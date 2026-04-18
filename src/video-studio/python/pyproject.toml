@@ -1,0 +1,9 @@
+[project]
+name = "atlas-video-studio"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "scenedetect[opencv]>=0.6",
+    "faster-whisper>=1.0",
+    "librosa>=0.10",
+]
