@@ -1,0 +1,22 @@
+[
+  { "name": "whoosh_fast",        "category": "whoosh",       "duration": 0.4, "license": "CC0" },
+  { "name": "whoosh_soft",        "category": "whoosh",       "duration": 0.5, "license": "CC0" },
+  { "name": "pop_bubble",         "category": "pop",          "duration": 0.3, "license": "CC0" },
+  { "name": "pop_deep",           "category": "pop",          "duration": 0.4, "license": "CC0" },
+  { "name": "ding_bright",        "category": "ding",         "duration": 1.2, "license": "CC0" },
+  { "name": "ding_soft",          "category": "ding",         "duration": 0.9, "license": "CC0" },
+  { "name": "swoosh_down",        "category": "whoosh",       "duration": 0.6, "license": "CC0" },
+  { "name": "swoosh_up",          "category": "whoosh",       "duration": 0.6, "license": "CC0" },
+  { "name": "impact_thud",        "category": "impact",       "duration": 0.5, "license": "CC0" },
+  { "name": "impact_hit",         "category": "impact",       "duration": 0.3, "license": "CC0" },
+  { "name": "transition_snap",    "category": "transition",   "duration": 0.2, "license": "CC0" },
+  { "name": "transition_shutter", "category": "transition",   "duration": 0.4, "license": "CC0" },
+  { "name": "notification_chime", "category": "notification", "duration": 1.5, "license": "CC0" },
+  { "name": "error_buzz",         "category": "notification", "duration": 0.6, "license": "CC0" },
+  { "name": "success_sparkle",    "category": "notification", "duration": 0.8, "license": "CC0" },
+  { "name": "typing_single",      "category": "typing",       "duration": 0.1, "license": "CC0" },
+  { "name": "laser_zap",          "category": "impact",       "duration": 0.5, "license": "CC0" },
+  { "name": "electric_crackle",   "category": "ambient",      "duration": 0.7, "license": "CC0" },
+  { "name": "crowd_cheer_short",  "category": "ambient",      "duration": 2.0, "license": "CC0" },
+  { "name": "camera_shutter",     "category": "transition",   "duration": 0.3, "license": "CC0" }
+]

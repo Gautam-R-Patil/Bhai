@@ -105,13 +105,17 @@ const CATEGORIES: Record<string, CategoryDef> = {
     },
     coding: {
         description: "Writing code, debugging code, fixing bugs, implementing new features, refactoring, code review, reading source files, making precise edits to existing code, searching the codebase for patterns or symbols, finding files by glob pattern, running build and test commands, iterating on a development task. Includes plan mode for structured research-then-implement workflows.",
+        // Order matters: the top-N tools (up to MAX_TOOLS_PER_CATEGORY) are
+        // the ones most likely to be included when the category fits a query.
+        // Keep the highest-value coding primitives first.
         tools: [
-            "read", "edit", "write", "append_file", "grep", "glob",
-            "shell_exec", "shell_exec_background", "shell_check_process",
+            "read", "edit", "write", "grep", "glob", "notebook_edit",
+            "lsp", "test_run", "fix_issue", "shell_exec", "append_file", "repo_map",
+            "enter_plan_mode", "exit_plan_mode", "enter_spec_mode", "finalize_spec",
+            "code_action", "code_execute", "browser_verify",
+            "shell_exec_background", "shell_check_process",
             "shell_wait_process", "shell_kill_process",
-            "code_action", "code_execute", "repo_map", "lsp",
             "list_directory", "delete_file", "get_current_time",
-            "enter_plan_mode", "exit_plan_mode", "notebook_edit",
         ],
     },
     browser: {
@@ -160,12 +164,19 @@ const CATEGORIES: Record<string, CategoryDef> = {
         ],
     },
     media: {
-        description: "Full Spotify control (play/pause/skip/queue/volume/shuffle/repeat, search, playlists, library, devices) via the `spogo` CLI — which talks to Spotify's internal web-player endpoints using browser cookies, so it works for every user on Free or Premium without the closed public Web API. Local-app URI-launch fallback when spogo isn't installed. Apple Music control. Generating images and artwork, AI art, screen recording, video editing with DaVinci Resolve, 3D modeling with Blender, searching for GIFs and memes, audio visualization and spectrograms, controlling Sonos speakers and smart home audio.",
+        description: "Full Spotify control (play/pause/skip/queue/volume/shuffle/repeat, search, playlists, library, devices) via the `spogo` CLI — which talks to Spotify's internal web-player endpoints using browser cookies, so it works for every user on Free or Premium without the closed public Web API. Local-app URI-launch fallback when spogo isn't installed. Apple Music control. Generating images and artwork, AI art, screen recording, searching for GIFs and memes, audio visualization and spectrograms, controlling Sonos speakers and smart home audio.",
         tools: [
             "spotify", "music_control",
             "generate_image", "screen_record",
-            "blender_script", "davinci_script",
             "gif_search", "audio_visualize", "sonos_control",
+        ],
+    },
+    video_editing: {
+        description: "Full video editing pipeline: cut, trim, join, render videos; make reels, shorts, TikToks; add captions, subtitles, transitions (fade, xfade, dissolve), music with beat-sync, sound effects; background removal; auto-crop to vertical; export to DaVinci Resolve or Premiere. Use for any task that involves editing, combining, or producing video content from one or more video files.",
+        tools: [
+            "video_create_project", "video_analyze", "video_plan_edit",
+            "video_render", "video_patch_plan", "video_ffmpeg",
+            "video_list_projects", "davinci_script", "blender_script",
         ],
     },
     presentation: {
@@ -439,16 +450,39 @@ const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] 
     { pattern: /\b(add|remove|delete|insert|reorder|swap|move)\b.{0,30}?\bslides?\b/i, category: "presentation", minScore: 0.8 },
     { pattern: /\b(export|convert|render|save)\b.{0,40}?\b(slides?|deck|presentation)\b/i, category: "presentation", minScore: 0.75 },
     // ── Coding — debugging, fixing, refactoring, writing code ──
-    { pattern: /\b(debug|refactor|implement(ation)?|compile|stack.?trace|exception|traceback|syntax.?error|type.?error|lint(er|ing)?|typecheck)\b/i, category: "coding", minScore: 0.7 },
+    // Patterns are deliberately conjunctive: coding verbs + coding objects,
+    // not bare keywords. A user saying "TypeScript tutorials" should NOT
+    // trigger coding — they want to browse, not code.
+    { pattern: /\b(debug|refactor|implement(ation)?|compile|stack.?trace|exception|traceback|syntax.?error|type.?error|typecheck)\b/i, category: "coding", minScore: 0.7 },
     { pattern: /\b(fix.*(bug|error|issue|crash|typo)|fix.*code|find.*bug|broken.*code)\b/i, category: "coding", minScore: 0.75 },
-    { pattern: /\b(typescript|javascript|python|golang|rust-?analyzer|\.ts\b|\.tsx\b|\.jsx\b|\.py\b|\.rs\b|\.go\b|\.cpp\b|\.java\b)\b/i, category: "coding", minScore: 0.6 },
-    { pattern: /\b(function|class|interface|method|variable|import|module|package)\b.*\b(add|remove|rename|modify|change|update|fix)\b/i, category: "coding", minScore: 0.65 },
+    // File-extension references are strong coding signal (a user saying ".ts" or "foo.py" is talking about a real file)
+    { pattern: /\b\w+\.(ts|tsx|jsx|js|mjs|cjs|py|rs|go|cpp|hpp|java|rb|ipynb)\b/i, category: "coding", minScore: 0.75 },
+    // Language name only counts as coding when paired with a coding verb or object
+    { pattern: /\b(typescript|javascript|python|golang|rust|swift)\b.*\b(code|function|class|interface|module|script|file|error|bug|test|compile|implement|refactor)\b/i, category: "coding", minScore: 0.7 },
+    { pattern: /\b(function|class|interface|method)\b.*\b(add|remove|rename|modify|change|update|fix|implement)\b/i, category: "coding", minScore: 0.7 },
     { pattern: /\b(goto.?definition|find.?references|workspace.?symbol|document.?symbol|hover.?info)\b/i, category: "coding", minScore: 0.85 },
-    { pattern: /\b(notebook|\.ipynb|jupyter|kernel)\b/i, category: "coding", minScore: 0.7 },
-    { pattern: /\b(grep|ripgrep|rg\b).*(for|in|across)\b/i, category: "coding", minScore: 0.65 },
-    { pattern: /\b(glob|find.*files?.*matching)\b/i, category: "coding", minScore: 0.6 },
+    { pattern: /\b(notebook|jupyter|kernel)\b/i, category: "coding", minScore: 0.7 },
+    { pattern: /\b(grep|ripgrep)\b.*\b(for|in|across)\b/i, category: "coding", minScore: 0.65 },
+    { pattern: /\b(glob)\b.*\b(pattern|files?)\b/i, category: "coding", minScore: 0.6 },
+    { pattern: /\b(find|list)\b.*\bfiles?\b.*\b(matching|pattern)\b/i, category: "coding", minScore: 0.55 },
     { pattern: /\b(plan.?mode|research.?first|investigate.?first|exit.?plan.?mode|enter.?plan.?mode)\b/i, category: "coding", minScore: 0.75 },
     { pattern: /\b(edit.*code|modify.*function|update.*class|change.*interface|replace.*import)\b/i, category: "coding", minScore: 0.7 },
+    // Lint / linter is a coding tool but users may also say "lint the house" etc. — narrow to linter/eslint/biome/clippy/ruff
+    { pattern: /\b(eslint|biome|clippy|ruff|lint(er|ing)?\s+(error|warning|fails|pass))\b/i, category: "coding", minScore: 0.7 },
+    // Test running — frameworks or "run tests"/"failing test" phrasing (stays conjunctive to avoid "test the water")
+    { pattern: /\b(jest|vitest|pytest|mocha|playwright|cargo\s+test|go\s+test)\b/i, category: "coding", minScore: 0.85 },
+    { pattern: /\b(run|execute|invoke)\b.{0,20}?\b(tests?|test\s+suite|unit\s+tests?|integration\s+tests?|spec)\b/i, category: "coding", minScore: 0.8 },
+    { pattern: /\b(failing|failed|broken|red)\b.{0,20}?\b(tests?|test\s+suite|assertions?|specs?)\b/i, category: "coding", minScore: 0.8 },
+    { pattern: /\b(tdd|test.driven|write.*tests?\s+for|add.*tests?\s+for)\b/i, category: "coding", minScore: 0.75 },
+    // Spec mode / acceptance criteria
+    { pattern: /\b(spec|specification|acceptance\s+criteria)\b.{0,30}?\b(for|of|the)\b/i, category: "coding", minScore: 0.7 },
+    { pattern: /\b(finalize\s+spec|enter\s+spec\s+mode|write\s+a?\s+spec)\b/i, category: "coding", minScore: 0.85 },
+    // fix_issue localizer
+    { pattern: /\b(localize|pinpoint|find\s+(?:the\s+)?cause\s+of)\b.{0,30}?\b(error|failure|crash|bug)\b/i, category: "coding", minScore: 0.75 },
+    // UI/frontend verification via browser_verify — fires when the user mentions rendering the page, checking in a browser, or UI-centric frameworks
+    { pattern: /\b(verify|check|test|preview|render)\b.{0,30}?\b(ui|frontend|page|component|form|dashboard|route|view|layout)\b/i, category: "coding", minScore: 0.8 },
+    { pattern: /\b(localhost|dev\s+server|vite|next\s+dev|npm\s+run\s+dev|pnpm\s+dev|yarn\s+dev)\b/i, category: "coding", minScore: 0.75 },
+    { pattern: /\b(browser[_\s-]?verify|post[_\s-]?coding\s+check|visual\s+(?:regression|check))\b/i, category: "coding", minScore: 0.85 },
 ];
 
 // ── Caching State ─────────────────────────────
@@ -740,14 +774,16 @@ function structuralClassify(message: string): { category: string; score: number 
             /\b(file|folder|directory|read|write|create|edit|save|delete|path|document|text|csv|json|pdf|copy|move|rename)\b/i,
         ],
         coding: [
-            /\b(debug|refactor|implement|compile|fix.*(bug|error|issue|crash|typo)|stack.?trace|exception|traceback|syntax.?error|typecheck)\b/i,
-            /\b(typescript|javascript|python|golang|rust-?analyzer|\.ts\b|\.tsx\b|\.jsx\b|\.py\b|\.rs\b|\.go\b|\.cpp\b|\.java\b|\.ipynb\b)\b/i,
-            /\b(function|class|interface|method|variable|import|module|package)\b/i,
+            /\b(debug|refactor|implement|compile|stack.?trace|exception|traceback|syntax.?error|typecheck)\b/i,
+            /\bfix.*(bug|error|issue|crash|typo)\b/i,
+            // File-extension references are a strong coding signal on their own
+            /\b\w+\.(ts|tsx|jsx|js|mjs|cjs|py|rs|go|cpp|hpp|java|rb|ipynb)\b/i,
             /\b(source ?code|codebase|source files?|src\/|lib\/|test\/)\b/i,
             /\b(unit.?test|integration.?test|jest|vitest|pytest|mocha|cargo.?test)\b/i,
-            /\b(goto.?definition|find.?references|workspace.?symbol|document.?symbol|hover)\b/i,
-            /\b(notebook|jupyter|ipynb|cell)\b/i,
+            /\b(goto.?definition|find.?references|workspace.?symbol|document.?symbol)\b/i,
+            /\b(notebook|jupyter|ipynb)\b/i,
             /\b(plan.?mode|exit.?plan.?mode|enter.?plan.?mode)\b/i,
+            /\b(eslint|biome|clippy|ruff|rust-?analyzer|typescript-language-server|pyright)\b/i,
         ],
         media: [
             /\b(spotify|music|song|track|tracks|artist|artists|album|albums|playlist|playlists|play|pause|skip|shuffle|repeat|queue|now.?playing|image|picture|photo|generate|art|draw|paint|blender|3d|video|record|lyrics|discover.?weekly|release.?radar|sonos|speaker|airplay)\b/i,

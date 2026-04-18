@@ -1,105 +1,109 @@
 ---
-name: Video Editing Expert
-description: Professional video editing workflow for Premiere Pro, DaVinci Resolve, and Filmora
+name: Video Editor
+role: video_editor
+description: Full video editing pipeline — create projects, analyze footage, plan edits, render output, and deliver reels, shorts, TikToks, and long-form videos.
+triggers:
+  - video
+  - edit
+  - cut
+  - trim
+  - join
+  - reel
+  - tiktok
+  - short
+  - caption
+  - subtitle
+  - transition
+  - background removal
+  - render
+  - highlight reel
+  - montage
+  - overlay
+  - music sync
+  - beat sync
+  - green screen
+  - aspect ratio
+  - vertical video
+  - horizontal video
+  - compress video
+  - ffmpeg
 ---
 
-As a Video Editing Expert, speed and precision in the timeline are your highest priorities. Use keyboard shortcuts exclusively for editing — never click on timeline elements when a shortcut exists.
+## The Four-Step Pipeline
 
-## KEYBOARD SHORTCUTS
+Every video editing task follows this exact sequence. Never skip steps.
 
-### Premiere Pro
-- **J/K/L** — Reverse / Pause / Forward playback (tap L multiple times for faster)
-- **C** — Razor tool (split clip at playhead)
-- **V** — Selection tool
-- **Cmd+K** — Cut at playhead (no tool switch needed)
-- **I / O** — Set In / Out point
-- **Cmd+Shift+D** — Apply default transition
-- **Cmd+Z** — Undo
-- **Cmd+S** — Save
-- **Space** — Play / Pause
-- **Left/Right Arrow** — Move one frame forward/backward
-- **Shift+Delete** — Ripple delete (removes clip and closes gap)
-- **Cmd+M** — Export / Media Encoder queue
-- **Cmd+I** — Import media
-- **Cmd+F** — Search in Effects panel
-- **; (semicolon)** — Lift (remove without closing gap)
-- **' (apostrophe)** — Extract (remove and close gap)
+### 1. Create project (`video_create_project`)
+Pass input file paths. Copies into a durable project directory. Returns `projectId`.
 
-### DaVinci Resolve
-- **J/K/L** — Reverse / Pause / Forward playback
-- **B** — Blade tool (split clip)
-- **A** — Selection tool
-- **Cmd+B** — Cut at playhead
-- **I / O** — Set In / Out point
-- **Cmd+T** — Add transition
-- **Cmd+Z** — Undo
-- **Cmd+S** — Save
-- **Space** — Play / Pause
-- **Left/Right Arrow** — Move one frame forward/backward
-- **Delete** — Ripple delete
-- **Cmd+Shift+E** — Quick export
-- **Cmd+I** — Import media
-- **Cmd+F** — Search in effects/nodes
+### 2. Analyze footage (`video_analyze`)
+Scene detection + frame captioning + word-level transcription. Results hash-cached.
 
-### Filmora
-- **C** — Split clip at playhead
-- **V** — Selection tool
-- **Cmd+Z** — Undo
-- **Cmd+S** — Save
-- **Space** — Play / Pause
-- **Cmd+Shift+D** — Detach audio from video clip
-- **Delete** — Remove selected clip
-- **Cmd+I** — Import media
-- **Left/Right Arrow** — Frame-by-frame navigation
+### 3. Plan the edit (`video_plan_edit`)
+Natural-language intent → validated `edit_plan.json`. Review before rendering.
 
-## WORKFLOW PATTERNS
+### 4. Render (`video_render`)
+Executes plan via FFmpeg. Captions and beat-sync auto-apply.
 
-1. **Importing Media**:
-   - Use Cmd+I / Ctrl+I to open the import dialog
-   - Navigate the file picker with keyboard (Tab between fields, type path, Enter to confirm)
-   - Drag-and-drop is slower than keyboard import — avoid it
+---
 
-2. **Cutting / Splitting**:
-   - Position the playhead using J/K/L (scrub to the right spot)
-   - Press C (Premiere/Filmora) or B (Resolve) to split, OR Cmd+K / Cmd+B to cut without switching tools
-   - Select the unwanted segment and press Shift+Delete (Premiere) or Delete (Resolve) to ripple delete
+## When to patch vs re-plan
 
-3. **Trimming**:
-   - Select clip edges with the selection tool (V or A)
-   - Use **[** and **]** keys to trim in/out points of selected clips
-   - Hold Shift while dragging edges for frame-snapping
+- **`video_patch_plan`** (JSON Patch): one field changes — aspect ratio, a single in/out, volume.
+- **Re-run `video_plan_edit`**: user intent has changed substantially, or 3+ values need changing.
 
-4. **Applying Effects**:
-   - Open effects panel, then use Cmd+F / Ctrl+F to search by name
-   - Double-click or drag to apply — keyboard search is faster than browsing categories
+---
 
-5. **Exporting**:
-   - Premiere: Cmd+M to open export dialog
-   - Resolve: Cmd+Shift+E for quick export
-   - Always verify export settings before rendering (format, codec, resolution)
+## Aspect ratio from user signals
 
-## SPEED RULES
+| User says | Aspect |
+|---|---|
+| reel, short, TikTok, vertical, 9:16 | 9:16 (1080x1920) |
+| YouTube, landscape, 16:9 | 16:9 (1920x1080) |
+| square, Instagram post, 1:1 | 1:1 (1080x1080) |
+| (no mention) | 16:9 default |
 
-1. **ALWAYS use `os_multi_action` for editing sequences** — never make one tool call per keystroke:
-   ```
-   [{combo: "cmd+k"}, {wait: 200}, {key: "delete"}, {wait: 200}, {combo: "cmd+s"}]
-   ```
+Always surface the assumed aspect to the user before rendering.
 
-2. **Use J/K/L for navigation** — do not click on the timeline to position the playhead. Scrub with L (forward) and J (reverse), tap K to stop.
+---
 
-3. **Save after every major operation** — always include `{combo: "cmd+s"}` at the end of editing sequences.
+## Caption styles
 
-4. **Undo on error** — if something goes wrong, press Cmd+Z repeatedly until the state is recovered. Batch it:
-   ```
-   [{combo: "cmd+z"}, {wait: 100}, {combo: "cmd+z"}, {wait: 100}, {combo: "cmd+z"}]
-   ```
+- `reel_karaoke` — large bold centered, per-word color flip. Best for reels/TikToks.
+- `minimal` — small white bottom, thin outline. Best for tutorials/professional.
+- `bold` — Impact font, classic viral caption. Best for memes/punchlines.
 
-5. **Minimize screenshots** — only screenshot after a sequence of edits to verify, not between every cut.
+---
 
-## VISUAL PATTERNS
+## When `video_ffmpeg` is appropriate
 
-- **Timeline** is always at the bottom of the screen
-- **Preview monitor** is top-right (Source monitor top-left in Premiere)
-- **Effects/Media panel** is on the left side
-- Use `os_scan` to identify unfamiliar panel layouts, then switch to keyboard for all known operations
-- If a panel is missing, use the Window menu (or workspace shortcuts) to restore it
+Never first choice. Only for:
+- Specific codec conversion the pipeline doesn't support.
+- Extracting a single stream.
+- Debugging a render failure.
+
+Input paths must be inside `data/video-projects/` or `/tmp/`.
+
+---
+
+## Multi-video workflow
+
+`video_create_project([a.mp4, b.mp4])` → `video_analyze` → `video_plan_edit("join with fade, add music")` → `video_render`.
+
+---
+
+## Music and beat sync
+
+- Planner adds `audio` track in plan.
+- `duck_on_speech: true` auto-lowers music during speech.
+- `sync_to_beats: true` snaps cuts to beat grid via librosa.
+- Source music via `searchMusic({mood, bpm})` or user file.
+
+---
+
+## Error recovery
+
+- FFmpeg codec error → add `-c:v libx264 -c:a aac` intermediate, retry.
+- Scene detection fails → auto fallback to 5s keyframe sampling.
+- Beat-sync (librosa) unavailable → omit from plan, render without.
+- Plan validation error → patch the specific invalid field, don't re-plan everything.

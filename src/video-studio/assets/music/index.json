@@ -1,0 +1,12 @@
+[
+  { "title": "Upbeat Corporate", "artist": "Mixkit", "url": "https://assets.mixkit.co/music/preview/mixkit-upbeat-corporate-574.mp3", "license": "Mixkit License", "mood": ["upbeat", "corporate", "energetic"], "bpm": 120, "durationSec": 120 },
+  { "title": "Chill Lofi Beat", "artist": "Pixabay", "url": "https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3", "license": "Pixabay License", "mood": ["chill", "lofi", "relaxed"], "bpm": 85, "durationSec": 180 },
+  { "title": "Epic Cinematic Rise", "artist": "Mixkit", "url": "https://assets.mixkit.co/music/preview/mixkit-epic-cinematic-rise-589.mp3", "license": "Mixkit License", "mood": ["epic", "dramatic", "cinematic"], "bpm": 140, "durationSec": 90 },
+  { "title": "Happy Acoustic", "artist": "Pixabay", "url": "https://cdn.pixabay.com/download/audio/2022/03/15/audio_8da6fa9df5.mp3", "license": "Pixabay License", "mood": ["happy", "acoustic", "warm"], "bpm": 110, "durationSec": 150 },
+  { "title": "Pump Up", "artist": "Mixkit", "url": "https://assets.mixkit.co/music/preview/mixkit-pump-up-575.mp3", "license": "Mixkit License", "mood": ["energetic", "workout", "upbeat"], "bpm": 135, "durationSec": 120 },
+  { "title": "Ambient Meditation", "artist": "Pixabay", "url": "https://cdn.pixabay.com/download/audio/2022/01/20/audio_d0a13f1f1c.mp3", "license": "Pixabay License", "mood": ["calm", "ambient", "meditation"], "bpm": 60, "durationSec": 240 },
+  { "title": "Tech House Groove", "artist": "Mixkit", "url": "https://assets.mixkit.co/music/preview/mixkit-tech-house-vibes-130.mp3", "license": "Mixkit License", "mood": ["electronic", "dance", "energetic"], "bpm": 128, "durationSec": 180 },
+  { "title": "Sad Piano", "artist": "Pixabay", "url": "https://cdn.pixabay.com/download/audio/2022/10/25/audio_fcd41a89e0.mp3", "license": "Pixabay License", "mood": ["sad", "emotional", "cinematic"], "bpm": 72, "durationSec": 200 },
+  { "title": "Funky Party", "artist": "Mixkit", "url": "https://assets.mixkit.co/music/preview/mixkit-funky-140.mp3", "license": "Mixkit License", "mood": ["funky", "party", "upbeat"], "bpm": 115, "durationSec": 160 },
+  { "title": "Suspense Thriller", "artist": "Pixabay", "url": "https://cdn.pixabay.com/download/audio/2022/08/02/audio_884fe92c21.mp3", "license": "Pixabay License", "mood": ["suspense", "thriller", "dramatic"], "bpm": 95, "durationSec": 130 }
+]

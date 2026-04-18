@@ -20,6 +20,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "smoke:video": "tsx scripts/video-studio-smoke.ts",
     "postinstall": "bash scripts/patch-baileys.sh 2>/dev/null || true && npx tsx scripts/postinstall-video.ts 2>/dev/null || true"
   },
   "dependencies": {

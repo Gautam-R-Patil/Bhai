@@ -19,12 +19,25 @@ import { glob } from "./coding/glob.js";
 import { enterPlanModeTool, exitPlanModeTool } from "./coding/plan-mode-tools.js";
 import { notebookEdit } from "./coding/notebook-edit.js";
 import { lsp } from "./coding/lsp.js";
+import { testRun } from "./coding/test-run.js";
+import { fixIssue } from "./coding/fix-issue.js";
+import { enterSpecModeTool, finalizeSpecTool } from "./coding/spec-mode-tools.js";
+import { browserVerify } from "./coding/browser-verify.js";
 import { appleScript, osScreenshot, osClick, osType, osContext, osOcrClick, osVisualVerify, setBrightness, sendScreenshot, osAccessibilityTree, osKeyboardShortcuts, osScan, osClickElement, osMultiAction, osZoomRegion, osNav } from "./macos.js";
 import { powerShellScript, winOsScreenshot, winOsClick, winOsType, winOsContext, winOsOcrClick, winOsVisualVerify, winSetBrightness, winSendScreenshot } from "./windows.js";
 import { linuxShellScript, linuxOsScreenshot, linuxOsClick, linuxOsType, linuxOsContext, linuxSetBrightness, linuxSendScreenshot } from "./linux.js";
 import { IS_MAC, IS_WIN, IS_LINUX } from "./platform.js";
 import { blenderScript } from "./blender.js";
 import { davinciScript } from "./video.js";
+import {
+    videoCreateProject,
+    videoAnalyze,
+    videoPlanEdit,
+    videoRender,
+    videoPatchPlan,
+    videoFfmpeg,
+    videoListProjects,
+} from "./video-studio.js";
 import { webSearch } from "./web-search.js";
 import {
     browserNavigate,
@@ -248,6 +261,15 @@ registry.set(blenderScript.schema.function.name, blenderScript);
 // Video tools
 registry.set(davinciScript.schema.function.name, davinciScript);
 
+// Video Studio tools
+registry.set(videoCreateProject.schema.function.name, videoCreateProject);
+registry.set(videoAnalyze.schema.function.name, videoAnalyze);
+registry.set(videoPlanEdit.schema.function.name, videoPlanEdit);
+registry.set(videoRender.schema.function.name, videoRender);
+registry.set(videoPatchPlan.schema.function.name, videoPatchPlan);
+registry.set(videoFfmpeg.schema.function.name, videoFfmpeg);
+registry.set(videoListProjects.schema.function.name, videoListProjects);
+
 // File tools (coding primitives + directory listing + deletion)
 registry.set(read.schema.function.name, read);
 registry.set(edit.schema.function.name, edit);
@@ -267,6 +289,11 @@ registry.set(notebookEdit.schema.function.name, notebookEdit);
 
 // LSP (code intelligence: goToDefinition, findReferences, hover, etc.)
 registry.set(lsp.schema.function.name, lsp);
+registry.set(testRun.schema.function.name, testRun);
+registry.set(fixIssue.schema.function.name, fixIssue);
+registry.set(enterSpecModeTool.schema.function.name, enterSpecModeTool);
+registry.set(finalizeSpecTool.schema.function.name, finalizeSpecTool);
+registry.set(browserVerify.schema.function.name, browserVerify);
 
 // Web & browser tools
 registry.set(webSearch.schema.function.name, webSearch);
