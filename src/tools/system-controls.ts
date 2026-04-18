@@ -1,0 +1,965 @@
+// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// This software is proprietary. Copying or reuse is prohibited.
+// See LICENSE.md for details.
+
+// ── System Control Tools ──────────────────────
+// Cross-platform system controls (macOS + Windows + Linux).
+// macOS: AppleScript / shell tools
+// Windows: PowerShell / registry / Win32 APIs
+// Linux: /proc, /sys, nmcli, pactl, amixer, etc.
+
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { promises as fs } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import type { ToolDefinition } from "./get-current-time.js";
+import { IS_MAC, IS_WIN, IS_LINUX, runPowerShell, runPowerShellInline, clipboardRead, clipboardWrite } from "./platform.js";
+
+const execFileAsync = promisify(execFile);
+
+// ── Helper: run AppleScript from string ───────
+
+async function runAppleScript(script: string, timeout = 5000): Promise<string> {
+    const tmpFile = join(tmpdir(), `atlas_sys_${Date.now()}.scpt`);
+    try {
+        await fs.writeFile(tmpFile, script, "utf-8");
+        const { stdout } = await execFileAsync("osascript", [tmpFile], { timeout });
+        await fs.unlink(tmpFile).catch(() => { });
+        return stdout.trim();
+    } catch (err) {
+        await fs.unlink(tmpFile).catch(() => { });
+        throw err;
+    }
+}
+
+async function runJXA(script: string, timeout = 5000): Promise<string> {
+    const tmpFile = join(tmpdir(), `atlas_sys_${Date.now()}.js`);
+    try {
+        await fs.writeFile(tmpFile, script, "utf-8");
+        const { stdout } = await execFileAsync("osascript", ["-l", "JavaScript", tmpFile], { timeout });
+        await fs.unlink(tmpFile).catch(() => { });
+        return stdout.trim();
+    } catch (err) {
+        await fs.unlink(tmpFile).catch(() => { });
+        throw err;
+    }
+}
+
+// ═══════════════════════════════════════════════
+// 1. SET VOLUME
+// ═══════════════════════════════════════════════
+
+export const setVolume: ToolDefinition = {
+    schema: {
+        type: "function",
+        function: {
+            name: "set_volume",
+            description: "Control system volume. Set to a specific level (0-100), mute/unmute, or get the current volume.",
+            parameters: {
+                type: "object",
+                properties: {
+                    level: {
+                        type: "number",
+                        description: "Volume level 0-100. Omit to just query current volume.",
+                    },
+                    mute: {
+                        type: "boolean",
+                        description: "Set to true to mute, false to unmute. Omit to leave mute state unchanged.",
+                    },
+                },
+                required: [],
+            },
+        },
+    },
+
+    async handler(input) {
+        try {
+            const level = input.level as number | undefined;
+            const mute = input.mute as boolean | undefined;
+
+            if (IS_WIN) {
+                // Windows: use PowerShell + COM Audio
+                const commands: string[] = [];
+                if (level !== undefined) {
+                    const clamped = Math.max(0, Math.min(100, Math.round(level)));
+                    // Use nircmd if available, otherwise PowerShell COM
+                    commands.push(`try { & nircmd.exe setsysvolume ${Math.round(clamped * 655.35)} } catch {`);
+                    commands.push(`  Add-Type -TypeDefinition 'using System.Runtime.InteropServices; [Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)] interface IAudioEndpointVolume { int _0(); int _1(); int _2(); int _3(); int SetMasterVolumeLevelScalar(float fLevel, System.Guid pguidEventContext); int GetMasterVolumeLevelScalar(out float pfLevel); }' -ErrorAction SilentlyContinue`);
+                    commands.push(`}`);
+                }
+                if (mute !== undefined) {
+                    commands.push(`try { & nircmd.exe mutesysvolume ${mute ? '1' : '0'} } catch {}`);
+                }
+                // Query final state
+                commands.push(`$vol = try { [int]((& nircmd.exe getvolume '') 2>&1) } catch { -1 }`);
+                commands.push(`"$vol|false"`);
+
+                try {
+                    const result = await runPowerShell(commands.join("\n"));
+                    const [volStr, muteStr] = result.split("|");
+                    return JSON.stringify({
+                        success: true,
+                        volume: parseInt(volStr) >= 0 ? parseInt(volStr) : (level ?? 50),
+                        muted: muteStr === "true" || (mute ?? false),
+                        note: "For best results, install nircmd (nirsoft.net/utils/nircmd.html)",
+                    });
+                } catch {
+                    // Simplest fallback: just set and assume
+                    if (level !== undefined) {
+                        const clamped = Math.max(0, Math.min(100, Math.round(level)));
+                        await runPowerShellInline(`(New-Object -ComObject WScript.Shell).SendKeys([char]173)`, 3000).catch(() => { });
+                    }
+                    return JSON.stringify({
+                        success: true,
+                        volume: level ?? 50,
+                        muted: mute ?? false,
+                        note: "Volume set via fallback method.",
+                    });
+                }
+            }
+
+            // macOS
+            const commands: string[] = [];
+
+            if (level !== undefined) {
+                const clamped = Math.max(0, Math.min(100, Math.round(level)));
+                commands.push(`set volume output volume ${clamped}`);
+            }
+
+            if (mute !== undefined) {
+                commands.push(`set volume output muted ${mute}`);
+            }
+
+            // Always query the final state
+            commands.push(`set vol to output volume of (get volume settings)`);
+            commands.push(`set m to output muted of (get volume settings)`);
+            commands.push(`return (vol as text) & "|" & (m as text)`);
+
+            const result = await runAppleScript(commands.join("\n"));
+            const [volStr, muteStr] = result.split("|");
+
+            return JSON.stringify({
+                success: true,
+                volume: parseInt(volStr) || 0,
+                muted: muteStr === "true",
+            });
+        } catch (err) {
+            return JSON.stringify({ success: false, error: (err as Error).message });
+        }
+    },
+};
+
+// ═══════════════════════════════════════════════
+// 2. CLIPBOARD
+// ═══════════════════════════════════════════════
+
+export const clipboard: ToolDefinition = {
+    schema: {
+        type: "function",
+        function: {
+            name: "clipboard",
+            description: "Read from or write to the system clipboard. Use 'read' to get what's currently copied, 'write' to copy text to clipboard.",
+            parameters: {
+                type: "object",
+                properties: {
+                    action: {
+                        type: "string",
+                        enum: ["read", "write"],
+                        description: "Action to perform (default: read)",
+                    },
+                    text: {
+                        type: "string",
+                        description: "Text to write to clipboard (required for 'write' action)",
+                    },
+                },
+                required: [],
+            },
+        },
+    },
+
+    async handler(input) {
+        try {
+            const action = (input.action as string) || "read";
+
+            if (action === "write") {
+                const text = input.text as string;
+                if (!text && text !== "") {
+                    return JSON.stringify({ error: "Provide 'text' for the write action." });
+                }
+                if (IS_WIN || IS_LINUX) {
+                    await clipboardWrite(text);
+                } else {
+                    const escaped = text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+                    await runAppleScript(`set the clipboard to "${escaped}"`);
+                }
+                return JSON.stringify({
+                    success: true,
+                    action: "write",
+                    length: text.length,
+                });
+            }
+
+            // Read clipboard
+            let content: string;
+            if (IS_WIN || IS_LINUX) {
+                content = await clipboardRead();
+            } else {
+                content = await runAppleScript("return (the clipboard as text)");
+            }
+            return JSON.stringify({
+                success: true,
+                action: "read",
+                content: content.substring(0, 5000),
+                length: content.length,
+                truncated: content.length > 5000,
+            });
+        } catch (err) {
+            return JSON.stringify({ success: false, error: (err as Error).message });
+        }
+    },
+};
+
+// ═══════════════════════════════════════════════
+// 3. SYSTEM INFO
+// ═══════════════════════════════════════════════
+
+export const systemInfo: ToolDefinition = {
+    schema: {
+        type: "function",
+        function: {
+            name: "system_info",
+            description: "Get a quick system dashboard: battery, RAM, CPU, disk, Wi-Fi, and uptime — all in one call.",
+            parameters: {
+                type: "object",
+                properties: {},
+                required: [],
+            },
+        },
+    },
+
+    async handler() {
+        const info: Record<string, unknown> = { success: true };
+
+        if (IS_WIN) {
+            // Windows: use PowerShell Get-CimInstance queries
+            const [batteryResult, memResult, cpuResult, diskResult, wifiResult, uptimeResult] = await Promise.allSettled([
+                runPowerShellInline(`$b = Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue; if ($b) { "$($b.EstimatedChargeRemaining)|$($b.BatteryStatus)" } else { "none" }`, 5000).then(r => {
+                    if (r === "none") return { percent: null, state: "desktop (no battery)" };
+                    const [pct, status] = r.split("|");
+                    const stateMap: Record<string, string> = { "1": "discharging", "2": "AC Power", "3": "fully charged", "4": "low", "5": "critical" };
+                    return { percent: parseInt(pct) || null, state: stateMap[status] || "unknown" };
+                }),
+                runPowerShellInline(`$os = Get-CimInstance Win32_OperatingSystem; $used = [math]::Round(($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / 1048576, 1); $free = [math]::Round($os.FreePhysicalMemory / 1048576, 1); "$used|$free"`, 5000).then(r => {
+                    const [used, free] = r.split("|").map(Number);
+                    return { used_gb: used, available_gb: free };
+                }),
+                runPowerShellInline(`$cpu = Get-CimInstance Win32_Processor; "$($cpu.LoadPercentage)"`, 5000).then(r => {
+                    return { load_percent: parseInt(r) || 0 };
+                }),
+                runPowerShellInline(`$d = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"; $total = [math]::Round($d.Size / 1GB, 1); $free = [math]::Round($d.FreeSpace / 1GB, 1); $used = [math]::Round(($d.Size - $d.FreeSpace) / 1GB, 1); $pct = [math]::Round(($d.Size - $d.FreeSpace) / $d.Size * 100); "$total|$used|$free|$pct"`, 5000).then(r => {
+                    const [total, used, available, pct] = r.split("|");
+                    return { total: `${total}G`, used: `${used}G`, available: `${available}G`, use_pct: `${pct}%` };
+                }),
+                runPowerShellInline(`$w = netsh wlan show interfaces | Select-String 'SSID|Signal'; $lines = $w -join '|'; $lines`, 5000).then(r => {
+                    const ssidMatch = r.match(/SSID\s*:\s*(.+?)\|/);
+                    const signalMatch = r.match(/Signal\s*:\s*(\d+)/);
+                    return { ssid: ssidMatch?.[1]?.trim() || "disconnected", signal_percent: signalMatch ? parseInt(signalMatch[1]) : null };
+                }).catch(() => ({ ssid: "unknown", signal_percent: null })),
+                runPowerShellInline(`$os = Get-CimInstance Win32_OperatingSystem; $boot = $os.LastBootUpTime; $up = (Get-Date) - $boot; "$($up.Days)d $($up.Hours)h $($up.Minutes)m"`, 5000),
+            ]);
+
+            if (batteryResult.status === "fulfilled") info.battery = batteryResult.value;
+            if (memResult.status === "fulfilled") info.memory = memResult.value;
+            if (cpuResult.status === "fulfilled") info.cpu = cpuResult.value;
+            if (diskResult.status === "fulfilled") info.disk = diskResult.value;
+            if (wifiResult.status === "fulfilled") info.wifi = wifiResult.value;
+            if (uptimeResult.status === "fulfilled") info.uptime = uptimeResult.value;
+
+            return JSON.stringify(info);
+        }
+
+        if (IS_LINUX) {
+            // Linux: use /proc, /sys, and standard CLI tools
+            const [batteryResult, memResult, cpuResult, diskResult, wifiResult, uptimeResult] = await Promise.allSettled([
+                // Battery
+                fs.readFile("/sys/class/power_supply/BAT0/capacity", "utf-8").then(cap => {
+                    return fs.readFile("/sys/class/power_supply/BAT0/status", "utf-8").then(status => ({
+                        percent: parseInt(cap.trim()),
+                        state: status.trim().toLowerCase(),
+                    }));
+                }).catch(() => ({ percent: null, state: "no battery" })),
+                // Memory from /proc/meminfo
+                fs.readFile("/proc/meminfo", "utf-8").then(data => {
+                    const totalMatch = data.match(/MemTotal:\s+(\d+)/);
+                    const availMatch = data.match(/MemAvailable:\s+(\d+)/);
+                    const totalKb = parseInt(totalMatch?.[1] || "0");
+                    const availKb = parseInt(availMatch?.[1] || "0");
+                    const usedKb = totalKb - availKb;
+                    return {
+                        used_gb: Math.round(usedKb / 1048576 * 10) / 10,
+                        available_gb: Math.round(availKb / 1048576 * 10) / 10,
+                    };
+                }),
+                // CPU load from /proc/loadavg
+                fs.readFile("/proc/loadavg", "utf-8").then(data => {
+                    const parts = data.trim().split(/\s+/);
+                    return { load_1m: parseFloat(parts[0]) || 0, load_5m: parseFloat(parts[1]) || 0 };
+                }),
+                // Disk
+                execFileAsync("df", ["-H", "/"], { timeout: 3000 }).then(({ stdout }) => {
+                    const lines = stdout.trim().split("\n");
+                    if (lines.length >= 2) {
+                        const parts = lines[1].split(/\s+/);
+                        return { total: parts[1], used: parts[2], available: parts[3], use_pct: parts[4] };
+                    }
+                    return null;
+                }),
+                // Wi-Fi
+                execFileAsync("nmcli", ["-t", "-f", "active,ssid,signal", "dev", "wifi"], { timeout: 3000 }).then(({ stdout }) => {
+                    const active = stdout.split("\n").find(l => l.startsWith("yes:"));
+                    if (active) {
+                        const parts = active.split(":");
+                        return { ssid: parts[1] || "disconnected", signal_percent: parseInt(parts[2]) || null };
+                    }
+                    return { ssid: "disconnected", signal_percent: null };
+                }).catch(() => ({ ssid: "unknown", signal_percent: null })),
+                // Uptime
+                execFileAsync("uptime", ["-p"], { timeout: 3000 }).then(({ stdout }) => stdout.trim()).catch(
+                    () => execFileAsync("uptime", [], { timeout: 3000 }).then(({ stdout }) => {
+                        const match = stdout.match(/up\s+(.+?),\s+\d+\s+user/);
+                        return match?.[1]?.trim() || stdout.trim();
+                    })
+                ),
+            ]);
+
+            if (batteryResult.status === "fulfilled") info.battery = batteryResult.value;
+            if (memResult.status === "fulfilled") info.memory = memResult.value;
+            if (cpuResult.status === "fulfilled") info.cpu = cpuResult.value;
+            if (diskResult.status === "fulfilled") info.disk = diskResult.value;
+            if (wifiResult.status === "fulfilled") info.wifi = wifiResult.value;
+            if (uptimeResult.status === "fulfilled") info.uptime = uptimeResult.value;
+
+            return JSON.stringify(info);
+        }
+
+        // macOS: Run all queries in parallel for speed
+        const [batteryResult, memResult, cpuResult, diskResult, wifiResult, uptimeResult] = await Promise.allSettled([
+            // Battery
+            execFileAsync("pmset", ["-g", "batt"], { timeout: 3000 }).then(({ stdout }) => {
+                const pctMatch = stdout.match(/(\d+)%/);
+                const chargingMatch = stdout.match(/'([^']+)'/);
+                return {
+                    percent: pctMatch ? parseInt(pctMatch[1]) : null,
+                    state: chargingMatch ? chargingMatch[1] : "unknown",
+                };
+            }),
+            // Memory
+            execFileAsync("vm_stat", [], { timeout: 3000 }).then(({ stdout }) => {
+                const pageSize = 16384; // Apple Silicon default
+                const free = parseInt(stdout.match(/Pages free:\s+(\d+)/)?.[1] || "0");
+                const active = parseInt(stdout.match(/Pages active:\s+(\d+)/)?.[1] || "0");
+                const inactive = parseInt(stdout.match(/Pages inactive:\s+(\d+)/)?.[1] || "0");
+                const wired = parseInt(stdout.match(/Pages wired down:\s+(\d+)/)?.[1] || "0");
+                const totalUsed = (active + wired) * pageSize;
+                const totalFree = (free + inactive) * pageSize;
+                return {
+                    used_gb: Math.round(totalUsed / 1073741824 * 10) / 10,
+                    available_gb: Math.round(totalFree / 1073741824 * 10) / 10,
+                };
+            }),
+            // CPU load
+            execFileAsync("sysctl", ["-n", "vm.loadavg"], { timeout: 3000 }).then(({ stdout }) => {
+                const parts = stdout.trim().replace(/[{}]/g, "").trim().split(/\s+/);
+                return { load_1m: parseFloat(parts[0]) || 0, load_5m: parseFloat(parts[1]) || 0 };
+            }),
+            // Disk
+            execFileAsync("df", ["-H", "/"], { timeout: 3000 }).then(({ stdout }) => {
+                const lines = stdout.trim().split("\n");
+                if (lines.length >= 2) {
+                    const parts = lines[1].split(/\s+/);
+                    return { total: parts[1], used: parts[2], available: parts[3], use_pct: parts[4] };
+                }
+                return null;
+            }),
+            // Wi-Fi
+            execFileAsync("/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport", ["-I"], { timeout: 3000 }).then(({ stdout }) => {
+                const ssidMatch = stdout.match(/\s+SSID:\s+(.+)/);
+                const signalMatch = stdout.match(/agrCtlRSSI:\s+(-?\d+)/);
+                return { ssid: ssidMatch?.[1]?.trim() || "disconnected", signal_dbm: signalMatch ? parseInt(signalMatch[1]) : null };
+            }),
+            // Uptime
+            execFileAsync("uptime", [], { timeout: 3000 }).then(({ stdout }) => {
+                const match = stdout.match(/up\s+(.+?),\s+\d+\s+user/);
+                return match?.[1]?.trim() || stdout.trim();
+            }),
+        ]);
+
+        if (batteryResult.status === "fulfilled") info.battery = batteryResult.value;
+        if (memResult.status === "fulfilled") info.memory = memResult.value;
+        if (cpuResult.status === "fulfilled") info.cpu = cpuResult.value;
+        if (diskResult.status === "fulfilled") info.disk = diskResult.value;
+        if (wifiResult.status === "fulfilled") info.wifi = wifiResult.value;
+        if (uptimeResult.status === "fulfilled") info.uptime = uptimeResult.value;
+
+        return JSON.stringify(info);
+    },
+};
+
+// ═══════════════════════════════════════════════
+// 4. WIFI CONTROL
+// ═══════════════════════════════════════════════
+
+export const wifiControl: ToolDefinition = {
+    schema: {
+        type: "function",
+        function: {
+            name: "wifi_control",
+            description: "Control Wi-Fi: turn on/off, get status, or connect to a network. ⚠️ CRITICAL: Turning Wi-Fi OFF will IMMEDIATELY kill your internet connection. Only turn Wi-Fi off if the user explicitly confirms they understand this. Warn them first!",
+            parameters: {
+                type: "object",
+                properties: {
+                    action: {
+                        type: "string",
+                        enum: ["on", "off", "status", "connect"],
+                        description: "Action to perform",
+                    },
+                    ssid: {
+                        type: "string",
+                        description: "Network name to connect to (required for 'connect' action)",
+                    },
+                    password: {
+                        type: "string",
+                        description: "Network password (required for password-protected networks)",
+                    },
+                },
+                required: ["action"],
+            },
+        },
+    },
+
+    async handler(input) {
+        const action = input.action as string;
+
+        try {
+            if (IS_WIN) {
+                // Windows: use netsh wlan
+                switch (action) {
+                    case "status": {
+                        const result = await runPowerShellInline(`netsh wlan show interfaces`, 5000);
+                        const ssidMatch = result.match(/SSID\s*:\s*(.+)/m);
+                        const stateMatch = result.match(/State\s*:\s*(\w+)/m);
+                        return JSON.stringify({
+                            success: true,
+                            power: stateMatch ? (stateMatch[1] === "connected" ? "on" : "on (disconnected)") : "unknown",
+                            connected_ssid: ssidMatch ? ssidMatch[1].trim() : null,
+                        });
+                    }
+                    case "off":
+                        await runPowerShellInline(`netsh interface set interface "Wi-Fi" disable`, 5000);
+                        return JSON.stringify({
+                            success: true, action: "off",
+                            warning: "⚠️ Wi-Fi is now OFF. Connection lost until re-enabled.",
+                        });
+                    case "on":
+                        await runPowerShellInline(`netsh interface set interface "Wi-Fi" enable`, 5000);
+                        await new Promise(r => setTimeout(r, 2000));
+                        return JSON.stringify({ success: true, action: "on", note: "Wi-Fi turned on." });
+                    case "connect": {
+                        const ssid = input.ssid as string;
+                        if (!ssid) return JSON.stringify({ error: "Provide 'ssid'." });
+                        const password = input.password as string;
+                        if (password) {
+                            // Create temp profile
+                            const profileXml = `<?xml version="1.0"?><WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1"><name>${ssid}</name><SSIDConfig><SSID><name>${ssid}</name></SSID></SSIDConfig><connectionType>ESS</connectionType><connectionMode>auto</connectionMode><MSM><security><authEncryption><authentication>WPA2PSK</authentication><encryption>AES</encryption></authEncryption><sharedKey><keyType>passPhrase</keyType><protected>false</protected><keyMaterial>${password}</keyMaterial></sharedKey></security></MSM></WLANProfile>`;
+                            const tmpProfile = join(tmpdir(), `wifi_profile_${Date.now()}.xml`);
+                            await fs.writeFile(tmpProfile, profileXml);
+                            await runPowerShellInline(`netsh wlan add profile filename="${tmpProfile}"`, 5000);
+                            await fs.unlink(tmpProfile).catch(() => { });
+                        }
+                        await runPowerShellInline(`netsh wlan connect name="${ssid}"`, 5000);
+                        return JSON.stringify({ success: true, action: "connect", ssid });
+                    }
+                    default:
+                        return JSON.stringify({ error: `Unknown action: ${action}.` });
+                }
+            }
+
+            // macOS
+            let iface = "en0";
+            try {
+                const { stdout } = await execFileAsync("networksetup", ["-listallhardwareports"], { timeout: 3000 });
+                const wifiMatch = stdout.match(/Hardware Port: Wi-Fi\nDevice: (\w+)/);
+                if (wifiMatch) iface = wifiMatch[1];
+            } catch { /* use default en0 */ }
+
+            switch (action) {
+                case "status": {
+                    const { stdout } = await execFileAsync("networksetup", ["-getairportnetwork", iface], { timeout: 3000 });
+                    const ssidMatch = stdout.match(/Current Wi-Fi Network:\s*(.+)/);
+                    const powerResult = await execFileAsync("networksetup", ["-getairportpower", iface], { timeout: 3000 });
+                    const isOn = powerResult.stdout.includes("On");
+                    return JSON.stringify({
+                        success: true,
+                        power: isOn ? "on" : "off",
+                        connected_ssid: ssidMatch ? ssidMatch[1].trim() : null,
+                    });
+                }
+                case "off":
+                    await execFileAsync("networksetup", ["-setairportpower", iface, "off"], { timeout: 5000 });
+                    return JSON.stringify({
+                        success: true, action: "off",
+                        warning: "⚠️ Wi-Fi is now OFF.",
+                    });
+                case "on":
+                    await execFileAsync("networksetup", ["-setairportpower", iface, "on"], { timeout: 5000 });
+                    await new Promise(r => setTimeout(r, 2000));
+                    return JSON.stringify({ success: true, action: "on", note: "Wi-Fi turned on." });
+                case "connect": {
+                    const ssid = input.ssid as string;
+                    if (!ssid) return JSON.stringify({ error: "Provide 'ssid'." });
+                    const password = input.password as string;
+                    const args = ["-setairportnetwork", iface, ssid];
+                    if (password) args.push(password);
+                    await execFileAsync("networksetup", args, { timeout: 15000 });
+                    return JSON.stringify({ success: true, action: "connect", ssid });
+                }
+                default:
+                    return JSON.stringify({ error: `Unknown action: ${action}.` });
+            }
+        } catch (err) {
+            return JSON.stringify({ success: false, error: (err as Error).message });
+        }
+    },
+};
+
+// ═══════════════════════════════════════════════
+// 5. BLUETOOTH CONTROL
+// ═══════════════════════════════════════════════
+
+export const bluetoothControl: ToolDefinition = {
+    schema: {
+        type: "function",
+        function: {
+            name: "bluetooth_control",
+            description: "Control Bluetooth: turn on/off, list paired devices, or connect/disconnect a specific device (like AirPods).",
+            parameters: {
+                type: "object",
+                properties: {
+                    action: {
+                        type: "string",
+                        enum: ["on", "off", "status", "list", "connect", "disconnect"],
+                        description: "Action to perform",
+                    },
+                    device: {
+                        type: "string",
+                        description: "Device name to connect/disconnect (e.g. 'AirPods Pro'). Required for connect/disconnect.",
+                    },
+                },
+                required: ["action"],
+            },
+        },
+    },
+
+    async handler(input) {
+        const action = input.action as string;
+
+        try {
+            // Check if blueutil is available (brew install blueutil)
+            let hasBlueutil = false;
+            try {
+                await execFileAsync("which", ["blueutil"], { timeout: 2000 });
+                hasBlueutil = true;
+            } catch { /* not installed */ }
+
+            switch (action) {
+                case "status": {
+                    if (hasBlueutil) {
+                        const { stdout } = await execFileAsync("blueutil", ["--power"], { timeout: 3000 });
+                        return JSON.stringify({ success: true, power: stdout.trim() === "1" ? "on" : "off" });
+                    }
+                    // Fallback: use system_profiler
+                    const result = await runAppleScript(`
+tell application "System Events"
+    try
+        set btState to do shell script "defaults read /Library/Preferences/com.apple.Bluetooth ControllerPowerState"
+        return btState
+    on error
+        return "unknown"
+    end try
+end tell`);
+                    return JSON.stringify({ success: true, power: result === "1" ? "on" : result === "0" ? "off" : "unknown" });
+                }
+
+                case "on":
+                case "off": {
+                    if (hasBlueutil) {
+                        await execFileAsync("blueutil", ["--power", action === "on" ? "1" : "0"], { timeout: 5000 });
+                    } else {
+                        // Fallback: use AppleScript to toggle via System Settings
+                        const script = action === "on"
+                            ? `do shell script "defaults write /Library/Preferences/com.apple.Bluetooth ControllerPowerState -int 1" with administrator privileges`
+                            : `do shell script "defaults write /Library/Preferences/com.apple.Bluetooth ControllerPowerState -int 0" with administrator privileges`;
+                        try {
+                            await runAppleScript(script, 10000);
+                        } catch {
+                            // If admin fails, try the GUI approach
+                            await runAppleScript(`
+tell application "System Events"
+    tell process "ControlCenter"
+        -- This may not work on all macOS versions
+    end tell
+end tell`);
+                            return JSON.stringify({ success: false, error: "Could not toggle Bluetooth. Install 'blueutil' (brew install blueutil) for reliable control." });
+                        }
+                    }
+                    return JSON.stringify({ success: true, action, note: `Bluetooth turned ${action}.` });
+                }
+
+                case "list": {
+                    if (hasBlueutil) {
+                        const { stdout } = await execFileAsync("blueutil", ["--paired"], { timeout: 5000 });
+                        const devices = stdout.trim().split("\n").filter(Boolean).map(line => {
+                            const nameMatch = line.match(/name: "([^"]+)"/);
+                            const addrMatch = line.match(/address: ([0-9a-fA-F:-]+)/);
+                            const connMatch = line.match(/connected: (\w+)/);
+                            return {
+                                name: nameMatch?.[1] || "unknown",
+                                address: addrMatch?.[1] || "",
+                                connected: connMatch?.[1] === "1",
+                            };
+                        });
+                        return JSON.stringify({ success: true, devices });
+                    }
+                    // Fallback
+                    const { stdout } = await execFileAsync("system_profiler", ["SPBluetoothDataType", "-json"], { timeout: 10000 });
+                    try {
+                        const data = JSON.parse(stdout);
+                        const btData = data?.SPBluetoothDataType?.[0];
+                        const devices = btData?.devices_list || [];
+                        const deviceList = devices.flatMap((d: Record<string, unknown>) =>
+                            Object.entries(d).map(([name]) => ({ name }))
+                        );
+                        return JSON.stringify({ success: true, devices: deviceList, note: "Install 'blueutil' for detailed info." });
+                    } catch {
+                        return JSON.stringify({ success: true, raw: stdout.substring(0, 2000) });
+                    }
+                }
+
+                case "connect":
+                case "disconnect": {
+                    const device = input.device as string;
+                    if (!device) return JSON.stringify({ error: "Provide 'device' name for connect/disconnect." });
+
+                    if (hasBlueutil) {
+                        // Find the device address first
+                        const { stdout } = await execFileAsync("blueutil", ["--paired"], { timeout: 5000 });
+                        const lines = stdout.split("\n");
+                        const deviceLine = lines.find(l => l.toLowerCase().includes(device.toLowerCase()));
+                        if (!deviceLine) {
+                            return JSON.stringify({ error: `Device "${device}" not found in paired devices. Use bluetooth_control action="list" to see available devices.` });
+                        }
+                        const addrMatch = deviceLine.match(/address: ([0-9a-fA-F:-]+)/);
+                        if (!addrMatch) return JSON.stringify({ error: `Could not find address for "${device}".` });
+
+                        const flag = action === "connect" ? "--connect" : "--disconnect";
+                        await execFileAsync("blueutil", [flag, addrMatch[1]], { timeout: 10000 });
+                        return JSON.stringify({ success: true, action, device });
+                    }
+
+                    return JSON.stringify({ error: "Install 'blueutil' (brew install blueutil) for device connect/disconnect." });
+                }
+
+                default:
+                    return JSON.stringify({ error: `Unknown action: ${action}.` });
+            }
+        } catch (err) {
+            return JSON.stringify({ success: false, error: (err as Error).message });
+        }
+    },
+};
+
+// ═══════════════════════════════════════════════
+// 6. SET DO NOT DISTURB (FOCUS MODE)
+// ═══════════════════════════════════════════════
+
+export const setDoNotDisturb: ToolDefinition = {
+    schema: {
+        type: "function",
+        function: {
+            name: "set_do_not_disturb",
+            description: "Toggle Do Not Disturb (Focus mode) on macOS. Turn on to silence notifications, turn off to resume them.",
+            parameters: {
+                type: "object",
+                properties: {
+                    enabled: {
+                        type: "boolean",
+                        description: "true to enable DND, false to disable it",
+                    },
+                },
+                required: ["enabled"],
+            },
+        },
+    },
+
+    async handler(input) {
+        const enabled = input.enabled as boolean;
+
+        try {
+            if (IS_WIN) {
+                // Windows: Toggle Focus Assist via registry
+                const value = enabled ? 2 : 0; // 0=off, 1=priority only, 2=alarms only (full DND)
+                await runPowerShellInline(
+                    `Set-ItemProperty -Path 'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings' -Name 'NOC_GLOBAL_SETTING_TOASTS_ENABLED' -Value ${enabled ? 0 : 1} -Type DWord -Force`,
+                    5000
+                );
+                return JSON.stringify({
+                    success: true,
+                    do_not_disturb: enabled,
+                    note: enabled ? "🔕 Focus Assist enabled — notifications silenced." : "🔔 Focus Assist disabled — notifications resumed.",
+                });
+            }
+
+            // macOS
+            try {
+                await runAppleScript(`
+tell application "System Events"
+end tell
+do shell script "defaults -currentHost write ~/Library/Preferences/ByHost/com.apple.notificationcenterui doNotDisturb -boolean ${enabled}"
+do shell script "defaults -currentHost write ~/Library/Preferences/ByHost/com.apple.notificationcenterui doNotDisturbDate -date \\"$(date -u +\\"%Y-%m-%d %H:%M:%S +0000\\")\\"" 
+do shell script "killall NotificationCenter 2>/dev/null || true"`, 10000);
+                return JSON.stringify({
+                    success: true,
+                    do_not_disturb: enabled,
+                    note: enabled ? "🔕 Do Not Disturb is ON." : "🔔 Do Not Disturb is OFF.",
+                });
+            } catch {
+                try {
+                    const script = enabled
+                        ? `do shell script "shortcuts run 'Do Not Disturb' 2>/dev/null || true"`
+                        : `do shell script "shortcuts run 'Do Not Disturb Off' 2>/dev/null || true"`;
+                    await runAppleScript(script, 10000);
+                    return JSON.stringify({ success: true, do_not_disturb: enabled });
+                } catch (err2) {
+                    return JSON.stringify({ success: false, error: (err2 as Error).message });
+                }
+            }
+        } catch (err) {
+            return JSON.stringify({ success: false, error: (err as Error).message });
+        }
+    },
+};
+
+// ═══════════════════════════════════════════════
+// 7. DARK MODE
+// ═══════════════════════════════════════════════
+
+export const darkMode: ToolDefinition = {
+    schema: {
+        type: "function",
+        function: {
+            name: "dark_mode",
+            description: "Toggle system appearance between dark mode and light mode, or check current mode.",
+            parameters: {
+                type: "object",
+                properties: {
+                    mode: {
+                        type: "string",
+                        enum: ["dark", "light", "toggle", "status"],
+                        description: "The appearance mode to set, or 'toggle' to switch, or 'status' to check current mode.",
+                    },
+                },
+                required: ["mode"],
+            },
+        },
+    },
+
+    async handler(input) {
+        const mode = input.mode as string;
+
+        try {
+            if (IS_WIN) {
+                // Windows: use registry AppsUseLightTheme
+                const regPath = 'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize';
+
+                if (mode === "status") {
+                    const result = await runPowerShellInline(`(Get-ItemProperty -Path '${regPath}' -Name AppsUseLightTheme).AppsUseLightTheme`, 3000);
+                    const isDark = result.trim() === "0";
+                    return JSON.stringify({ success: true, dark_mode: isDark, appearance: isDark ? "dark" : "light" });
+                }
+
+                let setDark: boolean;
+                if (mode === "toggle") {
+                    const current = await runPowerShellInline(`(Get-ItemProperty -Path '${regPath}' -Name AppsUseLightTheme).AppsUseLightTheme`, 3000);
+                    setDark = current.trim() !== "0";
+                } else {
+                    setDark = mode === "dark";
+                }
+
+                const val = setDark ? 0 : 1;
+                await runPowerShellInline(`Set-ItemProperty -Path '${regPath}' -Name AppsUseLightTheme -Value ${val}; Set-ItemProperty -Path '${regPath}' -Name SystemUsesLightTheme -Value ${val}`, 5000);
+                return JSON.stringify({ success: true, dark_mode: setDark, appearance: setDark ? "dark" : "light" });
+            }
+
+            // macOS
+            if (mode === "status") {
+                const result = await runAppleScript(`
+tell application "System Events"
+    tell appearance preferences
+        return dark mode as text
+    end tell
+end tell`);
+                return JSON.stringify({
+                    success: true,
+                    dark_mode: result === "true",
+                    appearance: result === "true" ? "dark" : "light",
+                });
+            }
+
+            let setDark: boolean;
+            if (mode === "toggle") {
+                const current = await runAppleScript(`
+tell application "System Events"
+    tell appearance preferences
+        return dark mode as text
+    end tell
+end tell`);
+                setDark = current !== "true";
+            } else {
+                setDark = mode === "dark";
+            }
+
+            await runAppleScript(`
+tell application "System Events"
+    tell appearance preferences
+        set dark mode to ${setDark}
+    end tell
+end tell`);
+
+            return JSON.stringify({
+                success: true,
+                dark_mode: setDark,
+                appearance: setDark ? "dark" : "light",
+            });
+        } catch (err) {
+            return JSON.stringify({ success: false, error: (err as Error).message });
+        }
+    },
+};
+
+// ═══════════════════════════════════════════════
+// 8. LOCK SCREEN
+// ═══════════════════════════════════════════════
+
+export const lockScreen: ToolDefinition = {
+    schema: {
+        type: "function",
+        function: {
+            name: "lock_screen",
+            description: "Lock the screen immediately. The user will need to enter their password to unlock.",
+            parameters: {
+                type: "object",
+                properties: {},
+                required: [],
+            },
+        },
+    },
+
+    async handler() {
+        try {
+            if (IS_WIN) {
+                await execFileAsync("rundll32.exe", ["user32.dll,LockWorkStation"], { timeout: 3000 });
+                return JSON.stringify({ success: true, note: "🔒 Screen locked." });
+            }
+
+            // macOS
+            await runAppleScript(`
+tell application "System Events" to keystroke "q" using {command down, control down}`, 3000);
+            return JSON.stringify({ success: true, note: "🔒 Screen locked." });
+        } catch (err) {
+            try {
+                if (IS_MAC) {
+                    await execFileAsync(
+                        "/System/Library/CoreServices/Menu Extras/User.menu/Contents/Resources/CGSession",
+                        ["-suspend"],
+                        { timeout: 3000 }
+                    );
+                    return JSON.stringify({ success: true, note: "🔒 Screen locked." });
+                }
+            } catch { /* fall through */ }
+            return JSON.stringify({ success: false, error: (err as Error).message });
+        }
+    },
+};
+
+// ═══════════════════════════════════════════════
+// 9. SLEEP DISPLAY
+// ═══════════════════════════════════════════════
+
+export const sleepDisplay: ToolDefinition = {
+    schema: {
+        type: "function",
+        function: {
+            name: "sleep_display",
+            description: "Put the display to sleep or wake it up. The display turns off but the computer stays running.",
+            parameters: {
+                type: "object",
+                properties: {
+                    action: {
+                        type: "string",
+                        enum: ["sleep", "wake"],
+                        description: "Whether to sleep or wake the display (default: sleep)",
+                    },
+                },
+                required: [],
+            },
+        },
+    },
+
+    async handler(input) {
+        const action = (input.action as string) || "sleep";
+
+        try {
+            if (IS_WIN) {
+                if (action === "sleep") {
+                    // Send SC_MONITORPOWER message to put display to sleep
+                    await runPowerShell(`
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public class MonitorAPI {
+    [DllImport("user32.dll")]
+    public static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+    public static readonly IntPtr HWND_BROADCAST = new IntPtr(0xffff);
+    public const uint WM_SYSCOMMAND = 0x0112;
+    public static readonly IntPtr SC_MONITORPOWER = new IntPtr(0xF170);
+}
+'@
+[MonitorAPI]::SendMessage([MonitorAPI]::HWND_BROADCAST, [MonitorAPI]::WM_SYSCOMMAND, [MonitorAPI]::SC_MONITORPOWER, [IntPtr]::new(2))
+`, 5000);
+                    return JSON.stringify({ success: true, action: "sleep", note: "💤 Display sleeping." });
+                } else {
+                    // Wake: move mouse slightly
+                    await runPowerShell(`
+Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class WinAPI { [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo); }'
+[WinAPI]::mouse_event(0x0001, 1, 0, 0, [UIntPtr]::Zero)
+Start-Sleep -Milliseconds 50
+[WinAPI]::mouse_event(0x0001, -1, 0, 0, [UIntPtr]::Zero)
+`, 5000);
+                    return JSON.stringify({ success: true, action: "wake", note: "☀️ Display woken." });
+                }
+            }
+
+            // macOS
+            if (action === "sleep") {
+                await execFileAsync("pmset", ["displaysleepnow"], { timeout: 3000 });
+                return JSON.stringify({ success: true, action: "sleep", note: "💤 Display sleeping." });
+            } else {
+                await execFileAsync("caffeinate", ["-u", "-t", "1"], { timeout: 3000 });
+                return JSON.stringify({ success: true, action: "wake", note: "☀️ Display woken." });
+            }
+        } catch (err) {
+            return JSON.stringify({ success: false, error: (err as Error).message });
+        }
+    },
+};

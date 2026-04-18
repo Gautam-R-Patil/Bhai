@@ -1,0 +1,64 @@
+---
+triple:          'arm64-apple-darwin'
+binary-path:     '/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/ATLASOverlay'
+relocations:
+  - { offset: 0xF6D0A, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay10overlayURL33_45886D5D124D1CAF78F6AFED7B6E0475LLSSvp.0', symObjAddr: 0x12C88, symBinAddr: 0x10000CD00, symSize: 0x0 }
+  - { offset: 0xF6D26, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay10overlayURL33_45886D5D124D1CAF78F6AFED7B6E0475LLSSvp.1', symObjAddr: 0x12C90, symBinAddr: 0x10000CD08, symSize: 0x0 }
+  - { offset: 0xF6D42, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay12overlayWidth33_45886D5D124D1CAF78F6AFED7B6E0475LL12CoreGraphics7CGFloatVvp.0', symObjAddr: 0x12C98, symBinAddr: 0x10000CD10, symSize: 0x0 }
+  - { offset: 0xF6D5C, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay16overlayMinHeight33_45886D5D124D1CAF78F6AFED7B6E0475LL12CoreGraphics7CGFloatVvp.0', symObjAddr: 0x12CA0, symBinAddr: 0x10000CD18, symSize: 0x0 }
+  - { offset: 0xF6D76, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay16overlayMaxHeight33_45886D5D124D1CAF78F6AFED7B6E0475LL12CoreGraphics7CGFloatVvp.0', symObjAddr: 0x12CA8, symBinAddr: 0x10000CD20, symSize: 0x0 }
+  - { offset: 0xF6D90, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay18overlayMarginRight33_45886D5D124D1CAF78F6AFED7B6E0475LL12CoreGraphics7CGFloatVvp.0', symObjAddr: 0x12CB0, symBinAddr: 0x10000CD28, symSize: 0x0 }
+  - { offset: 0xF6DAA, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay16overlayMarginTop33_45886D5D124D1CAF78F6AFED7B6E0475LL12CoreGraphics7CGFloatVvp.0', symObjAddr: 0x12CB8, symBinAddr: 0x10000CD30, symSize: 0x0 }
+  - { offset: 0xF6DC4, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay14resizeInterval33_45886D5D124D1CAF78F6AFED7B6E0475LLSdvp.0', symObjAddr: 0x12CC0, symBinAddr: 0x10000CD38, symSize: 0x0 }
+  - { offset: 0xF6DDE, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay21hideAnimationDuration33_45886D5D124D1CAF78F6AFED7B6E0475LLSdvp.0', symObjAddr: 0x12CC8, symBinAddr: 0x10000CD40, symSize: 0x0 }
+  - { offset: 0xF6DF9, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay3appSo13NSApplicationCvp', symObjAddr: 0x12CD0, symBinAddr: 0x10000CD48, symSize: 0x0 }
+  - { offset: 0xF6E14, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay8delegateAA11AppDelegateCvp', symObjAddr: 0x12CD8, symBinAddr: 0x10000CD50, symSize: 0x0 }
+  - { offset: 0xF7103, size: 0x8, addend: 0x0, symName: _ATLASOverlay_main, symObjAddr: 0x0, symBinAddr: 0x100001268, symSize: 0x11C }
+  - { offset: 0xF714D, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay11AppDelegateCMa', symObjAddr: 0x11C, symBinAddr: 0x100001384, symSize: 0x20 }
+  - { offset: 0xF7161, size: 0x8, addend: 0x0, symName: '_$sIeg_IeyB_TR', symObjAddr: 0x1190, symBinAddr: 0x1000023F8, symSize: 0x2C }
+  - { offset: 0xF7179, size: 0x8, addend: 0x0, symName: '_$sSo7NSEventCABSgIeggo_AbCIeyBya_TR', symObjAddr: 0x16E8, symBinAddr: 0x100002950, symSize: 0x58 }
+  - { offset: 0xF71A7, size: 0x8, addend: 0x0, symName: '_$sypSgs5Error_pSgIeghng_yXlSgSo7NSErrorCSgIeyBhyy_TR', symObjAddr: 0x1D08, symBinAddr: 0x100002F70, symSize: 0xB0 }
+  - { offset: 0xF71BF, size: 0x8, addend: 0x0, symName: '_$s10Foundation4DataVSgSo13NSURLResponseCSgs5Error_pSgIeghggg_So6NSDataCSgAGSo7NSErrorCSgIeyBhyyy_TR', symObjAddr: 0x27A0, symBinAddr: 0x100003A08, symSize: 0xC8 }
+  - { offset: 0xF71D7, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay11AppDelegateCfETo', symObjAddr: 0x2928, symBinAddr: 0x100003B90, symSize: 0x94 }
+  - { offset: 0xF7215, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay11AppDelegateC7webView_15decidePolicyFor15decisionHandlerySo05WKWebE0C_So18WKNavigationActionCySo0lmG0VctFTo', symObjAddr: 0x29BC, symBinAddr: 0x100003C24, symSize: 0x90 }
+  - { offset: 0xF7253, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay11AppDelegateC7webView_15decidePolicyFor15decisionHandlerySo05WKWebE0C_So18WKNavigationActionCySo0lmG0VctF06$sSo24lmG16VIeyBy_ABIegy_TRALIeyBy_Tf1nncn_nTf4dndg_n', symObjAddr: 0x2A4C, symBinAddr: 0x100003CB4, symSize: 0x28C }
+  - { offset: 0xF731A, size: 0x8, addend: 0x0, symName: ___swift_instantiateConcreteTypeFromMangledNameV2, symObjAddr: 0x2CD8, symBinAddr: 0x100003F40, symSize: 0x50 }
+  - { offset: 0xF732E, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay11AppDelegateC13waitForServer33_45886D5D124D1CAF78F6AFED7B6E0475LL8attempts10completionySi_yyctFy10Foundation4DataVSg_So13NSURLResponseCSgs5Error_pSgtYbcfU_TA', symObjAddr: 0x2D2C, symBinAddr: 0x100003F94, symSize: 0x10 }
+  - { offset: 0xF7342, size: 0x8, addend: 0x0, symName: _block_copy_helper, symObjAddr: 0x2D3C, symBinAddr: 0x100003FA4, symSize: 0x10 }
+  - { offset: 0xF7356, size: 0x8, addend: 0x0, symName: _block_destroy_helper, symObjAddr: 0x2D4C, symBinAddr: 0x100003FB4, symSize: 0x8 }
+  - { offset: 0xF736A, size: 0x8, addend: 0x0, symName: '_$s10Foundation4DataVSgWOe', symObjAddr: 0x2D54, symBinAddr: 0x100003FBC, symSize: 0x14 }
+  - { offset: 0xF737E, size: 0x8, addend: 0x0, symName: '_$s10Foundation4DataV15_RepresentationOWOe', symObjAddr: 0x2D68, symBinAddr: 0x100003FD0, symSize: 0x40 }
+  - { offset: 0xF7392, size: 0x8, addend: 0x0, symName: '_$sSo17OS_dispatch_queueCMa', symObjAddr: 0x2DA8, symBinAddr: 0x100004010, symSize: 0x44 }
+  - { offset: 0xF73A6, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay11AppDelegateC13waitForServer33_45886D5D124D1CAF78F6AFED7B6E0475LL8attempts10completionySi_yyctFy10Foundation4DataVSg_So13NSURLResponseCSgs5Error_pSgtYbcfU_yyScMYccfU0_TA', symObjAddr: 0x2E3C, symBinAddr: 0x1000040A4, symSize: 0x78 }
+  - { offset: 0xF73F2, size: 0x8, addend: 0x0, symName: '_$s8Dispatch0A13WorkItemFlagsVACs10SetAlgebraAAWl', symObjAddr: 0x2EB4, symBinAddr: 0x10000411C, symSize: 0x44 }
+  - { offset: 0xF7406, size: 0x8, addend: 0x0, symName: '_$sSay8Dispatch0A13WorkItemFlagsVGSayxGSTsWl', symObjAddr: 0x2EF8, symBinAddr: 0x100004160, symSize: 0x50 }
+  - { offset: 0xF741A, size: 0x8, addend: 0x0, symName: ___swift_instantiateConcreteTypeFromMangledNameAbstractV2, symObjAddr: 0x2F48, symBinAddr: 0x1000041B0, symSize: 0x54 }
+  - { offset: 0xF742E, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay11AppDelegateC13waitForServer33_45886D5D124D1CAF78F6AFED7B6E0475LL8attempts10completionySi_yyctFy10Foundation4DataVSg_So13NSURLResponseCSgs5Error_pSgtYbcfU_yyScMYccfU_TA', symObjAddr: 0x2FC0, symBinAddr: 0x100004228, symSize: 0x20 }
+  - { offset: 0xF7462, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay11AppDelegateC18windowDidResignKey33_45886D5D124D1CAF78F6AFED7B6E0475LLyy10Foundation12NotificationVFyyScMYccfU_TA', symObjAddr: 0x2FE0, symBinAddr: 0x100004248, symSize: 0x74 }
+  - { offset: 0xF74D2, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay11AppDelegateC17pollContentHeight33_45886D5D124D1CAF78F6AFED7B6E0475LLyyFyypSg_s5Error_pSgtYbScMYccfU_TA', symObjAddr: 0x3054, symBinAddr: 0x1000042BC, symSize: 0x210 }
+  - { offset: 0xF7691, size: 0x8, addend: 0x0, symName: '_$sypWOb', symObjAddr: 0x32A4, symBinAddr: 0x10000450C, symSize: 0x10 }
+  - { offset: 0xF76A5, size: 0x8, addend: 0x0, symName: '_$sypSgWOc', symObjAddr: 0x32B4, symBinAddr: 0x10000451C, symSize: 0x50 }
+  - { offset: 0xF76B9, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay11AppDelegateC18startResizePolling33_45886D5D124D1CAF78F6AFED7B6E0475LLyyFySo7NSTimerCYbcfU_TA', symObjAddr: 0x3304, symBinAddr: 0x10000456C, symSize: 0x50 }
+  - { offset: 0xF76E2, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay11AppDelegateC14handleKeyEvent33_45886D5D124D1CAF78F6AFED7B6E0475LLySbSo7NSEventCFyyScMYccfU_TA', symObjAddr: 0x3360, symBinAddr: 0x1000045C8, symSize: 0x8C }
+  - { offset: 0xF776C, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay11AppDelegateC15registerHotkeys33_45886D5D124D1CAF78F6AFED7B6E0475LLyyFySo7NSEventCcfU_TA', symObjAddr: 0x33EC, symBinAddr: 0x100004654, symSize: 0x58 }
+  - { offset: 0xF7795, size: 0x8, addend: 0x0, symName: '_$sypSgWOd', symObjAddr: 0x3444, symBinAddr: 0x1000046AC, symSize: 0x50 }
+  - { offset: 0xF77A9, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay11AppDelegateC15registerHotkeys33_45886D5D124D1CAF78F6AFED7B6E0475LLyyFSo7NSEventCSgAGcfU0_TA', symObjAddr: 0x3494, symBinAddr: 0x1000046FC, symSize: 0x7C }
+  - { offset: 0xF77D2, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay11AppDelegateC11hideOverlayyyFyyScMYccfU_TA', symObjAddr: 0x3510, symBinAddr: 0x100004778, symSize: 0xE8 }
+  - { offset: 0xF787F, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay11AppDelegateC11showOverlayyyFyyScMYccfU_TA', symObjAddr: 0x35F8, symBinAddr: 0x100004860, symSize: 0xBC }
+  - { offset: 0xF78EA, size: 0x8, addend: 0x0, symName: ___swift_project_boxed_opaque_existential_0, symObjAddr: 0x36B4, symBinAddr: 0x10000491C, symSize: 0x24 }
+  - { offset: 0xF78FE, size: 0x8, addend: 0x0, symName: ___swift_destroy_boxed_opaque_existential_0, symObjAddr: 0x36D8, symBinAddr: 0x100004940, symSize: 0x20 }
+  - { offset: 0xF7DCF, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay11AppDelegateC29applicationDidFinishLaunchingyy10Foundation12NotificationVF', symObjAddr: 0x13C, symBinAddr: 0x1000013A4, symSize: 0x2B0 }
+  - { offset: 0xF7EC0, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay11AppDelegateC24applicationWillTerminateyy10Foundation12NotificationVF', symObjAddr: 0x3F8, symBinAddr: 0x100001660, symSize: 0x190 }
+  - { offset: 0xF80E4, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay11AppDelegateC11setupWindow33_45886D5D124D1CAF78F6AFED7B6E0475LLyyF', symObjAddr: 0x594, symBinAddr: 0x1000017FC, symSize: 0x2C4 }
+  - { offset: 0xF845A, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay11AppDelegateC12setupWebView33_45886D5D124D1CAF78F6AFED7B6E0475LLyyF', symObjAddr: 0x858, symBinAddr: 0x100001AC0, symSize: 0x2DC }
+  - { offset: 0xF86A5, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay11AppDelegateC11showOverlayyyF', symObjAddr: 0xB34, symBinAddr: 0x100001D9C, symSize: 0x65C }
+  - { offset: 0xF88E8, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay11AppDelegateC11hideOverlayyyF', symObjAddr: 0x11BC, symBinAddr: 0x100002424, symSize: 0x310 }
+  - { offset: 0xF8A48, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay11AppDelegateC15registerHotkeys33_45886D5D124D1CAF78F6AFED7B6E0475LLyyF', symObjAddr: 0x14CC, symBinAddr: 0x100002734, symSize: 0x218 }
+  - { offset: 0xF8B09, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay11AppDelegateC14handleKeyEvent33_45886D5D124D1CAF78F6AFED7B6E0475LLySbSo7NSEventCF', symObjAddr: 0x1740, symBinAddr: 0x1000029A8, symSize: 0x358 }
+  - { offset: 0xF8C01, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay11AppDelegateC18startResizePolling33_45886D5D124D1CAF78F6AFED7B6E0475LLyyF', symObjAddr: 0x1A98, symBinAddr: 0x100002D00, symSize: 0xFC }
+  - { offset: 0xF8C72, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay11AppDelegateC17pollContentHeight33_45886D5D124D1CAF78F6AFED7B6E0475LLyyF', symObjAddr: 0x1BE0, symBinAddr: 0x100002E48, symSize: 0x128 }
+  - { offset: 0xF8D5A, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay11AppDelegateC18windowDidResignKey33_45886D5D124D1CAF78F6AFED7B6E0475LLyy10Foundation12NotificationVF', symObjAddr: 0x1DB8, symBinAddr: 0x100003020, symSize: 0x270 }
+  - { offset: 0xF8DDE, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay11AppDelegateC13waitForServer33_45886D5D124D1CAF78F6AFED7B6E0475LL8attempts10completionySi_yyctF', symObjAddr: 0x20D8, symBinAddr: 0x100003340, symSize: 0x298 }
+  - { offset: 0xF8E81, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay11AppDelegateCACycfcTo', symObjAddr: 0x2868, symBinAddr: 0x100003AD0, symSize: 0x90 }
+  - { offset: 0xF8EB6, size: 0x8, addend: 0x0, symName: '_$s12ATLASOverlay11AppDelegateCfD', symObjAddr: 0x28F8, symBinAddr: 0x100003B60, symSize: 0x30 }
+...

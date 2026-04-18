@@ -1,0 +1,180 @@
+{
+    "name": "atlas-desktop",
+    "version": "1.0.0",
+    "description": "A.T.L.A.S AI — Desktop Control Panel & Installer",
+    "author": "XAGI Labs Private Limited",
+    "license": "UNLICENSED",
+    "private": true,
+    "main": "main.js",
+    "scripts": {
+        "start": "electron .",
+        "prebuild": "echo 'Source protection will run after pack...'",
+        "build:win": "node build/patch-nsis.js && electron-builder --win --x64",
+        "build:mac": "electron-builder --mac --dir && bash build/create-dmg.sh",
+        "build:mac:protected": "npm run prebuild && electron-builder --mac",
+        "build:win:protected": "node build/patch-nsis.js && npm run prebuild && electron-builder --win --x64",
+        "postinstall": "electron-builder install-app-deps",
+        "protect:standalone": "node build/obfuscate.js ../dist ../dist-obfuscated && node build/compile-bytecode.js --in-place ../dist-obfuscated"
+    },
+    "dependencies": {
+        "adm-zip": "^0.5.16",
+        "better-sqlite3": "^12.6.2",
+        "electron-store": "^8.2.0",
+        "electron-updater": "^6.1.7",
+        "qrcode": "^1.5.4"
+    },
+    "devDependencies": {
+        "bytenode": "^1.5.7",
+        "electron": "^40.6.1",
+        "electron-builder": "^26.8.1",
+        "javascript-obfuscator": "^4.1.1"
+    },
+    "build": {
+        "appId": "com.xagilabs.atlas",
+        "productName": "A.T.L.A.S",
+        "copyright": "Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.",
+        "publish": {
+            "provider": "github",
+            "owner": "dheeraj-xagilabs",
+            "repo": "Atlas",
+            "releaseType": "release"
+        },
+        "asar": true,
+        "asarUnpack": [
+            "node_modules/better-sqlite3/**",
+            "node_modules/@xenova/**",
+            "node_modules/sharp/**"
+        ],
+        "files": [
+            "**/*",
+            "!build/**"
+        ],
+        "extraResources": [
+            {
+                "from": "../dist",
+                "to": "bot/dist",
+                "filter": [
+                    "**/*"
+                ]
+            },
+            {
+                "from": "../package.json",
+                "to": "bot/package.json"
+            },
+            {
+                "from": "../package-lock.json",
+                "to": "bot/package-lock.json"
+            },
+            {
+                "from": "../prompts",
+                "to": "bot/prompts",
+                "filter": [
+                    "**/*"
+                ]
+            },
+            {
+                "from": "../scripts",
+                "to": "bot/scripts",
+                "filter": [
+                    "**/*"
+                ]
+            },
+            {
+                "from": "../skills",
+                "to": "bot/skills",
+                "filter": [
+                    "**/*",
+                    "!convex-*",
+                    "!convex-*/**"
+                ]
+            },
+            {
+                "from": "../src/overlay/overlay.html",
+                "to": "bot/src/overlay/overlay.html"
+            },
+            {
+                "from": "../data/google-credentials.json",
+                "to": "bot/data/google-credentials.json"
+            },
+            {
+                "from": "../native",
+                "to": "bot/native",
+                "filter": [
+                    "index.js",
+                    "*.node",
+                    "package.json"
+                ]
+            },
+            {
+                "from": "../node_modules",
+                "to": "bot/node_modules",
+                "filter": [
+                    "**/*"
+                ]
+            }
+        ],
+        "win": {
+            "target": [
+                {
+                    "target": "nsis",
+                    "arch": [
+                        "x64"
+                    ]
+                }
+            ],
+            "icon": "logo.ico",
+            "legalTrademarks": "© 2024-2026 XAGI Labs Private Limited. All rights reserved.",
+            "requestedExecutionLevel": "asInvoker"
+        },
+        "mac": {
+            "target": [
+                "dir"
+            ],
+            "icon": "logo.png",
+            "entitlements": "build/entitlements.mac.plist",
+            "entitlementsInherit": "build/entitlements.mac.plist",
+            "extendInfo": {
+                "NSMicrophoneUsageDescription": "A.T.L.A.S needs microphone access for voice messages and live voice conversations.",
+                "NSScreenCaptureUsageDescription": "A.T.L.A.S needs screen recording access to take screenshots and help you with screen-based tasks.",
+                "NSAppleEventsUsageDescription": "A.T.L.A.S uses Apple Events to automate actions on your Mac."
+            }
+        },
+        "dmg": {
+            "title": "A.T.L.A.S Setup",
+            "icon": "logo.png",
+            "sign": false,
+            "writeUpdateInfo": false,
+            "window": {
+                "width": 540,
+                "height": 380
+            },
+            "contents": [
+                {
+                    "x": 130,
+                    "y": 150,
+                    "type": "file"
+                },
+                {
+                    "x": 410,
+                    "y": 150,
+                    "type": "link",
+                    "path": "/Applications"
+                }
+            ]
+        },
+        "nsis": {
+            "oneClick": false,
+            "perMachine": false,
+            "allowToChangeInstallationDirectory": true,
+            "installerIcon": "logo.ico",
+            "uninstallerIcon": "logo.ico",
+            "installerHeaderIcon": "logo.ico",
+            "createDesktopShortcut": true,
+            "createStartMenuShortcut": true,
+            "shortcutName": "A.T.L.A.S",
+            "license": "../LICENSE.txt",
+            "include": "./build/installer.nsh"
+        },
+        "afterPack": "./build/protect-source.js"
+    }
+}

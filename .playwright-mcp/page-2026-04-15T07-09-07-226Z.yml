@@ -1,0 +1,145 @@
+- generic [active] [ref=e1]:
+  - navigation [ref=e2]:
+    - link "XAGILABS" [ref=e3] [cursor=pointer]:
+      - /url: /
+      - generic [ref=e4]: XAGILABS
+    - generic [ref=e5]:
+      - link "About" [ref=e6] [cursor=pointer]:
+        - /url: /about
+        - text: About
+      - link "ATLAS" [ref=e8] [cursor=pointer]:
+        - /url: /atlas
+      - link "Contact" [ref=e9] [cursor=pointer]:
+        - /url: /contact
+  - main [ref=e10]:
+    - main [ref=e11]:
+      - generic [ref=e15]:
+        - generic [ref=e18]: About Us
+        - heading "We exist to build AGI." [level=1] [ref=e20]:
+          - generic [ref=e22]: We exist to
+          - generic [ref=e24]: build AGI.
+        - paragraph [ref=e25]: Founded in 2026 in India, XAGI Labs is building artificial general intelligence that works for everyone — not just researchers, not just enterprises. Everyone.
+      - paragraph [ref=e28]:
+        - generic [ref=e29]: Most
+        - generic [ref=e30]: AI
+        - generic [ref=e31]: companies
+        - generic [ref=e32]: are
+        - generic [ref=e33]: building
+        - generic [ref=e34]: tools.
+        - generic [ref=e35]: We're
+        - generic [ref=e36]: building
+        - generic [ref=e37]: something
+        - generic [ref=e38]: different.
+        - generic [ref=e39]: ATLAS
+        - generic [ref=e40]: isn't
+        - generic [ref=e41]: a
+        - generic [ref=e42]: chatbot
+        - generic [ref=e43]: you
+        - generic [ref=e44]: open
+        - generic [ref=e45]: when
+        - generic [ref=e46]: you
+        - generic [ref=e47]: need
+        - generic [ref=e48]: help.
+        - generic [ref=e49]: It's
+        - generic [ref=e50]: an
+        - generic [ref=e51]: intelligence
+        - generic [ref=e52]: that
+        - generic [ref=e53]: runs
+        - generic [ref=e54]: continuously,
+        - generic [ref=e55]: remembers
+        - generic [ref=e56]: everything,
+        - generic [ref=e57]: controls
+        - generic [ref=e58]: your
+        - generic [ref=e59]: computer,
+        - generic [ref=e60]: and
+        - generic [ref=e61]: gets
+        - generic [ref=e62]: better
+        - generic [ref=e63]: every
+        - generic [ref=e64]: single
+        - generic [ref=e65]: day.
+        - generic [ref=e66]: It
+        - generic [ref=e67]: doesn't
+        - generic [ref=e68]: wait.
+        - generic [ref=e69]: It
+        - generic [ref=e70]: acts.
+        - generic [ref=e71]: We
+        - generic [ref=e72]: believe
+        - generic [ref=e73]: that's
+        - generic [ref=e74]: what
+        - generic [ref=e75]: AGI
+        - generic [ref=e76]: actually
+        - generic [ref=e77]: looks
+        - generic [ref=e78]: like
+        - generic [ref=e79]: —
+        - generic [ref=e80]: not
+        - generic [ref=e81]: a
+        - generic [ref=e82]: smarter
+        - generic [ref=e83]: chat
+        - generic [ref=e84]: window,
+        - generic [ref=e85]: but
+        - generic [ref=e86]: a
+        - generic [ref=e87]: new
+        - generic [ref=e88]: kind
+        - generic [ref=e89]: of
+        - generic [ref=e90]: entity
+        - generic [ref=e91]: that
+        - generic [ref=e92]: works
+        - generic [ref=e93]: alongside
+        - generic [ref=e94]: you,
+        - generic [ref=e95]: "24"
+        - generic [ref=e96]: hours
+        - generic [ref=e97]: a
+        - generic [ref=e98]: day,
+        - generic [ref=e99]: "7"
+        - generic [ref=e100]: days
+        - generic [ref=e101]: a
+        - generic [ref=e102]: week.
+      - generic [ref=e103]:
+        - generic [ref=e104]:
+          - generic [ref=e105]: Our Values
+          - heading "What drives us." [level=2] [ref=e106]
+        - generic [ref=e107]:
+          - generic [ref=e109]:
+            - generic: "01"
+            - generic [ref=e110]:
+              - heading "Action Over Generation" [level=3] [ref=e111]
+              - paragraph [ref=e112]: We don't build AI that writes paragraphs about doing things. We build AI that actually does them. Our agents control computers, manage workflows, and execute autonomously.
+          - generic [ref=e114]:
+            - generic: "02"
+            - generic [ref=e115]:
+              - heading "Memory As Identity" [level=3] [ref=e116]
+              - paragraph [ref=e117]: Without memory, intelligence is just computation. ATLAS remembers every interaction, learns from every outcome, and builds a living model of your world.
+          - generic [ref=e119]:
+            - generic: "03"
+            - generic [ref=e120]:
+              - heading "Security By Design" [level=3] [ref=e121]
+              - paragraph [ref=e122]: Autonomous agents need trust. Every action is sandboxed, every tool call validated, every sensitive operation gated. Security isn't a feature — it's the architecture.
+          - generic [ref=e124]:
+            - generic: "04"
+            - generic [ref=e125]:
+              - heading "Accessible To All" [level=3] [ref=e126]
+              - paragraph [ref=e127]: AGI shouldn't be locked behind enterprise contracts. We're building intelligence anyone can use, at a price anyone can afford. The future should be for everyone.
+      - blockquote [ref=e130]: “The question isn't whether AGI will happen. It's who builds it, and who gets to use it.”
+      - generic [ref=e132]:
+        - heading "Join us on the frontier." [level=2] [ref=e133]
+        - paragraph [ref=e134]: We're a small, focused team. If you think AGI matters — talk to us.
+        - generic [ref=e135]:
+          - link "Get In Touch" [ref=e136] [cursor=pointer]:
+            - /url: /contact
+            - text: Get In Touch
+            - img [ref=e137]
+          - link "Explore ATLAS" [ref=e139] [cursor=pointer]:
+            - /url: https://tryatlasagi.com
+  - contentinfo [ref=e140]:
+    - generic [ref=e141]:
+      - generic [ref=e142]:
+        - link "About" [ref=e143] [cursor=pointer]:
+          - /url: /about
+        - link "ATLAS" [ref=e144] [cursor=pointer]:
+          - /url: /atlas
+        - link "Contact" [ref=e145] [cursor=pointer]:
+          - /url: /contact
+        - link "hello@xagilab.com" [ref=e146] [cursor=pointer]:
+          - /url: mailto:hello@xagilab.com
+      - paragraph [ref=e147]: © 2026 XAGI Labs Private Limited
+  - alert [ref=e148]

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.xagi.atlas.location</string>
+    <key>CFBundleName</key>
+    <string>ATLAS Location</string>
+    <key>NSLocationUsageDescription</key>
+    <string>A.T.L.A.S needs your location for weather, timezone detection, and location-aware features.</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>A.T.L.A.S needs your location for weather, timezone detection, and location-aware features.</string>
+</dict>
+</plist>

@@ -1,0 +1,66 @@
+client:
+  name: basic
+  file-system: device-agnostic
+tools: {}
+targets:
+  "ATLASOverlay-arm64-apple-macosx26.0-release.exe": ["<ATLASOverlay-arm64-apple-macosx26.0-release.exe>"]
+  "ATLASOverlay-arm64-apple-macosx26.0-release.module": ["<ATLASOverlay-arm64-apple-macosx26.0-release.module>"]
+  "PackageStructure": ["<PackageStructure>"]
+  "main": ["<ATLASOverlay-arm64-apple-macosx26.0-release.exe>","<ATLASOverlay-arm64-apple-macosx26.0-release.module>"]
+  "test": ["<ATLASOverlay-arm64-apple-macosx26.0-release.exe>","<ATLASOverlay-arm64-apple-macosx26.0-release.module>"]
+default: "main"
+nodes:
+  "/Users/user/Desktop/jarvis/overlay-app/Sources/":
+    is-directory-structure: true
+    content-exclusion-patterns: [".git",".build"]
+commands:
+  "/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/ATLASOverlay.build/sources":
+    tool: write-auxiliary-file
+    inputs: ["<sources-file-list>","/Users/user/Desktop/jarvis/overlay-app/Sources/main.swift"]
+    outputs: ["/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/ATLASOverlay.build/sources"]
+    description: "Write auxiliary file /Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/ATLASOverlay.build/sources"
+
+  "/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/ATLASOverlay.product/Objects.LinkFileList":
+    tool: write-auxiliary-file
+    inputs: ["<link-file-list>","/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/ATLASOverlay.build/main.swift.o"]
+    outputs: ["/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/ATLASOverlay.product/Objects.LinkFileList"]
+    description: "Write auxiliary file /Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/ATLASOverlay.product/Objects.LinkFileList"
+
+  "/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/swift-version--1AB21518FC5DEDBE.txt":
+    tool: write-auxiliary-file
+    inputs: ["<swift-get-version>","/Library/Developer/CommandLineTools/usr/bin/swiftc"]
+    outputs: ["/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/swift-version--1AB21518FC5DEDBE.txt"]
+    always-out-of-date: "true"
+    description: "Write auxiliary file /Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/swift-version--1AB21518FC5DEDBE.txt"
+
+  "<ATLASOverlay-arm64-apple-macosx26.0-release.exe>":
+    tool: phony
+    inputs: ["/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/ATLASOverlay"]
+    outputs: ["<ATLASOverlay-arm64-apple-macosx26.0-release.exe>"]
+
+  "<ATLASOverlay-arm64-apple-macosx26.0-release.module>":
+    tool: phony
+    inputs: ["/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/ATLASOverlay.build/main.swift.o","/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/Modules/ATLASOverlay.swiftmodule"]
+    outputs: ["<ATLASOverlay-arm64-apple-macosx26.0-release.module>"]
+
+  "C.ATLASOverlay-arm64-apple-macosx26.0-release.exe":
+    tool: shell
+    inputs: ["/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/ATLASOverlay.build/main.swift.o","/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/ATLASOverlay.product/Objects.LinkFileList"]
+    outputs: ["/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/ATLASOverlay"]
+    description: "Linking ./.build/arm64-apple-macosx/release/ATLASOverlay"
+    args: ["/Library/Developer/CommandLineTools/usr/bin/swiftc","-L","/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release","-o","/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/ATLASOverlay","-module-name","ATLASOverlay","-Xlinker","-no_warn_duplicate_libraries","-emit-executable","-Xlinker","-dead_strip","-Xlinker","-alias","-Xlinker","_ATLASOverlay_main","-Xlinker","_main","-Xlinker","-rpath","-Xlinker","@loader_path","@/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/ATLASOverlay.product/Objects.LinkFileList","-Xlinker","-rpath","-Xlinker","/Library/Developer/CommandLineTools/usr/lib/swift-6.2/macosx","-target","arm64-apple-macosx13.0","-I","/Library/Developer/CommandLineTools/Library/Developer/Frameworks","-L","/Library/Developer/CommandLineTools/Library/Developer/Frameworks","-plugin-path","/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing","-sdk","/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk","-g"]
+
+  "C.ATLASOverlay-arm64-apple-macosx26.0-release.module":
+    tool: shell
+    inputs: ["/Users/user/Desktop/jarvis/overlay-app/Sources/main.swift","/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/swift-version--1AB21518FC5DEDBE.txt","/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/ATLASOverlay.build/sources"]
+    outputs: ["/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/ATLASOverlay.build/main.swift.o","/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/Modules/ATLASOverlay.swiftmodule"]
+    description: "Compiling Swift Module 'ATLASOverlay' (1 sources)"
+    args: ["/Library/Developer/CommandLineTools/usr/bin/swiftc","-module-name","ATLASOverlay","-emit-dependencies","-emit-module","-emit-module-path","/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/Modules/ATLASOverlay.swiftmodule","-output-file-map","/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/ATLASOverlay.build/output-file-map.json","-whole-module-optimization","-num-threads","10","-c","@/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/ATLASOverlay.build/sources","-I","/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/Modules","-target","arm64-apple-macosx13.0","-whole-module-optimization","-num-threads","10","-serialize-diagnostics","-O","-j10","-DSWIFT_PACKAGE","-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE","-module-cache-path","/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/ModuleCache","-parseable-output","-Xfrontend","-entry-point-function-name","-Xfrontend","ATLASOverlay_main","-swift-version","5","-I","/Library/Developer/CommandLineTools/Library/Developer/Frameworks","-L","/Library/Developer/CommandLineTools/Library/Developer/Frameworks","-plugin-path","/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing","-sdk","/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk","-g","-Xcc","-isysroot","-Xcc","/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk","-Xcc","-fPIC","-Xcc","-g","-package-name","overlay_app"]
+
+  "PackageStructure":
+    tool: package-structure-tool
+    inputs: ["/Users/user/Desktop/jarvis/overlay-app/Sources/","/Users/user/Desktop/jarvis/overlay-app/Package.swift","/Users/user/Desktop/jarvis/overlay-app/Package.resolved"]
+    outputs: ["<PackageStructure>"]
+    description: "Planning build"
+    allow-missing-inputs: true
+

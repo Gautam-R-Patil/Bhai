@@ -1,0 +1,76 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: "Helvetica Neue", Arial, sans-serif;
+  color: #1a1a1a;
+  font-size: 10.5pt;
+  line-height: 1.4;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.resume { padding: 0.5in 0.55in; max-width: 8.5in; margin: 0 auto; }
+
+:root { --accent: #244b7f; --muted: #666; --line: #d8d8d8; }
+
+.head { margin-bottom: 14pt; padding-bottom: 8pt; border-bottom: 2pt solid var(--accent); }
+.name {
+  font-size: 26pt;
+  margin: 0;
+  font-weight: 300;
+  letter-spacing: 0.5pt;
+  color: #111;
+}
+.label {
+  font-size: 11.5pt;
+  color: var(--accent);
+  margin-top: 1pt;
+  font-weight: 500;
+  letter-spacing: 0.5pt;
+  text-transform: uppercase;
+}
+.contact { margin-top: 6pt; font-size: 9.5pt; color: var(--muted); }
+.contact span + span::before { content: " · "; color: #bbb; }
+
+.section-summary p {
+  font-size: 11pt;
+  color: #333;
+  margin: 8pt 0 4pt 0;
+  line-height: 1.5;
+}
+
+.section { margin-top: 10pt; }
+.section h2 {
+  font-size: 11pt;
+  text-transform: uppercase;
+  letter-spacing: 1.4pt;
+  color: var(--accent);
+  margin: 0 0 6pt 0;
+  font-weight: 600;
+}
+
+.entry { margin-bottom: 9pt; page-break-inside: avoid; }
+.entry-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10pt;
+  margin-bottom: 2pt;
+}
+.entry-title { font-weight: 600; font-size: 11pt; color: #111; }
+.entry-sub { color: var(--muted); font-size: 10pt; margin-top: 1pt; }
+.entry-dates { font-size: 9.5pt; color: var(--muted); white-space: nowrap; }
+.entry-summary { margin: 3pt 0; color: #333; }
+.entry-highlights { margin: 3pt 0 0 1.1em; padding: 0; }
+.entry-highlights li { margin: 1.5pt 0; }
+
+.skills-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3pt 14pt;
+}
+.skill-name { font-weight: 600; font-size: 10pt; }
+.skill-kw { color: #444; font-size: 10pt; }
+
+.inline-list span + span::before { content: " · "; color: #bbb; }
+
+@page { size: Letter; margin: 0; }

@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat:*)",
+      "Bash(npx convex deploy:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm install)",
+      "Bash([ -d /Users/user/Desktop/jarvis/.github ])",
+      "Bash(grep -E \"^\\\\.|-{3,}|^@\" /Users/user/Desktop/jarvis/desktop/styles.css)",
+      "Bash(wc -l /Users/user/Desktop/jarvis/native/src/*.rs)",
+      "Bash(ls -la /Users/user/Desktop/jarvis/src/tools/*.ts)",
+      "Bash(ls -lh /Users/user/Desktop/jarvis/native/src/*.rs)"
+    ]
+  }
+}

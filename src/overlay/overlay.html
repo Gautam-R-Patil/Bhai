@@ -1,0 +1,2608 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>A.T.L.A.S</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      background: transparent;
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Inter', system-ui, sans-serif;
+      color: #F5F5F7;
+      /* Apple's signature off-white */
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    #container {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 4px;
+    }
+
+    /* ── Input Box ── */
+    #input-box {
+      display: flex;
+      align-items: center;
+      padding: 12px 14px;
+      gap: 12px;
+      /* Apple Vision Pro/macOS style translucency + vibrancy */
+      background: rgba(28, 28, 30, 0.82);
+      backdrop-filter: blur(80px) saturate(220%) brightness(1.1);
+      -webkit-backdrop-filter: blur(80px) saturate(220%) brightness(1.1);
+      /* Hairline border + delicate inner highlight */
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.12), inset 0 0 0 0.5px rgba(255, 255, 255, 0.06);
+      border-radius: 20px;
+      /* Slightly rounder, more iOS-like */
+      position: relative;
+      overflow: hidden;
+      flex-shrink: 0;
+
+      /* Spring-damped open animation */
+      animation: springIn 0.45s cubic-bezier(0.175, 0.885, 0.32, 1.1);
+    }
+
+    /* Apple spring-in: fast deceleration with tiny overshoot */
+    @keyframes springIn {
+      0% {
+        opacity: 0;
+        transform: scale(0.88) translateY(-8px);
+      }
+
+      60% {
+        opacity: 1;
+        transform: scale(1.015) translateY(0.5px);
+      }
+
+      80% {
+        transform: scale(0.997) translateY(-0.3px);
+      }
+
+      100% {
+        transform: scale(1) translateY(0);
+      }
+    }
+
+    /* Apple spring-out: fast ease-in */
+    @keyframes springOut {
+      0% {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+      }
+
+      100% {
+        opacity: 0;
+        transform: scale(0.92) translateY(-6px);
+      }
+    }
+
+    /* ── Advanced Liquid Mesh Gradients ── */
+    .blob {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(50px);
+      /* Deep blur for seamless blending */
+      opacity: 0;
+      transition: opacity 1.5s cubic-bezier(0.32, 0.72, 0, 1);
+      pointer-events: none;
+      mix-blend-mode: screen;
+      /* Brighter, richer overlaps */
+    }
+
+    .blob.on {
+      opacity: 0.65;
+      /* Brighter ambient glow */
+    }
+
+    /* Blob 1: Vibrant Cyan/Blue */
+    .b1 {
+      width: 140px;
+      height: 140px;
+      background: radial-gradient(circle at center, rgba(6, 182, 212, 0.5) 0%, rgba(59, 130, 246, 0.2) 50%, transparent 80%);
+      top: -40px;
+      left: -30px;
+      animation: liq1 14s cubic-bezier(0.4, 0, 0.2, 1) infinite alternate;
+    }
+
+    /* Blob 2: Deep Violet */
+    .b2 {
+      width: 130px;
+      height: 130px;
+      background: radial-gradient(circle at center, rgba(124, 58, 237, 0.5) 0%, rgba(139, 92, 246, 0.2) 50%, transparent 80%);
+      top: -10px;
+      right: -20px;
+      animation: liq2 18s cubic-bezier(0.4, 0, 0.2, 1) infinite alternate-reverse;
+    }
+
+    /* Blob 3: Fuchsia/Pink core */
+    .b3 {
+      width: 110px;
+      height: 110px;
+      background: radial-gradient(circle at center, rgba(217, 70, 239, 0.45) 0%, rgba(236, 72, 153, 0.15) 50%, transparent 80%);
+      bottom: -40px;
+      left: 30%;
+      animation: liq3 15s cubic-bezier(0.4, 0, 0.2, 1) infinite alternate;
+    }
+
+    /* Organic, overlapping orbital animations */
+    @keyframes liq1 {
+      0% {
+        transform: translate(0, 0) scale(1) rotate(0deg);
+      }
+
+      33% {
+        transform: translate(15px, 10px) scale(1.1) rotate(10deg);
+      }
+
+      66% {
+        transform: translate(-10px, 15px) scale(0.95) rotate(-5deg);
+      }
+
+      100% {
+        transform: translate(5px, -10px) scale(1.05) rotate(5deg);
+      }
+    }
+
+    @keyframes liq2 {
+      0% {
+        transform: translate(0, 0) scale(1) rotate(0deg);
+      }
+
+      33% {
+        transform: translate(-15px, 12px) scale(1.15) rotate(-10deg);
+      }
+
+      66% {
+        transform: translate(12px, -8px) scale(0.9) rotate(8deg);
+      }
+
+      100% {
+        transform: translate(-8px, -15px) scale(1.05) rotate(-5deg);
+      }
+    }
+
+    @keyframes liq3 {
+      0% {
+        transform: translate(0, 0) scale(1) rotate(0deg);
+      }
+
+      33% {
+        transform: translate(20px, -15px) scale(0.9) rotate(15deg);
+      }
+
+      66% {
+        transform: translate(-15px, -20px) scale(1.1) rotate(-10deg);
+      }
+
+      100% {
+        transform: translate(-5px, 10px) scale(1.05) rotate(5deg);
+      }
+    }
+
+    /* ── Icon (Sparkle) ── */
+    .icon {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      /* Richer gradient for the icon */
+      background: linear-gradient(135deg, #06b6d4 0%, #8b5cf6 50%, #d946ef 100%);
+      background-size: 200% 200%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      flex-shrink: 0;
+      /* Intense, tight glow + sharp inner ring */
+      box-shadow: 0 4px 16px rgba(139, 92, 246, 0.5), inset 0 2px 4px rgba(255, 255, 255, 0.4), inset 0 -2px 4px rgba(0, 0, 0, 0.2);
+      animation: shimmer 4s linear infinite;
+      transition: box-shadow 0.5s cubic-bezier(0.25, 0.1, 0.25, 1),
+        transform 0.5s cubic-bezier(0.25, 0.1, 0.25, 1);
+      position: relative;
+      z-index: 1;
+    }
+
+    @keyframes shimmer {
+
+      0%,
+      100% {
+        background-position: 0% 50%;
+      }
+
+      50% {
+        background-position: 100% 50%;
+      }
+    }
+
+    .icon.thinking {
+      animation: shimmer 1s linear infinite;
+      box-shadow: 0 4px 24px rgba(217, 70, 239, 0.6), inset 0 2px 4px rgba(255, 255, 255, 0.5);
+      transform: scale(1.08);
+    }
+
+    /* ── Input ── */
+    #input {
+      flex: 1;
+      background: none;
+      border: none;
+      outline: none;
+      color: #FFF;
+      font-family: inherit;
+      font-size: 15px;
+      font-weight: 400;
+      caret-color: #a855f7;
+      letter-spacing: -0.01em;
+      transition: opacity 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+      position: relative;
+      z-index: 1;
+    }
+
+    #input::placeholder {
+      color: rgba(255, 255, 255, 0.45);
+      font-weight: 400;
+    }
+
+    #input:disabled {
+      opacity: 0.45;
+      cursor: default;
+    }
+
+    /* ── Reply Bubble ── */
+    #reply-box {
+      background: rgba(28, 28, 30, 0.85);
+      backdrop-filter: blur(80px) saturate(220%) brightness(1.1);
+      -webkit-backdrop-filter: blur(80px) saturate(220%) brightness(1.1);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.12), inset 0 0 0 0.5px rgba(255, 255, 255, 0.06);
+      border-radius: 20px;
+      padding: 16px 18px;
+      font-size: 14px;
+      line-height: 1.5;
+      letter-spacing: -0.01em;
+      color: #F5F5F7;
+      position: relative;
+      overflow: hidden;
+      display: none;
+      flex-shrink: 0;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    #reply-box.visible {
+      display: block;
+      animation: bubbleSpring 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.08);
+    }
+
+    /* Spring bubble — fast in, gentle overshoot, settle */
+    @keyframes bubbleSpring {
+      0% {
+        opacity: 0;
+        transform: scale(0.85) translateY(-4px);
+      }
+
+      55% {
+        opacity: 1;
+        transform: scale(1.02) translateY(0.5px);
+      }
+
+      75% {
+        transform: scale(0.995) translateY(-0.2px);
+      }
+
+      100% {
+        transform: scale(1) translateY(0);
+      }
+    }
+
+    /* Liquid shimmer sweep across bubble */
+    #reply-box::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(110deg,
+          transparent 0%,
+          rgba(255, 255, 255, 0.03) 35%,
+          rgba(255, 255, 255, 0.06) 50%,
+          rgba(255, 255, 255, 0.03) 65%,
+          transparent 100%);
+      animation: glassSweep 0.8s cubic-bezier(0.25, 0.1, 0.25, 1) forwards;
+      pointer-events: none;
+    }
+
+    @keyframes glassSweep {
+      0% {
+        transform: translateX(-100%);
+        opacity: 1;
+      }
+
+      100% {
+        transform: translateX(100%);
+        opacity: 0;
+      }
+    }
+
+    /* Reply blob (ambient inner glow) */
+    .reply-blob {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(35px);
+      pointer-events: none;
+      width: 100px;
+      height: 100px;
+      background: radial-gradient(circle at center, rgba(6, 182, 212, 0.25) 0%, rgba(139, 92, 246, 0.1) 50%, transparent 80%);
+      bottom: -30px;
+      right: -20px;
+      animation: liq2 15s cubic-bezier(0.4, 0, 0.2, 1) infinite alternate;
+      mix-blend-mode: screen;
+    }
+
+    #reply-text {
+      position: relative;
+      z-index: 1;
+      color: #F5F5F7;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    }
+
+    #reply-text code {
+      background: rgba(139, 92, 246, 0.15);
+      /* Light violet hint */
+      color: #e0d4ff;
+      padding: 2px 5px;
+      border-radius: 4px;
+      font-family: 'SF Mono', ui-monospace, monospace;
+      font-size: 12.5px;
+    }
+
+    #reply-text pre {
+      background: rgba(0, 0, 0, 0.35);
+      /* Darker contrast */
+      padding: 12px 14px;
+      border-radius: 10px;
+      overflow-x: auto;
+      margin: 8px 0;
+      font-family: 'SF Mono', ui-monospace, monospace;
+      font-size: 12.5px;
+      line-height: 1.5;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      /* Subtler border */
+    }
+
+    #reply-text pre code {
+      background: none;
+      color: rgba(255, 255, 255, 0.9);
+      padding: 0;
+    }
+
+    #reply-text strong {
+      color: #a855f7;
+      /* Brighter purple for emphasis */
+      font-weight: 500;
+    }
+
+    #reply-text img {
+      max-width: 100%;
+      border-radius: 10px;
+      margin: 6px 0;
+      display: block;
+    }
+
+    #reply-text .img-caption {
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.4);
+      margin-top: 2px;
+    }
+
+    /* Progress */
+    #progress {
+      display: none;
+      padding: 0 2px;
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.35);
+      font-style: italic;
+      transition: opacity 0.3s;
+    }
+
+    #progress.visible {
+      display: block;
+      animation: fadeIn 0.3s ease;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+      }
+
+      to {
+        opacity: 1;
+      }
+    }
+
+    /* ── Notification Banner ── */
+    #notification-box {
+      display: none;
+      background: rgba(28, 28, 30, 0.85);
+      backdrop-filter: blur(80px) saturate(220%) brightness(1.1);
+      -webkit-backdrop-filter: blur(80px) saturate(220%) brightness(1.1);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-left: 3px solid #a855f7;
+      /* Brighter purple */
+      border-radius: 16px;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.12), inset 0 0 0 0.5px rgba(255, 255, 255, 0.06);
+      padding: 14px 18px;
+      font-size: 14px;
+      line-height: 1.5;
+      letter-spacing: -0.01em;
+      position: relative;
+      overflow: hidden;
+      flex-shrink: 0;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+
+    #notification-box.visible {
+      display: block;
+      animation: notifSlideIn 0.45s cubic-bezier(0.175, 0.885, 0.32, 1.1);
+    }
+
+    #notification-box.dismissing {
+      animation: notifFadeOut 0.4s ease forwards;
+    }
+
+    @keyframes notifSlideIn {
+      0% {
+        opacity: 0;
+        transform: translateY(-10px) scale(0.92);
+      }
+
+      60% {
+        opacity: 1;
+        transform: translateY(1px) scale(1.01);
+      }
+
+      100% {
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    @keyframes notifFadeOut {
+      0% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+
+      100% {
+        opacity: 0;
+        transform: translateY(-6px) scale(0.95);
+      }
+    }
+
+    #notification-label {
+      font-size: 10.5px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #8b5cf6;
+      margin-bottom: 6px;
+    }
+
+    #notification-text {
+      color: rgba(255, 255, 255, 0.85);
+    }
+
+    /* ── Notification Actions ── */
+    .notif-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .notif-action-btn {
+      appearance: none;
+      border: none;
+      background: rgba(255, 255, 255, 0.1);
+      color: #FFF;
+      font-size: 12px;
+      font-weight: 500;
+      padding: 6px 14px;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background 0.2s cubic-bezier(0.32, 0.72, 0, 1);
+      font-family: inherit;
+    }
+
+    .notif-action-btn:hover {
+      background: rgba(255, 255, 255, 0.18);
+    }
+
+    .notif-action-btn.dismiss {
+      color: rgba(255, 255, 255, 0.55);
+      background: transparent;
+    }
+
+    .notif-action-btn.dismiss:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: rgba(255, 255, 255, 0.9);
+    }
+
+    /* ── Mic Button (Siri-style minimal) ── */
+    #mic-btn {
+      appearance: none;
+      border: none;
+      background: transparent;
+      color: rgba(255, 255, 255, 0.2);
+      cursor: pointer;
+      padding: 0;
+      margin-right: -2px;
+      transition: color 0.3s ease, opacity 0.3s ease;
+      flex-shrink: 0;
+      opacity: 0.6;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      z-index: 1;
+    }
+
+    #mic-btn:hover {
+      color: rgba(255, 255, 255, 0.5);
+      opacity: 1;
+    }
+
+    #mic-btn.listening {
+      color: #a855f7;
+      opacity: 1;
+    }
+
+    #mic-btn.listening svg {
+      filter: drop-shadow(0 0 8px rgba(168, 85, 247, 0.6));
+    }
+
+    #mic-btn svg {
+      transition: filter 0.3s ease;
+    }
+
+    /* ── Code Block Copy Button ── */
+    .code-wrap {
+      position: relative;
+    }
+
+    .code-wrap pre {
+      margin: 0;
+    }
+
+    .copy-btn {
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      appearance: none;
+      border: none;
+      background: rgba(255, 255, 255, 0.1);
+      color: rgba(255, 255, 255, 0.5);
+      font-size: 10px;
+      padding: 3px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.15s;
+    }
+
+    .copy-btn:hover {
+      background: rgba(255, 255, 255, 0.2);
+      color: white;
+    }
+
+    /* ── Quick Action Buttons ── */
+    .quick-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+      animation: fadeSlideIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.08);
+    }
+
+    .quick-action-btn {
+      appearance: none;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      background: rgba(255, 255, 255, 0.06);
+      color: rgba(255, 255, 255, 0.9);
+      font-size: 13px;
+      font-weight: 400;
+      padding: 7px 16px;
+      border-radius: 20px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      letter-spacing: -0.01em;
+    }
+
+    .quick-action-btn:hover {
+      background: rgba(255, 255, 255, 0.15);
+      border-color: rgba(255, 255, 255, 0.3);
+      color: #FFF;
+      transform: scale(1.02);
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+    }
+
+    .quick-action-btn:active {
+      transform: scale(0.96);
+      opacity: 0.8;
+    }
+
+    .quick-action-btn.danger {
+      border-color: rgba(255, 59, 48, 0.4);
+      /* iOS Red */
+      background: rgba(255, 59, 48, 0.1);
+      color: #ff6b6b;
+    }
+
+    .quick-action-btn.danger:hover {
+      background: rgba(255, 59, 48, 0.2);
+      border-color: rgba(255, 59, 48, 0.6);
+      color: #ff8787;
+      box-shadow: 0 4px 12px rgba(255, 59, 48, 0.2);
+    }
+
+    .quick-action-btn.confirm {
+      border-color: rgba(52, 199, 89, 0.4);
+      /* iOS Green */
+      background: rgba(52, 199, 89, 0.1);
+      color: #69db7c;
+    }
+
+    .quick-action-btn.confirm:hover {
+      background: rgba(52, 199, 89, 0.2);
+      border-color: rgba(52, 199, 89, 0.6);
+      color: #8ce99a;
+      box-shadow: 0 4px 12px rgba(52, 199, 89, 0.2);
+    }
+
+    /* ── Widgets (Clock, Weather, etc.) ── */
+    #widgets-container {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 12px;
+      width: 100%;
+    }
+
+    .widget-card {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 16px;
+      padding: 14px 18px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      transition: all 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+      color: #FFF;
+      letter-spacing: -0.01em;
+    }
+
+    .widget-icon {
+      font-size: 32px;
+      line-height: 1;
+      filter: drop-shadow(0 2px 8px rgba(255, 255, 255, 0.2));
+    }
+
+    /* Clock Widget Specifics */
+    .widget-clock .widget-time {
+      font-size: 28px;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+      margin-bottom: 2px;
+    }
+
+    .widget-clock .widget-date {
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.65);
+    }
+
+    /* ── File / Link Cards ── */
+    .interactive-cards {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+      animation: fadeSlideIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.08);
+    }
+
+    .file-card,
+    .link-card {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 14px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      font-size: 13px;
+      color: #FFF;
+      cursor: pointer;
+      transition: all 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+      text-decoration: none;
+      max-width: 260px;
+      overflow: hidden;
+      font-family: inherit;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    .file-card:hover,
+    .link-card:hover {
+      background: rgba(255, 255, 255, 0.15);
+      border-color: rgba(255, 255, 255, 0.25);
+      transform: scale(1.015);
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+    }
+
+    .card-icon {
+      font-size: 13px;
+      flex-shrink: 0;
+    }
+
+    .card-label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* ── Tables ── */
+    .table-wrapper {
+      width: 100%;
+      overflow-x: auto;
+      margin: 10px 0;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: rgba(0, 0, 0, 0.2);
+    }
+
+    .md-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      text-align: left;
+    }
+
+    .md-table th {
+      padding: 8px 12px;
+      background: rgba(255, 255, 255, 0.05);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      font-weight: 600;
+      color: #FFF;
+      white-space: nowrap;
+    }
+
+    .md-table td {
+      padding: 8px 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      color: rgba(255, 255, 255, 0.85);
+      vertical-align: top;
+    }
+
+    .md-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    /* ── Collapsible Sections ── */
+    .collapse-section {
+      margin: 6px 0;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      overflow: hidden;
+    }
+
+    .collapse-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      background: rgba(255, 255, 255, 0.04);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      color: rgba(255, 255, 255, 0.85);
+      transition: background 0.2s cubic-bezier(0.32, 0.72, 0, 1);
+      user-select: none;
+    }
+
+    .collapse-header:hover {
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .collapse-arrow {
+      font-size: 9px;
+      transition: transform 0.2s;
+      color: rgba(255, 255, 255, 0.4);
+    }
+
+    .collapse-section.open .collapse-arrow {
+      transform: rotate(90deg);
+    }
+
+    .collapse-body {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.3s cubic-bezier(0.25, 0.1, 0.25, 1);
+    }
+
+    .collapse-section.open .collapse-body {
+      max-height: 500px;
+      overflow-y: auto;
+    }
+
+    .collapse-body::-webkit-scrollbar {
+      width: 6px;
+    }
+    .collapse-body::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 3px;
+    }
+
+    .collapse-content {
+      padding: 8px 10px;
+      font-size: 12px;
+      line-height: 1.5;
+      color: rgba(255, 255, 255, 0.75);
+      border-top: 1px solid rgba(255, 255, 255, 0.04);
+    }
+
+    /* ── Copy Response Button ── */
+    .copy-response-btn {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      appearance: none;
+      border: none;
+      background: rgba(255, 255, 255, 0.06);
+      color: rgba(255, 255, 255, 0.3);
+      font-size: 12px;
+      padding: 3px 7px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.2s;
+      opacity: 0;
+      z-index: 2;
+    }
+
+    #reply-box:hover .copy-response-btn {
+      opacity: 1;
+    }
+
+    .copy-response-btn:hover {
+      background: rgba(255, 255, 255, 0.12);
+      color: rgba(255, 255, 255, 0.7);
+    }
+
+    /* ── Enhanced Progress Card ── */
+    .progress-card {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background: rgba(28, 28, 30, 0.72);
+      backdrop-filter: blur(80px) saturate(200%);
+      -webkit-backdrop-filter: blur(80px) saturate(200%);
+      border-radius: 12px;
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.6);
+      animation: fadeSlideIn 0.3s ease;
+    }
+
+    .progress-icon {
+      font-size: 14px;
+      animation: progressPulse 1.5s ease-in-out infinite;
+    }
+
+    .progress-label {
+      flex: 1;
+      font-style: italic;
+    }
+
+    .progress-dots {
+      display: flex;
+      gap: 3px;
+    }
+
+    /* ── Live Thinking Block ── */
+    .thinking-block {
+      padding: 10px 14px;
+      background: rgba(147, 51, 234, 0.08);
+      border-left: 2px solid rgba(147, 51, 234, 0.4);
+      border-radius: 8px;
+      font-size: 11.5px;
+      color: rgba(255, 255, 255, 0.55);
+      font-style: italic;
+      line-height: 1.5;
+      max-height: 120px;
+      overflow-y: auto;
+      animation: fadeSlideIn 0.3s ease;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(147, 51, 234, 0.3) transparent;
+    }
+    .thinking-block::-webkit-scrollbar { width: 4px; }
+    .thinking-block::-webkit-scrollbar-thumb { background: rgba(147, 51, 234, 0.3); border-radius: 2px; }
+    .thinking-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: rgba(147, 51, 234, 0.6);
+      margin-bottom: 4px;
+      font-style: normal;
+    }
+
+    .progress-dots span {
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: rgba(124, 106, 255, 0.6);
+      animation: dotBounce 1.4s ease-in-out infinite;
+    }
+
+    .progress-dots span:nth-child(2) {
+      animation-delay: 0.16s;
+    }
+
+    .progress-dots span:nth-child(3) {
+      animation-delay: 0.32s;
+    }
+
+    @keyframes fadeSlideIn {
+      0% {
+        opacity: 0;
+        transform: translateY(4px);
+      }
+
+      100% {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes progressPulse {
+
+      0%,
+      100% {
+        opacity: 0.6;
+      }
+
+      50% {
+        opacity: 1;
+      }
+    }
+
+    @keyframes dotBounce {
+
+      0%,
+      80%,
+      100% {
+        transform: scale(0.6);
+        opacity: 0.4;
+      }
+
+      40% {
+        transform: scale(1);
+        opacity: 1;
+      }
+    }
+
+    /* ── Drag & Drop Overlay ── */
+    #drop-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      background: rgba(10, 10, 14, 0.72);
+      backdrop-filter: blur(24px) saturate(180%);
+      -webkit-backdrop-filter: blur(24px) saturate(180%);
+      border: 2px dashed rgba(168, 85, 247, 0.5);
+      border-radius: 20px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s cubic-bezier(0.32, 0.72, 0, 1);
+    }
+
+    #drop-overlay.active {
+      opacity: 1;
+      pointer-events: all;
+      animation: dropBorderPulse 1.8s ease-in-out infinite;
+    }
+
+    @keyframes dropBorderPulse {
+
+      0%,
+      100% {
+        border-color: rgba(168, 85, 247, 0.4);
+        box-shadow: 0 0 0 0 rgba(168, 85, 247, 0);
+      }
+
+      50% {
+        border-color: rgba(168, 85, 247, 0.9);
+        box-shadow: 0 0 24px 4px rgba(168, 85, 247, 0.15);
+      }
+    }
+
+    .drop-icon {
+      font-size: 42px;
+      animation: dropIconFloat 2s ease-in-out infinite;
+      filter: drop-shadow(0 0 16px rgba(168, 85, 247, 0.5));
+    }
+
+    @keyframes dropIconFloat {
+
+      0%,
+      100% {
+        transform: translateY(0);
+      }
+
+      50% {
+        transform: translateY(-8px);
+      }
+    }
+
+    .drop-label {
+      font-size: 15px;
+      font-weight: 500;
+      color: rgba(255, 255, 255, 0.85);
+      letter-spacing: -0.01em;
+    }
+
+    .drop-sub {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.38);
+      letter-spacing: 0.01em;
+    }
+
+    /* ── @ Mention Picker (Moved Outside Input Box) ── */
+    #mention-picker {
+      position: absolute;
+      top: calc(100% + 8px);
+      left: 0;
+      right: 0;
+      background: rgba(18, 18, 22, 0.92);
+      backdrop-filter: blur(40px) saturate(200%);
+      -webkit-backdrop-filter: blur(40px) saturate(200%);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(168, 85, 247, 0.15);
+      overflow: hidden;
+      opacity: 0;
+      transform: translateY(-6px) scale(0.97);
+      pointer-events: none;
+      transition: opacity 0.18s ease, transform 0.18s cubic-bezier(0.175, 0.885, 0.32, 1.1);
+      z-index: 200;
+      max-height: 320px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    #mention-picker.open {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+      pointer-events: all;
+    }
+
+    .picker-tabs {
+      display: flex;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+      flex-shrink: 0;
+    }
+
+    .picker-tab {
+      flex: 1;
+      padding: 9px 0;
+      font-size: 11.5px;
+      font-weight: 500;
+      color: rgba(255, 255, 255, 0.4);
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      font-family: inherit;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      transition: color 0.15s, background 0.15s;
+    }
+
+    .picker-tab.active {
+      color: #a855f7;
+      background: rgba(168, 85, 247, 0.08);
+    }
+
+    .picker-tab:hover:not(.active) {
+      color: rgba(255, 255, 255, 0.65);
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .picker-search-wrap {
+      padding: 10px 12px 6px;
+      flex-shrink: 0;
+    }
+
+    #picker-search {
+      width: 100%;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      color: #FFF;
+      font-family: inherit;
+      font-size: 13px;
+      padding: 7px 10px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    #picker-search:focus {
+      border-color: rgba(168, 85, 247, 0.5);
+    }
+
+    #picker-search::placeholder {
+      color: rgba(255, 255, 255, 0.3);
+    }
+
+    .picker-list {
+      overflow-y: auto;
+      flex: 1;
+      padding: 4px 0 8px;
+    }
+
+    .picker-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 14px;
+      cursor: pointer;
+      font-size: 13.5px;
+      color: rgba(255, 255, 255, 0.82);
+      transition: background 0.12s;
+      border-radius: 0;
+      letter-spacing: -0.01em;
+    }
+
+    .picker-item:hover,
+    .picker-item.selected {
+      background: rgba(168, 85, 247, 0.12);
+      color: #FFF;
+    }
+
+    .picker-item.selected {
+      background: rgba(168, 85, 247, 0.18);
+    }
+
+    .picker-item-icon {
+      font-size: 15px;
+      width: 20px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+
+    .picker-item-name {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .picker-item-badge {
+      font-size: 10px;
+      color: rgba(255, 255, 255, 0.3);
+      background: rgba(255, 255, 255, 0.06);
+      padding: 2px 6px;
+      border-radius: 4px;
+      flex-shrink: 0;
+    }
+
+    #picker-preview img,
+    #picker-preview video {
+      max-width: 100%;
+      height: auto;
+      max-height: 160px;
+      border-radius: 6px;
+      object-fit: contain;
+    }
+
+    .picker-empty {
+      text-align: center;
+      padding: 24px;
+      color: rgba(255, 255, 255, 0.25);
+      font-size: 13px;
+      font-style: italic;
+    }
+
+    .picker-path-bar {
+      padding: 6px 12px 2px;
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.3);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex-shrink: 0;
+      cursor: pointer;
+    }
+
+    .picker-path-bar:hover {
+      color: rgba(255, 255, 255, 0.6);
+    }
+
+    /* ── Mention Chips (in input) ── */
+    .mentions-wrapper {
+      flex: 1;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 4px;
+      min-height: 28px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .mention-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: rgba(168, 85, 247, 0.18);
+      border: 1px solid rgba(168, 85, 247, 0.35);
+      color: rgba(200, 160, 255, 1);
+      border-radius: 6px;
+      padding: 2px 8px 2px 6px;
+      font-size: 12.5px;
+      font-family: inherit;
+      white-space: nowrap;
+      flex-shrink: 0;
+      cursor: default;
+      animation: chipPop 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.2);
+    }
+
+    @keyframes chipPop {
+      0% {
+        transform: scale(0.7);
+        opacity: 0;
+      }
+
+      100% {
+        transform: scale(1);
+        opacity: 1;
+      }
+    }
+
+    .chip-remove {
+      cursor: pointer;
+      opacity: 0.5;
+      font-size: 11px;
+      line-height: 1;
+      transition: opacity 0.15s;
+      margin-left: 2px;
+    }
+
+    .chip-remove:hover {
+      opacity: 1;
+    }
+
+    /* ── Screen Reader Only (visually hidden) ── */
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    /* Flex-row input wrapper */
+    .input-inner {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      min-width: 0;
+      position: relative;
+      z-index: 1;
+    }
+
+    #input-wrapper {
+      flex: 1;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 4px;
+      position: relative;
+    }
+
+    /* ── Task Drawer ── */
+    #task-drawer-toggle {
+      appearance: none;
+      border: none;
+      background: rgba(28, 28, 30, 0.7);
+      backdrop-filter: blur(40px) saturate(180%);
+      -webkit-backdrop-filter: blur(40px) saturate(180%);
+      color: rgba(255, 255, 255, 0.55);
+      font-size: 11px;
+      font-weight: 500;
+      font-family: inherit;
+      padding: 4px 12px;
+      border-radius: 0 0 10px 10px;
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.32, 0.72, 0, 1);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      margin: 0 auto;
+      position: relative;
+      z-index: 5;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-top: none;
+    }
+
+    #task-drawer-toggle:hover {
+      background: rgba(28, 28, 30, 0.85);
+      color: rgba(255, 255, 255, 0.8);
+    }
+
+    #task-drawer-toggle .task-count-badge {
+      background: rgba(168, 85, 247, 0.6);
+      color: #FFF;
+      font-size: 9px;
+      font-weight: 600;
+      padding: 1px 5px;
+      border-radius: 8px;
+      min-width: 14px;
+      text-align: center;
+    }
+
+    #task-drawer-toggle .task-count-badge.empty {
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    #task-drawer {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.35s cubic-bezier(0.25, 0.1, 0.25, 1);
+      background: rgba(28, 28, 30, 0.85);
+      backdrop-filter: blur(80px) saturate(220%) brightness(1.1);
+      -webkit-backdrop-filter: blur(80px) saturate(220%) brightness(1.1);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 14px;
+      margin-bottom: 4px;
+    }
+
+    #task-drawer.open {
+      max-height: 260px;
+      overflow-y: auto;
+    }
+
+    .task-drawer-content {
+      padding: 10px 14px;
+    }
+
+    .task-drawer-empty {
+      color: rgba(255, 255, 255, 0.3);
+      font-size: 12px;
+      text-align: center;
+      padding: 16px 0;
+      font-style: italic;
+    }
+
+    .task-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .task-item:last-child {
+      border-bottom: none;
+    }
+
+    .task-item-icon {
+      font-size: 14px;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    .task-item-body {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .task-item-name {
+      font-size: 12.5px;
+      font-weight: 500;
+      color: rgba(255, 255, 255, 0.85);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .task-item-detail {
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.4);
+      margin-top: 2px;
+    }
+
+    .task-progress-bar {
+      width: 100%;
+      height: 3px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 2px;
+      margin-top: 4px;
+      overflow: hidden;
+    }
+
+    .task-progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #8b5cf6, #a855f7);
+      border-radius: 2px;
+      transition: width 0.5s cubic-bezier(0.32, 0.72, 0, 1);
+    }
+
+    .task-cancel-btn {
+      appearance: none;
+      border: 1px solid rgba(255, 59, 48, 0.3);
+      background: rgba(255, 59, 48, 0.08);
+      color: rgba(255, 100, 100, 0.7);
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: inherit;
+      flex-shrink: 0;
+      margin-top: 2px;
+      transition: all 0.15s;
+    }
+
+    .task-cancel-btn:hover {
+      background: rgba(255, 59, 48, 0.2);
+      color: #ff8787;
+      border-color: rgba(255, 59, 48, 0.5);
+    }
+
+    /* ── Focus Styles for Keyboard Nav ── */
+    #input:focus-visible,
+    #mic-btn:focus-visible,
+    .quick-action-btn:focus-visible,
+    .notif-action-btn:focus-visible,
+    .copy-btn:focus-visible,
+    .copy-response-btn:focus-visible,
+    #task-drawer-toggle:focus-visible,
+    .task-cancel-btn:focus-visible {
+      outline: 2px solid rgba(168, 85, 247, 0.7);
+      outline-offset: 2px;
+    }
+  </style>
+</head>
+
+<body>
+  <!-- Screen reader live region for status announcements -->
+  <div id="sr-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+
+  <div id="container" role="main" aria-label="A.T.L.A.S overlay">
+    <!-- Task Drawer -->
+    <button id="task-drawer-toggle" aria-label="Toggle active tasks drawer" aria-expanded="false" aria-controls="task-drawer" tabindex="0">
+      Tasks <span class="task-count-badge empty" id="task-count-badge">0</span>
+    </button>
+    <div id="task-drawer" role="region" aria-label="Active tasks">
+      <div class="task-drawer-content" id="task-drawer-content">
+        <div class="task-drawer-empty">No active tasks</div>
+      </div>
+    </div>
+
+    <div id="input-box-wrapper" style="position: relative; z-index: 10;">
+    <div id="input-box" role="search" aria-label="Message A.T.L.A.S">
+      <div class="blob b1" id="b1" aria-hidden="true"></div>
+      <div class="blob b2" id="b2" aria-hidden="true"></div>
+      <div class="blob b3" id="b3" aria-hidden="true"></div>
+      <div class="icon" id="icon" role="status" aria-label="Agent status: idle" aria-live="polite">✦</div>
+      <div id="input-wrapper">
+        <!-- @ mention chips are prepended here dynamically -->
+        <input type="text" id="input" placeholder="Ask A.T.L.A.S. (type @ to mention)" autocomplete="off" autofocus
+          spellcheck="false" aria-label="Message input" role="combobox" aria-expanded="false" aria-controls="mention-picker" aria-haspopup="listbox" />
+      </div>
+        <button id="mic-btn" title="Voice input" aria-label="Voice input" tabindex="0">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+            <line x1="12" y1="19" x2="12" y2="23" />
+            <line x1="8" y1="23" x2="16" y2="23" />
+          </svg>
+        </button>
+      </div>
+      <!-- @ Mention Picker extracted from input-box so it's not clipped by overflow:hidden -->
+      <div id="mention-picker" role="listbox" aria-label="Mention picker">
+        <div class="picker-search-wrap">
+          <input id="picker-search" type="text" placeholder="Search…" autocomplete="off" spellcheck="false" />
+        </div>
+        <div class="picker-path-bar" id="picker-path-bar" style="display:none">← /</div>
+        <div style="display: flex; flex: 1; flex-direction: row; min-height: 0; overflow: hidden;">
+          <div class="picker-list" id="picker-list"></div>
+          <div class="picker-preview" id="picker-preview" style="display: none; width: 150px; padding: 10px; border-left: 1px solid rgba(255,255,255,0.1); text-align: center; background: rgba(0,0,0,0.2); align-items: center; justify-content: center; flex-shrink: 0; overflow: hidden;"></div>
+        </div>
+      </div>
+    </div>
+    <div id="progress" role="status" aria-live="polite" aria-label="Agent progress"></div>
+    <div id="notification-box" role="alert" aria-live="assertive">
+      <div id="notification-label">✦ A.T.L.A.S</div>
+      <div id="notification-text"></div>
+      <div class="notif-actions">
+        <button class="notif-action-btn reply-btn" onclick="replyToNotification()" aria-label="Reply to notification" tabindex="0">Reply</button>
+        <button class="notif-action-btn dismiss" onclick="dismissNotification()" aria-label="Dismiss notification" tabindex="0">Dismiss</button>
+      </div>
+    </div>
+    <div id="reply-box" role="log" aria-live="polite" aria-label="Agent response" aria-busy="false">
+      <button class="copy-response-btn" id="copy-response-btn" onclick="copyResponse()" aria-label="Copy response" tabindex="0">⧉</button>
+      <div class="reply-blob" aria-hidden="true"></div>
+      <div id="reply-text"></div>
+      <div id="widgets-container" class="widgets-container"></div>
+      <div id="quick-actions" class="quick-actions"></div>
+      <div id="interactive-cards" class="interactive-cards"></div>
+    </div>
+  </div>
+
+  <!-- Drag & Drop Overlay -->
+  <div id="drop-overlay" role="region" aria-label="File drop zone" aria-hidden="true">
+    <div class="drop-icon" aria-hidden="true">📎</div>
+    <div class="drop-label">Drop file to send</div>
+    <div class="drop-sub">Images, code, text, PDFs…</div>
+  </div>
+
+  <script>
+    (() => {
+      const input = document.getElementById('input');
+      const icon = document.getElementById('icon');
+      const progress = document.getElementById('progress');
+      const replyBox = document.getElementById('reply-box');
+      const replyText = document.getElementById('reply-text');
+      const notifBox = document.getElementById('notification-box');
+      const notifText = document.getElementById('notification-text');
+      const widgetsBox = document.getElementById('widgets-container');
+      const quickActionsBox = document.getElementById('quick-actions');
+      const cardsBox = document.getElementById('interactive-cards');
+      const blobs = [document.getElementById('b1'), document.getElementById('b2'), document.getElementById('b3')];
+      const srStatus = document.getElementById('sr-status');
+      const taskDrawerToggle = document.getElementById('task-drawer-toggle');
+      const taskDrawer = document.getElementById('task-drawer');
+      const taskDrawerContent = document.getElementById('task-drawer-content');
+      const taskCountBadge = document.getElementById('task-count-badge');
+
+      let ws = null, waiting = false, notifTimer = null;
+      let activeTasks = new Map(); // taskId -> { name, type, progress, phase }
+
+      // ── Screen Reader Announcement ──
+      function announceToSR(text) {
+        srStatus.textContent = '';
+        setTimeout(() => { srStatus.textContent = text; }, 50);
+      }
+
+      // ── ARIA Busy State ──
+      function setAgentBusy(busy) {
+        replyBox.setAttribute('aria-busy', busy ? 'true' : 'false');
+        icon.setAttribute('aria-label', busy ? 'Agent status: processing' : 'Agent status: idle');
+        if (busy) announceToSR('A.T.L.A.S is processing your request');
+      }
+
+      // ── Task Drawer ──
+      taskDrawerToggle.addEventListener('click', () => {
+        const isOpen = taskDrawer.classList.toggle('open');
+        taskDrawerToggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+      });
+
+      function updateTaskDrawer() {
+        const count = activeTasks.size;
+        taskCountBadge.textContent = String(count);
+        taskCountBadge.classList.toggle('empty', count === 0);
+
+        if (count === 0) {
+          taskDrawerContent.innerHTML = '<div class="task-drawer-empty">No active tasks</div>';
+          return;
+        }
+
+        let html = '';
+        for (const [taskId, task] of activeTasks) {
+          const iconChar = task.type === 'research' ? '🔬' : '⚡';
+          const progressPct = task.progress != null ? Math.round(task.progress) : null;
+          const detail = task.phase || (progressPct != null ? `${progressPct}%` : 'Running...');
+
+          html += `<div class="task-item" role="listitem" aria-label="${task.name || 'Task'}: ${detail}">`;
+          html += `  <span class="task-item-icon" aria-hidden="true">${iconChar}</span>`;
+          html += `  <div class="task-item-body">`;
+          html += `    <div class="task-item-name">${esc(task.name || 'Task ' + taskId)}</div>`;
+          html += `    <div class="task-item-detail">${esc(detail)}</div>`;
+          if (progressPct != null) {
+            html += `    <div class="task-progress-bar" role="progressbar" aria-valuenow="${progressPct}" aria-valuemin="0" aria-valuemax="100">`;
+            html += `      <div class="task-progress-fill" style="width:${progressPct}%"></div>`;
+            html += `    </div>`;
+          }
+          html += `  </div>`;
+          html += `  <button class="task-cancel-btn" aria-label="Cancel task: ${esc(task.name || taskId)}" onclick="cancelTask('${esc(taskId)}')">Cancel</button>`;
+          html += `</div>`;
+        }
+        taskDrawerContent.innerHTML = html;
+      }
+
+      function cancelTask(taskId) {
+        if (ws && ws.readyState === 1) {
+          ws.send(JSON.stringify({ type: 'cancel_task', taskId }));
+          activeTasks.delete(taskId);
+          updateTaskDrawer();
+          announceToSR('Task cancelled');
+        }
+      }
+      window.cancelTask = cancelTask;
+
+      function grabFocus() {
+        input.focus();
+        setTimeout(() => input.focus(), 100);
+        setTimeout(() => input.focus(), 300);
+      }
+
+      function connect() {
+        ws = new WebSocket(`ws://${location.host}`);
+        window._atlasWS = ws; // Expose for Electron IPC (live voice shortcut)
+        ws.onopen = () => { blobs.forEach(b => b.classList.add('on')); grabFocus(); };
+        ws.onmessage = (e) => { try { handle(JSON.parse(e.data)); } catch (err) { console.error('[OVERLAY] handle() error:', err); } };
+        ws.onclose = () => { blobs.forEach(b => b.classList.remove('on')); setTimeout(connect, 2000); };
+        ws.onerror = () => ws.close();
+      }
+
+      // Clear all interactive elements (timers included)
+      let activeTimers = [];
+      function clearInteractive() {
+        quickActionsBox.innerHTML = '';
+        cardsBox.innerHTML = '';
+        widgetsBox.innerHTML = '';
+        activeTimers.forEach(clearInterval);
+        activeTimers = [];
+      }
+
+      function handle(msg) {
+        // Agent visibility control — hide overlay from screenshots, show after
+        if (msg.type === 'agent_hide') {
+          document.getElementById('container').style.opacity = '0';
+          document.getElementById('container').style.pointerEvents = 'none';
+          return;
+        }
+        if (msg.type === 'agent_show') {
+          document.getElementById('container').style.opacity = '1';
+          document.getElementById('container').style.pointerEvents = 'auto';
+          return;
+        }
+        // ── Task drawer updates ──
+        if (msg.type === 'task_progress') {
+          const tid = msg.taskId || msg.id;
+          if (tid) {
+            activeTasks.set(tid, {
+              name: msg.name || (activeTasks.get(tid) || {}).name || 'Task',
+              type: msg.taskType || (activeTasks.get(tid) || {}).type || 'long_task',
+              progress: msg.progress != null ? msg.progress : (activeTasks.get(tid) || {}).progress,
+              phase: msg.phase || msg.status || (activeTasks.get(tid) || {}).phase,
+            });
+            updateTaskDrawer();
+          }
+          return;
+        }
+        if (msg.type === 'task_complete' || msg.type === 'task_cancelled') {
+          const tid = msg.taskId || msg.id;
+          if (tid) {
+            const taskName = (activeTasks.get(tid) || {}).name || 'Task';
+            activeTasks.delete(tid);
+            updateTaskDrawer();
+            announceToSR(msg.type === 'task_complete' ? `${taskName} completed` : `${taskName} cancelled`);
+          }
+          return;
+        }
+        if (msg.type === 'research_progress') {
+          const rid = msg.taskId || msg.id || 'research';
+          activeTasks.set(rid, {
+            name: msg.topic || (activeTasks.get(rid) || {}).name || 'Research',
+            type: 'research',
+            progress: msg.progress != null ? msg.progress : (activeTasks.get(rid) || {}).progress,
+            phase: msg.phase || msg.status || (activeTasks.get(rid) || {}).phase,
+          });
+          updateTaskDrawer();
+          return;
+        }
+
+        if (msg.type === 'thinking') {
+          icon.classList.add('thinking');
+          setAgentBusy(true);
+          replyBox.classList.remove('visible');
+          progress.classList.remove('visible');
+          progress.innerHTML = '';
+          clearInteractive();
+        }
+        else if (msg.type === 'thinking_content') {
+          // Live thinking display — show model reasoning as it arrives
+          const thinkingText = (msg.text || '').trim();
+          if (thinkingText) {
+            const truncated = thinkingText.length > 600 ? thinkingText.substring(0, 600) + '...' : thinkingText;
+            progress.innerHTML = `<div class="thinking-block"><div class="thinking-label">💭 thinking</div>${esc(truncated)}</div>`;
+            progress.classList.add('visible');
+          }
+        }
+        else if (msg.type === 'progress') {
+          // Render as enhanced progress card
+          const progressIcon = extractProgressIcon(msg.text);
+          const progressLabel = msg.text.replace(/^[\u2728\u2699\ufe0f\ud83d\udd0d\ud83c\udf10\ud83d\udcd6\u270f\ufe0f\ud83d\udcf8\ud83d\udcad\u23f3\u26a0\ufe0f]\s?/u, '');
+          progress.innerHTML = `<div class="progress-card"><span class="progress-icon">${progressIcon}</span><span class="progress-label">${esc(progressLabel)}</span><div class="progress-dots"><span></span><span></span><span></span></div></div>`;
+          progress.classList.add('visible');
+        }
+        else if (msg.type === 'response' || msg.type === 'error') {
+          icon.classList.remove('thinking');
+          setAgentBusy(false);
+          progress.classList.remove('visible');
+          progress.innerHTML = '';
+
+          const rawText = msg.text || '(no response)';
+          console.log('[OVERLAY] Response text length:', rawText.length, 'preview:', rawText.substring(0, 100));
+          const renderedText = msg.type === 'error' ? `⚠️ ${esc(rawText)}` : renderMd(rawText);
+          console.log('[OVERLAY] Rendered HTML length:', renderedText.length);
+          replyText.innerHTML = renderedText;
+          replyBox.classList.remove('visible');
+          replyBox.offsetHeight;
+          replyBox.classList.add('visible');
+          input.value = '';
+          input.disabled = false;
+          waiting = false;
+          announceToSR(msg.type === 'error' ? 'Error received from A.T.L.A.S' : 'Response received from A.T.L.A.S');
+
+          // Render interactive elements
+          clearInteractive();
+          if (msg.widgets && msg.widgets.length > 0) {
+            renderWidgets(msg.widgets);
+          }
+          if (msg.quickActions && msg.quickActions.length > 0) {
+            renderQuickActions(msg.quickActions);
+          }
+          if ((msg.files && msg.files.length > 0) || (msg.links && msg.links.length > 0)) {
+            renderCards(msg.files || [], msg.links || []);
+          }
+
+          grabFocus();
+        }
+        else if (msg.type === 'silent') {
+          icon.classList.remove('thinking');
+          setAgentBusy(false);
+          progress.classList.remove('visible');
+          progress.innerHTML = '';
+          replyBox.classList.remove('visible');
+          clearInteractive();
+          input.value = '';
+          input.disabled = false;
+          waiting = false;
+          grabFocus();
+        }
+        else if (msg.type === 'image') {
+          icon.classList.remove('thinking');
+          progress.classList.remove('visible');
+          progress.innerHTML = '';
+          let imgHtml = `<img src="${msg.url}" alt="Generated image" />`;
+          if (msg.caption) imgHtml += `<div class="img-caption">${esc(msg.caption)}</div>`;
+          replyText.innerHTML = imgHtml;
+          replyBox.classList.remove('visible');
+          replyBox.offsetHeight;
+          replyBox.classList.add('visible');
+        }
+        else if (msg.type === 'placeholder') {
+          input.placeholder = msg.text || 'Ask A.T.L.A.S…';
+        }
+        else if (msg.type === 'notification') {
+          if (notifTimer) { clearTimeout(notifTimer); notifTimer = null; }
+          notifText.innerHTML = renderMd(msg.text);
+          notifBox.classList.remove('visible', 'dismissing');
+          notifBox.offsetHeight;
+          notifBox.classList.add('visible');
+          notifTimer = setTimeout(() => {
+            notifBox.classList.add('dismissing');
+            setTimeout(() => {
+              notifBox.classList.remove('visible', 'dismissing');
+              notifTimer = null;
+            }, 400);
+          }, 12000);
+        }
+        else if (msg.type === 'research_complete') {
+          // Remove research from task drawer
+          const rid = msg.taskId || msg.id || 'research';
+          activeTasks.delete(rid);
+          updateTaskDrawer();
+          announceToSR('Deep research completed');
+          // Auto-show overlay window when research completes
+          if (window.atlasOverlay && window.atlasOverlay.showWindow) {
+            window.atlasOverlay.showWindow();
+          }
+          // Also send a native notification
+          if (window.atlasOverlay && window.atlasOverlay.notify) {
+            window.atlasOverlay.notify('Research Complete', msg.text || 'Your deep research has finished.');
+          }
+          // Show the result in the overlay as a persistent notification (no auto-dismiss)
+          if (notifTimer) { clearTimeout(notifTimer); notifTimer = null; }
+          notifText.innerHTML = renderMd(msg.text);
+          notifBox.classList.remove('visible', 'dismissing');
+          notifBox.offsetHeight;
+          notifBox.classList.add('visible');
+          // Don't auto-dismiss — user should see this and can dismiss manually
+        }
+        else if (msg.type === 'voice_result') {
+          micBtn.classList.remove('listening');
+          isListening = false;
+          if (msg.text) {
+            input.placeholder = 'Ask A.T.L.A.S…';
+            input.value = msg.text;
+            send();
+          } else {
+            input.placeholder = 'Analyzing audio…';
+            icon.classList.add('thinking');
+            waiting = true;
+            input.disabled = true;
+          }
+        }
+        else if (msg.type === 'voice_status') {
+          if (msg.status === 'listening') {
+            micBtn.classList.add('listening');
+            input.placeholder = 'Listening…';
+          } else if (msg.status === 'processing') {
+            micBtn.classList.remove('listening');
+            input.placeholder = 'Analyzing audio…';
+          } else if (msg.status === 'error') {
+            micBtn.classList.remove('listening');
+            isListening = false;
+            input.placeholder = msg.error || 'Voice error';
+            setTimeout(() => { input.placeholder = 'Ask A.T.L.A.S…'; }, 2000);
+          }
+        }
+        // ── Live Voice Mode status ──
+        else if (msg.type === 'voice_live_status') {
+          const s = msg.status;
+          if (s === 'connecting') {
+            input.placeholder = 'Connecting live voice…';
+            icon.classList.add('thinking');
+            blobs.forEach(b => b.style.boxShadow = '0 0 20px 8px rgba(0,255,150,0.5)');
+          } else if (s === 'active') {
+            const stopKey = navigator.platform.includes('Mac') ? '⌘⇧L' : 'Alt+Shift+L';
+            input.placeholder = 'Live voice active — speak freely (' + stopKey + ' to stop)';
+            icon.classList.remove('thinking');
+            blobs.forEach(b => b.style.boxShadow = '0 0 25px 10px rgba(0,255,150,0.7)');
+          } else if (s === 'interrupted') {
+            input.placeholder = 'Listening…';
+          } else if (s === 'ended') {
+            input.placeholder = 'Ask A.T.L.A.S…';
+            icon.classList.remove('thinking');
+            blobs.forEach(b => b.style.boxShadow = '');
+          } else if (s === 'error' || s === 'unavailable') {
+            input.placeholder = msg.error || 'Live voice unavailable';
+            icon.classList.remove('thinking');
+            blobs.forEach(b => b.style.boxShadow = '');
+            setTimeout(() => { input.placeholder = 'Ask A.T.L.A.S…'; }, 3000);
+          }
+        }
+        else if (msg.type === 'voice_live_transcript') {
+          // Show what the AI is saying in the reply box
+          replyBox.classList.add('visible');
+          replyText.innerHTML = msg.text || '';
+        }
+        else if (msg.type === 'voice_live_tool') {
+          // Show tool execution feedback
+          progressBox.classList.add('visible');
+          progressBox.innerHTML = '⚡ ' + (msg.tools || []).join(', ');
+          setTimeout(() => { progressBox.classList.remove('visible'); progressBox.innerHTML = ''; }, 2000);
+        }
+      }
+
+      // ── Widgets ──
+      function renderWidgets(widgets) {
+        widgetsBox.innerHTML = '';
+        widgets.forEach(w => {
+          if (w.type === 'clock') {
+            const card = document.createElement('div');
+            card.className = 'widget-card widget-clock';
+            card.innerHTML = `
+              <div class="widget-icon">⏱️</div>
+              <div class="widget-content">
+                <div class="widget-time" id="live-time"></div>
+                <div class="widget-date" id="live-date"></div>
+              </div>
+            `;
+            widgetsBox.appendChild(card);
+
+            const timeEl = card.querySelector('#live-time');
+            const dateEl = card.querySelector('#live-date');
+
+            const updateClock = () => {
+              const now = new Date();
+              timeEl.textContent = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+              dateEl.textContent = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+            };
+
+            updateClock();
+            activeTimers.push(setInterval(updateClock, 1000));
+          }
+          // Placeholder for future weather widget
+        });
+      }
+
+      // ── Quick Action Buttons ──
+      function renderQuickActions(actions) {
+        quickActionsBox.innerHTML = '';
+        const DANGER_WORDS = ['delete', 'remove', 'destroy', 'drop', 'erase', 'nuke', 'wipe', 'uninstall'];
+        const CONFIRM_WORDS = ['yes', 'confirm', 'approve', 'accept', 'proceed', 'go ahead', 'do it', 'ok'];
+
+        actions.forEach(label => {
+          const btn = document.createElement('button');
+          btn.className = 'quick-action-btn';
+          btn.textContent = label;
+          const lower = label.toLowerCase();
+
+          if (DANGER_WORDS.some(w => lower.includes(w))) btn.classList.add('danger');
+          else if (CONFIRM_WORDS.some(w => lower.includes(w))) btn.classList.add('confirm');
+
+          btn.onclick = () => {
+            if (!ws || ws.readyState !== 1 || waiting) return;
+            waiting = true;
+            input.disabled = true;
+            replyBox.classList.remove('visible');
+            clearInteractive();
+            ws.send(JSON.stringify({ type: 'quick_action', text: label }));
+          };
+          quickActionsBox.appendChild(btn);
+        });
+      }
+
+      // ── File & Link Cards ──
+      function renderCards(files, links) {
+        cardsBox.innerHTML = '';
+
+        files.forEach(filePath => {
+          const card = document.createElement('a');
+          card.className = 'file-card';
+          card.href = '#';
+          const basename = filePath.split('/').pop() || filePath;
+          const ext = basename.split('.').pop() || '';
+          const icon = getFileIcon(ext);
+          card.innerHTML = `<span class="card-icon">${icon}</span><span class="card-label" title="${esc(filePath)}">${esc(basename)}</span>`;
+          card.onclick = (e) => {
+            e.preventDefault();
+            if (ws && ws.readyState === 1) {
+              ws.send(JSON.stringify({ type: 'chat', text: `open ${filePath}` }));
+            }
+          };
+          cardsBox.appendChild(card);
+        });
+
+        links.forEach(url => {
+          const card = document.createElement('a');
+          card.className = 'link-card';
+          card.href = url;
+          card.target = '_blank';
+          let domain = url;
+          try { domain = new URL(url).hostname.replace(/^www\./, ''); } catch { }
+          card.innerHTML = `<span class="card-icon">🌐</span><span class="card-label" title="${esc(url)}">${esc(domain)}</span>`;
+          cardsBox.appendChild(card);
+        });
+      }
+
+      function getFileIcon(ext) {
+        const icons = {
+          'ts': '📜', 'js': '📜', 'tsx': '📜', 'jsx': '📜',
+          'py': '🐍', 'rs': '⚙️', 'go': '⚙️',
+          'html': '🌐', 'css': '🎨', 'scss': '🎨',
+          'json': '📋', 'yaml': '📋', 'yml': '📋', 'toml': '📋',
+          'md': '🗒️', 'txt': '🗒️',
+          'png': '🖼️', 'jpg': '🖼️', 'jpeg': '🖼️', 'svg': '🖼️', 'gif': '🖼️',
+          'pdf': '📄', 'doc': '📄', 'docx': '📄',
+          'sh': '⌨️', 'bash': '⌨️', 'zsh': '⌨️',
+        };
+        return icons[ext.toLowerCase()] || '📁';
+      }
+
+      // ── Progress icon extraction ──
+      function extractProgressIcon(text) {
+        const match = text.match(/^([\p{Emoji}\u200d\ufe0f]+)/u);
+        return match ? match[1] : '💭';
+      }
+
+
+
+      function esc(t) { return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+      function renderMd(text) {
+        let h = esc(text);
+        // Code blocks with copy button
+        h = h.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, l, c) => {
+          const code = c.trim();
+          const id = 'cb' + Math.random().toString(36).substr(2, 6);
+          return `<div class="code-wrap"><button class="copy-btn" onclick="copyCode('${id}')">Copy</button><pre><code id="${id}">${code}</code></pre></div>`;
+        });
+        // Collapsible sections: <!--COLLAPSE:Title-->content<!--/COLLAPSE-->
+        h = h.replace(/&lt;!--COLLAPSE:(.*?)--&gt;([\s\S]*?)&lt;!--\/COLLAPSE--&gt;/g, (_, title, content) => {
+          const id = 'cl' + Math.random().toString(36).substr(2, 6);
+          return `<div class="collapse-section" id="${id}"><div class="collapse-header" onclick="toggleCollapse('${id}')"><span class="collapse-arrow">▶</span>${title.trim()}</div><div class="collapse-body"><div class="collapse-content">${content.trim()}</div></div></div>`;
+        });
+        
+        // Tables
+        const tableRegex = /^\|(.+)\|\n\|([ \-\|:]+)\|\n((\|.*\|\n?)+)/gm;
+        h = h.replace(tableRegex, (match, header, sep, body) => {
+          const makeRow = (row, tag) => {
+            const cols = row.trim().replace(/^\||\|$/g, '').split('|');
+            return `<tr>${cols.map(c => `<${tag}>${c.trim()}</${tag}>`).join('')}</tr>`;
+          };
+          const thead = makeRow(header, 'th');
+          const tbody = body.trim().split('\n').map(r => r.trim() ? makeRow(r, 'td') : '').join('');
+          return `<div class="table-wrapper"><table class="md-table"><thead>${thead}</thead><tbody>${tbody}</tbody></table></div>`;
+        });
+
+        h = h.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+        h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+        h = h.replace(/(?<!\w)\*([^*\n]+?)\*(?!\w)/g, '<em>$1</em>');
+        h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" style="color:#7c6aff">$1</a>');
+        h = h.replace(/^[\s]*[*\-]\s+/gm, '• ');
+        h = h.replace(/\n/g, '<br>');
+        return h;
+      }
+
+      function copyCode(id) {
+        const el = document.getElementById(id);
+        if (el) {
+          navigator.clipboard.writeText(el.textContent || '');
+          const btn = el.closest('.code-wrap')?.querySelector('.copy-btn');
+          if (btn) { btn.textContent = '✓ Copied'; setTimeout(() => btn.textContent = 'Copy', 1500); }
+        }
+      }
+
+      // ── Copy Response ──
+      function copyResponse() {
+        const text = replyText.textContent || replyText.innerText || '';
+        navigator.clipboard.writeText(text);
+        const btn = document.getElementById('copy-response-btn');
+        if (btn) { btn.textContent = '✓'; setTimeout(() => btn.textContent = '⧉', 1500); }
+      }
+
+      // ── Toggle Collapsible Section ──
+      function toggleCollapse(id) {
+        const section = document.getElementById(id);
+        if (section) section.classList.toggle('open');
+      }
+
+      // Make functions globally accessible
+      window.copyCode = copyCode;
+      window.copyResponse = copyResponse;
+      window.toggleCollapse = toggleCollapse;
+
+      // ── Notification Actions ──
+      function replyToNotification() {
+        dismissNotification();
+        const notifContent = notifText.textContent || '';
+        const preview = notifContent.substring(0, 40).trim();
+        input.value = `Re: ${preview}… `;
+        input.disabled = false;
+        input.focus();
+      }
+
+      function dismissNotification() {
+        if (notifTimer) { clearTimeout(notifTimer); notifTimer = null; }
+        notifBox.classList.add('dismissing');
+        setTimeout(() => { notifBox.classList.remove('visible', 'dismissing'); }, 300);
+      }
+
+      // ── Voice Input (via WebSocket → server-side recording) ──
+      const micBtn = document.getElementById('mic-btn');
+      let isListening = false;
+
+      micBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!ws || ws.readyState !== 1) return;
+
+        if (isListening) {
+          ws.send(JSON.stringify({ type: 'voice_stop' }));
+          isListening = false;
+          micBtn.classList.remove('listening');
+          input.placeholder = 'Processing…';
+        } else {
+          ws.send(JSON.stringify({ type: 'voice_start' }));
+          isListening = true;
+          micBtn.classList.add('listening');
+          input.value = '';
+          input.placeholder = 'Listening…';
+        }
+      });
+
+      // ── @ Mention Picker ──
+      const picker = document.getElementById('mention-picker');
+      const pickerList = document.getElementById('picker-list');
+      const pickerSearch = document.getElementById('picker-search');
+      const pickerPathBar = document.getElementById('picker-path-bar');
+      const inputWrapper = document.getElementById('input-wrapper');
+      const pickerPreview = document.getElementById('picker-preview');
+
+      let pickerOpen = false;
+      let activeTab = 'categories';
+      let allTools = [];
+      let allSkills = [];
+      let currentDir = '/';
+      let homeDir = '/';
+      let browseCache = {};
+      let pickerItems = [];
+      let pickerSelectedIdx = -1;
+      let mentionChips = []; // [{ type, name, value }]
+      let mentionTriggerPos = -1; // caret pos when @ was typed
+
+      // Fetch tools and home dir from server once
+      async function loadMentionData() {
+        try {
+          const r = await fetch('/api/mentions');
+          const d = await r.json();
+          allTools = d.tools || [];
+          allSkills = d.skills || [];
+          homeDir = d.homeDir || '/';
+          currentDir = homeDir;
+        } catch { allTools = []; allSkills = []; }
+      }
+      loadMentionData();
+
+      async function browseDir(dir) {
+        if (browseCache[dir]) return browseCache[dir];
+        try {
+          const r = await fetch(`/api/browse?dir=${encodeURIComponent(dir)}`);
+          const d = await r.json();
+          browseCache[dir] = d.entries || [];
+          return browseCache[dir];
+        } catch { return []; }
+      }
+
+      function openPicker() {
+        activeTab = 'categories';
+        pickerOpen = true;
+        picker.classList.add('open');
+        input.setAttribute('aria-expanded', 'true');
+        pickerSearch.value = '';
+        pickerSelectedIdx = -1;
+        renderPicker();
+        // Focus search after a tick so it doesn't capture the @
+        setTimeout(() => pickerSearch.focus(), 30);
+      }
+
+      function closePicker() {
+        pickerOpen = false;
+        picker.classList.remove('open');
+        input.setAttribute('aria-expanded', 'false');
+        pickerSelectedIdx = -1;
+        input.focus();
+      }
+
+      async function renderPicker() {
+        const query = pickerSearch.value.toLowerCase();
+        pickerList.innerHTML = '';
+
+        if (activeTab === 'categories') {
+          pickerPathBar.style.display = 'none';
+          const cats = [
+            { id: 'tools', icon: '🔧', name: 'Tools', badge: 'category' },
+            { id: 'files', icon: '📄', name: 'Files', badge: 'category' },
+            { id: 'folders', icon: '📁', name: 'Folders', badge: 'category' },
+            { id: 'skills', icon: '🧠', name: 'Skills', badge: 'category' }
+          ].filter(c => !query || c.name.toLowerCase().includes(query));
+          pickerItems = cats;
+          if (cats.length === 0) {
+            pickerList.innerHTML = '<div class="picker-empty">No categories found</div>';
+            return;
+          }
+          cats.forEach((c, i) => {
+            const el = makePicker(i, c.icon, c.name, c.badge, 'category');
+            el.addEventListener('click', () => selectItem(i));
+            pickerList.appendChild(el);
+          });
+
+        } else if (activeTab === 'tools') {
+          pickerPathBar.style.display = 'block';
+          pickerPathBar.textContent = '← Categories';
+          const results = allTools.filter(t =>
+            !query || t.name.toLowerCase().includes(query) || t.label.toLowerCase().includes(query)
+          );
+          pickerItems = results;
+          if (results.length === 0) {
+            pickerList.innerHTML = '<div class="picker-empty">No tools found</div>';
+            return;
+          }
+          results.forEach((tool, i) => {
+            const el = makePicker(i, '🔧', tool.label, tool.name.replace(/_/g, '-'), 'tool');
+            el.addEventListener('click', () => selectItem(i));
+            pickerList.appendChild(el);
+          });
+
+        } else if (activeTab === 'skills') {
+          pickerPathBar.style.display = 'block';
+          pickerPathBar.textContent = '← Categories';
+          const results = allSkills.filter(s =>
+            !query || s.name.toLowerCase().includes(query) || s.label.toLowerCase().includes(query)
+          );
+          pickerItems = results;
+          if (results.length === 0) {
+            pickerList.innerHTML = '<div class="picker-empty">No skills found</div>';
+            return;
+          }
+          results.forEach((skill, i) => {
+            const el = makePicker(i, '🧠', skill.name, 'skill', 'skill');
+            el.addEventListener('click', () => selectItem(i));
+            pickerList.appendChild(el);
+          });
+
+        } else {
+          // Files or Folders
+          pickerPathBar.style.display = 'block';
+          pickerPathBar.textContent = `← ${currentDir === '/' || currentDir === '' ? 'Categories' : currentDir}`;
+          const entries = await browseDir(currentDir);
+          const filtered = entries.filter(e => {
+            if (activeTab === 'folders' && !e.isDir) return false;
+            return !query || e.name.toLowerCase().includes(query);
+          });
+          
+          pickerItems = [];
+          if (activeTab === 'folders' && !query) {
+            const currentName = currentDir === '/' ? 'Root' : currentDir.split('/').pop() || 'Root';
+            pickerItems.push({ isCurrent: true, name: currentName, path: currentDir });
+            const currentEl = makePicker(0, '✅', `Choose current folder (${currentName})`, 'select', 'current', currentDir);
+            currentEl.addEventListener('click', () => selectItem(0));
+            pickerList.appendChild(currentEl);
+          }
+          
+          if (filtered.length === 0 && pickerItems.length === 0) {
+            pickerList.innerHTML = '<div class="picker-empty">Nothing here</div>';
+            return;
+          }
+          
+          filtered.forEach((entry) => {
+            const idx = pickerItems.length;
+            pickerItems.push(entry);
+            const icon = entry.isDir ? '📁' : getFileIconChar(entry.name);
+            const badge = entry.isDir ? 'dir' : entry.name.split('.').pop();
+            const el = makePicker(idx, icon, entry.name, badge, entry.isDir ? 'dir' : 'file', entry.path);
+            el.addEventListener('click', () => {
+              if (entry.isDir) {
+                // Navigate into dir
+                currentDir = entry.path;
+                pickerSearch.value = '';
+                pickerSelectedIdx = -1;
+                renderPicker();
+                pickerSearch.focus();
+              } else {
+                selectItem(idx);
+              }
+            });
+            pickerList.appendChild(el);
+          });
+        }
+        highlightItem(pickerSelectedIdx);
+      }
+
+      function makePicker(idx, icon, name, badge, type, path) {
+        const el = document.createElement('div');
+        el.className = 'picker-item';
+        el.dataset.idx = idx;
+        el.innerHTML = `<span class="picker-item-icon">${icon}</span><span class="picker-item-name">${esc(name)}</span><span class="picker-item-badge">${esc(badge)}</span>`;
+        return el;
+      }
+
+      function getFileIconChar(name) {
+        const ext = name.split('.').pop().toLowerCase();
+        const m = { ts: '📜', js: '📜', tsx: '📜', jsx: '📜', py: '🐍', md: '🗒️', json: '📋', yaml: '📋', yml: '📋', html: '🌐', css: '🎨', sh: '⌨️', png: '🖼️', jpg: '🖼️', jpeg: '🖼️', svg: '🖼️', pdf: '📄' };
+        return m[ext] || '📄';
+      }
+
+      function highlightItem(idx) {
+        document.querySelectorAll('.picker-item').forEach((el, i) => {
+          el.classList.toggle('selected', i === idx);
+          if (i === idx) el.scrollIntoView({ block: 'nearest' });
+        });
+
+        // Preview images or videos
+        const item = pickerItems[idx];
+        if (item && !item.isDir && item.path) {
+          const ext = (item.name || '').split('.').pop().toLowerCase();
+          const isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext);
+          const isVideo = ['mp4', 'webm', 'mov'].includes(ext);
+          
+          if (isImage || isVideo) {
+            const src = `/api/file?path=${encodeURIComponent(item.path)}`;
+            pickerPreview.style.display = 'flex';
+            if (isVideo) {
+              pickerPreview.innerHTML = `<video src="${src}" autoplay loop muted style="max-width: 100%; max-height: 160px; border-radius: 8px;"></video>`;
+            } else {
+              pickerPreview.innerHTML = `<img src="${src}" style="max-width: 100%; max-height: 160px; border-radius: 8px; object-fit: contain;" />`;
+            }
+            return;
+          }
+        }
+        
+        pickerPreview.style.display = 'none';
+        pickerPreview.innerHTML = '';
+      }
+
+      function selectItem(idx) {
+        const item = pickerItems[idx];
+        if (!item) return;
+
+        if (activeTab === 'categories') {
+          activeTab = item.id;
+          pickerSearch.value = '';
+          currentDir = homeDir;
+          pickerSelectedIdx = -1;
+          renderPicker();
+          pickerSearch.focus();
+          return;
+        }
+
+        if (item.isCurrent) {
+          addChip('folder', item.name || '/', item.path);
+          const val = input.value;
+          if (mentionTriggerPos >= 0) input.value = val.substring(0, mentionTriggerPos);
+          mentionTriggerPos = -1;
+          closePicker();
+          return;
+        }
+
+        if (item.isDir && (activeTab === 'files' || activeTab === 'folders')) {
+          currentDir = item.path;
+          pickerSearch.value = '';
+          pickerSelectedIdx = -1;
+          renderPicker();
+          pickerSearch.focus();
+          return;
+        }
+
+        let chipType, chipName, chipValue;
+        if (activeTab === 'tools') {
+          chipType = 'tool';
+          chipName = item.label || item.name;
+          chipValue = item.name;
+        } else if (activeTab === 'skills') {
+          chipType = 'skill';
+          chipName = item.name;
+          chipValue = item.name;
+        } else if (activeTab === 'files') {
+          chipType = 'file';
+          chipName = item.name;
+          chipValue = item.path || item.name;
+        } else {
+          chipType = 'folder';
+          chipName = item.name;
+          chipValue = item.path || item.name;
+        }
+        addChip(chipType, chipName, chipValue);
+        // Remove the @ + any typed query from the input
+        const val = input.value;
+        if (mentionTriggerPos >= 0) {
+          input.value = val.substring(0, mentionTriggerPos);
+        }
+        mentionTriggerPos = -1;
+        closePicker();
+      }
+
+      function addChip(type, name, value) {
+        const icons = { tool: '🔧', file: '📄', folder: '📁', skill: '🧠' };
+        const chip = document.createElement('span');
+        chip.className = 'mention-chip';
+        chip.dataset.type = type;
+        chip.dataset.value = value;
+        chip.innerHTML = `${icons[type] || '@'} ${esc(name)}<span class="chip-remove" onclick="this.parentElement.remove()">×</span>`;
+        // Insert before the input
+        inputWrapper.insertBefore(chip, input);
+        mentionChips = Array.from(inputWrapper.querySelectorAll('.mention-chip'));
+      }
+
+      // Build full message including chips as context
+      function buildFullMessage() {
+        const chips = Array.from(inputWrapper.querySelectorAll('.mention-chip'));
+        const chipContext = chips.map(c => {
+          const t = c.dataset.type, v = c.dataset.value;
+          if (t === 'tool') return `[USE TOOL: ${v}]`;
+          if (t === 'skill') return `[USE SKILL: ${v}]`;
+          if (t === 'file') return `[FILE CONTEXT: ${v}]`;
+          if (t === 'folder') return `[FOLDER CONTEXT: ${v}]`;
+          return '';
+        }).filter(Boolean).join(' ');
+        const text = input.value.trim();
+        return chipContext ? `${text}\n\n${chipContext}` : text;
+      }
+
+      // Picker search filter
+      pickerSearch.addEventListener('input', () => renderPicker());
+
+      // Picker keyboard nav
+      pickerSearch.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') { closePicker(); return; }
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          pickerSelectedIdx = Math.min(pickerSelectedIdx + 1, pickerItems.length - 1);
+          highlightItem(pickerSelectedIdx);
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          pickerSelectedIdx = Math.max(pickerSelectedIdx - 1, 0);
+          highlightItem(pickerSelectedIdx);
+        } else if (e.key === 'Enter' || e.key === 'Tab') {
+          e.preventDefault();
+          if (pickerSelectedIdx >= 0) selectItem(pickerSelectedIdx);
+          else if (pickerItems.length > 0) selectItem(0);
+        }
+      });
+
+      // Path bar click = go up one directory or back to categories
+      pickerPathBar.addEventListener('click', () => {
+        if (activeTab === 'tools' || activeTab === 'skills') {
+          activeTab = 'categories';
+          pickerSearch.value = '';
+          renderPicker();
+          return;
+        }
+        if (currentDir === '/' || currentDir === '') {
+          activeTab = 'categories';
+          pickerSearch.value = '';
+          renderPicker();
+          return;
+        }
+        const parts = currentDir.split('/').filter(Boolean);
+        if (parts.length > 0) {
+          parts.pop();
+          currentDir = parts.length > 0 ? '/' + parts.join('/') : '/';
+          pickerSearch.value = '';
+          renderPicker();
+        } else {
+          activeTab = 'categories';
+          pickerSearch.value = '';
+          renderPicker();
+        }
+      });
+
+      // Input @ detection
+      input.addEventListener('input', (e) => {
+        const val = input.value;
+        const pos = input.selectionStart || 0;
+        // Find last @ before cursor
+        const lastAt = val.lastIndexOf('@', pos - 1);
+        if (lastAt >= 0 && (lastAt === 0 || /\s/.test(val[lastAt - 1]))) {
+          const query = val.substring(lastAt + 1, pos);
+          // Only open for short queries (not if user typed a long word that happens to have @)
+          if (query.length <= 30 && !query.includes(' ')) {
+            mentionTriggerPos = lastAt;
+            if (!pickerOpen) openPicker();
+            pickerSearch.value = query;
+            renderPicker();
+            return;
+          }
+        }
+        if (pickerOpen) closePicker();
+      });
+
+      input.addEventListener('keydown', (e) => {
+        if (pickerOpen) {
+          if (e.key === 'Escape') { e.preventDefault(); closePicker(); return; }
+          if (e.key === 'ArrowDown') { e.preventDefault(); pickerSelectedIdx = Math.min(pickerSelectedIdx + 1, pickerItems.length - 1); highlightItem(pickerSelectedIdx); return; }
+          if (e.key === 'ArrowUp') { e.preventDefault(); pickerSelectedIdx = Math.max(pickerSelectedIdx - 1, 0); highlightItem(pickerSelectedIdx); return; }
+          if (e.key === 'Tab') { e.preventDefault(); if (pickerSelectedIdx >= 0) selectItem(pickerSelectedIdx); else if (pickerItems.length > 0) selectItem(0); return; }
+        }
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+        // Backspace on empty input removes last chip
+        if (e.key === 'Backspace' && input.value === '') {
+          const chips = inputWrapper.querySelectorAll('.mention-chip');
+          if (chips.length > 0) chips[chips.length - 1].remove();
+        }
+      });
+
+      // Override send to include chip context
+      function send() {
+        const text = buildFullMessage();
+        if (!text || !ws || ws.readyState !== 1 || waiting) return;
+        waiting = true;
+        input.disabled = true;
+        setAgentBusy(true);
+        announceToSR('Message sent, waiting for response');
+        // Clear chips
+        inputWrapper.querySelectorAll('.mention-chip').forEach(c => c.remove());
+        replyBox.classList.remove('visible');
+        progress.classList.remove('visible');
+        progress.innerHTML = '';
+        clearInteractive();
+        ws.send(JSON.stringify({ type: 'chat', text }));
+      }
+
+      // Click outside picker to close
+      document.addEventListener('click', function (e) {
+        if (pickerOpen && !picker.contains(e.target) && e.target !== input) {
+          closePicker();
+        }
+        const a = e.target.closest('a');
+        if (a && a.href) {
+          e.preventDefault();
+          e.stopPropagation();
+          window.open(a.href, '_blank');
+          return;
+        }
+        if (!pickerOpen) grabFocus();
+      });
+
+      // ── Drag & Drop ──
+      const dropOverlay = document.getElementById('drop-overlay');
+      let dragCounter = 0;
+
+      document.addEventListener('dragenter', (e) => {
+        e.preventDefault();
+        dragCounter++;
+        dropOverlay.classList.add('active');
+        dropOverlay.setAttribute('aria-hidden', 'false');
+      }, false);
+
+      document.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        dragCounter--;
+        if (dragCounter <= 0) {
+          dragCounter = 0;
+          dropOverlay.classList.remove('active');
+          dropOverlay.setAttribute('aria-hidden', 'true');
+        }
+      }, false);
+
+      document.addEventListener('dragover', (e) => {
+        e.preventDefault();
+      }, false);
+
+      document.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dragCounter = 0;
+        dropOverlay.classList.remove('active');
+        dropOverlay.setAttribute('aria-hidden', 'true');
+
+        const files = e.dataTransfer && e.dataTransfer.files;
+        if (!files || files.length === 0 || !ws || ws.readyState !== 1 || waiting) return;
+
+        const file = files[0];
+        const reader = new FileReader();
+        reader.onload = () => {
+          const dataUrl = reader.result;
+          // Extract base64 from data URL
+          const base64 = dataUrl.split(',')[1];
+          const mimeType = file.type || 'application/octet-stream';
+          waiting = true;
+          input.disabled = true;
+          replyBox.classList.remove('visible');
+          clearInteractive();
+          ws.send(JSON.stringify({
+            type: 'file_attach',
+            name: file.name,
+            base64,
+            mimeType,
+            text: '',
+          }));
+        };
+        reader.readAsDataURL(file);
+      }, false);
+
+      connect();
+      grabFocus();
+    })();
+  </script>
+</body>
+
+</html>

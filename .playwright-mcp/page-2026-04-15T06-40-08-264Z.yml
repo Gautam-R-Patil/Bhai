@@ -1,0 +1,155 @@
+- generic [active] [ref=e1]:
+  - link "Skip to content" [ref=e2] [cursor=pointer]:
+    - /url: "#main"
+  - navigation [ref=e3]:
+    - link "XAGILABS" [ref=e4] [cursor=pointer]:
+      - /url: /
+      - emphasis [ref=e5]: XAGI
+      - text: LABS
+    - generic [ref=e6]:
+      - link "About" [ref=e7] [cursor=pointer]:
+        - /url: /about.html
+      - link "ATLAS" [ref=e8] [cursor=pointer]:
+        - /url: /atlas.html
+      - link "Contact" [ref=e9] [cursor=pointer]:
+        - /url: /contact.html
+  - generic [ref=e10]:
+    - generic [ref=e11]: AI Research Lab
+    - heading "We're building the future of intelligence." [level=1] [ref=e14]:
+      - generic [ref=e16]: We're building
+      - generic [ref=e18]: the future of intelligence.
+    - paragraph [ref=e19]: XAGI Labs is on a mission to build AGI and make it accessible to everyone. Not locked away in research labs. Not behind enterprise paywalls. For everyone.
+    - generic [ref=e20]:
+      - link "Explore ATLAS" [ref=e21] [cursor=pointer]:
+        - /url: https://tryatlasagi.com
+        - text: Explore ATLAS
+        - img [ref=e22]
+      - link "Our Mission" [ref=e24] [cursor=pointer]:
+        - /url: /about.html
+    - generic [ref=e25]: scroll
+  - generic [ref=e28]:
+    - generic [ref=e29]: Autonomous Intelligence
+    - generic [ref=e30]: •
+    - generic [ref=e31]: Living Memory
+    - generic [ref=e32]: •
+    - generic [ref=e33]: Agent Swarms
+    - generic [ref=e34]: •
+    - generic [ref=e35]: Full Computer Control
+    - generic [ref=e36]: •
+    - generic [ref=e37]: Self-Evolving AI
+    - generic [ref=e38]: •
+    - generic [ref=e39]: 24/7 Operation
+    - generic [ref=e40]: •
+    - generic [ref=e41]: Voice Conversations
+    - generic [ref=e42]: •
+    - generic [ref=e43]: Deep Research
+    - generic [ref=e44]: •
+    - generic [ref=e45]: Autonomous Intelligence
+    - generic [ref=e46]: •
+    - generic [ref=e47]: Living Memory
+    - generic [ref=e48]: •
+    - generic [ref=e49]: Agent Swarms
+    - generic [ref=e50]: •
+    - generic [ref=e51]: Full Computer Control
+    - generic [ref=e52]: •
+    - generic [ref=e53]: Self-Evolving AI
+    - generic [ref=e54]: •
+    - generic [ref=e55]: 24/7 Operation
+    - generic [ref=e56]: •
+    - generic [ref=e57]: Voice Conversations
+    - generic [ref=e58]: •
+    - generic [ref=e59]: Deep Research
+    - generic [ref=e60]: •
+  - generic [ref=e61]:
+    - generic [ref=e62]:
+      - paragraph [ref=e63]: What We Believe
+      - heading "Three convictions that drive everything." [level=2] [ref=e64]:
+        - text: Three convictions
+        - text: that drive everything.
+    - generic [ref=e65]:
+      - generic: "01"
+      - generic [ref=e66]:
+        - heading "AGI should be for everyone." [level=2] [ref=e67]
+        - paragraph [ref=e68]: Not locked behind enterprise contracts or research papers. When AGI arrives, it should be as natural as using a smartphone. We're building for individuals, students, creators — not just corporations.
+    - generic [ref=e69]:
+      - generic: "02"
+      - generic [ref=e70]:
+        - heading "Intelligence should act, not just answer." [level=2] [ref=e71]
+        - paragraph [ref=e72]: The leap from AI to AGI isn't more knowledge — it's autonomous action. Real intelligence doesn't wait to be prompted. It anticipates, decides, executes, and learns from the outcome.
+    - generic [ref=e73]:
+      - generic: "03"
+      - generic [ref=e74]:
+        - heading "The future runs continuously." [level=2] [ref=e75]
+        - paragraph [ref=e76]: AGI isn't something you open and close. It's an always-on presence that understands your world, remembers your history, and evolves alongside you — getting smarter with every interaction.
+  - generic [ref=e78]:
+    - paragraph [ref=e79]: Our First Product
+    - generic [ref=e80]: ATLAS
+    - paragraph [ref=e81]: The world's first AGI experience. A continuously running autonomous intelligence that controls your computer, coordinates AI agents, and remembers everything.
+    - generic [ref=e82]:
+      - generic [ref=e83]:
+        - generic [ref=e84]: 🌙
+        - heading "Always On" [level=4] [ref=e85]
+        - paragraph [ref=e86]: Works 24/7, even overnight. Wake up to completed tasks.
+      - generic [ref=e87]:
+        - generic [ref=e88]: 🧠
+        - heading "Living Memory" [level=4] [ref=e89]
+        - paragraph [ref=e90]: Remembers every detail about you, forever.
+      - generic [ref=e91]:
+        - generic [ref=e92]: 🔨
+        - heading "Self-Evolving" [level=4] [ref=e93]
+        - paragraph [ref=e94]: Builds its own tools. Gets smarter every day.
+      - generic [ref=e95]:
+        - generic [ref=e96]: 🐝
+        - heading "Agent Swarm" [level=4] [ref=e97]
+        - paragraph [ref=e98]: Multiple AI agents working in parallel.
+    - link "Experience ATLAS" [ref=e99] [cursor=pointer]:
+      - /url: https://tryatlasagi.com
+      - text: Experience ATLAS
+      - img [ref=e100]
+  - blockquote [ref=e103]:
+    - text: “
+    - generic [ref=e104]: We
+    - generic [ref=e105]: didn't
+    - generic [ref=e106]: start
+    - generic [ref=e107]: a
+    - generic [ref=e108]: company
+    - generic [ref=e109]: to
+    - generic [ref=e110]: build
+    - generic [ref=e111]: another
+    - generic [ref=e112]: chatbot.
+    - generic [ref=e113]: We
+    - generic [ref=e114]: started
+    - generic [ref=e115]: it
+    - generic [ref=e116]: to
+    - generic [ref=e117]: build
+    - generic [ref=e118]: something
+    - generic [ref=e119]: that
+    - generic [ref=e120]:
+      - generic [ref=e121]: actually
+      - generic [ref=e122]: changes
+      - generic [ref=e123]: how
+      - generic [ref=e124]: people
+      - generic [ref=e125]: live
+      - generic [ref=e126]: and
+      - generic [ref=e127]: work.
+  - generic [ref=e128]:
+    - heading "The future isn't coming. We're building it." [level=2] [ref=e129]:
+      - text: The future isn't coming.
+      - text: We're building it.
+    - paragraph [ref=e130]: Join us on the mission to make AGI accessible to every human on the planet.
+    - generic [ref=e131]:
+      - link "Join the Waitlist" [ref=e132] [cursor=pointer]:
+        - /url: https://tryatlasagi.com/waitlist
+      - link "Get in Touch" [ref=e133] [cursor=pointer]:
+        - /url: /contact.html
+  - contentinfo [ref=e134]:
+    - generic [ref=e135]:
+      - link "About" [ref=e136] [cursor=pointer]:
+        - /url: /about.html
+      - link "ATLAS" [ref=e137] [cursor=pointer]:
+        - /url: /atlas.html
+      - link "Contact" [ref=e138] [cursor=pointer]:
+        - /url: /contact.html
+      - link "hello@xagilab.com" [ref=e139] [cursor=pointer]:
+        - /url: mailto:hello@xagilab.com
+    - paragraph [ref=e140]: © 2026 XAGI Labs Private Limited

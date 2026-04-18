@@ -1,0 +1,121 @@
+<div class="resume">
+  {{#if basics}}
+  <header class="head">
+    <h1 class="name">{{basics.name}}</h1>
+    {{#if basics.label}}<div class="label">{{basics.label}}</div>{{/if}}
+    <div class="contact">
+      {{#if basics.email}}<span>{{basics.email}}</span>{{/if}}
+      {{#if basics.phone}}<span>{{basics.phone}}</span>{{/if}}
+      {{#if basics.url}}<span>{{basics.url}}</span>{{/if}}
+      {{#if basics.location.city}}<span>{{basics.location.city}}{{#if basics.location.region}}, {{basics.location.region}}{{/if}}</span>{{/if}}
+    </div>
+  </header>
+  {{/if}}
+
+  {{#if basics.summary}}
+  <section class="section section-summary">
+    <p>{{basics.summary}}</p>
+  </section>
+  {{/if}}
+
+  {{#if work}}
+  <section class="section">
+    <h2>Experience</h2>
+    {{#each work}}
+    <div class="entry">
+      <div class="entry-head">
+        <div>
+          <div class="entry-title">{{position}}</div>
+          <div class="entry-sub">{{name}}{{#if location}} · {{location}}{{/if}}</div>
+        </div>
+        <div class="entry-dates">{{startDate}}{{#if endDate}} – {{endDate}}{{else}} – Present{{/if}}</div>
+      </div>
+      {{#if summary}}<p class="entry-summary">{{summary}}</p>{{/if}}
+      {{#if highlights}}
+      <ul class="entry-highlights">
+        {{#each highlights}}<li>{{this}}</li>{{/each}}
+      </ul>
+      {{/if}}
+    </div>
+    {{/each}}
+  </section>
+  {{/if}}
+
+  {{#if projects}}
+  <section class="section">
+    <h2>Projects</h2>
+    {{#each projects}}
+    <div class="entry">
+      <div class="entry-head">
+        <div class="entry-title">{{name}}</div>
+        {{#if startDate}}<div class="entry-dates">{{startDate}}{{#if endDate}} – {{endDate}}{{/if}}</div>{{/if}}
+      </div>
+      {{#if description}}<p class="entry-summary">{{description}}</p>{{/if}}
+      {{#if highlights}}
+      <ul class="entry-highlights">
+        {{#each highlights}}<li>{{this}}</li>{{/each}}
+      </ul>
+      {{/if}}
+    </div>
+    {{/each}}
+  </section>
+  {{/if}}
+
+  {{#if skills}}
+  <section class="section">
+    <h2>Skills</h2>
+    <div class="skills-grid">
+      {{#each skills}}
+      <div class="skill">
+        <div class="skill-name">{{name}}</div>
+        <div class="skill-kw">{{#each keywords}}{{this}}{{#unless @last}} · {{/unless}}{{/each}}</div>
+      </div>
+      {{/each}}
+    </div>
+  </section>
+  {{/if}}
+
+  {{#if education}}
+  <section class="section">
+    <h2>Education</h2>
+    {{#each education}}
+    <div class="entry">
+      <div class="entry-head">
+        <div>
+          <div class="entry-title">{{institution}}</div>
+          <div class="entry-sub">{{studyType}}{{#if area}}, {{area}}{{/if}}</div>
+        </div>
+        <div class="entry-dates">{{startDate}}{{#if endDate}} – {{endDate}}{{/if}}</div>
+      </div>
+    </div>
+    {{/each}}
+  </section>
+  {{/if}}
+
+  {{#if awards}}
+  <section class="section">
+    <h2>Awards</h2>
+    {{#each awards}}
+    <div class="entry">
+      <div class="entry-head">
+        <div>
+          <div class="entry-title">{{title}}</div>
+          <div class="entry-sub">{{awarder}}</div>
+        </div>
+        <div class="entry-dates">{{date}}</div>
+      </div>
+      {{#if summary}}<p class="entry-summary">{{summary}}</p>{{/if}}
+    </div>
+    {{/each}}
+  </section>
+  {{/if}}
+
+  {{#if languages}}
+  <section class="section">
+    <h2>Languages</h2>
+    <div class="inline-list">
+      {{#each languages}}<span>{{language}} ({{fluency}})</span>{{/each}}
+    </div>
+  </section>
+  {{/if}}
+</div>

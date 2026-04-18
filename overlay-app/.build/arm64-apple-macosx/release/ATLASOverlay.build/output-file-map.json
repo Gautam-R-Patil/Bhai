@@ -1,0 +1,13 @@
+{
+  "": {
+    "dependencies": "/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/ATLASOverlay.build/ATLASOverlay.d",
+    "object": "/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/ATLASOverlay.build/ATLASOverlay.o",
+    "swift-dependencies": "/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/ATLASOverlay.build/master.swiftdeps"
+  },
+  "/Users/user/Desktop/jarvis/overlay-app/Sources/main.swift": {
+    "object": "/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/ATLASOverlay.build/main.swift.o",
+    "swiftmodule": "/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/ATLASOverlay.build/main~partial.swiftmodule",
+    "swift-dependencies": "/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/ATLASOverlay.build/main.swiftdeps",
+    "diagnostics": "/Users/user/Desktop/jarvis/overlay-app/.build/arm64-apple-macosx/release/ATLASOverlay.build/main.dia"
+  }
+}

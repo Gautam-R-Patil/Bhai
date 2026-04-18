@@ -1,0 +1,119 @@
+- generic [active] [ref=e1]:
+  - navigation [ref=e2]:
+    - link "XAGILABS" [ref=e3] [cursor=pointer]:
+      - /url: /
+      - generic [ref=e4]: XAGILABS
+    - generic [ref=e5]:
+      - link "About" [ref=e6] [cursor=pointer]:
+        - /url: /about
+      - link "ATLAS" [ref=e7] [cursor=pointer]:
+        - /url: /atlas
+        - text: ATLAS
+      - link "Contact" [ref=e9] [cursor=pointer]:
+        - /url: /contact
+  - main [ref=e10]:
+    - main [ref=e11]:
+      - generic [ref=e15]:
+        - generic [ref=e18]: Our Product
+        - heading "ATLAS" [level=1] [ref=e20]:
+          - generic [ref=e22]: ATLAS
+        - paragraph [ref=e23]: The world's first continuously running autonomous AI. It doesn't wait for prompts. It acts.
+        - link "Experience ATLAS" [ref=e25] [cursor=pointer]:
+          - /url: https://tryatlasagi.com
+          - text: Experience ATLAS
+          - img [ref=e26]
+      - generic [ref=e28]:
+        - generic [ref=e29]:
+          - generic [ref=e30]: Capabilities
+          - heading "What makes ATLAS different." [level=2] [ref=e31]
+        - generic [ref=e32]:
+          - generic [ref=e34]:
+            - generic: "01"
+            - generic [ref=e35]:
+              - heading "It Never Stops." [level=3] [ref=e36]
+              - paragraph [ref=e37]: ATLAS runs 24/7. While you sleep, it works. While you're in meetings, it executes. It doesn't wait for prompts — it maintains a continuous execution loop, monitoring, acting, and delivering around the clock.
+          - generic [ref=e39]:
+            - generic: "02"
+            - generic [ref=e40]:
+              - heading "It Never Forgets." [level=3] [ref=e41]
+              - paragraph [ref=e42]: Every conversation, every preference, every outcome is stored in a living memory system — semantic recall, knowledge graphs, emotional context, and episodic milestones. ATLAS doesn't start over. It builds on everything.
+          - generic [ref=e44]:
+            - generic: "03"
+            - generic [ref=e45]:
+              - heading "It Controls Everything." [level=3] [ref=e46]
+              - paragraph [ref=e47]: Full computer control via browser automation, shell commands, file system access, and API integrations. ATLAS doesn't just suggest actions — it performs them. Your entire digital workflow, automated.
+          - generic [ref=e49]:
+            - generic: "04"
+            - generic [ref=e50]:
+              - heading "It Builds Its Own Tools." [level=3] [ref=e51]
+              - paragraph [ref=e52]: When ATLAS encounters a problem it can't solve with existing tools, it creates new ones. Self-evolving tool generation, strategy libraries, and decomposition templates that improve with every task.
+      - generic [ref=e54]:
+        - generic [ref=e55]:
+          - generic [ref=e56]: 40+
+          - generic [ref=e57]: Hours saved weekly
+        - generic [ref=e58]:
+          - generic [ref=e59]: 24/7
+          - generic [ref=e60]: Continuous operation
+        - generic [ref=e61]:
+          - generic [ref=e62]: 130+
+          - generic [ref=e63]: Built-in tools
+        - generic [ref=e64]:
+          - generic [ref=e65]: "16"
+          - generic [ref=e66]: Memory systems
+      - generic [ref=e68]:
+        - generic [ref=e69]:
+          - generic [ref=e70]: Features
+          - heading "Everything, built in." [level=2] [ref=e71]
+        - generic [ref=e72]:
+          - generic [ref=e74]:
+            - generic [ref=e75]: ⚡
+            - heading "Always On" [level=3] [ref=e76]
+            - paragraph [ref=e77]: Continuous 24/7 autonomous operation
+          - generic [ref=e79]:
+            - generic [ref=e80]: 🧠
+            - heading "Living Memory" [level=3] [ref=e81]
+            - paragraph [ref=e82]: Remembers everything, learns from every interaction
+          - generic [ref=e84]:
+            - generic [ref=e85]: ⚙️
+            - heading "Self-Evolving" [level=3] [ref=e86]
+            - paragraph [ref=e87]: Writes its own tools, improves its own strategies
+          - generic [ref=e89]:
+            - generic [ref=e90]: 🤖
+            - heading "Agent Swarm" [level=3] [ref=e91]
+            - paragraph [ref=e92]: Parallel sub-agents for complex task orchestration
+          - generic [ref=e94]:
+            - generic [ref=e95]: 🎙️
+            - heading "Voice" [level=3] [ref=e96]
+            - paragraph [ref=e97]: Natural voice conversations and transcription
+          - generic [ref=e99]:
+            - generic [ref=e100]: 🔬
+            - heading "Deep Research" [level=3] [ref=e101]
+            - paragraph [ref=e102]: Autonomous research across 500+ sources
+          - generic [ref=e104]:
+            - generic [ref=e105]: 🔒
+            - heading "Secure" [level=3] [ref=e106]
+            - paragraph [ref=e107]: Sandboxed execution, validated tool calls
+          - generic [ref=e109]:
+            - generic [ref=e110]: 🌙
+            - heading "Dreams Overnight" [level=3] [ref=e111]
+            - paragraph [ref=e112]: Consolidates learnings while you sleep
+      - generic [ref=e114]:
+        - heading "Ready to meet your AI?" [level=2] [ref=e115]
+        - paragraph [ref=e116]: ATLAS is available now. Start with a free trial.
+        - link "Experience ATLAS" [ref=e118] [cursor=pointer]:
+          - /url: https://tryatlasagi.com
+          - text: Experience ATLAS
+          - img [ref=e119]
+  - contentinfo [ref=e121]:
+    - generic [ref=e122]:
+      - generic [ref=e123]:
+        - link "About" [ref=e124] [cursor=pointer]:
+          - /url: /about
+        - link "ATLAS" [ref=e125] [cursor=pointer]:
+          - /url: /atlas
+        - link "Contact" [ref=e126] [cursor=pointer]:
+          - /url: /contact
+        - link "hello@xagilab.com" [ref=e127] [cursor=pointer]:
+          - /url: mailto:hello@xagilab.com
+      - paragraph [ref=e128]: © 2026 XAGI Labs Private Limited
+  - alert [ref=e129]

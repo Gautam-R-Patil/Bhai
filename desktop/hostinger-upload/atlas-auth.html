@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>A.T.L.A.S — Sign In</title>
+    <!-- OTPless Headless SDK — runs on this real HTTPS domain, no restrictions -->
+    <script id="otpless-sdk" src="https://otpless.com/v4/headless.js" data-appid="GY9VEBIDPJPIJU3LU4F5"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+        }
+        .card {
+            background: rgba(255,255,255,0.07);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 20px;
+            padding: 40px 36px;
+            width: 360px;
+            box-shadow: 0 24px 60px rgba(0,0,0,0.4);
+        }
+        .logo {
+            text-align: center;
+            margin-bottom: 28px;
+        }
+        .logo-circle {
+            width: 56px; height: 56px;
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            border-radius: 14px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 24px; font-weight: 700; margin: 0 auto 12px;
+        }
+        h1 { font-size: 20px; font-weight: 700; }
+        .subtitle { font-size: 13px; color: rgba(255,255,255,0.5); margin-top: 4px; }
+
+        .section { margin-top: 24px; }
+        label { font-size: 12px; font-weight: 500; color: rgba(255,255,255,0.6); display: block; margin-bottom: 6px; letter-spacing: 0.06em; text-transform: uppercase; }
+        .phone-row { display: flex; gap: 8px; }
+        input {
+            width: 100%; padding: 11px 14px;
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 10px; color: #fff; font-size: 14px;
+            transition: border-color 0.2s;
+            outline: none;
+        }
+        input::placeholder { color: rgba(255,255,255,0.3); }
+        input:focus { border-color: #6366f1; background: rgba(255,255,255,0.11); }
+        .cc-input { width: 72px; flex-shrink: 0; }
+
+        .btn {
+            width: 100%; padding: 12px;
+            border: none; border-radius: 10px;
+            font-size: 14px; font-weight: 600;
+            cursor: pointer; transition: all 0.2s;
+            margin-top: 12px;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            color: #fff;
+        }
+        .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .btn-google {
+            background: rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.2);
+            color: #fff; display: flex; align-items: center; justify-content: center; gap: 10px;
+        }
+        .btn-google:hover { background: rgba(255,255,255,0.15); }
+
+        .divider { display: flex; align-items: center; gap: 10px; margin: 16px 0 4px; }
+        .divider hr { flex: 1; border: none; border-top: 1px solid rgba(255,255,255,0.12); }
+        .divider span { font-size: 12px; color: rgba(255,255,255,0.4); }
+
+        .back-link { font-size: 12px; color: rgba(255,255,255,0.4); cursor: pointer; display: inline-block; margin-top: 14px; }
+        .back-link:hover { color: rgba(255,255,255,0.7); }
+
+        .resend-row { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
+        .text-btn { background: none; border: none; color: rgba(255,255,255,0.45); font-size: 12px; cursor: pointer; padding: 0; }
+        .text-btn:hover { color: rgba(255,255,255,0.8); }
+        .text-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        #loadingState { text-align: center; padding: 32px 0; }
+        .spinner { width: 36px; height: 36px; border: 3px solid rgba(99,102,241,0.2); border-top-color: #6366f1; border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 12px; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        #successState { text-align: center; padding: 32px 0; }
+        .check { font-size: 40px; margin-bottom: 12px; }
+
+        #errorBanner { background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.3); border-radius: 8px; padding: 10px 14px; font-size: 13px; color: #fca5a5; margin-top: 12px; display: none; }
+
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+<div class="card">
+    <div class="logo">
+        <div class="logo-circle">A</div>
+        <h1>Sign in to A.T.L.A.S</h1>
+        <p class="subtitle">Enter your phone number or continue with Google</p>
+    </div>
+
+    <!-- Step 1: Phone Input -->
+    <div id="step1">
+        <div class="section">
+            <label>Phone Number</label>
+            <div class="phone-row">
+                <input class="cc-input" type="text" id="ccInput" value="+91" maxlength="5">
+                <input type="tel" id="phoneInput" placeholder="10-digit number" maxlength="10" inputmode="numeric">
+            </div>
+        </div>
+        <button class="btn btn-primary" id="sendBtn" onclick="sendOTP()">Send OTP</button>
+
+        <div class="divider"><hr><span>or</span><hr></div>
+        <button class="btn btn-google" onclick="signInGoogle()">
+            <svg width="18" height="18" viewBox="0 0 24 24">
+                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/>
+                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+            </svg>
+            Continue with Google
+        </button>
+        <div id="errorBanner"></div>
+    </div>
+
+    <!-- Step 2: OTP Verification -->
+    <div id="step2" class="hidden">
+        <div class="section">
+            <p style="font-size:13px;color:rgba(255,255,255,0.55);margin-bottom:16px;">OTP sent to <strong id="sentTo" style="color:#fff;"></strong></p>
+            <label>Enter OTP</label>
+            <input type="text" id="otpInput" placeholder="6-digit OTP" maxlength="6" inputmode="numeric" oninput="this.value=this.value.replace(/\D/g,'')">
+        </div>
+        <button class="btn btn-primary" id="verifyBtn" onclick="verifyOTP()">Verify &amp; Sign In</button>
+        <div class="resend-row">
+            <button class="text-btn" onclick="goBack()">← Change number</button>
+            <button class="text-btn" id="resendBtn" onclick="resendOTP()" disabled>Resend (<span id="resendTimer">30</span>s)</button>
+        </div>
+        <div id="errorBanner2" style="background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.3);border-radius:8px;padding:10px 14px;font-size:13px;color:#fca5a5;margin-top:12px;display:none;"></div>
+    </div>
+
+    <!-- Loading -->
+    <div id="loadingState" class="hidden">
+        <div class="spinner"></div>
+        <p style="font-size:14px;color:rgba(255,255,255,0.6);" id="loadingMsg">Sending OTP…</p>
+    </div>
+
+    <!-- Success -->
+    <div id="successState" class="hidden">
+        <div class="check">✅</div>
+        <p style="font-size:16px;font-weight:600;">Signed in!</p>
+        <p style="font-size:13px;color:rgba(255,255,255,0.5);margin-top:6px;">Returning to A.T.L.A.S…</p>
+    </div>
+</div>
+
+<script>
+    let _signin = null;
+    let _phone = '';
+    let _cc = '';
+    let _resendInterval = null;
+
+    // ── OTPless Init ──────────────────────────────────────────────────
+    function initOTPless() {
+        if (_signin) return;
+        if (typeof OTPless === 'undefined') { setTimeout(initOTPless, 400); return; }
+
+        _signin = new OTPless(function(event) {
+            const type = event.responseType;
+            console.log('[OTPless event]', type, event);
+
+            if (type === 'INITIATE') {
+                // OTP sent — go to step 2
+                showStep2();
+                startResend();
+            } else if (type === 'OTP_AUTO_READ') {
+                const otp = event.response?.otp;
+                if (otp) document.getElementById('otpInput').value = otp;
+            } else if (type === 'ONETAP' || type === 'VERIFY') {
+                // Auth success!
+                const resp = event.response;
+                const userId = resp.userId || resp.waId;
+                const identities = resp.identities || [];
+                const phoneId = identities.find(i => i.identityType === 'MOBILE');
+                const emailId = identities.find(i => i.identityType === 'EMAIL');
+                const payload = {
+                    userId,
+                    token: resp.token || resp.idToken || userId,
+                    phone: phoneId?.identityValue || _phone || null,
+                    email: emailId?.identityValue || null,
+                    name: phoneId?.name || emailId?.name || null,
+                };
+                onAuthSuccess(payload);
+            } else if (type === 'FAILED') {
+                const msg = event.response?.errorMessage || 'Authentication failed';
+                showError(msg);
+                resetToStep1();
+            }
+        });
+    }
+
+    // ── Auth Result → Electron ────────────────────────────────────────
+    function onAuthSuccess(payload) {
+        showSuccess();
+        // 1. If running inside Electron Preload bridge
+        if (window.__ATLAS_AUTH__) {
+            window.__ATLAS_AUTH__(payload);
+            return;
+        }
+        // 2. postMessage to opener (Electron BrowserWindow listens on did-navigate / ipc)
+        if (window.opener) {
+            window.opener.postMessage({ type: 'ATLAS_AUTH_SUCCESS', payload }, '*');
+        }
+        // 3. URL hash fallback — main process watches did-navigate
+        setTimeout(() => {
+            window.location.hash = 'auth=' + encodeURIComponent(JSON.stringify(payload));
+        }, 300);
+    }
+
+    // ── OTP Flow ──────────────────────────────────────────────────────
+    function sendOTP() {
+        const phone = document.getElementById('phoneInput').value.trim();
+        const cc = document.getElementById('ccInput').value.trim() || '+91';
+        if (!phone || phone.replace(/\D/g,'').length < 6) { showError('Enter a valid phone number'); return; }
+        _phone = phone;
+        _cc = cc;
+        hideError();
+        showLoading('Sending OTP…');
+        initOTPless();
+        _signin.initiate({ channel: 'PHONE', phone, countryCode: cc });
+    }
+
+    function verifyOTP() {
+        const otp = document.getElementById('otpInput').value.trim();
+        if (!otp || otp.length < 4) { showError2('Enter the OTP'); return; }
+        hideError2();
+        document.getElementById('verifyBtn').disabled = true;
+        document.getElementById('verifyBtn').textContent = 'Verifying…';
+        _signin.verify({ channel: 'PHONE', phone: _phone, countryCode: _cc, otp });
+    }
+
+    function resendOTP() {
+        document.getElementById('otpInput').value = '';
+        hideError2();
+        showLoading('Resending OTP…');
+        _signin.initiate({ channel: 'PHONE', phone: _phone, countryCode: _cc });
+    }
+
+    function signInGoogle() {
+        showLoading('Opening Google…');
+        initOTPless();
+        _signin.initiate({ channel: 'OAUTH', channelType: 'GMAIL' });
+    }
+
+    function goBack() {
+        stopResend();
+        document.getElementById('step2').classList.add('hidden');
+        document.getElementById('step1').classList.remove('hidden');
+        document.getElementById('loadingState').classList.add('hidden');
+    }
+
+    // ── Resend Countdown ──────────────────────────────────────────────
+    function startResend() {
+        stopResend();
+        let secs = 30;
+        const btn = document.getElementById('resendBtn');
+        const timer = document.getElementById('resendTimer');
+        btn.disabled = true;
+        timer.textContent = secs;
+        _resendInterval = setInterval(() => {
+            secs--;
+            timer.textContent = secs;
+            if (secs <= 0) {
+                stopResend();
+                btn.disabled = false;
+                btn.textContent = 'Resend OTP';
+            }
+        }, 1000);
+    }
+    function stopResend() {
+        if (_resendInterval) { clearInterval(_resendInterval); _resendInterval = null; }
+    }
+
+    // ── UI State ──────────────────────────────────────────────────────
+    function showStep2() {
+        document.getElementById('step1').classList.add('hidden');
+        document.getElementById('loadingState').classList.add('hidden');
+        document.getElementById('step2').classList.remove('hidden');
+        document.getElementById('sentTo').textContent = _cc + ' ' + _phone;
+        document.getElementById('verifyBtn').disabled = false;
+        document.getElementById('verifyBtn').textContent = 'Verify & Sign In';
+        document.getElementById('otpInput').focus();
+    }
+    function showLoading(msg) {
+        document.getElementById('step1').classList.add('hidden');
+        document.getElementById('step2').classList.add('hidden');
+        document.getElementById('successState').classList.add('hidden');
+        document.getElementById('loadingState').classList.remove('hidden');
+        document.getElementById('loadingMsg').textContent = msg || 'Please wait…';
+    }
+    function showSuccess() {
+        ['step1','step2','loadingState'].forEach(id => document.getElementById(id).classList.add('hidden'));
+        document.getElementById('successState').classList.remove('hidden');
+    }
+    function resetToStep1() {
+        document.getElementById('loadingState').classList.add('hidden');
+        document.getElementById('step2').classList.add('hidden');
+        document.getElementById('successState').classList.add('hidden');
+        document.getElementById('step1').classList.remove('hidden');
+        document.getElementById('sendBtn').disabled = false;
+        document.getElementById('sendBtn').textContent = 'Send OTP';
+    }
+    function showError(msg) {
+        const el = document.getElementById('errorBanner');
+        el.textContent = '⚠ ' + msg; el.style.display = 'block';
+    }
+    function hideError() { document.getElementById('errorBanner').style.display = 'none'; }
+    function showError2(msg) {
+        const el = document.getElementById('errorBanner2');
+        el.textContent = '⚠ ' + msg; el.style.display = 'block';
+    }
+    function hideError2() { document.getElementById('errorBanner2').style.display = 'none'; }
+
+    // Enter key support
+    document.addEventListener('keydown', e => {
+        const s1 = !document.getElementById('step1').classList.contains('hidden');
+        const s2 = !document.getElementById('step2').classList.contains('hidden');
+        if (e.key === 'Enter') { if (s1) sendOTP(); else if (s2) verifyOTP(); }
+    });
+
+    // Auto-init
+    initOTPless();
+</script>
+</body>
+</html>

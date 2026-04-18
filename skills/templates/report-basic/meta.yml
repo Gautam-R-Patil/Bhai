@@ -1,0 +1,18 @@
+id: report-basic
+name: Basic Report
+description: Generic report/letter template. Title, subtitle, author, date, then markdown-style blocks. Use for briefs, status updates, memos, or any long-form document without a dedicated template.
+documentTypes:
+  - report
+  - letter
+  - generic
+supports:
+  - pdf
+renderKind: markdown
+source: template.md
+page:
+  format: Letter
+  margin:
+    top: 0.7in
+    bottom: 0.7in
+    left: 0.9in
+    right: 0.9in

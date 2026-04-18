@@ -1,0 +1,16 @@
+id: cover-letter-standard
+name: Standard Cover Letter
+description: Classic block-format business cover letter. Sender/recipient blocks, date, salutation, body blocks, signature. Markdown-authored body so paragraphs and bullet lists look natural.
+documentTypes:
+  - cover_letter
+supports:
+  - pdf
+renderKind: markdown
+source: template.md
+page:
+  format: Letter
+  margin:
+    top: 0.8in
+    bottom: 0.8in
+    left: 1in
+    right: 1in

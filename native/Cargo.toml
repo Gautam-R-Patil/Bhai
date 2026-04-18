@@ -1,0 +1,53 @@
+[package]
+name = "atlas-native"
+version = "0.1.0"
+edition = "2021"
+authors = ["XAGI Labs Private Limited"]
+description = "Native SIMD-accelerated operations for A.T.L.A.S"
+license = "Proprietary"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# NAPI-RS for Node.js bindings
+napi = { version = "2", features = ["napi9"] }
+napi-derive = "2"
+
+# SIMD-accelerated operations
+wide = "0.7"          # Portable SIMD abstractions
+simsimd = "6.5"       # High-performance similarity metrics
+
+# Utilities
+rayon = "1.10"        # Parallel processing
+parking_lot = "0.12"  # Fast mutex
+regex = "1"           # Regex patterns
+lazy_static = "1.4"   # Lazy pattern compilation
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"      # JSON interchange
+
+# Crypto (security module)
+aes-gcm = "0.10"      # AES-256-GCM encryption
+scrypt = "0.11"        # Key derivation
+getrandom = "0.2"      # Crypto-random IV generation
+hex = "0.4"            # Hex encoding/decoding
+
+# Platform-specific
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
+[build-dependencies]
+napi-build = "2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev]
+opt-level = 1

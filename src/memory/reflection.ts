@@ -1,0 +1,882 @@
+// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// This software is proprietary. Copying or reuse is prohibited.
+// See LICENSE.md for details.
+
+// ── Reflection Engine (SAC-DR Advanced + Living Continuity) ──
+// Post-session reflection, dream replay, HMAC audit, emotional/episodic extraction,
+// narrative compression. Strict JSON validation, per-reflection caps.
+
+import crypto from "node:crypto";
+import { extractJSON } from "../utils/json-extract.js";
+import type { LLMClient, ChatCompletionMessageParam } from "../llm.js";
+import { remember, recall } from "./sqlite.js";
+import { reinforceTrait, contradictTrait, decayTraits, recordSessionCoOccurrences, getAllTraits } from "./traits.js";
+import { updateIdentityProfile, getIdentityProfile } from "./identity.js";
+import { getShortSummary } from "./session.js";
+import { recordEmotion, decayEmotions } from "./emotional.js";
+import { recordEpisode } from "./episodic.js";
+import { updateSelfStateFromSession, type EmotionalTone } from "./self-state.js";
+import { updateRelationshipAfterSession } from "./relationship.js";
+import { upsertLearning, type LearningCategory } from "./task-learnings.js";
+import { applyDecay, synapticPrune, findDuplicates, mergeDuplicates } from "./self-evolving.js";
+import { reorganizeMemories } from "./self-evolving.js";
+import { batchSurpriseAnalysis } from "./surprise-gate.js";
+import { addEntity, getKnowledgeGraphDB } from "./knowledge-graph.js";
+import { generateUUID } from "../utils/uuid.js";
+import { consolidateMemories } from "./consolidation.js";
+import { cleanupTriggers } from "./prospective.js";
+import { getTemporalCache } from "./temporal-cache.js";
+import { getHNSWIndex } from "./vector-index.js";
+
+// ── Constants ─────────────────────────────────
+
+const MAX_TRAIT_SIGNALS = 5;
+const MAX_RETRIES = 1;
+const HMAC_SECRET = "atlas-sacdr-audit-v1";  // Derived key for signing
+const CONSOLIDATION_EVERY_N_REFLECTIONS = 5; // Run lightweight consolidation every 5th reflection
+
+// ── Reflection Counter (for periodic consolidation) ──
+let _reflectionCounter = 0;
+
+// ── UUID Fallback ─────────────────────────────
+
+/** @deprecated Use generateUUID() from utils/uuid.ts instead */
+export const v4Fallback = generateUUID;
+
+// ── Types ─────────────────────────────────────
+
+interface ReflectionSummary {
+    summary: string;
+    highlights: string[];
+}
+
+interface TraitSignal {
+    key: string;
+    value: string;
+    evidence: number;
+    explicit: boolean;
+    topics: string[];
+}
+
+interface IdentityUpdate {
+    field: string;
+    value: string;
+    explicit: boolean;
+}
+
+interface EmotionalSignal {
+    emotion: string;
+    context: string;
+    intensity: number;
+}
+
+interface EpisodicSignal {
+    type: string;
+    description: string;
+    importance: number;
+}
+
+interface ExtractionResult {
+    traits: TraitSignal[];
+    identity_updates: IdentityUpdate[];
+    emotions: EmotionalSignal[];
+    episodes: EpisodicSignal[];
+    dominant_tone: string;
+}
+
+// ── Reflection Entry Point ────────────────────
+
+/**
+ * Runs asynchronously after a session ends or after N turns.
+ * Non-blocking — errors logged but never thrown to user.
+ */
+export async function runReflection(
+    llm: LLMClient,
+    conversationHistory: ChatCompletionMessageParam[]
+): Promise<void> {
+    console.log("[MEMORY][REFLECTION] Starting post-session reflection...");
+
+    try {
+        // ── 1. Build input ────────────────────────
+        const sessionSummaryInput = getShortSummary();
+        const transcript = buildTranscript(conversationHistory);
+
+        const reflectionInput = sessionSummaryInput
+            ? `Session context: ${sessionSummaryInput}\n\nRecent transcript:\n${transcript}`
+            : transcript;
+
+        if (reflectionInput.length < 50) {
+            console.log("[MEMORY][REFLECTION] Skipped — insufficient content");
+            return;
+        }
+
+        // ── 2. Summarize the session ──────────────
+        const summary = await extractSummary(llm, reflectionInput);
+        if (summary) {
+            remember(summary.summary, "session_summary", "reflection,session", 6);
+            signedAuditLog("session_summary_stored", { length: summary.summary.length });
+            console.log(`[MEMORY][REFLECTION] Summary stored (${summary.summary.length} chars)`);
+
+            // ── 2b. Persist to conversations table ──
+            try {
+                const db = getKnowledgeGraphDB();
+                if (db) {
+                    const sessionId = generateUUID();
+                    const messagesJson = JSON.stringify(conversationHistory.slice(-20));
+                    db.run(
+                        `INSERT INTO conversations (session_id, messages_json, summary) VALUES (?, ?, ?)`,
+                        [sessionId, messagesJson, summary.summary]
+                    );
+                    console.log(`[MEMORY][REFLECTION] Conversation saved (session ${sessionId.substring(0, 8)})`);
+
+                    // ── Async: embed conversation summary for vector search ──
+                    const convIdResult = db.exec("SELECT last_insert_rowid()");
+                    const convId = convIdResult[0]?.values[0]?.[0] as number;
+                    if (convId && summary.summary) {
+                        import("./embeddings.js").then(async ({ embedText, embeddingToBuffer, isReady }) => {
+                            if (!isReady()) return;
+                            try {
+                                const { getRawDb } = await import("./sqlite.js");
+                                const raw = getRawDb();
+                                if (!raw) return;
+                                const embedding = await embedText(summary.summary);
+                                const buffer = embeddingToBuffer(embedding);
+                                raw.prepare(
+                                    "INSERT OR REPLACE INTO conversation_embeddings (conversation_id, embedding) VALUES (?, ?)"
+                                ).run(convId, buffer);
+                            } catch { /* non-fatal */ }
+                        }).catch(() => { /* non-fatal */ });
+                    }
+                }
+            } catch (err) {
+                console.error("[MEMORY][REFLECTION] Conversation save failed (non-fatal):", err);
+            }
+        }
+
+        // ── 3. Extract all signals (traits + identity + emotions + episodes) ──
+        const extraction = await extractSignals(llm, reflectionInput);
+
+        let traitUpdates = 0;
+        let hadEmotionalSignals = false;
+        let hadEpisodicSignals = false;
+        let dominantTone: EmotionalTone = "neutral";
+
+        if (extraction) {
+            // ── 3a. Trait signals (capped) ────────
+            const traitSignals = extraction.traits.slice(0, MAX_TRAIT_SIGNALS);
+
+            for (const signal of traitSignals) {
+                if (!signal.key || !signal.value) continue;
+
+                const result = reinforceTrait(signal.key, signal.value, {
+                    explicit: signal.explicit,
+                    topics: signal.topics || [],
+                });
+
+                if (result) {
+                    traitUpdates++;
+                    signedAuditLog("trait_reinforced", {
+                        trait_key: signal.key,
+                        value: signal.value,
+                        confidence: result.confidence,
+                        explicit: signal.explicit,
+                    });
+                    console.log(`[MEMORY][REFLECTION] Trait: ${signal.key} = ${signal.value} (conf=${result.confidence.toFixed(2)})`);
+                }
+            }
+
+            // ── Record co-occurrences ──
+            recordSessionCoOccurrences();
+
+            // ── 3b. Identity updates (safeguarded) ──
+            for (const update of extraction.identity_updates) {
+                if (!update.field || !update.value) continue;
+
+                if (update.explicit) {
+                    const currentProfile = getIdentityProfile();
+                    const currentValue = (currentProfile as unknown as Record<string, unknown>)[update.field];
+
+                    if (currentValue && currentValue !== update.value) {
+                        signedAuditLog("identity_conflict_detected", {
+                            field: update.field,
+                            old_value: String(currentValue),
+                            new_value: update.value,
+                            action: "overwritten_explicit",
+                        });
+                    }
+
+                    updateIdentityProfile({ [update.field]: update.value });
+                    signedAuditLog("identity_updated", { field: update.field, value: update.value, explicit: true });
+                    console.log(`[MEMORY][REFLECTION] Identity: ${update.field} = ${update.value} (explicit)`);
+                } else {
+                    signedAuditLog("identity_pending", { field: update.field, value: update.value, explicit: false });
+                    console.log(`[MEMORY][REFLECTION] Identity pending: ${update.field} = ${update.value}`);
+                }
+            }
+
+            // ── 3c. Emotional signals ──
+            for (const em of extraction.emotions || []) {
+                if (!em.emotion || !em.context) continue;
+                recordEmotion(em.emotion, em.context, em.intensity || 0.5);
+                hadEmotionalSignals = true;
+            }
+
+            // ── 3d. Episodic signals ──
+            for (const ep of extraction.episodes || []) {
+                if (!ep.type || !ep.description) continue;
+                recordEpisode(ep.type, ep.description, ep.importance || 0.5);
+                hadEpisodicSignals = true;
+            }
+
+            // ── 3e. Dominant tone ──
+            if (extraction.dominant_tone) {
+                const validTones: EmotionalTone[] = ["driven", "stressed", "excited", "neutral", "curious", "frustrated"];
+                if (validTones.includes(extraction.dominant_tone as EmotionalTone)) {
+                    dominantTone = extraction.dominant_tone as EmotionalTone;
+                }
+            }
+
+            console.log(`[MEMORY][REFLECTION] Processed ${traitUpdates} traits, ${extraction.emotions?.length || 0} emotions, ${extraction.episodes?.length || 0} episodes`);
+
+            // ── 3f. Entity extraction from episodes + identity ──
+            try {
+                const kgDb = getKnowledgeGraphDB();
+                if (kgDb) {
+                    // Extract entities from episodic signals
+                    for (const ep of extraction.episodes || []) {
+                        if (ep.type && ep.description) {
+                            addEntity(kgDb, ep.description, ep.type, { importance: ep.importance });
+                        }
+                    }
+                    // Extract entities from identity updates
+                    for (const iu of extraction.identity_updates || []) {
+                        if (iu.field && iu.value) {
+                            addEntity(kgDb, `${iu.field}: ${iu.value}`, "identity_field", { explicit: iu.explicit });
+                        }
+                    }
+                    console.log(`[MEMORY][REFLECTION] Entities extracted`);
+                }
+            } catch { /* non-fatal */ }
+        }
+
+        // ── 4. Update self-state ──────────────────
+        const turnCount = conversationHistory.filter(m => m.role === "user").length;
+        updateSelfStateFromSession(turnCount, dominantTone);
+
+        // ── 5. Update relationship state ──────────
+        updateRelationshipAfterSession(turnCount, hadEmotionalSignals, hadEpisodicSignals);
+
+        // ── 6. Decay stale data ───────────────────
+        const traitsPruned = decayTraits();
+        const emotionsPruned = decayEmotions();
+        if (traitsPruned > 0 || emotionsPruned > 0) {
+            console.log(`[MEMORY][DECAY] Pruned ${traitsPruned} traits, ${emotionsPruned} emotions`);
+        }
+
+        // ── 7. Auto-extract browser / OS task learnings ──────────────────────────────
+        // Only runs when the session actually involved browser or OS tool use.
+        // Non-blocking: errors are swallowed.
+        const hasBrowserOrOS = conversationHistory.some(m => {
+            const c = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+            return /browser_|os_click|os_type|apple_script|shell_exec/.test(c);
+        });
+        if (hasBrowserOrOS) {
+            await extractTaskLearnings(llm, reflectionInput);
+        }
+
+        // ── 7b. Lightweight SleepGate consolidation on session end ──
+        // Normally only runs during nightly dreaming; this runs a lighter version
+        // after each reflection to catch conflicts and strengthen important memories sooner.
+        try {
+            const { runSleepGateConsolidation } = await import("./sleep-gate.js");
+            const kgDb = getKnowledgeGraphDB();
+            if (kgDb) {
+                const sgResult = await runSleepGateConsolidation(kgDb);
+                if (sgResult.totalProcessed > 0) {
+                    console.log(`[MEMORY][REFLECTION] SleepGate: ${sgResult.conflictsDetected} conflicts, ${sgResult.memoriesForgotten} forgotten, ${sgResult.memoriesStrengthened} strengthened`);
+                }
+            }
+        } catch { /* sleep-gate non-fatal */ }
+
+        // ── 8. Periodic lightweight consolidation (every Nth reflection) ──
+        _reflectionCounter++;
+        if (_reflectionCounter % CONSOLIDATION_EVERY_N_REFLECTIONS === 0) {
+            try {
+                const kgDb = getKnowledgeGraphDB();
+                if (kgDb) {
+                    console.log(`[MEMORY][REFLECTION] Running periodic consolidation (every ${CONSOLIDATION_EVERY_N_REFLECTIONS} reflections)...`);
+                    const consolidation = await consolidateMemories(kgDb, llm);
+                    if (consolidation.crystalsCreated > 0) {
+                        console.log(`[MEMORY][REFLECTION] Periodic consolidation: ${consolidation.crystalsCreated} crystals from ${consolidation.clusteredCount} memories`);
+                    }
+                }
+            } catch (err) {
+                console.error("[MEMORY][REFLECTION] Periodic consolidation failed (non-fatal):", err);
+            }
+        }
+
+        console.log("[MEMORY][REFLECTION] ✅ Reflection complete");
+    } catch (err) {
+        console.error("[MEMORY][REFLECTION] ❌ Failed (non-fatal):", err);
+    }
+}
+
+// ── Dream Replay (Nightly Consolidation) ──────
+
+/**
+ * Nightly consolidation: clusters session summaries, merges overlapping
+ * trait signals, penalizes unstable traits, updates trait graph edges,
+ * and generates narrative compression.
+ */
+export async function runDreamReplay(llm: LLMClient): Promise<void> {
+    console.log("[MEMORY][REPLAY] Starting dream replay...");
+
+    try {
+        // ── 1. Load recent session summaries (last 7 days) ──
+        const summaries = await recall("session summary reflection", 20);
+        const recentSummaries = summaries.filter(m => {
+            const daysAgo = (Date.now() - new Date(m.created_at).getTime()) / (1000 * 60 * 60 * 24);
+            return m.category === "session_summary" && daysAgo < 7;
+        });
+
+        if (recentSummaries.length < 2) {
+            console.log("[MEMORY][REPLAY] Not enough summaries for clustering (need ≥2)");
+            return;
+        }
+
+        console.log(`[MEMORY][REPLAY] Clustering ${recentSummaries.length} summaries...`);
+
+        // ── 2. Cluster by topic similarity ──
+        const clusters = clusterSummaries(recentSummaries.map(s => s.content));
+
+        // ── 3. Analyze trait stability via LLM ──
+        const allTraits = getAllTraits();
+        const traitFlips = detectTraitInstability(allTraits);
+
+        // ── 4. Penalize unstable traits (flip ratio > 30%) ──
+        for (const flip of traitFlips) {
+            const trait = allTraits.find(t => t.trait_key === flip.key);
+            if (trait && flip.flipRatio > 0.3) {
+                contradictTrait(flip.key, trait.value);
+                signedAuditLog("dream_replay_penalized", { trait: flip.key, flipRatio: flip.flipRatio });
+                console.log(`[MEMORY][REPLAY] Penalized unstable trait: ${flip.key} (flip ratio=${flip.flipRatio.toFixed(2)})`);
+            }
+        }
+
+        // ── 5. Record cross-cluster co-occurrences ──
+        recordSessionCoOccurrences();
+
+        // ── 5b. Reorganize memories (synaptic pruning + HNSW-based dedup + tier assignment) ──
+        try {
+            const kgDb = getKnowledgeGraphDB();
+            if (kgDb) {
+                const result = reorganizeMemories(kgDb);
+                console.log(`[MEMORY][REPLAY] 🧹 Synaptic pruning: ${result.pruned} pruned, ${result.weakened} weakened, ${result.strengthened} strengthened, ${result.merged} dupes merged`);
+                console.log(`[MEMORY][REPLAY] 📊 Tiers: ${result.tiers.hot} hot, ${result.tiers.warm} warm, ${result.tiers.cold} cold`);
+            }
+        } catch { /* non-fatal */ }
+
+        // ── 5c. Batch Surprise Analysis (D-MEM Inspired) ──
+        // Analyze recent memories for surprise levels and adjust importance/decay accordingly.
+        try {
+            const kgDb = getKnowledgeGraphDB();
+            if (kgDb) {
+                const recentMems = kgDb.exec(
+                    `SELECT id, importance, access_count,
+                            julianday('now') - julianday(created_at) as days_old
+                     FROM memories
+                     WHERE created_at > datetime('now', '-7 days') AND consolidated_into IS NULL
+                     ORDER BY created_at DESC LIMIT 100`
+                );
+                if (recentMems.length > 0 && recentMems[0].values.length > 0) {
+                    const memories = recentMems[0].values.map(row => ({
+                        id: row[0] as number,
+                        importance: row[1] as number,
+                        accessCount: (row[2] as number) || 0,
+                        daysOld: row[3] as number,
+                    }));
+                    // Predict baseline (0.5 = expected), actual = normalized importance
+                    const predictions = memories.map(() => 0.5);
+                    const outcomes = memories.map(m => m.importance / 10);
+                    const surpriseResults = batchSurpriseAnalysis(memories, predictions, outcomes);
+
+                    let surpriseUpdates = 0;
+                    for (const sr of surpriseResults) {
+                        if (sr.isSurprising) {
+                            kgDb.run(
+                                "UPDATE memories SET importance = ?, decay_score = decay_score * ? WHERE id = ?",
+                                [Math.round(sr.newImportance), sr.decayMultiplier, sr.memoryId]
+                            );
+                            surpriseUpdates++;
+                        }
+                    }
+                    if (surpriseUpdates > 0) {
+                        console.log(`[MEMORY][REPLAY] Surprise analysis: ${surpriseUpdates}/${memories.length} memories had surprise-adjusted importance`);
+                    }
+                }
+            }
+        } catch { /* surprise analysis non-fatal */ }
+
+        // ── 5c+. Memory Consolidation (Knowledge Crystals — uses Lite model) ──
+        try {
+            const kgDb = getKnowledgeGraphDB();
+            if (kgDb) {
+                const consolidation = await consolidateMemories(kgDb, llm);
+                if (consolidation.crystalsCreated > 0) {
+                    console.log(`[MEMORY][REPLAY] 💎 Created ${consolidation.crystalsCreated} knowledge crystals from ${consolidation.clusteredCount} memories`);
+                }
+            }
+        } catch (err) {
+            console.error("[MEMORY][REPLAY] Consolidation failed (non-fatal):", err);
+        }
+
+        // ── 5d. Cleanup prospective memory triggers ──
+        try { cleanupTriggers(); } catch { /* non-fatal */ }
+
+        // ── 5e. Clear temporal cache (fresh start after reorganization) ──
+        try { getTemporalCache().clearCache(); } catch { /* non-fatal */ }
+
+        // ── 5f. Persist HNSW index ──
+        try { getHNSWIndex().persist(); } catch { /* non-fatal */ }
+
+        // ── 6. Narrative compression (every 30 days) ──
+        await generateNarrativeCompression(llm);
+
+        console.log(`[MEMORY][REPLAY] ✅ Dream replay complete (${clusters.length} clusters, ${traitFlips.length} instabilities)`);
+    } catch (err) {
+        console.error("[MEMORY][REPLAY] ❌ Failed (non-fatal):", err);
+    }
+}
+
+// ── Narrative Compression ─────────────────────
+
+/**
+ * Generates a compressed identity narrative from all traits and identity.
+ * Stored as a high-priority meta trait (identity_narrative).
+ * Only runs if existing narrative is >30 days old or missing.
+ */
+async function generateNarrativeCompression(llm: LLMClient): Promise<void> {
+    // Check if narrative exists and is recent
+    const allTraits = getAllTraits();
+    const existing = allTraits.find(t => t.trait_key === "identity_narrative");
+    if (existing) {
+        const daysOld = (Date.now() - new Date(existing.last_seen_ts).getTime()) / (1000 * 60 * 60 * 24);
+        if (daysOld < 30) {
+            console.log("[MEMORY][REPLAY] Narrative compression skipped — recent enough");
+            return;
+        }
+    }
+
+    const identity = getIdentityProfile();
+    const traits = allTraits.filter(t => t.confidence > 0.5 && t.trait_key !== "identity_narrative");
+
+    if (traits.length < 3) {
+        console.log("[MEMORY][REPLAY] Not enough traits for narrative compression");
+        return;
+    }
+
+    const prompt = `Compress the following user profile and traits into a single-sentence identity narrative (max 50 words).
+Output ONLY the narrative text, no JSON, no quotes.
+
+Identity: ${JSON.stringify(identity)}
+Traits: ${traits.map(t => `${t.trait_key}=${t.value} (${(t.confidence * 100).toFixed(0)}%)`).join(", ")}`;
+
+    try {
+        const response = await llm.chat({
+            messages: [{ role: "user", content: prompt }],
+            systemPrompt: "You compress context into ultra-concise identity narratives. Output only the narrative, nothing else.",
+        });
+
+        const narrative = (response.choices[0]?.message?.content || "").trim();
+        if (narrative.length > 10 && narrative.length < 300) {
+            reinforceTrait("identity_narrative", narrative, { explicit: false, topics: ["meta", "identity"] });
+            signedAuditLog("narrative_compressed", { narrative: narrative.substring(0, 100) });
+            console.log(`[MEMORY][REPLAY] Narrative: "${narrative.substring(0, 80)}..."`);
+        }
+    } catch (err) {
+        console.error("[MEMORY][REPLAY] Narrative compression failed:", err);
+    }
+}
+
+// ── Task Learning Extraction ───────────────────────────────
+
+interface LearningEntry {
+    category: string;           // "browser" | "os" | "app"
+    task_pattern: string;       // short label, e.g. "create google account"
+    context: string;            // domain or app, e.g. "accounts.google.com" or "WhatsApp"
+    what_worked: string[];      // concrete steps/approaches that succeeded
+    what_failed: string[];      // steps/approaches that failed and why
+    tips: string[];             // standalone free-form tips
+    success_score: number;      // 0.0–1.0 (was the task ultimately successful?)
+}
+
+interface LearningsResult {
+    learnings: LearningEntry[];
+}
+
+async function extractTaskLearnings(
+    llm: LLMClient,
+    transcript: string,
+): Promise<void> {
+    const prompt = `You are an analyst. Read the following agent session transcript and extract structured learnings for future browser and OS automation tasks.
+
+Rules:
+- Only extract if there were actual browser_* or OS (apple_script, os_click, os_type, shell_exec) tool calls
+- Identify what approaches worked and what failed
+- Be specific: name the exact element, selector, button, or step
+- "category": "browser" for web tasks, "os" for native Mac app interactions, "app" for a specific installed app
+- "context": the domain (e.g. "accounts.google.com") or app name (e.g. "WhatsApp")
+- "success_score": 1.0 if task fully completed, 0.5 if partial, 0.0 if failed
+- Ignore chitchat, memory, or search-only sessions
+- If nothing worth recording, return {"learnings": []}
+- Output ONLY valid JSON, no markdown, no explanation
+
+Schema:
+{
+  "learnings": [
+    {
+      "category": "browser",
+      "task_pattern": "create google account",
+      "context": "accounts.google.com",
+      "what_worked": ["browser_navigate to accounts.google.com/signup works directly", "label-based browser_type for first/last name fields"],
+      "what_failed": ["clicking Terms link opened new tab instead of Next button"],
+      "tips": ["Look for <button> tag not <a> for Next step", "Phone verification may block completion without real number"],
+      "success_score": 0.5
+    }
+  ]
+}
+
+Transcript:
+${transcript.substring(0, 8000)}`;
+
+    try {
+        const response = await llm.chat({
+            messages: [{ role: "user", content: prompt }],
+            systemPrompt: "You are a JSON-only automation analyst. Output valid JSON only.",
+        });
+
+        const text = response.choices[0]?.message?.content || "";
+        const parsed = parseAndValidateJSON<LearningsResult>(text, validateLearnings);
+        if (!parsed || parsed.learnings.length === 0) {
+            console.log("[LEARNINGS] No learnings extracted for this session");
+            return;
+        }
+
+        for (const entry of parsed.learnings) {
+            const cat = (["browser", "os", "app"].includes(entry.category)
+                ? entry.category
+                : "browser") as LearningCategory;
+            upsertLearning(
+                cat,
+                entry.task_pattern,
+                entry.context,
+                entry.what_worked || [],
+                entry.what_failed || [],
+                entry.tips || [],
+                typeof entry.success_score === "number" ? entry.success_score : 0.5,
+            );
+        }
+
+        console.log(`[LEARNINGS] ✅ Auto-extracted ${parsed.learnings.length} learning(s) from session`);
+    } catch (err) {
+        console.error("[LEARNINGS] Extraction failed (non-fatal):", err);
+    }
+}
+
+function validateLearnings(obj: unknown): obj is LearningsResult {
+    if (typeof obj !== "object" || obj === null) return false;
+    const o = obj as Record<string, unknown>;
+    if (!Array.isArray(o.learnings)) return false;
+    for (const l of o.learnings) {
+        if (typeof l !== "object" || l === null) return false;
+        const entry = l as Record<string, unknown>;
+        if (typeof entry.task_pattern !== "string" || typeof entry.context !== "string") return false;
+    }
+    return true;
+}
+
+// ── Summary Extraction ────────────────────────────────────
+
+async function extractSummary(
+    llm: LLMClient,
+    input: string
+): Promise<ReflectionSummary | null> {
+    const prompt = `You are a summarizer. Input: a session transcript.
+Output: a concise factual summary (50–150 tokens) returning ONLY valid JSON:
+{"summary":"...", "highlights":["...", "..."]}
+
+Do NOT include any text outside the JSON object.
+
+Transcript:
+${input}`;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            const response = await llm.chat({
+                messages: [{ role: "user", content: prompt }],
+                systemPrompt: "You are a JSON-only summarizer. Output valid JSON only, no markdown, no explanation.",
+            });
+
+            const text = response.choices[0]?.message?.content || "";
+            const parsed = parseAndValidateJSON<ReflectionSummary>(text, validateSummary);
+            if (parsed) return parsed;
+
+            if (attempt < MAX_RETRIES) {
+                console.log("[MEMORY][REFLECTION] Summary JSON invalid, retrying...");
+            }
+        } catch {
+            if (attempt >= MAX_RETRIES) return null;
+        }
+    }
+
+    console.log("[MEMORY][REFLECTION] Summary extraction failed after retries");
+    return null;
+}
+
+// ── Signal Extraction (Extended) ──────────────
+
+async function extractSignals(
+    llm: LLMClient,
+    input: string
+): Promise<ExtractionResult | null> {
+    const prompt = `You are an extractor. Input: session transcript.
+Output ONLY valid JSON. Schema:
+{
+  "traits": [
+    {"key": "likes_detailed_answers", "value": "true", "evidence": 0.85, "explicit": false, "topics": ["dev"]}
+  ],
+  "identity_updates": [
+    {"field": "email", "value": "x@y.com", "explicit": true}
+  ],
+  "emotions": [
+    {"emotion": "excited", "context": "launching new product", "intensity": 0.8}
+  ],
+  "episodes": [
+    {"type": "milestone", "description": "Launched MVP", "importance": 0.9}
+  ],
+  "dominant_tone": "driven"
+}
+
+Rules:
+- Only CLEAR signals, not guesses
+- "explicit" = true if user directly stated it
+- Snake_case trait keys, evidence 0.0-1.0
+- Emotions: excited, frustrated, stressed, driven, curious, neutral
+- Episodes: milestone, achievement, struggle, decision, project_launch
+- dominant_tone: overall session mood
+- Return empty arrays if nothing observed
+- NO text outside JSON
+
+Session:
+${input}`;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            const response = await llm.chat({
+                messages: [{ role: "user", content: prompt }],
+                systemPrompt: "You are a JSON-only extractor. Output valid JSON only, no markdown, no explanation.",
+            });
+
+            const text = response.choices[0]?.message?.content || "";
+            const parsed = parseAndValidateJSON<ExtractionResult>(text, validateExtraction);
+            if (parsed) return parsed;
+
+            if (attempt < MAX_RETRIES) {
+                console.log("[MEMORY][REFLECTION] Extraction JSON invalid, retrying...");
+            }
+        } catch {
+            if (attempt >= MAX_RETRIES) return null;
+        }
+    }
+
+    console.log("[MEMORY][REFLECTION] Signal extraction failed after retries");
+    return null;
+}
+
+// ── JSON Validation ───────────────────────────
+
+function parseAndValidateJSON<T>(
+    text: string,
+    validator: (obj: unknown) => obj is T
+): T | null {
+    try {
+        const jsonStr = extractJSON(text);
+        if (!jsonStr) return null;
+        const parsed = JSON.parse(jsonStr);
+        return validator(parsed) ? parsed : null;
+    } catch {
+        return null;
+    }
+}
+
+function validateSummary(obj: unknown): obj is ReflectionSummary {
+    if (typeof obj !== "object" || obj === null) return false;
+    const o = obj as Record<string, unknown>;
+    return typeof o.summary === "string" && o.summary.length > 0
+        && Array.isArray(o.highlights);
+}
+
+function validateExtraction(obj: unknown): obj is ExtractionResult {
+    if (typeof obj !== "object" || obj === null) return false;
+    const o = obj as Record<string, unknown>;
+
+    if (!Array.isArray(o.traits)) return false;
+    // identity_updates, emotions, episodes optional for backward compat
+    if (o.identity_updates !== undefined && !Array.isArray(o.identity_updates)) return false;
+
+    for (const t of o.traits) {
+        if (typeof t !== "object" || t === null) return false;
+        const trait = t as Record<string, unknown>;
+        if (typeof trait.key !== "string" || typeof trait.value !== "string") return false;
+    }
+
+    // Fill defaults for optional fields
+    const record = obj as Record<string, unknown>;
+    if (!record.identity_updates) record.identity_updates = [];
+    if (!record.emotions) record.emotions = [];
+    if (!record.episodes) record.episodes = [];
+    if (!record.dominant_tone) record.dominant_tone = "neutral";
+
+    return true;
+}
+
+// ── HMAC-Signed Audit Logging ─────────────────
+
+function signedAuditLog(action: string, details: Record<string, unknown>): void {
+    try {
+        const payload = {
+            action,
+            ts: new Date().toISOString(),
+            user_id: "default",
+            ...details,
+        };
+        const payloadStr = JSON.stringify(payload);
+
+        // Compute HMAC-SHA256
+        const hmac = crypto.createHmac("sha256", HMAC_SECRET);
+        hmac.update(payloadStr);
+        const signature = hmac.digest("hex");
+
+        const entry = JSON.stringify({ ...payload, sig: signature });
+        remember(entry, "audit_log", `audit,${action}`, 3);
+    } catch {
+        // Never let audit failures affect main flow
+    }
+}
+
+// ── Transcript Builder ────────────────────────
+
+function buildTranscript(history: ChatCompletionMessageParam[]): string {
+    return history.slice(-20)
+        .filter(m => m.role === "user" || (m.role === "assistant" && typeof m.content === "string"))
+        .map(m => {
+            const content = typeof m.content === "string" ? m.content : "";
+            return `${m.role}: ${content.substring(0, 250)}`;
+        })
+        .join("\n");
+}
+
+// ── Clustering Helpers ────────────────────────
+
+interface SummaryCluster {
+    summaries: string[];
+    keywords: Set<string>;
+}
+
+function clusterSummaries(summaries: string[]): SummaryCluster[] {
+    const clusters: SummaryCluster[] = [];
+
+    for (const summary of summaries) {
+        const keywords = extractKeywords(summary);
+        let merged = false;
+
+        for (const cluster of clusters) {
+            const overlap = keywordOverlap(keywords, cluster.keywords);
+            if (overlap > 0.3) {
+                cluster.summaries.push(summary);
+                for (const kw of keywords) cluster.keywords.add(kw);
+                merged = true;
+                break;
+            }
+        }
+
+        if (!merged) {
+            clusters.push({ summaries: [summary], keywords });
+        }
+    }
+
+    return clusters;
+}
+
+function extractKeywords(text: string): Set<string> {
+    const stopwords = new Set(["the", "a", "an", "is", "are", "was", "to", "of", "in", "for", "and", "or", "this", "that", "with", "on", "at", "by", "it"]);
+    return new Set(
+        text.toLowerCase()
+            .replace(/[^\w\s]/g, " ")
+            .split(/\s+/)
+            .filter(w => w.length > 3 && !stopwords.has(w))
+    );
+}
+
+function keywordOverlap(a: Set<string>, b: Set<string>): number {
+    if (a.size === 0 || b.size === 0) return 0;
+    let overlap = 0;
+    for (const word of a) {
+        if (b.has(word)) overlap++;
+    }
+    return overlap / Math.min(a.size, b.size);
+}
+
+// ── Trait Instability Detection ───────────────
+
+interface TraitFlip {
+    key: string;
+    flipRatio: number;
+}
+
+function detectTraitInstability(traits: Array<{ trait_key: string; confidence: number; reinforcement_count: number }>): TraitFlip[] {
+    const flips: TraitFlip[] = [];
+
+    for (const t of traits) {
+        // High reinforcement count but low confidence = unstable
+        if (t.reinforcement_count > 3 && t.confidence < 0.4) {
+            const flipRatio = 1 - t.confidence;
+            flips.push({ key: t.trait_key, flipRatio });
+        }
+    }
+
+    return flips;
+}
+
+// ── Daily Decay + Dream Replay (Scheduler) ────
+
+export function runDailyDecay(): void {
+    console.log("[MEMORY][DECAY] Running daily decay...");
+    const traitsPruned = decayTraits();
+    const emotionsPruned = decayEmotions();
+
+    // Also decay memory scores (from self-evolving.ts)
+    try {
+        const kgDb = getKnowledgeGraphDB();
+        if (kgDb) {
+            const memoriesDecayed = applyDecay(kgDb);
+
+            // Synaptic Homeostasis Pruning — prune/weaken/strengthen based on strength scores
+            const pruneResult = synapticPrune(kgDb);
+            console.log(`[MEMORY][DECAY] Synaptic prune: ${pruneResult.pruned} pruned, ${pruneResult.weakened} weakened, ${pruneResult.strengthened} strengthened`);
+
+            // HNSW-based duplicate merging — merge near-duplicate memories
+            const dupesMerged = mergeDuplicates(kgDb);
+            if (dupesMerged > 0) {
+                console.log(`[MEMORY][DECAY] Merged ${dupesMerged} duplicate memories`);
+            }
+
+            console.log(`[MEMORY][DECAY] Daily decay complete: ${traitsPruned} traits, ${emotionsPruned} emotions, ${memoriesDecayed} memories decayed`);
+        } else {
+            console.log(`[MEMORY][DECAY] Daily decay complete: ${traitsPruned} traits, ${emotionsPruned} emotions pruned`);
+        }
+    } catch (err) {
+        console.error("[MEMORY][DECAY] Memory decay failed (non-fatal):", err);
+        console.log(`[MEMORY][DECAY] Daily decay partial: ${traitsPruned} traits, ${emotionsPruned} emotions pruned`);
+    }
+}

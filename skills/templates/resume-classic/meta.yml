@@ -1,0 +1,17 @@
+id: resume-classic
+name: Classic ATS Resume
+description: Single-column, ATS-safe, web-safe fonts. The default for job applications when the target runs an applicant-tracking system. Calibri-style typography, embedded text layer, no icons.
+documentTypes:
+  - resume
+supports:
+  - pdf
+renderKind: html
+source: template.html
+styles: styles.css
+page:
+  format: Letter
+  margin:
+    top: 0.5in
+    bottom: 0.5in
+    left: 0.6in
+    right: 0.6in

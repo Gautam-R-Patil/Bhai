@@ -1,0 +1,508 @@
+<!-- Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved. -->
+<!-- This software is proprietary. Copying or reuse is prohibited. -->
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>A.T.L.A.S Setup</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+
+    <!-- Background Orbs -->
+    <div class="bg-canvas">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+        <div class="orb orb-3"></div>
+        <div class="orb orb-4"></div>
+    </div>
+
+    <!-- Title Bar -->
+    <div class="title-bar">
+        <span class="title-bar-text">A.T.L.A.S Setup</span>
+        <div class="title-bar-buttons">
+            <button class="title-btn" onclick="atlas.minimize()">─</button>
+            <button class="title-btn close" onclick="atlas.close()">✕</button>
+        </div>
+    </div>
+
+    <!-- Wizard Container -->
+    <div class="wizard-container">
+
+        <div class="wizard-content">
+
+            <!-- ═══════════════════════════════════════ -->
+            <!-- STEP 0: Welcome                        -->
+            <!-- ═══════════════════════════════════════ -->
+            <div class="wizard-step active" id="step-0">
+                <div class="logo-container">
+                    <img src="logo.png" alt="A.T.L.A.S" class="app-logo">
+                </div>
+                <h1 class="section-title">Welcome to A.T.L.A.S</h1>
+                <p class="section-subtitle">
+                    Your personal AI assistant — powered by cutting-edge language models,
+                    with system control, memory, and automation built right in.
+                </p>
+                <div style="text-align: center; margin-top: 32px;">
+                    <button class="btn btn-primary" onclick="goToStep(1)" style="padding: 12px 32px;">
+                        Get Started
+                    </button>
+                </div>
+            </div>
+
+            <!-- ═══════════════════════════════════════ -->
+            <!-- STEP 1: About You                      -->
+            <!-- ═══════════════════════════════════════ -->
+            <div class="wizard-step" id="step-1">
+                <h2 class="section-title">About You</h2>
+                <p class="section-subtitle">Help A.T.L.A.S personalize your experience.</p>
+
+                <div class="surface-card">
+                    <div class="input-group">
+                        <label class="input-label">Your Name</label>
+                        <input class="clean-input" type="text" id="userName" placeholder="Enter your name"
+                            autocomplete="off">
+                    </div>
+
+                    <div class="form-row">
+                        <div class="input-group">
+                            <label class="input-label">Age</label>
+                            <input class="clean-input" type="number" id="userAge" placeholder="e.g. 22" min="1"
+                                max="150">
+                        </div>
+                        <div class="input-group">
+                            <label class="input-label">Gender</label>
+                            <select class="clean-select" id="userGender">
+                                <option value="">Select...</option>
+                                <option value="male">Male</option>
+                                <option value="female">Female</option>
+                                <option value="non-binary">Non-binary</option>
+                                <option value="prefer-not-to-say">Prefer not to say</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="wizard-footer">
+                    <button class="btn btn-secondary" onclick="goToStep(0)">Back</button>
+                    <button class="btn btn-primary" onclick="saveProfile()">Continue</button>
+                </div>
+            </div>
+
+            <!-- ═══════════════════════════════════════ -->
+            <!-- STEP 2: API Credentials                -->
+            <!-- ═══════════════════════════════════════ -->
+            <div class="wizard-step" id="step-2">
+                <h2 class="section-title">API Credentials</h2>
+                <p class="section-subtitle">Connect your services. All keys are encrypted with AES-256-GCM.</p>
+
+                <div class="surface-card">
+                    <div class="input-group">
+                        <label class="input-label">Telegram Bot Token *</label>
+                        <input class="clean-input" type="password" id="botToken"
+                            placeholder="e.g. 123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11">
+                        <span class="input-hint">Get from @BotFather on Telegram</span>
+                    </div>
+
+
+                    <div class="input-group">
+                        <label class="input-label">Allowed Telegram User IDs *</label>
+                        <input class="clean-input" type="text" id="userIds" placeholder="e.g. 1151119331">
+                        <span class="input-hint">Comma-separated. Message @userinfobot</span>
+                    </div>
+
+                    <div class="input-group">
+                        <label class="input-label">GitHub Token (optional)</label>
+                        <input class="clean-input" type="password" id="githubToken" placeholder="ghp_...">
+                    </div>
+                </div>
+
+                <div class="wizard-footer">
+                    <button class="btn btn-secondary" onclick="goToStep(1)">Back</button>
+                    <button class="btn btn-primary" onclick="saveCredentials()">Continue</button>
+                </div>
+            </div>
+
+            <!-- ═══════════════════════════════════════ -->
+            <!-- STEP 3: Google Account                 -->
+            <!-- ═══════════════════════════════════════ -->
+            <div class="wizard-step" id="step-3">
+                <h2 class="section-title">Google Account</h2>
+                <p class="section-subtitle">Connect your Google account for Calendar and Gmail access.</p>
+
+                <div class="surface-card" style="text-align: center; padding: 48px 32px;">
+                    <div id="googleNotConnected">
+                        <button class="google-btn" onclick="connectGoogle()">
+                            <svg viewBox="0 0 24 24">
+                                <path fill="#4285F4"
+                                    d="M23.7 12.3c0-.8-.1-1.6-.2-2.3H12.2v4.5h6.5c-.3 1.5-1.1 2.7-2.4 3.5v2.9h3.8c2.3-2.1 3.6-5.2 3.6-8.6z" />
+                                <path fill="#34A853"
+                                    d="M12.2 24c3.3 0 6-1.1 8-2.9l-3.8-2.9c-1.1.7-2.5 1.1-4.2 1.1-3.2 0-6-2.2-6.9-5.1H1.4v3C3.4 21.4 7.5 24 12.2 24z" />
+                                <path fill="#FBBC05"
+                                    d="M5.3 14.3c-.3-.7-.4-1.5-.4-2.3s.1-1.6.4-2.3V6.6H1.4C.5 8.4 0 10.1 0 12s.5 3.6 1.4 5.4l3.9-3.1z" />
+                                <path fill="#EA4335"
+                                    d="M12.2 4.8c1.8 0 3.4.6 4.7 1.8L20.3 3C18.2 1.1 15.5 0 12.2 0 7.5 0 3.4 2.6 1.4 6.6l3.9 3.1c.9-2.9 3.7-4.9 6.9-4.9z" />
+                            </svg>
+                            Sign in with Google
+                        </button>
+                        <p style="margin-top: 24px; font-size: 13px; color: var(--text-secondary);">
+                            You can add more accounts later by asking A.T.L.A.S.
+                        </p>
+                    </div>
+
+                    <div id="googleConnected" style="display: none;">
+                        <div style="font-size: 15px; font-weight: 500; color: var(--text-primary); margin-bottom: 8px;">
+                            ✓ Connected via Google
+                        </div>
+                        <div id="googleEmail" style="color: var(--text-secondary);">account@gmail.com</div>
+                    </div>
+                </div>
+
+                <div class="wizard-footer">
+                    <button class="btn btn-secondary" onclick="goToStep(2)">Back</button>
+                    <div class="footer-buttons">
+                        <button class="text-link" onclick="goToStep(4)" style="margin-right: 16px;">Skip for
+                            now</button>
+                        <button class="btn btn-primary" onclick="goToStep(4)">Continue</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ═══════════════════════════════════════ -->
+            <!-- STEP 4: Installing                     -->
+            <!-- ═══════════════════════════════════════ -->
+            <div class="wizard-step" id="step-4">
+                <h2 class="section-title">Setting Up A.T.L.A.S</h2>
+                <p class="section-subtitle" id="installSubtitle">Configure your workspace to begin.</p>
+
+                <div class="surface-card">
+                    <!-- Workspace Chooser (shown before install starts) -->
+                    <div id="workspaceChooser">
+                        <div class="input-group">
+                            <label class="input-label">Workspace Folder</label>
+                            <p class="input-hint" style="margin-bottom: 12px;">
+                                Where should A.T.L.A.S save files it creates? (screenshots, downloads, research)
+                            </p>
+                            <div class="workspace-preview">
+                                <div class="path-display" id="workspacePath">Desktop\A.T.L.A.S Files</div>
+                                <button class="btn btn-secondary" onclick="chooseWorkspace()">Browse...</button>
+                            </div>
+                        </div>
+
+                        <div style="text-align: center; margin-top: 32px;">
+                            <button class="btn btn-primary" onclick="startInstallation()" id="installBtn">
+                                Install
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Progress (shown during install) -->
+                    <div id="installProgress" style="display: none;">
+                        <div class="progress-labels">
+                            <span id="progressLabel">Starting installation...</span>
+                            <span id="progressPercent" style="font-weight: 500;">0%</span>
+                        </div>
+                        <div class="progress-track">
+                            <div class="progress-fill" id="progressBar" style="width: 0%"></div>
+                        </div>
+                        <div class="install-log" id="installLog"></div>
+                    </div>
+                </div>
+
+                <div class="wizard-footer">
+                    <button class="btn btn-secondary" onclick="goToStep(3)" id="installBackBtn">Back</button>
+                    <span></span>
+                </div>
+            </div>
+
+            <!-- ═══════════════════════════════════════ -->
+            <!-- STEP 5: Complete!                      -->
+            <!-- ═══════════════════════════════════════ -->
+            <!-- STEP 5: Complete!                      -->
+            <!-- ═══════════════════════════════════════ -->
+            <div class="wizard-step" id="step-5" style="text-align: center; max-width: 680px;">
+                <h2 class="section-title">Ready to Go</h2>
+                <p class="section-subtitle" style="margin-bottom: 24px;">
+                    A.T.L.A.S is installed. Here is the cognitive architecture now running locally.
+                </p>
+
+                <div class="surface-card"
+                    style="text-align: left; padding: 24px; margin-bottom: 24px; max-height: 400px; overflow-y: overlay;">
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                        <div>
+                            <h3
+                                style="font-size: 14px; font-weight: 600; color: var(--accent-primary); margin-bottom: 4px;">
+                                LRU & HNSW</h3>
+                            <div style="font-size: 12px; color: var(--text-secondary); line-height: 1.4;">
+                                <strong>Temporal Locality & Vector Search</strong><br>
+                                Instantly retrieves conversational repeats using a Bloom filter, while Approximate
+                                Nearest Neighbor turns vector search time to O(log n).
+                            </div>
+                        </div>
+
+                        <div>
+                            <h3
+                                style="font-size: 14px; font-weight: 600; color: var(--orb-purple); margin-bottom: 4px;">
+                                RRF & SAN</h3>
+                            <div style="font-size: 12px; color: var(--text-secondary); line-height: 1.4;">
+                                <strong>Reciprocal Rank Fusion & Spreading Activation</strong><br>
+                                Combines keyword/semantic scores, and simulates brain-like association using decay
+                                factors and node caps via knowledge graphs.
+                            </div>
+                        </div>
+
+                        <div>
+                            <h3 style="font-size: 14px; font-weight: 600; color: var(--orb-pink); margin-bottom: 4px;">
+                                ATS & ESM</h3>
+                            <div style="font-size: 12px; color: var(--text-secondary); line-height: 1.4;">
+                                <strong>Adaptive Tier Scoring & Emotional Salience</strong><br>
+                                Dynamically assigns memory tiers (Hot/Warm/Cold), and amplifies importance if the
+                                emotional intensity is high (mimicking the Amygdala).
+                            </div>
+                        </div>
+
+                        <div>
+                            <h3
+                                style="font-size: 14px; font-weight: 600; color: var(--orb-orange); margin-bottom: 4px;">
+                                HMC & SHP</h3>
+                            <div style="font-size: 12px; color: var(--text-secondary); line-height: 1.4;">
+                                <strong>Memory Consolidation & Synaptic Pruning</strong><br>
+                                Groups cold memories into optimized "Knowledge Crystals", and biologically prunes or
+                                weakens memories during sleep cycles.
+                            </div>
+                        </div>
+
+                        <div style="grid-column: 1 / -1;">
+                            <h3 style="font-size: 14px; font-weight: 600; color: var(--orb-green); margin-bottom: 4px;">
+                                SAC-DR</h3>
+                            <div style="font-size: 12px; color: var(--text-secondary); line-height: 1.4;">
+                                <strong>Semantic Attention Contextual Decay Routing</strong><br>
+                                The continuous context token pruner that algorithmically compresses historic logs and
+                                interactions in real-time.
+                            </div>
+                        </div>
+                    </div>
+
+                    <div
+                        style="margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border-light); font-size: 13px; color: var(--text-primary); text-align: center; font-weight: 500;">
+                        Press <kbd
+                            style="background: var(--glass-input); padding: 4px 8px; border-radius: 4px; border: var(--glass-border);">Alt
+                            + Space</kbd> anywhere to summon A.T.L.A.S.
+                    </div>
+                </div>
+
+                <button class="btn btn-primary" onclick="launchAtlas()" style="padding: 14px 48px; font-size: 16px;">
+                    Launch A.T.L.A.S
+                </button>
+            </div>
+
+        </div>
+
+    </div>
+
+    <!-- Step Indicator (Dots) -->
+    <div class="step-indicator" id="stepIndicator">
+        <div class="step-dot active" data-step="0"></div>
+        <div class="step-dot" data-step="1"></div>
+        <div class="step-dot" data-step="2"></div>
+        <div class="step-dot" data-step="3"></div>
+        <div class="step-dot" data-step="4"></div>
+        <div class="step-dot" data-step="5"></div>
+    </div>
+
+    <div class="copyright">Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.</div>
+    </div>
+
+    <script>
+        // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+
+        let currentStep = 0;
+        let workspacePath = '';
+
+        // ── Default workspace path ───────────────────
+        (async () => {
+            try {
+                const info = await atlas.getAppInfo();
+                workspacePath = info.defaultWorkspace || 'A.T.L.A.S Files';
+                const pathEl = document.getElementById('workspacePath');
+                if (pathEl) pathEl.textContent = workspacePath;
+            } catch { /* */ }
+        })();
+
+        // ── Step Navigation ──────────────────────────
+
+        function goToStep(step) {
+            // Hide current
+            document.getElementById(`step-${currentStep}`).classList.remove('active');
+
+            // Update dots
+            const dots = document.querySelectorAll('.step-dot');
+            dots.forEach((dot, i) => {
+                dot.classList.remove('active', 'completed');
+                if (i < step) dot.classList.add('completed');
+                if (i === step) dot.classList.add('active');
+            });
+
+            // Show new step
+            currentStep = step;
+            document.getElementById(`step-${currentStep}`).classList.add('active');
+        }
+
+        // ── Profile ──────────────────────────────────
+
+        async function saveProfile() {
+            const name = document.getElementById('userName').value.trim();
+            const age = document.getElementById('userAge').value;
+            const gender = document.getElementById('userGender').value;
+
+            if (!name) {
+                shakeElement(document.getElementById('userName'));
+                return;
+            }
+
+            await atlas.saveProfile({ name, age: parseInt(age) || null, gender: gender || null });
+            goToStep(2);
+        }
+
+        // ── Credentials ──────────────────────────────
+
+        async function saveCredentials() {
+            const botToken = document.getElementById('botToken').value.trim();
+            const userIds = document.getElementById('userIds').value.trim();
+            const githubToken = document.getElementById('githubToken').value.trim();
+
+            if (!botToken) { shakeElement(document.getElementById('botToken')); return; }
+            if (!userIds) { shakeElement(document.getElementById('userIds')); return; }
+
+            const result = await atlas.saveCredentials({
+                botToken, userIds, githubToken, workspace: workspacePath,
+            });
+
+            if (result.success) {
+                goToStep(3);
+            } else {
+                alert('Failed to save credentials: ' + result.error);
+            }
+        }
+
+        // ── Google OAuth ─────────────────────────────
+
+        function connectGoogle() {
+            const btn = document.querySelector('.google-btn');
+            btn.textContent = 'Waiting for authorization...';
+            btn.disabled = true;
+
+            atlas.googleOAuth().then(result => {
+                if (result.success) {
+                    document.getElementById('googleNotConnected').style.display = 'none';
+                    document.getElementById('googleConnected').style.display = 'block';
+                    document.getElementById('googleEmail').textContent = result.email;
+                } else {
+                    btn.textContent = 'Sign in with Google';
+                    btn.disabled = false;
+                    if (result.error && !result.error.includes("timed out")) {
+                        alert("Google Sign-in failed: " + result.error);
+                    }
+                }
+            });
+        }
+
+        // ── Workspace ────────────────────────────────
+
+        async function chooseWorkspace() {
+            const result = await atlas.chooseWorkspace();
+            if (!result.canceled && result.path) {
+                workspacePath = result.path;
+                document.getElementById('workspacePath').textContent = workspacePath;
+            }
+        }
+
+        // ── Installation ─────────────────────────────
+
+        async function startInstallation() {
+            document.getElementById('workspaceChooser').style.display = 'none';
+            document.getElementById('installProgress').style.display = 'block';
+
+            // Hide footer during install
+            document.querySelector('#step-4 .wizard-footer').style.display = 'none';
+            document.getElementById('installSubtitle').textContent = 'This may take a few minutes. Please wait.';
+
+            // Listen for progress updates (main step messages)
+            atlas.onInstallProgress(({ percent, message }) => {
+                if (percent >= 0) {
+                    document.getElementById('progressBar').style.width = percent + '%';
+                    document.getElementById('progressPercent').textContent = percent + '%';
+                }
+                document.getElementById('progressLabel').textContent = message;
+                addLogLine(message, percent < 0 ? 'error' : (message.includes('✅') ? 'success' : ''));
+
+                if (percent >= 100) {
+                    setTimeout(() => goToStep(5), 1000);
+                }
+            });
+
+            // Listen for detailed sub-log output (real-time command output)
+            atlas.onInstallLog((msg) => {
+                addLogLine(msg, 'detail');
+            });
+
+            // Create workspace first
+            if (workspacePath) {
+                await atlas.createWorkspace(workspacePath);
+            }
+
+            // Start the installation
+            const result = await atlas.startInstall({ workspace: workspacePath });
+            if (!result.success) {
+                addLogLine('❌ Installation failed: ' + result.error, 'error');
+                document.querySelector('#step-4 .wizard-footer').style.display = 'flex';
+                document.getElementById('installSubtitle').textContent = 'Installation failed.';
+            }
+        }
+
+        function addLogLine(text, className = '') {
+            const log = document.getElementById('installLog');
+            const line = document.createElement('div');
+            line.className = 'log-line' + (className ? ' ' + className : '');
+            line.textContent = text;
+            log.appendChild(line);
+            log.scrollTop = log.scrollHeight;
+        }
+
+        // ── Launch ───────────────────────────────────
+
+        function launchAtlas() {
+            // Tell the main process to load the panel
+            atlas.finishSetup();
+        }
+
+        // ── Shake Animation (Validation) ─────────────
+
+        function shakeElement(el) {
+            el.style.animation = 'none';
+            el.offsetHeight; // Reflow
+            el.style.animation = 'shake 0.4s cubic-bezier(.36,.07,.19,.97) both';
+            el.style.borderColor = 'var(--accent-danger)';
+            setTimeout(() => { el.style.borderColor = 'var(--border-light)'; }, 2000);
+        }
+
+        // Add shake keyframes
+        const style = document.createElement('style');
+        style.textContent = `
+@keyframes shake {
+    10%, 90% { transform: translate3d(-1px, 0, 0); }
+    20%, 80% { transform: translate3d(2px, 0, 0); }
+    30%, 50%, 70% { transform: translate3d(-4px, 0, 0); }
+    40%, 60% { transform: translate3d(4px, 0, 0); }
+}
+`;
+        document.head.appendChild(style);
+    </script>
+
+</body>
+
+</html>

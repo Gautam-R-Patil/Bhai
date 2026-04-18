@@ -1,0 +1,205 @@
+// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// This software is proprietary. Copying or reuse is prohibited.
+// See LICENSE.md for details.
+
+// ── edit ──────────────────────────────────────
+// Claude Code–style exact-string file editor.
+//   • File must have been read in this process (ReadRegistry) — catches
+//     hallucinated edits and stale-context drift
+//   • `old_string` must occur exactly once (unless `replace_all=true`) —
+//     no silent wrong-location edits
+//   • Atomic: either the full change applies or nothing changes
+//   • Returns a minimal unified-diff preview for the caller to render
+
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { getPathBlockedReason, isPathAllowed, isProtectedPath } from "../../security/allowlist.js";
+import { auditLog } from "../../security/audit-log.js";
+import type { ToolDefinition } from "../get-current-time.js";
+import { hashContent, hasRegistryEntry, recordRead, wasRead } from "./read-registry.js";
+
+// ── Diff helper ───────────────────────────────
+
+const DIFF_CONTEXT_LINES = 3;
+
+/**
+ * Produce a minimal unified-diff preview for a single-region replacement.
+ * We know `before` and `after` differ only where `oldStr` → `newStr`, so
+ * locate the span, emit surrounding context, then - old lines, + new lines.
+ */
+function buildDiffPreview(before: string, after: string, _oldStr: string, _newStr: string): string {
+    const beforeLines = before.split("\n");
+    const afterLines = after.split("\n");
+
+    // Find the first differing line from the top
+    let top = 0;
+    const maxScan = Math.min(beforeLines.length, afterLines.length);
+    while (top < maxScan && beforeLines[top] === afterLines[top]) top++;
+
+    // Find the first differing line from the bottom
+    let bottom = 0;
+    while (
+        bottom < maxScan - top &&
+        beforeLines[beforeLines.length - 1 - bottom] === afterLines[afterLines.length - 1 - bottom]
+    ) {
+        bottom++;
+    }
+
+    const beforeStart = Math.max(0, top - DIFF_CONTEXT_LINES);
+    const afterStart = beforeStart;
+    const beforeEnd = beforeLines.length - bottom;
+    const afterEnd = afterLines.length - bottom;
+    const trailEnd = Math.min(beforeLines.length, beforeEnd + DIFF_CONTEXT_LINES);
+
+    const lines: string[] = [];
+    for (let i = beforeStart; i < top; i++) {
+        lines.push("  " + beforeLines[i]);
+    }
+    for (let i = top; i < beforeEnd; i++) {
+        lines.push("- " + beforeLines[i]);
+    }
+    for (let i = top; i < afterEnd; i++) {
+        lines.push("+ " + afterLines[i]);
+    }
+    for (let i = beforeEnd; i < trailEnd; i++) {
+        lines.push("  " + beforeLines[i]);
+    }
+
+    const headerStart = beforeStart + 1;
+    const headerLen = Math.max(1, beforeEnd - beforeStart + (trailEnd - beforeEnd));
+    return `@@ -${headerStart},${headerLen} +${afterStart + 1},${Math.max(1, afterEnd - afterStart + (trailEnd - beforeEnd))} @@\n${lines.join("\n")}`;
+}
+
+// ── Tool ──────────────────────────────────────
+
+export const edit: ToolDefinition = {
+    schema: {
+        type: "function",
+        function: {
+            name: "edit",
+            description:
+                "Edit a file by replacing an exact string with a new string. " +
+                "REQUIRES a prior successful `read` of the file in this process — else the edit is refused. " +
+                "`old_string` must occur exactly once in the file, unless `replace_all=true`. " +
+                "This is the primary tool for modifying existing files. Atomic: either the full change applies or nothing changes.",
+            parameters: {
+                type: "object",
+                properties: {
+                    file_path: {
+                        type: "string",
+                        description: "Absolute or relative file path.",
+                    },
+                    old_string: {
+                        type: "string",
+                        description:
+                            "The exact text to find and replace. Include enough surrounding context so the match is unique.",
+                    },
+                    new_string: {
+                        type: "string",
+                        description: "The replacement text. Must differ from `old_string`.",
+                    },
+                    replace_all: {
+                        type: "boolean",
+                        description:
+                            "If true, replace every occurrence of `old_string`. If false (default), exactly one occurrence is required.",
+                    },
+                },
+                required: ["file_path", "old_string", "new_string"],
+            },
+        },
+    },
+
+    async handler(input) {
+        const rawPath = input.file_path as string;
+        const oldStr = (input.old_string as string) ?? "";
+        const newStr = (input.new_string as string) ?? "";
+        const replaceAll = input.replace_all === true;
+
+        if (!rawPath) {
+            return JSON.stringify({ error: "file_path is required" });
+        }
+        if (oldStr === "") {
+            return JSON.stringify({ error: "old_string must not be empty" });
+        }
+        if (oldStr === newStr) {
+            return JSON.stringify({
+                error: "old_string and new_string are identical — no edit to perform",
+            });
+        }
+
+        const filePath = path.resolve(rawPath);
+        auditLog("file_edit", { path: filePath, replace_all: replaceAll });
+
+        if (!isPathAllowed(filePath)) {
+            const reason = getPathBlockedReason(filePath) ?? `Path "${filePath}" is not allowed.`;
+            return JSON.stringify({ error: reason });
+        }
+        if (isProtectedPath(filePath)) {
+            return JSON.stringify({
+                error: `Editing "${filePath}" is not allowed — this path is part of the bot's own codebase and is write-protected.`,
+            });
+        }
+
+        let stats;
+        try {
+            stats = statSync(filePath);
+        } catch (err) {
+            return JSON.stringify({ error: `File not found: ${filePath} (${(err as Error).message})` });
+        }
+        if (!stats.isFile()) {
+            return JSON.stringify({ error: `Not a file: ${filePath}` });
+        }
+
+        // Read-before-edit enforcement
+        if (!wasRead(filePath)) {
+            const reason = hasRegistryEntry(filePath)
+                ? "File has changed on disk since the last read. Call `read` again before editing."
+                : "You must call `read` on this file before editing it.";
+            return JSON.stringify({ error: reason });
+        }
+
+        let before: string;
+        try {
+            before = readFileSync(filePath, "utf-8");
+        } catch (err) {
+            return JSON.stringify({ error: (err as Error).message });
+        }
+
+        // Occurrence check
+        const parts = before.split(oldStr);
+        const occurrences = parts.length - 1;
+        if (occurrences === 0) {
+            return JSON.stringify({
+                error: "`old_string` was not found in the file. It must match exactly, including whitespace and indentation.",
+            });
+        }
+        if (occurrences > 1 && !replaceAll) {
+            return JSON.stringify({
+                error: `\`old_string\` appears ${occurrences} times in the file. Pass \`replace_all=true\` to replace every occurrence, or include more surrounding context so the match is unique.`,
+            });
+        }
+
+        const after = replaceAll ? parts.join(newStr) : before.replace(oldStr, newStr);
+
+        // Write
+        try {
+            const dir = path.dirname(filePath);
+            if (dir) mkdirSync(dir, { recursive: true });
+            writeFileSync(filePath, after, "utf-8");
+        } catch (err) {
+            return JSON.stringify({ error: `Write failed: ${(err as Error).message}` });
+        }
+
+        // Update registry so subsequent edits see the new hash
+        recordRead(filePath, hashContent(after));
+
+        const preview = buildDiffPreview(before, after, oldStr, newStr);
+
+        return JSON.stringify({
+            success: true,
+            path: filePath,
+            replacements_made: replaceAll ? occurrences : 1,
+            preview,
+        });
+    },
+};
