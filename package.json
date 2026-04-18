@@ -18,7 +18,9 @@
     "build:all": "npm run build:native && npm run build:ocr && npm run build:location && npm run build",
     "lint": "biome check .",
     "typecheck": "tsc --noEmit",
-    "postinstall": "bash scripts/patch-baileys.sh 2>/dev/null || true"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "postinstall": "bash scripts/patch-baileys.sh 2>/dev/null || true && npx tsx scripts/postinstall-video.ts 2>/dev/null || true"
   },
   "dependencies": {
     "@discordjs/voice": "^0.19.2",
@@ -37,6 +39,9 @@
     "docxtemplater": "^3.68.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "ffmpeg-static": "^5.2.0",
+    "ffprobe-static": "^3.1.0",
+    "fluent-ffmpeg": "^2.1.3",
     "googleapis": "^171.4.0",
     "grammy": "^1.35.0",
     "gray-matter": "^4.0.3",
@@ -65,15 +70,18 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/dockerode": "^3.3.34",
     "@types/express": "^5.0.0",
+    "@types/fluent-ffmpeg": "^2.1.27",
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^22.13.4",
     "@types/node-cron": "^3.0.11",
     "@types/nodemailer": "^7.0.11",
     "@types/tar": "^6.1.13",
     "@types/ws": "^8.5.13",
+    "@vitest/ui": "^3.2.0",
     "archiver": "^7.0.1",
     "tsx": "^4.19.3",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "vitest": "^3.2.0"
   },
   "engines": {
     "node": ">=20"
