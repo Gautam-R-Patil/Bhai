@@ -424,6 +424,105 @@ function saveEnvKVs(kvs) {
     saveEnvEncrypted(updated.join("\n") + "\n");
 }
 
+// ─── Detection + Install Helpers (C10) ──────────────
+/**
+ * Build the dependency bundle passed to `runDetection`. Extracted so the
+ * adaptive wizard's detect IPC AND the install/retry/resume handlers all
+ * build state the same way.
+ */
+function buildDetectionDeps() {
+    const osmod = require("os");
+    const { promisify } = require("util");
+    const execFn = promisify(require("child_process").exec);
+
+    const prefs = (() => {
+        try {
+            return {
+                account: store.get("account") || undefined,
+                personalize: store.get("personalize") || undefined,
+            };
+        } catch { return {}; }
+    })();
+
+    const envObj = (() => {
+        try {
+            const raw = loadEnvDecrypted();
+            if (!raw) return {};
+            const out = {};
+            for (const line of raw.split("\n")) {
+                const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/);
+                if (m) out[m[1]] = m[2];
+            }
+            return out;
+        } catch { return {}; }
+    })();
+
+    const paths = {
+        setupFlag: SETUP_FLAG,
+        envFile: path.join(app.getPath("userData"), ".env.enc"),
+        googleTokens: path.join(app.getPath("userData"), "google-tokens"),
+        botDir: path.join(process.resourcesPath || app.getAppPath(), "bot"),
+        homeDir: app.getPath("home"),
+        workspace: path.join(app.getPath("desktop"), "A.T.L.A.S Files"),
+        storedVersion: path.join(app.getPath("userData"), "version.json"),
+        slackInstalls: path.join(app.getPath("userData"), "slack-installs"),
+        whatsappOwners: path.join(app.getPath("userData"), "whatsapp-users", "owners.json"),
+    };
+
+    return {
+        proc: process,
+        fs,
+        os: osmod,
+        systemPreferences,
+        nativeTheme,
+        globalShortcut,
+        prefs,
+        envObj,
+        execFn: async (cmd) => execFn(cmd),
+        paths,
+        currentVersion: app.getVersion(),
+        hotkey: process.platform === "win32" ? "Control+Space" : "Alt+Space",
+    };
+}
+
+/**
+ * Build the context passed to phase.run(). Wires up the send-progress /
+ * send-log helpers to the main window's install-progress / install-log IPC
+ * channels and injects the existing install utilities the phases need.
+ */
+function buildInstallCtx(mw, options) {
+    const send = (channel, payload) => {
+        if (mw && !mw.isDestroyed()) mw.webContents.send(channel, payload);
+    };
+    return {
+        sendProgress: (percent, message) => send("install-progress", { percent, message }),
+        sendLog: (msg) => send("install-log", msg),
+        BOT_DIR: BOT_DIR,
+        DATA_DIR: DATA_DIR,
+        SETUP_FLAG: SETUP_FLAG,
+        checkNodeInstalled: checkNodeInstalled,
+        downloadAndInstallNode: downloadAndInstallNode,
+        runCommand: runCommand,
+        loadEnvDecrypted: loadEnvDecrypted,
+        saveEnvEncrypted: saveEnvEncrypted,
+        documentsDir: app.getPath("documents"),
+        options: options || {},
+    };
+}
+
+function requireInstaller() {
+    const { runDetection } = require(path.join(__dirname, "detection"));
+    const { buildPhaseList } = require(path.join(__dirname, "installer", "phases.js"));
+    const r = require(path.join(__dirname, "installer", "runner.js"));
+    return {
+        runDetection: runDetection,
+        buildPhaseList: buildPhaseList,
+        runPhases: r.runPhases,
+        getResumeList: r.getResumeList,
+        readSetupState: r.readSetupState,
+    };
+}
+
 /**
  * Load and decrypt the .env file.
  * Returns the plaintext .env content.
@@ -1581,199 +1680,80 @@ function registerIPC() {
     });
 
     // Setup: run installation pipeline
+    // Setup: adaptive, resumable install. Builds the phase list from detection,
+    // runs each phase sequentially, and writes per-phase markers to
+    // data/setup-state.json so a crash mid-install can be resumed.
     ipcMain.handle("setup:install", async (_, options) => {
-        const sendProgress = (pct, msg) => {
-            if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send("install-progress", { percent: pct, message: msg });
-            }
-        };
-        // Send a sub-log line (no progress bar change, just a detail message)
-        const sendLog = (msg) => {
-            if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send("install-log", msg);
-            }
-        };
-
+        const ctx = buildInstallCtx(mainWindow, options);
         try {
-            // Step 1: Check Node.js
-            sendProgress(2, "Checking Node.js installation...");
-            sendLog("Detecting Node.js on system PATH...");
-            const hasNode = await checkNodeInstalled();
-            if (!hasNode) {
-                sendProgress(5, "Downloading Node.js 20 LTS...");
-                sendLog("Node.js not found — downloading installer...");
-                await downloadAndInstallNode(sendProgress);
-            } else {
-                sendLog("Node.js 20+ detected ✓");
+            const { runDetection, buildPhaseList, runPhases } = requireInstaller();
+            const state = await runDetection(buildDetectionDeps());
+            const phases = buildPhaseList(state);
+            const res = await runPhases(phases, ctx);
+            if (res.status === "complete") {
+                return { success: true, completed: res.completed };
             }
-            sendProgress(12, "✅ Node.js ready");
-
-            // Step 2: Skip npm install (dependencies shipped in ASAR)
-            sendLog("Dependencies shipped in ASAR package — skipping npm install");
-            sendProgress(38, "✅ Dependencies ready");
-
-            // Step 3: TypeScript (already compiled before packaging)
-            sendProgress(40, "Checking compiled sources...");
-            sendLog("TypeScript already compiled — shipped pre-built in package");
-            sendProgress(52, "✅ TypeScript ready");
-
-            // Step 4: Playwright
-            sendProgress(52, "Installing browser engine (Playwright)...");
-            sendLog("Installing Chromium browser engine...");
-            sendLog("This downloads ~130MB of Chromium browser engine...");
-            // Use the bundled playwright CLI directly (npx may not find it on fresh systems)
-            const playwrightCli = path.join(BOT_DIR, "node_modules", "playwright", "cli.js");
-            await runCommand("node", [playwrightCli, "install", "chromium"], BOT_DIR, (line) => {
-                if (line.trim()) sendLog(line);
-            });
-            sendProgress(60, "✅ Browser engine ready");
-
-            // Step 4.5: Audio tools (sox — needed for live voice mode)
-            sendProgress(61, "Checking audio tools...");
-            try {
-                const hasSox = await new Promise((resolve) => {
-                    require("child_process").exec("sox --version", (err) => resolve(!err));
-                });
-                if (hasSox) {
-                    sendLog("sox audio toolkit detected ✓");
-                } else {
-                    sendLog("Installing sox audio toolkit (needed for live voice mode)...");
-                    if (process.platform === "darwin") {
-                        // macOS: try Homebrew first, then MacPorts
-                        try {
-                            await runCommand("brew", ["install", "sox"], undefined, (line) => {
-                                if (line.trim()) sendLog(line);
-                            });
-                            sendLog("sox installed via Homebrew ✓");
-                        } catch {
-                            sendLog("Homebrew not available — sox will be installed on first use");
-                            sendLog("You can install manually: brew install sox");
-                        }
-                    } else if (process.platform === "linux") {
-                        try {
-                            await runCommand("sudo", ["apt-get", "install", "-y", "sox"], undefined, (line) => {
-                                if (line.trim()) sendLog(line);
-                            });
-                            sendLog("sox installed via apt ✓");
-                        } catch {
-                            sendLog("Could not auto-install sox — install manually: sudo apt install sox");
-                        }
-                    } else {
-                        // Windows: sox needs manual install or choco
-                        try {
-                            await runCommand("choco", ["install", "sox", "-y"], undefined, (line) => {
-                                if (line.trim()) sendLog(line);
-                            });
-                            sendLog("sox installed via Chocolatey ✓");
-                        } catch {
-                            sendLog("sox not found — live voice requires sox. Install from https://sox.sourceforge.net");
-                        }
-                    }
-                }
-            } catch {
-                sendLog("Audio tools check skipped (non-fatal)");
-            }
-            sendProgress(63, "✅ Audio tools ready");
-
-            // Step 5: AI Model
-            sendProgress(65, "Downloading AI embedding model (~23MB)...");
-            sendLog("Pre-warming Xenova/all-MiniLM-L6-v2 (quantized)...");
-            sendLog("This model powers semantic search and memory recall");
-            // Write warmup script to temp file (Windows cmd.exe breaks with => in node -e)
-            const warmupScript = path.join(require("os").tmpdir(), "_atlas_warmup.mjs");
-            fs.writeFileSync(warmupScript, `
-                import("@xenova/transformers")
-                    .then(t => t.pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2", { quantized: true }))
-                    .then(() => console.log("done"))
-                    .catch(e => console.error(e));
-            `);
-            try {
-                await runCommand("node", [warmupScript], BOT_DIR, (line) => {
-                    if (line.trim()) sendLog(line);
-                });
-            } finally {
-                try { fs.unlinkSync(warmupScript); } catch { /* cleanup */ }
-            }
-            sendProgress(78, "✅ AI model downloaded");
-
-            // Step 6: Prepare data directory (use writable DATA_DIR, not read-only BOT_DIR)
-            sendProgress(80, "Preparing data directory...");
-            sendLog("Setting up writable data directory...");
-            fs.mkdirSync(DATA_DIR, { recursive: true });
-
-            const toDelete = [
-                "memory.db", "memory.db-shm", "memory.db-wal", "memory.hnsw.json",
-                "audit.jsonl", "browser-strategies.json", "task-learnings.json",
-            ];
-            const dirsToClear = [
-                "browser-profile", "google-tokens", "research", "long-tasks", "process-logs",
-            ];
-
-            for (const f of toDelete) {
-                try { fs.unlinkSync(path.join(DATA_DIR, f)); sendLog(`Cleared ${f}`); } catch { /* */ }
-            }
-            for (const d of dirsToClear) {
-                try { fs.rmSync(path.join(DATA_DIR, d), { recursive: true, force: true }); } catch { /* */ }
-                fs.mkdirSync(path.join(DATA_DIR, d), { recursive: true });
-                sendLog(`Reset directory: ${d}/`);
-            }
-
-            // Copy bundled google-credentials.json to writable data dir
-            const bundledCreds = path.join(BOT_DIR, "data", "google-credentials.json");
-            const writableCreds = path.join(DATA_DIR, "google-credentials.json");
-            if (fs.existsSync(bundledCreds)) {
-                fs.copyFileSync(bundledCreds, writableCreds);
-                sendLog("Copied Google credentials to data directory");
-            }
-
-            sendProgress(85, "✅ Data directory ready");
-
-            // Step 7: Create workspace
-            if (options.workspace) {
-                sendProgress(87, "Creating A.T.L.A.S workspace folder...");
-                sendLog(`Creating: ${options.workspace}`);
-                try {
-                    fs.mkdirSync(options.workspace, { recursive: true });
-                } catch (mkdirErr) {
-                    // Desktop may be restricted on some Windows setups — fall back to Documents
-                    sendLog(`Could not create workspace at ${options.workspace}: ${mkdirErr.message}`);
-                    const fallback = path.join(app.getPath("documents"), "A.T.L.A.S Files");
-                    sendLog(`Falling back to: ${fallback}`);
-                    fs.mkdirSync(fallback, { recursive: true });
-                    options.workspace = fallback;
-
-                    // Rewrite the .env file with the fallback workspace
-                    const currentEnv = loadEnvDecrypted();
-                    if (currentEnv) {
-                        const newEnv = currentEnv.split('\n').map(line => {
-                            if (line.startsWith('ATLAS_WORKSPACE=')) return `ATLAS_WORKSPACE=${options.workspace}`;
-                            return line;
-                        }).join('\n');
-                        saveEnvEncrypted(newEnv);
-                        sendLog(`Updated configuration with fallback workspace path`);
-                    }
-                }
-            }
-            sendProgress(88, "✅ Workspace created");
-
-            // Step 8: Seed user profile
-            sendProgress(90, "Setting up your profile...");
-            sendLog("Profile will be seeded on first launch");
-            // Profile will be seeded on first bot run via the identity module
-
-            // Step 9: Desktop shortcut (handled by NSIS installer)
-            sendProgress(95, "Finalizing installation...");
-            sendLog("Writing setup completion flag...");
-
-            // Mark setup complete
-            fs.writeFileSync(SETUP_FLAG, new Date().toISOString());
-            sendLog("Setup complete — all systems go ✓");
-            sendProgress(100, "✅ Installation complete!");
-
-            return { success: true };
+            return {
+                success: false,
+                paused: true,
+                failedPhase: res.failedPhase,
+                error: res.error && res.error.message,
+                completed: res.completed,
+            };
         } catch (err) {
-            sendLog(`ERROR: ${err.message}`);
-            sendProgress(-1, `❌ Error: ${err.message}`);
+            ctx.sendLog("ERROR: " + err.message);
+            ctx.sendProgress(-1, "Error: " + err.message);
+            return { success: false, error: err.message };
+        }
+    });
+
+    // Setup: retry a single install phase by id. Used by install-log's Retry button
+    // (see desktop/components/install-log.js).
+    ipcMain.handle("setup:retry-install-phase", async (_, phaseId) => {
+        try {
+            const { runDetection, buildPhaseList, runPhases } = requireInstaller();
+            const state = await runDetection(buildDetectionDeps());
+            const full = buildPhaseList(state);
+            const phase = full.find((p) => p.id === phaseId);
+            if (!phase) return { success: false, error: "Unknown phase: " + phaseId };
+            const res = await runPhases([phase], buildInstallCtx(mainWindow, {}));
+            return {
+                success: res.status === "complete",
+                paused: res.status === "paused",
+                error: res.error && res.error.message,
+            };
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    // Setup: resume install — runs only phases that don't yet have a done-marker
+    // in data/setup-state.json. Used when the user relaunches the app mid-install.
+    ipcMain.handle("setup:resume-install", async () => {
+        try {
+            const { runDetection, buildPhaseList, runPhases, getResumeList, readSetupState } = requireInstaller();
+            const state = await runDetection(buildDetectionDeps());
+            const full = buildPhaseList(state);
+            const remaining = getResumeList(full, readSetupState(DATA_DIR));
+            const res = await runPhases(remaining, buildInstallCtx(mainWindow, {}));
+            return {
+                success: res.status === "complete",
+                paused: res.status === "paused",
+                failedPhase: res.failedPhase,
+                error: res.error && res.error.message,
+            };
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    // Setup: read the per-phase done-markers (for Install step UI to show
+    // "resume from here" affordances).
+    ipcMain.handle("setup:get-state", () => {
+        try {
+            const { readSetupState } = requireInstaller();
+            return { success: true, state: readSetupState(DATA_DIR) };
+        } catch (err) {
             return { success: false, error: err.message };
         }
     });
@@ -2027,62 +2007,8 @@ function registerIPC() {
     // Runs all Phase A signal probes in parallel with per-signal timeouts.
     // Fail-safe: errors and timeouts never abort detection — every probe has a fallback.
     ipcMain.handle("setup:detect", async () => {
-        const { runDetection } = require("./detection");
-        const os = require("os");
-        const { promisify } = require("util");
-        const execFn = promisify(require("child_process").exec);
-
-        // Pull OTPless session from electron-store; safeStorage may throw if key expired.
-        const prefs = (() => {
-            try {
-                return {
-                    account: store.get("account") || undefined,
-                    personalize: store.get("personalize") || undefined,
-                };
-            } catch { return {}; }
-        })();
-
-        // Parse the encrypted .env into a plain object so channel probes can read
-        // presence-only flags without the raw file ever leaving this function.
-        const envObj = (() => {
-            try {
-                const raw = loadEnvDecrypted();
-                if (!raw) return {};
-                const out = {};
-                for (const line of raw.split("\n")) {
-                    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/);
-                    if (m) out[m[1]] = m[2];
-                }
-                return out;
-            } catch { return {}; }
-        })();
-
-        const paths = {
-            setupFlag: SETUP_FLAG,
-            envFile: path.join(app.getPath("userData"), ".env.enc"),
-            googleTokens: path.join(app.getPath("userData"), "google-tokens"),
-            botDir: path.join(process.resourcesPath || app.getAppPath(), "bot"),
-            homeDir: app.getPath("home"),
-            workspace: path.join(app.getPath("desktop"), "A.T.L.A.S Files"),
-            storedVersion: path.join(app.getPath("userData"), "version.json"),
-            slackInstalls: path.join(app.getPath("userData"), "slack-installs"),
-            whatsappOwners: path.join(app.getPath("userData"), "whatsapp-users", "owners.json"),
-        };
-
-        return runDetection({
-            proc: process,
-            fs,
-            os,
-            systemPreferences,
-            nativeTheme,
-            globalShortcut,
-            prefs,
-            envObj,
-            execFn: async (cmd) => execFn(cmd),
-            paths,
-            currentVersion: app.getVersion(),
-            hotkey: process.platform === "win32" ? "Control+Space" : "Alt+Space",
-        });
+        const { runDetection } = requireInstaller();
+        return runDetection(buildDetectionDeps());
     });
 
     // Setup: re-read just the macOS permission map (for 1s live polling from the

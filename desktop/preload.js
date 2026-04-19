@@ -41,6 +41,9 @@ contextBridge.exposeInMainWorld("atlas", {
     setupSaveChannel: (type, creds, testId) => ipcRenderer.invoke("setup:save-channel", type, creds, testId),
     setupSlackOAuthStart: () => ipcRenderer.invoke("setup:slack-oauth-start"),
     setupSavePersonalize: (cfg) => ipcRenderer.invoke("setup:save-personalize", cfg),
+    setupRetryInstallPhase: (phaseId) => ipcRenderer.invoke("setup:retry-install-phase", phaseId),
+    setupResumeInstall: () => ipcRenderer.invoke("setup:resume-install"),
+    setupGetSetupState: () => ipcRenderer.invoke("setup:get-state"),
     finishSetup: () => ipcRenderer.invoke("setup:finish"),
 
     // ── Events ────────────────────────────────
