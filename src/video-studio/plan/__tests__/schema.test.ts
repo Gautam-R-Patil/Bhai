@@ -3,7 +3,7 @@
 // See LICENSE.md for details.
 
 import { describe, expect, it } from "vitest";
-import { EditPlanSchema, validateEditPlan } from "../schema.js";
+import { EditPlanSchema, VideoTrackSchema, validateEditPlan } from "../schema.js";
 
 const VALID_PLAN = {
     projectId: "vid_2026_04_18_01",
@@ -55,6 +55,31 @@ describe("EditPlanSchema", () => {
         const bad = structuredClone(VALID_PLAN);
         bad.output.resolution = "fullhd";
         expect(EditPlanSchema.safeParse(bad).success).toBe(false);
+    });
+
+    it("accepts crop: auto_face", () => {
+        const plan = structuredClone(VALID_PLAN);
+        Object.assign(plan.tracks.video[0], { crop: "auto_face" });
+        expect(EditPlanSchema.safeParse(plan).success).toBe(true);
+    });
+
+    it("accepts crop: coordinate string matching N:N:N:N", () => {
+        const plan = structuredClone(VALID_PLAN);
+        Object.assign(plan.tracks.video[0], { crop: "0:0:1920:1080" });
+        expect(EditPlanSchema.safeParse(plan).success).toBe(true);
+    });
+
+    it("rejects crop: arbitrary string that is not auto_face or N:N:N:N", () => {
+        const plan = structuredClone(VALID_PLAN);
+        Object.assign(plan.tracks.video[0], { crop: "garbage_value" });
+        expect(EditPlanSchema.safeParse(plan).success).toBe(false);
+    });
+});
+
+describe("VideoTrackSchema export", () => {
+    it("VideoTrackSchema is exported and parses a valid track", () => {
+        const result = VideoTrackSchema.safeParse({ id: "v1", source: "s1", in: 0, out: 5 });
+        expect(result.success).toBe(true);
     });
 });
 
