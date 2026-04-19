@@ -4325,6 +4325,12 @@ Self-review surfaced cross-phase drift between the four fragments (detection pat
 - All tests live under `desktop/tests/**/*.test.js`. Any step that creates a test under `desktop/__tests__/` or `desktop/<subdir>/__tests__/` — relocate to `desktop/tests/<subdir>/<name>.test.js` instead. Phase A's `vitest.config.js` stays the single source of truth; add `include: ["tests/**/*.test.js"]` and nothing else.
 - Single test runner: **vitest** across all phases. Any step in Phase D that imports `from "node:test"` or runs `node --test …` — rewrite to `import { describe, it, expect } from "vitest"` and put the file under `desktop/tests/`.
 
+**Module syntax (canonical) — discovered during A0 execution:**
+- `desktop/vitest.config.js` uses **CommonJS** (`const { defineConfig } = require("vitest/config"); module.exports = defineConfig({...})`). `desktop/` has no top-level `"type":"module"` in `package.json`, so `.js` files default to CommonJS.
+- **Test files under `desktop/tests/` must use ESM `import` syntax.** Vitest 2.x ships `vitest` as ESM-only — `require("vitest")` throws "Vitest cannot be imported with require(...)". Every test file must use `import { describe, it, expect } from "vitest"` even though the module under test is CommonJS. Any plan snippet showing `const { describe, it, expect } = require("vitest")` is wrong — use `import { ... } from "vitest"` instead.
+- **Modules under test stay CommonJS.** `desktop/detection/signals.js`, `desktop/detection/index.js`, `desktop/installer/phases.js`, `desktop/installer/runner.js`, `desktop/wizard/router.js`, `desktop/wizard/chips.js`, and all shared main-process helpers export via `module.exports = {...}` and are `require()`d from `main.js`. Tests import them via vitest's interop: `import signals from "../../detection/signals.js"` (picks up `module.exports` as the default import) or `import * as signals from "../../detection/signals.js"` (named interop — works because vitest transforms CJS on the way in).
+- **Renderer components stay IIFE**, per the component pattern below. No `import`/`export`. They attach to `window.SetupComponents.<Name>`.
+
 **Component API (canonical):**
 
 Every renderer component exports a class constructor on `window.SetupComponents.<PascalCaseName>` and follows this contract:
