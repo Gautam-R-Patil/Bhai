@@ -82,3 +82,33 @@ describe("WizardRouter.next/prev + ALL_STEPS", () => {
         expect(ALL_STEPS).toEqual(["welcome", "signin", "profile", "personalize", "permissions", "install"]);
     });
 });
+
+describe("Windows parity (C13)", () => {
+    it("win32 signed-in + complete state still excludes permissions and ends with install", () => {
+        const s = {
+            platform: "win32",
+            isReconfigure: false,
+            account: { signedIn: true, email: "d@x.co" },
+            profile: { name: "Dheeraj", tone: "friendly" },
+            permissions: { accessibility: "denied", screen: "denied", microphone: "denied", location: "denied" },
+            installed: { node: false, playwright: false, embeddingModel: false, sox: false },
+            hotkey: { current: "Control+Space", conflicts: [] },
+            personalize: { hotkey: "Control+Space", theme: "dark", voice: { backend: "gemini-live", name: "Aoede" }, wakeWord: { enabled: false, phrase: "Hey Atlas" } },
+            workspace: { path: "", exists: false },
+        };
+        const { steps } = getSteps(s);
+        expect(steps).not.toContain("permissions");
+        expect(steps[steps.length - 1]).toBe("install");
+    });
+    it("win32 fresh → permissions still excluded even in initial flow", () => {
+        const s = {
+            platform: "win32", isReconfigure: false,
+            account: { signedIn: false }, profile: {},
+            permissions: { accessibility: "denied", screen: "denied", microphone: "denied", location: "denied" },
+            installed: { node: false, playwright: false, embeddingModel: false, sox: false },
+            hotkey: { current: "Control+Space", conflicts: [] },
+            workspace: { path: "", exists: false },
+        };
+        expect(getSteps(s).steps).not.toContain("permissions");
+    });
+});

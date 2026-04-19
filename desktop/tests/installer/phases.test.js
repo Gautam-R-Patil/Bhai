@@ -91,3 +91,26 @@ describe("phase.run contracts", () => {
         expect(dataDir.idempotent).toBe(true);
     });
 });
+
+describe("Windows parity (C13)", () => {
+    it("win32 fresh state → same phase ids as darwin (sox branches at runtime)", () => {
+        const list = buildPhaseList(base({ platform: "win32" }));
+        expect(list.map((p) => p.id)).toEqual(CANON);
+    });
+    it("win32 cached state → [data-dir, setup-state-finalize] (no workspace path)", () => {
+        const list = buildPhaseList(base({
+            platform: "win32",
+            installed: { node: true, playwright: true, embeddingModel: true, sox: true },
+            workspace: { path: "", exists: true },
+        }));
+        expect(list.map((p) => p.id)).toEqual(["data-dir", "setup-state-finalize"]);
+    });
+    it("win32 with requested workspace → includes workspace phase", () => {
+        const list = buildPhaseList(base({
+            platform: "win32",
+            installed: { node: true, playwright: true, embeddingModel: true, sox: true },
+            workspace: { path: "C:\\Users\\Dev\\Atlas Files", exists: true },
+        }));
+        expect(list.map((p) => p.id)).toContain("workspace");
+    });
+});
