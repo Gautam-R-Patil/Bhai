@@ -82,6 +82,8 @@
                 "to": "bot/skills",
                 "filter": [
                     "**/*",
+                    "!convex",
+                    "!convex/**",
                     "!convex-*",
                     "!convex-*/**"
                 ]
