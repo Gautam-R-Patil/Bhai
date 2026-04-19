@@ -6,7 +6,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
     test: {
-        include: ["src/video-studio/**/*.test.ts", "src/tools/**/*.test.ts"],
+        include: ["src/video-studio/**/*.test.ts", "src/tools/**/*.test.ts", "src/setup/**/*.test.ts"],
         environment: "node",
         testTimeout: 30_000,
         reporters: ["verbose"],
