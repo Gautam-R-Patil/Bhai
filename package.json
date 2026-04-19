@@ -10,7 +10,7 @@
     "predev": "npm run build:location 2>/dev/null || true",
     "dev": "tsx --watch src/index.ts",
     "build": "node node_modules/typescript/bin/tsc",
-    "postbuild": "node -e \"const fs=require('fs');fs.mkdirSync('dist/overlay',{recursive:true});fs.copyFileSync('src/overlay/overlay.html','dist/overlay/overlay.html')\"",
+    "postbuild": "node scripts/postbuild-copy-assets.mjs",
     "start": "node dist/index.js",
     "build:native": "cd native && npm install && npm run build",
     "build:ocr": "swiftc -O scripts/ocr_screen.swift -o scripts/ocr_screen_bin 2>/dev/null || echo 'Swift OCR compilation skipped (non-macOS or no Swift)'",

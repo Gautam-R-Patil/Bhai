@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { getToolSchemasByNames } from "../index.js";
 
 describe("video studio registry", () => {
-    it("all 7 video_ tools are registered in the global registry", () => {
+    it("all 8 video_ tools are registered in the global registry", () => {
         const names = [
             "video_create_project",
             "video_analyze",
@@ -15,9 +15,10 @@ describe("video studio registry", () => {
             "video_patch_plan",
             "video_ffmpeg",
             "video_list_projects",
+            "video_search_broll",
         ];
         const schemas = getToolSchemasByNames(names);
-        expect(schemas).toHaveLength(7);
+        expect(schemas).toHaveLength(8);
         for (const s of schemas) {
             expect(s.type).toBe("function");
             expect(s.function.name).toMatch(/^video_/);

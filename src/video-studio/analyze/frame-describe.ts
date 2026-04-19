@@ -135,6 +135,7 @@ export async function describeKeyframes(
 
     const keyframes = await pLimit(tasks, CONCURRENCY);
 
+    fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
     fs.writeFileSync(cacheFile, JSON.stringify(keyframes, null, 2), "utf-8");
     try {
         fs.unlinkSync(partialFile);

@@ -34,7 +34,14 @@ const SCHEMA_DESCRIPTION = `Required JSON shape (strict — output ONLY this JSO
   "sources": [{ "id": "<string>", "path": "<string>", "duration": <number> }],
   "tracks": {
     "video": [{ "id": "<string>", "source": "<sources[].id>", "in": <number>, "out": <number>,
-                "speed": <opt number>, "crop": <opt string>, "effects": <opt string[]> }],
+                "speed": <opt number>,
+                "crop": <opt "auto_face" | "W:H:X:Y">,
+                "effects": <opt string[] — each entry matches one of:
+                             "bg_replace:<path/to/background.jpg>",
+                             "color_grade:warm" | "color_grade:cool" | "color_grade:vintage" | "color_grade:mono",
+                             "stabilize"  (Phase 3 placeholder — currently a no-op),
+                             "stylize:<preset>"  (Phase 3 placeholder — currently a no-op)>
+              }],
     "audio": [{ "id": "<string>", "source": "<path>", "volume": <opt dB>, "duck_on_speech": <opt bool>,
                 "sync_to_beats": <opt bool>, "fade_in": <opt s>, "fade_out": <opt s> }],
     "overlays": [
@@ -47,8 +54,13 @@ const SCHEMA_DESCRIPTION = `Required JSON shape (strict — output ONLY this JSO
                     "kind": <opt string>, "duration": <opt s> }],
   "export_targets": ["mp4"] (required) | ["mp4","fcpxml"]
 }
-Constraints: video[].out <= source duration; video[].in < video[].out;
-             transition between[] IDs must exist in tracks.video[].id.`;
+Constraints:
+  - video[].out <= source duration; video[].in < video[].out.
+  - transition between[] IDs must exist in tracks.video[].id.
+  - crop MUST be either the literal "auto_face" (smart face-tracked crop to output aspect)
+    OR four colon-separated integers "W:H:X:Y" (explicit fixed crop). Any other crop value is REJECTED.
+  - effects entries MUST use the exact directive syntax above. Unknown directives are skipped at render time with a warning.
+  - "bg_replace" downloads a ~400MB BiRefNet model on first use; skip it unless the user explicitly asked for background replacement.`;
 
 function buildSystemPrompt(): string {
     return `You are a video editing planner. Given a timeline and a user intent, you output a single valid JSON edit plan conforming exactly to the schema below. Output ONLY the JSON object — no markdown fences, no prose, no comments.

@@ -190,6 +190,7 @@ import {
     videoPatchPlan,
     videoPlanEdit,
     videoRender,
+    videoSearchBroll,
 } from "./video-studio.js";
 import { weatherTool } from "./weather.js";
 import { webSearch } from "./web-search.js";
@@ -378,6 +379,7 @@ registry.set(videoRender.schema.function.name, videoRender);
 registry.set(videoPatchPlan.schema.function.name, videoPatchPlan);
 registry.set(videoFfmpeg.schema.function.name, videoFfmpeg);
 registry.set(videoListProjects.schema.function.name, videoListProjects);
+registry.set(videoSearchBroll.schema.function.name, videoSearchBroll);
 
 // File tools (coding primitives + directory listing + deletion)
 registry.set(read.schema.function.name, read);

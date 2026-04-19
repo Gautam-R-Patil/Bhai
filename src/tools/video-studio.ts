@@ -9,6 +9,12 @@ import { promisify } from "node:util";
 import { getDataDir } from "../config/paths.js";
 import type { LLMClient } from "../llm.js";
 import { buildTimeline } from "../video-studio/analyze/timeline-builder.js";
+import {
+    downloadStockClip,
+    type StockProvider,
+    searchStockVideo,
+    selectDefaultProvider,
+} from "../video-studio/assets/stock-broll.js";
 import { PlanValidationError, planEdit } from "../video-studio/plan/planner.js";
 import { type EditPlan, validateEditPlan } from "../video-studio/plan/schema.js";
 import { createProject, listProjects, loadProject } from "../video-studio/project.js";
@@ -508,6 +514,91 @@ export const videoListProjects: ToolDefinition = {
                     id: p.id,
                     rootDir: p.rootDir,
                     inputCount: p.inputs.length,
+                })),
+            });
+        } catch (e) {
+            return errFromUnknown(e);
+        }
+    },
+};
+
+export const videoSearchBroll: ToolDefinition = {
+    schema: {
+        type: "function",
+        function: {
+            name: "video_search_broll",
+            description:
+                "Search free stock b-roll footage by keyword. Defaults to Internet Archive (keyless, public-domain) — no API key required. Uses Pexels automatically if PEXELS_API_KEY is set for higher-quality modern clips. Optionally downloads the first N results into the project's assets/broll directory and returns local file paths.",
+            parameters: {
+                type: "object",
+                properties: {
+                    query: { type: "string", description: "Search keyword, e.g. 'ocean waves' or 'city traffic'." },
+                    count: {
+                        type: "number",
+                        description: "Max results to return. Default 5, max 25.",
+                    },
+                    provider: {
+                        type: "string",
+                        enum: ["internet_archive", "pexels"],
+                        description:
+                            "Force a provider. Omit to auto-select (pexels if PEXELS_API_KEY set, else internet_archive).",
+                    },
+                    projectId: {
+                        type: "string",
+                        description:
+                            "If provided, downloads the returned clips into <project>/assets/broll/ and includes localPath in each result.",
+                    },
+                    downloadFirst: {
+                        type: "number",
+                        description:
+                            "Number of top results to download locally when projectId is provided. Default 0 (search-only). Max equal to count.",
+                    },
+                },
+                required: ["query"],
+            },
+        },
+    },
+
+    async handler(input) {
+        try {
+            const query = typeof input.query === "string" ? input.query.trim() : "";
+            if (!query) return errResult("`query` is required and must be non-empty");
+
+            const count = Math.min(25, Math.max(1, Number(input.count) || 5));
+            const provider = typeof input.provider === "string" ? (input.provider as StockProvider) : undefined;
+            const projectId = typeof input.projectId === "string" ? input.projectId : undefined;
+            const downloadFirst = Math.max(0, Math.min(count, Number(input.downloadFirst) || 0));
+
+            const clips = await searchStockVideo(query, { count, provider });
+
+            let downloads: Array<{ id: string; localPath: string }> = [];
+            if (projectId && downloadFirst > 0) {
+                const project = await loadProject(projectId);
+                const destDir = path.join(project.rootDir, "assets", "broll");
+                const toDownload = clips.slice(0, downloadFirst);
+                downloads = await Promise.all(
+                    toDownload.map(async (clip) => ({
+                        id: clip.id,
+                        localPath: await downloadStockClip(clip, destDir),
+                    })),
+                );
+            }
+
+            const localPathById = new Map(downloads.map((d) => [d.id, d.localPath]));
+
+            return JSON.stringify({
+                success: true,
+                provider: clips[0]?.provider ?? provider ?? selectDefaultProvider(),
+                count: clips.length,
+                clips: clips.map((c) => ({
+                    id: c.id,
+                    provider: c.provider,
+                    url: c.url,
+                    thumbnailUrl: c.thumbnailUrl,
+                    width: c.width,
+                    height: c.height,
+                    durationSec: c.durationSec,
+                    localPath: localPathById.get(c.id),
                 })),
             });
         } catch (e) {

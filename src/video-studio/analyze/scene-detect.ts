@@ -6,8 +6,11 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { ffprobePath } from "../util/ffmpeg-bin.js";
 import { ensurePythonEnv, runPython } from "../util/python-sidecar.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export interface Scene {
     index: number;
@@ -85,7 +88,7 @@ export async function detectScenes(videoPath: string, projectRoot: string): Prom
 
     try {
         await ensurePythonEnv();
-        const scriptPath = path.resolve("src/video-studio/python/scene_detect.py");
+        const scriptPath = path.join(__dirname, "..", "python", "scene_detect.py");
         const tmpOut = `${cacheFile}.tmp.json`;
         await runPython(scriptPath, [videoPath, tmpOut]);
         const raw = JSON.parse(fs.readFileSync(tmpOut, "utf-8")) as SceneDetectOutput;
