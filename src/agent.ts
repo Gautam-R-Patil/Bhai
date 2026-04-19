@@ -85,7 +85,12 @@ import { clearCache, executeTool, resetRateLimits } from "./tools/index.js";
 // classifier is highly confident the user is asking for simple music playback.
 // Fails open: any misfire falls through to the normal agent path.
 
-const MUSIC_INTENT_PATTERN = /^(play_music|play_song|pause|resume|next|previous|skip|volume|shuffle|repeat|now_playing)/i;
+// Match the classifier's actual intent labels for music playback. Handles spaces
+// OR underscores (e.g. "play music track" and "play_music_track"). Covers the
+// common variants observed in production: play_music, play_song, music_playback,
+// music_control, play, pause, resume, next/previous/skip, volume, shuffle,
+// repeat, now_playing.
+const MUSIC_INTENT_PATTERN = /^(play[_ ]?music|play[_ ]?song|music[_ ]?(playback|control|play)|play$|play[_ ]|pause|resume|next|previous|skip|volume|shuffle|repeat|now[_ ]?playing)/i;
 const MUSIC_POSSESSIVE_PATTERN = /\b(my|our|the one|that|favorite|fav|usual|go[- ]?to|mine)\b/i;
 const SPOTIFY_URI_PATTERN = /spotify:(track|album|playlist|artist):[A-Za-z0-9]+/;
 
