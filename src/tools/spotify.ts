@@ -35,6 +35,7 @@ import {
     osVolume,
 } from "./spotify-os.js";
 import { installSpogo, spogoBinaryPath } from "./spotify-installer.js";
+import { fastSearchTrack } from "./spotify-search.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -294,11 +295,36 @@ async function call(args: string[], opts: { timeout?: number; withJson?: boolean
 
 // ── URI resolution helpers ────────────────────
 
+// In-memory cache for resolved URIs — if the user asks for the same song twice
+// in a session, skip the ~15s spogo search roundtrip entirely.
+interface SearchCacheEntry { result: { uri: string; name?: string; artists?: string }; at: number; }
+const _searchCache = new Map<string, SearchCacheEntry>();
+const SEARCH_CACHE_TTL_MS = 15 * 60 * 1000; // 15 min
+
 async function searchTop(type: "track" | "album" | "artist" | "playlist", query: string): Promise<{ uri: string; name?: string; artists?: string } | null> {
-    const r = await call(["search", type, query, "--limit", "1"]);
+    const cacheKey = `${type}:${query.toLowerCase().trim()}`;
+    const cached = _searchCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < SEARCH_CACHE_TTL_MS) {
+        return cached.result;
+    }
+
+    // Fast path: Spotify public Web API via Client Credentials (~200ms).
+    // Only for tracks — album/artist/playlist still go through spogo.
+    if (type === "track") {
+        const fast = await fastSearchTrack(query);
+        if (fast) {
+            const result = { uri: fast.uri, name: fast.name, artists: fast.artists };
+            _searchCache.set(cacheKey, { result, at: Date.now() });
+            return result;
+        }
+    }
+
+    // Fallback: spogo search (~15s). NOTE: spogo v0.2.0 has a bug where
+    // `--limit 1` returns the wrong top result for many queries; `--limit 10`
+    // returns the correctly-ranked list.
+    const r = await call(["search", type, query, "--limit", "10"]);
     if (!r.ok || !r.data) return null;
     const d = r.data as Record<string, unknown>;
-    // Expected shape: { tracks: [{uri, name, artists:[{name}]}] } etc. Try defensive extraction.
     const arr = (d[`${type}s`] as Array<Record<string, unknown>> | undefined) || (d.items as Array<Record<string, unknown>> | undefined) || (d.results as Array<Record<string, unknown>> | undefined);
     const first = Array.isArray(arr) && arr.length > 0 ? arr[0] : null;
     if (!first) return null;
@@ -308,7 +334,13 @@ async function searchTop(type: "track" | "album" | "artist" | "playlist", query:
     const artists = Array.isArray(first.artists)
         ? (first.artists as Array<Record<string, unknown>>).map((a) => a.name as string).filter(Boolean).join(", ")
         : undefined;
-    return { uri, name: first.name as string | undefined, artists };
+    const result = { uri, name: first.name as string | undefined, artists };
+    _searchCache.set(cacheKey, { result, at: Date.now() });
+    if (_searchCache.size > 200) {
+        const oldest = [..._searchCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+        if (oldest) _searchCache.delete(oldest[0]);
+    }
+    return result;
 }
 
 // ── Action handlers ───────────────────────────
@@ -317,6 +349,13 @@ async function doPlay(input: Record<string, unknown>): Promise<string> {
     const rawUri = (input.uri as string) || (input.context_uri as string) || "";
     const query = (input.query as string) || "";
     const shuffle = Boolean(input.shuffle);
+
+    // Kick off a Spotify-app wakeup in parallel — on the common "play X" path we'll
+    // need an active device anyway. Running it concurrently with the ~15s spogo search
+    // cuts ~3s off the perceived latency when the app wasn't already running.
+    const appWakeup = (rawUri || query)
+        ? ensureSpotifyAppRunning().catch(() => false)
+        : Promise.resolve(true);
 
     // Resolve URI if only a query was given
     let targetUri = rawUri;
@@ -335,6 +374,10 @@ async function doPlay(input: Record<string, unknown>): Promise<string> {
             label = `${resolved.name ?? ""}${resolved.artists ? ` – ${resolved.artists}` : ""}`.trim();
         }
     }
+
+    // Wait for the wakeup to complete before trying spogo play (so it has a device
+    // to target). This is a no-op if Spotify was already running.
+    await appWakeup;
 
     if (!targetUri && !query) {
         // Plain "resume"
