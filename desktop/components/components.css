@@ -92,3 +92,10 @@
 .hub-actions .btn-primary:hover { filter: brightness(1.1); }
 .hub-actions .btn-ghost { padding: 10px 20px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.15); background: rgba(255,255,255,0.04); color: #e8eaed; font-size: 14px; cursor: pointer; }
 .hub-actions .btn-ghost:hover { background: rgba(255,255,255,0.08); }
+.page-head { display: flex; align-items: center; gap: 16px; padding: 24px 24px 8px; }
+.page-head .page-title { margin: 0; font-size: 24px; font-weight: 500; }
+.back-link { color: var(--text-secondary, #86868b); text-decoration: none; font-size: 13px; }
+.back-link:hover { color: var(--text-primary, #e8eaed); }
+.channels-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; padding: 24px; }
+.channel-cell { display: block; }
+.channel-cell--connected .sp-channel { border-color: rgba(52,199,89,0.4); background: rgba(52,199,89,0.06); }
