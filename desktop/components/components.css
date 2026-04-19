@@ -99,3 +99,44 @@
 .channels-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; padding: 24px; }
 .channel-cell { display: block; }
 .channel-cell--connected .sp-channel { border-color: rgba(52,199,89,0.4); background: rgba(52,199,89,0.06); }
+
+/* D7: Motion polish — orb avatar breathing, tile pulse overrides, live theme transitions */
+
+/* Breathing orb avatar for the Ready Hub hero */
+@keyframes sp-breathe {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.04); }
+    100% { transform: scale(1); }
+}
+.orb-avatar {
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 30% 30%, #a855f7, #ec4899 70%);
+    margin: 0 auto 16px;
+    box-shadow: 0 12px 48px rgba(168, 85, 247, 0.35);
+}
+.orb-avatar.breathing {
+    animation: sp-breathe 3s ease-in-out infinite;
+}
+
+/* Status-tile green-pulse override (B1's sp-tile--pulse keyframe also exists; this
+   is a stronger visible pulse specifically for 'newly turned green' transitions
+   that the hub's diff-tiles flow triggers). */
+@keyframes sp-border-pulse-green {
+    0%   { border-left-color: currentColor; }
+    50%  { border-left-color: #10b981; box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.18); }
+    100% { border-left-color: currentColor; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+.sp-tile.sp-tile--pulse { animation: sp-border-pulse-green 320ms ease-out; }
+
+/* Live theme switch transitions (D7) — wizard + hub + panel recolor over 200ms
+   when theme-change CustomEvent fires. Applied to body + major container classes. */
+body, .wizard-body, .panel-body, .hub-root, .step-container, .sp-tile, .sp-channel, .sp-perm {
+    transition: background-color 200ms ease, color 200ms ease, border-color 200ms ease;
+}
+
+/* Wake-for-user indicator during theme flips — class added transiently by theme-switch */
+.theme-switching * {
+    transition: background-color 200ms ease, color 200ms ease, border-color 200ms ease !important;
+}
