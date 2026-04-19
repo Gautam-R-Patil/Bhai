@@ -63,7 +63,6 @@ import {
 import { detectTaskType } from "./prompts/dynamic-assembler.js";
 import {
     clearToolRouterState,
-    getLastClassification,
     getLastIntent,
     handleToolRequest,
     isRequestToolsCall,
@@ -108,6 +107,7 @@ function isMusicFastPathEligible(opts: {
     userMessage: string;
     iteration: number;
     inPlanMode: boolean;
+    classification: { intent: string; specific_tools: string[]; confidence: number; categories: string[] } | null;
 }): boolean {
     if (opts.iteration !== 1) return false;          // only first iteration of a turn
     if (opts.inPlanMode) return false;
@@ -115,7 +115,7 @@ function isMusicFastPathEligible(opts: {
     const trimmed = opts.userMessage.trim();
     if (trimmed.length === 0 || trimmed.length > 80) return false;
 
-    const cls = getLastClassification();
+    const cls = opts.classification;
     if (!cls) return false;                           // structural fallback fired — not confident enough
     if (cls.confidence < 0.9) return false;
     if (!MUSIC_INTENT_PATTERN.test(cls.intent)) return false;
@@ -1618,14 +1618,17 @@ STRATEGY: Execute in as few tool calls as possible.
         const tools = toolSelection.tools;
         activeCategories = toolSelection.categories;
 
-        // Phase-2 full fast-path gate (requires classifier output — only available
-        // AFTER the await above populated lastClassification via selectTools).
+        // Phase-2 full fast-path gate (requires classifier output — threaded
+        // through toolSelection.classification so it's guaranteed to reflect
+        // THIS call's classifier result, immune to concurrent-call races and
+        // to stale reads on cache hits).
         if (
             iterations === 1 &&
             isMusicFastPathEligible({
                 userMessage: rawUserMessage,
                 iteration: iterations,
                 inPlanMode: isPlanMode(),
+                classification: toolSelection.classification,
             })
         ) {
             musicFastPathActive = true;

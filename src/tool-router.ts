@@ -50,6 +50,13 @@ export interface ToolRouterSelection {
     skillSlugs: string[];
     totalAvailable: number;
     selectedCount: number;
+    /**
+     * The LLM classifier's output for this turn, or null if the structural
+     * fallback path was used. Present on every call (including cache hits)
+     * so callers can implement fast-path gates without relying on
+     * module-level state that's vulnerable to races / cache staleness.
+     */
+    classification: { intent: string; specific_tools: string[]; confidence: number; categories: string[] } | null;
 }
 
 interface CategoryDef {
@@ -1162,6 +1169,7 @@ export function selectToolsFast(): ToolRouterSelection {
         skillSlugs: [],
         totalAvailable: getToolSchemas().length,
         selectedCount: 0,
+        classification: null,
     };
 }
 
@@ -1494,12 +1502,27 @@ export async function selectTools(opts: {
     // ── Select relevant skill slugs ──
     const skillSlugs = getRelevantSkillSlugs(selectedCategories);
 
+    // Thread the classifier's output through the selection so callers can
+    // implement fast-path gates without relying on the mutable module-level
+    // `lastClassification` state — which is vulnerable to concurrent-call
+    // races and stale reads on cache hits.
+    const classificationForReturn: ToolRouterSelection["classification"] =
+        llmResult && llmResult.categories.length > 0 && llmResult.confidence >= 0.4
+            ? {
+                  intent: llmResult.intent,
+                  specific_tools: [...(llmResult.specific_tools || [])],
+                  confidence: llmResult.confidence,
+                  categories: [...llmResult.categories],
+              }
+            : null;
+
     const result: ToolRouterSelection = {
         tools: selectedSchemas,
         categories: selectedCategories,
         skillSlugs,
         totalAvailable: allSchemas.length + mcpSchemas.length,
         selectedCount: selectedSchemas.length,
+        classification: classificationForReturn,
     };
 
     // ── Cache ──
@@ -1612,6 +1635,7 @@ export function clearToolRouterState(): void {
     selectionCache.clear();
     currentIteration = 0;
     lastClassification = null;
+    lastClassifiedIntent = "";
     console.log(`🎯 Tool Router: State cleared`);
 }
 
