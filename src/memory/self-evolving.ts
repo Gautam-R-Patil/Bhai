@@ -2,11 +2,11 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
+import { bufferToEmbedding } from "./embeddings.js";
+import { assignTiers } from "./memory-tiers.js";
 import type { Database } from "./sqlite.js";
 import { beginTransaction, commitTransaction, rollbackTransaction } from "./sqlite.js";
 import { getHNSWIndex } from "./vector-index.js";
-import { bufferToEmbedding, cosineSimilarity } from "./embeddings.js";
-import { assignTiers } from "./memory-tiers.js";
 
 /**
  * ── Self-Evolving Memory (Brain-Inspired) ─────────────────────
@@ -38,7 +38,7 @@ function strengthScore(
     importance: number,
     accessCount: number,
     daysSinceAccess: number,
-    emotionalWeight = 1.0
+    emotionalWeight = 1.0,
 ): number {
     const accessFactor = Math.log2(1 + accessCount);
     const recency = Math.exp(-0.01 * daysSinceAccess); // λ=0.01, 69-day half-life
@@ -62,13 +62,14 @@ export function synapticPrune(db: Database): { pruned: number; weakened: number;
         `SELECT id, importance, access_count, decay_score,
                 julianday('now') - julianday(COALESCE(accessed_at, created_at)) as days_since
          FROM memories
-         WHERE consolidated_into IS NULL`
+         WHERE consolidated_into IS NULL
+           AND (category IS NULL OR category NOT LIKE 'code\\_%' ESCAPE '\\')`,
     );
 
     if (results.length === 0 || results[0].values.length === 0) return stats;
 
     // Calculate all strengths
-    const memories: MemoryStrength[] = results[0].values.map(row => ({
+    const memories: MemoryStrength[] = results[0].values.map((row) => ({
         id: row[0] as number,
         importance: row[1] as number,
         access_count: (row[2] as number) || 0,
@@ -78,7 +79,7 @@ export function synapticPrune(db: Database): { pruned: number; weakened: number;
     }));
 
     // Calculate global median strength
-    const sortedStrengths = memories.map(m => m.strength).sort((a, b) => a - b);
+    const sortedStrengths = memories.map((m) => m.strength).sort((a, b) => a - b);
     const median = sortedStrengths[Math.floor(sortedStrengths.length / 2)] || 1;
 
     const pruneThreshold = median * 0.3;
@@ -97,7 +98,11 @@ export function synapticPrune(db: Database): { pruned: number; weakened: number;
                 // PRUNE — too weak, remove (but not new/unaccessed memories)
                 db.run("DELETE FROM memories WHERE id = ?", [m.id]);
                 // Also remove from HNSW
-                try { getHNSWIndex().removeVector(m.id); } catch { /* */ }
+                try {
+                    getHNSWIndex().removeVector(m.id);
+                } catch {
+                    /* */
+                }
                 stats.pruned++;
             } else if (m.strength < weakenThreshold && !isNewMemory && !isUnaccessed) {
                 // WEAKEN — reduce decay score by 20% (but not new/unaccessed memories)
@@ -116,7 +121,9 @@ export function synapticPrune(db: Database): { pruned: number; weakened: number;
         rollbackTransaction();
     }
 
-    console.log(`[PRUNING] Synaptic homeostasis: ${stats.pruned} pruned, ${stats.weakened} weakened, ${stats.strengthened} strengthened (median=${median.toFixed(2)})`);
+    console.log(
+        `[PRUNING] Synaptic homeostasis: ${stats.pruned} pruned, ${stats.weakened} weakened, ${stats.strengthened} strengthened (median=${median.toFixed(2)})`,
+    );
     return stats;
 }
 
@@ -135,7 +142,8 @@ export function findDuplicates(db: Database, threshold = 0.9): Array<{ id1: numb
         `SELECT m.id, e.embedding FROM memories m
          JOIN memory_embeddings e ON m.id = e.memory_id
          WHERE m.consolidated_into IS NULL
-         ORDER BY m.id DESC LIMIT 200`
+           AND (m.category IS NULL OR m.category NOT LIKE 'code\\_%' ESCAPE '\\')
+         ORDER BY m.id DESC LIMIT 200`,
     );
 
     if (memories.length === 0) return [];
@@ -184,7 +192,11 @@ export function mergeDuplicates(db: Database): number {
 
             const deleteId = score1 >= score2 ? dupe.id2 : dupe.id1;
             db.run("DELETE FROM memories WHERE id = ?", [deleteId]);
-            try { getHNSWIndex().removeVector(deleteId); } catch { /* */ }
+            try {
+                getHNSWIndex().removeVector(deleteId);
+            } catch {
+                /* */
+            }
             merged++;
         }
         commitTransaction();
@@ -212,19 +224,29 @@ export function boostMemory(db: Database, id: number): void {
       access_count = access_count + 1,
       accessed_at = datetime('now')
      WHERE id = ?`,
-        [id]
+        [id],
     );
 }
 
 // ── Reorganize ────────────────────────────────
 
-export function reorganizeMemories(db: Database): { pruned: number; weakened: number; strengthened: number; merged: number; tiers: { hot: number; warm: number; cold: number } } {
+export function reorganizeMemories(db: Database): {
+    pruned: number;
+    weakened: number;
+    strengthened: number;
+    merged: number;
+    tiers: { hot: number; warm: number; cold: number };
+} {
     const pruneResult = synapticPrune(db);
     const merged = mergeDuplicates(db);
     const tiers = assignTiers(db);
 
     // Persist HNSW index after reorganization
-    try { getHNSWIndex().persist(); } catch { /* */ }
+    try {
+        getHNSWIndex().persist();
+    } catch {
+        /* */
+    }
 
     return { ...pruneResult, merged, tiers };
 }
@@ -240,7 +262,7 @@ export function getAccessPatterns(db: Database): Array<{
         `SELECT category, AVG(access_count) as avg_access, COUNT(*) as total
      FROM memories
      GROUP BY category
-     ORDER BY avg_access DESC`
+     ORDER BY avg_access DESC`,
     );
 
     if (results.length === 0) return [];
