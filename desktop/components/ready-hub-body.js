@@ -21,6 +21,32 @@
         sub.textContent = "A.T.L.A.S is configured" + name + ". Launch when you are ready.";
         root.appendChild(sub);
 
+        const actions = document.createElement("div");
+        actions.id = "hub-actions";
+        actions.className = "hub-actions";
+
+        const talkBtn = document.createElement("button");
+        talkBtn.type = "button";
+        talkBtn.className = "btn-primary";
+        talkBtn.setAttribute("data-action", "talk");
+        talkBtn.textContent = "\uD83C\uDF99 Talk";
+
+        const typeBtn = document.createElement("button");
+        typeBtn.type = "button";
+        typeBtn.className = "btn-ghost";
+        typeBtn.setAttribute("data-action", "type");
+        typeBtn.textContent = "\u2328\uFE0F Type";
+
+        const actionsErr = document.createElement("p");
+        actionsErr.id = "hub-actions-err";
+        actionsErr.className = "step-error";
+        actionsErr.setAttribute("aria-live", "polite");
+
+        actions.appendChild(talkBtn);
+        actions.appendChild(typeBtn);
+        root.appendChild(actions);
+        root.appendChild(actionsErr);
+
         const tilesWrap = document.createElement("div");
         tilesWrap.id = "hub-tiles";
         tilesWrap.className = "hub-tiles";
@@ -151,6 +177,34 @@
         const body = renderHubBody(state);
         container.appendChild(body);
         renderTiles(body.querySelector("#hub-tiles"), state);
+
+        // Wire Talk/Type buttons.
+        const atlas = atlasApi || (typeof window !== "undefined" ? window.atlas : null) || {};
+        const talkBtn = body.querySelector('[data-action="talk"]');
+        const typeBtn = body.querySelector('[data-action="type"]');
+        const errEl = body.querySelector("#hub-actions-err");
+        if (talkBtn) {
+            talkBtn.addEventListener("click", async function () {
+                if (typeof atlas.triggerLiveVoice !== "function") {
+                    if (errEl) errEl.textContent = "Live voice unavailable.";
+                    return;
+                }
+                let res;
+                try { res = await atlas.triggerLiveVoice(); }
+                catch (e) { if (errEl) errEl.textContent = "Voice error: " + (e.message || e); return; }
+                if (!res || !res.ok) {
+                    if (errEl) errEl.textContent = "Couldn't start voice: " + ((res && res.error) || "unknown");
+                } else {
+                    if (errEl) errEl.textContent = "";
+                }
+            });
+        }
+        if (typeBtn) {
+            typeBtn.addEventListener("click", function () {
+                if (typeof atlas.showOverlay === "function") atlas.showOverlay();
+                else if (errEl) errEl.textContent = "Overlay unavailable.";
+            });
+        }
 
         // Mount the "Try this" rotating strip inside #hub-try-this.
         let tryHandle = { stop: function () {} };

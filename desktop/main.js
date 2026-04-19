@@ -1390,6 +1390,15 @@ function registerIPC() {
     ipcMain.on("overlay:show", () => {
         showOverlay();
     });
+    // Ready Hub "Talk" button — trigger live voice session from renderer.
+    // Mirrors what the global live-voice hotkey does when pressed.
+    ipcMain.handle("live-voice:trigger", () => {
+        if (typeof toggleLiveVoice === "function") {
+            try { toggleLiveVoice(); return { ok: true }; }
+            catch (err) { return { ok: false, error: err.message || String(err) }; }
+        }
+        return { ok: false, error: "live-voice not available" };
+    });
     ipcMain.on("overlay:notify", (_, { title, body }) => {
         const { Notification } = require("electron");
         if (Notification.isSupported()) {

@@ -161,3 +161,70 @@ describe("startLiveUpdates — 3s polling gate", () => {
         handle.stop();
     });
 });
+
+describe("Talk / Type actions", () => {
+    let container;
+    let atlas;
+    let calls;
+    beforeEach(() => {
+        container = document.createElement("div"); document.body.appendChild(container);
+        calls = { talks: 0, overlays: 0 };
+        atlas = {
+            setupDetect: async () => baseState(),
+            onAccountStatusChange: () => {},
+            triggerLiveVoice: async () => { calls.talks += 1; return { ok: true }; },
+            showOverlay: () => { calls.overlays += 1; },
+        };
+    });
+    afterEach(() => { document.body.innerHTML = ""; });
+
+    it("renders Talk + Type buttons in the actions row", () => {
+        mountHub(container, baseState(), atlas);
+        expect(container.querySelector('[data-action="talk"]')).toBeTruthy();
+        expect(container.querySelector('[data-action="type"]')).toBeTruthy();
+    });
+
+    it("Talk click calls atlas.triggerLiveVoice", async () => {
+        mountHub(container, baseState(), atlas);
+        container.querySelector('[data-action="talk"]').click();
+        await Promise.resolve(); await Promise.resolve();
+        expect(calls.talks).toBe(1);
+    });
+
+    it("Talk surfaces error when triggerLiveVoice returns {ok:false}", async () => {
+        atlas.triggerLiveVoice = async () => ({ ok: false, error: "mic blocked" });
+        mountHub(container, baseState(), atlas);
+        container.querySelector('[data-action="talk"]').click();
+        await Promise.resolve(); await Promise.resolve();
+        expect(container.querySelector("#hub-actions-err").textContent).toMatch(/mic blocked/);
+    });
+
+    it("Talk surfaces error when triggerLiveVoice throws", async () => {
+        atlas.triggerLiveVoice = async () => { throw new Error("IPC dead"); };
+        mountHub(container, baseState(), atlas);
+        container.querySelector('[data-action="talk"]').click();
+        await Promise.resolve(); await Promise.resolve();
+        expect(container.querySelector("#hub-actions-err").textContent).toMatch(/IPC dead/);
+    });
+
+    it("Type click calls atlas.showOverlay", () => {
+        mountHub(container, baseState(), atlas);
+        container.querySelector('[data-action="type"]').click();
+        expect(calls.overlays).toBe(1);
+    });
+
+    it("Talk with missing triggerLiveVoice shows 'unavailable'", async () => {
+        delete atlas.triggerLiveVoice;
+        mountHub(container, baseState(), atlas);
+        container.querySelector('[data-action="talk"]').click();
+        await Promise.resolve();
+        expect(container.querySelector("#hub-actions-err").textContent).toMatch(/unavailable/);
+    });
+
+    it("Type with missing showOverlay shows 'unavailable'", () => {
+        delete atlas.showOverlay;
+        mountHub(container, baseState(), atlas);
+        container.querySelector('[data-action="type"]').click();
+        expect(container.querySelector("#hub-actions-err").textContent).toMatch(/unavailable/);
+    });
+});
