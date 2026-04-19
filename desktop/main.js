@@ -2299,6 +2299,23 @@ function registerIPC() {
         return { ok: true };
     });
 
+    // Setup: persist personalize block (hotkey/theme/voice/wakeWord) into
+    // electron-store AND mirror voice + wake-word + hotkey into .env.enc via
+    // ATLAS_* env keys so the bot actually reads the user's choice on next boot.
+    ipcMain.handle("setup:save-personalize", async (_evt, update) => {
+        try {
+            const { mergePersonalize, envKVsFromPersonalize } = require(path.join(__dirname, "wizard", "personalize-reducer.js"));
+            const current = store.get("prefs") || {};
+            const next = mergePersonalize(current, update || {});
+            store.set("prefs", next);
+            try { saveEnvKVs(envKVsFromPersonalize(next.personalize)); }
+            catch (e) { console.warn("[setup:save-personalize] env mirror failed:", e.message); }
+            return { success: true, prefs: next };
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
 
     // App info
     ipcMain.handle("app:info", () => ({

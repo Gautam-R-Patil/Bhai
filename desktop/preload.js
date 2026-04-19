@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld("atlas", {
     setupTestChannel: (type, creds) => ipcRenderer.invoke("setup:test-channel", type, creds),
     setupSaveChannel: (type, creds, testId) => ipcRenderer.invoke("setup:save-channel", type, creds, testId),
     setupSlackOAuthStart: () => ipcRenderer.invoke("setup:slack-oauth-start"),
+    setupSavePersonalize: (cfg) => ipcRenderer.invoke("setup:save-personalize", cfg),
     finishSetup: () => ipcRenderer.invoke("setup:finish"),
 
     // ── Events ────────────────────────────────
