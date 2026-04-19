@@ -114,6 +114,10 @@ export const edit: ToolDefinition = {
         const oldStr = (input.old_string as string) ?? "";
         const newStr = (input.new_string as string) ?? "";
         const replaceAll = input.replace_all === true;
+        // Pre-edit hint from the built-in LSP hook (if fired). Surfaced in
+        // the tool result so the model sees "this symbol is defined at X"
+        // before deciding whether the edit is still right.
+        const lspHint = typeof input._lsp_preedit_hint === "string" ? (input._lsp_preedit_hint as string) : undefined;
 
         if (!rawPath) {
             return JSON.stringify({ error: "file_path is required" });
@@ -200,6 +204,7 @@ export const edit: ToolDefinition = {
             path: filePath,
             replacements_made: replaceAll ? occurrences : 1,
             preview,
+            ...(lspHint ? { lsp_preedit_hint: lspHint } : {}),
         });
     },
 };

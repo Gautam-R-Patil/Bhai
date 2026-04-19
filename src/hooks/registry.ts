@@ -26,6 +26,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { BUILTIN_HOOKS } from "./built-in.js";
 
 // ── Types ─────────────────────────────────────
 
@@ -37,11 +38,34 @@ export type HookEvent =
     | "PostToolUse"
     | "Stop";
 
+/**
+ * Return shape an in-process handler produces. Mirrors the JSON
+ * contract that subprocess hooks emit on stdout, so firePreToolUse
+ * can treat both the same way.
+ */
+export interface HookHandlerResult {
+    modifiedInput?: Record<string, unknown>;
+    block?: boolean;
+    reason?: string;
+    /** Free-form text injected as UserPromptSubmit stdout. */
+    stdout?: string;
+}
+
+export type HookHandler = (payload: unknown) => Promise<HookHandlerResult | null | void>;
+
 export interface HookDefinition {
     /** Regex string matched against tool name for tool events, or a loose tag for others. */
     matcher?: string;
-    /** Shell command to run. Receives JSON on stdin, emits JSON (or plain text) on stdout. */
-    command: string;
+    /**
+     * Shell command to run. Receives JSON on stdin, emits JSON (or plain text) on stdout.
+     * Mutually exclusive with `handler` — built-in hooks use `handler`, user hooks use `command`.
+     */
+    command?: string;
+    /**
+     * In-process handler — called directly with the event payload. Used by
+     * built-in hooks to avoid subprocess spawn overhead.
+     */
+    handler?: HookHandler;
     /** Milliseconds before the hook is killed. Defaults to 5000. */
     timeout?: number;
     /** Human-readable label for logging. */
@@ -84,6 +108,19 @@ export function loadHooks(projectRoot?: string): void {
     const userPath = path.join(homedir(), ".atlas", "hooks.json");
     const projectPath = path.join(projectRoot ?? process.cwd(), ".atlas", "hooks.json");
 
+    // ── Built-in hooks — registered first so user hooks fire after them
+    // and can override or extend their behavior. Disabled via env.
+    if (process.env.ATLAS_DISABLE_BUILTIN_HOOKS !== "true") {
+        let builtinCount = 0;
+        for (const event of Object.keys(BUILTIN_HOOKS) as HookEvent[]) {
+            const defs = BUILTIN_HOOKS[event];
+            if (!Array.isArray(defs)) continue;
+            merged[event] = (merged[event] ?? []).concat(defs);
+            builtinCount += defs.length;
+        }
+        if (builtinCount > 0) sources.push("builtin");
+    }
+
     for (const p of [userPath, projectPath]) {
         const cfg = readHooksFile(p);
         if (!cfg) continue;
@@ -91,7 +128,9 @@ export function loadHooks(projectRoot?: string): void {
         for (const event of Object.keys(cfg) as HookEvent[]) {
             const defs = cfg[event];
             if (!Array.isArray(defs)) continue;
-            merged[event] = (merged[event] ?? []).concat(defs.filter((d) => d && typeof d.command === "string"));
+            merged[event] = (merged[event] ?? []).concat(
+                defs.filter((d) => d && (typeof d.command === "string" || typeof d.handler === "function")),
+            );
         }
     }
 

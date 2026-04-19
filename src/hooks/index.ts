@@ -31,9 +31,38 @@ interface HookOutput {
 }
 
 async function runHook(def: HookDefinition, payload: unknown): Promise<HookOutput> {
+    // In-process handler short-circuits the subprocess spawn. Built-in
+    // hooks use this path; user hooks always go through `command`.
+    if (typeof def.handler === "function") {
+        const timeoutMs = Math.max(100, def.timeout ?? DEFAULT_TIMEOUT_MS);
+        try {
+            const result = await Promise.race([
+                def.handler(payload),
+                new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
+            ]);
+            if (!result) return { ok: true, stdout: "", stderr: "", exitCode: 0 };
+            const stdoutJson = JSON.stringify({
+                modifiedInput: result.modifiedInput,
+                block: result.block,
+                reason: result.reason,
+            });
+            return {
+                ok: true,
+                stdout: result.stdout ?? (result.modifiedInput || result.block ? stdoutJson : ""),
+                stderr: "",
+                exitCode: 0,
+            };
+        } catch (err) {
+            return { ok: false, stdout: "", stderr: (err as Error).message, exitCode: 1 };
+        }
+    }
+    if (!def.command) {
+        return { ok: false, stdout: "", stderr: "hook has neither command nor handler", exitCode: 2 };
+    }
+
     return new Promise((resolve) => {
         const timeoutMs = Math.max(100, def.timeout ?? DEFAULT_TIMEOUT_MS);
-        const child = spawn("sh", ["-c", def.command], {
+        const child = spawn("sh", ["-c", def.command as string], {
             stdio: ["pipe", "pipe", "pipe"],
         });
 
