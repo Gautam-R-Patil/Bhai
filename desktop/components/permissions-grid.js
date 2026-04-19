@@ -45,7 +45,10 @@
         const row = document.createElement("div");
         row.className = "sp-perm__row sp-perm__skipped";
         row.setAttribute("data-sp-perm-skipped", key);
-        row.innerHTML = "<span class='sp-pill sp-pill--idk'>⚠️ " + title + " skipped — some features disabled</span>";
+        const pill = document.createElement("span");
+        pill.className = "sp-pill sp-pill--idk";
+        pill.textContent = "\u26A0\uFE0F " + title + " skipped — some features disabled";
+        row.appendChild(pill);
         const undo = document.createElement("button");
         undo.className = "sp-btn sp-btn--ghost";
         undo.textContent = "Un-skip";
