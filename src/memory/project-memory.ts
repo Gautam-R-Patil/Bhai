@@ -2,84 +2,111 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-// ── Project Memory (ATLAS.md walk-up) ─────────
-// Claude-Code-style hierarchical project memory. When the agent starts a
-// coding task, walk from the current working directory up to the home/root
-// boundary, collecting any ATLAS.md / .atlas/ATLAS.md / ATLAS.local.md
-// files found along the way. Also consult the user-level `~/.atlas/ATLAS.md`.
-//
-// Precedence: the MORE SPECIFIC (closer to CWD) file wins on conflict.
-// We concatenate in order from most-specific → least-specific, clearly
-// labeled, so the model knows where each block came from.
-//
-// Fail-open: any FS or parse error results in an empty snippet, never a
-// thrown exception. Project memory is additive — its absence never
-// changes behavior.
+// ── Project Memory (walk-up loader) ────────────
+// Walks from CWD up to $HOME, collecting AGENTS.md + .atlas/agents/*.md
+// + ATLAS.md files. Selective by task type. Section markers let callers
+// pull specific sub-zones out of sub-docs.
 
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
-// ── Tuning ────────────────────────────────────
-
-/** Maximum bytes of project memory to concatenate. Hard cap to avoid prompt bloat. */
 const MAX_TOTAL_BYTES = 16 * 1024;
-/** Maximum bytes to read from any single file. */
 const MAX_FILE_BYTES = 8 * 1024;
-/** Hard stop on how many parent levels to walk. */
 const MAX_DEPTH = 20;
 
-// ── File name candidates (most-specific first) ─────
+// Root-level candidates (most-specific first — same-directory precedence).
+const FILE_CANDIDATES = ["ATLAS.md", ".atlas/ATLAS.md", "ATLAS.local.md", "AGENTS.md"];
 
-const FILE_CANDIDATES = ["ATLAS.md", ".atlas/ATLAS.md", "ATLAS.local.md"];
-
-// ── Types ─────────────────────────────────────
+// Sub-docs under .atlas/agents/ that are candidates for injection.
+const SUBDOC_BASENAMES = [
+    "architecture.md",
+    "conventions.md",
+    "workflows.md",
+    "quickref.md",
+    "gotchas.md",
+    "commands.md",
+    "recent.md",
+    "notes.md",
+];
 
 interface LoadedMemoryFile {
     path: string;
-    /** 0 = CWD, 1 = CWD's parent, etc. Lower = more specific. */
     depth: number;
-    /** "user" = ~/.atlas/ATLAS.md, "project" = anything in the walk-up */
     source: "project" | "user";
     content: string;
+    subdoc: string | null;
 }
 
-// ── Helpers ───────────────────────────────────
+export type TaskType = "coding" | "build" | "debug" | "refactor" | "setup" | "other";
+
+export interface LoadOptions {
+    taskType?: TaskType;
+    /** Optional per-sub-doc section filter: { "architecture.md": ["mermaid"] } */
+    sections?: Record<string, string[]>;
+}
 
 function readCapped(p: string): string | null {
     try {
         const stats = statSync(p);
         if (!stats.isFile()) return null;
         const buf = readFileSync(p);
-        const text = buf.length > MAX_FILE_BYTES
-            ? buf.subarray(0, MAX_FILE_BYTES).toString("utf-8") + "\n[... truncated]"
+        return buf.length > MAX_FILE_BYTES
+            ? `${buf.subarray(0, MAX_FILE_BYTES).toString("utf-8")}\n[... truncated]`
             : buf.toString("utf-8");
-        return text;
     } catch {
         return null;
     }
 }
 
 function shouldStopAt(dir: string): boolean {
-    // Stop walking when we hit the home directory exactly. We don't want to
-    // bubble out past $HOME because that's the user's private space — but we
-    // also don't want to stop prematurely when the project lives outside
-    // $HOME (e.g. /tmp, /opt, /workspace). The fs-root stop is handled by
-    // the caller noticing `parent === dir`.
     return path.resolve(dir) === homedir();
 }
 
-// ── Public API ────────────────────────────────
+/** Pick sub-docs relevant to the task type per the spec's table. */
+function subdocsForTask(taskType: TaskType): Set<string> {
+    const always = new Set(["gotchas.md", "notes.md"]);
+    if (taskType === "coding") {
+        always.add("architecture.md");
+        always.add("conventions.md");
+        always.add("quickref.md");
+    }
+    if (taskType === "build" || taskType === "setup") {
+        always.add("commands.md");
+    }
+    if (taskType === "debug" || taskType === "refactor") {
+        always.add("recent.md");
+    }
+    return always;
+}
+
+/** Given a sub-doc content and a section-name filter, return the concatenated sections (or the whole content if no filter). */
+function applySectionFilter(content: string, sections: string[] | undefined): string {
+    if (!sections || sections.length === 0) return content;
+    const out: string[] = [];
+    for (const name of sections) {
+        const startMarker = `<!-- @atlas:section:${name} -->`;
+        const endMarker = `<!-- @atlas:section:${name}:end -->`;
+        const si = content.indexOf(startMarker);
+        if (si === -1) continue;
+        const ei = content.indexOf(endMarker, si);
+        if (ei === -1) continue;
+        out.push(content.slice(si + startMarker.length, ei).trim());
+    }
+    return out.join("\n\n");
+}
 
 /**
- * Walk up from `startDir` (default: process.cwd()) collecting ATLAS.md
- * files. Stops at the home directory boundary or after MAX_DEPTH levels.
- * Returns files ordered MOST-specific first.
+ * Walk up from startDir collecting AGENTS.md + ATLAS.md + the task-type-relevant
+ * sub-docs under .atlas/agents/. Stops at home or root. Caps total bytes at 16K.
  */
-export function loadProjectMemoryFiles(startDir?: string): LoadedMemoryFile[] {
+export function loadProjectMemoryFiles(startDir?: string, options: LoadOptions = {}): LoadedMemoryFile[] {
+    const taskType: TaskType = options.taskType ?? "other";
+    const wanted = subdocsForTask(taskType);
     const out: LoadedMemoryFile[] = [];
     let totalBytes = 0;
-    const pushIfRoom = (f: LoadedMemoryFile) => {
+
+    const pushIfRoom = (f: LoadedMemoryFile): boolean => {
         if (totalBytes + f.content.length > MAX_TOTAL_BYTES) return false;
         out.push(f);
         totalBytes += f.content.length;
@@ -88,46 +115,62 @@ export function loadProjectMemoryFiles(startDir?: string): LoadedMemoryFile[] {
 
     let dir = path.resolve(startDir ?? process.cwd());
     for (let depth = 0; depth < MAX_DEPTH; depth++) {
+        // Root-level candidates
         for (const name of FILE_CANDIDATES) {
             const p = path.join(dir, name);
             if (!existsSync(p)) continue;
             const content = readCapped(p);
             if (!content) continue;
-            pushIfRoom({ path: p, depth, source: "project", content });
+            pushIfRoom({ path: p, depth, source: "project", content, subdoc: null });
         }
-
-        // Stop at home, and at filesystem root.
+        // .atlas/agents/*.md sub-docs
+        const subdir = path.join(dir, ".atlas", "agents");
+        if (existsSync(subdir)) {
+            let entries: string[] = [];
+            try {
+                entries = readdirSync(subdir);
+            } catch {
+                /* */
+            }
+            for (const name of entries) {
+                if (!SUBDOC_BASENAMES.includes(name)) continue;
+                if (!wanted.has(name)) continue;
+                const p = path.join(subdir, name);
+                const raw = readCapped(p);
+                if (!raw) continue;
+                const filtered = applySectionFilter(raw, options.sections?.[name]);
+                if (!filtered) continue;
+                pushIfRoom({ path: p, depth, source: "project", content: filtered, subdoc: name });
+            }
+        }
         if (shouldStopAt(dir)) break;
         const parent = path.dirname(dir);
         if (parent === dir) break;
         dir = parent;
     }
 
-    // Global user-level memory: ~/.atlas/ATLAS.md
+    // Global user memory
     try {
         const userPath = path.join(homedir(), ".atlas", "ATLAS.md");
         if (existsSync(userPath)) {
             const content = readCapped(userPath);
-            if (content) {
-                pushIfRoom({ path: userPath, depth: MAX_DEPTH, source: "user", content });
-            }
+            if (content) pushIfRoom({ path: userPath, depth: MAX_DEPTH, source: "user", content, subdoc: null });
         }
     } catch {
-        /* ignore */
+        /* */
     }
 
     return out;
 }
 
 /**
- * Assemble a single <project_memory>...</project_memory> snippet ready
- * for injection into the system prompt. Returns an empty string when no
- * memory files are found, so callers can simply concatenate.
+ * Assemble the <project_memory>…</project_memory> block. Returns empty
+ * string when no files were found so callers can concatenate safely.
  */
-export function getProjectMemorySnippet(startDir?: string): string {
+export function getProjectMemorySnippet(startDir?: string, options: LoadOptions = {}): string {
     let files: LoadedMemoryFile[];
     try {
-        files = loadProjectMemoryFiles(startDir);
+        files = loadProjectMemoryFiles(startDir, options);
     } catch {
         return "";
     }
@@ -135,7 +178,7 @@ export function getProjectMemorySnippet(startDir?: string): string {
 
     const parts: string[] = ["<project_memory>"];
     for (const f of files) {
-        const label = f.source === "user" ? "user-level" : `depth=${f.depth}`;
+        const label = f.source === "user" ? "user-level" : `depth=${f.depth}${f.subdoc ? `:subdoc=${f.subdoc}` : ""}`;
         parts.push(`--- ${label}: ${f.path} ---`);
         parts.push(f.content.trim());
     }
