@@ -16,10 +16,25 @@ const FAILURE_RATE_THRESHOLD = 0.3; // Only speculate when >30% historical failu
 const ALTERNATIVE_APPROACH_HINTS: Record<string, string> = {
     browser: "If direct web interaction fails, try using web_search to find the information instead.",
     researcher: "If web search doesn't find what you need, try checking memory or reading local files.",
-    coder: "If the command fails, try an alternative tool or approach to achieve the same goal.",
+    coder: "Take the TEST-FIRST path: write a failing test that captures the requirement, then make it pass. Do NOT implement before the test exists.",
     system: "If AppleScript/automation fails, try using shell commands as an alternative.",
     general: "If your first approach doesn't work, try a completely different method.",
 };
+
+// Phase 4F: coder work is worth speculating on when the task description
+// signals breadth (refactor, multi-file, architectural) even without historical
+// failure data. The test-first alternative above is then raced against the
+// primary (direct-patch) approach; first successful wins.
+const CODER_SPECULATE_PATTERNS: RegExp[] = [
+    /\brefactor\b/i,
+    /\bmigrate\b/i,
+    /\bacross\s+(?:multiple|several|many)\s+files?\b/i,
+    /\bdesign\s+(?:a\s+)?(?:new\s+)?(?:module|system|architecture)\b/i,
+    /\bport\s+.*\s+to\b/i,
+    /\brewrite\b/i,
+    /\bnew\s+feature\b/i,
+    /\bimplement\s+.*\s+(?:from\s+scratch|end.to.end)\b/i,
+];
 
 // ── Types ────────────────────────────────────
 
@@ -33,12 +48,21 @@ export interface SpeculativeResult {
 
 /**
  * Determine if a step should be executed speculatively.
+ * Phase 4F: also speculate on coder steps with refactor/multi-file intent
+ * regardless of historical failure rate, since the cost of a second coder
+ * run is low relative to the upside of catching a wrong-approach early.
  */
 export function shouldSpeculate(
     historicalFailureRate: number,
     threshold = FAILURE_RATE_THRESHOLD,
+    roleHint?: string,
+    descriptionHint?: string,
 ): boolean {
-    return historicalFailureRate > threshold;
+    if (historicalFailureRate > threshold) return true;
+    if (roleHint === "coder" && descriptionHint && process.env.ATLAS_NO_CODER_SPECULATION !== "true") {
+        return CODER_SPECULATE_PATTERNS.some((p) => p.test(descriptionHint));
+    }
+    return false;
 }
 
 /**

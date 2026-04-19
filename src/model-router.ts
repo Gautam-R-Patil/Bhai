@@ -417,11 +417,25 @@ function maybeEscalateForCoding(
     const sonnet = Object.values(MODEL_REGISTRY).find((m) => m.tier === 2 && m.supportsTools);
     if (!sonnet) return null;
 
+    // ── Phase 4F: extended thinking budget for complex coding ──
+    // Gated by env so cost can be pulled without a redeploy. Lifts
+    // the thinking budget when signals indicate architectural reasoning
+    // would pay off; otherwise leaves base.thinkingLevel untouched.
+    let thinkingLevel = base.thinkingLevel;
+    if (process.env.ATLAS_NO_CODING_THINKING !== "true") {
+        const ultra = /\b(refactor\s+architecture|design\s+system|re.?architect|port\s+.*\s+to)\b/i.test(message);
+        const heavy = multiFile || (errorDense && errorCount >= 4);
+        if (ultra) thinkingLevel = "max";
+        else if (heavy) thinkingLevel = "high";
+        else if (thinkingLevel === "off") thinkingLevel = "medium";
+    }
+
     return {
         ...base,
         modelId: sonnet.id,
         displayName: sonnet.displayName,
-        reason: `${base.reason} → coding escalation (${multiFile ? "multi-file intent" : "error-dense coding loop"})`,
+        thinkingLevel,
+        reason: `${base.reason} → coding escalation (${multiFile ? "multi-file intent" : "error-dense coding loop"}${thinkingLevel !== base.thinkingLevel ? `, thinking=${thinkingLevel}` : ""})`,
     };
 }
 
