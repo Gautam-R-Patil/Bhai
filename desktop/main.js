@@ -2184,23 +2184,51 @@ function registerIPC() {
     const __randomId = () => require("crypto").randomBytes(8).toString("hex");
 
     ipcMain.handle("setup:test-channel", async (_evt, type, creds) => {
+        const safeJson = async (r) => {
+            if (!r.ok) return { __httpError: `HTTP ${r.status}` };
+            try { return await r.json(); }
+            catch { return { __parseError: "non-JSON response" }; }
+        };
         try {
             if (type === "telegram") {
-                const r = await fetch(`https://api.telegram.org/bot${creds.token}/getMe`);
-                const j = await r.json();
+                // Server-side guard: renderer validator can be bypassed by a compromised caller.
+                const token = creds && creds.token;
+                if (typeof token !== "string" || !/^\d+:[A-Za-z0-9_-]{35,}$/.test(token)) {
+                    return { ok: false, error: "Bad Telegram token format" };
+                }
+                const r = await fetch(`https://api.telegram.org/bot${encodeURIComponent(token)}/getMe`);
+                const j = await safeJson(r);
+                if (j.__httpError) return { ok: false, error: `Telegram ${j.__httpError}` };
+                if (j.__parseError) return { ok: false, error: `Telegram returned ${j.__parseError}` };
                 if (!j.ok) return { ok: false, error: j.description || "Telegram rejected token" };
             } else if (type === "discord") {
+                const token = creds && creds.token;
+                if (typeof token !== "string" || token.length < 50 || !/^[A-Za-z0-9._-]+$/.test(token)) {
+                    return { ok: false, error: "Bad Discord token format" };
+                }
                 const r = await fetch("https://discord.com/api/v10/users/@me", {
-                    headers: { Authorization: "Bot " + creds.token },
+                    headers: { Authorization: "Bot " + token },
                 });
-                const j = await r.json();
+                const j = await safeJson(r);
+                if (j.__httpError) return { ok: false, error: `Discord ${j.__httpError}` };
+                if (j.__parseError) return { ok: false, error: `Discord returned ${j.__parseError}` };
                 if (!j.id) return { ok: false, error: j.message || "Discord rejected token" };
             } else if (type === "matrix") {
-                const base = String(creds.homeserver || "").replace(/\/$/, "");
+                const homeserver = creds && creds.homeserver;
+                const token = creds && creds.token;
+                if (typeof homeserver !== "string" || !/^https?:\/\//.test(homeserver)) {
+                    return { ok: false, error: "Bad Matrix homeserver URL" };
+                }
+                if (typeof token !== "string" || !token) {
+                    return { ok: false, error: "Missing Matrix access token" };
+                }
+                const base = homeserver.replace(/\/$/, "");
                 const r = await fetch(`${base}/_matrix/client/v3/account/whoami`, {
-                    headers: { Authorization: "Bearer " + creds.token },
+                    headers: { Authorization: "Bearer " + token },
                 });
-                const j = await r.json();
+                const j = await safeJson(r);
+                if (j.__httpError) return { ok: false, error: `Matrix ${j.__httpError}` };
+                if (j.__parseError) return { ok: false, error: `Matrix returned ${j.__parseError}` };
                 if (!j.user_id) return { ok: false, error: j.error || "Matrix rejected token" };
             } else if (type === "email") {
                 const { ImapFlow } = require("imapflow");
