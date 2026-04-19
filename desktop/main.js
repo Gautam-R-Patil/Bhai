@@ -73,6 +73,22 @@ const SETUP_FLAG = path.join(app.getPath("userData"), ".setup-complete");
 const LOGS_DIR = path.join(app.getPath("userData"), "logs");
 const LOG_RETENTION_DAYS = 3; // Keep logs for 3 days
 
+// ── v1 → v2 Setup Migration (D10) ─────────────
+// Runs once at boot before the wizard-gate so v1 installs are tagged + seeded.
+async function runV2Migration() {
+    try {
+        const { runMigrationIfNeeded } = require(path.join(__dirname, "migration", "v2-setup.js"));
+        await runMigrationIfNeeded({
+            userDataDir: app.getPath("userData"),
+            setupFlagPath: SETUP_FLAG,
+            loadEnvDecrypted: loadEnvDecrypted,
+            log: (m) => console.log("[migrate v2]", m),
+        });
+    } catch (err) {
+        console.warn("[migrate v2] failed, continuing with boot:", err.message || err);
+    }
+}
+
 // ── Overlay Window Constants ─────────────────
 const OVERLAY_WIDTH = 340;
 const OVERLAY_MIN_HEIGHT = 56;
@@ -3833,6 +3849,9 @@ let isQuitting = false;
 // ── App Lifecycle ─────────────────────────────
 
 app.whenReady().then(async () => {
+    // Run v1 → v2 migration before anything reads SETUP_FLAG or prefs.json.
+    await runV2Migration();
+
     initProtection();
     registerIPC();
     setupAutoUpdater();
