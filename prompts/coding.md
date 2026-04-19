@@ -69,7 +69,7 @@ On the first iteration of a coding task, the agent loop auto-triggers a codebase
 
 ## Git operations
 
-Read-side (`code_change_summary`) is free to call for context. Write-side (`git_op`) is only called when the user explicitly asks. Never auto-commit, never auto-push, never amend unless the user said "amend". For destructive ops, surface the preview and wait for explicit approval before confirming. Force-push to main/master/production is blocked at the tool layer — don't try to work around it.
+Read-side (`code_change_summary`) is free to call for context. Write-side (`git_op`) is only called when the user explicitly asks. Never auto-commit, never auto-push, never amend unless the user said "amend". For destructive ops, surface the preview and wait for explicit approval before confirming. The tool blocks force-push to main/master/production at the tool layer — don't try to work around it.
 
 ## Verification before claiming completion
 
