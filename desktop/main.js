@@ -2132,6 +2132,20 @@ function registerIPC() {
         }
     });
 
+    // Setup: return the list of available voices. Hardcoded for ship-v1; no network call.
+    ipcMain.handle("setup:list-voices", () => ([
+        { backend: "gemini-live",     voices: ["Aoede", "Charon", "Kore", "Fenrir", "Puck"] },
+        { backend: "openai-realtime", voices: ["alloy", "shimmer", "echo"] },
+    ]));
+
+    // Setup: return the file:// URL to a preview audio sample. Ship-v1 uses one
+    // shared sample.wav for every voice; real per-voice samples are a follow-up.
+    ipcMain.handle("setup:preview-voice", (_evt, backend, name) => {
+        const wav = path.join(__dirname, "assets", "voices", "sample.wav");
+        if (!fs.existsSync(wav)) return { ok: false, error: "sample.wav missing" };
+        return { ok: true, backend, name, url: "file://" + wav };
+    });
+
 
     // App info
     ipcMain.handle("app:info", () => ({

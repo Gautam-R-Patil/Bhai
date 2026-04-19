@@ -35,6 +35,8 @@ contextBridge.exposeInMainWorld("atlas", {
     setupMarkPermissionSkipped: (name, skipped) => ipcRenderer.invoke("setup:mark-permission-skipped", name, skipped),
     setupTestHotkey: (combo) => ipcRenderer.invoke("setup:test-hotkey", combo),
     setupSaveHotkey: (combo) => ipcRenderer.invoke("setup:save-hotkey", combo),
+    setupListVoices: () => ipcRenderer.invoke("setup:list-voices"),
+    setupPreviewVoice: (backend, name) => ipcRenderer.invoke("setup:preview-voice", backend, name),
     finishSetup: () => ipcRenderer.invoke("setup:finish"),
 
     // ── Events ────────────────────────────────
