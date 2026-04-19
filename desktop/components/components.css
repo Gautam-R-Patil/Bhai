@@ -63,3 +63,14 @@
 .wizard-head { padding: 24px 24px 8px; display: flex; flex-direction: column; gap: 12px; }
 .wizard-head h1 { font-size: 24px; font-weight: 500; margin: 0; }
 .step-container { padding: 12px 24px 24px; }
+.phase-list { list-style: none; padding: 0; margin: 12px 0; }
+.phase-row { display: flex; gap: 8px; align-items: center; padding: 4px 0; font-size: 13px; }
+.phase-row .phase-icon { width: 16px; text-align: center; }
+.phase-pending .phase-icon { color: rgba(255,255,255,0.35); }
+.phase-running .phase-icon { color: #a78bfa; animation: sp-spin 1s linear infinite; }
+.phase-done .phase-icon { color: #4ade80; }
+.phase-failed .phase-icon { color: #f87171; }
+.progress-wrap { height: 4px; background: rgba(255,255,255,0.08); border-radius: 2px; overflow: hidden; margin: 8px 0; }
+.progress-bar { height: 100%; width: 0%; background: linear-gradient(90deg, #a78bfa, #f472b6); transition: width 300ms; }
+.hidden { display: none !important; }
+@keyframes sp-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
