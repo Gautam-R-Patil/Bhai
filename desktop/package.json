@@ -66,13 +66,6 @@
                 "to": "bot/package-lock.json"
             },
             {
-                "from": "../prompts",
-                "to": "bot/prompts",
-                "filter": [
-                    "**/*"
-                ]
-            },
-            {
                 "from": "../scripts",
                 "to": "bot/scripts",
                 "filter": [

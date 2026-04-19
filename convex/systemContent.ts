@@ -117,8 +117,9 @@ export const assembleSystemPrompt = internalQuery({
     platform: v.string(),                // "mac" | "win" | "linux"
     skillSlugs: v.array(v.string()),     // Skill slugs selected by client tool-router
     userId: v.optional(v.string()),      // For fetching user's installed store skills
+    inSpecMode: v.optional(v.boolean()), // Client-side plan-mode state flag for spec prompt inclusion
   },
-  handler: async (ctx, { platform, skillSlugs, userId }) => {
+  handler: async (ctx, { platform, skillSlugs, userId, inSpecMode }) => {
     // 1. Fetch all system prompts
     const allPrompts = await ctx.db.query("system_prompts").collect();
     const promptMap: Record<string, string> = {};
@@ -139,6 +140,26 @@ export const assembleSystemPrompt = internalQuery({
     }
 
     if (promptMap["browsing"]) parts.push(promptMap["browsing"]);
+
+    // Coding workflow + tool guidance — included when the task signals
+    // coding. skillSlugs is the router's semantic match, so any coding-
+    // adjacent skill triggers it.
+    const codingSkills = new Set([
+      "coding_best_practices",
+      "full_stack_developer",
+      "devops_engineer",
+      "data_scientist",
+      "security_auditor",
+    ]);
+    if (promptMap["coding"] && skillSlugs.some((s) => codingSkills.has(s))) {
+      parts.push(promptMap["coding"]);
+    }
+
+    // Spec-mode guidance — only when the client signals plan-mode is in
+    // the spec state, so it doesn't pay for the prompt in every request.
+    if (inSpecMode && promptMap["spec"]) {
+      parts.push(promptMap["spec"]);
+    }
 
     // 3. Fetch requested skills (built-in system skills)
     const skillParts: string[] = [];

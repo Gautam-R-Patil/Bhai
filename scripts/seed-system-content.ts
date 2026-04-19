@@ -62,6 +62,8 @@ async function seedPrompts() {
     { slug: "rules-windows", file: "rules-windows.md" },
     { slug: "browsing", file: "browsing.md" },
     { slug: "thinking", file: "thinking.md" },
+    { slug: "coding", file: "coding.md" },
+    { slug: "spec", file: "spec.md" },
   ];
 
   console.log("\n📝 Seeding system prompts...\n");

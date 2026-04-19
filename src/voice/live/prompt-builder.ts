@@ -4,11 +4,8 @@
 
 // ── Prompt Builder — Constructs system prompt for live voice sessions ──
 
-import fs from "node:fs";
-import path from "node:path";
+import { fetchSystemPrompts } from "../../config/system-prompts.js";
 import { getFullMemoryContext } from "./memory-bridge.js";
-
-const PROMPTS_DIR = path.resolve("prompts");
 
 // ── Voice Mode Rules ─────────────────────────────
 
@@ -51,28 +48,14 @@ PERSONALITY:
 export async function buildVoiceSystemPrompt(): Promise<string> {
     const parts: string[] = [];
 
-    // ── Load identity prompt from prompts/ directory ──
-    try {
-        const identityPath = path.join(PROMPTS_DIR, "identity.md");
-        if (fs.existsSync(identityPath)) {
-            parts.push(fs.readFileSync(identityPath, "utf-8").trim());
-        }
-    } catch { /* */ }
-
-    // ── Load platform rules ──
-    try {
-        const rulesPath = path.join(PROMPTS_DIR, "rules.md");
-        if (fs.existsSync(rulesPath)) {
-            parts.push(fs.readFileSync(rulesPath, "utf-8").trim());
-        }
-    } catch { /* */ }
-
-    try {
-        const macRulesPath = path.join(PROMPTS_DIR, "rules-mac.md");
-        if (process.platform === "darwin" && fs.existsSync(macRulesPath)) {
-            parts.push(fs.readFileSync(macRulesPath, "utf-8").trim());
-        }
-    } catch { /* */ }
+    // ── Load prompts from Convex ──
+    const slugs = ["identity", "rules"];
+    if (process.platform === "darwin") slugs.push("rules-mac");
+    const prompts = await fetchSystemPrompts(slugs);
+    for (const slug of slugs) {
+        const content = prompts[slug];
+        if (content) parts.push(content.trim());
+    }
 
     // ── Voice mode specific rules ──
     parts.push(VOICE_MODE_RULES);

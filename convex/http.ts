@@ -831,6 +831,57 @@ http.route({
 });
 
 // ══════════════════════════════════════════════════════════════════════════
+// GET /api/system/prompt?slug=<slug> — Fetch a single system prompt
+// Used by client-side subsystems (voice live mode, dream replay) that need
+// raw prompt content to assemble their own requests without bundling
+// prompts/*.md into the desktop app package. Session-authenticated.
+// ══════════════════════════════════════════════════════════════════════════
+
+http.route({
+  path: "/api/system/prompt",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+
+    const url = new URL(request.url);
+    const slug = url.searchParams.get("slug");
+    if (!slug) {
+      return new Response(
+        JSON.stringify({ error: "slug query parameter is required" }),
+        { status: 400, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    try {
+      const prompt = await ctx.runQuery(
+        internal.systemContent.getPromptBySlug,
+        { slug }
+      );
+      if (!prompt) {
+        return new Response(
+          JSON.stringify({ error: `Prompt not found: ${slug}` }),
+          { status: 404, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      return await buildResponse(
+        { slug: prompt.slug, content: prompt.content, version: prompt.version },
+        200,
+        request.headers.get("X-Encryption") === "ecdh-aes-256-gcm",
+        account.sharedKey,
+      );
+    } catch (err: any) {
+      return new Response(
+        JSON.stringify({ error: err.message }),
+        { status: 500, headers: { "Content-Type": "application/json" } }
+      );
+    }
+  }),
+});
+
+// ══════════════════════════════════════════════════════════════════════════
 // ADMIN ROUTES — System content management (prompts + skills)
 // Authenticated via ADMIN_API_KEY environment variable.
 // ══════════════════════════════════════════════════════════════════════════

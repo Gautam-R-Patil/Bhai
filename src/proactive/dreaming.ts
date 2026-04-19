@@ -283,11 +283,10 @@ async function runDreaming(llm: LLMClient, recentContext: string): Promise<void>
 
             if (failureMessages.length >= 2) {
                 console.log(`[DREAMING] 🔧 Found ${failureMessages.length} failure patterns — proposing self-edit...`);
-                const fs = await import("node:fs");
-                const path = await import("node:path");
-                const rulesPath = path.join(process.cwd(), "prompts", "rules.md");
-                let rulesContent = "";
-                try { rulesContent = fs.readFileSync(rulesPath, "utf-8").substring(0, 1000); } catch { /* */ }
+                const { fetchSystemPrompt } = await import("../config/system-prompts.js");
+                const full = await fetchSystemPrompt("rules");
+                const rulesContent = full.substring(0, 1000);
+                const rulesPath = "convex://system_prompts/rules";
 
                 if (rulesContent) {
                     const edit = await proposeSelfEdit(
