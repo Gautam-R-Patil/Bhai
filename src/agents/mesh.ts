@@ -9,6 +9,7 @@
 import type { LLMClient } from "../llm.js";
 import { runSubAgent, type SubAgentTask, type SubAgentResult, type AgentRole } from "./sub-agent.js";
 import { executeWithRecovery } from "./error-recovery.js";
+import { isWorktreeEnabled, setupAgentWorktree } from "./agent-worktree.js";
 import { buildHandoff, serializeHandoff } from "./handoff.js";
 import { shouldOverrideRole } from "./role-analyzer.js";
 import { shouldSpeculate, executeSpeculatively } from "./speculative.js";
@@ -243,6 +244,25 @@ export async function executeMesh(
             await onProgress(`⚡ running ${ready.length} step${ready.length > 1 ? "s" : ""}: ${stepNames}`).catch(() => { });
         }
 
+        // ── Phase 4G: worktree isolation for parallel coder steps ──
+        // Opt-in via ATLAS_AGENT_WORKTREE=true. Allocates one throwaway
+        // git worktree per coder step in the wave when >= 2 coder steps
+        // run in parallel, so each agent operates on its own checkout
+        // without file conflicts. Worktrees are torn down at end of wave.
+        const coderStepsInWave = ready.filter((s) => s.role === "coder");
+        const worktreeAssignments = new Map<string, string>();
+        const activeWorktreeHandles: { cleanup(): void }[] = [];
+        if (coderStepsInWave.length >= 2 && isWorktreeEnabled()) {
+            for (const s of coderStepsInWave) {
+                const wt = setupAgentWorktree(s.id);
+                if (wt) {
+                    worktreeAssignments.set(s.id, wt.path);
+                    activeWorktreeHandles.push(wt);
+                    console.log(`    🌳 Worktree ${wt.path} allocated for step ${s.id}`);
+                }
+            }
+        }
+
         // Run all ready steps in parallel
         const waveResults = await Promise.all(
             ready.map(async (step) => {
@@ -309,7 +329,12 @@ export async function executeMesh(
                 let result: SubAgentResult;
 
                 // ── Speculative execution for critical steps ──
-                if (step.priority === "critical" && shouldSpeculate(0.35)) {
+                // Phase 4F: coder steps with refactor/multi-file intent also
+                // speculate even when priority isn't marked critical, since
+                // the test-first alt_B approach is cheap to race.
+                const coderBreadth = effectiveRole === "coder" && shouldSpeculate(0, 0.35, "coder", step.description);
+                const workingDirectory = worktreeAssignments.get(step.id);
+                if ((step.priority === "critical" && shouldSpeculate(0.35)) || coderBreadth) {
                     try {
                         console.log(`    🎯 Speculative execution for critical step ${step.id}`);
                         const specResult = await executeSpeculatively(llm, {
@@ -319,6 +344,7 @@ export async function executeMesh(
                             context: fullContext,
                             timeoutMs: stepTimeoutMs,
                             priority: step.priority,
+                            workingDirectory,
                         }, progressFn);
                         result = specResult.result;
                     } catch (specErr) {
@@ -330,6 +356,7 @@ export async function executeMesh(
                             context: fullContext,
                             timeoutMs: stepTimeoutMs,
                             priority: step.priority,
+                            workingDirectory,
                         }, progressFn);
                     }
                 } else {
@@ -340,6 +367,7 @@ export async function executeMesh(
                         context: fullContext,
                         timeoutMs: stepTimeoutMs,
                         priority: step.priority,
+                        workingDirectory,
                     }, progressFn);
                 }
 
@@ -359,6 +387,16 @@ export async function executeMesh(
                 return result;
             })
         );
+
+        // ── Phase 4G: cleanup worktrees after the wave ──
+        // Best-effort; SIGINT/exit handlers in agent-worktree.ts will also
+        // sweep these if the process dies mid-wave.
+        if (activeWorktreeHandles.length > 0) {
+            for (const h of activeWorktreeHandles) {
+                try { h.cleanup(); } catch { /* */ }
+            }
+            console.log(`    🌳 Cleaned up ${activeWorktreeHandles.length} worktree(s)`);
+        }
 
         // Record results and checkpoint after each wave
         for (const result of waveResults) {
