@@ -24,6 +24,13 @@ export type PlanModeState =
         reason: string;
         /** User-originated (/plan command) vs agent-internal auto-trigger */
         source: "user" | "auto";
+    }
+    | {
+        mode: "spec";
+        enteredAt: number;
+        task: string;
+        specPath: string;
+        source: "user" | "auto";
     };
 
 let state: PlanModeState = { mode: "act" };
@@ -48,6 +55,10 @@ export function isPlanMode(): boolean {
     return state.mode === "plan";
 }
 
+export function isSpecMode(): boolean {
+    return state.mode === "spec";
+}
+
 export function getPlanModeState(): PlanModeState {
     return state;
 }
@@ -59,6 +70,17 @@ export function enterPlanMode(reason: string, source: "user" | "auto" = "user"):
 
 export function exitPlanMode(): void {
     state = { mode: "act" };
+    emit();
+}
+
+export function enterSpecMode(task: string, specPath: string, source: "user" | "auto" = "user"): void {
+    state = { mode: "spec", enteredAt: Date.now(), task, specPath, source };
+    emit();
+}
+
+/** Transition from spec → plan once the spec is finalized. */
+export function specToPlan(reason: string, source: "user" | "auto" = "auto"): void {
+    state = { mode: "plan", enteredAt: Date.now(), reason, source };
     emit();
 }
 
@@ -128,12 +150,31 @@ export function filterToolsForPlanMode<T extends { function: { name: string } }>
     return tools.filter((t) => PLAN_MODE_ALLOWED_TOOLS.has(t.function.name));
 }
 
+// ── Spec Mode Allowlist (Phase 4I) ───────────
+// Spec mode is plan mode + a narrow write channel for the spec file and
+// the finalize_spec tool. The agent is NOT allowed to write code here;
+// only the spec document. Path gating lives in finalize_spec itself.
+
+export const SPEC_MODE_ALLOWED_TOOLS: ReadonlySet<string> = new Set([
+    ...PLAN_MODE_ALLOWED_TOOLS,
+    "write",
+    "append_file",
+    "finalize_spec",
+]);
+
+export function filterToolsForSpecMode<T extends { function: { name: string } }>(
+    tools: T[],
+): T[] {
+    return tools.filter((t) => SPEC_MODE_ALLOWED_TOOLS.has(t.function.name));
+}
+
 /**
  * Is this a tool the agent can call right now, given the current mode?
  * Used as a last-resort safety check in the tool executor.
  */
 export function isToolAllowedInCurrentMode(toolName: string): boolean {
     if (state.mode === "act") return true;
+    if (state.mode === "spec") return SPEC_MODE_ALLOWED_TOOLS.has(toolName);
     return PLAN_MODE_ALLOWED_TOOLS.has(toolName);
 }
 
@@ -141,10 +182,19 @@ export function isToolAllowedInCurrentMode(toolName: string): boolean {
  * The reminder body to inject each iteration while plan mode is active.
  */
 export function planModeReminderBody(): string {
-    if (state.mode !== "plan") return "";
-    return [
-        "Plan mode is active.",
-        "You may read, search, and reason — but must NOT modify files, run destructive commands, send messages, or call mutation tools.",
-        "When your plan is ready, call exit_plan_mode with the full plan as the `plan` argument. After the user approves, the agent will execute in act mode.",
-    ].join(" ");
+    if (state.mode === "plan") {
+        return [
+            "Plan mode is active.",
+            "You may read, search, and reason — but must NOT modify files, run destructive commands, send messages, or call mutation tools.",
+            "When your plan is ready, call exit_plan_mode with the full plan as the `plan` argument. After the user approves, the agent will execute in act mode.",
+        ].join(" ");
+    }
+    if (state.mode === "spec") {
+        return [
+            `Spec mode is active. Task: ${state.task}.`,
+            `Write the specification to ${state.specPath}. It must include: problem statement, acceptance criteria (bullet list), test scenarios, and out-of-scope notes.`,
+            "Call finalize_spec when the document is complete — that transitions to plan mode, where you can outline the implementation.",
+        ].join(" ");
+    }
+    return "";
 }

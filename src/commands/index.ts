@@ -3,7 +3,8 @@
 // See LICENSE.md for details.
 
 import type { Config } from "../config.js";
-import { enterPlanMode, exitPlanMode, isPlanMode, getPlanModeState } from "../agents/plan-mode.js";
+import { enterPlanMode, exitPlanMode, isPlanMode, isSpecMode, getPlanModeState, enterSpecMode } from "../agents/plan-mode.js";
+import path from "node:path";
 
 // ── Types ─────────────────────────────────────
 
@@ -65,6 +66,8 @@ export async function handleCommand(text: string): Promise<CommandResult> {
             return { handled: true, response: cmdPlan(args.join(" ")) };
         case "/noplan":
             return { handled: true, response: cmdNoPlan() };
+        case "/spec":
+            return { handled: true, response: cmdSpec(args.join(" ")) };
         default:
             return { handled: false };
     }
@@ -141,7 +144,8 @@ function cmdHelp(): string {
         "`/think off|low|medium|high` — Set reasoning depth",
         "`/usage` — Session usage stats",
         "`/plan [task]` — Enter plan mode (research before acting)",
-        "`/noplan` — Exit plan mode",
+        "`/spec <task>` — Enter spec mode (write acceptance criteria first)",
+        "`/noplan` — Exit plan/spec mode",
         "`/help` — This message",
         "",
         "Or use the quick action buttons below.",
@@ -166,9 +170,38 @@ function cmdPlan(task: string): string {
 }
 
 function cmdNoPlan(): string {
-    if (!isPlanMode()) {
-        return "Plan mode is already off.";
+    if (!isPlanMode() && !isSpecMode()) {
+        return "Plan/spec mode is already off.";
     }
     exitPlanMode();
-    return "✅ Plan mode exited. Agent is back to normal (act) mode.";
+    return "✅ Plan/spec mode exited. Agent is back to normal (act) mode.";
+}
+
+function cmdSpec(task: string): string {
+    if (isSpecMode()) {
+        const s = getPlanModeState();
+        return `📝 Already in spec mode. Task: ${s.mode === "spec" ? s.task : "—"}. Finish writing the spec, then call finalize_spec.`;
+    }
+    const trimmed = task.trim();
+    if (!trimmed) {
+        return "Usage: `/spec <short task description>` — enters spec mode, where the agent writes a specification before planning or implementation.";
+    }
+    const slug = trimmed
+        .toLowerCase()
+        .replace(/[^\w\s-]/g, "")
+        .trim()
+        .split(/\s+/)
+        .slice(0, 6)
+        .join("-")
+        .slice(0, 50) || `spec-${Date.now()}`;
+    const specPath = path.resolve(".atlas", "specs", `${slug}.md`);
+    enterSpecMode(trimmed, specPath, "user");
+    return [
+        "📝 **Spec mode active.**",
+        "",
+        `Task: ${trimmed}`,
+        `Target spec file: ${specPath}`,
+        "",
+        "The agent will write a specification (problem, acceptance criteria, test scenarios, out-of-scope) before planning implementation. Send your next message to start. Finalize with `finalize_spec` or `/noplan` to cancel.",
+    ].join("\n");
 }
