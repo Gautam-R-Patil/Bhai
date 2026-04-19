@@ -37,6 +37,9 @@ contextBridge.exposeInMainWorld("atlas", {
     setupSaveHotkey: (combo) => ipcRenderer.invoke("setup:save-hotkey", combo),
     setupListVoices: () => ipcRenderer.invoke("setup:list-voices"),
     setupPreviewVoice: (backend, name) => ipcRenderer.invoke("setup:preview-voice", backend, name),
+    setupTestChannel: (type, creds) => ipcRenderer.invoke("setup:test-channel", type, creds),
+    setupSaveChannel: (type, creds, testId) => ipcRenderer.invoke("setup:save-channel", type, creds, testId),
+    setupSlackOAuthStart: () => ipcRenderer.invoke("setup:slack-oauth-start"),
     finishSetup: () => ipcRenderer.invoke("setup:finish"),
 
     // ── Events ────────────────────────────────

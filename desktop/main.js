@@ -397,6 +397,34 @@ function saveEnvEncrypted(envContent) {
 }
 
 /**
+ * Merge key/value pairs into the encrypted .env file. Reads the existing env
+ * (if any), updates or inserts each key, and writes back encrypted. Creates
+ * the file if it didn't exist.
+ */
+function saveEnvKVs(kvs) {
+    if (!kvs || typeof kvs !== "object") return;
+    const existing = loadEnvDecrypted() || "";
+    const lines = existing.split("\n");
+    const seen = new Set();
+    const updated = lines.map((line) => {
+        const m = line.match(/^\s*([A-Z0-9_]+)\s*=/);
+        if (!m) return line;
+        const key = m[1];
+        if (Object.prototype.hasOwnProperty.call(kvs, key)) {
+            seen.add(key);
+            return `${key}=${String(kvs[key])}`;
+        }
+        return line;
+    });
+    for (const k of Object.keys(kvs)) {
+        if (!seen.has(k)) updated.push(`${k}=${String(kvs[k])}`);
+    }
+    // Drop trailing empty lines before collapsing (keep one).
+    while (updated.length > 1 && updated[updated.length - 1] === "") updated.pop();
+    saveEnvEncrypted(updated.join("\n") + "\n");
+}
+
+/**
  * Load and decrypt the .env file.
  * Returns the plaintext .env content.
  */
@@ -2146,6 +2174,97 @@ function registerIPC() {
         const wav = path.join(__dirname, "assets", "voices", "sample.wav");
         if (!fs.existsSync(wav)) return { ok: false, error: "sample.wav missing" };
         return { ok: true, backend, name, url: require("url").pathToFileURL(wav).href };
+    });
+
+    // Setup: channel test-before-save gate.
+    // Tests a channel's credentials via the provider's actual API. On success,
+    // returns a short-lived testId the caller must present to setup:save-channel
+    // within 60s. Credentials never reach .env until the save handler runs.
+    const __pendingChannelTests = new Map();
+    const __randomId = () => require("crypto").randomBytes(8).toString("hex");
+
+    ipcMain.handle("setup:test-channel", async (_evt, type, creds) => {
+        try {
+            if (type === "telegram") {
+                const r = await fetch(`https://api.telegram.org/bot${creds.token}/getMe`);
+                const j = await r.json();
+                if (!j.ok) return { ok: false, error: j.description || "Telegram rejected token" };
+            } else if (type === "discord") {
+                const r = await fetch("https://discord.com/api/v10/users/@me", {
+                    headers: { Authorization: "Bot " + creds.token },
+                });
+                const j = await r.json();
+                if (!j.id) return { ok: false, error: j.message || "Discord rejected token" };
+            } else if (type === "matrix") {
+                const base = String(creds.homeserver || "").replace(/\/$/, "");
+                const r = await fetch(`${base}/_matrix/client/v3/account/whoami`, {
+                    headers: { Authorization: "Bearer " + creds.token },
+                });
+                const j = await r.json();
+                if (!j.user_id) return { ok: false, error: j.error || "Matrix rejected token" };
+            } else if (type === "email") {
+                const { ImapFlow } = require("imapflow");
+                const client = new ImapFlow({
+                    host: creds.imapHost,
+                    port: creds.imapPort,
+                    secure: !!creds.imapTls,
+                    auth: { user: creds.user, pass: creds.password },
+                    logger: false,
+                });
+                try { await client.connect(); await client.logout(); }
+                catch (err) { return { ok: false, error: err.message || "IMAP login failed" }; }
+            } else {
+                return { ok: false, error: "unsupported type: " + type };
+            }
+            const testId = __randomId();
+            __pendingChannelTests.set(testId, Date.now());
+            return { ok: true, testId };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    ipcMain.handle("setup:save-channel", async (_evt, type, creds, testId) => {
+        const t = __pendingChannelTests.get(testId);
+        if (!t || (Date.now() - t) > 60000) {
+            return { ok: false, error: "Test expired — re-run Test, then Save." };
+        }
+        __pendingChannelTests.delete(testId);
+        try {
+            if (type === "telegram") {
+                saveEnvKVs({ TELEGRAM_BOT_TOKEN: creds.token, ALLOWED_USER_IDS: creds.allowedIds });
+            } else if (type === "discord") {
+                saveEnvKVs({ DISCORD_BOT_TOKEN: creds.token });
+            } else if (type === "matrix") {
+                saveEnvKVs({ MATRIX_HOMESERVER: creds.homeserver, MATRIX_ACCESS_TOKEN: creds.token });
+            } else if (type === "email") {
+                saveEnvKVs({
+                    EMAIL_USER: creds.user,
+                    EMAIL_PASSWORD: creds.password,
+                    EMAIL_IMAP_HOST: creds.imapHost,
+                    EMAIL_IMAP_PORT: String(creds.imapPort),
+                    EMAIL_SMTP_HOST: creds.smtpHost,
+                    EMAIL_SMTP_PORT: String(creds.smtpPort),
+                });
+            }
+            return { ok: true };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    // Slack OAuth launcher (popup only). The redirect/callback exchange is a
+    // separate task (E3c); this IPC only opens the browser-based authorize page.
+    ipcMain.handle("setup:slack-oauth-start", async () => {
+        const clientId = process.env.SLACK_CLIENT_ID || "REPLACE_ME";
+        const url = "https://slack.com/oauth/v2/authorize?scope=chat:write,app_mentions:read,im:history&client_id=" + encodeURIComponent(clientId);
+        const popup = new BrowserWindow({
+            width: 520,
+            height: 720,
+            webPreferences: { nodeIntegration: false, contextIsolation: true },
+        });
+        popup.loadURL(url);
+        return { ok: true };
     });
 
 
