@@ -487,10 +487,10 @@ const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] 
     // Web design — asset search + scaffolding
     { pattern: /\b(stock\s+image|stock\s+photo|hero\s+image|unsplash|pexels|picsum)\b/i, category: "coding", minScore: 0.8 },
     { pattern: /\b(icon(?:s|ify)?|svg\s+icon|lucide|heroicons?|phosphor|tabler|font.?awesome)\b.{0,30}?\b(search|find|need|add|pick)\b/i, category: "coding", minScore: 0.8 },
-    { pattern: /\b(scaffold|bootstrap|create|new)\b.{0,30}?\b(project|app|website|site|starter)\b/i, category: "coding", minScore: 0.8 },
+    { pattern: /\b(scaffold|bootstrap)\b.{0,30}?\b(project|app|website|site|starter)\b/i, category: "coding", minScore: 0.8 },
     { pattern: /\b(vite|next\.?js|astro|tailwind|shadcn|framer.?motion|three\.?js|r3f|react.?three.?fiber|gsap|lottie)\b/i, category: "coding", minScore: 0.75 },
     // 3D / animation intent — route to coding so R3F/Three tools surface
-    { pattern: /\b(3d|three.?d|webgl|shader|scene|mesh|geometry|material)\b.{0,40}?\b(website|page|component|animation|scroll|hero)\b/i, category: "coding", minScore: 0.8 },
+    { pattern: /\b(3d|three.?d|webgl|shader|scene|mesh|geometry)\b.{0,40}?\b(website|page|component|animation|scroll|hero)\b/i, category: "coding", minScore: 0.8 },
     { pattern: /\b(landing\s+page|hero\s+section|pricing\s+page|portfolio\s+site|marketing\s+site)\b/i, category: "coding", minScore: 0.75 },
 ];
 
