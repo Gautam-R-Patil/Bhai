@@ -47,6 +47,9 @@
         this._platform = this.props.platform || "darwin";
         this._recording = false;
         this._onKeyDown = null;
+        // Monotonic counter used to discard in-flight test/commit calls when the user
+        // starts a new recording before the previous test IPC round-trip resolves.
+        this._recordSeq = 0;
     }
 
     HotkeyPicker.prototype.mount = function (container) {
@@ -88,16 +91,26 @@
     HotkeyPicker.prototype._startRecording = function () {
         if (this._recording || !this._el) return;
         this._recording = true;
+        this._recordSeq += 1;
+        const token = this._recordSeq;
         this._el.classList.add("sp-hotkey--recording");
         this._setStatus("Press the combo you want…", false);
         const self = this;
         this._onKeyDown = function (e) {
+            // Escape cancels the recording without committing anything.
+            if (e.key === "Escape") {
+                e.preventDefault();
+                e.stopPropagation();
+                self._stopRecording();
+                self._setStatus("Cancelled", false);
+                return;
+            }
             const combo = parseAccelerator(e, self._platform);
             if (!combo) return;
             e.preventDefault();
             e.stopPropagation();
             self._stopRecording();
-            self._testAndCommit(combo);
+            self._testAndCommit(combo, token);
         };
         window.addEventListener("keydown", this._onKeyDown, true);
     };
@@ -111,25 +124,41 @@
         if (this._el) this._el.classList.remove("sp-hotkey--recording");
     };
 
-    HotkeyPicker.prototype._testAndCommit = async function (combo) {
+    HotkeyPicker.prototype._testAndCommit = async function (combo, token) {
         if (!window.atlas || !window.atlas.setupTestHotkey) {
-            this._commit(combo);
+            this._commit(combo, token);
             return;
         }
         this._setStatus("Testing " + combo + "…", false);
         let res;
         try { res = await window.atlas.setupTestHotkey(combo); }
-        catch (err) { this._setStatus("Error: " + (err.message || err), true); return; }
-        if (res && res.ok) this._commit(combo);
+        catch (err) {
+            if (token !== this._recordSeq) return; // stale — user started another recording
+            this._setStatus("Error: " + (err.message || err), true);
+            return;
+        }
+        if (token !== this._recordSeq) return; // stale
+        if (res && res.ok) this._commit(combo, token);
         else this._setStatus((res && res.conflict) || "Combo in use by another app", true);
     };
 
-    HotkeyPicker.prototype._commit = async function (combo) {
+    HotkeyPicker.prototype._commit = async function (combo, token) {
         this._combo = combo;
         if (this._comboEl) this._comboEl.textContent = combo;
         this._setStatus("Saved", false);
         if (window.atlas && window.atlas.setupSaveHotkey) {
-            try { await window.atlas.setupSaveHotkey(combo); } catch {}
+            let saveRes;
+            try { saveRes = await window.atlas.setupSaveHotkey(combo); }
+            catch (err) {
+                if (token !== this._recordSeq) return;
+                this._setStatus("Save failed: " + (err.message || err), true);
+                return;
+            }
+            if (token !== this._recordSeq) return;
+            if (!saveRes || !saveRes.ok) {
+                this._setStatus("Save failed: " + ((saveRes && saveRes.error) || "unknown"), true);
+                return;
+            }
         }
         if (typeof this.props.onChange === "function") this.props.onChange(combo);
     };

@@ -2107,17 +2107,27 @@ function registerIPC() {
     });
 
     // Setup: persist the new overlay hotkey to electron-store and re-bind globalShortcut.
-    // Reuses the existing overlayHotkey machinery (see line ~2196 for the runtime path).
+    // Mirrors the existing hotkey:set-overlay handler (main.js:~2205): unregister ONLY the
+    // old overlay binding (not the live-voice hotkey, not every registered shortcut), attempt
+    // the new binding, and restore the old one if the new register call fails.
     ipcMain.handle("setup:save-hotkey", (_evt, combo) => {
         if (typeof combo !== "string" || !combo) return { ok: false, error: "invalid combo" };
+        const currentShortcut = getOverlayShortcut();
         try {
-            store.set("overlayHotkey", combo);
-            try { globalShortcut.unregisterAll(); } catch {}
-            globalShortcut.register(combo, () => {
+            try { globalShortcut.unregister(currentShortcut); } catch {}
+            const ok = globalShortcut.register(combo, () => {
                 if (typeof toggleOverlay === "function") toggleOverlay();
             });
+            if (!ok) {
+                // Rollback: put the old binding back so the user isn't left with nothing.
+                try { globalShortcut.register(currentShortcut, () => { if (typeof toggleOverlay === "function") toggleOverlay(); }); } catch {}
+                return { ok: false, error: "globalShortcut.register returned false — combo may have been claimed between test and save" };
+            }
+            store.set("overlayHotkey", combo);
             return { ok: true };
         } catch (err) {
+            // Best-effort rollback then report
+            try { globalShortcut.register(currentShortcut, () => { if (typeof toggleOverlay === "function") toggleOverlay(); }); } catch {}
             return { ok: false, error: err.message || String(err) };
         }
     });
