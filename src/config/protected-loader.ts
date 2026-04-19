@@ -7,7 +7,6 @@
 // Falls back to unprotected files in dev mode.
 
 import fs from "node:fs";
-import path from "node:path";
 
 // Must match the key used in desktop/build/protect-source.js
 const PROTECTION_KEY = Buffer.from("ATLAS_PROTECTED_2026");
@@ -53,20 +52,6 @@ export function loadProtectedFile(filePath: string): string | null {
     }
 
     return null;
-}
-
-/**
- * Load a prompt file by name from the prompts directory.
- * Handles both protected and unprotected versions.
- */
-export function loadPromptFile(promptsDir: string, filename: string): string {
-    const basePath = path.join(promptsDir, filename);
-    const content = loadProtectedFile(basePath);
-    if (content) {
-        return content.trim();
-    }
-    console.warn(`⚠️  Prompt file not found: ${basePath}`);
-    return "";
 }
 
 /**
