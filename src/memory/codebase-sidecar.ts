@@ -100,6 +100,29 @@ function runSchema(raw: BetterSqlite3.Database): void {
     raw.exec(SCHEMA_SQL);
 }
 
+/**
+ * Apply pragmas + schema to a freshly-opened raw sidecar handle.
+ * Used on first-open AND on schema-version rebuild, so pragmas never drift.
+ */
+function finalizeNewHandle(raw: BetterSqlite3.Database): void {
+    try {
+        raw.pragma("journal_mode = WAL");
+    } catch {
+        /* fail-open */
+    }
+    try {
+        raw.pragma("synchronous = NORMAL");
+    } catch {
+        /* fail-open */
+    }
+    try {
+        raw.pragma("foreign_keys = ON");
+    } catch {
+        /* fail-open */
+    }
+    runSchema(raw);
+}
+
 function ensureDir(): void {
     try {
         if (!fs.existsSync(SIDECAR_DIR)) fs.mkdirSync(SIDECAR_DIR, { recursive: true });
@@ -144,24 +167,7 @@ export function openSidecar(repoRoot: string): Database {
         raw = new BetterSqlite3(p);
     }
 
-    // Pragmas: WAL for concurrency, NORMAL sync (sidecar is throwaway).
-    try {
-        raw.pragma("journal_mode = WAL");
-    } catch {
-        /* */
-    }
-    try {
-        raw.pragma("synchronous = NORMAL");
-    } catch {
-        /* */
-    }
-    try {
-        raw.pragma("foreign_keys = ON");
-    } catch {
-        /* */
-    }
-
-    runSchema(raw);
+    finalizeNewHandle(raw);
 
     // Schema version check: drop + rebuild on mismatch.
     try {
@@ -172,17 +178,7 @@ export function openSidecar(repoRoot: string): Database {
             raw.close();
             wipeFile(p);
             raw = new BetterSqlite3(p);
-            try {
-                raw.pragma("journal_mode = WAL");
-            } catch {
-                /* */
-            }
-            try {
-                raw.pragma("foreign_keys = ON");
-            } catch {
-                /* */
-            }
-            runSchema(raw);
+            finalizeNewHandle(raw);
         }
     } catch {
         /* first-open: no meta row yet */
@@ -191,6 +187,24 @@ export function openSidecar(repoRoot: string): Database {
     const db = wrapDatabase(raw);
     cache.set(hash, { db, raw, root: repoRoot });
     return db;
+}
+
+/**
+ * Return the raw better-sqlite3 handle for a repo sidecar. Opens+caches if
+ * not already open. Consumers needing transactions, prepared statements in
+ * hot loops, or PRAGMA reads must use this instead of the wrapped Database
+ * interface, which only routes SELECT/WITH statements to the read path.
+ */
+export function getRawSidecar(repoRoot: string): BetterSqlite3.Database {
+    openSidecar(repoRoot);
+    const hash = repoHash(repoRoot);
+    // Cache is populated by openSidecar; this lookup is always hit.
+    const entry = cache.get(hash);
+    if (!entry) {
+        // Pathological: openSidecar succeeded but cache entry missing. Re-open fresh.
+        throw new Error(`codebase-sidecar: cache miss for ${hash} after open`);
+    }
+    return entry.raw;
 }
 
 /** Close the sidecar handle for a repo root (if cached) and evict the cache entry. */
