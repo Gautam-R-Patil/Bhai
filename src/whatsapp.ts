@@ -1575,7 +1575,7 @@ export function getWhatsAppSocket(): WASocket | null {
  * Send a proactive message to all registered owners (and legacy allowed JIDs).
  * Respects rate limits and typing simulation.
  */
-export async function sendWhatsAppProactiveMessage(message: string): Promise<void> {
+export async function sendWhatsAppProactiveMessage(message: string, filePath?: string): Promise<void> {
     if (!socket) return;
 
     // Collect all owner JIDs + legacy allowed JIDs
@@ -1587,7 +1587,41 @@ export async function sendWhatsAppProactiveMessage(message: string): Promise<voi
         try {
             await socket.sendPresenceUpdate("composing", jid);
             await new Promise(r => setTimeout(r, getTypingDelay(message)));
-            await sendMessage(jid, message);
+
+            if (filePath) {
+                // Send document attachment with the message as caption
+                try {
+                    const fs = await import("node:fs");
+                    const path = await import("node:path");
+                    const buf = fs.readFileSync(filePath);
+                    const fileName = path.basename(filePath);
+                    const ext = path.extname(filePath).toLowerCase();
+                    const isImage = [".jpg", ".jpeg", ".png", ".webp", ".gif"].includes(ext);
+                    const isVideo = [".mp4", ".mov", ".avi", ".webm"].includes(ext);
+                    const isAudio = [".mp3", ".wav", ".ogg", ".m4a"].includes(ext);
+                    if (isImage) {
+                        await socket.sendMessage(jid, { image: buf, caption: message });
+                    } else if (isVideo) {
+                        await socket.sendMessage(jid, { video: buf, caption: message });
+                    } else if (isAudio) {
+                        await socket.sendMessage(jid, { audio: buf, mimetype: "audio/mpeg" });
+                        if (message) await sendMessage(jid, message);
+                    } else {
+                        await socket.sendMessage(jid, {
+                            document: buf,
+                            fileName,
+                            mimetype: "application/octet-stream",
+                            caption: message,
+                        });
+                    }
+                } catch (fileErr) {
+                    console.error(`[WHATSAPP] Failed to send file to ${jid}:`, (fileErr as Error).message);
+                    await sendMessage(jid, message);
+                }
+            } else {
+                await sendMessage(jid, message);
+            }
+
             await socket.sendPresenceUpdate("paused", jid);
         } catch (err) {
             console.error(`[WHATSAPP] Failed to send proactive message to ${jid}:`, (err as Error).message);

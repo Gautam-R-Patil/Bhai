@@ -6,12 +6,12 @@ import type { ToolDefinition } from "../get-current-time.js";
 import type { LLMClient } from "../../llm.js";
 import { generateOutline } from "./outline.js";
 import { renderPptx } from "./render-pptx.js";
-import { getTelegramContext } from "../send-file.js";
 import { listThemeIds } from "./themes.js";
 import { resolveAssets, clearAssetCache } from "./assets.js";
 import { auditOutline, applyAutoFixes } from "./design-rules.js";
 import { generatePatch, applyPatch } from "./modify.js";
 import { renderHtml } from "./render-html.js";
+import { deliverToActiveChannel } from "../channel-send.js";
 import type { DeckArchetype, PresentationOutline, Slide } from "./types.js";
 
 // ── LLM client injection (follows swarm-tool.ts pattern) ──
@@ -192,24 +192,12 @@ export const createPresentation: ToolDefinition = {
             console.log(`  ✅ Rendered: ${filePath} (${sizeKb}KB)`);
             clearAssetCache();
 
-            // Step 3: auto-deliver on active channel (Telegram for now; other channels via send_file)
-            let delivered = false;
-            const { bot, chatId } = getTelegramContext();
-            if (bot && chatId) {
-                try {
-                    const { InputFile } = await import("grammy");
-                    const fs = await import("node:fs");
-                    const path = await import("node:path");
-                    const buf = fs.readFileSync(filePath);
-                    const filename = path.basename(filePath);
-                    await bot.api.sendDocument(chatId, new InputFile(buf, filename), {
-                        caption: outline.title,
-                    });
-                    delivered = true;
-                    console.log(`  📤 Deck sent to Telegram`);
-                } catch (sendErr) {
-                    console.warn(`  ⚠️ Auto-send failed: ${(sendErr as Error).message}`);
-                }
+            // Step 3: auto-deliver on the active channel (whatsapp/telegram/overlay/etc.)
+            const delivery = await deliverToActiveChannel(outline.title, filePath);
+            if (delivery.delivered) {
+                console.log(`  📤 Deck sent on ${delivery.channel}`);
+            } else if (delivery.error) {
+                console.warn(`  ⚠️ Auto-send failed: ${delivery.error}`);
             }
 
             return JSON.stringify({
@@ -220,7 +208,6 @@ export const createPresentation: ToolDefinition = {
                 file_path: filePath,
                 size_kb: sizeKb,
                 theme: outline.themeId,
-                delivered,
                 warnings: warnings.length > 0 ? warnings : undefined,
                 auto_fixes: autoFixes.length > 0 ? autoFixes : undefined,
                 design_audit: audit.passes
@@ -229,9 +216,11 @@ export const createPresentation: ToolDefinition = {
                         slide_issues: audit.slideIssues,
                         deck_warnings: audit.warnings,
                     },
-                tip: delivered
-                    ? "Deck sent to user. Tell them it's ready and mention the theme/slide count."
-                    : "Deck saved — use send_file to deliver it to the user.",
+                delivered: delivery.delivered,
+                delivered_on: delivery.channel ?? undefined,
+                tip: delivery.delivered
+                    ? `Deck sent on ${delivery.channel}. Tell the user it's ready and mention the theme/slide count.`
+                    : "Deck saved — tell the user the file path so they can open it.",
             });
         } catch (err) {
             console.error(`  ❌ Presentation generation failed:`, err);
@@ -348,23 +337,10 @@ export const modifyPresentation: ToolDefinition = {
 
             console.log(`  ✅ Re-rendered: ${filePath} (${sizeKb}KB)`);
 
-            // Step 5: auto-deliver
-            let delivered = false;
-            const { bot, chatId } = getTelegramContext();
-            if (bot && chatId) {
-                try {
-                    const { InputFile } = await import("grammy");
-                    const fs = await import("node:fs");
-                    const path = await import("node:path");
-                    const buf = fs.readFileSync(filePath);
-                    const filename = path.basename(filePath);
-                    await bot.api.sendDocument(chatId, new InputFile(buf, filename), {
-                        caption: `${outline.title} (modified)`,
-                    });
-                    delivered = true;
-                } catch (sendErr) {
-                    console.warn(`  ⚠️ Auto-send failed: ${(sendErr as Error).message}`);
-                }
+            // Step 5: auto-deliver on active channel
+            const delivery = await deliverToActiveChannel(`${outline.title} (modified)`, filePath);
+            if (delivery.delivered) {
+                console.log(`  📤 Modified deck sent on ${delivery.channel}`);
             }
 
             return JSON.stringify({
@@ -379,7 +355,8 @@ export const modifyPresentation: ToolDefinition = {
                 auto_fixes: autoFixes.length > 0 ? autoFixes : undefined,
                 design_audit: audit.passes ? "pass" : { slide_issues: audit.slideIssues, deck_warnings: audit.warnings },
                 warnings: warnings.length > 0 ? warnings : undefined,
-                delivered,
+                delivered: delivery.delivered,
+                delivered_on: delivery.channel ?? undefined,
             });
         } catch (err) {
             console.error(`  ❌ Modify failed:`, err);
@@ -442,22 +419,8 @@ export const exportPresentation: ToolDefinition = {
                 return JSON.stringify({ error: `Unsupported format '${format}'. Use 'pptx' or 'html'.` });
             }
 
-            // Auto-deliver
-            let delivered = false;
-            const { bot, chatId } = getTelegramContext();
-            if (bot && chatId) {
-                try {
-                    const { InputFile } = await import("grammy");
-                    const fs = await import("node:fs");
-                    const path = await import("node:path");
-                    const buf = fs.readFileSync(filePath);
-                    const filename = path.basename(filePath);
-                    await bot.api.sendDocument(chatId, new InputFile(buf, filename), {
-                        caption: `${outline.title} (${format})`,
-                    });
-                    delivered = true;
-                } catch { /* fall through */ }
-            }
+            // Auto-deliver on active channel
+            const delivery = await deliverToActiveChannel(`${outline.title} (${format})`, filePath);
 
             return JSON.stringify({
                 success: true,
@@ -465,7 +428,8 @@ export const exportPresentation: ToolDefinition = {
                 file_path: filePath,
                 size_kb: sizeKb,
                 format,
-                delivered,
+                delivered: delivery.delivered,
+                delivered_on: delivery.channel ?? undefined,
             });
         } catch (err) {
             return JSON.stringify({ error: `Export failed: ${(err as Error).message}` });

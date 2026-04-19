@@ -1603,10 +1603,49 @@ function humanizeProgress(msg: string): string | null {
 
 // ── Proactive Message Sender ──────────────────
 
-export async function sendProactiveMessage(bot: Bot, config: Config, message: string): Promise<void> {
+export async function sendProactiveMessage(bot: Bot, config: Config, message: string, filePath?: string): Promise<void> {
     if (config.allowedUserIds.size === 0) {
         console.warn("⚠️ No allowed Telegram users to send proactive message to.");
         return;
+    }
+
+    // File attachment path — send document/photo/video based on extension
+    if (filePath) {
+        try {
+            const fs = await import("node:fs");
+            const path = await import("node:path");
+            const { InputFile } = await import("grammy");
+            if (fs.existsSync(filePath)) {
+                const buf = fs.readFileSync(filePath);
+                const fileName = path.basename(filePath);
+                const ext = path.extname(filePath).toLowerCase();
+                const isImage = [".jpg", ".jpeg", ".png", ".webp"].includes(ext);
+                const isVideo = [".mp4", ".mov", ".webm"].includes(ext);
+                const caption = message.length <= 1024 ? message : undefined;
+                for (const userId of config.allowedUserIds) {
+                    try {
+                        const inputFile = new InputFile(buf, fileName);
+                        if (isImage) {
+                            await bot.api.sendPhoto(userId, inputFile, { caption });
+                        } else if (isVideo) {
+                            await bot.api.sendVideo(userId, inputFile, { caption });
+                        } else {
+                            await bot.api.sendDocument(userId, inputFile, { caption });
+                        }
+                    } catch (err) {
+                        console.error(`❌ Failed to send proactive file to ${userId}:`, (err as Error).message);
+                    }
+                }
+                // If caption was too long for Telegram (>1024), send the message separately
+                if (caption === undefined && message) {
+                    // fall through to also send the message as a regular text below
+                } else {
+                    return;
+                }
+            }
+        } catch (fileErr) {
+            console.error("❌ Proactive file send failed, falling back to text:", (fileErr as Error).message);
+        }
     }
 
     // Skip when internet is down — no point retrying Telegram API

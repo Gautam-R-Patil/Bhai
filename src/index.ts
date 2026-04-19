@@ -363,11 +363,11 @@ async function boot() {
     const bot = createTelegramBot(config, llm);
 
     // ── Register cross-channel senders (for send_message_on_channel tool) ──
-    registerChannelSender("telegram", async (message) => {
-        await sendProactiveMessage(bot, config, message);
+    registerChannelSender("telegram", async (message, filePath) => {
+        await sendProactiveMessage(bot, config, message, filePath);
     });
-    registerChannelSender("whatsapp", async (message) => {
-        await sendWhatsAppProactiveMessage(message);
+    registerChannelSender("whatsapp", async (message, filePath) => {
+        await sendWhatsAppProactiveMessage(message, filePath);
     });
     registerChannelSender("discord", async (message) => {
         await sendDiscordProactiveMessage(message);

@@ -26,6 +26,62 @@ export function getActiveChannelSenders(): string[] {
     return Array.from(channelSenders.keys());
 }
 
+/**
+ * Get a channel sender function by name. Tools can use this to deliver
+ * files/messages on the current inbound channel without hard-coding Telegram.
+ */
+export function getChannelSender(channel: string): ChannelSendFn | undefined {
+    return channelSenders.get(channel);
+}
+
+// ── Active channel context (set by agent.ts before tool execution) ──
+// Tracks which channel the current user message came in on, so tools can
+// deliver outputs back to the same channel the user is waiting on.
+
+let _activeChannel: string | null = null;
+
+export function setActiveChannel(channel: string | null): void {
+    _activeChannel = channel;
+}
+
+export function getActiveChannel(): string | null {
+    return _activeChannel;
+}
+
+/**
+ * Deliver a file to the currently active channel (fallback: primary channel env var).
+ * Returns true on success, false if no channel can deliver.
+ */
+export async function deliverToActiveChannel(
+    message: string,
+    filePath: string,
+): Promise<{ delivered: boolean; channel: string | null; error?: string }> {
+    const candidates: string[] = [];
+    if (_activeChannel) candidates.push(_activeChannel);
+    const primary = process.env.PRIMARY_CHANNEL;
+    if (primary && !candidates.includes(primary)) candidates.push(primary);
+    // Final fallback: any registered sender
+    for (const k of channelSenders.keys()) {
+        if (!candidates.includes(k)) candidates.push(k);
+    }
+
+    for (const ch of candidates) {
+        const sender = channelSenders.get(ch);
+        if (!sender) continue;
+        try {
+            await sender(message, filePath);
+            return { delivered: true, channel: ch };
+        } catch (err) {
+            // Try the next candidate
+            const msg = (err as Error).message;
+            if (ch === candidates[candidates.length - 1]) {
+                return { delivered: false, channel: null, error: msg };
+            }
+        }
+    }
+    return { delivered: false, channel: null, error: "No channel senders registered" };
+}
+
 // ── Tool Definition ──────────────────────────────
 
 export const channelSendTool: ToolDefinition = {
