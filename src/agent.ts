@@ -63,6 +63,7 @@ import {
 import { detectTaskType } from "./prompts/dynamic-assembler.js";
 import {
     clearToolRouterState,
+    getLastClassification,
     getLastIntent,
     handleToolRequest,
     isRequestToolsCall,
@@ -78,6 +79,89 @@ import {
 } from "./tool-router-analytics.js";
 import { autoSaveSession, getBrowserContext, trackBrowserStep } from "./tools/browser-memory.js";
 import { clearCache, executeTool, resetRateLimits } from "./tools/index.js";
+
+// ── Music fast-path helpers ──────────────────────
+// Short-circuits the Sonnet orchestrator + heavy memory briefing when the LLM
+// classifier is highly confident the user is asking for simple music playback.
+// Fails open: any misfire falls through to the normal agent path.
+
+const MUSIC_INTENT_PATTERN = /^(play_music|play_song|pause|resume|next|previous|skip|volume|shuffle|repeat|now_playing)/i;
+const MUSIC_POSSESSIVE_PATTERN = /\b(my|our|the one|that|favorite|fav|usual|go[- ]?to|mine)\b/i;
+const SPOTIFY_URI_PATTERN = /spotify:(track|album|playlist|artist):[A-Za-z0-9]+/;
+
+interface MusicFastPathContext {
+    musicMemoryHint?: string;
+    resolvedUri?: string;
+}
+
+/**
+ * True iff the current turn is a simple, high-confidence music-playback command.
+ * When this returns true, the agent skips the Sonnet orchestrator, the
+ * full memory briefing, and the auto-verification loop.
+ */
+function isMusicFastPathEligible(opts: {
+    userMessage: string;
+    iteration: number;
+    inPlanMode: boolean;
+}): boolean {
+    if (opts.iteration !== 1) return false;          // only first iteration of a turn
+    if (opts.inPlanMode) return false;
+
+    const trimmed = opts.userMessage.trim();
+    if (trimmed.length === 0 || trimmed.length > 80) return false;
+
+    const cls = getLastClassification();
+    if (!cls) return false;                           // structural fallback fired — not confident enough
+    if (cls.confidence < 0.9) return false;
+    if (!MUSIC_INTENT_PATTERN.test(cls.intent)) return false;
+
+    const tools = cls.specific_tools || [];
+    if (tools.length !== 1) return false;
+    if (tools[0] !== "spotify" && tools[0] !== "music_control") return false;
+
+    return true;
+}
+
+/**
+ * Cheap, bounded memory lookup for possessive/reference music queries
+ * ("play my favorite song"). Returns a hint to inject into the agent's system
+ * context — or an empty context if nothing useful was found or the budget
+ * exceeded.
+ */
+async function musicMemoryPeek(userMessage: string, llmForRecall: LLMClient): Promise<MusicFastPathContext> {
+    if (!MUSIC_POSSESSIVE_PATTERN.test(userMessage)) return {};
+
+    try {
+        const searchPromise = recall(`${userMessage} music song`, 3, llmForRecall, "llm_only");
+        const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 500));
+        const results = await Promise.race([searchPromise, timeoutPromise]);
+        if (!results || !Array.isArray(results) || results.length === 0) return {};
+
+        const snippets: string[] = [];
+        let resolvedUri: string | undefined;
+        for (const r of results) {
+            const content = typeof r.content === "string" ? r.content : "";
+            if (!content) continue;
+            const uriMatch = content.match(SPOTIFY_URI_PATTERN);
+            if (uriMatch && !resolvedUri) resolvedUri = uriMatch[0];
+            snippets.push(content.substring(0, 160));
+            if (snippets.join(" ").length > 300) break;
+        }
+
+        if (resolvedUri) {
+            return {
+                musicMemoryHint: `[Music Memory Hint] User has previously tagged this: ${resolvedUri}. Pass it directly as uri.\n${snippets.join("\n").substring(0, 260)}`,
+                resolvedUri,
+            };
+        }
+        if (snippets.length > 0) {
+            return { musicMemoryHint: `[Music Memory Hint]\n${snippets.join("\n").substring(0, 300)}` };
+        }
+        return {};
+    } catch {
+        return {};
+    }
+}
 
 // ── Constants ─────────────────────────────────
 
