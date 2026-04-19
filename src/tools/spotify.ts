@@ -301,6 +301,17 @@ interface SearchCacheEntry { result: { uri: string; name?: string; artists?: str
 const _searchCache = new Map<string, SearchCacheEntry>();
 const SEARCH_CACHE_TTL_MS = 15 * 60 * 1000; // 15 min
 
+function writeSearchCache(
+    cacheKey: string,
+    result: { uri: string; name?: string; artists?: string },
+): void {
+    _searchCache.set(cacheKey, { result, at: Date.now() });
+    if (_searchCache.size > 200) {
+        const oldest = [..._searchCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+        if (oldest) _searchCache.delete(oldest[0]);
+    }
+}
+
 async function searchTop(type: "track" | "album" | "artist" | "playlist", query: string): Promise<{ uri: string; name?: string; artists?: string } | null> {
     const cacheKey = `${type}:${query.toLowerCase().trim()}`;
     const cached = _searchCache.get(cacheKey);
@@ -314,7 +325,7 @@ async function searchTop(type: "track" | "album" | "artist" | "playlist", query:
         const fast = await fastSearchTrack(query);
         if (fast) {
             const result = { uri: fast.uri, name: fast.name, artists: fast.artists };
-            _searchCache.set(cacheKey, { result, at: Date.now() });
+            writeSearchCache(cacheKey, result);
             return result;
         }
     }
@@ -335,11 +346,7 @@ async function searchTop(type: "track" | "album" | "artist" | "playlist", query:
         ? (first.artists as Array<Record<string, unknown>>).map((a) => a.name as string).filter(Boolean).join(", ")
         : undefined;
     const result = { uri, name: first.name as string | undefined, artists };
-    _searchCache.set(cacheKey, { result, at: Date.now() });
-    if (_searchCache.size > 200) {
-        const oldest = [..._searchCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
-        if (oldest) _searchCache.delete(oldest[0]);
-    }
+    writeSearchCache(cacheKey, result);
     return result;
 }
 
