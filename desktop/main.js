@@ -2068,6 +2068,30 @@ function registerIPC() {
         }
     });
 
+    // Setup: request an OS permission by opening the correct Preferences pane.
+    // Non-darwin is a no-op returning {ok:true, skipped:true}.
+    ipcMain.handle("setup:request-permission", async (_evt, name) => {
+        if (process.platform !== "darwin") return { ok: true, skipped: true };
+        const { prefPaneUrlFor } = require("./components/permissions-grid");
+        const url = prefPaneUrlFor(name);
+        if (!url) return { ok: false, error: "unknown permission: " + String(name) };
+        try { await shell.openExternal(url); return { ok: true }; }
+        catch (err) { return { ok: false, error: err.message || String(err) }; }
+    });
+
+    // Setup (E3b): persist a user's decision to skip a permission. Writes through to
+    // electron-store's prefs.skippedPermissions map so the Ready Hub tile can amber-flag.
+    ipcMain.handle("setup:mark-permission-skipped", (_evt, name, skipped) => {
+        try {
+            const current = store.get("skippedPermissions") || {};
+            if (skipped) current[name] = true; else delete current[name];
+            store.set("skippedPermissions", current);
+            return { ok: true, skippedPermissions: current };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
 
     // App info
     ipcMain.handle("app:info", () => ({

@@ -31,6 +31,8 @@ contextBridge.exposeInMainWorld("atlas", {
     isSetupComplete: () => ipcRenderer.invoke("setup:is-complete"),
     setupDetect: () => ipcRenderer.invoke("setup:detect"),
     setupPollPermissions: () => ipcRenderer.invoke("setup:poll-permissions"),
+    setupRequestPermission: (name) => ipcRenderer.invoke("setup:request-permission", name),
+    setupMarkPermissionSkipped: (name, skipped) => ipcRenderer.invoke("setup:mark-permission-skipped", name, skipped),
     finishSetup: () => ipcRenderer.invoke("setup:finish"),
 
     // ── Events ────────────────────────────────
