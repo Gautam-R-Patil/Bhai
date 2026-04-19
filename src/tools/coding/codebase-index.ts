@@ -56,7 +56,9 @@ Env overrides: ATLAS_INDEX_DEPTH=symbols|imports|calls forces a tier; ATLAS_NO_C
     async handler(input: Record<string, unknown>): Promise<string> {
         const command = String(input.command ?? "").toLowerCase();
         const root = typeof input.path === "string" && input.path ? input.path : process.cwd();
-        const depth = typeof input.depth === "string" ? (input.depth as "symbols" | "imports" | "calls") : undefined;
+        const rawDepth = typeof input.depth === "string" ? input.depth : undefined;
+        const depth: "symbols" | "imports" | "calls" | undefined =
+            rawDepth === "symbols" || rawDepth === "imports" || rawDepth === "calls" ? rawDepth : undefined;
 
         try {
             if (command === "build") {
@@ -70,8 +72,16 @@ Env overrides: ATLAS_INDEX_DEPTH=symbols|imports|calls forces a tier; ATLAS_NO_C
                 auditLog("codebase_index.build", {
                     root: r.repoRoot,
                     hash: r.repoHash,
+                    depth: r.depth,
+                    depthAuto: r.depthAuto,
                     added: r.added,
                     updated: r.updated,
+                    unchanged: r.unchanged,
+                    deleted: r.deleted,
+                    fileCount: r.fileCount,
+                    symbolCount: r.symbolCount,
+                    errorCount: r.errors.length,
+                    elapsedMs: r.elapsedMs,
                 });
                 return JSON.stringify({ success: true, ...r });
             }
@@ -86,8 +96,16 @@ Env overrides: ATLAS_INDEX_DEPTH=symbols|imports|calls forces a tier; ATLAS_NO_C
                 auditLog("codebase_index.refresh", {
                     root: r.repoRoot,
                     hash: r.repoHash,
+                    depth: r.depth,
+                    depthAuto: r.depthAuto,
+                    added: r.added,
                     updated: r.updated,
                     unchanged: r.unchanged,
+                    deleted: r.deleted,
+                    fileCount: r.fileCount,
+                    symbolCount: r.symbolCount,
+                    errorCount: r.errors.length,
+                    elapsedMs: r.elapsedMs,
                 });
                 return JSON.stringify({ success: true, ...r });
             }
@@ -96,9 +114,18 @@ Env overrides: ATLAS_INDEX_DEPTH=symbols|imports|calls forces a tier; ATLAS_NO_C
                 return JSON.stringify({ success: true, ...s });
             }
             if (command === "wipe") {
+                // Snapshot stats before wiping so the audit log records what was actually deleted.
+                const preWipeStats = getIndexStats(root);
                 wipeIndex(root);
-                auditLog("codebase_index.wipe", { root });
-                return JSON.stringify({ success: true, wiped: true });
+                auditLog("codebase_index.wipe", {
+                    root,
+                    hash: preWipeStats.repoHash,
+                    existed: preWipeStats.exists,
+                    sidecarBytes: preWipeStats.sidecarBytes,
+                    fileCount: preWipeStats.fileCount,
+                    symbolCount: preWipeStats.symbolCount,
+                });
+                return JSON.stringify({ success: true, wiped: true, ...preWipeStats });
             }
             return JSON.stringify({ success: false, error: `unknown command: ${command}` });
         } catch (err) {
