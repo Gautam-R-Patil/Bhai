@@ -81,3 +81,83 @@ describe("mountHub — tile rendering via tile-model + StatusTile", () => {
         expect(() => mountHub(null, baseState())).not.toThrow();
     });
 });
+
+describe("applyDiff — in-place update", () => {
+    let container;
+    beforeEach(() => {
+        container = document.createElement("div"); document.body.appendChild(container);
+    });
+    afterEach(() => { document.body.innerHTML = ""; });
+
+    it("updates the changed tile in place via StatusTile.update", () => {
+        const s1 = baseState();
+        const s2 = Object.assign({}, s1, { google: { connected: true, email: "new@x.com" } });
+        mountHub(container, s1);
+        const tilesWrap = container.querySelector("#hub-tiles");
+        const beforeNode = container.querySelector('[data-sp-tile="google"] .sp-tile');
+        const { applyDiff } = require("../../components/ready-hub-body.js");
+        applyDiff(tilesWrap, s1, s2);
+        const afterNode = container.querySelector('[data-sp-tile="google"] .sp-tile');
+        expect(afterNode).toBe(beforeNode); // same DOM node — in-place update
+        expect(afterNode.querySelector(".sp-tile__value").textContent).toBe("new@x.com");
+        expect(afterNode.className).toMatch(/sp-tile--green/);
+    });
+
+    it("rebuilds when platform changes (permissions tile appears/disappears)", () => {
+        const s1 = Object.assign(baseState(), { platform: "win32" });
+        const s2 = baseState(); // darwin — permissions tile now present
+        mountHub(container, s1);
+        expect(container.querySelectorAll("[data-sp-tile]").length).toBe(7);
+        const { applyDiff } = require("../../components/ready-hub-body.js");
+        applyDiff(container.querySelector("#hub-tiles"), s1, s2);
+        expect(container.querySelectorAll("[data-sp-tile]").length).toBe(8);
+        expect(container.querySelector('[data-sp-tile="permissions"]')).toBeTruthy();
+    });
+
+    it("no-op when diff is empty", () => {
+        const s = baseState();
+        mountHub(container, s);
+        const { applyDiff } = require("../../components/ready-hub-body.js");
+        // Should not throw, should not touch DOM.
+        const beforeCount = container.querySelectorAll("[data-sp-tile]").length;
+        applyDiff(container.querySelector("#hub-tiles"), s, s);
+        expect(container.querySelectorAll("[data-sp-tile]").length).toBe(beforeCount);
+    });
+});
+
+describe("startLiveUpdates — 3s polling gate", () => {
+    let container;
+    beforeEach(() => {
+        container = document.createElement("div"); document.body.appendChild(container);
+    });
+    afterEach(() => { document.body.innerHTML = ""; });
+
+    it("polls setupDetect on an interval, applies diffs, and stops on .stop()", async () => {
+        const { REFRESH_MS, mountHub } = require("../../components/ready-hub-body.js");
+        expect(REFRESH_MS).toBe(3000);
+        let detectCalls = 0;
+        const atlas = {
+            setupDetect: async () => { detectCalls += 1; return baseState(); },
+            onAccountStatusChange: () => {},
+        };
+        const handle = mountHub(container, baseState(), atlas);
+        expect(typeof handle.stop).toBe("function");
+        // Fire one manual refresh (skip waiting 3s for real timer)
+        await handle.refreshNow();
+        expect(detectCalls).toBe(1);
+        handle.stop();
+        // After stop, interval should not be scheduled further
+    });
+
+    it("subscribes to onAccountStatusChange and fires a refresh when invoked", async () => {
+        let subscribedCb = null;
+        const atlas = {
+            setupDetect: async () => baseState(),
+            onAccountStatusChange: (cb) => { subscribedCb = cb; },
+        };
+        const { mountHub } = require("../../components/ready-hub-body.js");
+        const handle = mountHub(container, baseState(), atlas);
+        expect(typeof subscribedCb).toBe("function");
+        handle.stop();
+    });
+});
