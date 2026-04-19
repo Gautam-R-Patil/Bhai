@@ -259,6 +259,33 @@ export async function runReflection(
             } catch { /* non-fatal */ }
         }
 
+        // ── 3g. Coding strategy extraction ────────
+        // Only fires if this session actually touched the coding primitives
+        // (edit / write / test_run). Stores successful patterns in the
+        // "code" task-learnings category so future coding queries can
+        // recall them via recallLearnings("code", query).
+        try {
+            if (sessionTouchedCoding(conversationHistory)) {
+                const strategies = await extractCodingStrategies(llm, reflectionInput);
+                for (const s of strategies) {
+                    upsertLearning(
+                        "code" as LearningCategory,
+                        s.pattern,
+                        s.context || "coding",
+                        s.whatWorked || [],
+                        s.whatFailed || [],
+                        s.tips || [],
+                        typeof s.successScore === "number" ? s.successScore : 0.75,
+                    );
+                }
+                if (strategies.length > 0) {
+                    console.log(`[MEMORY][REFLECTION] Coding strategies captured: ${strategies.length}`);
+                }
+            }
+        } catch (err) {
+            console.warn("[MEMORY][REFLECTION] Coding strategy extraction failed (non-fatal):", (err as Error).message);
+        }
+
         // ── 4. Update self-state ──────────────────
         const turnCount = conversationHistory.filter(m => m.role === "user").length;
         updateSelfStateFromSession(turnCount, dominantTone);
@@ -691,6 +718,90 @@ ${input}`;
 
     console.log("[MEMORY][REFLECTION] Signal extraction failed after retries");
     return null;
+}
+
+// ── Coding Strategy Extraction (Phase 4E) ────
+// Called from runReflection when the session touched coding primitives.
+// Output is piped into upsertLearning("code", ...) so subsequent coding
+// queries can recall successful patterns via recallLearnings("code", q).
+
+interface CodingStrategy {
+    pattern: string;
+    context?: string;
+    whatWorked?: string[];
+    whatFailed?: string[];
+    tips?: string[];
+    successScore?: number;
+}
+
+const CODING_TOOL_SIGNATURES = new Set([
+    "edit", "write", "append_file", "notebook_edit", "test_run",
+    "code_action", "code_execute", "repo_map", "lsp",
+]);
+
+function sessionTouchedCoding(history: ChatCompletionMessageParam[]): boolean {
+    for (const msg of history) {
+        if (msg.role !== "assistant" || !("tool_calls" in msg) || !msg.tool_calls) continue;
+        for (const tc of msg.tool_calls) {
+            if (tc.type === "function" && CODING_TOOL_SIGNATURES.has(tc.function.name)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+async function extractCodingStrategies(llm: LLMClient, input: string): Promise<CodingStrategy[]> {
+    const prompt = `You are a coding strategy extractor. Read the session transcript and identify reusable PATTERNS the agent discovered — things that worked, things that failed, and generalizable tips for similar future coding tasks.
+
+Only extract GENERALIZABLE patterns (not one-off file edits). Examples of good patterns:
+- "When editing TS files with union types, read the full type definition first"
+- "Running vitest with a --testPathPattern is faster than full suite for targeted fixes"
+- "For Rust lifetimes errors, refactor to clone() before re-architecting ownership"
+
+Output ONLY valid JSON:
+{"strategies": [
+  {"pattern": "<short rule>", "context": "<tech/language/domain>", "whatWorked": ["<concrete step>"], "whatFailed": ["<approach that failed, if any>"], "tips": ["<standalone takeaway>"], "successScore": 0.0-1.0}
+]}
+
+Rules:
+- Return at most 3 strategies
+- Skip the session entirely if no coding happened — output {"strategies": []}
+- successScore reflects whether the overall task succeeded (1.0 = shipped and verified, 0.5 = partial, 0.0 = abandoned)
+- Patterns must be reusable across projects, not "I fixed foo.ts line 42"
+
+Transcript:
+${input.slice(0, 6000)}`;
+
+    try {
+        const response = await llm.chat({
+            messages: [{ role: "user", content: prompt }],
+            systemPrompt: "You are a JSON-only coding strategy extractor. Output valid JSON, no markdown.",
+            modelOverride: "anthropic/claude-haiku-4.5",
+        });
+        const text = response.choices?.[0]?.message?.content || "";
+        const jsonStr = extractJSON(text);
+        if (!jsonStr) return [];
+        const parsed = JSON.parse(jsonStr) as { strategies?: unknown };
+        if (!Array.isArray(parsed.strategies)) return [];
+        const out: CodingStrategy[] = [];
+        for (const raw of parsed.strategies.slice(0, 3)) {
+            if (typeof raw !== "object" || raw === null) continue;
+            const s = raw as Record<string, unknown>;
+            if (typeof s.pattern !== "string" || s.pattern.length < 4) continue;
+            out.push({
+                pattern: s.pattern,
+                context: typeof s.context === "string" ? s.context : "coding",
+                whatWorked: Array.isArray(s.whatWorked) ? (s.whatWorked as string[]).filter((x) => typeof x === "string") : [],
+                whatFailed: Array.isArray(s.whatFailed) ? (s.whatFailed as string[]).filter((x) => typeof x === "string") : [],
+                tips: Array.isArray(s.tips) ? (s.tips as string[]).filter((x) => typeof x === "string") : [],
+                successScore: typeof s.successScore === "number" ? s.successScore : 0.7,
+            });
+        }
+        return out;
+    } catch {
+        return [];
+    }
 }
 
 // ── JSON Validation ───────────────────────────

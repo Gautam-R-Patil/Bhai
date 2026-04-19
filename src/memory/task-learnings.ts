@@ -12,7 +12,7 @@ import path from "node:path";
 
 // ── Types ─────────────────────────────────────
 
-export type LearningCategory = "browser" | "os" | "app";
+export type LearningCategory = "browser" | "os" | "app" | "code";
 
 export interface ClickStrategy {
     appName: string;          // e.g. "WhatsApp", "Finder"
