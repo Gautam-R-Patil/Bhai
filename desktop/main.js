@@ -1545,6 +1545,28 @@ function registerIPC() {
     ipcMain.handle("bot:start", () => startBot());
     ipcMain.handle("bot:stop", () => stopBot());
     ipcMain.handle("bot:status", () => ({ status: getBotStatus() }));
+
+    // E3d-2: trigger a wizard-seed refresh. If the bot is running, bounce it so
+    // the next boot picks up changes via seedProfileIfPresent (src/setup/wizard-seed.ts).
+    // If the bot is stopped, this is a no-op — the NEXT bot:start will pick up the
+    // wizard's `.user-profile.json` automatically. Called by the wizard's Profile
+    // step after a re-configuration save, and (optionally) by the install step on
+    // completion. Always returns success so a failed bounce doesn't block setup UI.
+    ipcMain.handle("setup:reseed-now", async () => {
+        try {
+            if (getBotStatus() === "running") {
+                stopBot();
+                // Give the child process a brief moment to release its DB handle
+                // before the new instance opens it. 300ms is conservative.
+                await new Promise((resolve) => setTimeout(resolve, 300));
+                startBot();
+                return { success: true, action: "restarted" };
+            }
+            return { success: true, action: "no-op-bot-stopped" };
+        } catch (err) {
+            return { success: false, error: err.message || String(err) };
+        }
+    });
     ipcMain.handle("bot:stats", () => {
         if (!botStartTime || getBotStatus() !== "running") return null;
         // Try to get memory count from DB

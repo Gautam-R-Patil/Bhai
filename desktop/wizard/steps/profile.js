@@ -81,6 +81,14 @@
                 err.textContent = (res && res.error) || "Save failed.";
                 return;
             }
+            // E3d-2: if reconfiguring (bot may already be running), bounce it so the
+            // running bot picks up the new name/tone via src/setup/wizard-seed.ts on
+            // its next boot. No-op on fresh install (bot not started yet). Best-effort:
+            // a reseed failure doesn't block the user from advancing.
+            if (ctx && ctx.state && ctx.state.isReconfigure && window.atlas && typeof window.atlas.setupReseedNow === "function") {
+                try { await window.atlas.setupReseedNow(); }
+                catch { /* next bot restart will still pick it up */ }
+            }
             if (ctx && typeof ctx.refreshState === "function") await ctx.refreshState();
             if (ctx && typeof ctx.onAdvance === "function") ctx.onAdvance();
         });

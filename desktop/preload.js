@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld("atlas", {
     // ── Setup ─────────────────────────────────
     saveCredentials: (creds) => ipcRenderer.invoke("setup:save-credentials", creds),
     saveProfile: (profile) => ipcRenderer.invoke("setup:save-profile", profile),
+    setupReseedNow: () => ipcRenderer.invoke("setup:reseed-now"),
     chooseWorkspace: () => ipcRenderer.invoke("setup:choose-workspace"),
     createWorkspace: (path) => ipcRenderer.invoke("setup:create-workspace", path),
     startInstall: (options) => ipcRenderer.invoke("setup:install", options),
