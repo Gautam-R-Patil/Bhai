@@ -1355,4 +1355,67 @@ http.route({
   }),
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// POST /api/spotify/app-token — Mint a Spotify Client Credentials token
+// Used by the spotify-search fast path for read-only catalog search. The
+// client_id + client_secret stay on the server; the client only receives the
+// resulting access_token (1h TTL).
+// ══════════════════════════════════════════════════════════════════════════
+
+http.route({
+  path: "/api/spotify/app-token",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+
+    const isEncrypted = request.headers.get("X-Encryption") === "ecdh-aes-256-gcm";
+
+    const clientId = process.env.SPOTIFY_CLIENT_ID;
+    const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
+    if (!clientId || !clientSecret) {
+      return await buildResponse(
+        { error: "SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET not configured on server" },
+        500,
+        isEncrypted,
+        account.sharedKey,
+      );
+    }
+
+    try {
+      const resp = await fetch("https://accounts.spotify.com/api/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: `Basic ${btoa(`${clientId}:${clientSecret}`)}`,
+        },
+        body: new URLSearchParams({ grant_type: "client_credentials" }).toString(),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        return await buildResponse(
+          { error: data?.error_description || data?.error || `Spotify token endpoint ${resp.status}` },
+          resp.status,
+          isEncrypted,
+          account.sharedKey,
+        );
+      }
+      return await buildResponse(
+        { access_token: data.access_token, expires_in: data.expires_in, token_type: data.token_type || "Bearer" },
+        200,
+        isEncrypted,
+        account.sharedKey,
+      );
+    } catch (err: any) {
+      return await buildResponse(
+        { error: err.message || "Spotify token network error" },
+        502,
+        isEncrypted,
+        account.sharedKey,
+      );
+    }
+  }),
+});
+
 export default http;
