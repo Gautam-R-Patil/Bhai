@@ -369,8 +369,8 @@ async function boot() {
     registerChannelSender("whatsapp", async (message, filePath) => {
         await sendWhatsAppProactiveMessage(message, filePath);
     });
-    registerChannelSender("discord", async (message) => {
-        await sendDiscordProactiveMessage(message);
+    registerChannelSender("discord", async (message, filePath) => {
+        await sendDiscordProactiveMessage(message, filePath);
     });
     registerChannelSender("slack", async (message) => {
         await sendSlackProactiveMessage(message);

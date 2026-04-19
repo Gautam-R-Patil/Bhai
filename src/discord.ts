@@ -674,7 +674,7 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
 
 // ── Send a proactive message to Discord ──────
 
-export async function sendDiscordProactiveMessage(message: string): Promise<void> {
+export async function sendDiscordProactiveMessage(message: string, filePath?: string): Promise<void> {
     if (!discordClient) return;
 
     const channelId = process.env.DISCORD_NOTIFICATIONS_CHANNEL_ID;
@@ -685,6 +685,31 @@ export async function sendDiscordProactiveMessage(message: string): Promise<void
         if (!channel || !("send" in channel)) return;
 
         const sanitized = sanitizeReply(message);
+
+        // File attachment path — Discord renders images/videos inline from
+        // attached files and renders other types as downloadable files.
+        if (filePath) {
+            try {
+                const fs = await import("node:fs");
+                const path = await import("node:path");
+                if (fs.existsSync(filePath)) {
+                    const buf = fs.readFileSync(filePath);
+                    const fileName = path.basename(filePath);
+                    const { AttachmentBuilder } = await import("discord.js");
+                    const attachment = new AttachmentBuilder(buf, { name: fileName });
+                    const firstChunk = splitForDiscord(sanitized)[0] ?? "";
+                    await (channel as TextChannel).send({
+                        content: firstChunk,
+                        files: [attachment],
+                    });
+                    return;
+                }
+            } catch (fileErr) {
+                console.warn("[DISCORD] Attachment send failed, falling back to text:", (fileErr as Error).message);
+                // Fall through to plain text path
+            }
+        }
+
         const chunks = splitForDiscord(sanitized);
         for (const chunk of chunks) {
             await (channel as TextChannel).send(chunk);
