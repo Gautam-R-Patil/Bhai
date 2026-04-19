@@ -1560,9 +1560,13 @@ STRATEGY: Execute in as few tool calls as possible.
                         // Briefing failed — fall back to raw injection (fail-open)
                         activeInjection = `[Auto-Injected Memory & Strategy Context]\n${cappedParts.join("\n\n")}`;
                     }
-                } else {
+                } else if (!musicFastPathPhase1) {
+                    // Briefing disabled or query is llm_only — fall back to raw injection.
                     activeInjection = `[Auto-Injected Memory & Strategy Context]\n${cappedParts.join("\n\n")}`;
                 }
+                // If musicFastPathPhase1 is true, we intentionally inject nothing here.
+                // Phase-2 (after the tool-selection await) may still add a small
+                // [Music Memory Hint] if the user used a possessive query.
             }
 
             // For simple casual messages, add a nudge for extra natural tone
