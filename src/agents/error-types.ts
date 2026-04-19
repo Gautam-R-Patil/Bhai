@@ -224,7 +224,7 @@ const LOCATION_PATTERNS: RegExp[] = [
     /([\w./\-]+):(\d+)\b/,
 ];
 
-function extractCodeLocation(message: string): CodeErrorLocation | undefined {
+export function extractCodeLocation(message: string): CodeErrorLocation | undefined {
     for (const p of LOCATION_PATTERNS) {
         const m = message.match(p);
         if (m) {

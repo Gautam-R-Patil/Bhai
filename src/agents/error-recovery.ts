@@ -46,6 +46,43 @@ interface RecoveryAttempt {
     modifiedTask?: Partial<SubAgentTask>;
 }
 
+// ── Coding error enrichment helpers (Phase 4C) ────
+
+const CODING_CATEGORIES = new Set<ErrorCategory>([
+    ErrorCategory.SyntaxError,
+    ErrorCategory.TypeError,
+    ErrorCategory.TestFailure,
+    ErrorCategory.LintError,
+    ErrorCategory.BuildError,
+    ErrorCategory.ImportError,
+    ErrorCategory.RuntimeError,
+]);
+
+function isCodingErrorCategory(cat: ErrorCategory): boolean {
+    return CODING_CATEGORIES.has(cat);
+}
+
+function categoryRecoveryHint(cat: ErrorCategory): string {
+    switch (cat) {
+        case ErrorCategory.TypeError:
+            return "Hint: read the type definition for the mismatched value. Adjust either the call site or the declared type — not both.";
+        case ErrorCategory.SyntaxError:
+            return "Hint: parse error. Fix syntactically at the reported line — don't rewrite logic.";
+        case ErrorCategory.TestFailure:
+            return "Hint: read the failing assertion, understand what invariant broke, then edit the implementation (not the test unless the contract changed).";
+        case ErrorCategory.LintError:
+            return "Hint: run the linter with --fix first; if it doesn't auto-resolve, make the minimal change to satisfy the rule.";
+        case ErrorCategory.BuildError:
+            return "Hint: check for missing imports, unresolved paths, or misconfigured bundler entries before touching business logic.";
+        case ErrorCategory.ImportError:
+            return "Hint: verify the import path exists, the package is installed, and the exports match what's imported.";
+        case ErrorCategory.RuntimeError:
+            return "Hint: read the stack trace bottom-up — the innermost frame is where bad data entered a bad function.";
+        default:
+            return "Hint: localize first, read surrounding code, then make a minimal targeted edit.";
+    }
+}
+
 // ── Role Reroute Suggestions ─────────────────
 
 const REROUTE_MAP: Partial<Record<AgentRole, AgentRole[]>> = {
@@ -123,7 +160,19 @@ export async function executeWithRecovery(
 
     // ── Level 1: Rephrase (append error context) ──
     if (p.enableRephrase && Date.now() - recoveryStart < p.budgetMs) {
-        const rephrasedDesc = `${task.description}\n\n⚠️ IMPORTANT: A previous attempt at this task failed with: "${result.error || "unknown error"}". Please try a DIFFERENT approach. Avoid the approach that failed.`;
+        // Phase 4C: for coding-specific errors, enrich the rephrase with the
+        // extracted location + category hint so the agent can localize and
+        // read before editing, instead of guessing.
+        let codingHint = "";
+        if (isCodingErrorCategory(classified.category)) {
+            const loc = classified.codeLocation;
+            const locHint = loc?.file
+                ? `Location: ${loc.file}${loc.line ? `:${loc.line}` : ""}${loc.column ? `:${loc.column}` : ""}. Read that file around the reported line before editing.`
+                : "No file location extracted — use grep or the fix_issue tool to localize before editing.";
+            const catHint = categoryRecoveryHint(classified.category);
+            codingHint = `\n\n🔧 CODING ERROR CONTEXT\nCategory: ${classified.category}\n${locHint}\n${catHint}\nRun \`test_run\` after the edit to verify the fix.`;
+        }
+        const rephrasedDesc = `${task.description}\n\n⚠️ IMPORTANT: A previous attempt at this task failed with: "${result.error || "unknown error"}". Please try a DIFFERENT approach. Avoid the approach that failed.${codingHint}`;
 
         console.log(`  🔄 Recovery: rephrasing step ${task.id}`);
         attempts.push({ level: 1, action: "rephrase", reason: "Previous attempt failed" });
