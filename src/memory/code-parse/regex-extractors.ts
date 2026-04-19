@@ -28,6 +28,8 @@ const SYMBOL_PATTERNS: Record<Language, SymbolPattern[]> = {
         { regex: /^(export\s+)?enum\s+(\w+)/, kind: "enum", exportGroup: true },
         { regex: /^(export\s+)?const\s+(\w+)\s*[=:]/, kind: "constant", exportGroup: true },
         { regex: /^(export\s+)?(?:let|var)\s+(\w+)\s*[=:]/, kind: "variable", exportGroup: true },
+        // Matches class-body methods only. Arrow-function methods
+        // (`foo = (x) => ...`) and object-literal methods are not captured.
         { regex: /^\s+(?:async\s+)?(\w+)\s*\([^)]*\)\s*(?::\s*[^{]+)?\s*\{/, kind: "method" },
         { regex: /^\s+(?:public|private|protected)\s+(?:static\s+)?(?:async\s+)?(\w+)\s*[(<]/, kind: "method" },
     ],
@@ -139,6 +141,8 @@ const SYMBOL_PATTERNS: Record<Language, SymbolPattern[]> = {
 // ── Import patterns (per language) ──
 
 const IMPORT_PATTERNS: Record<Language, RegExp[]> = {
+    // Note: single-line imports only. Multi-line TS/JS imports (e.g.
+    // `import {\n  a,\n  b,\n} from "./x"`) are not captured by this regex.
     typescript: [
         /^\s*import\s+(?:type\s+)?(?:\{[^}]*\}|\*\s+as\s+\w+|\w+)(?:\s*,\s*(?:\{[^}]*\}|\w+))?\s+from\s+['"]([^'"]+)['"]/,
         /^\s*import\s+['"]([^'"]+)['"]/,
@@ -153,7 +157,12 @@ const IMPORT_PATTERNS: Record<Language, RegExp[]> = {
     ],
     python: [/^\s*from\s+([\w.]+)\s+import/, /^\s*import\s+([\w.]+)/],
     rust: [/^\s*use\s+([\w:]+)/, /^\s*(?:pub\s+)?extern\s+crate\s+(\w+)/],
-    go: [/^\s*import\s+"([^"]+)"/, /^\s*import\s+\(\s*$/],
+    go: [
+        /^\s*import\s+"([^"]+)"/,
+        // Opens an import block; specifiers inside the parens (common in Go)
+        // are not captured by this line-by-line regex.
+        /^\s*import\s+\(\s*$/,
+    ],
     java: [/^\s*import\s+([\w.]+)/],
     c: [/^\s*#include\s+[<"]([^>"]+)[>"]/],
     cpp: [/^\s*#include\s+[<"]([^>"]+)[>"]/],
@@ -188,6 +197,9 @@ const CALL_LANGS = new Set<Language>([
 
 // ── Utilities: strip strings and line comments ──
 
+// Best-effort line-level strip. Does not handle:
+//   • block comments `/* … */` (only matters if inline with a call)
+//   • Python triple-quoted strings — interior lines scanned as code
 function stripStringsAndComments(line: string, lang: Language): string {
     let out = line;
     // Strip // and # line comments (language-aware)

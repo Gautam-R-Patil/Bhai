@@ -14,7 +14,6 @@ export const MAX_FILE_BYTES = 100_000; // 100 KB per file
 export const LFS_PREFIX = "version https://git-lfs";
 
 export * from "./types.js";
-export type { Language, ParseResult };
 export { parseFile };
 
 /**
@@ -24,8 +23,9 @@ export { parseFile };
  * @param lang       Detected language (or "file-only" if unknown)
  * @param filePath   Absolute path (used for error messages only)
  * @param content    Pre-read file contents (caller handles UTF-8/latin-1)
+ * Never throws — callers must inspect `error` on the returned ParseResult.
  */
-function parseFile(lang: Language, _filePath: string, content: string): ParseResult {
+function parseFile(lang: Language, filePath: string, content: string): ParseResult {
     try {
         // LFS pointer → treat as file-only
         if (content.startsWith(LFS_PREFIX) && content.length < 200) {
@@ -51,7 +51,7 @@ function parseFile(lang: Language, _filePath: string, content: string): ParseRes
             calls: [],
             loc: 0,
             truncated: false,
-            error: `parse-error: ${(err as Error).message}`,
+            error: `parse-error ${filePath}: ${(err as Error).message}`,
         };
     }
 }
