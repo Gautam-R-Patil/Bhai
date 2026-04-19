@@ -50,6 +50,7 @@ async function mintAppToken(): Promise<CachedToken | null> {
             }
             return null;
         }
+        _loggedEndpointFailure = false;
         return {
             access_token: data.access_token,
             expires_at: Date.now() + Math.max(0, (data.expires_in - 60) * 1000),
