@@ -140,3 +140,24 @@ body, .wizard-body, .panel-body, .hub-root, .step-container, .sp-tile, .sp-chann
 .theme-switching * {
     transition: background-color 200ms ease, color 200ms ease, border-color 200ms ease !important;
 }
+
+/* D9: Retuned type scale — applies only to the wizard + hub surfaces to avoid
+   disturbing the existing panel/auth layouts that rely on the pre-existing
+   32px centered section-title. */
+
+/* Wizard surfaces (wizard.html-loaded via components/components.css link) */
+.wizard-head h1 { font-size: 24px; line-height: 1.25; font-weight: 500; }
+.step-title { font-size: 20px; line-height: 1.3; font-weight: 600; margin: 0 0 8px; }
+.step-sub { font-size: 14px; line-height: 1.5; color: var(--text-secondary, #a1a1aa); margin: 0 0 16px; }
+.step-note, .step-error { font-size: 13px; line-height: 1.5; }
+.step-error { color: var(--accent-danger, #f87171); }
+
+/* Ready Hub surfaces */
+.hub-title { font-size: 24px; line-height: 1.25; font-weight: 600; margin: 0 0 6px; }
+.hub-sub { font-size: 14px; line-height: 1.5; color: var(--text-secondary, #a1a1aa); margin: 0 0 16px; }
+
+/* Under the hood section title already scoped in its inline style; body text gets 13px */
+body .uth p { font-size: 13px; line-height: 1.55; }
+
+/* Shrink top-level 'Setup Components Smoke' and page-head titles on small pages */
+.page-head .page-title { font-size: 22px; }
