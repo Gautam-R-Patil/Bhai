@@ -1241,6 +1241,19 @@ STRATEGY: Execute in as few tool calls as possible.
                 console.warn("[AGENT] architecture injection failed (non-fatal):", (err as Error).message);
             }
 
+            // ── Past coding-strategy recall (Phase 4E read side) ──
+            // For coding tasks, surface the code-category task-learnings ahead
+            // of the general recall so previously-validated patterns aren't
+            // crowded out by browser/os/app entries when the top-3 is shared.
+            try {
+                if (detectTaskType(rawUserMessage) === "coding") {
+                    const codingLearnings = getTaskLearningsContext(userMessage, "code");
+                    if (codingLearnings) parts.push(codingLearnings);
+                }
+            } catch {
+                /* task-learnings not initialized */
+            }
+
             // ── 3. Behavioral traits (token-budgeted, relevance-scored) ──
             try {
                 const traitsSnippet = getTraitsForInjection(userMessage, 600);
