@@ -2140,10 +2140,12 @@ function registerIPC() {
 
     // Setup: return the file:// URL to a preview audio sample. Ship-v1 uses one
     // shared sample.wav for every voice; real per-voice samples are a follow-up.
+    // Uses pathToFileURL so spaces and non-ASCII chars in the app path (common on
+    // macOS, e.g. "/Applications/A.T.L.A.S.app/...") are correctly URL-encoded.
     ipcMain.handle("setup:preview-voice", (_evt, backend, name) => {
         const wav = path.join(__dirname, "assets", "voices", "sample.wav");
         if (!fs.existsSync(wav)) return { ok: false, error: "sample.wav missing" };
-        return { ok: true, backend, name, url: "file://" + wav };
+        return { ok: true, backend, name, url: require("url").pathToFileURL(wav).href };
     });
 
 
