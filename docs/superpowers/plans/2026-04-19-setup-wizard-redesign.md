@@ -4475,6 +4475,31 @@ Touch this in these tasks:
 
 **Why this matters:** without this, the wizard feels decorative — the user's answers land in files the agent never reads. With this, the first chat is: agent greets by name, knows the tone preference, and doesn't re-ask anything.
 
+### E3e — WhatsApp QR pairing inside the wizard (USER-FLAGGED GAP)
+
+**The problem:** the ChannelCard (B6) renders "Generate QR" for WhatsApp, but clicking it today calls `wa:generate-otp` which only writes `data/whatsapp-otp-signal.json` — it **assumes the bot process is already running** and watching that file. During the setup wizard the bot has NOT started yet, so the signal is never picked up, no QR is ever emitted on the `whatsapp-qr` channel, and the ChannelCard spins on "Generating pairing…" forever.
+
+**Fix:** add a setup-scoped WhatsApp pair flow that runs Baileys **from the Electron main process directly**, so a user can scan the QR and complete pairing **before the bot boots at Launch**.
+
+**New files:**
+- `desktop/setup/whatsapp-pair.js` — Baileys-backed pair runner. Exports `{ startPair(opts), stopPair() }`. `startPair` takes `{ dataDir, onQr(qrString), onConnected(owner), onError(message) }`. Uses `@whiskeysockets/baileys` (already in root deps but not in `desktop/node_modules`) — install it into `desktop/package.json` as part of this task.
+
+**New IPC handlers** in `desktop/main.js`:
+- `setup:wa-pair-start` — if already running, no-op; otherwise require the pair runner, wire its callbacks to emit `whatsapp-qr` (string) and `whatsapp-qr` (`"connected"` sentinel) on the existing channel that `preload.js:152` already bridges to `onWhatsAppQR`. On connect, write the owner JID to `data/whatsapp-users/owners.json` AND call `saveEnvKVs({})` — no env keys needed for WhatsApp (Baileys stores session state in `data/whatsapp-users/baileys-auth-state/`); presence of owners.json is what the `detectWhatsApp` probe looks for.
+- `setup:wa-pair-cancel` — calls `stopPair()` and clears any pending listener.
+
+**Modify `desktop/components/channel-card.js`:**
+- Replace the WhatsApp Generate QR button's click handler: instead of calling `window.atlas.waGenerateOTP()` (which is for the already-running bot's admin flow), call `window.atlas.setupWaPairStart()`. The existing QR-rendering listener (`onWhatsAppQR`) already handles both the QR string AND the `"connected"` sentinel — it just needs a branch that swaps the QR canvas for a green "Connected as <jid>" message when sentinel arrives, and fires `props.onSaved("whatsapp")` so the card status tile flips green like the other channels.
+
+**Modify `desktop/preload.js`:**
+- Expose `setupWaPairStart: () => ipcRenderer.invoke("setup:wa-pair-start")` and `setupWaPairCancel: () => ipcRenderer.invoke("setup:wa-pair-cancel")` under the Setup block.
+
+**Tests** at `desktop/tests/setup/whatsapp-pair.test.js`: unit-test the pair runner with a mocked Baileys client — confirm (a) QR events emit onQr, (b) connection update → open → calls onConnected with the JID, (c) subsequent startPair calls are idempotent (no double-subscribe), (d) stopPair detaches listeners. Use a fake-Baileys shim; do not bring in the real library for tests.
+
+**Manual check:** in the wizard's channel picker, click WhatsApp → Generate QR → scan on phone → within ~5s the QR canvas is replaced by "Connected as 91XXXXX@s.whatsapp.net ✓" and the Channels tile on the Ready Hub flips green.
+
+**Why this matters:** without this, the wizard advertises WhatsApp as a setup-time channel but silently fails to pair until the user reaches Ready Hub, opens panel.html, starts the bot, and goes through the panel's WhatsApp tab — which defeats the whole "pair before launch" promise.
+
 ### E4 — Known deferrals (acknowledged; not blocking)
 
 Document these openly so consumers don't think they're bugs:
