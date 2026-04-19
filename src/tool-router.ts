@@ -113,6 +113,7 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "lsp", "test_run", "fix_issue", "shell_exec", "append_file", "repo_map",
             "enter_plan_mode", "exit_plan_mode", "enter_spec_mode", "finalize_spec",
             "code_action", "code_execute", "browser_verify",
+            "stock_image_search", "icon_search", "web_asset_download", "scaffold_project",
             "shell_exec_background", "shell_check_process",
             "shell_wait_process", "shell_kill_process",
             "list_directory", "delete_file", "get_current_time",
@@ -483,6 +484,14 @@ const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] 
     { pattern: /\b(verify|check|test|preview|render)\b.{0,30}?\b(ui|frontend|page|component|form|dashboard|route|view|layout)\b/i, category: "coding", minScore: 0.8 },
     { pattern: /\b(localhost|dev\s+server|vite|next\s+dev|npm\s+run\s+dev|pnpm\s+dev|yarn\s+dev)\b/i, category: "coding", minScore: 0.75 },
     { pattern: /\b(browser[_\s-]?verify|post[_\s-]?coding\s+check|visual\s+(?:regression|check))\b/i, category: "coding", minScore: 0.85 },
+    // Web design — asset search + scaffolding
+    { pattern: /\b(stock\s+image|stock\s+photo|hero\s+image|unsplash|pexels|picsum)\b/i, category: "coding", minScore: 0.8 },
+    { pattern: /\b(icon(?:s|ify)?|svg\s+icon|lucide|heroicons?|phosphor|tabler|font.?awesome)\b.{0,30}?\b(search|find|need|add|pick)\b/i, category: "coding", minScore: 0.8 },
+    { pattern: /\b(scaffold|bootstrap|create|new)\b.{0,30}?\b(project|app|website|site|starter)\b/i, category: "coding", minScore: 0.8 },
+    { pattern: /\b(vite|next\.?js|astro|tailwind|shadcn|framer.?motion|three\.?js|r3f|react.?three.?fiber|gsap|lottie)\b/i, category: "coding", minScore: 0.75 },
+    // 3D / animation intent — route to coding so R3F/Three tools surface
+    { pattern: /\b(3d|three.?d|webgl|shader|scene|mesh|geometry|material)\b.{0,40}?\b(website|page|component|animation|scroll|hero)\b/i, category: "coding", minScore: 0.8 },
+    { pattern: /\b(landing\s+page|hero\s+section|pricing\s+page|portfolio\s+site|marketing\s+site)\b/i, category: "coding", minScore: 0.75 },
 ];
 
 // ── Caching State ─────────────────────────────
@@ -870,9 +879,25 @@ export function selectToolsFast(): ToolRouterSelection {
 
 // ── Main Selection API ────────────────────────
 
-// ── Last classified intent (exported for preference recording) ──
+// ── Last classified intent + full classification (exported for fast-path gates) ──
 let lastClassifiedIntent = "";
+let lastClassification: {
+    intent: string;
+    specific_tools: string[];
+    confidence: number;
+    categories: string[];
+} | null = null;
+
 export function getLastIntent(): string { return lastClassifiedIntent; }
+
+/**
+ * Returns the most recent LLM-classifier result, or null if the LLM classifier
+ * didn't run (e.g. structural fallback was used). Agent-level fast paths must
+ * treat a null return as "not confident — use the normal flow".
+ */
+export function getLastClassification(): { intent: string; specific_tools: string[]; confidence: number; categories: string[] } | null {
+    return lastClassification;
+}
 
 // Tool selection caps. These must be large enough to hold the ~17 tools
 // from alwaysInclude categories (memory=13, core=1, tool_creation=3) PLUS
@@ -929,8 +954,15 @@ export async function selectTools(opts: {
         selectedCategories = [...llmResult.categories];
         specificTools = llmResult.specific_tools || [];
         lastClassifiedIntent = llmResult.intent;
+        lastClassification = {
+            intent: llmResult.intent,
+            specific_tools: [...(llmResult.specific_tools || [])],
+            confidence: llmResult.confidence,
+            categories: [...llmResult.categories],
+        };
         classifierUsed = "llm";
     } else {
+        lastClassification = null;
         // Fallback: hybrid structural + semantic + keyword boosts
         const expandedMessage = expandQuery(opts.message);
         const ranked = await classifyToolNeeds(expandedMessage, opts.recentToolCalls, opts.iteration);
@@ -1275,6 +1307,7 @@ export function clearToolRouterState(): void {
     messageEmbeddingCache.clear();
     selectionCache.clear();
     currentIteration = 0;
+    lastClassification = null;
     console.log(`🎯 Tool Router: State cleared`);
 }
 
