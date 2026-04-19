@@ -23,27 +23,24 @@
 //   5. A `request_tools` meta-tool lets the LLM ask for more tools mid-task
 //   6. Usage patterns are tracked to improve future selections
 
+import { createHash } from "node:crypto";
 import type { ChatCompletionTool } from "openai/resources/chat/completions.js";
 import type { LLMClient } from "./llm.js";
 import { MODELS } from "./llm.js";
-import { getToolSchemas, getToolSchemasByNames } from "./tools/index.js";
 import { getMCPToolSchemas } from "./mcp/client.js";
 import { getRelevantSkillSlugs } from "./skills/loader.js";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { createHash } from "node:crypto";
-import { join } from "node:path";
-import { extractJSON } from "./utils/json-extract.js";
 import {
-    initAnalytics,
-    recordToolUsage,
-    getLikelyCategories,
     detectTaskChain,
     getCategoriesForChain,
-    getPreferredTools,
     getFollowUpTools,
-    recordIntentToolUsage,
+    getLikelyCategories,
+    getPreferredTools,
+    initAnalytics,
+    recordToolUsage,
     updateCategoryAffinity,
 } from "./tool-router-analytics.js";
+import { getToolSchemas } from "./tools/index.js";
+import { extractJSON } from "./utils/json-extract.js";
 
 // ── Types ─────────────────────────────────────
 
@@ -56,10 +53,10 @@ export interface ToolRouterSelection {
 }
 
 interface CategoryDef {
-    description: string;          // Rich NL description for embedding
-    tools: string[];              // Tool names in this category
-    alwaysInclude?: boolean;      // Always send these to the LLM
-    embedding?: Float32Array;     // Pre-computed embedding (set at boot)
+    description: string; // Rich NL description for embedding
+    tools: string[]; // Tool names in this category
+    alwaysInclude?: boolean; // Always send these to the LLM
+    embedding?: Float32Array; // Pre-computed embedding (set at boot)
 }
 
 interface ToolRequest {
@@ -79,186 +76,304 @@ const CATEGORIES: Record<string, CategoryDef> = {
         alwaysInclude: true,
     },
     memory: {
-        description: "Remembering information, storing facts, searching past memories, recalling what the user told me before, remembering preferences, saving notes, managing knowledge and identity information about the user. Self-editing core memory sections: reading, replacing, appending, and deleting content from identity, traits, preferences, or custom memory sections.",
+        description:
+            "Remembering information, storing facts, searching past memories, recalling what the user told me before, remembering preferences, saving notes, managing knowledge and identity information about the user. Self-editing core memory sections: reading, replacing, appending, and deleting content from identity, traits, preferences, or custom memory sections.",
         tools: [
-            "memory_store", "memory_search", "memory_list", "memory_delete",
-            "identity_view", "identity_update", "trait_update", "trait_list",
+            "memory_store",
+            "memory_search",
+            "memory_list",
+            "memory_delete",
+            "identity_view",
+            "identity_update",
+            "trait_update",
+            "trait_list",
             "memory_snapshot",
-            "core_memory_read", "core_memory_replace", "core_memory_append", "core_memory_delete",
+            "core_memory_read",
+            "core_memory_replace",
+            "core_memory_append",
+            "core_memory_delete",
         ],
         alwaysInclude: true,
     },
     shell: {
-        description: "Running terminal commands, executing shell scripts, system administration, installing packages with npm pip brew apt, running code, compiling, building projects, git operations, checking processes, development workflow. Long-running background processes, monitoring command output.",
+        description:
+            "Running terminal commands, executing shell scripts, system administration, installing packages with npm pip brew apt, running code, compiling, building projects, git operations, checking processes, development workflow. Long-running background processes, monitoring command output.",
         tools: [
             "shell_exec",
-            "shell_exec_background", "shell_check_process", "shell_wait_process", "shell_kill_process",
+            "shell_exec_background",
+            "shell_check_process",
+            "shell_wait_process",
+            "shell_kill_process",
         ],
     },
     file_system: {
-        description: "Reading files, writing files, creating files, editing documents and code, listing directories, searching files by name or content, searching code with regex, finding files by glob pattern, deleting files, file metadata, compressing archives, managing the trash can, opening files in applications, appending to log files.",
+        description:
+            "Reading files, writing files, creating files, editing documents and code, listing directories, searching files by name or content, searching code with regex, finding files by glob pattern, deleting files, file metadata, compressing archives, managing the trash can, opening files in applications, appending to log files.",
         tools: [
-            "read", "edit", "write", "append_file", "grep", "glob",
-            "list_directory", "delete_file",
-            "file_metadata", "compress_files", "trash_manager", "open_in_app",
+            "read",
+            "edit",
+            "write",
+            "append_file",
+            "grep",
+            "glob",
+            "list_directory",
+            "delete_file",
+            "file_metadata",
+            "compress_files",
+            "trash_manager",
+            "open_in_app",
         ],
     },
     coding: {
-        description: "Writing code, debugging code, fixing bugs, implementing new features, refactoring, code review, reading source files, making precise edits to existing code, searching the codebase for patterns or symbols, finding files by glob pattern, running build and test commands, iterating on a development task. Includes plan mode for structured research-then-implement workflows.",
+        description:
+            "Writing code, debugging code, fixing bugs, implementing new features, refactoring, code review, reading source files, making precise edits to existing code, searching the codebase for patterns or symbols, finding files by glob pattern, running build and test commands, iterating on a development task. Includes plan mode for structured research-then-implement workflows.",
         // Order matters: the top-N tools (up to MAX_TOOLS_PER_CATEGORY) are
         // the ones most likely to be included when the category fits a query.
         // Keep the highest-value coding primitives first.
         tools: [
-            "read", "edit", "write", "grep", "glob", "notebook_edit",
-            "lsp", "test_run", "fix_issue", "shell_exec", "append_file", "repo_map",
-            "enter_plan_mode", "exit_plan_mode", "enter_spec_mode", "finalize_spec",
-            "code_action", "code_execute", "browser_verify",
-            "stock_image_search", "icon_search", "web_asset_download", "scaffold_project",
-            "shell_exec_background", "shell_check_process",
-            "shell_wait_process", "shell_kill_process",
-            "list_directory", "delete_file", "get_current_time",
+            "read",
+            "edit",
+            "write",
+            "grep",
+            "glob",
+            "notebook_edit",
+            "lsp",
+            "test_run",
+            "fix_issue",
+            "shell_exec",
+            "append_file",
+            "repo_map",
+            "enter_plan_mode",
+            "exit_plan_mode",
+            "enter_spec_mode",
+            "finalize_spec",
+            "code_action",
+            "code_execute",
+            "browser_verify",
+            "stock_image_search",
+            "icon_search",
+            "web_asset_download",
+            "scaffold_project",
+            "shell_exec_background",
+            "shell_check_process",
+            "shell_wait_process",
+            "shell_kill_process",
+            "list_directory",
+            "delete_file",
+            "get_current_time",
+            // Phase 4L: codebase comprehension + git
+            "codebase_index",
+            "codebase_query",
+            "code_change_summary",
+            "agents_md_scaffold",
+            "git_op",
         ],
     },
     browser: {
-        description: "Web browsing, navigating to websites and URLs, clicking on web page elements, typing into web forms, scrolling web pages, extracting data from websites, scraping, automating web interactions, filling out online forms, logging into websites, web page analysis, tab management, uploading files to websites, downloading from the web, opening multiple URLs in parallel tabs, batch processing. Includes using the user's real Chrome browser via extension (for their active tab, logged-in sites, current page) or headless Playwright (for independent research, background tasks). When the user references 'my tab', 'this page', 'use my Chrome', or asks about what they're viewing, prefer chrome mode.",
+        description:
+            "Web browsing, navigating to websites and URLs, clicking on web page elements, typing into web forms, scrolling web pages, extracting data from websites, scraping, automating web interactions, filling out online forms, logging into websites, web page analysis, tab management, uploading files to websites, downloading from the web, opening multiple URLs in parallel tabs, batch processing. Includes using the user's real Chrome browser via extension (for their active tab, logged-in sites, current page) or headless Playwright (for independent research, background tasks). When the user references 'my tab', 'this page', 'use my Chrome', or asks about what they're viewing, prefer chrome mode.",
         tools: [
-            "browser_navigate", "browser_click_at", "browser_type",
-            "browser_scan", "browser_extract", "browser_back", "browser_scroll",
-            "browser_analyze", "browser_run_js", "browser_wait", "browser_select",
-            "browser_right_click", "browser_hold_click", "browser_drag",
-            "browser_hover", "browser_keyboard", "browser_switch_tab",
-            "browser_close", "browser_upload_file", "browser_multi_action",
+            "browser_navigate",
+            "browser_click_at",
+            "browser_type",
+            "browser_scan",
+            "browser_extract",
+            "browser_back",
+            "browser_scroll",
+            "browser_analyze",
+            "browser_run_js",
+            "browser_wait",
+            "browser_select",
+            "browser_right_click",
+            "browser_hold_click",
+            "browser_drag",
+            "browser_hover",
+            "browser_keyboard",
+            "browser_switch_tab",
+            "browser_close",
+            "browser_upload_file",
+            "browser_multi_action",
             "browser_scroll_element",
-            "browser_save_strategy", "browser_recall_strategy",
-            "browser_parallel_tabs", "browser_parallel_actions",
-            "browser_replay_actions", "browser_cache_actions",
-            "browser_set_mode", "browser_chrome_status", "browser_click",
+            "browser_save_strategy",
+            "browser_recall_strategy",
+            "browser_parallel_tabs",
+            "browser_parallel_actions",
+            "browser_replay_actions",
+            "browser_cache_actions",
+            "browser_set_mode",
+            "browser_chrome_status",
+            "browser_click",
         ],
     },
     web_search: {
-        description: "Searching the internet, looking up information online, Google search, finding answers, researching topics, fact-checking, finding news, looking up definitions or documentation, checking weather and forecasts.",
+        description:
+            "Searching the internet, looking up information online, Google search, finding answers, researching topics, fact-checking, finding news, looking up definitions or documentation, checking weather and forecasts.",
         tools: ["web_search", "weather"],
     },
     os_control: {
-        description: "Controlling the computer's operating system, taking screenshots of the desktop, clicking on screen elements by coordinates or OCR text, typing into OS applications, interacting with native desktop apps, visual verification of UI elements, screen capture, mouse control, keyboard input automation, macOS Automator, AppleScript, PowerShell automation, accessibility tree inspection, keyboard shortcuts for apps, fast accessibility-based navigation, hierarchical computer use for complex multi-step desktop automation tasks.",
+        description:
+            "Controlling the computer's operating system, taking screenshots of the desktop, clicking on screen elements by coordinates or OCR text, typing into OS applications, interacting with native desktop apps, visual verification of UI elements, screen capture, mouse control, keyboard input automation, macOS Automator, AppleScript, PowerShell automation, accessibility tree inspection, keyboard shortcuts for apps, fast accessibility-based navigation, hierarchical computer use for complex multi-step desktop automation tasks.",
         tools: [
-            "os_nav", "os_click_element",  // Primary: fast accessibility-based interaction
-            "apple_script", "os_screenshot", "os_click", "os_type",
-            "os_context", "os_ocr_click", "os_visual_verify",
-            "set_brightness", "send_screenshot",
-            "os_accessibility_tree", "os_keyboard_shortcuts",
-            "os_scan", "os_multi_action", "os_zoom_region",
+            "os_nav",
+            "os_click_element", // Primary: fast accessibility-based interaction
+            "apple_script",
+            "os_screenshot",
+            "os_click",
+            "os_type",
+            "os_context",
+            "os_ocr_click",
+            "os_visual_verify",
+            "set_brightness",
+            "send_screenshot",
+            "os_accessibility_tree",
+            "os_keyboard_shortcuts",
+            "os_scan",
+            "os_multi_action",
+            "os_zoom_region",
             // Windows equivalents (only one platform is loaded at a time)
-            "powershell_script", "win_os_screenshot", "win_os_click", "win_os_type",
-            "win_os_context", "win_os_ocr_click", "win_os_visual_verify",
-            "win_set_brightness", "win_send_screenshot",
+            "powershell_script",
+            "win_os_screenshot",
+            "win_os_click",
+            "win_os_type",
+            "win_os_context",
+            "win_os_ocr_click",
+            "win_os_visual_verify",
+            "win_set_brightness",
+            "win_send_screenshot",
             // Hierarchical computer use agent
             "computer_use",
         ],
     },
     system_controls: {
-        description: "System settings and hardware controls: volume, brightness, clipboard, system info, WiFi, Bluetooth, Do Not Disturb, dark mode, locking the screen, display sleep.",
+        description:
+            "System settings and hardware controls: volume, brightness, clipboard, system info, WiFi, Bluetooth, Do Not Disturb, dark mode, locking the screen, display sleep.",
         tools: [
-            "set_volume", "clipboard", "system_info",
-            "wifi_control", "bluetooth_control", "set_do_not_disturb",
-            "dark_mode", "lock_screen", "sleep_display",
+            "set_volume",
+            "clipboard",
+            "system_info",
+            "wifi_control",
+            "bluetooth_control",
+            "set_do_not_disturb",
+            "dark_mode",
+            "lock_screen",
+            "sleep_display",
         ],
     },
     media: {
-        description: "Full Spotify control (play/pause/skip/queue/volume/shuffle/repeat, search, playlists, library, devices) via the `spogo` CLI — which talks to Spotify's internal web-player endpoints using browser cookies, so it works for every user on Free or Premium without the closed public Web API. Local-app URI-launch fallback when spogo isn't installed. Apple Music control. Generating images and artwork, AI art, screen recording, searching for GIFs and memes, audio visualization and spectrograms, controlling Sonos speakers and smart home audio.",
+        description:
+            "Full Spotify control (play/pause/skip/queue/volume/shuffle/repeat, search, playlists, library, devices) via the `spogo` CLI — which talks to Spotify's internal web-player endpoints using browser cookies, so it works for every user on Free or Premium without the closed public Web API. Local-app URI-launch fallback when spogo isn't installed. Apple Music control. Generating images and artwork, AI art, screen recording, searching for GIFs and memes, audio visualization and spectrograms, controlling Sonos speakers and smart home audio.",
         tools: [
-            "spotify", "music_control",
-            "generate_image", "screen_record",
-            "gif_search", "audio_visualize", "sonos_control",
+            "spotify",
+            "music_control",
+            "generate_image",
+            "screen_record",
+            "gif_search",
+            "audio_visualize",
+            "sonos_control",
         ],
     },
     video_editing: {
-        description: "Full video editing pipeline: cut, trim, join, render videos; make reels, shorts, TikToks; add captions, subtitles, transitions (fade, xfade, dissolve), music with beat-sync, sound effects; background removal; auto-crop to vertical; export to DaVinci Resolve or Premiere. Use for any task that involves editing, combining, or producing video content from one or more video files.",
+        description:
+            "Full video editing pipeline: cut, trim, join, render videos; make reels, shorts, TikToks; add captions, subtitles, transitions (fade, xfade, dissolve), music with beat-sync, sound effects; background removal; auto-crop to vertical; export to DaVinci Resolve or Premiere. Use for any task that involves editing, combining, or producing video content from one or more video files.",
         tools: [
-            "video_create_project", "video_analyze", "video_plan_edit",
-            "video_render", "video_patch_plan", "video_ffmpeg",
-            "video_list_projects", "davinci_script", "blender_script",
+            "video_create_project",
+            "video_analyze",
+            "video_plan_edit",
+            "video_render",
+            "video_patch_plan",
+            "video_ffmpeg",
+            "video_list_projects",
+            "davinci_script",
+            "blender_script",
         ],
     },
     presentation: {
-        description: "Creating, modifying, and exporting slide decks, presentations, PPT, PowerPoint, pitch decks, sales decks, research presentations, QBRs, board decks, training materials, keynote slides. Producing editable .pptx files (and HTML/Reveal.js) with charts, images, action titles, bento grids, stat callouts, timelines, two-column layouts, quotes, and process steps. Modify existing decks in-session: change titles, bullets, layouts, add/remove slides, switch themes. Use when the user asks to make, create, build, generate, edit, modify, change, update, tweak, or add to a presentation, slide deck, PPT, PowerPoint, Keynote, pitch deck, or slides. Supports listing previously-created decks.",
-        tools: [
-            "create_presentation",
-            "modify_presentation",
-            "export_presentation",
-            "list_presentations",
-        ],
+        description:
+            "Creating, modifying, and exporting slide decks, presentations, PPT, PowerPoint, pitch decks, sales decks, research presentations, QBRs, board decks, training materials, keynote slides. Producing editable .pptx files (and HTML/Reveal.js) with charts, images, action titles, bento grids, stat callouts, timelines, two-column layouts, quotes, and process steps. Modify existing decks in-session: change titles, bullets, layouts, add/remove slides, switch themes. Use when the user asks to make, create, build, generate, edit, modify, change, update, tweak, or add to a presentation, slide deck, PPT, PowerPoint, Keynote, pitch deck, or slides. Supports listing previously-created decks.",
+        tools: ["create_presentation", "modify_presentation", "export_presentation", "list_presentations"],
     },
     communication: {
-        description: "Sending emails, sending messages to the user on any channel (Telegram, WhatsApp, Discord, Slack, Matrix, overlay), sending files to the user, cross-channel messaging, notifications. Use send_message_on_channel to send messages on a specific channel, whatsapp_send for WhatsApp contacts, contact_lookup to find contacts.",
+        description:
+            "Sending emails, sending messages to the user on any channel (Telegram, WhatsApp, Discord, Slack, Matrix, overlay), sending files to the user, cross-channel messaging, notifications. Use send_message_on_channel to send messages on a specific channel, whatsapp_send for WhatsApp contacts, contact_lookup to find contacts.",
         tools: [
-            "email_send", "messages_tool", "send_file",
-            "send_message_on_channel", "whatsapp_send", "contact_lookup",
+            "email_send",
+            "messages_tool",
+            "send_file",
+            "send_message_on_channel",
+            "whatsapp_send",
+            "contact_lookup",
         ],
     },
     scheduling: {
-        description: "Scheduling tasks for later, creating reminders, managing calendar events, setting alarms, to-do lists, recurring tasks, planning events, managing webhooks, Apple Notes for note-taking and organizing information.",
+        description:
+            "Scheduling tasks for later, creating reminders, managing calendar events, setting alarms, to-do lists, recurring tasks, planning events, managing webhooks, Apple Notes for note-taking and organizing information.",
         tools: [
-            "schedule_task", "set_reminder", "list_tasks", "cancel_task",
-            "calendar_tool", "reminders_tool", "apple_notes",
-            "register_webhook", "list_webhooks",
+            "schedule_task",
+            "set_reminder",
+            "list_tasks",
+            "cancel_task",
+            "calendar_tool",
+            "reminders_tool",
+            "apple_notes",
+            "register_webhook",
+            "list_webhooks",
             "task_queue",
         ],
     },
     app_management: {
-        description: "Managing applications, opening apps, closing apps, force-quitting apps, listing running apps, window management, moving windows, resizing windows, drag and drop operations, macOS Shortcuts.",
-        tools: [
-            "app_manager", "window_manage", "os_drag", "run_shortcut",
-        ],
+        description:
+            "Managing applications, opening apps, closing apps, force-quitting apps, listing running apps, window management, moving windows, resizing windows, drag and drop operations, macOS Shortcuts.",
+        tools: ["app_manager", "window_manage", "os_drag", "run_shortcut"],
     },
     research: {
-        description: "Deep research on complex topics, long-running research tasks, multi-source investigation, synthesizing information from many sources, writing research reports, academic research.",
-        tools: [
-            "deep_research", "check_deep_research", "cancel_deep_research",
-        ],
+        description:
+            "Deep research on complex topics, long-running research tasks, multi-source investigation, synthesizing information from many sources, writing research reports, academic research.",
+        tools: ["deep_research", "check_deep_research", "cancel_deep_research"],
     },
     long_tasks: {
-        description: "Long-running coding tasks, building entire websites, generating large codebases, multi-step complex projects that take a long time to complete, swarm orchestration for parallel sub-tasks.",
-        tools: [
-            "start_long_task", "check_long_task", "cancel_long_task", "resume_long_task",
-            "swarm_task",
-        ],
+        description:
+            "Long-running coding tasks, building entire websites, generating large codebases, multi-step complex projects that take a long time to complete, swarm orchestration for parallel sub-tasks.",
+        tools: ["start_long_task", "check_long_task", "cancel_long_task", "resume_long_task", "swarm_task"],
     },
     google_api: {
-        description: "Google services: Google Calendar for managing events, Gmail for reading and sending email, Google account management.",
-        tools: [
-            "google_accounts", "google_calendar", "gmail",
-        ],
+        description:
+            "Google services: Google Calendar for managing events, Gmail for reading and sending email, Google account management.",
+        tools: ["google_accounts", "google_calendar", "gmail"],
     },
     github: {
-        description: "GitHub operations: managing repositories, creating issues, pull requests, viewing code, GitHub API interactions.",
+        description:
+            "GitHub operations: managing repositories, creating issues, pull requests, viewing code, GitHub API interactions.",
         tools: ["github"],
     },
     code_execution: {
-        description: "Executing JavaScript code snippets that call multiple tools programmatically. Code-as-action pattern for multi-step operations — more efficient than sequential tool calls. Running generated code in a sandbox with access to all tools. Composing tool calls with loops, conditionals, and data transformation in code.",
-        tools: [
-            "code_execute", "code_action",
-        ],
+        description:
+            "Executing JavaScript code snippets that call multiple tools programmatically. Code-as-action pattern for multi-step operations — more efficient than sequential tool calls. Running generated code in a sandbox with access to all tools. Composing tool calls with loops, conditionals, and data transformation in code.",
+        tools: ["code_execute", "code_action"],
     },
     codebase: {
-        description: "Understanding code repositories, mapping codebase structure, finding functions and classes in a project, getting an overview of a repository's architecture, listing symbols (functions, classes, interfaces, types) across files. Repository analysis and navigation.",
-        tools: [
-            "repo_map",
-        ],
+        description:
+            "Understanding code repositories, mapping codebase structure, finding functions and classes in a project, getting an overview of a repository's architecture, listing symbols (functions, classes, interfaces, types) across files, tracing call-graphs, finding where a symbol is used, generating AGENTS.md + .atlas/agents/*.md onboarding docs, reading recent git activity (commits, hot files, diffs, blame) for context. Repository analysis, navigation, and onboarding.",
+        tools: ["repo_map", "codebase_index", "codebase_query", "code_change_summary", "agents_md_scaffold"],
     },
     tool_creation: {
-        description: "Creating new tools at runtime when you need a capability that doesn't exist yet. Dynamic tool creation, building custom tools on the fly, extending capabilities, making tools for novel tasks, sideloading external skills from ClawHub or other sources.",
-        tools: [
-            "create_tool", "list_dynamic_tools", "sideload_skill",
-        ],
+        description:
+            "Creating new tools at runtime when you need a capability that doesn't exist yet. Dynamic tool creation, building custom tools on the fly, extending capabilities, making tools for novel tasks, sideloading external skills from ClawHub or other sources.",
+        tools: ["create_tool", "list_dynamic_tools", "sideload_skill"],
         alwaysInclude: true,
     },
     document: {
-        description: "Creating, editing, ingesting, and exporting structured documents: resumes, CVs, cover letters, reports, letters, invoices, memos. Use for 'make me a resume', 'update my resume', 'add this job to my resume', 'write a cover letter for Acme', 'export as PDF', 'export as Word', 'change the template'. Also for ingesting a user-uploaded PDF resume into editable JSON (ingest_pdf_document) before making changes — PDF text cannot be edited in-place, so ingest → edit → re-export is the required workflow. Templates are bundled (classic ATS, modern, cover letter, report) and extensible via the store.",
+        description:
+            "Creating, editing, ingesting, and exporting structured documents: resumes, CVs, cover letters, reports, letters, invoices, memos. Use for 'make me a resume', 'update my resume', 'add this job to my resume', 'write a cover letter for Acme', 'export as PDF', 'export as Word', 'change the template'. Also for ingesting a user-uploaded PDF resume into editable JSON (ingest_pdf_document) before making changes — PDF text cannot be edited in-place, so ingest → edit → re-export is the required workflow. Templates are bundled (classic ATS, modern, cover letter, report) and extensible via the store.",
         tools: [
-            "create_document", "update_document", "append_resume_work",
-            "list_documents", "load_document", "delete_document",
-            "export_document", "list_templates", "set_document_template",
+            "create_document",
+            "update_document",
+            "append_resume_work",
+            "list_documents",
+            "load_document",
+            "delete_document",
+            "export_document",
+            "list_templates",
+            "set_document_template",
             "ingest_pdf_document",
         ],
     },
@@ -287,8 +402,8 @@ interface CategoryRequest {
 
 // ── State ─────────────────────────────────────
 
-let categoryEmbeddings: Map<string, Float32Array> = new Map();
-let mcpToolEmbeddings: Map<string, Float32Array> = new Map();  // Pre-computed MCP embeddings
+const categoryEmbeddings: Map<string, Float32Array> = new Map();
+const mcpToolEmbeddings: Map<string, Float32Array> = new Map(); // Pre-computed MCP embeddings
 let embeddingsReady = false;
 let initPromise: Promise<void> | null = null;
 let activeRequestedCategories: CategoryRequest = { categories: [], lastUsedIteration: 0 };
@@ -307,10 +422,10 @@ export function setToolRouterLLM(llm: LLMClient): void {
 // This replaces pattern matching with genuine language understanding.
 
 interface IntentClassification {
-    intent: string;            // e.g. "music_playback", "shell_command", "info_lookup"
-    categories: string[];      // e.g. ["media", "web_search"]
-    specific_tools: string[];  // e.g. ["spotify"]
-    confidence: number;        // 0-1
+    intent: string; // e.g. "music_playback", "shell_command", "info_lookup"
+    categories: string[]; // e.g. ["media", "web_search"]
+    specific_tools: string[]; // e.g. ["spotify"]
+    confidence: number; // 0-1
 }
 
 const intentCache: Map<string, { result: IntentClassification; timestamp: number }> = new Map();
@@ -325,7 +440,7 @@ async function classifyWithLLM(
     if (!routerLLM) return null;
 
     // Check cache — include conversation context hash for disambiguation
-    const cacheKey = simpleHash(message + "|" + (conversationContext || "").substring(0, 200));
+    const cacheKey = simpleHash(`${message}|${(conversationContext || "").substring(0, 200)}`);
     const cached = intentCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < INTENT_CACHE_TTL_MS) {
         return cached.result;
@@ -334,12 +449,14 @@ async function classifyWithLLM(
     // Build compact category + tool listing for the classifier
     const categoryList = Object.entries(CATEGORIES)
         .filter(([_, def]) => !def.alwaysInclude)
-        .map(([name, def]) => `${name}: ${def.description.substring(0, 120)} [tools: ${def.tools.slice(0, 6).join(", ")}${def.tools.length > 6 ? "..." : ""}]`)
+        .map(
+            ([name, def]) =>
+                `${name}: ${def.description.substring(0, 120)} [tools: ${def.tools.slice(0, 6).join(", ")}${def.tools.length > 6 ? "..." : ""}]`,
+        )
         .join("\n");
 
-    const recentContext = recentTools && recentTools.length > 0
-        ? `\nRecently used tools: ${recentTools.slice(0, 5).join(", ")}`
-        : "";
+    const recentContext =
+        recentTools && recentTools.length > 0 ? `\nRecently used tools: ${recentTools.slice(0, 5).join(", ")}` : "";
 
     // Conversation context helps disambiguate references like "open the file manager"
     // (OS Finder vs. a button on a website the user was just discussing)
@@ -370,7 +487,7 @@ Respond with JSON only: {"intent":"short_label","categories":["cat1"],"specific_
                 modelOverride: MODELS.HAIKU,
             }),
             new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error("timeout")), LLM_CLASSIFIER_TIMEOUT_MS)
+                setTimeout(() => reject(new Error("timeout")), LLM_CLASSIFIER_TIMEOUT_MS),
             ),
         ]);
 
@@ -382,7 +499,7 @@ Respond with JSON only: {"intent":"short_label","categories":["cat1"],"specific_
         const parsed = JSON.parse(jsonStr) as IntentClassification;
 
         // Validate categories exist
-        parsed.categories = (parsed.categories || []).filter(c => CATEGORIES[c]);
+        parsed.categories = (parsed.categories || []).filter((c) => CATEGORIES[c]);
         parsed.specific_tools = parsed.specific_tools || [];
         parsed.intent = parsed.intent || "unknown";
         parsed.confidence = Math.min(1, Math.max(0, parsed.confidence || 0.5));
@@ -400,13 +517,18 @@ Respond with JSON only: {"intent":"short_label","categories":["cat1"],"specific_
                 let oldestKey: string | undefined;
                 let oldestTime = Infinity;
                 for (const [key, val] of intentCache) {
-                    if (val.timestamp < oldestTime) { oldestTime = val.timestamp; oldestKey = key; }
+                    if (val.timestamp < oldestTime) {
+                        oldestTime = val.timestamp;
+                        oldestKey = key;
+                    }
                 }
                 if (oldestKey) intentCache.delete(oldestKey);
             }
         }
 
-        console.log(`🧠 LLM Classifier: intent="${parsed.intent}" cats=[${parsed.categories}] tools=[${parsed.specific_tools}] conf=${parsed.confidence}`);
+        console.log(
+            `🧠 LLM Classifier: intent="${parsed.intent}" cats=[${parsed.categories}] tools=[${parsed.specific_tools}] conf=${parsed.confidence}`,
+        );
         return parsed;
     } catch (err) {
         // LLM failed — caller will use fallback
@@ -421,8 +543,16 @@ Respond with JSON only: {"intent":"short_label","categories":["cat1"],"specific_
 
 const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] = [
     // Music / Media
-    { pattern: /\b(play|pause|skip|next|previous|shuffle|repeat|queue|now.?playing)\b/i, category: "media", minScore: 0.5 },
-    { pattern: /\b(song|music|track|artist|album|playlist|spotify|apple.?music|tune|beat|listen)\b/i, category: "media", minScore: 0.65 },
+    {
+        pattern: /\b(play|pause|skip|next|previous|shuffle|repeat|queue|now.?playing)\b/i,
+        category: "media",
+        minScore: 0.5,
+    },
+    {
+        pattern: /\b(song|music|track|artist|album|playlist|spotify|apple.?music|tune|beat|listen)\b/i,
+        category: "media",
+        minScore: 0.65,
+    },
     { pattern: /\b(gif|giphy|meme|sticker)\b/i, category: "media", minScore: 0.6 },
     { pattern: /\b(sonos|speaker|airplay)\b/i, category: "media", minScore: 0.6 },
     { pattern: /\b(spectrogram|waveform|audio.?viz)\b/i, category: "media", minScore: 0.7 },
@@ -433,7 +563,11 @@ const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] 
     { pattern: /\b(note|notes|apple.?notes)\b/i, category: "scheduling", minScore: 0.6 },
     { pattern: /\b(calendar|event|meeting|appointment)\b/i, category: "scheduling", minScore: 0.7 },
     // GitHub
-    { pattern: /\b(github|pull.?request|merge|issue|repo|commit|ci.?cd|workflow.?run)\b/i, category: "github", minScore: 0.7 },
+    {
+        pattern: /\b(github|pull.?request|merge|issue|repo|commit|ci.?cd|workflow.?run)\b/i,
+        category: "github",
+        minScore: 0.7,
+    },
     // Communication
     { pattern: /\b(email|gmail|mail|imessage|sms|text.?message)\b/i, category: "communication", minScore: 0.65 },
     // OS / Screenshots
@@ -441,66 +575,221 @@ const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] 
     // Browser
     { pattern: /\b(website|webpage|url|browse|navigate.?to|open.?site)\b/i, category: "browser", minScore: 0.65 },
     // Shell
-    { pattern: /\b(terminal|npm|pip|brew|apt|git\b|docker|sudo|bash|chmod|mkdir)\b/i, category: "shell", minScore: 0.65 },
+    {
+        pattern: /\b(terminal|npm|pip|brew|apt|git\b|docker|sudo|bash|chmod|mkdir)\b/i,
+        category: "shell",
+        minScore: 0.65,
+    },
     // Research
     { pattern: /\b(deep.?research|investigate|comprehensive.?research)\b/i, category: "research", minScore: 0.8 },
     // Presentation / Slide decks
-    { pattern: /\b(presentation|presentations|slide.?deck|slide.?decks|pitch.?deck|sales.?deck|keynote|power.?point|powerpoint|pptx?|\.pptx?|gamma)\b/i, category: "presentation", minScore: 0.8 },
-    { pattern: /\b(make|create|build|generate|design|produce|put.?together|whip.?up)\b.{0,40}?\b(slides?|deck|presentation|pitch|ppt)\b/i, category: "presentation", minScore: 0.8 },
-    { pattern: /\b(modify|edit|change|update|tweak|revise|fix)\b.{0,40}?\b(slides?|deck|presentation)\b/i, category: "presentation", minScore: 0.8 },
-    { pattern: /\b(add|remove|delete|insert|reorder|swap|move)\b.{0,30}?\bslides?\b/i, category: "presentation", minScore: 0.8 },
-    { pattern: /\b(export|convert|render|save)\b.{0,40}?\b(slides?|deck|presentation)\b/i, category: "presentation", minScore: 0.75 },
+    {
+        pattern:
+            /\b(presentation|presentations|slide.?deck|slide.?decks|pitch.?deck|sales.?deck|keynote|power.?point|powerpoint|pptx?|\.pptx?|gamma)\b/i,
+        category: "presentation",
+        minScore: 0.8,
+    },
+    {
+        pattern:
+            /\b(make|create|build|generate|design|produce|put.?together|whip.?up)\b.{0,40}?\b(slides?|deck|presentation|pitch|ppt)\b/i,
+        category: "presentation",
+        minScore: 0.8,
+    },
+    {
+        pattern: /\b(modify|edit|change|update|tweak|revise|fix)\b.{0,40}?\b(slides?|deck|presentation)\b/i,
+        category: "presentation",
+        minScore: 0.8,
+    },
+    {
+        pattern: /\b(add|remove|delete|insert|reorder|swap|move)\b.{0,30}?\bslides?\b/i,
+        category: "presentation",
+        minScore: 0.8,
+    },
+    {
+        pattern: /\b(export|convert|render|save)\b.{0,40}?\b(slides?|deck|presentation)\b/i,
+        category: "presentation",
+        minScore: 0.75,
+    },
     // ── Coding — debugging, fixing, refactoring, writing code ──
     // Patterns are deliberately conjunctive: coding verbs + coding objects,
     // not bare keywords. A user saying "TypeScript tutorials" should NOT
     // trigger coding — they want to browse, not code.
-    { pattern: /\b(debug|refactor|implement(ation)?|compile|stack.?trace|exception|traceback|syntax.?error|type.?error|typecheck)\b/i, category: "coding", minScore: 0.7 },
-    { pattern: /\b(fix.*(bug|error|issue|crash|typo)|fix.*code|find.*bug|broken.*code)\b/i, category: "coding", minScore: 0.75 },
+    {
+        pattern:
+            /\b(debug|refactor|implement(ation)?|compile|stack.?trace|exception|traceback|syntax.?error|type.?error|typecheck)\b/i,
+        category: "coding",
+        minScore: 0.7,
+    },
+    {
+        pattern: /\b(fix.*(bug|error|issue|crash|typo)|fix.*code|find.*bug|broken.*code)\b/i,
+        category: "coding",
+        minScore: 0.75,
+    },
     // File-extension references are strong coding signal (a user saying ".ts" or "foo.py" is talking about a real file)
     { pattern: /\b\w+\.(ts|tsx|jsx|js|mjs|cjs|py|rs|go|cpp|hpp|java|rb|ipynb)\b/i, category: "coding", minScore: 0.75 },
     // Language name only counts as coding when paired with a coding verb or object
-    { pattern: /\b(typescript|javascript|python|golang|rust|swift)\b.*\b(code|function|class|interface|module|script|file|error|bug|test|compile|implement|refactor)\b/i, category: "coding", minScore: 0.7 },
-    { pattern: /\b(function|class|interface|method)\b.*\b(add|remove|rename|modify|change|update|fix|implement)\b/i, category: "coding", minScore: 0.7 },
-    { pattern: /\b(goto.?definition|find.?references|workspace.?symbol|document.?symbol|hover.?info)\b/i, category: "coding", minScore: 0.85 },
+    {
+        pattern:
+            /\b(typescript|javascript|python|golang|rust|swift)\b.*\b(code|function|class|interface|module|script|file|error|bug|test|compile|implement|refactor)\b/i,
+        category: "coding",
+        minScore: 0.7,
+    },
+    {
+        pattern: /\b(function|class|interface|method)\b.*\b(add|remove|rename|modify|change|update|fix|implement)\b/i,
+        category: "coding",
+        minScore: 0.7,
+    },
+    {
+        pattern: /\b(goto.?definition|find.?references|workspace.?symbol|document.?symbol|hover.?info)\b/i,
+        category: "coding",
+        minScore: 0.85,
+    },
     { pattern: /\b(notebook|jupyter|kernel)\b/i, category: "coding", minScore: 0.7 },
     { pattern: /\b(grep|ripgrep)\b.*\b(for|in|across)\b/i, category: "coding", minScore: 0.65 },
     { pattern: /\b(glob)\b.*\b(pattern|files?)\b/i, category: "coding", minScore: 0.6 },
     { pattern: /\b(find|list)\b.*\bfiles?\b.*\b(matching|pattern)\b/i, category: "coding", minScore: 0.55 },
-    { pattern: /\b(plan.?mode|research.?first|investigate.?first|exit.?plan.?mode|enter.?plan.?mode)\b/i, category: "coding", minScore: 0.75 },
-    { pattern: /\b(edit.*code|modify.*function|update.*class|change.*interface|replace.*import)\b/i, category: "coding", minScore: 0.7 },
+    {
+        pattern: /\b(plan.?mode|research.?first|investigate.?first|exit.?plan.?mode|enter.?plan.?mode)\b/i,
+        category: "coding",
+        minScore: 0.75,
+    },
+    {
+        pattern: /\b(edit.*code|modify.*function|update.*class|change.*interface|replace.*import)\b/i,
+        category: "coding",
+        minScore: 0.7,
+    },
     // Lint / linter is a coding tool but users may also say "lint the house" etc. — narrow to linter/eslint/biome/clippy/ruff
-    { pattern: /\b(eslint|biome|clippy|ruff|lint(er|ing)?\s+(error|warning|fails|pass))\b/i, category: "coding", minScore: 0.7 },
+    {
+        pattern: /\b(eslint|biome|clippy|ruff|lint(er|ing)?\s+(error|warning|fails|pass))\b/i,
+        category: "coding",
+        minScore: 0.7,
+    },
     // Test running — frameworks or "run tests"/"failing test" phrasing (stays conjunctive to avoid "test the water")
-    { pattern: /\b(jest|vitest|pytest|mocha|playwright|cargo\s+test|go\s+test)\b/i, category: "coding", minScore: 0.85 },
-    { pattern: /\b(run|execute|invoke)\b.{0,20}?\b(tests?|test\s+suite|unit\s+tests?|integration\s+tests?|spec)\b/i, category: "coding", minScore: 0.8 },
-    { pattern: /\b(failing|failed|broken|red)\b.{0,20}?\b(tests?|test\s+suite|assertions?|specs?)\b/i, category: "coding", minScore: 0.8 },
+    {
+        pattern: /\b(jest|vitest|pytest|mocha|playwright|cargo\s+test|go\s+test)\b/i,
+        category: "coding",
+        minScore: 0.85,
+    },
+    {
+        pattern: /\b(run|execute|invoke)\b.{0,20}?\b(tests?|test\s+suite|unit\s+tests?|integration\s+tests?|spec)\b/i,
+        category: "coding",
+        minScore: 0.8,
+    },
+    {
+        pattern: /\b(failing|failed|broken|red)\b.{0,20}?\b(tests?|test\s+suite|assertions?|specs?)\b/i,
+        category: "coding",
+        minScore: 0.8,
+    },
     { pattern: /\b(tdd|test.driven|write.*tests?\s+for|add.*tests?\s+for)\b/i, category: "coding", minScore: 0.75 },
     // Spec mode / acceptance criteria
-    { pattern: /\b(spec|specification|acceptance\s+criteria)\b.{0,30}?\b(for|of|the)\b/i, category: "coding", minScore: 0.7 },
+    {
+        pattern: /\b(spec|specification|acceptance\s+criteria)\b.{0,30}?\b(for|of|the)\b/i,
+        category: "coding",
+        minScore: 0.7,
+    },
     { pattern: /\b(finalize\s+spec|enter\s+spec\s+mode|write\s+a?\s+spec)\b/i, category: "coding", minScore: 0.85 },
     // fix_issue localizer
-    { pattern: /\b(localize|pinpoint|find\s+(?:the\s+)?cause\s+of)\b.{0,30}?\b(error|failure|crash|bug)\b/i, category: "coding", minScore: 0.75 },
+    {
+        pattern: /\b(localize|pinpoint|find\s+(?:the\s+)?cause\s+of)\b.{0,30}?\b(error|failure|crash|bug)\b/i,
+        category: "coding",
+        minScore: 0.75,
+    },
     // UI/frontend verification via browser_verify — fires when the user mentions rendering the page, checking in a browser, or UI-centric frameworks
-    { pattern: /\b(verify|check|test|preview|render)\b.{0,30}?\b(ui|frontend|page|component|form|dashboard|route|view|layout)\b/i, category: "coding", minScore: 0.8 },
-    { pattern: /\b(localhost|dev\s+server|vite|next\s+dev|npm\s+run\s+dev|pnpm\s+dev|yarn\s+dev)\b/i, category: "coding", minScore: 0.75 },
-    { pattern: /\b(browser[_\s-]?verify|post[_\s-]?coding\s+check|visual\s+(?:regression|check))\b/i, category: "coding", minScore: 0.85 },
+    {
+        pattern:
+            /\b(verify|check|test|preview|render)\b.{0,30}?\b(ui|frontend|page|component|form|dashboard|route|view|layout)\b/i,
+        category: "coding",
+        minScore: 0.8,
+    },
+    {
+        pattern: /\b(localhost|dev\s+server|vite|next\s+dev|npm\s+run\s+dev|pnpm\s+dev|yarn\s+dev)\b/i,
+        category: "coding",
+        minScore: 0.75,
+    },
+    {
+        pattern: /\b(browser[_\s-]?verify|post[_\s-]?coding\s+check|visual\s+(?:regression|check))\b/i,
+        category: "coding",
+        minScore: 0.85,
+    },
     // Web design — asset search + scaffolding
-    { pattern: /\b(stock\s+image|stock\s+photo|hero\s+image|unsplash|pexels|picsum)\b/i, category: "coding", minScore: 0.8 },
-    { pattern: /\b(icon(?:s|ify)?|svg\s+icon|lucide|heroicons?|phosphor|tabler|font.?awesome)\b.{0,30}?\b(search|find|need|add|pick)\b/i, category: "coding", minScore: 0.8 },
-    { pattern: /\b(scaffold|bootstrap)\b.{0,30}?\b(project|app|website|site|starter)\b/i, category: "coding", minScore: 0.8 },
-    { pattern: /\b(vite|next\.?js|astro|tailwind|shadcn|framer.?motion|three\.?js|r3f|react.?three.?fiber|gsap|lottie)\b/i, category: "coding", minScore: 0.75 },
+    {
+        pattern: /\b(stock\s+image|stock\s+photo|hero\s+image|unsplash|pexels|picsum)\b/i,
+        category: "coding",
+        minScore: 0.8,
+    },
+    {
+        pattern:
+            /\b(icon(?:s|ify)?|svg\s+icon|lucide|heroicons?|phosphor|tabler|font.?awesome)\b.{0,30}?\b(search|find|need|add|pick)\b/i,
+        category: "coding",
+        minScore: 0.8,
+    },
+    {
+        pattern: /\b(scaffold|bootstrap)\b.{0,30}?\b(project|app|website|site|starter)\b/i,
+        category: "coding",
+        minScore: 0.8,
+    },
+    {
+        pattern:
+            /\b(vite|next\.?js|astro|tailwind|shadcn|framer.?motion|three\.?js|r3f|react.?three.?fiber|gsap|lottie)\b/i,
+        category: "coding",
+        minScore: 0.75,
+    },
     // 3D / animation intent — route to coding so R3F/Three tools surface
-    { pattern: /\b(3d|three.?d|webgl|shader|scene|mesh|geometry)\b.{0,40}?\b(website|page|component|animation|scroll|hero)\b/i, category: "coding", minScore: 0.8 },
-    { pattern: /\b(landing\s+page|hero\s+section|pricing\s+page|portfolio\s+site|marketing\s+site)\b/i, category: "coding", minScore: 0.75 },
+    {
+        pattern:
+            /\b(3d|three.?d|webgl|shader|scene|mesh|geometry)\b.{0,40}?\b(website|page|component|animation|scroll|hero)\b/i,
+        category: "coding",
+        minScore: 0.8,
+    },
+    {
+        pattern: /\b(landing\s+page|hero\s+section|pricing\s+page|portfolio\s+site|marketing\s+site)\b/i,
+        category: "coding",
+        minScore: 0.75,
+    },
+    // Phase 4L: codebase comprehension
+    {
+        pattern:
+            /\b(architecture.?overview|mindmap|subsystem.?map|project.?structure|codebase.?(map|overview|structure))\b/i,
+        category: "codebase",
+        minScore: 0.8,
+    },
+    {
+        pattern: /\b(find.?usages|where.*(called|used)|call.?sites?|used.?by|callers?\s+of)\b/i,
+        category: "codebase",
+        minScore: 0.75,
+    },
+    { pattern: /\b(dependency.?chain|import.?path|how.*depends.*on)\b/i, category: "codebase", minScore: 0.75 },
+    {
+        pattern: /\b(agents\.?md|AGENTS\.?md|atlas.?agents?|project.?memory.?doc)\b/i,
+        category: "codebase",
+        minScore: 0.85,
+    },
+    {
+        pattern: /\b(hot.?files?|recent.?commits?|what.*(changed|moved).*(recent|last))\b/i,
+        category: "codebase",
+        minScore: 0.7,
+    },
+    // Phase 4L: git write-side
+    {
+        pattern: /\b(git.?(commit|add|push|stash|merge|rebase|reset|revert|cherry.?pick|switch|branch|tag|clean))\b/i,
+        category: "coding",
+        minScore: 0.8,
+    },
+    {
+        pattern: /\b(force.?push|reset.?hard|clean.?force|amend.*(commit|message))\b/i,
+        category: "coding",
+        minScore: 0.85,
+    },
+    { pattern: /\b(stage|unstage|cherry.?pick|conflict|merge.?conflict)\b/i, category: "coding", minScore: 0.7 },
 ];
 
 // ── Caching State ─────────────────────────────
 
 const messageEmbeddingCache: Map<string, CachedEmbedding> = new Map();
 const selectionCache: Map<string, CachedSelection> = new Map();
-const SELECTION_CACHE_TTL_MS = 60_000;  // 60 seconds
+const SELECTION_CACHE_TTL_MS = 60_000; // 60 seconds
 const MAX_CACHE_SIZE = 50;
-const CATEGORY_EXPIRY_ITERATIONS = 10;  // Auto-expire after 10 unused iterations
+const CATEGORY_EXPIRY_ITERATIONS = 10; // Auto-expire after 10 unused iterations
 
 // ── Collision-free hash function for cache keys ───────
 
@@ -522,27 +811,30 @@ interface ContextSynonym {
 }
 
 const CONTEXT_SYNONYMS: Record<string, ContextSynonym[] | string[]> = {
-    "play": [
-        { context: /\b(song|music|track|artist|album|playlist|spotify|tune|beat|listen)\b/i, synonyms: ["stream", "listen", "music playback"] },
+    play: [
+        {
+            context: /\b(song|music|track|artist|album|playlist|spotify|tune|beat|listen)\b/i,
+            synonyms: ["stream", "listen", "music playback"],
+        },
         { context: /\b(video|movie|clip|youtube)\b/i, synonyms: ["watch", "stream video"] },
         { context: /.*/, synonyms: ["start", "execute"] },
     ],
-    "open": [
+    open: [
         { context: /\b(website|url|http|page|site|\.com)\b/i, synonyms: ["navigate", "browse"] },
         { context: /\b(app|application|program)\b/i, synonyms: ["launch", "activate"] },
         { context: /\b(file|document|folder)\b/i, synonyms: ["read", "access"] },
         { context: /.*/, synonyms: ["launch", "start"] },
     ],
-    "make": ["create", "generate"],
+    make: ["create", "generate"],
     "look up": ["search", "find"],
-    "find": ["search", "locate"],
-    "close": ["quit", "exit"],
-    "send": ["deliver", "message"],
-    "save": ["store", "write"],
-    "delete": ["remove", "trash"],
-    "edit": ["modify", "update"],
-    "show": ["display", "view"],
-    "get": ["fetch", "retrieve"],
+    find: ["search", "locate"],
+    close: ["quit", "exit"],
+    send: ["deliver", "message"],
+    save: ["store", "write"],
+    delete: ["remove", "trash"],
+    edit: ["modify", "update"],
+    show: ["display", "view"],
+    get: ["fetch", "retrieve"],
 };
 
 function expandQuery(message: string): string {
@@ -575,13 +867,15 @@ const REQUEST_TOOLS_SCHEMA: ChatCompletionTool = {
     type: "function",
     function: {
         name: "request_tools",
-        description: "Request additional tools when you realize you need capabilities not currently available. Describe what you need and the router will provide the right tools on your next turn. Use this when the task evolved and you need different tools than what was initially provided.",
+        description:
+            "Request additional tools when you realize you need capabilities not currently available. Describe what you need and the router will provide the right tools on your next turn. Use this when the task evolved and you need different tools than what was initially provided.",
         parameters: {
             type: "object",
             properties: {
                 capability: {
                     type: "string",
-                    description: "Describe the capability you need in natural language. Examples: 'browser automation to navigate websites', 'file system tools to read and write files', 'image generation', 'email sending', 'spotify music control', 'screen control and mouse clicking', 'GitHub repository management'",
+                    description:
+                        "Describe the capability you need in natural language. Examples: 'browser automation to navigate websites', 'file system tools to read and write files', 'image generation', 'email sending', 'spotify music control', 'screen control and mouse clicking', 'GitHub repository management'",
                 },
                 reason: {
                     type: "string",
@@ -600,7 +894,7 @@ export async function initToolRouter(): Promise<void> {
     if (initPromise) return initPromise;
 
     initPromise = (async () => {
-        const INIT_TIMEOUT_MS = 10_000;  // 10 second timeout
+        const INIT_TIMEOUT_MS = 10_000; // 10 second timeout
 
         try {
             const { embedBatch, isReady } = await import("./memory/embeddings.js");
@@ -610,14 +904,14 @@ export async function initToolRouter(): Promise<void> {
                 const { warmup } = await import("./memory/embeddings.js");
                 const warmupPromise = warmup();
                 const timeoutPromise = new Promise<never>((_, reject) =>
-                    setTimeout(() => reject(new Error("Model warmup timeout")), INIT_TIMEOUT_MS)
+                    setTimeout(() => reject(new Error("Model warmup timeout")), INIT_TIMEOUT_MS),
                 );
                 await Promise.race([warmupPromise, timeoutPromise]);
             }
 
             // ── Embed categories ──
             const categoryNames = Object.keys(CATEGORIES);
-            const descriptions = categoryNames.map(name => CATEGORIES[name].description);
+            const descriptions = categoryNames.map((name) => CATEGORIES[name].description);
 
             console.log(`🎯 Tool Router: Embedding ${categoryNames.length} categories...`);
             const categoryEmbeddingResults = await embedBatch(descriptions);
@@ -630,9 +924,7 @@ export async function initToolRouter(): Promise<void> {
             const mcpSchemas = getMCPToolSchemas();
             if (mcpSchemas.length > 0) {
                 console.log(`🎯 Tool Router: Pre-embedding ${mcpSchemas.length} MCP tools...`);
-                const mcpDescriptions = mcpSchemas.map(t =>
-                    t.function.description || t.function.name
-                );
+                const mcpDescriptions = mcpSchemas.map((t) => t.function.description || t.function.name);
                 const mcpEmbeddingResults = await embedBatch(mcpDescriptions);
 
                 for (let i = 0; i < mcpSchemas.length; i++) {
@@ -641,7 +933,9 @@ export async function initToolRouter(): Promise<void> {
             }
 
             embeddingsReady = true;
-            console.log(`🎯 Tool Router: ✅ Ready (${categoryNames.length} categories, ${mcpSchemas.length} MCP tools embedded)`);
+            console.log(
+                `🎯 Tool Router: ✅ Ready (${categoryNames.length} categories, ${mcpSchemas.length} MCP tools embedded)`,
+            );
 
             // Initialize analytics for co-occurrence learning
             initAnalytics();
@@ -670,8 +964,7 @@ async function getCachedMessageEmbedding(message: string): Promise<Float32Array>
 
     // Evict oldest if cache is full
     if (messageEmbeddingCache.size >= MAX_CACHE_SIZE) {
-        const oldest = [...messageEmbeddingCache.entries()]
-            .sort((a, b) => a[1].timestamp - b[1].timestamp)[0];
+        const oldest = [...messageEmbeddingCache.entries()].sort((a, b) => a[1].timestamp - b[1].timestamp)[0];
         if (oldest) messageEmbeddingCache.delete(oldest[0]);
     }
 
@@ -683,7 +976,7 @@ async function getCachedMessageEmbedding(message: string): Promise<Float32Array>
 
 function getSelectionCacheKey(message: string, recentToolCalls?: string[], contextHash?: string): string {
     const toolPart = recentToolCalls ? recentToolCalls.sort().join(",") : "";
-    return simpleHash(message + "|" + toolPart + "|" + (contextHash || ""));
+    return simpleHash(`${message}|${toolPart}|${contextHash || ""}`);
 }
 
 function getCachedSelection(key: string): ToolRouterSelection | null {
@@ -702,8 +995,7 @@ function getCachedSelection(key: string): ToolRouterSelection | null {
 function cacheSelection(key: string, result: ToolRouterSelection): void {
     // Evict oldest if cache is full
     if (selectionCache.size >= MAX_CACHE_SIZE) {
-        const oldest = [...selectionCache.entries()]
-            .sort((a, b) => a[1].timestamp - b[1].timestamp)[0];
+        const oldest = [...selectionCache.entries()].sort((a, b) => a[1].timestamp - b[1].timestamp)[0];
         if (oldest) selectionCache.delete(oldest[0]);
     }
 
@@ -716,11 +1008,11 @@ function cacheSelection(key: string, result: ToolRouterSelection): void {
 async function classifyToolNeeds(
     message: string,
     recentToolCalls?: string[],
-    iteration?: number,
+    _iteration?: number,
 ): Promise<{ category: string; score: number; confidence: number }[]> {
     // ── HYBRID: Always run structural first (instant, catches keywords) ──
     const structural = structuralClassify(message);
-    const scoreMap = new Map<string, number>(structural.map(s => [s.category, s.score]));
+    const scoreMap = new Map<string, number>(structural.map((s) => [s.category, s.score]));
 
     // ── Overlay semantic scores if embeddings ready (raises scores, never lowers) ──
     if (embeddingsReady) {
@@ -739,7 +1031,9 @@ async function classifyToolNeeds(
     }
 
     const scores = Array.from(scoreMap.entries()).map(([category, score]) => ({
-        category, score, confidence: score,
+        category,
+        score,
+        confidence: score,
     }));
 
     // ── Boost categories in active use ──
@@ -809,18 +1103,12 @@ function structuralClassify(message: string): { category: string; score: number 
         app_management: [
             /\b(open ?app|close ?app|force ?quit|window|resize|minimize|maximize|full ?screen|split|arrange)\b/i,
         ],
-        research: [
-            /\b(deep ?research|investigate|analyze|comprehensive|thorough|report|study|synthesis)\b/i,
-        ],
+        research: [/\b(deep ?research|investigate|analyze|comprehensive|thorough|report|study|synthesis)\b/i],
         long_tasks: [
             /\b(build.*(website|app|project|codebase)|long.?running|complex.?task|entire|full|complete.*build|swarm)\b/i,
         ],
-        google_api: [
-            /\b(google|gmail|gcal|google ?calendar|google ?account)\b/i,
-        ],
-        github: [
-            /\b(github|repo|repository|pull ?request|pr|issue|commit|branch|merge)\b/i,
-        ],
+        google_api: [/\b(google|gmail|gcal|google ?calendar|google ?account)\b/i],
+        github: [/\b(github|repo|repository|pull ?request|pr|issue|commit|branch|merge)\b/i],
         document: [
             /\b(resume|resumé|curriculum vitae|cv|cover letter|cover.?letter)\b/i,
             /\b(job application|apply(ing)? (for|to) (a |an )?job|applying somewhere)\b/i,
@@ -836,7 +1124,7 @@ function structuralClassify(message: string): { category: string; score: number 
             if (re.test(msg)) matched++;
         }
         // Normalize: if any pattern matches, give a moderate score
-        const score = matched > 0 ? 0.3 + (matched * 0.15) : 0.05;
+        const score = matched > 0 ? 0.3 + matched * 0.15 : 0.05;
         scores.push({ category, score });
     }
 
@@ -888,14 +1176,21 @@ let lastClassification: {
     categories: string[];
 } | null = null;
 
-export function getLastIntent(): string { return lastClassifiedIntent; }
+export function getLastIntent(): string {
+    return lastClassifiedIntent;
+}
 
 /**
  * Returns the most recent LLM-classifier result, or null if the LLM classifier
  * didn't run (e.g. structural fallback was used). Agent-level fast paths must
  * treat a null return as "not confident — use the normal flow".
  */
-export function getLastClassification(): { intent: string; specific_tools: string[]; confidence: number; categories: string[] } | null {
+export function getLastClassification(): {
+    intent: string;
+    specific_tools: string[];
+    confidence: number;
+    categories: string[];
+} | null {
     return lastClassification;
 }
 
@@ -927,7 +1222,7 @@ export async function selectTools(opts: {
     }
 
     const allSchemas = getToolSchemas();
-    const allToolNames = new Set(allSchemas.map(t => t.function.name));
+    const allToolNames = new Set(allSchemas.map((t) => t.function.name));
 
     // Apply any explicitly requested categories
     if (opts.requestedCategories) {
@@ -970,7 +1265,7 @@ export async function selectTools(opts: {
         // Apply keyword hard-boosts to ranked scores
         for (const { pattern, category, minScore } of KEYWORD_BOOSTS) {
             if (pattern.test(opts.message)) {
-                const entry = ranked.find(r => r.category === category);
+                const entry = ranked.find((r) => r.category === category);
                 if (entry) {
                     entry.score = Math.max(entry.score, minScore);
                     entry.confidence = Math.max(entry.confidence, minScore);
@@ -984,11 +1279,9 @@ export async function selectTools(opts: {
         // Dynamic threshold
         const topScore = ranked.length > 0 ? ranked[0].score : 0;
         const topConfidence = ranked.length > 0 ? ranked[0].confidence : 0;
-        let threshold = embeddingsReady
-            ? Math.max(0.15, topScore * 0.45)
-            : 0.25;
+        let threshold = embeddingsReady ? Math.max(0.15, topScore * 0.45) : 0.25;
         if (topConfidence < 0.3) {
-            threshold = Math.max(0.10, threshold * 0.7);
+            threshold = Math.max(0.1, threshold * 0.7);
         }
 
         // Select categories above threshold
@@ -1005,7 +1298,10 @@ export async function selectTools(opts: {
         classifierUsed = embeddingsReady ? "hybrid" : "structural";
 
         if (ranked.length > 0) {
-            const topN = ranked.slice(0, 5).map(r => `${r.category}:${r.score.toFixed(2)}`).join("  ");
+            const topN = ranked
+                .slice(0, 5)
+                .map((r) => `${r.category}:${r.score.toFixed(2)}`)
+                .join("  ");
             console.log(`   📊 Fallback scores: ${topN} (threshold: ${threshold.toFixed(2)})`);
         }
     }
@@ -1069,10 +1365,10 @@ export async function selectTools(opts: {
 
     // Prioritize specific tools from LLM classifier
     if (specificTools.length > 0) {
-        const specific = new Set(specificTools.filter(t => allToolNames.has(t)));
+        const specific = new Set(specificTools.filter((t) => allToolNames.has(t)));
         candidateTools = [
-            ...candidateTools.filter(t => specific.has(t)),
-            ...candidateTools.filter(t => !specific.has(t)),
+            ...candidateTools.filter((t) => specific.has(t)),
+            ...candidateTools.filter((t) => !specific.has(t)),
         ];
     }
 
@@ -1129,7 +1425,10 @@ export async function selectTools(opts: {
         // Find which category this tool belongs to
         let toolCat = "";
         for (const [catName, catDef] of Object.entries(CATEGORIES)) {
-            if (catDef.tools.includes(tool)) { toolCat = catName; break; }
+            if (catDef.tools.includes(tool)) {
+                toolCat = catName;
+                break;
+            }
         }
         const catCount = catToolCounts.get(toolCat) || 0;
         if (catCount >= MAX_TOOLS_PER_CATEGORY) continue;
@@ -1209,7 +1508,9 @@ export async function selectTools(opts: {
     // ── Logging ──
     const elapsed = Date.now() - startTime;
     const catLog = selectedCategories.join(", ");
-    console.log(`🎯 Tool Router: ${selectedSchemas.length}/${allSchemas.length + mcpSchemas.length} tools selected [${catLog}] (${elapsed}ms, classifier: ${classifierUsed})`);
+    console.log(
+        `🎯 Tool Router: ${selectedSchemas.length}/${allSchemas.length + mcpSchemas.length} tools selected [${catLog}] (${elapsed}ms, classifier: ${classifierUsed})`,
+    );
     if (specificTools.length > 0) {
         console.log(`   🎯 Specific: [${specificTools.join(", ")}] | Intent: ${lastClassifiedIntent}`);
     }
@@ -1265,7 +1566,8 @@ export async function handleToolRequest(request: ToolRequest): Promise<{
         };
         return {
             categories: fallbackCategories,
-            response: `No built-in tool for "${capability}". You have three options:\n` +
+            response:
+                `No built-in tool for "${capability}". You have three options:\n` +
                 `1. **create_tool** — Build a custom tool for "${capability}" using shell commands or API calls. It will persist and be reusable.\n` +
                 `2. **browser tools** — If it's a web service, navigate to its URL and automate via browser.\n` +
                 `3. **shell_exec** — Run CLI commands or install a tool (e.g., via npm/pip/brew) to accomplish this.\n\n` +
@@ -1292,7 +1594,9 @@ export async function handleToolRequest(request: ToolRequest): Promise<{
 
     const response = `✅ Added ${matchedCategories.length} tool categories for "${capability}":\n${toolDescriptions.join("\n")}\n\nThese tools are now available in your next response. Use them as needed.`;
 
-    console.log(`🎯 Tool Router: Added categories [${matchedCategories.join(", ")}] (${matchedCategories.reduce((sum, cat) => sum + (CATEGORIES[cat]?.tools.length || 0), 0)} tools)`);
+    console.log(
+        `🎯 Tool Router: Added categories [${matchedCategories.join(", ")}] (${matchedCategories.reduce((sum, cat) => sum + (CATEGORIES[cat]?.tools.length || 0), 0)} tools)`,
+    );
 
     return { categories: matchedCategories, response };
 }

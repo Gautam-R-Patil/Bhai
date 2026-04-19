@@ -2,129 +2,238 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
+import fs from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
 import type { ChatCompletionTool } from "openai/resources/chat/completions.js";
-import { getCurrentTime, type ToolDefinition } from "./get-current-time.js";
-import { isCacheable, getCached, setCache, checkRateLimit, auditLog, recordToolUsage, requiresConfirmation } from "./tool-intelligence.js";
-import { validateToolInput } from "./schema-validator.js";
-import { memoryStore, memorySearch, memoryList, memoryDelete, identityView, identityUpdate, traitUpdate, traitList, memorySnapshot } from "./memory-tools.js";
-import { coreMemoryRead, coreMemoryReplace, coreMemoryAppend, coreMemoryDelete } from "./memory-tools-advanced.js";
-import { shellExec } from "./shell.js";
-import { listDirectory, deleteFile } from "./files.js";
-import { read } from "./coding/read.js";
-import { edit } from "./coding/edit.js";
-import { write } from "./coding/write.js";
-import { appendFile } from "./coding/append-file.js";
-import { grep } from "./coding/grep.js";
-import { glob } from "./coding/glob.js";
-import { enterPlanModeTool, exitPlanModeTool } from "./coding/plan-mode-tools.js";
-import { notebookEdit } from "./coding/notebook-edit.js";
-import { lsp } from "./coding/lsp.js";
-import { testRun } from "./coding/test-run.js";
-import { fixIssue } from "./coding/fix-issue.js";
-import { enterSpecModeTool, finalizeSpecTool } from "./coding/spec-mode-tools.js";
-import { browserVerify } from "./coding/browser-verify.js";
-import { appleScript, osScreenshot, osClick, osType, osContext, osOcrClick, osVisualVerify, setBrightness, sendScreenshot, osAccessibilityTree, osKeyboardShortcuts, osScan, osClickElement, osMultiAction, osZoomRegion, osNav } from "./macos.js";
-import { powerShellScript, winOsScreenshot, winOsClick, winOsType, winOsContext, winOsOcrClick, winOsVisualVerify, winSetBrightness, winSendScreenshot } from "./windows.js";
-import { linuxShellScript, linuxOsScreenshot, linuxOsClick, linuxOsType, linuxOsContext, linuxSetBrightness, linuxSendScreenshot } from "./linux.js";
-import { IS_MAC, IS_WIN, IS_LINUX } from "./platform.js";
+import { firePostToolUse, firePreToolUse } from "../hooks/index.js";
+import { executeMCPTool, getMCPToolSchemas, isMCPTool } from "../mcp/client.js";
+import { sideloadSkillTool } from "../store/sideload.js";
+import { contactLookupTool, whatsappGroupInfoTool, whatsappSendTool, whatsappStickerTool } from "../whatsapp.js";
+import {
+    appManager,
+    calendarTool,
+    messagesTool,
+    musicControl,
+    osDrag,
+    remindersTool,
+    windowManage,
+} from "./app-integrations.js";
+import { appleNotesTool } from "./apple-notes.js";
+import { audioVisualize } from "./audio-visualize.js";
 import { blenderScript } from "./blender.js";
-import { davinciScript } from "./video.js";
 import {
-    videoCreateProject,
-    videoAnalyze,
-    videoPlanEdit,
-    videoRender,
-    videoPatchPlan,
-    videoFfmpeg,
-    videoListProjects,
-} from "./video-studio.js";
-import { webSearch } from "./web-search.js";
-import {
-    browserNavigate,
-    browserScan,
+    browserAnalyze,
     browserBack,
-    browserSwitchTab,
-    browserClose,
-    browserClickAt,
+    browserCacheActions,
+    browserChromeStatus,
     browserClick,
-    browserRightClick,
-    browserHoldClick,
+    browserClickAt,
+    browserClose,
     browserDrag,
-    browserScroll,
-    browserType,
+    browserExtract,
+    browserHoldClick,
     browserHover,
     browserKeyboard,
-    browserScrollElement,
-    browserAnalyze,
-    browserRunJs,
-    browserWait,
-    browserSelect,
-    browserExtract,
-    browserUploadFile,
-    browserSaveStrategy,
-    browserRecallStrategy,
-    browserParallelTabs,
-    browserParallelActions,
     browserMultiAction,
-    browserSetMode,
-    browserChromeStatus,
+    browserNavigate,
+    browserParallelActions,
+    browserParallelTabs,
+    browserRecallStrategy,
     browserReplayActions,
-    browserCacheActions,
+    browserRightClick,
+    browserRunJs,
+    browserSaveStrategy,
+    browserScan,
+    browserScroll,
+    browserScrollElement,
+    browserSelect,
+    browserSetMode,
+    browserSwitchTab,
+    browserType,
+    browserUploadFile,
+    browserWait,
 } from "./browser/index.js";
-import { sendFileTool } from "./send-file.js";
-import { generateImage } from "./generate-image.js";
-import { createPresentation, listPresentations, modifyPresentation, exportPresentation, setPresentationLLM } from "./presentation/index.js";
-import { scheduleTask, listTasks, cancelTask, setReminder } from "./scheduled.js";
-import { registerWebhook, listWebhooks } from "./webhook.js";
-import { swarmTask, setSwarmLLM, setSwarmProgress, clearSwarmProgress } from "./swarm-tool.js";
-import { deepResearch, checkDeepResearch, cancelDeepResearch, setDeepResearchLLM, setDeepResearchProgress, clearDeepResearchProgress, setDeepResearchNotifier, setOverlayResearchProgress, clearOverlayResearchProgress } from "./deep-research.js";
-import { startLongTaskTool, checkLongTaskTool, cancelLongTaskTool, resumeLongTaskTool, setLongTaskLLM, setLongTaskProgress, clearLongTaskProgress } from "./long-task-tool.js";
-import { shellExecBackground, shellCheckProcess, shellWaitProcess, shellKillProcess } from "./shell-monitor.js";
-import { setVolume, clipboard, systemInfo, wifiControl, bluetoothControl, setDoNotDisturb, darkMode, lockScreen, sleepDisplay } from "./system-controls.js";
-import { musicControl, calendarTool, remindersTool, messagesTool, windowManage, osDrag, appManager } from "./app-integrations.js";
-import { spotifyTool } from "./spotify.js";
-import { appleNotesTool } from "./apple-notes.js";
-import { weatherTool } from "./weather.js";
-import { locationTool } from "./location-tool.js";
-import { gifSearch } from "./gif-search.js";
-import { sonosControl } from "./sonos.js";
-import { audioVisualize } from "./audio-visualize.js";
-import { sideloadSkillTool } from "../store/sideload.js";
-import { screenRecord, fileMetadata, compressFiles, trashManager, runShortcut, openInApp } from "./file-utils.js";
-import { googleAccounts, googleCalendarTool, gmailTool } from "./google-api.js";
-import { githubTool } from "./github-api.js";
-import { taskQueueTool } from "./task-queue.js";
-import { emailSend } from "./email-tool.js";
-import { createTool, listDynamicTools, setRegistryRef, loadDynamicTools } from "./create-tool.js";
-import { codeActionTool, codeExecuteTool, setCodeActionLLM, setCodeActionExecutor } from "./code-action-tool.js";
-import { repoMapTool } from "./repo-map.js";
+import { channelSendTool } from "./channel-send.js";
+import { codeActionTool, codeExecuteTool, setCodeActionExecutor, setCodeActionLLM } from "./code-action-tool.js";
+import { agentsMdScaffoldTool } from "./coding/agents-md-scaffold.js";
+import { appendFile } from "./coding/append-file.js";
+import { browserVerify } from "./coding/browser-verify.js";
+import { codeChangeSummaryTool } from "./coding/code-change-summary.js";
+import { codebaseIndexTool } from "./coding/codebase-index.js";
+import { codebaseQueryTool } from "./coding/codebase-query.js";
+import { edit } from "./coding/edit.js";
+import { fixIssue } from "./coding/fix-issue.js";
+import { gitOpTool } from "./coding/git-op.js";
+import { glob } from "./coding/glob.js";
+import { grep } from "./coding/grep.js";
+import { iconSearch } from "./coding/icon-search.js";
+import { lsp } from "./coding/lsp.js";
+import { notebookEdit } from "./coding/notebook-edit.js";
+import { enterPlanModeTool, exitPlanModeTool } from "./coding/plan-mode-tools.js";
+import { read } from "./coding/read.js";
+import { scaffoldProject } from "./coding/scaffold-project.js";
+import { enterSpecModeTool, finalizeSpecTool } from "./coding/spec-mode-tools.js";
+import { stockImageSearch } from "./coding/stock-image-search.js";
+import { testRun } from "./coding/test-run.js";
+import { webAssetDownload } from "./coding/web-asset-download.js";
+import { write } from "./coding/write.js";
 import { computerUseTool, setComputerUseLLM } from "./computer-use-tool.js";
-import { whatsappSendTool, contactLookupTool, whatsappStickerTool, whatsappGroupInfoTool } from "../whatsapp.js";
-import { channelSendTool, registerChannelSender, getActiveChannelSenders } from "./channel-send.js";
+import { createTool, listDynamicTools, setRegistryRef } from "./create-tool.js";
+import {
+    cancelDeepResearch,
+    checkDeepResearch,
+    clearDeepResearchProgress,
+    clearOverlayResearchProgress,
+    deepResearch,
+    setDeepResearchLLM,
+    setDeepResearchNotifier,
+    setDeepResearchProgress,
+    setOverlayResearchProgress,
+} from "./deep-research.js";
 import { documentTools, initDocumentTools } from "./document.js";
-import { setIngestLLM } from "../documents/ingest.js";
-import { getMCPToolSchemas, executeMCPTool, isMCPTool } from "../mcp/client.js";
-import { firePreToolUse, firePostToolUse } from "../hooks/index.js";
-import fs from "node:fs";
-import path from "node:path";
-import { homedir } from "node:os";
+import { emailSend } from "./email-tool.js";
+import { compressFiles, fileMetadata, openInApp, runShortcut, screenRecord, trashManager } from "./file-utils.js";
+import { deleteFile, listDirectory } from "./files.js";
+import { generateImage } from "./generate-image.js";
+import { getCurrentTime, type ToolDefinition } from "./get-current-time.js";
+import { gifSearch } from "./gif-search.js";
+import { githubTool } from "./github-api.js";
+import { gmailTool, googleAccounts, googleCalendarTool } from "./google-api.js";
+import {
+    linuxOsClick,
+    linuxOsContext,
+    linuxOsScreenshot,
+    linuxOsType,
+    linuxSendScreenshot,
+    linuxSetBrightness,
+    linuxShellScript,
+} from "./linux.js";
+import { locationTool } from "./location-tool.js";
+import {
+    cancelLongTaskTool,
+    checkLongTaskTool,
+    clearLongTaskProgress,
+    resumeLongTaskTool,
+    setLongTaskLLM,
+    setLongTaskProgress,
+    startLongTaskTool,
+} from "./long-task-tool.js";
+import {
+    appleScript,
+    osAccessibilityTree,
+    osClick,
+    osClickElement,
+    osContext,
+    osKeyboardShortcuts,
+    osMultiAction,
+    osNav,
+    osOcrClick,
+    osScan,
+    osScreenshot,
+    osType,
+    osVisualVerify,
+    osZoomRegion,
+    sendScreenshot,
+    setBrightness,
+} from "./macos.js";
+import {
+    identityUpdate,
+    identityView,
+    memoryDelete,
+    memoryList,
+    memorySearch,
+    memorySnapshot,
+    memoryStore,
+    traitList,
+    traitUpdate,
+} from "./memory-tools.js";
+import { coreMemoryAppend, coreMemoryDelete, coreMemoryRead, coreMemoryReplace } from "./memory-tools-advanced.js";
+import { IS_LINUX, IS_MAC, IS_WIN } from "./platform.js";
+import { createPresentation, exportPresentation, listPresentations, modifyPresentation } from "./presentation/index.js";
+import { repoMapTool } from "./repo-map.js";
+import { cancelTask, listTasks, scheduleTask, setReminder } from "./scheduled.js";
+import { validateToolInput } from "./schema-validator.js";
+import { sendFileTool } from "./send-file.js";
+import { shellExec } from "./shell.js";
+import { shellCheckProcess, shellExecBackground, shellKillProcess, shellWaitProcess } from "./shell-monitor.js";
+import { sonosControl } from "./sonos.js";
+import { spotifyTool } from "./spotify.js";
+import { clearSwarmProgress, setSwarmLLM, setSwarmProgress, swarmTask } from "./swarm-tool.js";
+import {
+    bluetoothControl,
+    clipboard,
+    darkMode,
+    lockScreen,
+    setDoNotDisturb,
+    setVolume,
+    sleepDisplay,
+    systemInfo,
+    wifiControl,
+} from "./system-controls.js";
+import { taskQueueTool } from "./task-queue.js";
+import {
+    auditLog,
+    checkRateLimit,
+    getCached,
+    isCacheable,
+    recordToolUsage,
+    requiresConfirmation,
+    setCache,
+} from "./tool-intelligence.js";
+import { davinciScript } from "./video.js";
+import {
+    videoAnalyze,
+    videoCreateProject,
+    videoFfmpeg,
+    videoListProjects,
+    videoPatchPlan,
+    videoPlanEdit,
+    videoRender,
+} from "./video-studio.js";
+import { weatherTool } from "./weather.js";
+import { webSearch } from "./web-search.js";
+import { listWebhooks, registerWebhook } from "./webhook.js";
+import {
+    powerShellScript,
+    winOsClick,
+    winOsContext,
+    winOsOcrClick,
+    winOsScreenshot,
+    winOsType,
+    winOsVisualVerify,
+    winSendScreenshot,
+    winSetBrightness,
+} from "./windows.js";
 
 // ── Store Tools Constants ────────────────────────
 const STORE_TOOLS_PATH = path.join(homedir(), ".atlas", "store", "tools");
 
-// Re-export injection helpers for boot wiring
-export { setSwarmLLM, setSwarmProgress, clearSwarmProgress };
-export { setPresentationLLM } from "./presentation/index.js";
-export { loadDynamicTools } from "./create-tool.js";
-export { setDeepResearchLLM, setDeepResearchProgress, clearDeepResearchProgress, setDeepResearchNotifier, setOverlayResearchProgress, clearOverlayResearchProgress };
-export { setLongTaskLLM, setLongTaskProgress, clearLongTaskProgress };
-export { setCodeActionLLM, setCodeActionExecutor };
-export { setComputerUseLLM };
-export { initSpotify } from "./spotify.js";
-export { registerChannelSender, getActiveChannelSenders } from "./channel-send.js";
-export { clearCache, resetRateLimits, rotateAuditLog, getToolAnalytics } from "./tool-intelligence.js";
-export { initDocumentTools } from "./document.js";
 export { setIngestLLM } from "../documents/ingest.js";
+export { getActiveChannelSenders, registerChannelSender } from "./channel-send.js";
+export { loadDynamicTools } from "./create-tool.js";
+export { initDocumentTools } from "./document.js";
+export { setPresentationLLM } from "./presentation/index.js";
+export { initSpotify } from "./spotify.js";
+export { clearCache, getToolAnalytics, resetRateLimits, rotateAuditLog } from "./tool-intelligence.js";
+// Re-export injection helpers for boot wiring
+export {
+    clearDeepResearchProgress,
+    clearLongTaskProgress,
+    clearOverlayResearchProgress,
+    clearSwarmProgress,
+    setCodeActionExecutor,
+    setCodeActionLLM,
+    setComputerUseLLM,
+    setDeepResearchLLM,
+    setDeepResearchNotifier,
+    setDeepResearchProgress,
+    setLongTaskLLM,
+    setLongTaskProgress,
+    setOverlayResearchProgress,
+    setSwarmLLM,
+    setSwarmProgress,
+};
 
 // ── Tool Registry ─────────────────────────────
 
@@ -294,6 +403,10 @@ registry.set(fixIssue.schema.function.name, fixIssue);
 registry.set(enterSpecModeTool.schema.function.name, enterSpecModeTool);
 registry.set(finalizeSpecTool.schema.function.name, finalizeSpecTool);
 registry.set(browserVerify.schema.function.name, browserVerify);
+registry.set(stockImageSearch.schema.function.name, stockImageSearch);
+registry.set(iconSearch.schema.function.name, iconSearch);
+registry.set(webAssetDownload.schema.function.name, webAssetDownload);
+registry.set(scaffoldProject.schema.function.name, scaffoldProject);
 
 // Web & browser tools
 registry.set(webSearch.schema.function.name, webSearch);
@@ -383,6 +496,13 @@ registry.set(codeExecuteTool.schema.function.name, codeExecuteTool);
 // Repo map (regex-based codebase symbol extraction)
 registry.set(repoMapTool.schema.function.name, repoMapTool);
 
+// Phase 4L: codebase comprehension + git ops
+registry.set(codebaseIndexTool.schema.function.name, codebaseIndexTool);
+registry.set(codebaseQueryTool.schema.function.name, codebaseQueryTool);
+registry.set(codeChangeSummaryTool.schema.function.name, codeChangeSummaryTool);
+registry.set(agentsMdScaffoldTool.schema.function.name, agentsMdScaffoldTool);
+registry.set(gitOpTool.schema.function.name, gitOpTool);
+
 // Computer use agent (desktop automation)
 registry.set(computerUseTool.schema.function.name, computerUseTool);
 
@@ -401,7 +521,11 @@ for (const tool of documentTools) {
 }
 
 // Warm the template registry so list_templates is instant.
-try { initDocumentTools(); } catch (err) { console.warn(`[documents] init failed: ${(err as Error).message}`); }
+try {
+    initDocumentTools();
+} catch (err) {
+    console.warn(`[documents] init failed: ${(err as Error).message}`);
+}
 
 // ── Exports ───────────────────────────────────
 
@@ -416,8 +540,8 @@ export function getToolSchemas(): ChatCompletionTool[] {
 export function getToolSchemasByNames(names: string[]): ChatCompletionTool[] {
     const nameSet = new Set(names);
     return Array.from(registry.values())
-        .filter(t => nameSet.has(t.schema.function.name))
-        .map(t => t.schema);
+        .filter((t) => nameSet.has(t.schema.function.name))
+        .map((t) => t.schema);
 }
 
 // ── Tool Timeout Configuration ───────────────────────
@@ -431,11 +555,11 @@ const TOOL_TIMEOUTS: Record<string, number> = {
     browser_scan: 20_000,
     browser_screenshot: 15_000,
     // Shell/system tools - variable execution time
-    shell: 60_000,           // Shell commands can take a while
+    shell: 60_000, // Shell commands can take a while
     run_code: 30_000,
     // Research/network tools
     web_search: 20_000,
-    deep_research: 300_000,  // 5 minutes for deep research
+    deep_research: 300_000, // 5 minutes for deep research
     // File operations (coding primitives)
     read: 10_000,
     edit: 10_000,
@@ -453,11 +577,7 @@ function getToolTimeout(name: string): number {
 }
 
 /** Execute with timeout wrapper */
-async function executeWithTimeout<T>(
-    promise: Promise<T>,
-    timeoutMs: number,
-    toolName: string
-): Promise<T> {
+async function executeWithTimeout<T>(promise: Promise<T>, timeoutMs: number, toolName: string): Promise<T> {
     let timeoutId: NodeJS.Timeout;
     const timeoutPromise = new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => {
@@ -476,10 +596,7 @@ async function executeWithTimeout<T>(
 }
 
 /** Execute a tool by name — with caching, rate limiting, audit logging, timeouts, and analytics */
-export async function executeTool(
-    name: string,
-    input: Record<string, unknown>
-): Promise<string> {
+export async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
     const startTime = Date.now();
     const timeout = getToolTimeout(name);
 
@@ -491,7 +608,14 @@ export async function executeTool(
             return result;
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
-            auditLog({ tool: name, args: input, success: false, cached: false, durationMs: Date.now() - startTime, error: message });
+            auditLog({
+                tool: name,
+                args: input,
+                success: false,
+                cached: false,
+                durationMs: Date.now() - startTime,
+                error: message,
+            });
             return JSON.stringify({ error: message });
         }
     }
@@ -543,7 +667,14 @@ export async function executeTool(
         const pre = await firePreToolUse(name, input);
         if (pre.block) {
             const reason = pre.block_reason ?? "Blocked by PreToolUse hook.";
-            auditLog({ tool: name, args: input, success: false, cached: false, durationMs: Date.now() - startTime, error: `blocked_by_hook: ${reason}` });
+            auditLog({
+                tool: name,
+                args: input,
+                success: false,
+                cached: false,
+                durationMs: Date.now() - startTime,
+                error: `blocked_by_hook: ${reason}`,
+            });
             return JSON.stringify({ error: reason, blocked_by_hook: true });
         }
         if (pre.modifiedInput) {
@@ -565,7 +696,12 @@ export async function executeTool(
 
         // Determine success
         let success = true;
-        try { const p = JSON.parse(result); if (p.error) success = false; } catch { /* not json */ }
+        try {
+            const p = JSON.parse(result);
+            if (p.error) success = false;
+        } catch {
+            /* not json */
+        }
 
         auditLog({ tool: name, args: effectiveInput, success, cached: false, durationMs });
         recordToolUsage(name, success, durationMs);
@@ -585,7 +721,11 @@ export async function executeTool(
         auditLog({ tool: name, args: effectiveInput, success: false, cached: false, durationMs, error: message });
         recordToolUsage(name, false, durationMs);
 
-        try { void firePostToolUse(name, effectiveInput, JSON.stringify({ error: message }), false); } catch { /* */ }
+        try {
+            void firePostToolUse(name, effectiveInput, JSON.stringify({ error: message }), false);
+        } catch {
+            /* */
+        }
 
         return JSON.stringify({ error: `Tool "${name}" failed: ${message}` });
     }
@@ -632,7 +772,7 @@ export async function loadStoreTools(): Promise<void> {
         }
     }
 
-    const storeToolCount = Array.from(registry.keys()).filter(k => k.startsWith("store_")).length;
+    const storeToolCount = Array.from(registry.keys()).filter((k) => k.startsWith("store_")).length;
     if (storeToolCount > 0) {
         console.log(`🔧 ${storeToolCount} store tool(s) loaded`);
     }
@@ -644,7 +784,7 @@ export async function loadStoreTools(): Promise<void> {
 export async function registerStoreTool(toolPath: string): Promise<void> {
     const configPath = path.join(toolPath, "atlas.config.json");
     const handlerPath = path.join(toolPath, "dist", "handler.js");
-    const handlerTsPath = path.join(toolPath, "handler.ts");  // For dev tools without build step
+    const handlerTsPath = path.join(toolPath, "handler.ts"); // For dev tools without build step
 
     // Validate structure
     if (!fs.existsSync(configPath)) {
@@ -668,13 +808,13 @@ export async function registerStoreTool(toolPath: string): Promise<void> {
     // Dynamically import the handler
     // Clear module cache to allow hot-reload
     const resolvedPath = path.resolve(actualHandlerPath);
-    const moduleUrl = `file://${resolvedPath}?t=${Date.now()}`;  // Cache bust
+    const moduleUrl = `file://${resolvedPath}?t=${Date.now()}`; // Cache bust
 
     try {
         const module = await import(moduleUrl);
         const tool: ToolDefinition = module.default || module.tool || module[Object.keys(module)[0]];
 
-        if (!tool || !tool.schema || !tool.handler) {
+        if (!tool?.schema || !tool.handler) {
             throw new Error(`Invalid tool export in ${toolPath}`);
         }
 
@@ -728,5 +868,5 @@ export function unregisterStoreTool(slug: string): void {
  * Get all store tool names
  */
 export function getStoreToolNames(): string[] {
-    return Array.from(registry.keys()).filter(k => k.startsWith("store_"));
+    return Array.from(registry.keys()).filter((k) => k.startsWith("store_"));
 }

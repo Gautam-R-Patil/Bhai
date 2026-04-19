@@ -7,22 +7,22 @@
 // Each sub-agent gets its own message history and can only see the tools it needs.
 // Uses smart context windowing to limit token usage in long-running tasks.
 
-import type { LLMClient, ChatCompletionMessageParam, ChatCompletionTool } from "../llm.js";
+import type { ChatCompletionMessageParam, ChatCompletionTool, LLMClient } from "../llm.js";
 import { selectForSubAgent } from "../model-router.js";
-import { getToolSchemasByNames, executeTool } from "../tools/index.js";
-import { smartTruncate } from "./smart-truncate.js";
+import { executeTool, getToolSchemasByNames } from "../tools/index.js";
 import { isToolError } from "./error-types.js";
+import { smartTruncate } from "./smart-truncate.js";
 
 // NOTE: a2a.ts imports sub-agent.ts, so we use lazy dynamic imports to break the cycle.
 
 // ── Context Window Configuration ─────────────────
 // Keep last N messages in LLM context to prevent token bloat in long tasks
-const MAX_CONTEXT_MESSAGES = 20;  // Keep last 20 messages (10 exchanges)
-const SUMMARIZE_THRESHOLD = 30;   // Summarize when history exceeds this
+const MAX_CONTEXT_MESSAGES = 20; // Keep last 20 messages (10 exchanges)
+const SUMMARIZE_THRESHOLD = 30; // Summarize when history exceeds this
 
 // ── Loop / Stuckness Detection ────────────────────
 // Detects when a sub-agent is repeating the same tool calls
-const STUCK_WINDOW_SIZE = 5;       // Track last N tool calls
+const STUCK_WINDOW_SIZE = 5; // Track last N tool calls
 const STUCK_WARNING_THRESHOLD = 3; // Inject warning after N consecutive identical calls
 const STUCK_CRITICAL_THRESHOLD = 5; // Force-exit after N consecutive identical calls
 
@@ -55,27 +55,92 @@ export type AgentRole = "researcher" | "coder" | "browser" | "system" | "general
 
 const ROLE_TOOLS: Record<AgentRole, string[]> = {
     researcher: [
-        "web_search", "deep_research", "memory_store", "memory_search", "memory_list",
-        "read", "grep", "glob", "get_current_time",
+        "web_search",
+        "deep_research",
+        "memory_store",
+        "memory_search",
+        "memory_list",
+        "read",
+        "grep",
+        "glob",
+        "get_current_time",
     ],
     coder: [
-        "shell_exec", "shell_exec_background", "shell_check_process", "shell_wait_process", "shell_kill_process",
-        "read", "edit", "write", "append_file", "grep", "glob", "notebook_edit",
-        "list_directory", "delete_file", "get_current_time",
-        "code_action", "code_execute", "repo_map", "lsp",
-        "enter_plan_mode", "exit_plan_mode",
+        "shell_exec",
+        "shell_exec_background",
+        "shell_check_process",
+        "shell_wait_process",
+        "shell_kill_process",
+        "read",
+        "edit",
+        "write",
+        "append_file",
+        "grep",
+        "glob",
+        "notebook_edit",
+        "list_directory",
+        "delete_file",
+        "get_current_time",
+        "code_action",
+        "code_execute",
+        "repo_map",
+        "lsp",
+        "test_run",
+        "fix_issue",
+        "enter_plan_mode",
+        "exit_plan_mode",
+        "enter_spec_mode",
+        "finalize_spec",
+        // Browser verification for UI/frontend changes (Phase 4J)
+        "browser_verify",
+        "browser_navigate",
+        "browser_scan",
+        "browser_wait",
+        "browser_run_js",
+        // Web design toolkit (Phase 4K): asset search + download + scaffolding
+        "stock_image_search",
+        "icon_search",
+        "web_asset_download",
+        "scaffold_project",
+        // Codebase comprehension + git (Phase 4L)
+        "codebase_index",
+        "codebase_query",
+        "code_change_summary",
+        "agents_md_scaffold",
+        "git_op",
     ],
     browser: [
-        "web_search", "browser_navigate", "browser_scan", "browser_click_at",
-        "browser_type", "browser_scroll", "browser_extract", "browser_back",
-        "browser_analyze", "browser_run_js", "browser_wait", "browser_select",
-        "browser_keyboard", "browser_switch_tab", "browser_close",
-        "browser_scroll_element", "get_current_time",
+        "web_search",
+        "browser_navigate",
+        "browser_scan",
+        "browser_click_at",
+        "browser_type",
+        "browser_scroll",
+        "browser_extract",
+        "browser_back",
+        "browser_analyze",
+        "browser_run_js",
+        "browser_wait",
+        "browser_select",
+        "browser_keyboard",
+        "browser_switch_tab",
+        "browser_close",
+        "browser_scroll_element",
+        "get_current_time",
     ],
     system: [
-        "shell_exec", "apple_script", "os_screenshot", "os_click", "os_type",
-        "os_context", "os_ocr_click", "os_visual_verify", "read",
-        "write", "edit", "get_current_time",
+        "shell_exec",
+        "apple_script",
+        "os_screenshot",
+        "os_click",
+        "os_type",
+        "os_context",
+        "os_ocr_click",
+        "os_visual_verify",
+        "read",
+        "write",
+        "edit",
+        "get_current_time",
     ],
     general: [], // Will use all tools
 };
@@ -125,7 +190,8 @@ const REQUEST_TOOLS_SCHEMA: ChatCompletionTool = {
     type: "function",
     function: {
         name: "request_tools",
-        description: "Request additional tools that are not in your current toolset. Provide tool names you need. Available categories: shell (shell_exec), files/coding (read, edit, write, append_file, grep, glob), browser (browser_navigate, browser_scan, browser_click_at), memory (memory_store, memory_search), web (web_search, deep_research).",
+        description:
+            "Request additional tools that are not in your current toolset. Provide tool names you need. Available categories: shell (shell_exec), files/coding (read, edit, write, append_file, grep, glob), browser (browser_navigate, browser_scan, browser_click_at), memory (memory_store, memory_search), web (web_search, deep_research).",
         parameters: {
             type: "object",
             properties: {
@@ -146,10 +212,19 @@ const REQUEST_TOOLS_SCHEMA: ChatCompletionTool = {
 
 // Tools that are always safe to grant to any role
 const SAFE_EXPANSION_TOOLS = new Set([
-    "read", "edit", "write", "append_file", "grep", "glob",
-    "list_directory", "get_current_time",
-    "memory_store", "memory_search", "memory_list",
-    "web_search", "shell_exec",
+    "read",
+    "edit",
+    "write",
+    "append_file",
+    "grep",
+    "glob",
+    "list_directory",
+    "get_current_time",
+    "memory_store",
+    "memory_search",
+    "memory_list",
+    "web_search",
+    "shell_exec",
 ]);
 
 // ── A2A Delegation Tool ─────────────────────────
@@ -173,10 +248,7 @@ function isA2ADelegateCall(fnName: string): boolean {
 }
 
 /** Handle A2A delegation via lazy import. */
-async function execA2ADelegate(
-    llm: LLMClient,
-    args: { task_description: string; priority?: string },
-): Promise<string> {
+async function execA2ADelegate(llm: LLMClient, args: { task_description: string; priority?: string }): Promise<string> {
     const { handleAgentToolCall } = await import("./a2a.js");
     return handleAgentToolCall(llm, args);
 }
@@ -187,14 +259,22 @@ export interface SubAgentTask {
     id: string;
     role: AgentRole;
     description: string;
-    context?: string;           // Context from dependency results
-    maxIterations?: number;     // Default: 15
-    timeoutMs?: number;         // Default: 60000
+    context?: string; // Context from dependency results
+    maxIterations?: number; // Default: 15
+    timeoutMs?: number; // Default: 60000
     priority?: "critical" | "normal" | "low"; // From critical path analysis (#4)
     /** Callback for streaming partial results every N tool calls (#19) */
     onPartialResult?: (partialOutput: string, toolCallsSoFar: number) => void;
     /** Interval for emitting partial results (in tool calls). Default: 5 */
     partialResultInterval?: number;
+    /**
+     * Optional working directory for this sub-agent. When set, shell_exec
+     * calls that don't specify their own cwd get this one injected, and a
+     * reminder is appended to the system prompt so the model knows to use
+     * absolute paths rooted here for read/edit/write. Used by Phase 4G
+     * worktree isolation for parallel coder agents.
+     */
+    workingDirectory?: string;
 }
 
 export interface SubAgentResult {
@@ -204,7 +284,7 @@ export interface SubAgentResult {
     output: string;
     toolCalls: number;
     durationMs: number;
-    estimatedCost: number;      // Accumulated estimated cost in credits (#16)
+    estimatedCost: number; // Accumulated estimated cost in credits (#16)
     error?: string;
 }
 
@@ -261,8 +341,7 @@ export async function runSubAgent(
 ): Promise<SubAgentResult> {
     const startTime = Date.now();
     // Priority-based scaling for iterations and timeout (#4)
-    const priorityScale = task.priority === "critical" ? 1.5
-        : task.priority === "low" ? 0.75 : 1.0;
+    const priorityScale = task.priority === "critical" ? 1.5 : task.priority === "low" ? 0.75 : 1.0;
     const maxIter = Math.round((task.maxIterations || 50) * priorityScale);
     const timeout = Math.round((task.timeoutMs || 300000) * priorityScale); // 5 min base
 
@@ -280,15 +359,14 @@ export async function runSubAgent(
     } else {
         // Add the request_tools meta-tool so sub-agents can expand their toolset (#12)
         // Add A2A delegate tool for inter-agent delegation
-        tools = [
-            ...getToolSchemasByNames(roleToolNames),
-            REQUEST_TOOLS_SCHEMA,
-            a2aTool,
-        ];
+        tools = [...getToolSchemasByNames(roleToolNames), REQUEST_TOOLS_SCHEMA, a2aTool];
     }
 
     // Build a focused system prompt
-    const systemPrompt = ROLE_PROMPTS[task.role];
+    let systemPrompt = ROLE_PROMPTS[task.role];
+    if (task.workingDirectory) {
+        systemPrompt += `\n\nYour working directory for this task is: ${task.workingDirectory}\nAll shell commands default to this cwd. For read/edit/write/grep/glob, use absolute paths rooted here (e.g., ${task.workingDirectory}/<subpath>) to avoid ambiguity.`;
+    }
 
     // Build initial message with task description + any upstream context
     let userContent = `## Your Task\n${task.description}`;
@@ -297,17 +375,15 @@ export async function runSubAgent(
     }
 
     // Full history (for context retention and debugging)
-    const fullHistory: ChatCompletionMessageParam[] = [
-        { role: "user", content: userContent },
-    ];
+    const fullHistory: ChatCompletionMessageParam[] = [{ role: "user", content: userContent }];
 
     // Summary of older messages (created when history exceeds threshold)
     let historySummary = "";
 
     let iterations = 0;
     let totalToolCalls = 0;
-    let errorCount = 0;              // Track errors for model escalation (#13)
-    let estimatedCost = 0;            // Accumulated estimated cost (#16)
+    let errorCount = 0; // Track errors for model escalation (#13)
+    let estimatedCost = 0; // Accumulated estimated cost (#16)
     const toolCallHistory: string[] = []; // Track tool calls for loop detection (#11)
 
     try {
@@ -387,7 +463,11 @@ export async function runSubAgent(
             for (const tc of toolCalls) {
                 const fnName = tc.function.name;
                 let fnArgs: Record<string, unknown> = {};
-                try { fnArgs = JSON.parse(tc.function.arguments || "{}"); } catch { /* */ }
+                try {
+                    fnArgs = JSON.parse(tc.function.arguments || "{}");
+                } catch {
+                    /* */
+                }
 
                 // Handle request_tools meta-tool (#12)
                 if (fnName === "request_tools") {
@@ -401,19 +481,16 @@ export async function runSubAgent(
                     }
                     if (granted.length > 0) {
                         // Rebuild tool schemas with expanded set
-                        tools = [
-                            ...getToolSchemasByNames([...expandedTools]),
-                            REQUEST_TOOLS_SCHEMA,
-                            a2aTool,
-                        ];
+                        tools = [...getToolSchemasByNames([...expandedTools]), REQUEST_TOOLS_SCHEMA, a2aTool];
                         console.log(`    🔓 Sub-agent ${task.id}: granted tools [${granted.join(", ")}]`);
                     }
                     fullHistory.push({
                         role: "tool",
                         tool_call_id: tc.id,
-                        content: granted.length > 0
-                            ? `Granted access to: ${granted.join(", ")}. You can now use these tools.`
-                            : `No new tools granted. Requested tools are either already available or not permitted for your role.`,
+                        content:
+                            granted.length > 0
+                                ? `Granted access to: ${granted.join(", ")}. You can now use these tools.`
+                                : `No new tools granted. Requested tools are either already available or not permitted for your role.`,
                     } as ChatCompletionMessageParam);
                     continue;
                 }
@@ -422,7 +499,7 @@ export async function runSubAgent(
                 if (isA2ADelegateCall(fnName)) {
                     const delegateArgs = fnArgs as { task_description: string; priority?: string };
                     if (onProgress) {
-                        await onProgress(task.id, `🤝 [${task.role}] delegating task via A2A`).catch(() => { });
+                        await onProgress(task.id, `🤝 [${task.role}] delegating task via A2A`).catch(() => {});
                     }
                     console.log(`    🤝 Sub-agent ${task.id} (${task.role}): A2A delegation`);
                     try {
@@ -447,7 +524,15 @@ export async function runSubAgent(
                 }
 
                 if (onProgress) {
-                    await onProgress(task.id, `🔧 [${task.role}] ${fnName}`).catch(() => { });
+                    await onProgress(task.id, `🔧 [${task.role}] ${fnName}`).catch(() => {});
+                }
+
+                // Phase 4G: inject workingDirectory into shell_exec cwd when
+                // the task has one set and the model didn't specify its own.
+                if (task.workingDirectory && typeof fnArgs === "object" && fnArgs && !("cwd" in fnArgs)) {
+                    if (fnName === "shell_exec" || fnName === "shell_exec_background" || fnName === "test_run") {
+                        (fnArgs as Record<string, unknown>).cwd = task.workingDirectory;
+                    }
                 }
 
                 console.log(`    🔧 Sub-agent ${task.id} (${task.role}): ${fnName}`);
@@ -472,27 +557,34 @@ export async function runSubAgent(
             // ── Streaming Partial Results (#19) ──────
             const interval = task.partialResultInterval || 5;
             if (task.onPartialResult && totalToolCalls > 0 && totalToolCalls % interval === 0) {
-                const lastAssistantMsg = [...fullHistory].reverse().find(m => m.role === "assistant");
+                const lastAssistantMsg = [...fullHistory].reverse().find((m) => m.role === "assistant");
                 const partialOutput = typeof lastAssistantMsg?.content === "string" ? lastAssistantMsg.content : "";
-                try { task.onPartialResult(partialOutput, totalToolCalls); } catch { /* */ }
+                try {
+                    task.onPartialResult(partialOutput, totalToolCalls);
+                } catch {
+                    /* */
+                }
             }
 
             // ── Loop Detection (#11) ──────────────────
             const stuckLevel = detectStuckPattern(toolCallHistory);
             if (stuckLevel === "critical") {
-                console.warn(`  🔄 Sub-agent ${task.id} stuck (critical) — forcing exit after ${totalToolCalls} repeated tool calls`);
+                console.warn(
+                    `  🔄 Sub-agent ${task.id} stuck (critical) — forcing exit after ${totalToolCalls} repeated tool calls`,
+                );
                 break;
             } else if (stuckLevel === "warning") {
                 console.warn(`  🔄 Sub-agent ${task.id} may be stuck — injecting warning`);
                 fullHistory.push({
                     role: "user",
-                    content: "⚠️ You appear to be repeating the same action with the same arguments. This is not making progress. Try a COMPLETELY DIFFERENT approach or tool. If you have enough information, stop and provide your answer.",
+                    content:
+                        "⚠️ You appear to be repeating the same action with the same arguments. This is not making progress. Try a COMPLETELY DIFFERENT approach or tool. If you have enough information, stop and provide your answer.",
                 } as ChatCompletionMessageParam);
             }
         }
 
         // If we exhausted iterations, take the last content as output
-        const lastAssistant = [...fullHistory].reverse().find(m => m.role === "assistant");
+        const lastAssistant = [...fullHistory].reverse().find((m) => m.role === "assistant");
         const lastContent = typeof lastAssistant?.content === "string" ? lastAssistant.content : "";
 
         return {
