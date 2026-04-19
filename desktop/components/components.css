@@ -58,7 +58,7 @@
 .chip:hover { background: rgba(255,255,255,0.14); }
 .step-dots { display: flex; gap: 6px; }
 .step-dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,0.35); cursor: pointer; transition: background 200ms; }
-.step-dot.active { background: linear-gradient(135deg, #a78bfa, #f472b6); }
+.step-dot.active { background: linear-gradient(135deg, var(--orb-purple, #c471ed), var(--orb-pink, #ff758c)); }
 .step-dot.skipped { background: rgba(255,255,255,0.12); cursor: default; }
 .wizard-head { padding: 24px 24px 8px; display: flex; flex-direction: column; gap: 12px; }
 .wizard-head h1 { font-size: 24px; font-weight: 500; margin: 0; }
@@ -71,7 +71,7 @@
 .phase-done .phase-icon { color: #4ade80; }
 .phase-failed .phase-icon { color: #f87171; }
 .progress-wrap { height: 4px; background: rgba(255,255,255,0.08); border-radius: 2px; overflow: hidden; margin: 8px 0; }
-.progress-bar { height: 100%; width: 0%; background: linear-gradient(90deg, #a78bfa, #f472b6); transition: width 300ms; }
+.progress-bar { height: 100%; width: 0%; background: linear-gradient(90deg, var(--orb-purple, #c471ed), var(--orb-pink, #ff758c)); transition: width 300ms; }
 .hidden { display: none !important; }
 @keyframes sp-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .hub-try-this { margin-top: 24px; display: flex; flex-wrap: wrap; gap: 8px; transition: opacity 250ms; }
@@ -88,7 +88,7 @@
 }
 .prompt-pill:hover { background: rgba(255,255,255,0.15); }
 .hub-actions { margin: 24px 0; display: flex; gap: 12px; }
-.hub-actions .btn-primary { padding: 10px 20px; border-radius: 12px; border: none; background: linear-gradient(135deg, #a78bfa, #f472b6); color: white; font-weight: 600; font-size: 14px; cursor: pointer; }
+.hub-actions .btn-primary { padding: 10px 20px; border-radius: 12px; border: none; background: linear-gradient(135deg, var(--orb-purple, #c471ed), var(--orb-pink, #ff758c)); color: white; font-weight: 600; font-size: 14px; cursor: pointer; }
 .hub-actions .btn-primary:hover { filter: brightness(1.1); }
 .hub-actions .btn-ghost { padding: 10px 20px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.15); background: rgba(255,255,255,0.04); color: #e8eaed; font-size: 14px; cursor: pointer; }
 .hub-actions .btn-ghost:hover { background: rgba(255,255,255,0.08); }
@@ -112,9 +112,9 @@
     width: 72px;
     height: 72px;
     border-radius: 50%;
-    background: radial-gradient(circle at 30% 30%, #a855f7, #ec4899 70%);
+    background: radial-gradient(circle at 30% 30%, var(--orb-purple, #c471ed), var(--orb-pink, #ff758c) 70%);
     margin: 0 auto 16px;
-    box-shadow: 0 12px 48px rgba(168, 85, 247, 0.35);
+    box-shadow: 0 12px 48px rgba(196, 113, 237, 0.35);
 }
 .orb-avatar.breathing {
     animation: sp-breathe 3s ease-in-out infinite;
