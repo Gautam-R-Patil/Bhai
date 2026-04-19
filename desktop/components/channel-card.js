@@ -238,36 +238,62 @@
         if (!this._form) return;
         const qrBox = this._form.querySelector("[data-sp-qr]");
         if (!qrBox) return;
-        // Clear and show a generating message
         while (qrBox.firstChild) qrBox.removeChild(qrBox.firstChild);
         const generating = el("div", {}, "Generating pairing…");
         generating.style.color = "#666";
         qrBox.appendChild(generating);
 
-        if (window.atlas && typeof window.atlas.onWhatsAppQR === "function") {
-            window.atlas.onWhatsAppQR(function (qrString) {
-                // Clear, render fresh
-                while (qrBox.firstChild) qrBox.removeChild(qrBox.firstChild);
-                try {
-                    const QR = window.QRCode || (typeof require === "function" ? require("qrcode") : null);
-                    if (QR && typeof QR.toCanvas === "function") {
-                        const canvas = el("canvas");
-                        qrBox.appendChild(canvas);
-                        QR.toCanvas(canvas, qrString, { width: 220 });
-                    } else {
-                        const code = el("code", {}, qrString);
-                        code.style.fontSize = "10px";
-                        code.style.wordBreak = "break-all";
-                        qrBox.appendChild(code);
-                    }
-                } catch {
-                    const code = el("code", {}, qrString);
-                    code.style.fontSize = "10px";
-                    qrBox.appendChild(code);
+        const self = this;
+        function renderQr(qrString) {
+            while (qrBox.firstChild) qrBox.removeChild(qrBox.firstChild);
+            try {
+                const QR = window.QRCode || (typeof require === "function" ? require("qrcode") : null);
+                if (QR && typeof QR.toCanvas === "function") {
+                    const canvas = el("canvas");
+                    qrBox.appendChild(canvas);
+                    QR.toCanvas(canvas, qrString, { width: 220 });
+                    return;
                 }
+            } catch { /* fall through */ }
+            const code = el("code", {}, qrString);
+            code.style.fontSize = "10px";
+            code.style.wordBreak = "break-all";
+            qrBox.appendChild(code);
+        }
+        function renderConnected() {
+            while (qrBox.firstChild) qrBox.removeChild(qrBox.firstChild);
+            const ok = el("div", {}, "\u2713 WhatsApp paired. Ready.");
+            ok.style.color = "#10b981";
+            ok.style.fontWeight = "600";
+            ok.style.padding = "24px 0";
+            qrBox.appendChild(ok);
+            if (typeof self.props.onSaved === "function") self.props.onSaved("whatsapp");
+        }
+        function renderErr(msg) {
+            while (qrBox.firstChild) qrBox.removeChild(qrBox.firstChild);
+            const errEl = el("div", {}, "Pair failed: " + msg);
+            errEl.style.color = "#f87171";
+            qrBox.appendChild(errEl);
+        }
+
+        if (window.atlas && typeof window.atlas.onWhatsAppQR === "function") {
+            window.atlas.onWhatsAppQR(function (payload) {
+                if (payload === "connected") { renderConnected(); return; }
+                if (payload && typeof payload === "object" && payload.kind === "error") {
+                    renderErr(payload.message || "unknown"); return;
+                }
+                if (typeof payload === "string") renderQr(payload);
             });
         }
-        if (window.atlas && typeof window.atlas.waGenerateOTP === "function") {
+
+        // Start the wizard-scoped Baileys pair flow. Falls back to the old
+        // bot-relay path only if the new IPC isn't present.
+        if (window.atlas && typeof window.atlas.setupWaPairStart === "function") {
+            try {
+                const res = await window.atlas.setupWaPairStart();
+                if (res && res.ok === false) renderErr(res.error || "could not start");
+            } catch (e) { renderErr(e.message || String(e)); }
+        } else if (window.atlas && typeof window.atlas.waGenerateOTP === "function") {
             try { await window.atlas.waGenerateOTP(); } catch {}
         }
     };

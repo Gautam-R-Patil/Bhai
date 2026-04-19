@@ -18,6 +18,7 @@
         "protect:standalone": "node build/obfuscate.js ../dist ../dist-obfuscated && node build/compile-bytecode.js --in-place ../dist-obfuscated"
     },
     "dependencies": {
+        "@whiskeysockets/baileys": "^7.0.0-rc.9",
         "adm-zip": "^0.5.16",
         "better-sqlite3": "^12.6.2",
         "electron-store": "^8.2.0",

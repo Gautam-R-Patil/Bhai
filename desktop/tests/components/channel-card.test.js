@@ -94,6 +94,7 @@ describe("ChannelCard DOM", () => {
             setupSlackOAuthStart: () => { atlasCalls.slackStarts += 1; return Promise.resolve({ ok: true }); },
             onWhatsAppQR: (handler) => { atlasCalls.whatsAppHandlers.push(handler); },
             waGenerateOTP: () => Promise.resolve({}),
+            setupWaPairStart: async () => { atlasCalls.waPairStarts = (atlasCalls.waPairStarts || 0) + 1; return { ok: true }; },
         };
     });
     afterEach(() => { delete window.atlas; });
@@ -189,6 +190,14 @@ describe("ChannelCard DOM", () => {
         expect(btn.textContent).toBe("Generate QR");
         btn.click();
         expect(atlasCalls.whatsAppHandlers.length).toBe(1);
+    });
+
+    it("whatsapp: Generate QR also invokes setupWaPairStart", async () => {
+        const c = document.createElement("div"); document.body.appendChild(c);
+        new ChannelCard({ type: "whatsapp" }).mount(c);
+        c.querySelector("button.sp-btn").click();
+        await Promise.resolve(); await Promise.resolve();
+        expect(atlasCalls.waPairStarts).toBe(1);
     });
 
     it("discord: renders only a token field + Test/Save", () => {

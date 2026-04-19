@@ -3280,6 +3280,43 @@ ${body}`;
         return { code };
     });
 
+    // Setup: start a WhatsApp pair session from inside the wizard.
+    // Runs Baileys directly from main.js so the user can scan the QR BEFORE
+    // the bot has booted. Emits QR strings on the existing `whatsapp-qr`
+    // channel (which preload.js:152 bridges to window.atlas.onWhatsAppQR).
+    // Emits the literal string "connected" when pairing completes.
+    ipcMain.handle("setup:wa-pair-start", async () => {
+        try {
+            const { startPair, isPairing } = require(path.join(__dirname, "setup", "whatsapp-pair.js"));
+            if (isPairing()) return { ok: true, alreadyRunning: true };
+            const baileysFactory = require("@whiskeysockets/baileys");
+            const send = (payload) => {
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send("whatsapp-qr", payload);
+                }
+            };
+            await startPair({
+                dataDir: DATA_DIR,
+                baileysFactory: baileysFactory,
+                onQr: (qr) => send(qr),
+                onConnected: () => send("connected"),
+                onError: (msg) => send({ kind: "error", message: msg }),
+            });
+            return { ok: true };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    ipcMain.handle("setup:wa-pair-cancel", () => {
+        try {
+            const { stopPair } = require(path.join(__dirname, "setup", "whatsapp-pair.js"));
+            return stopPair();
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
     ipcMain.handle("wa:get-persona", () => {
         try {
             const personaPath = path.join(DATA_DIR, "whatsapp-persona.json");
