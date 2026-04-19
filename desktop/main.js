@@ -2053,6 +2053,21 @@ function registerIPC() {
         });
     });
 
+    // Setup: re-read just the macOS permission map (for 1s live polling from the
+    // Permissions step of the wizard and the Ready Hub permissions tile).
+    // Returns all-granted on non-darwin since the OS doesn't gate per-app.
+    ipcMain.handle("setup:poll-permissions", () => {
+        if (process.platform !== "darwin") {
+            return { accessibility: "granted", screen: "granted", microphone: "granted", location: "granted" };
+        }
+        try {
+            const { detectMacPermissions } = require("./detection/signals");
+            return detectMacPermissions(systemPreferences);
+        } catch {
+            return { accessibility: "unknown", screen: "unknown", microphone: "unknown", location: "unknown" };
+        }
+    });
+
 
     // App info
     ipcMain.handle("app:info", () => ({

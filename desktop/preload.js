@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld("atlas", {
     googleOAuth: () => ipcRenderer.invoke("setup:google-oauth"),
     isSetupComplete: () => ipcRenderer.invoke("setup:is-complete"),
     setupDetect: () => ipcRenderer.invoke("setup:detect"),
+    setupPollPermissions: () => ipcRenderer.invoke("setup:poll-permissions"),
     finishSetup: () => ipcRenderer.invoke("setup:finish"),
 
     // ── Events ────────────────────────────────
