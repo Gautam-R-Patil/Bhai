@@ -20,6 +20,7 @@ import { runMCTSPlanning } from "../planning/mcts-planner.js";
 import { shouldUseMoA, synthesizeWithMoA } from "./mixture.js";
 import { findTemplates, saveTemplate, formatTemplateHint } from "./decomposition-library.js";
 import { runMultiCriticDebate } from "./multi-critic.js";
+import { runCodeCriticIfCoder } from "./code-critic.js";
 import { verifyReasoning } from "../planning/logic-verifier.js";
 import { createHierarchicalPlan } from "../planning/hierarchical-planner.js";
 import { getMemoryInformedContext } from "../memory/memory-informed-planning.js";
@@ -197,6 +198,24 @@ export async function runSwarm(
         },
         meshResult.results,
     );
+
+    // ── Code-Aware Critic: deterministic compile/lint/test checks when plan includes coder steps ──
+    // Runs in parallel before the LLM multi-critic so cheap, objective signals fire first.
+    // Returns null (skip) when no coder steps exist or ATLAS_NO_CODE_CRITIC=true.
+    try {
+        const planRoles = plan.steps.map((s) => s.role);
+        const codeReflection = await runCodeCriticIfCoder(planRoles, userRequest);
+        if (codeReflection && codeReflection.key_issues.length > 0) {
+            console.log(`[SWARM] 🧪 Code critic: score ${codeReflection.overall_score}, ${codeReflection.key_issues.length} issues`);
+            if (codeReflection.should_retry && codeReflection.consensus_suggestions.length > 0) {
+                const codeFeedback = `Compile/test/lint checks flagged issues: ${codeReflection.key_issues.slice(0, 3).join("; ")}. ${codeReflection.consensus_suggestions.join(" ")}`;
+                synthesis = await synthesize(llm, userRequest, plan, meshResult.results, codeFeedback);
+                evaluationScore = Math.min(evaluationScore, codeReflection.overall_score);
+            }
+        }
+    } catch (ccErr) {
+        console.warn("[SWARM] Code critic failed (non-fatal):", (ccErr as Error).message);
+    }
 
     // ── Multi-Critic Debate: identify specific weaknesses if evaluation score is low ──
     if (evaluationScore < 60) {
