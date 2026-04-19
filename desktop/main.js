@@ -2092,6 +2092,36 @@ function registerIPC() {
         }
     });
 
+    // Setup: probe a hotkey combo by attempting to register with globalShortcut,
+    // then immediately unregister on success. Returns {ok:true} or {ok:false, conflict}.
+    ipcMain.handle("setup:test-hotkey", (_evt, combo) => {
+        if (typeof combo !== "string" || combo.length === 0) return { ok: false, conflict: "empty combo" };
+        try {
+            const registered = globalShortcut.register(combo, () => {});
+            if (!registered) return { ok: false, conflict: combo + " is already in use" };
+            globalShortcut.unregister(combo);
+            return { ok: true };
+        } catch (err) {
+            return { ok: false, conflict: err.message || String(err) };
+        }
+    });
+
+    // Setup: persist the new overlay hotkey to electron-store and re-bind globalShortcut.
+    // Reuses the existing overlayHotkey machinery (see line ~2196 for the runtime path).
+    ipcMain.handle("setup:save-hotkey", (_evt, combo) => {
+        if (typeof combo !== "string" || !combo) return { ok: false, error: "invalid combo" };
+        try {
+            store.set("overlayHotkey", combo);
+            try { globalShortcut.unregisterAll(); } catch {}
+            globalShortcut.register(combo, () => {
+                if (typeof toggleOverlay === "function") toggleOverlay();
+            });
+            return { ok: true };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
 
     // App info
     ipcMain.handle("app:info", () => ({
