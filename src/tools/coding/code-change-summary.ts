@@ -40,7 +40,7 @@ export const codeChangeSummaryTool: ToolDefinition = {
             description: `Read-only git summaries for local repositories. Never mutates anything.
 Operations:
 - recent_commits(n=10)     → last N commits, oneline format
-- hot_files(days=30)       → files touched most often in the window (requires 'uniq', 'sort')
+- hot_files(days=30)       → files touched most often in the window (top 50)
 - diff(base, target?)      → diff --stat + unified diff between two refs (default target: HEAD)
 - blame(file, line)        → git blame for a single line
 
