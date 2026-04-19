@@ -1528,9 +1528,13 @@ function registerIPC() {
     // Setup: save user profile
     ipcMain.handle("setup:save-profile", async (_, profile) => {
         try {
-            // Store profile to be seeded into memory.db after install
+            const { mergeProfile } = require(path.join(__dirname, "wizard", "profile-merge.js"));
             const profilePath = path.join(app.getPath("userData"), ".user-profile.json");
-            fs.writeFileSync(profilePath, JSON.stringify(profile, null, 2));
+            let existing = {};
+            try { existing = JSON.parse(fs.readFileSync(profilePath, "utf8")); }
+            catch { /* fresh profile or corrupt JSON — start over */ }
+            const merged = mergeProfile(existing, profile);
+            fs.writeFileSync(profilePath, JSON.stringify(merged, null, 2));
             return { success: true };
         } catch (err) {
             return { success: false, error: err.message };
