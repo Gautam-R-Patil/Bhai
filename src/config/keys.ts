@@ -2,12 +2,29 @@
 // Configuration — public endpoint URLs only.
 // ALL API keys are server-side (Convex env vars). No keys exist in client code.
 
+// ── Deployment URLs ───────────────────────────
+// Both deployments carry identical prompts + skills + code. The dev
+// deployment is the default during active development; prod is ready to
+// take over whenever we flip.
+//
+// Switching: set ATLAS_ENV=prod (or override CONVEX_URL directly).
+const CONVEX_URLS = {
+    dev: "https://zany-kudu-607.convex.cloud",
+    prod: "https://avid-oyster-465.convex.cloud",
+} as const;
+
+function defaultConvexUrl(): string {
+    const env = (process.env.ATLAS_ENV || "").toLowerCase();
+    if (env === "prod" || env === "production") return CONVEX_URLS.prod;
+    return CONVEX_URLS.dev;
+}
+
 /**
  * Get the Convex deployment URL for queries/mutations (not HTTP actions).
  * Used by store client for proxied query/mutation calls.
  */
 export function getConvexUrl(): string {
-    return process.env.CONVEX_URL || "https://zany-kudu-607.convex.cloud";
+    return process.env.CONVEX_URL || defaultConvexUrl();
 }
 
 /**
