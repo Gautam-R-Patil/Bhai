@@ -151,7 +151,26 @@
         const body = renderHubBody(state);
         container.appendChild(body);
         renderTiles(body.querySelector("#hub-tiles"), state);
-        return startLiveUpdates(body, state, atlasApi);
+
+        // Mount the "Try this" rotating strip inside #hub-try-this.
+        let tryHandle = { stop: function () {} };
+        if (typeof window !== "undefined" && window.TryThis && typeof window.TryThis.mount === "function") {
+            const tryHost = body.querySelector("#hub-try-this");
+            tryHandle = window.TryThis.mount(tryHost, state, {
+                onClick: function (text) {
+                    window.dispatchEvent(new CustomEvent("hub:try-prompt", { detail: { text: text } }));
+                },
+            });
+        }
+
+        const liveHandle = startLiveUpdates(body, state, atlasApi);
+        return {
+            stop: function () {
+                if (tryHandle && typeof tryHandle.stop === "function") tryHandle.stop();
+                if (liveHandle && typeof liveHandle.stop === "function") liveHandle.stop();
+            },
+            refreshNow: liveHandle.refreshNow,
+        };
     }
 
     const api = {

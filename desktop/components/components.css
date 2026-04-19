@@ -74,3 +74,16 @@
 .progress-bar { height: 100%; width: 0%; background: linear-gradient(90deg, #a78bfa, #f472b6); transition: width 300ms; }
 .hidden { display: none !important; }
 @keyframes sp-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.hub-try-this { margin-top: 24px; display: flex; flex-wrap: wrap; gap: 8px; transition: opacity 250ms; }
+.hub-try-this.fade-out { opacity: 0.3; }
+.prompt-pill {
+    padding: 6px 14px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.15);
+    background: rgba(255,255,255,0.08);
+    color: #e8eaed;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 150ms;
+}
+.prompt-pill:hover { background: rgba(255,255,255,0.15); }
