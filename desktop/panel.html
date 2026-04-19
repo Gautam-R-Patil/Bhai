@@ -87,6 +87,14 @@
                     </svg>
                     <span>Settings</span>
                 </button>
+                <button class="nav-item" data-tab="setup" onclick="switchTab('setup')">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M9 11l3 3L22 4"></path>
+                        <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+                    </svg>
+                    <span>Setup</span>
+                </button>
                 <button class="nav-item" data-tab="memory" onclick="switchTab('memory')">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                         stroke-linecap="round" stroke-linejoin="round">
@@ -1496,11 +1504,26 @@
                 </div>
             </div>
 
+            <!-- ═══════════════════════════════ -->
+            <!-- TAB: Setup (Ready Hub body)    -->
+            <!-- ═══════════════════════════════ -->
+            <div class="tab-content" id="tab-setup">
+                <div id="panel-hub-root"></div>
+            </div>
+
         </div>
     </div>
 
     <!-- Toast Notification -->
     <div class="toast" id="toast"></div>
+
+    <!-- Ready Hub body (shared with ready-hub.html) -->
+    <script src="components/status-tile.js"></script>
+    <script src="components/tile-model.js"></script>
+    <script src="components/diff-tiles.js"></script>
+    <script src="components/try-this.js"></script>
+    <script src="components/ready-hub-body.js"></script>
+    <script src="components/panel-setup-boot.js"></script>
 
     <script>
         // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
