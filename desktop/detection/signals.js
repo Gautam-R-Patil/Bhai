@@ -33,9 +33,9 @@ async function detectGoogleTokens(fs, tokenDir) {
         const entries = await fs.promises.readdir(tokenDir);
         const tokens = entries.filter((n) => n.endsWith(".json") && !n.startsWith("."));
         if (tokens.length === 0) return { connected: false };
-        // Filename convention: <email>.json
-        const email = tokens[0].replace(/\.json$/, "");
-        return { connected: true, email };
+        // Filename convention: <email>.json — only expose email if it actually looks like one.
+        const stem = tokens[0].replace(/\.json$/, "");
+        return /@/.test(stem) ? { connected: true, email: stem } : { connected: true };
     } catch {
         return { connected: false };
     }
@@ -44,6 +44,7 @@ async function detectGoogleTokens(fs, tokenDir) {
 function detectOtplessSession(prefs) {
     const acct = prefs && prefs.account;
     if (!acct || !acct.signedIn) return { signedIn: false };
+    // Falsy expiresAt (0, null, undefined) → treated as "no expiry stored", not "expired at epoch".
     if (acct.expiresAt && typeof acct.expiresAt === "number" && acct.expiresAt < Date.now()) {
         return { signedIn: false };
     }
@@ -119,15 +120,18 @@ function detectWorkspace(fs, workspacePath) {
 
 function detectHotkeyConflict(globalShortcut, combo) {
     const conflicts = [];
+    let registered = false;
     try {
-        const registered = globalShortcut.register(combo, () => {});
+        registered = globalShortcut.register(combo, () => {});
         if (!registered) {
             conflicts.push(`${combo} is already registered by another application`);
-        } else {
-            globalShortcut.unregister(combo);
         }
     } catch (err) {
         conflicts.push(`Hotkey probe failed for ${combo}: ${err.message || err}`);
+    } finally {
+        if (registered) {
+            try { globalShortcut.unregister(combo); } catch { /* best-effort cleanup */ }
+        }
     }
     return conflicts;
 }

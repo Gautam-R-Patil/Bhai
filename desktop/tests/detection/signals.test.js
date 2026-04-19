@@ -51,6 +51,14 @@ describe("detectGoogleTokens", () => {
         const result = await signals.detectGoogleTokens(fs, "/tmp/google");
         expect(result).toEqual({ connected: true, email: "user@example.com" });
     });
+    it("omits email when filename doesn't match the <email>.json convention", async () => {
+        const fs = {
+            existsSync: () => true,
+            promises: { readdir: async () => ["oauth.json"] },
+        };
+        const result = await signals.detectGoogleTokens(fs, "/tmp/google");
+        expect(result).toEqual({ connected: true });
+    });
 });
 
 describe("detectOtplessSession", () => {
@@ -168,6 +176,30 @@ describe("detectHotkeyConflict", () => {
         const r = signals.detectHotkeyConflict(gs, "Alt+Space");
         expect(r.length).toBeGreaterThan(0);
         expect(r[0]).toMatch(/Alt\+Space/);
+    });
+    it("still cleans up (unregisters) after a successful registration — leak-free", () => {
+        let unregisterCalls = 0;
+        const gs = {
+            register: () => true,
+            unregister: () => { unregisterCalls += 1; },
+            isRegistered: () => false,
+        };
+        const r = signals.detectHotkeyConflict(gs, "Alt+Space");
+        expect(r).toEqual([]);
+        expect(unregisterCalls).toBe(1);
+    });
+    it("still cleans up (unregisters) even if register throws mid-probe", () => {
+        // Ensure the finally block doesn't fire a second unregister when register threw.
+        let unregisterCalls = 0;
+        const gs = {
+            register: () => { throw new Error("boom"); },
+            unregister: () => { unregisterCalls += 1; },
+            isRegistered: () => false,
+        };
+        const r = signals.detectHotkeyConflict(gs, "Alt+Space");
+        expect(r.length).toBe(1);
+        expect(r[0]).toMatch(/boom/);
+        expect(unregisterCalls).toBe(0);
     });
 });
 
