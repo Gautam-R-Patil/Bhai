@@ -144,4 +144,20 @@ describe("runDetection", () => {
         expect(state.voice.name).toBe("alloy");
         expect(state.wakeWord.enabled).toBe(true);
     });
+
+    it("voice and wakeWord are independent copies — mutating state.voice does not affect state.personalize.voice", async () => {
+        const state = await runDetection(fakeDeps());
+        expect(state.voice).toEqual(state.personalize.voice);
+        expect(state.voice).not.toBe(state.personalize.voice);
+        state.voice.name = "mutated";
+        expect(state.personalize.voice.name).toBe("Aoede");
+    });
+
+    it("tolerates missing paths in deps", async () => {
+        const deps = fakeDeps();
+        delete deps.paths;
+        const state = await runDetection(deps);
+        expect(state).toBeDefined();
+        expect(state.platform).toBe("darwin");
+    });
 });

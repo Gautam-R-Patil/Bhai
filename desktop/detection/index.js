@@ -31,11 +31,12 @@ function safeSync(fn, fallback) {
 }
 
 async function runDetection(deps) {
+    const safeDeps = deps || {};
     const {
         proc, fs, os, systemPreferences, nativeTheme, globalShortcut,
-        prefs, envObj, execFn, paths, currentVersion, hotkey,
-    } = deps;
-    const timeoutMs = deps.signalTimeoutMs || DEFAULT_SIGNAL_TIMEOUT_MS;
+        prefs, envObj, execFn, paths = {}, currentVersion, hotkey,
+    } = safeDeps;
+    const timeoutMs = safeDeps.signalTimeoutMs || DEFAULT_SIGNAL_TIMEOUT_MS;
 
     const platform = safeSync(() => signals.detectPlatform(proc), "linux");
 
@@ -104,8 +105,8 @@ async function runDetection(deps) {
         account,
         profile: { name: undefined, tone: undefined },
         personalize,
-        voice: personalize.voice,
-        wakeWord: personalize.wakeWord,
+        voice: { ...personalize.voice },
+        wakeWord: { ...personalize.wakeWord },
         permissions,
         installed: {
             node: nodeInstalled,
