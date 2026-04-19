@@ -96,6 +96,51 @@ export class FilterComplexBuilder {
         return out;
     }
 
+    /**
+     * Auto-crop filter: attaches FFmpeg's sendcmd to change crop rect over time.
+     */
+    addAutoCrop(baseLabel: string, sendcmdPath: string, initialCrop: string): string {
+        const out = this.nextLabel();
+        const escapedPath = sendcmdPath.replace(/\\/g, "/").replace(/:/g, "\\:");
+        this.fragments.push(`${baseLabel}sendcmd=f='${escapedPath}',crop=${initialCrop}${out}`);
+        return out;
+    }
+
+    /**
+     * Composite foreground over background using a separate alpha matte.
+     */
+    addAlphaMerge(fgLabel: string, alphaLabel: string, bgLabel: string): string {
+        const merged = this.nextLabel();
+        const out = this.nextLabel();
+        this.fragments.push(`${fgLabel}${alphaLabel}alphamerge${merged}`);
+        this.fragments.push(`${bgLabel}${merged}overlay${out}`);
+        return out;
+    }
+
+    /**
+     * Apply a color grading preset: "cool" | "mono" | "vintage" | "warm".
+     */
+    addColorGrade(baseLabel: string, preset: "cool" | "mono" | "vintage" | "warm"): string {
+        const out = this.nextLabel();
+        let filter: string;
+        switch (preset) {
+            case "cool":
+                filter = "colortemperature=temperature=7500,eq=saturation=0.95";
+                break;
+            case "mono":
+                filter = "hue=s=0";
+                break;
+            case "vintage":
+                filter = "curves=vintage,eq=saturation=0.7";
+                break;
+            case "warm":
+                filter = "colortemperature=temperature=5500,eq=saturation=1.1:gamma=1.05";
+                break;
+        }
+        this.fragments.push(`${baseLabel}${filter}${out}`);
+        return out;
+    }
+
     addAudioMix(audioLabels: string[], opts: AudioMixOpts): string {
         const out = this.nextLabel();
         const n = audioLabels.length;

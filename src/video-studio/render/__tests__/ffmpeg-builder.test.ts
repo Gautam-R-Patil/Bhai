@@ -196,3 +196,97 @@ describe("FilterComplexBuilder — build()", () => {
         expect(b.build().filterGraph).toBe("");
     });
 });
+
+describe("FilterComplexBuilder — addAutoCrop", () => {
+    it("produces sendcmd=f='<path>',crop=<initial> fragment", () => {
+        const b = new FilterComplexBuilder();
+        const base = b.addTrim(0, 0, 5);
+        b.addAutoCrop(base, "/tmp/sendcmd.txt", "607:1080:656:0");
+        const graph = b.build().filterGraph;
+        expect(graph).toContain("sendcmd=f=");
+        expect(graph).toContain("crop=607:1080:656:0");
+    });
+
+    it("backslash path separators are converted to forward slashes", () => {
+        const b = new FilterComplexBuilder();
+        const base = b.addTrim(0, 0, 5);
+        b.addAutoCrop(base, "C:\\renders\\sendcmd.txt", "607:1080:656:0");
+        const graph = b.build().filterGraph;
+        expect(graph).not.toContain("\\renders\\");
+        expect(graph).toContain("/renders/sendcmd.txt");
+    });
+
+    it("colons in path escaped for FFmpeg filter syntax", () => {
+        const b = new FilterComplexBuilder();
+        const base = b.addTrim(0, 0, 5);
+        b.addAutoCrop(base, "C:/renders/sendcmd.txt", "607:1080:656:0");
+        const graph = b.build().filterGraph;
+        expect(graph).toContain("C\\:");
+    });
+
+    it("returns a label that chains into next filter", () => {
+        const b = new FilterComplexBuilder();
+        const base = b.addTrim(0, 0, 5);
+        const cropOut = b.addAutoCrop(base, "/tmp/cmd.txt", "607:1080:0:0");
+        b.addDrawtext(cropOut, "Test", { fontsize: 24 });
+        expect(b.build().filterGraph).toContain(cropOut);
+    });
+
+    it("initialCrop string included verbatim", () => {
+        const b = new FilterComplexBuilder();
+        const base = b.addTrim(0, 0, 5);
+        b.addAutoCrop(base, "/tmp/sc.txt", "999:888:11:22");
+        expect(b.build().filterGraph).toContain("crop=999:888:11:22");
+    });
+});
+
+describe("FilterComplexBuilder — addAlphaMerge", () => {
+    it("produces a 2-fragment chain: alphamerge then overlay", () => {
+        const b = new FilterComplexBuilder();
+        const fg = b.addTrim(0, 0, 5);
+        b.addAlphaMerge(fg, "[1:v]", "[2:v]");
+        const graph = b.build().filterGraph;
+        const parts = graph.split(";");
+        expect(parts).toHaveLength(3);
+        expect(parts[1]).toContain("alphamerge");
+        expect(parts[2]).toContain("overlay");
+    });
+
+    it("returns the final overlay output label", () => {
+        const b = new FilterComplexBuilder();
+        const fg = b.addTrim(0, 0, 5);
+        const out = b.addAlphaMerge(fg, "[1:v]", "[2:v]");
+        expect(out).toMatch(/^\[l\d+\]$/);
+        expect(b.build().filterGraph).toContain(out);
+    });
+});
+
+describe("FilterComplexBuilder — addColorGrade", () => {
+    it("warm preset includes colortemperature=temperature=5500", () => {
+        const b = new FilterComplexBuilder();
+        const base = b.addTrim(0, 0, 5);
+        b.addColorGrade(base, "warm");
+        expect(b.build().filterGraph).toContain("colortemperature=temperature=5500");
+    });
+
+    it("cool preset includes colortemperature=temperature=7500", () => {
+        const b = new FilterComplexBuilder();
+        const base = b.addTrim(0, 0, 5);
+        b.addColorGrade(base, "cool");
+        expect(b.build().filterGraph).toContain("colortemperature=temperature=7500");
+    });
+
+    it("vintage preset includes curves=vintage", () => {
+        const b = new FilterComplexBuilder();
+        const base = b.addTrim(0, 0, 5);
+        b.addColorGrade(base, "vintage");
+        expect(b.build().filterGraph).toContain("curves=vintage");
+    });
+
+    it("mono preset includes hue=s=0", () => {
+        const b = new FilterComplexBuilder();
+        const base = b.addTrim(0, 0, 5);
+        b.addColorGrade(base, "mono");
+        expect(b.build().filterGraph).toContain("hue=s=0");
+    });
+});

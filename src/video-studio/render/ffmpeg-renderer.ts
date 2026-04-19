@@ -5,6 +5,8 @@
 import { spawn } from "node:child_process";
 import { createWriteStream, promises as fs } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import type { CropFrame } from "../effects/auto-crop.js";
+import { parseEffect } from "../plan/effects.js";
 import type { EditPlan, Transition } from "../plan/schema.js";
 import { checkDurations, checkSourcesExist, checkTransitionBetweenExists } from "../plan/validator.js";
 import { ffmpegPath } from "../util/ffmpeg-bin.js";
@@ -33,6 +35,7 @@ export class RenderError extends Error {
 
 export interface RenderOpts {
     onProgress?: (percent: number) => void;
+    confirm?: (info: { name: string; sizeBytes: number }) => Promise<boolean>;
 }
 
 export interface RenderResult {
@@ -49,6 +52,15 @@ export function classifyRenderError(stderr: string): RenderErrorCategory {
     if (INVALID_GRAPH.some((p) => p.test(stderr))) return RenderErrorCategory.InvalidFilterGraph;
     if (SOURCE_UNREADABLE.some((p) => p.test(stderr))) return RenderErrorCategory.SourceUnreadable;
     return RenderErrorCategory.Unknown;
+}
+
+/**
+ * Converts CropFrame[] into FFmpeg sendcmd script content.
+ * Format: "<t> crop w <w>, crop h <h>, crop x <x>, crop y <y>;"
+ */
+export function buildSendcmdScript(cropFrames: CropFrame[]): string {
+    if (cropFrames.length === 0) return "";
+    return cropFrames.map((f) => `${f.t} crop w ${f.w}, crop h ${f.h}, crop x ${f.x}, crop y ${f.y};`).join("\n");
 }
 
 function absPath(p: string, root: string): string {
@@ -126,6 +138,164 @@ function compilePlan(plan: EditPlan, projectRoot: string): Compiled {
     if (audioTracks.length > 0) {
         for (const at of audioTracks) inputs.push(absPath(at.source, projectRoot));
         const audioLabels = audioTracks.map((_, i) => `[${plan.sources.length + i}:a]`);
+        finalAudioLabel = builder.addAudioMix(audioLabels, { normalize: false });
+        builder.setOutputAudioLabel(finalAudioLabel);
+    }
+
+    const { filterGraph, outputLabels } = builder.build();
+
+    return {
+        inputs,
+        filterGraph,
+        outputVideoLabel: outputLabels.video,
+        outputAudioLabel: outputLabels.audio,
+        outputPath: absPath(plan.output.path, projectRoot),
+    };
+}
+
+/**
+ * Async variant of compilePlan.
+ * Handles clip.crop === "auto_face" by running face detection + EMA smoothing
+ * + writing a sendcmd script. Other clips pass through unchanged.
+ *
+ * Also dispatches per-clip `effects` strings via parseEffect:
+ *   - "bg_replace:<path>" → generateAlphaMatte + addAlphaMerge
+ *   - "color_grade:<preset>" → addColorGrade
+ *   - "stabilize" / "stylize:..." → warn + skip (Phase 2 not implemented)
+ */
+export async function compilePlanAsync(
+    plan: EditPlan,
+    projectRoot: string,
+    opts: { confirm?: (info: { name: string; sizeBytes: number }) => Promise<boolean> } = {},
+): Promise<Compiled> {
+    const builder = new FilterComplexBuilder();
+    const sourceInfo = new Map(plan.sources.map((s, i) => [s.id, { idx: i, path: absPath(s.path, projectRoot) }]));
+    const inputs = plan.sources.map((s) => absPath(s.path, projectRoot));
+    const ts = Date.now();
+
+    const rendersDir = resolve(projectRoot, "renders");
+    await fs.mkdir(rendersDir, { recursive: true });
+
+    const videoLabels = new Map<string, string>();
+
+    for (const clip of plan.tracks.video) {
+        const info = sourceInfo.get(clip.source);
+        if (!info) continue;
+
+        const trimmedLabel = builder.addTrim(info.idx, clip.in, clip.out);
+
+        let currentLabel: string;
+
+        if (clip.crop === "auto_face") {
+            const { detectFaces } = await import("../analyze/face-track.js");
+            const { computeAutoCrop } = await import("../effects/auto-crop.js");
+            const { probeVideoMetadata } = await import("../analyze/timeline-builder.js");
+
+            const meta = await probeVideoMetadata(info.path);
+            const faceTrack = await detectFaces(info.path, projectRoot);
+            const cropFrames = computeAutoCrop(faceTrack, {
+                targetAspect: plan.output.aspect as "1:1" | "4:5" | "9:16",
+                inputWidth: meta.width,
+                inputHeight: meta.height,
+            });
+
+            const sendcmdContent = buildSendcmdScript(cropFrames);
+            const sendcmdPath = join(rendersDir, `sendcmd-${ts}-${clip.id}.txt`);
+            await fs.writeFile(sendcmdPath, sendcmdContent, "utf-8");
+
+            const first = cropFrames[0];
+            const initialCrop = first
+                ? `${first.w}:${first.h}:${first.x}:${first.y}`
+                : `${meta.width}:${meta.height}:0:0`;
+
+            currentLabel = builder.addAutoCrop(trimmedLabel, sendcmdPath, initialCrop);
+        } else {
+            currentLabel = trimmedLabel;
+        }
+
+        for (const raw of clip.effects ?? []) {
+            const directive = parseEffect(raw);
+            if (!directive) {
+                console.warn(`[video-studio] Unrecognized effect '${raw}', skipping`);
+                continue;
+            }
+
+            if (directive.kind === "bg_replace") {
+                const { generateAlphaMatte } = await import("../effects/bg-remove.js");
+                const mattePath = await generateAlphaMatte(info.path, projectRoot, { confirm: opts.confirm });
+                const bgPath = absPath(directive.asset, projectRoot);
+
+                const matteInputIdx = inputs.length;
+                inputs.push(mattePath);
+                const bgInputIdx = inputs.length;
+                inputs.push(bgPath);
+
+                currentLabel = builder.addAlphaMerge(currentLabel, `[${matteInputIdx}:v]`, `[${bgInputIdx}:v]`);
+            } else if (directive.kind === "color_grade") {
+                const preset = directive.preset as "cool" | "mono" | "vintage" | "warm";
+                if (preset !== "cool" && preset !== "mono" && preset !== "vintage" && preset !== "warm") {
+                    console.warn(`[video-studio] Unknown color_grade preset '${directive.preset}', skipping`);
+                    continue;
+                }
+                currentLabel = builder.addColorGrade(currentLabel, preset);
+            } else if (directive.kind === "stabilize") {
+                console.warn("[video-studio] stabilize effect is not yet implemented in Phase 2, skipping");
+            } else if (directive.kind === "stylize") {
+                console.warn("[video-studio] stylize effect is not yet implemented in Phase 2, skipping");
+            }
+        }
+
+        videoLabels.set(clip.id, currentLabel);
+    }
+
+    const transitionMap = new Map((plan.transitions ?? []).map((tx) => [`${tx.between[0]}_${tx.between[1]}`, tx]));
+    const clipIds = plan.tracks.video.map((v) => v.id);
+    const firstLabel = videoLabels.get(clipIds[0]);
+    if (!firstLabel) {
+        throw new RenderError(
+            "compilePlanAsync: no video labels produced from plan",
+            RenderErrorCategory.InvalidFilterGraph,
+            "",
+            [],
+        );
+    }
+    let finalVideoLabel: string = firstLabel;
+
+    for (let i = 1; i < clipIds.length; i++) {
+        const prevId = clipIds[i - 1];
+        const currId = clipIds[i];
+        const tx: Transition | undefined = transitionMap.get(`${prevId}_${currId}`);
+        const currLabel = videoLabels.get(currId);
+        if (!currLabel) continue;
+        if (tx?.type === "xfade" && tx.duration !== undefined) {
+            const prevClip = plan.tracks.video.find((v) => v.id === prevId);
+            const prevLen = prevClip ? prevClip.out - prevClip.in : 0;
+            const offset = Math.max(0, prevLen - tx.duration);
+            finalVideoLabel = builder.addXfade(finalVideoLabel, currLabel, tx.kind ?? "fade", tx.duration, offset);
+        } else {
+            finalVideoLabel = builder.addConcat([finalVideoLabel, currLabel]);
+        }
+    }
+
+    for (const overlay of plan.tracks.overlays ?? []) {
+        if (overlay.type === "text") {
+            finalVideoLabel = builder.addDrawtext(finalVideoLabel, overlay.content, {
+                fontsize: overlay.font_size,
+                fontcolor: overlay.font_color ?? "white",
+                x: overlay.x,
+                y: overlay.y,
+                enable: `between(t,${overlay.from},${overlay.to})`,
+            });
+        }
+    }
+
+    builder.setOutputVideoLabel(finalVideoLabel);
+
+    let finalAudioLabel = "";
+    const audioTracks = plan.tracks.audio ?? [];
+    if (audioTracks.length > 0) {
+        for (const at of audioTracks) inputs.push(absPath(at.source, projectRoot));
+        const audioLabels = audioTracks.map((_, idx) => `[${plan.sources.length + idx}:a]`);
         finalAudioLabel = builder.addAudioMix(audioLabels, { normalize: false });
         builder.setOutputAudioLabel(finalAudioLabel);
     }
@@ -314,7 +484,12 @@ export async function renderPlan(plan: EditPlan, projectRoot: string, opts: Rend
 
     const totalDuration = plan.tracks.video.reduce((s, clip) => s + (clip.out - clip.in), 0);
 
-    const compiled = compilePlan(plan, projectRoot);
+    const hasAutoCrop = plan.tracks.video.some((v) => v.crop === "auto_face");
+    const hasEffects = plan.tracks.video.some((v) => (v.effects ?? []).length > 0);
+    const compiled =
+        hasAutoCrop || hasEffects
+            ? await compilePlanAsync(plan, projectRoot, { confirm: opts.confirm })
+            : compilePlan(plan, projectRoot);
     await fs.mkdir(dirname(compiled.outputPath), { recursive: true });
     const args = buildArgs(compiled, plan, progressPath);
 

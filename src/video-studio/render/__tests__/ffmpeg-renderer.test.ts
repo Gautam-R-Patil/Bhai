@@ -5,9 +5,20 @@
 import { existsSync, promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import type { CropFrame } from "../../effects/auto-crop.js";
 import type { EditPlan } from "../../plan/schema.js";
-import { classifyRenderError, RenderErrorCategory, renderPlan } from "../ffmpeg-renderer.js";
+import {
+    buildSendcmdScript,
+    classifyRenderError,
+    compilePlanAsync,
+    RenderErrorCategory,
+    renderPlan,
+} from "../ffmpeg-renderer.js";
+
+vi.mock("../../effects/bg-remove.js", () => ({
+    generateAlphaMatte: vi.fn(async () => "/fake/matte.mov"),
+}));
 
 const FIXTURE = resolve("src/video-studio/__fixtures__/1s.mp4");
 const TEST_ROOT = join(tmpdir(), `atlas-renderer-test-${process.pid}`);
@@ -117,4 +128,77 @@ describe("renderPlan — integration happy path", () => {
             expect(v).toBeLessThanOrEqual(100);
         }
     }, 30_000);
+});
+
+describe("buildSendcmdScript", () => {
+    it("produces one sendcmd line per CropFrame", () => {
+        const frames: CropFrame[] = [
+            { t: 0.0, x: 420, y: 0, w: 607, h: 1080 },
+            { t: 0.033, x: 422, y: 0, w: 607, h: 1080 },
+        ];
+        const script = buildSendcmdScript(frames);
+        const lines = script.trim().split("\n");
+        expect(lines).toHaveLength(2);
+        expect(lines[0]).toMatch(/^0 crop w 607/);
+        expect(lines[0]).toContain("crop h 1080");
+        expect(lines[0]).toContain("crop x 420");
+        expect(lines[0]).toContain("crop y 0");
+        expect(lines[1]).toMatch(/^0\.033/);
+    });
+
+    it("each line ends with a semicolon", () => {
+        const frames: CropFrame[] = [{ t: 0.0, x: 0, y: 0, w: 607, h: 1080 }];
+        expect(buildSendcmdScript(frames).trim()).toMatch(/;$/);
+    });
+
+    it("returns empty string for empty input", () => {
+        expect(buildSendcmdScript([])).toBe("");
+    });
+});
+
+describe("compilePlanAsync — effects dispatch", () => {
+    it("dispatches color_grade:warm to addColorGrade", async () => {
+        const plan = makePlan({
+            tracks: {
+                video: [{ id: "v1", source: "s1", in: 0, out: 1, effects: ["color_grade:warm"] }],
+                audio: [],
+                overlays: [],
+            },
+        });
+        const compiled = await compilePlanAsync(plan, TEST_ROOT);
+        expect(compiled.filterGraph).toContain("colortemperature=temperature=5500");
+    });
+
+    it("dispatches bg_replace to addAlphaMerge and extends inputs", async () => {
+        const bgPath = join(TEST_ROOT, "bg.jpg");
+        await fs.writeFile(bgPath, "fake-jpg-bytes");
+        const plan = makePlan({
+            tracks: {
+                video: [{ id: "v1", source: "s1", in: 0, out: 1, effects: [`bg_replace:${bgPath}`] }],
+                audio: [],
+                overlays: [],
+            },
+        });
+        const compiled = await compilePlanAsync(plan, TEST_ROOT);
+        expect(compiled.inputs).toContain("/fake/matte.mov");
+        expect(compiled.inputs).toContain(bgPath);
+        expect(compiled.filterGraph).toContain("alphamerge");
+        expect(compiled.filterGraph).toContain("overlay");
+    });
+
+    it("warns and skips unknown effect kinds without throwing", async () => {
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const plan = makePlan({
+            tracks: {
+                video: [{ id: "v1", source: "s1", in: 0, out: 1, effects: ["sharpen:2x"] }],
+                audio: [],
+                overlays: [],
+            },
+        });
+        const compiled = await compilePlanAsync(plan, TEST_ROOT);
+        expect(warnSpy).toHaveBeenCalled();
+        expect(compiled.filterGraph).not.toContain("alphamerge");
+        expect(compiled.filterGraph).not.toContain("colortemperature");
+        warnSpy.mockRestore();
+    });
 });
