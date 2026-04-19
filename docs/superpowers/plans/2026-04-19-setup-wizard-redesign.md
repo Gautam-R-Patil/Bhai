@@ -4430,6 +4430,51 @@ Add matching vitest tests under `desktop/tests/detection/signals.test.js`.
 - `client_secret` ships in the bundled encrypted env (same mechanism as Google credentials) — not a user-facing field.
 - Manual checklist: install to a real Slack workspace, redirect back, verify file written, Channels tile goes green.
 
+### E3d — Wizard → Agent identity seeding (USER-FLAGGED GAP)
+
+**The problem:** the current wizard writes collected user data (name, tone, age, gender) to `userData/.user-profile.json` on disk, but the agent's identity system reads from the `user_profiles` SQLite table in `data/memories.db` (see `src/memory/identity.ts:70`). Nothing bridges these today — so the agent boots, calls `getIdentityProfile()`, sees a default empty profile, and asks the user their name again on first chat. This defeats the whole wizard.
+
+Fix this in two places:
+
+**E3d-1 — Seed on bot boot (runs first):**
+
+Add a new module `src/setup/wizard-seed.ts` that runs once during `src/index.ts` boot, right after `initIdentityDB(db)` and `initTraits(db)` are called. Responsibilities:
+
+- Look for `${ATLAS_DATA_DIR}/.user-profile.json` OR `${userData}/.user-profile.json` (main.js writes it to `userData`; the bot runs with `ATLAS_DATA_DIR` set to the same path via `setup:install`, so check both).
+- If present and not yet seeded (no sibling `.user-profile.seeded.json` marker):
+  1. `updateIdentityProfile({ name: profile.name, preferences: { communication_style: profile.tone } }, DEFAULT_USER_ID)` — pushes into SQLite so `getIdentityProfileSnippet()` returns it on the very next agent call.
+  2. Rename the file to `.user-profile.seeded.json` to avoid re-seeding every boot.
+- If file is missing, no-op (wizard wasn't run, or user is already seeded).
+
+TDD: unit-test `seedProfileIfPresent(fs, dataDir, idStore)` with a mocked `updateIdentityProfile` spy; cover (a) file present + not yet seeded → writes + renames, (b) file absent → no-op, (c) already-seeded marker exists → no-op, (d) JSON parse error → warn + skip.
+
+**E3d-2 — Same seeding also fires during the wizard's install step (runs second, catches re-configurations):**
+
+When `setup:install` completes successfully in `desktop/main.js`, after writing `SETUP_FLAG`, also spawn a one-shot `node -e` that requires the bot's seed module and runs it against the same `ATLAS_DATA_DIR`. This way, a user who re-runs setup to change their name sees the change reflected without a full bot restart.
+
+**Canonical mapping (wizard field → runtime destination):**
+
+| Wizard field | Persisted by | Agent reads from |
+|---|---|---|
+| `name` | `setup:save-profile` → `.user-profile.json` | `identity.ts` SQLite `user_profiles.profile_json.name` (via seed) |
+| `tone` | same | `identity.ts` `preferences.communication_style` (via seed) |
+| `workspace` | `setup:install` → `.env.enc` `ATLAS_WORKSPACE=...` | `process.env.ATLAS_WORKSPACE` at bot boot |
+| `hotkey` | `setup:save-personalize` → `electron-store` `personalize.hotkey` | Read on every `app.whenReady()` in `main.js` to register `globalShortcut` |
+| `theme` | same → `personalize.theme` | Renderer picks up on load via `window.atlas.getPrefs()` |
+| `voice.backend` + `voice.name` | same → `personalize.voice` | `src/voice/live/*` reads `ATLAS_LIVE_VOICE_NAME` + `ATLAS_LIVE_VOICE_BACKEND` envs; setup:install writes them into `.env.enc` |
+| `wakeWord.enabled` + `.phrase` | same → `personalize.wakeWord` | `src/voice/wake-word.ts` reads `ATLAS_WAKE_WORD_ENABLED` + `ATLAS_WAKE_WORD_PHRASE` envs |
+| `account.email` + `account.plan` | OTPless popup → `electron-store` `account.*` | Server-side (Convex); wizard display-only |
+| `google.email` (if connected) | google-oauth → `data/google-tokens/<email>.json` | `src/google/*` reads the token files |
+| Each channel creds (Telegram/Discord/Slack/WhatsApp/Matrix/Email) | `setup:save-channel` → `.env.enc` | Bot reads `process.env.*` on boot |
+
+Touch this in these tasks:
+- **C5** (profile step): after `saveProfile`, the bot is usually not running — just the file-writing path works. Manual checklist: restart bot and confirm `getIdentityProfile()` returns the new name.
+- **C6** (personalize step): the voice/wake-word backend names must be mapped into `.env.enc` within `setup:save-personalize`, not just into electron-store. See mapping table above — every `personalize.*` key has a matching `ATLAS_*` env var the bot reads on boot.
+- **C10** (install rewire): after `SETUP_FLAG` is written, fire the one-shot seed runner above.
+- **Phase D10** (migration): v1 installs might have `age`/`gender` in `.user-profile.json`. The migration must merge those into `identity.ts` `extra` field so nothing is lost.
+
+**Why this matters:** without this, the wizard feels decorative — the user's answers land in files the agent never reads. With this, the first chat is: agent greets by name, knows the tone preference, and doesn't re-ask anything.
+
 ### E4 — Known deferrals (acknowledged; not blocking)
 
 Document these openly so consumers don't think they're bugs:
