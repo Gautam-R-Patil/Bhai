@@ -13,7 +13,7 @@ try {
     // bytenode not available - running in dev mode
 }
 
-const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, Tray, Menu, nativeImage, globalShortcut, screen, systemPreferences } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, Tray, Menu, nativeImage, globalShortcut, screen, systemPreferences, nativeTheme } = require("electron");
 const { spawn, execFile } = require("child_process");
 const path = require("path");
 const fs = require("fs");
@@ -72,6 +72,22 @@ const ENV_PATH = IS_DEV
 const SETUP_FLAG = path.join(app.getPath("userData"), ".setup-complete");
 const LOGS_DIR = path.join(app.getPath("userData"), "logs");
 const LOG_RETENTION_DAYS = 3; // Keep logs for 3 days
+
+// ── v1 → v2 Setup Migration (D10) ─────────────
+// Runs once at boot before the wizard-gate so v1 installs are tagged + seeded.
+async function runV2Migration() {
+    try {
+        const { runMigrationIfNeeded } = require(path.join(__dirname, "migration", "v2-setup.js"));
+        await runMigrationIfNeeded({
+            userDataDir: app.getPath("userData"),
+            setupFlagPath: SETUP_FLAG,
+            loadEnvDecrypted: loadEnvDecrypted,
+            log: (m) => console.log("[migrate v2]", m),
+        });
+    } catch (err) {
+        console.warn("[migrate v2] failed, continuing with boot:", err.message || err);
+    }
+}
 
 // ── Overlay Window Constants ─────────────────
 const OVERLAY_WIDTH = 340;
@@ -394,6 +410,133 @@ function saveEnvEncrypted(envContent) {
         // Dev mode: write plain text to .env
         fs.writeFileSync(ENV_PATH, envContent, "utf-8");
     }
+}
+
+/**
+ * Merge key/value pairs into the encrypted .env file. Reads the existing env
+ * (if any), updates or inserts each key, and writes back encrypted. Creates
+ * the file if it didn't exist.
+ */
+function saveEnvKVs(kvs) {
+    if (!kvs || typeof kvs !== "object") return;
+    const existing = loadEnvDecrypted() || "";
+    const lines = existing.split("\n");
+    const seen = new Set();
+    const updated = lines.map((line) => {
+        const m = line.match(/^\s*([A-Z0-9_]+)\s*=/);
+        if (!m) return line;
+        const key = m[1];
+        if (Object.prototype.hasOwnProperty.call(kvs, key)) {
+            seen.add(key);
+            return `${key}=${String(kvs[key])}`;
+        }
+        return line;
+    });
+    for (const k of Object.keys(kvs)) {
+        if (!seen.has(k)) updated.push(`${k}=${String(kvs[k])}`);
+    }
+    // Drop trailing empty lines before collapsing (keep one).
+    while (updated.length > 1 && updated[updated.length - 1] === "") updated.pop();
+    saveEnvEncrypted(updated.join("\n") + "\n");
+}
+
+// ─── Detection + Install Helpers (C10) ──────────────
+/**
+ * Build the dependency bundle passed to `runDetection`. Extracted so the
+ * adaptive wizard's detect IPC AND the install/retry/resume handlers all
+ * build state the same way.
+ */
+function buildDetectionDeps() {
+    const osmod = require("os");
+    const { promisify } = require("util");
+    const execFn = promisify(require("child_process").exec);
+
+    const prefs = (() => {
+        try {
+            return {
+                account: store.get("account") || undefined,
+                personalize: store.get("personalize") || undefined,
+            };
+        } catch { return {}; }
+    })();
+
+    const envObj = (() => {
+        try {
+            const raw = loadEnvDecrypted();
+            if (!raw) return {};
+            const out = {};
+            for (const line of raw.split("\n")) {
+                const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/);
+                if (m) out[m[1]] = m[2];
+            }
+            return out;
+        } catch { return {}; }
+    })();
+
+    const paths = {
+        setupFlag: SETUP_FLAG,
+        envFile: path.join(app.getPath("userData"), ".env.enc"),
+        googleTokens: path.join(app.getPath("userData"), "google-tokens"),
+        botDir: path.join(process.resourcesPath || app.getAppPath(), "bot"),
+        homeDir: app.getPath("home"),
+        workspace: path.join(app.getPath("desktop"), "A.T.L.A.S Files"),
+        storedVersion: path.join(app.getPath("userData"), "version.json"),
+        slackInstalls: path.join(app.getPath("userData"), "slack-installs"),
+        whatsappOwners: path.join(app.getPath("userData"), "whatsapp-users", "owners.json"),
+    };
+
+    return {
+        proc: process,
+        fs,
+        os: osmod,
+        systemPreferences,
+        nativeTheme,
+        globalShortcut,
+        prefs,
+        envObj,
+        execFn: async (cmd) => execFn(cmd),
+        paths,
+        currentVersion: app.getVersion(),
+        hotkey: process.platform === "win32" ? "Control+Space" : "Alt+Space",
+    };
+}
+
+/**
+ * Build the context passed to phase.run(). Wires up the send-progress /
+ * send-log helpers to the main window's install-progress / install-log IPC
+ * channels and injects the existing install utilities the phases need.
+ */
+function buildInstallCtx(mw, options) {
+    const send = (channel, payload) => {
+        if (mw && !mw.isDestroyed()) mw.webContents.send(channel, payload);
+    };
+    return {
+        sendProgress: (percent, message) => send("install-progress", { percent, message }),
+        sendLog: (msg) => send("install-log", msg),
+        BOT_DIR: BOT_DIR,
+        DATA_DIR: DATA_DIR,
+        SETUP_FLAG: SETUP_FLAG,
+        checkNodeInstalled: checkNodeInstalled,
+        downloadAndInstallNode: downloadAndInstallNode,
+        runCommand: runCommand,
+        loadEnvDecrypted: loadEnvDecrypted,
+        saveEnvEncrypted: saveEnvEncrypted,
+        documentsDir: app.getPath("documents"),
+        options: options || {},
+    };
+}
+
+function requireInstaller() {
+    const { runDetection } = require(path.join(__dirname, "detection"));
+    const { buildPhaseList } = require(path.join(__dirname, "installer", "phases.js"));
+    const r = require(path.join(__dirname, "installer", "runner.js"));
+    return {
+        runDetection: runDetection,
+        buildPhaseList: buildPhaseList,
+        runPhases: r.runPhases,
+        getResumeList: r.getResumeList,
+        readSetupState: r.readSetupState,
+    };
 }
 
 /**
@@ -1263,6 +1406,15 @@ function registerIPC() {
     ipcMain.on("overlay:show", () => {
         showOverlay();
     });
+    // Ready Hub "Talk" button — trigger live voice session from renderer.
+    // Mirrors what the global live-voice hotkey does when pressed.
+    ipcMain.handle("live-voice:trigger", () => {
+        if (typeof toggleLiveVoice === "function") {
+            try { toggleLiveVoice(); return { ok: true }; }
+            catch (err) { return { ok: false, error: err.message || String(err) }; }
+        }
+        return { ok: false, error: "live-voice not available" };
+    });
     ipcMain.on("overlay:notify", (_, { title, body }) => {
         const { Notification } = require("electron");
         if (Notification.isSupported()) {
@@ -1393,6 +1545,28 @@ function registerIPC() {
     ipcMain.handle("bot:start", () => startBot());
     ipcMain.handle("bot:stop", () => stopBot());
     ipcMain.handle("bot:status", () => ({ status: getBotStatus() }));
+
+    // E3d-2: trigger a wizard-seed refresh. If the bot is running, bounce it so
+    // the next boot picks up changes via seedProfileIfPresent (src/setup/wizard-seed.ts).
+    // If the bot is stopped, this is a no-op — the NEXT bot:start will pick up the
+    // wizard's `.user-profile.json` automatically. Called by the wizard's Profile
+    // step after a re-configuration save, and (optionally) by the install step on
+    // completion. Always returns success so a failed bounce doesn't block setup UI.
+    ipcMain.handle("setup:reseed-now", async () => {
+        try {
+            if (getBotStatus() === "running") {
+                stopBot();
+                // Give the child process a brief moment to release its DB handle
+                // before the new instance opens it. 300ms is conservative.
+                await new Promise((resolve) => setTimeout(resolve, 300));
+                startBot();
+                return { success: true, action: "restarted" };
+            }
+            return { success: true, action: "no-op-bot-stopped" };
+        } catch (err) {
+            return { success: false, error: err.message || String(err) };
+        }
+    });
     ipcMain.handle("bot:stats", () => {
         if (!botStartTime || getBotStatus() !== "running") return null;
         // Try to get memory count from DB
@@ -1500,9 +1674,13 @@ function registerIPC() {
     // Setup: save user profile
     ipcMain.handle("setup:save-profile", async (_, profile) => {
         try {
-            // Store profile to be seeded into memory.db after install
+            const { mergeProfile } = require(path.join(__dirname, "wizard", "profile-merge.js"));
             const profilePath = path.join(app.getPath("userData"), ".user-profile.json");
-            fs.writeFileSync(profilePath, JSON.stringify(profile, null, 2));
+            let existing = {};
+            try { existing = JSON.parse(fs.readFileSync(profilePath, "utf8")); }
+            catch { /* fresh profile or corrupt JSON — start over */ }
+            const merged = mergeProfile(existing, profile);
+            fs.writeFileSync(profilePath, JSON.stringify(merged, null, 2));
             return { success: true };
         } catch (err) {
             return { success: false, error: err.message };
@@ -1549,199 +1727,80 @@ function registerIPC() {
     });
 
     // Setup: run installation pipeline
+    // Setup: adaptive, resumable install. Builds the phase list from detection,
+    // runs each phase sequentially, and writes per-phase markers to
+    // data/setup-state.json so a crash mid-install can be resumed.
     ipcMain.handle("setup:install", async (_, options) => {
-        const sendProgress = (pct, msg) => {
-            if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send("install-progress", { percent: pct, message: msg });
-            }
-        };
-        // Send a sub-log line (no progress bar change, just a detail message)
-        const sendLog = (msg) => {
-            if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send("install-log", msg);
-            }
-        };
-
+        const ctx = buildInstallCtx(mainWindow, options);
         try {
-            // Step 1: Check Node.js
-            sendProgress(2, "Checking Node.js installation...");
-            sendLog("Detecting Node.js on system PATH...");
-            const hasNode = await checkNodeInstalled();
-            if (!hasNode) {
-                sendProgress(5, "Downloading Node.js 20 LTS...");
-                sendLog("Node.js not found — downloading installer...");
-                await downloadAndInstallNode(sendProgress);
-            } else {
-                sendLog("Node.js 20+ detected ✓");
+            const { runDetection, buildPhaseList, runPhases } = requireInstaller();
+            const state = await runDetection(buildDetectionDeps());
+            const phases = buildPhaseList(state);
+            const res = await runPhases(phases, ctx);
+            if (res.status === "complete") {
+                return { success: true, completed: res.completed };
             }
-            sendProgress(12, "✅ Node.js ready");
-
-            // Step 2: Skip npm install (dependencies shipped in ASAR)
-            sendLog("Dependencies shipped in ASAR package — skipping npm install");
-            sendProgress(38, "✅ Dependencies ready");
-
-            // Step 3: TypeScript (already compiled before packaging)
-            sendProgress(40, "Checking compiled sources...");
-            sendLog("TypeScript already compiled — shipped pre-built in package");
-            sendProgress(52, "✅ TypeScript ready");
-
-            // Step 4: Playwright
-            sendProgress(52, "Installing browser engine (Playwright)...");
-            sendLog("Installing Chromium browser engine...");
-            sendLog("This downloads ~130MB of Chromium browser engine...");
-            // Use the bundled playwright CLI directly (npx may not find it on fresh systems)
-            const playwrightCli = path.join(BOT_DIR, "node_modules", "playwright", "cli.js");
-            await runCommand("node", [playwrightCli, "install", "chromium"], BOT_DIR, (line) => {
-                if (line.trim()) sendLog(line);
-            });
-            sendProgress(60, "✅ Browser engine ready");
-
-            // Step 4.5: Audio tools (sox — needed for live voice mode)
-            sendProgress(61, "Checking audio tools...");
-            try {
-                const hasSox = await new Promise((resolve) => {
-                    require("child_process").exec("sox --version", (err) => resolve(!err));
-                });
-                if (hasSox) {
-                    sendLog("sox audio toolkit detected ✓");
-                } else {
-                    sendLog("Installing sox audio toolkit (needed for live voice mode)...");
-                    if (process.platform === "darwin") {
-                        // macOS: try Homebrew first, then MacPorts
-                        try {
-                            await runCommand("brew", ["install", "sox"], undefined, (line) => {
-                                if (line.trim()) sendLog(line);
-                            });
-                            sendLog("sox installed via Homebrew ✓");
-                        } catch {
-                            sendLog("Homebrew not available — sox will be installed on first use");
-                            sendLog("You can install manually: brew install sox");
-                        }
-                    } else if (process.platform === "linux") {
-                        try {
-                            await runCommand("sudo", ["apt-get", "install", "-y", "sox"], undefined, (line) => {
-                                if (line.trim()) sendLog(line);
-                            });
-                            sendLog("sox installed via apt ✓");
-                        } catch {
-                            sendLog("Could not auto-install sox — install manually: sudo apt install sox");
-                        }
-                    } else {
-                        // Windows: sox needs manual install or choco
-                        try {
-                            await runCommand("choco", ["install", "sox", "-y"], undefined, (line) => {
-                                if (line.trim()) sendLog(line);
-                            });
-                            sendLog("sox installed via Chocolatey ✓");
-                        } catch {
-                            sendLog("sox not found — live voice requires sox. Install from https://sox.sourceforge.net");
-                        }
-                    }
-                }
-            } catch {
-                sendLog("Audio tools check skipped (non-fatal)");
-            }
-            sendProgress(63, "✅ Audio tools ready");
-
-            // Step 5: AI Model
-            sendProgress(65, "Downloading AI embedding model (~23MB)...");
-            sendLog("Pre-warming Xenova/all-MiniLM-L6-v2 (quantized)...");
-            sendLog("This model powers semantic search and memory recall");
-            // Write warmup script to temp file (Windows cmd.exe breaks with => in node -e)
-            const warmupScript = path.join(require("os").tmpdir(), "_atlas_warmup.mjs");
-            fs.writeFileSync(warmupScript, `
-                import("@xenova/transformers")
-                    .then(t => t.pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2", { quantized: true }))
-                    .then(() => console.log("done"))
-                    .catch(e => console.error(e));
-            `);
-            try {
-                await runCommand("node", [warmupScript], BOT_DIR, (line) => {
-                    if (line.trim()) sendLog(line);
-                });
-            } finally {
-                try { fs.unlinkSync(warmupScript); } catch { /* cleanup */ }
-            }
-            sendProgress(78, "✅ AI model downloaded");
-
-            // Step 6: Prepare data directory (use writable DATA_DIR, not read-only BOT_DIR)
-            sendProgress(80, "Preparing data directory...");
-            sendLog("Setting up writable data directory...");
-            fs.mkdirSync(DATA_DIR, { recursive: true });
-
-            const toDelete = [
-                "memory.db", "memory.db-shm", "memory.db-wal", "memory.hnsw.json",
-                "audit.jsonl", "browser-strategies.json", "task-learnings.json",
-            ];
-            const dirsToClear = [
-                "browser-profile", "google-tokens", "research", "long-tasks", "process-logs",
-            ];
-
-            for (const f of toDelete) {
-                try { fs.unlinkSync(path.join(DATA_DIR, f)); sendLog(`Cleared ${f}`); } catch { /* */ }
-            }
-            for (const d of dirsToClear) {
-                try { fs.rmSync(path.join(DATA_DIR, d), { recursive: true, force: true }); } catch { /* */ }
-                fs.mkdirSync(path.join(DATA_DIR, d), { recursive: true });
-                sendLog(`Reset directory: ${d}/`);
-            }
-
-            // Copy bundled google-credentials.json to writable data dir
-            const bundledCreds = path.join(BOT_DIR, "data", "google-credentials.json");
-            const writableCreds = path.join(DATA_DIR, "google-credentials.json");
-            if (fs.existsSync(bundledCreds)) {
-                fs.copyFileSync(bundledCreds, writableCreds);
-                sendLog("Copied Google credentials to data directory");
-            }
-
-            sendProgress(85, "✅ Data directory ready");
-
-            // Step 7: Create workspace
-            if (options.workspace) {
-                sendProgress(87, "Creating A.T.L.A.S workspace folder...");
-                sendLog(`Creating: ${options.workspace}`);
-                try {
-                    fs.mkdirSync(options.workspace, { recursive: true });
-                } catch (mkdirErr) {
-                    // Desktop may be restricted on some Windows setups — fall back to Documents
-                    sendLog(`Could not create workspace at ${options.workspace}: ${mkdirErr.message}`);
-                    const fallback = path.join(app.getPath("documents"), "A.T.L.A.S Files");
-                    sendLog(`Falling back to: ${fallback}`);
-                    fs.mkdirSync(fallback, { recursive: true });
-                    options.workspace = fallback;
-
-                    // Rewrite the .env file with the fallback workspace
-                    const currentEnv = loadEnvDecrypted();
-                    if (currentEnv) {
-                        const newEnv = currentEnv.split('\n').map(line => {
-                            if (line.startsWith('ATLAS_WORKSPACE=')) return `ATLAS_WORKSPACE=${options.workspace}`;
-                            return line;
-                        }).join('\n');
-                        saveEnvEncrypted(newEnv);
-                        sendLog(`Updated configuration with fallback workspace path`);
-                    }
-                }
-            }
-            sendProgress(88, "✅ Workspace created");
-
-            // Step 8: Seed user profile
-            sendProgress(90, "Setting up your profile...");
-            sendLog("Profile will be seeded on first launch");
-            // Profile will be seeded on first bot run via the identity module
-
-            // Step 9: Desktop shortcut (handled by NSIS installer)
-            sendProgress(95, "Finalizing installation...");
-            sendLog("Writing setup completion flag...");
-
-            // Mark setup complete
-            fs.writeFileSync(SETUP_FLAG, new Date().toISOString());
-            sendLog("Setup complete — all systems go ✓");
-            sendProgress(100, "✅ Installation complete!");
-
-            return { success: true };
+            return {
+                success: false,
+                paused: true,
+                failedPhase: res.failedPhase,
+                error: res.error && res.error.message,
+                completed: res.completed,
+            };
         } catch (err) {
-            sendLog(`ERROR: ${err.message}`);
-            sendProgress(-1, `❌ Error: ${err.message}`);
+            ctx.sendLog("ERROR: " + err.message);
+            ctx.sendProgress(-1, "Error: " + err.message);
+            return { success: false, error: err.message };
+        }
+    });
+
+    // Setup: retry a single install phase by id. Used by install-log's Retry button
+    // (see desktop/components/install-log.js).
+    ipcMain.handle("setup:retry-install-phase", async (_, phaseId) => {
+        try {
+            const { runDetection, buildPhaseList, runPhases } = requireInstaller();
+            const state = await runDetection(buildDetectionDeps());
+            const full = buildPhaseList(state);
+            const phase = full.find((p) => p.id === phaseId);
+            if (!phase) return { success: false, error: "Unknown phase: " + phaseId };
+            const res = await runPhases([phase], buildInstallCtx(mainWindow, {}));
+            return {
+                success: res.status === "complete",
+                paused: res.status === "paused",
+                error: res.error && res.error.message,
+            };
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    // Setup: resume install — runs only phases that don't yet have a done-marker
+    // in data/setup-state.json. Used when the user relaunches the app mid-install.
+    ipcMain.handle("setup:resume-install", async () => {
+        try {
+            const { runDetection, buildPhaseList, runPhases, getResumeList, readSetupState } = requireInstaller();
+            const state = await runDetection(buildDetectionDeps());
+            const full = buildPhaseList(state);
+            const remaining = getResumeList(full, readSetupState(DATA_DIR));
+            const res = await runPhases(remaining, buildInstallCtx(mainWindow, {}));
+            return {
+                success: res.status === "complete",
+                paused: res.status === "paused",
+                failedPhase: res.failedPhase,
+                error: res.error && res.error.message,
+            };
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    // Setup: read the per-phase done-markers (for Install step UI to show
+    // "resume from here" affordances).
+    ipcMain.handle("setup:get-state", () => {
+        try {
+            const { readSetupState } = requireInstaller();
+            return { success: true, state: readSetupState(DATA_DIR) };
+        } catch (err) {
             return { success: false, error: err.message };
         }
     });
@@ -1990,6 +2049,245 @@ function registerIPC() {
 
     // Setup: check if setup is complete
     ipcMain.handle("setup:is-complete", () => fs.existsSync(SETUP_FLAG));
+
+    // Setup: adaptive detection for the redesigned wizard (A.T.L.A.S wizard v2).
+    // Runs all Phase A signal probes in parallel with per-signal timeouts.
+    // Fail-safe: errors and timeouts never abort detection — every probe has a fallback.
+    ipcMain.handle("setup:detect", async () => {
+        const { runDetection } = requireInstaller();
+        return runDetection(buildDetectionDeps());
+    });
+
+    // Setup: re-read just the macOS permission map (for 1s live polling from the
+    // Permissions step of the wizard and the Ready Hub permissions tile).
+    // Returns all-granted on non-darwin since the OS doesn't gate per-app.
+    ipcMain.handle("setup:poll-permissions", () => {
+        if (process.platform !== "darwin") {
+            return { accessibility: "granted", screen: "granted", microphone: "granted", location: "granted" };
+        }
+        try {
+            const { detectMacPermissions } = require("./detection/signals");
+            return detectMacPermissions(systemPreferences);
+        } catch {
+            return { accessibility: "unknown", screen: "unknown", microphone: "unknown", location: "unknown" };
+        }
+    });
+
+    // Setup: request an OS permission by opening the correct Preferences pane.
+    // Non-darwin is a no-op returning {ok:true, skipped:true}.
+    ipcMain.handle("setup:request-permission", async (_evt, name) => {
+        if (process.platform !== "darwin") return { ok: true, skipped: true };
+        const { prefPaneUrlFor } = require("./components/permissions-grid");
+        const url = prefPaneUrlFor(name);
+        if (!url) return { ok: false, error: "unknown permission: " + String(name) };
+        try { await shell.openExternal(url); return { ok: true }; }
+        catch (err) { return { ok: false, error: err.message || String(err) }; }
+    });
+
+    // Setup (E3b): persist a user's decision to skip a permission. Writes through to
+    // electron-store's prefs.skippedPermissions map so the Ready Hub tile can amber-flag.
+    ipcMain.handle("setup:mark-permission-skipped", (_evt, name, skipped) => {
+        try {
+            const current = store.get("skippedPermissions") || {};
+            if (skipped) current[name] = true; else delete current[name];
+            store.set("skippedPermissions", current);
+            return { ok: true, skippedPermissions: current };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    // Setup: probe a hotkey combo by attempting to register with globalShortcut,
+    // then immediately unregister on success. Returns {ok:true} or {ok:false, conflict}.
+    ipcMain.handle("setup:test-hotkey", (_evt, combo) => {
+        if (typeof combo !== "string" || combo.length === 0) return { ok: false, conflict: "empty combo" };
+        try {
+            const registered = globalShortcut.register(combo, () => {});
+            if (!registered) return { ok: false, conflict: combo + " is already in use" };
+            globalShortcut.unregister(combo);
+            return { ok: true };
+        } catch (err) {
+            return { ok: false, conflict: err.message || String(err) };
+        }
+    });
+
+    // Setup: persist the new overlay hotkey to electron-store and re-bind globalShortcut.
+    // Mirrors the existing hotkey:set-overlay handler (main.js:~2205): unregister ONLY the
+    // old overlay binding (not the live-voice hotkey, not every registered shortcut), attempt
+    // the new binding, and restore the old one if the new register call fails.
+    ipcMain.handle("setup:save-hotkey", (_evt, combo) => {
+        if (typeof combo !== "string" || !combo) return { ok: false, error: "invalid combo" };
+        const currentShortcut = getOverlayShortcut();
+        try {
+            try { globalShortcut.unregister(currentShortcut); } catch {}
+            const ok = globalShortcut.register(combo, () => {
+                if (typeof toggleOverlay === "function") toggleOverlay();
+            });
+            if (!ok) {
+                // Rollback: put the old binding back so the user isn't left with nothing.
+                try { globalShortcut.register(currentShortcut, () => { if (typeof toggleOverlay === "function") toggleOverlay(); }); } catch {}
+                return { ok: false, error: "globalShortcut.register returned false — combo may have been claimed between test and save" };
+            }
+            store.set("overlayHotkey", combo);
+            return { ok: true };
+        } catch (err) {
+            // Best-effort rollback then report
+            try { globalShortcut.register(currentShortcut, () => { if (typeof toggleOverlay === "function") toggleOverlay(); }); } catch {}
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    // Setup: return the list of available voices. Hardcoded for ship-v1; no network call.
+    ipcMain.handle("setup:list-voices", () => ([
+        { backend: "gemini-live",     voices: ["Aoede", "Charon", "Kore", "Fenrir", "Puck"] },
+        { backend: "openai-realtime", voices: ["alloy", "shimmer", "echo"] },
+    ]));
+
+    // Setup: return the file:// URL to a preview audio sample. Ship-v1 uses one
+    // shared sample.wav for every voice; real per-voice samples are a follow-up.
+    // Uses pathToFileURL so spaces and non-ASCII chars in the app path (common on
+    // macOS, e.g. "/Applications/A.T.L.A.S.app/...") are correctly URL-encoded.
+    ipcMain.handle("setup:preview-voice", (_evt, backend, name) => {
+        const wav = path.join(__dirname, "assets", "voices", "sample.wav");
+        if (!fs.existsSync(wav)) return { ok: false, error: "sample.wav missing" };
+        return { ok: true, backend, name, url: require("url").pathToFileURL(wav).href };
+    });
+
+    // Setup: channel test-before-save gate.
+    // Tests a channel's credentials via the provider's actual API. On success,
+    // returns a short-lived testId the caller must present to setup:save-channel
+    // within 60s. Credentials never reach .env until the save handler runs.
+    const __pendingChannelTests = new Map();
+    const __randomId = () => require("crypto").randomBytes(8).toString("hex");
+
+    ipcMain.handle("setup:test-channel", async (_evt, type, creds) => {
+        const safeJson = async (r) => {
+            if (!r.ok) return { __httpError: `HTTP ${r.status}` };
+            try { return await r.json(); }
+            catch { return { __parseError: "non-JSON response" }; }
+        };
+        try {
+            if (type === "telegram") {
+                // Server-side guard: renderer validator can be bypassed by a compromised caller.
+                const token = creds && creds.token;
+                if (typeof token !== "string" || !/^\d+:[A-Za-z0-9_-]{35,}$/.test(token)) {
+                    return { ok: false, error: "Bad Telegram token format" };
+                }
+                const r = await fetch(`https://api.telegram.org/bot${encodeURIComponent(token)}/getMe`);
+                const j = await safeJson(r);
+                if (j.__httpError) return { ok: false, error: `Telegram ${j.__httpError}` };
+                if (j.__parseError) return { ok: false, error: `Telegram returned ${j.__parseError}` };
+                if (!j.ok) return { ok: false, error: j.description || "Telegram rejected token" };
+            } else if (type === "discord") {
+                const token = creds && creds.token;
+                if (typeof token !== "string" || token.length < 50 || !/^[A-Za-z0-9._-]+$/.test(token)) {
+                    return { ok: false, error: "Bad Discord token format" };
+                }
+                const r = await fetch("https://discord.com/api/v10/users/@me", {
+                    headers: { Authorization: "Bot " + token },
+                });
+                const j = await safeJson(r);
+                if (j.__httpError) return { ok: false, error: `Discord ${j.__httpError}` };
+                if (j.__parseError) return { ok: false, error: `Discord returned ${j.__parseError}` };
+                if (!j.id) return { ok: false, error: j.message || "Discord rejected token" };
+            } else if (type === "matrix") {
+                const homeserver = creds && creds.homeserver;
+                const token = creds && creds.token;
+                if (typeof homeserver !== "string" || !/^https?:\/\//.test(homeserver)) {
+                    return { ok: false, error: "Bad Matrix homeserver URL" };
+                }
+                if (typeof token !== "string" || !token) {
+                    return { ok: false, error: "Missing Matrix access token" };
+                }
+                const base = homeserver.replace(/\/$/, "");
+                const r = await fetch(`${base}/_matrix/client/v3/account/whoami`, {
+                    headers: { Authorization: "Bearer " + token },
+                });
+                const j = await safeJson(r);
+                if (j.__httpError) return { ok: false, error: `Matrix ${j.__httpError}` };
+                if (j.__parseError) return { ok: false, error: `Matrix returned ${j.__parseError}` };
+                if (!j.user_id) return { ok: false, error: j.error || "Matrix rejected token" };
+            } else if (type === "email") {
+                const { ImapFlow } = require("imapflow");
+                const client = new ImapFlow({
+                    host: creds.imapHost,
+                    port: creds.imapPort,
+                    secure: !!creds.imapTls,
+                    auth: { user: creds.user, pass: creds.password },
+                    logger: false,
+                });
+                try { await client.connect(); await client.logout(); }
+                catch (err) { return { ok: false, error: err.message || "IMAP login failed" }; }
+            } else {
+                return { ok: false, error: "unsupported type: " + type };
+            }
+            const testId = __randomId();
+            __pendingChannelTests.set(testId, Date.now());
+            return { ok: true, testId };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    ipcMain.handle("setup:save-channel", async (_evt, type, creds, testId) => {
+        const t = __pendingChannelTests.get(testId);
+        if (!t || (Date.now() - t) > 60000) {
+            return { ok: false, error: "Test expired — re-run Test, then Save." };
+        }
+        __pendingChannelTests.delete(testId);
+        try {
+            if (type === "telegram") {
+                saveEnvKVs({ TELEGRAM_BOT_TOKEN: creds.token, ALLOWED_USER_IDS: creds.allowedIds });
+            } else if (type === "discord") {
+                saveEnvKVs({ DISCORD_BOT_TOKEN: creds.token });
+            } else if (type === "matrix") {
+                saveEnvKVs({ MATRIX_HOMESERVER: creds.homeserver, MATRIX_ACCESS_TOKEN: creds.token });
+            } else if (type === "email") {
+                saveEnvKVs({
+                    EMAIL_USER: creds.user,
+                    EMAIL_PASSWORD: creds.password,
+                    EMAIL_IMAP_HOST: creds.imapHost,
+                    EMAIL_IMAP_PORT: String(creds.imapPort),
+                    EMAIL_SMTP_HOST: creds.smtpHost,
+                    EMAIL_SMTP_PORT: String(creds.smtpPort),
+                });
+            }
+            return { ok: true };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    // Slack OAuth launcher (popup only). The redirect/callback exchange is a
+    // separate task (E3c); this IPC only opens the browser-based authorize page.
+    ipcMain.handle("setup:slack-oauth-start", async () => {
+        const clientId = process.env.SLACK_CLIENT_ID || "REPLACE_ME";
+        const url = "https://slack.com/oauth/v2/authorize?scope=chat:write,app_mentions:read,im:history&client_id=" + encodeURIComponent(clientId);
+        const popup = new BrowserWindow({
+            width: 520,
+            height: 720,
+            webPreferences: { nodeIntegration: false, contextIsolation: true },
+        });
+        popup.loadURL(url);
+        return { ok: true };
+    });
+
+    // Setup: persist personalize block (hotkey/theme/voice/wakeWord) into
+    // electron-store AND mirror voice + wake-word + hotkey into .env.enc via
+    // ATLAS_* env keys so the bot actually reads the user's choice on next boot.
+    ipcMain.handle("setup:save-personalize", async (_evt, update) => {
+        try {
+            const { mergePersonalize, envKVsFromPersonalize } = require(path.join(__dirname, "wizard", "personalize-reducer.js"));
+            const current = store.get("prefs") || {};
+            const next = mergePersonalize(current, update || {});
+            store.set("prefs", next);
+            try { saveEnvKVs(envKVsFromPersonalize(next.personalize)); }
+            catch (e) { console.warn("[setup:save-personalize] env mirror failed:", e.message); }
+            return { success: true, prefs: next };
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
 
 
     // App info
@@ -3029,6 +3327,43 @@ ${body}`;
         return { code };
     });
 
+    // Setup: start a WhatsApp pair session from inside the wizard.
+    // Runs Baileys directly from main.js so the user can scan the QR BEFORE
+    // the bot has booted. Emits QR strings on the existing `whatsapp-qr`
+    // channel (which preload.js:152 bridges to window.atlas.onWhatsAppQR).
+    // Emits the literal string "connected" when pairing completes.
+    ipcMain.handle("setup:wa-pair-start", async () => {
+        try {
+            const { startPair, isPairing } = require(path.join(__dirname, "setup", "whatsapp-pair.js"));
+            if (isPairing()) return { ok: true, alreadyRunning: true };
+            const baileysFactory = require("@whiskeysockets/baileys");
+            const send = (payload) => {
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send("whatsapp-qr", payload);
+                }
+            };
+            await startPair({
+                dataDir: DATA_DIR,
+                baileysFactory: baileysFactory,
+                onQr: (qr) => send(qr),
+                onConnected: () => send("connected"),
+                onError: (msg) => send({ kind: "error", message: msg }),
+            });
+            return { ok: true };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    ipcMain.handle("setup:wa-pair-cancel", () => {
+        try {
+            const { stopPair } = require(path.join(__dirname, "setup", "whatsapp-pair.js"));
+            return stopPair();
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
     ipcMain.handle("wa:get-persona", () => {
         try {
             const personaPath = path.join(DATA_DIR, "whatsapp-persona.json");
@@ -3536,6 +3871,9 @@ let isQuitting = false;
 // ── App Lifecycle ─────────────────────────────
 
 app.whenReady().then(async () => {
+    // Run v1 → v2 migration before anything reads SETUP_FLAG or prefs.json.
+    await runV2Migration();
+
     initProtection();
     registerIPC();
     setupAutoUpdater();

@@ -1,0 +1,163 @@
+/* Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved. */
+.sp-root { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; color: var(--text-primary); font-size: 13px; }
+.sp-tile { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border-radius: var(--radius-md, 18px); background: var(--glass-bg, rgba(255,255,255,0.65)); border: var(--glass-border, 1px solid rgba(255,255,255,0.5)); border-left-width: 4px; box-shadow: var(--shadow-glass, 0 8px 32px rgba(0,0,0,0.08)); cursor: pointer; transition: border-color 300ms ease, transform 120ms ease; }
+.sp-tile:hover { transform: translateY(-1px); }
+.sp-tile--green { border-left-color: var(--accent-success, #34c759); }
+.sp-tile--amber { border-left-color: #ff9f0a; }
+.sp-tile--neutral { border-left-color: var(--text-muted, #86868b); }
+.sp-tile__label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted, #86868b); }
+.sp-tile__value { font-size: 16px; font-weight: 600; color: var(--text-primary, #1d1d1f); }
+.sp-tile__secondary { font-size: 12px; color: var(--text-secondary, #515154); }
+.sp-tile__action { margin-top: 4px; font-size: 12px; color: var(--accent-primary, #0066cc); text-decoration: none; }
+.sp-tile--pulse { animation: sp-tile-pulse 300ms ease; }
+@keyframes sp-tile-pulse { 0% { box-shadow: 0 0 0 0 rgba(52,199,89,0.6); } 100% { box-shadow: 0 0 0 6px rgba(52,199,89,0); } }
+.sp-perms { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.sp-perm { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border-radius: var(--radius-md, 18px); background: var(--glass-bg, rgba(255,255,255,0.65)); border: var(--glass-border, 1px solid rgba(255,255,255,0.5)); }
+.sp-perm__title { font-weight: 600; font-size: 14px; }
+.sp-perm__why { color: var(--text-secondary, #515154); font-size: 12px; }
+.sp-perm__row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.sp-pill { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+.sp-pill--ok { background: rgba(52,199,89,0.15); color: #1d7a3a; }
+.sp-pill--bad { background: rgba(255,59,48,0.15); color: #a8271d; }
+.sp-pill--idk { background: rgba(142,142,147,0.15); color: #515154; }
+.sp-btn { padding: 6px 12px; border-radius: 10px; border: none; cursor: pointer; background: var(--accent-primary, #0066cc); color: white; font-weight: 600; font-size: 12px; }
+.sp-btn:hover { background: var(--accent-hover, #0055b3); }
+.sp-btn--ghost { background: transparent; color: var(--accent-primary, #0066cc); border: 1px solid rgba(0,102,204,0.3); }
+.sp-hotkey { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: var(--radius-md, 18px); background: var(--glass-input, rgba(255,255,255,0.5)); }
+.sp-hotkey__combo { font-family: ui-monospace, Menlo, monospace; font-weight: 600; }
+.sp-hotkey__status { font-size: 12px; color: var(--text-secondary, #515154); }
+.sp-hotkey__conflict { color: var(--accent-danger, #ff3b30); font-weight: 600; }
+.sp-hotkey--recording .sp-hotkey__combo::after { content: " ●"; color: var(--accent-danger, #ff3b30); animation: sp-blink 1s infinite; }
+@keyframes sp-blink { 50% { opacity: 0; } }
+.sp-voice { display: flex; align-items: center; gap: 8px; padding: 10px; }
+.sp-voice select { padding: 6px 10px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.1); background: var(--glass-input, rgba(255,255,255,0.5)); font-size: 13px; }
+.sp-theme { display: inline-flex; padding: 4px; background: var(--glass-input, rgba(255,255,255,0.5)); border-radius: 999px; gap: 2px; }
+.sp-theme__pill { padding: 6px 14px; border: none; background: transparent; border-radius: 999px; cursor: pointer; font-size: 12px; color: var(--text-secondary, #515154); }
+.sp-theme__pill--active { background: white; color: var(--text-primary, #1d1d1f); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.sp-channel { display: flex; flex-direction: column; gap: 10px; padding: 16px; border-radius: var(--radius-md, 18px); background: var(--glass-bg, rgba(255,255,255,0.65)); border: var(--glass-border, 1px solid rgba(255,255,255,0.5)); }
+.sp-channel__title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; }
+.sp-channel__form { display: grid; gap: 8px; }
+.sp-channel__form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-secondary, #515154); }
+.sp-channel__form input, .sp-channel__form select { padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.1); background: var(--glass-input, rgba(255,255,255,0.5)); font-size: 13px; font-family: inherit; }
+.sp-channel__actions { display: flex; gap: 8px; justify-content: flex-end; }
+.sp-channel__status { font-size: 12px; padding: 6px 8px; border-radius: 8px; }
+.sp-channel__status--ok { background: rgba(52,199,89,0.12); color: #1d7a3a; }
+.sp-channel__status--bad { background: rgba(255,59,48,0.12); color: #a8271d; }
+.sp-channel__qr { display: flex; justify-content: center; padding: 8px; background: white; border-radius: 12px; }
+.sp-log { font-family: ui-monospace, Menlo, monospace; font-size: 12px; padding: 12px; border-radius: 12px; background: #0c0f14; color: #cfd8e3; max-height: 280px; overflow-y: auto; }
+.sp-log__line { display: flex; gap: 8px; padding: 2px 0; }
+.sp-log__line--info { color: #cfd8e3; }
+.sp-log__line--ok { color: #6dd17f; }
+.sp-log__line--warn { color: #f2c14e; }
+.sp-log__line--err { color: #ff7b72; }
+.sp-log__actions { display: inline-flex; gap: 6px; margin-left: 8px; }
+.sp-log__actions button { padding: 2px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.15); background: transparent; color: inherit; font-size: 11px; cursor: pointer; }
+.sp-log__actions button:hover { background: rgba(255,255,255,0.08); }
+.chip-strip { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 24px 12px; }
+.chip { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: #e8eaed; font-size: 12px; padding: 4px 10px; border-radius: 999px; cursor: pointer; }
+.chip:hover { background: rgba(255,255,255,0.14); }
+.step-dots { display: flex; gap: 6px; }
+.step-dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,0.35); cursor: pointer; transition: background 200ms; }
+.step-dot.active { background: linear-gradient(135deg, var(--orb-purple, #c471ed), var(--orb-pink, #ff758c)); }
+.step-dot.skipped { background: rgba(255,255,255,0.12); cursor: default; }
+.wizard-head { padding: 24px 24px 8px; display: flex; flex-direction: column; gap: 12px; }
+.wizard-head h1 { font-size: 24px; font-weight: 500; margin: 0; }
+.step-container { padding: 12px 24px 24px; }
+.phase-list { list-style: none; padding: 0; margin: 12px 0; }
+.phase-row { display: flex; gap: 8px; align-items: center; padding: 4px 0; font-size: 13px; }
+.phase-row .phase-icon { width: 16px; text-align: center; }
+.phase-pending .phase-icon { color: rgba(255,255,255,0.35); }
+.phase-running .phase-icon { color: var(--orb-purple, #c471ed); animation: sp-spin 1s linear infinite; }
+.phase-done .phase-icon { color: #4ade80; }
+.phase-failed .phase-icon { color: #f87171; }
+.progress-wrap { height: 4px; background: rgba(255,255,255,0.08); border-radius: 2px; overflow: hidden; margin: 8px 0; }
+.progress-bar { height: 100%; width: 0%; background: linear-gradient(90deg, var(--orb-purple, #c471ed), var(--orb-pink, #ff758c)); transition: width 300ms; }
+.hidden { display: none !important; }
+@keyframes sp-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.hub-try-this { margin-top: 24px; display: flex; flex-wrap: wrap; gap: 8px; transition: opacity 250ms; }
+.hub-try-this.fade-out { opacity: 0.3; }
+.prompt-pill {
+    padding: 6px 14px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.15);
+    background: rgba(255,255,255,0.08);
+    color: #e8eaed;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 150ms;
+}
+.prompt-pill:hover { background: rgba(255,255,255,0.15); }
+.hub-actions { margin: 24px 0; display: flex; gap: 12px; }
+.hub-actions .btn-primary { padding: 10px 20px; border-radius: 12px; border: none; background: linear-gradient(135deg, var(--orb-purple, #c471ed), var(--orb-pink, #ff758c)); color: white; font-weight: 600; font-size: 14px; cursor: pointer; }
+.hub-actions .btn-primary:hover { filter: brightness(1.1); }
+.hub-actions .btn-ghost { padding: 10px 20px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.15); background: rgba(255,255,255,0.04); color: #e8eaed; font-size: 14px; cursor: pointer; }
+.hub-actions .btn-ghost:hover { background: rgba(255,255,255,0.08); }
+.page-head { display: flex; align-items: center; gap: 16px; padding: 24px 24px 8px; }
+.page-head .page-title { margin: 0; font-size: 24px; font-weight: 500; }
+.back-link { color: var(--text-secondary, #86868b); text-decoration: none; font-size: 13px; }
+.back-link:hover { color: var(--text-primary, #e8eaed); }
+.channels-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; padding: 24px; }
+.channel-cell { display: block; }
+.channel-cell--connected .sp-channel { border-color: rgba(52,199,89,0.4); background: rgba(52,199,89,0.06); }
+
+/* D7: Motion polish — orb avatar breathing, tile pulse overrides, live theme transitions */
+
+/* Breathing orb avatar for the Ready Hub hero */
+@keyframes sp-breathe {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.04); }
+    100% { transform: scale(1); }
+}
+.orb-avatar {
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 30% 30%, var(--orb-purple, #c471ed), var(--orb-pink, #ff758c) 70%);
+    margin: 0 auto 16px;
+    box-shadow: 0 12px 48px rgba(196, 113, 237, 0.35);
+}
+.orb-avatar.breathing {
+    animation: sp-breathe 3s ease-in-out infinite;
+}
+
+/* Status-tile green-pulse override (B1's sp-tile--pulse keyframe also exists; this
+   is a stronger visible pulse specifically for 'newly turned green' transitions
+   that the hub's diff-tiles flow triggers). */
+@keyframes sp-border-pulse-green {
+    0%   { border-left-color: currentColor; }
+    50%  { border-left-color: #10b981; box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.18); }
+    100% { border-left-color: currentColor; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+.sp-tile.sp-tile--pulse { animation: sp-border-pulse-green 320ms ease-out; }
+
+/* Live theme switch transitions (D7) — wizard + hub + panel recolor over 200ms
+   when theme-change CustomEvent fires. Applied to body + major container classes. */
+body, .wizard-body, .panel-body, .hub-root, .step-container, .sp-tile, .sp-channel, .sp-perm {
+    transition: background-color 200ms ease, color 200ms ease, border-color 200ms ease;
+}
+
+/* Wake-for-user indicator during theme flips — class added transiently by theme-switch */
+.theme-switching * {
+    transition: background-color 200ms ease, color 200ms ease, border-color 200ms ease !important;
+}
+
+/* D9: Retuned type scale — applies only to the wizard + hub surfaces to avoid
+   disturbing the existing panel/auth layouts that rely on the pre-existing
+   32px centered section-title. */
+
+/* Wizard surfaces (wizard.html-loaded via components/components.css link) */
+.wizard-head h1 { font-size: 24px; line-height: 1.25; font-weight: 500; }
+.step-title { font-size: 20px; line-height: 1.3; font-weight: 600; margin: 0 0 8px; }
+.step-sub { font-size: 14px; line-height: 1.5; color: var(--text-secondary, #a1a1aa); margin: 0 0 16px; }
+.step-note, .step-error { font-size: 13px; line-height: 1.5; }
+.step-error { color: var(--accent-danger, #f87171); }
+
+/* Ready Hub surfaces */
+.hub-title { font-size: 24px; line-height: 1.25; font-weight: 600; margin: 0 0 6px; }
+.hub-sub { font-size: 14px; line-height: 1.5; color: var(--text-secondary, #a1a1aa); margin: 0 0 16px; }
+
+/* Under the hood section title already scoped in its inline style; body text gets 13px */
+body .uth p { font-size: 13px; line-height: 1.55; }
+
+/* Shrink top-level 'Setup Components Smoke' and page-head titles on small pages */
+.page-head .page-title { font-size: 22px; }

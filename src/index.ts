@@ -12,6 +12,7 @@ import { initKnowledgeGraph } from "./memory/knowledge-graph.js";
 import { initSupabase } from "./memory/supabase.js";
 import { initIdentityDB } from "./memory/identity.js";
 import { initTraitsDB, setMemoryDebug } from "./memory/traits.js";
+import { seedProfileIfPresent } from "./setup/wizard-seed.js";
 import { runDailyDecay, runDreamReplay } from "./memory/reflection.js";
 import { initSelfStateDB } from "./memory/self-state.js";
 import { initEmotionalMemory } from "./memory/emotional.js";
@@ -123,6 +124,23 @@ async function boot() {
         initCredibilityModel(memDb);
         initIdentityDB(memDb);
         initTraitsDB(memDb);
+
+        // Seed identity from the setup wizard's `.user-profile.json` (if present).
+        // Idempotent across restarts — renames source to `.user-profile.seeded.json`
+        // after successful seed. Source lives in the Electron app's userData dir,
+        // exposed to the bot via ATLAS_USER_DATA_DIR; falls back to ATLAS_DATA_DIR.
+        try {
+            const seedResult = seedProfileIfPresent({
+                userDataDir: process.env.ATLAS_USER_DATA_DIR,
+                dataDir: process.env.ATLAS_DATA_DIR,
+            }, { log: (m) => console.log(m) });
+            if (seedResult.ran) {
+                console.log(`🌱 Wizard profile seeded: ${seedResult.seeded?.name}`);
+            }
+        } catch (err) {
+            console.warn("[wizard-seed] non-fatal error:", (err as Error).message);
+        }
+
         initSupabase();
 
         // Living Continuity layers

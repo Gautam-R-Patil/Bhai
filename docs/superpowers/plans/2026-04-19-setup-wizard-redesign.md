@@ -4325,6 +4325,12 @@ Self-review surfaced cross-phase drift between the four fragments (detection pat
 - All tests live under `desktop/tests/**/*.test.js`. Any step that creates a test under `desktop/__tests__/` or `desktop/<subdir>/__tests__/` — relocate to `desktop/tests/<subdir>/<name>.test.js` instead. Phase A's `vitest.config.js` stays the single source of truth; add `include: ["tests/**/*.test.js"]` and nothing else.
 - Single test runner: **vitest** across all phases. Any step in Phase D that imports `from "node:test"` or runs `node --test …` — rewrite to `import { describe, it, expect } from "vitest"` and put the file under `desktop/tests/`.
 
+**Module syntax (canonical) — discovered during A0 execution:**
+- `desktop/vitest.config.js` uses **CommonJS** (`const { defineConfig } = require("vitest/config"); module.exports = defineConfig({...})`). `desktop/` has no top-level `"type":"module"` in `package.json`, so `.js` files default to CommonJS.
+- **Test files under `desktop/tests/` must use ESM `import` syntax.** Vitest 2.x ships `vitest` as ESM-only — `require("vitest")` throws "Vitest cannot be imported with require(...)". Every test file must use `import { describe, it, expect } from "vitest"` even though the module under test is CommonJS. Any plan snippet showing `const { describe, it, expect } = require("vitest")` is wrong — use `import { ... } from "vitest"` instead.
+- **Modules under test stay CommonJS.** `desktop/detection/signals.js`, `desktop/detection/index.js`, `desktop/installer/phases.js`, `desktop/installer/runner.js`, `desktop/wizard/router.js`, `desktop/wizard/chips.js`, and all shared main-process helpers export via `module.exports = {...}` and are `require()`d from `main.js`. Tests import them via vitest's interop: `import signals from "../../detection/signals.js"` (picks up `module.exports` as the default import) or `import * as signals from "../../detection/signals.js"` (named interop — works because vitest transforms CJS on the way in).
+- **Renderer components stay IIFE**, per the component pattern below. No `import`/`export`. They attach to `window.SetupComponents.<Name>`.
+
 **Component API (canonical):**
 
 Every renderer component exports a class constructor on `window.SetupComponents.<PascalCaseName>` and follows this contract:
@@ -4423,6 +4429,76 @@ Add matching vitest tests under `desktop/tests/detection/signals.test.js`.
 - New handler `setup:slack-oauth-complete` receives `{code, state}`, exchanges via `POST https://slack.com/api/oauth.v2.access` with `client_id` + `client_secret` + `code`, writes the returned `access_token` and `team` to `data/slack-installs/<team_id>.json`, triggers a `setup:detect` re-run so the Channels tile reflects the new install.
 - `client_secret` ships in the bundled encrypted env (same mechanism as Google credentials) — not a user-facing field.
 - Manual checklist: install to a real Slack workspace, redirect back, verify file written, Channels tile goes green.
+
+### E3d — Wizard → Agent identity seeding (USER-FLAGGED GAP)
+
+**The problem:** the current wizard writes collected user data (name, tone, age, gender) to `userData/.user-profile.json` on disk, but the agent's identity system reads from the `user_profiles` SQLite table in `data/memories.db` (see `src/memory/identity.ts:70`). Nothing bridges these today — so the agent boots, calls `getIdentityProfile()`, sees a default empty profile, and asks the user their name again on first chat. This defeats the whole wizard.
+
+Fix this in two places:
+
+**E3d-1 — Seed on bot boot (runs first):**
+
+Add a new module `src/setup/wizard-seed.ts` that runs once during `src/index.ts` boot, right after `initIdentityDB(db)` and `initTraits(db)` are called. Responsibilities:
+
+- Look for `${ATLAS_DATA_DIR}/.user-profile.json` OR `${userData}/.user-profile.json` (main.js writes it to `userData`; the bot runs with `ATLAS_DATA_DIR` set to the same path via `setup:install`, so check both).
+- If present and not yet seeded (no sibling `.user-profile.seeded.json` marker):
+  1. `updateIdentityProfile({ name: profile.name, preferences: { communication_style: profile.tone } }, DEFAULT_USER_ID)` — pushes into SQLite so `getIdentityProfileSnippet()` returns it on the very next agent call.
+  2. Rename the file to `.user-profile.seeded.json` to avoid re-seeding every boot.
+- If file is missing, no-op (wizard wasn't run, or user is already seeded).
+
+TDD: unit-test `seedProfileIfPresent(fs, dataDir, idStore)` with a mocked `updateIdentityProfile` spy; cover (a) file present + not yet seeded → writes + renames, (b) file absent → no-op, (c) already-seeded marker exists → no-op, (d) JSON parse error → warn + skip.
+
+**E3d-2 — Same seeding also fires during the wizard's install step (runs second, catches re-configurations):**
+
+When `setup:install` completes successfully in `desktop/main.js`, after writing `SETUP_FLAG`, also spawn a one-shot `node -e` that requires the bot's seed module and runs it against the same `ATLAS_DATA_DIR`. This way, a user who re-runs setup to change their name sees the change reflected without a full bot restart.
+
+**Canonical mapping (wizard field → runtime destination):**
+
+| Wizard field | Persisted by | Agent reads from |
+|---|---|---|
+| `name` | `setup:save-profile` → `.user-profile.json` | `identity.ts` SQLite `user_profiles.profile_json.name` (via seed) |
+| `tone` | same | `identity.ts` `preferences.communication_style` (via seed) |
+| `workspace` | `setup:install` → `.env.enc` `ATLAS_WORKSPACE=...` | `process.env.ATLAS_WORKSPACE` at bot boot |
+| `hotkey` | `setup:save-personalize` → `electron-store` `personalize.hotkey` | Read on every `app.whenReady()` in `main.js` to register `globalShortcut` |
+| `theme` | same → `personalize.theme` | Renderer picks up on load via `window.atlas.getPrefs()` |
+| `voice.backend` + `voice.name` | same → `personalize.voice` | `src/voice/live/*` reads `ATLAS_LIVE_VOICE_NAME` + `ATLAS_LIVE_VOICE_BACKEND` envs; setup:install writes them into `.env.enc` |
+| `wakeWord.enabled` + `.phrase` | same → `personalize.wakeWord` | `src/voice/wake-word.ts` reads `ATLAS_WAKE_WORD_ENABLED` + `ATLAS_WAKE_WORD_PHRASE` envs |
+| `account.email` + `account.plan` | OTPless popup → `electron-store` `account.*` | Server-side (Convex); wizard display-only |
+| `google.email` (if connected) | google-oauth → `data/google-tokens/<email>.json` | `src/google/*` reads the token files |
+| Each channel creds (Telegram/Discord/Slack/WhatsApp/Matrix/Email) | `setup:save-channel` → `.env.enc` | Bot reads `process.env.*` on boot |
+
+Touch this in these tasks:
+- **C5** (profile step): after `saveProfile`, the bot is usually not running — just the file-writing path works. Manual checklist: restart bot and confirm `getIdentityProfile()` returns the new name.
+- **C6** (personalize step): the voice/wake-word backend names must be mapped into `.env.enc` within `setup:save-personalize`, not just into electron-store. See mapping table above — every `personalize.*` key has a matching `ATLAS_*` env var the bot reads on boot.
+- **C10** (install rewire): after `SETUP_FLAG` is written, fire the one-shot seed runner above.
+- **Phase D10** (migration): v1 installs might have `age`/`gender` in `.user-profile.json`. The migration must merge those into `identity.ts` `extra` field so nothing is lost.
+
+**Why this matters:** without this, the wizard feels decorative — the user's answers land in files the agent never reads. With this, the first chat is: agent greets by name, knows the tone preference, and doesn't re-ask anything.
+
+### E3e — WhatsApp QR pairing inside the wizard (USER-FLAGGED GAP)
+
+**The problem:** the ChannelCard (B6) renders "Generate QR" for WhatsApp, but clicking it today calls `wa:generate-otp` which only writes `data/whatsapp-otp-signal.json` — it **assumes the bot process is already running** and watching that file. During the setup wizard the bot has NOT started yet, so the signal is never picked up, no QR is ever emitted on the `whatsapp-qr` channel, and the ChannelCard spins on "Generating pairing…" forever.
+
+**Fix:** add a setup-scoped WhatsApp pair flow that runs Baileys **from the Electron main process directly**, so a user can scan the QR and complete pairing **before the bot boots at Launch**.
+
+**New files:**
+- `desktop/setup/whatsapp-pair.js` — Baileys-backed pair runner. Exports `{ startPair(opts), stopPair() }`. `startPair` takes `{ dataDir, onQr(qrString), onConnected(owner), onError(message) }`. Uses `@whiskeysockets/baileys` (already in root deps but not in `desktop/node_modules`) — install it into `desktop/package.json` as part of this task.
+
+**New IPC handlers** in `desktop/main.js`:
+- `setup:wa-pair-start` — if already running, no-op; otherwise require the pair runner, wire its callbacks to emit `whatsapp-qr` (string) and `whatsapp-qr` (`"connected"` sentinel) on the existing channel that `preload.js:152` already bridges to `onWhatsAppQR`. On connect, write the owner JID to `data/whatsapp-users/owners.json` AND call `saveEnvKVs({})` — no env keys needed for WhatsApp (Baileys stores session state in `data/whatsapp-users/baileys-auth-state/`); presence of owners.json is what the `detectWhatsApp` probe looks for.
+- `setup:wa-pair-cancel` — calls `stopPair()` and clears any pending listener.
+
+**Modify `desktop/components/channel-card.js`:**
+- Replace the WhatsApp Generate QR button's click handler: instead of calling `window.atlas.waGenerateOTP()` (which is for the already-running bot's admin flow), call `window.atlas.setupWaPairStart()`. The existing QR-rendering listener (`onWhatsAppQR`) already handles both the QR string AND the `"connected"` sentinel — it just needs a branch that swaps the QR canvas for a green "Connected as <jid>" message when sentinel arrives, and fires `props.onSaved("whatsapp")` so the card status tile flips green like the other channels.
+
+**Modify `desktop/preload.js`:**
+- Expose `setupWaPairStart: () => ipcRenderer.invoke("setup:wa-pair-start")` and `setupWaPairCancel: () => ipcRenderer.invoke("setup:wa-pair-cancel")` under the Setup block.
+
+**Tests** at `desktop/tests/setup/whatsapp-pair.test.js`: unit-test the pair runner with a mocked Baileys client — confirm (a) QR events emit onQr, (b) connection update → open → calls onConnected with the JID, (c) subsequent startPair calls are idempotent (no double-subscribe), (d) stopPair detaches listeners. Use a fake-Baileys shim; do not bring in the real library for tests.
+
+**Manual check:** in the wizard's channel picker, click WhatsApp → Generate QR → scan on phone → within ~5s the QR canvas is replaced by "Connected as 91XXXXX@s.whatsapp.net ✓" and the Channels tile on the Ready Hub flips green.
+
+**Why this matters:** without this, the wizard advertises WhatsApp as a setup-time channel but silently fails to pair until the user reaches Ready Hub, opens panel.html, starts the bot, and goes through the panel's WhatsApp tab — which defeats the whole "pair before launch" promise.
 
 ### E4 — Known deferrals (acknowledged; not blocking)
 

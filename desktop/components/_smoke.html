@@ -1,0 +1,74 @@
+<!-- Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved. -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Setup Components — Smoke</title>
+<link rel="stylesheet" href="../styles.css">
+<link rel="stylesheet" href="components.css">
+<style>
+  body { padding: 24px; display: flex; flex-direction: column; gap: 18px; overflow: auto; }
+  h2 { font-size: 14px; color: var(--text-muted, #86868b); margin-top: 16px; }
+  .sp-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+</style>
+</head>
+<body class="sp-root">
+<h1 style="font-size:20px">Setup Components Smoke</h1>
+
+<h2>StatusTile</h2>
+<div class="sp-row" id="tiles"></div>
+
+<h2>PermissionsGrid</h2>
+<div id="perms"></div>
+
+<h2>HotkeyPicker</h2>
+<div id="hotkey"></div>
+
+<h2>VoicePicker</h2>
+<div id="voice"></div>
+
+<h2>ThemeSwitch</h2>
+<div id="theme"></div>
+
+<h2>ChannelCard (telegram)</h2>
+<div id="channel-telegram"></div>
+
+<h2>ChannelCard (email)</h2>
+<div id="channel-email"></div>
+
+<h2>InstallLog</h2>
+<div id="log"></div>
+
+<script src="status-tile.js"></script>
+<script src="permissions-grid.js"></script>
+<script src="hotkey-picker.js"></script>
+<script src="voice-picker.js"></script>
+<script src="theme-switch.js"></script>
+<script src="channel-card.js"></script>
+<script src="install-log.js"></script>
+<script>
+  (async () => {
+    const C = window.SetupComponents;
+    const tiles = document.getElementById("tiles");
+    new C.StatusTile({ label: "ACCOUNT", value: "dheeraj@xagi.co", secondary: "pro · 2400 credits", status: "green", onClick: () => console.log("account") }).mount(tiles);
+    new C.StatusTile({ label: "PERMISSIONS", value: "2 of 4 granted", secondary: "Mic, Screen missing", status: "amber" }).mount(tiles);
+    new C.StatusTile({ label: "WAKE WORD", value: "Off", status: "neutral" }).mount(tiles);
+
+    const isMac = (navigator.platform || "").toLowerCase().indexOf("mac") >= 0;
+    await new C.PermissionsGrid({ platform: isMac ? "darwin" : "win32" }).mount(document.getElementById("perms"));
+
+    new C.HotkeyPicker({ platform: "darwin", initial: "Alt+Space" }).mount(document.getElementById("hotkey"));
+    await new C.VoicePicker({}).mount(document.getElementById("voice"));
+    new C.ThemeSwitch({ osPreference: "light", initial: "system" }).mount(document.getElementById("theme"));
+    new C.ChannelCard({ type: "telegram" }).mount(document.getElementById("channel-telegram"));
+    new C.ChannelCard({ type: "email" }).mount(document.getElementById("channel-email"));
+
+    const log = new C.InstallLog();
+    log.mount(document.getElementById("log"));
+    log.addLine("starting install…", "info");
+    log.addLine("node 20 already installed", "ok");
+    log.addLine("playwright download failed: EAI_AGAIN", "err", "playwright");
+  })();
+</script>
+</body>
+</html>
