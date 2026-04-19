@@ -20,7 +20,11 @@
     ];
 
     function pillClass(s) { return s === "granted" ? "sp-pill sp-pill--ok" : s === "denied" ? "sp-pill sp-pill--bad" : "sp-pill sp-pill--idk"; }
-    function pillText(s)  { return s === "granted" ? "Granted" : s === "denied" ? "Denied" : "Not set"; }
+    // "unknown" is macOS's "not-determined" — Electron's getMediaAccessStatus
+    // returns this until the app itself invokes the matching API for the first
+    // time. We label it "Unknown" (not "Not set") so the user knows granting in
+    // System Settings is fine even if this UI can't verify it yet.
+    function pillText(s)  { return s === "granted" ? "Granted" : s === "denied" ? "Denied" : "Unknown"; }
 
     // E3b: does the tile roll up to "effectively OK" when skipped or granted?
     // Skipped perms turn amber in the Ready Hub; granted turn green.

@@ -161,3 +161,83 @@ body .uth p { font-size: 13px; line-height: 1.55; }
 
 /* Shrink top-level 'Setup Components Smoke' and page-head titles on small pages */
 .page-head .page-title { font-size: 22px; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   Wizard step content styling — matches existing design language
+   (pulls from --accent-primary, --glass-* vars in styles.css).
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* Centered single-column step layout — wizard steps + hub body sit inside
+   .wizard-content which is already flex column + align-items:center. We just
+   need each .step / #hub-root to have a sensible max-width. */
+.step, #hub-root, .hub-root {
+    width: 100%;
+    max-width: 680px;
+    animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.step { padding: 24px 0; }
+.step-title { font-size: 24px; font-weight: 600; margin: 0 0 8px; color: var(--text-primary, #1d1d1f); text-align: center; }
+.step-sub { font-size: 15px; color: var(--text-secondary, #515154); line-height: 1.5; margin: 0 0 24px; text-align: center; }
+.step-actions { display: flex; gap: 12px; justify-content: center; margin-top: 24px; }
+.step-error { margin-top: 12px; color: var(--accent-danger, #ff3b30); font-size: 13px; text-align: center; min-height: 18px; }
+.step-note { margin-top: 12px; color: var(--text-secondary, #515154); font-size: 13px; text-align: center; }
+.step-banner { padding: 10px 14px; border-radius: 10px; margin-bottom: 12px; font-size: 13px; }
+.step-banner--error { background: rgba(255, 59, 48, 0.08); color: var(--accent-danger, #ff3b30); border: 1px solid rgba(255, 59, 48, 0.2); }
+
+/* Form fields inside steps */
+.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+.field > span { font-size: 13px; color: var(--text-secondary, #515154); font-weight: 500; }
+.field input, .field select {
+    padding: 10px 12px;
+    font-size: 14px;
+    border-radius: 12px;
+    border: var(--glass-border, 1px solid rgba(0,0,0,0.1));
+    background: var(--glass-input, rgba(255,255,255,0.5));
+    font-family: inherit;
+    color: var(--text-primary, #1d1d1f);
+}
+.field input:focus, .field select:focus { outline: 2px solid var(--accent-primary, #0066cc); outline-offset: -2px; background: var(--glass-input-focus, rgba(255,255,255,0.9)); }
+
+/* Standalone .btn-primary / .btn-ghost so they work without a wrapper.
+   Scoped strongly enough to override the hub-actions variants. */
+.btn-primary, .btn-ghost {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 12px 28px;
+    font-size: 15px;
+    font-weight: 500;
+    border-radius: 12px;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    font-family: inherit;
+    user-select: none;
+}
+.btn-primary {
+    background: var(--accent-primary, #0066cc);
+    color: white;
+    box-shadow: 0 4px 12px rgba(0, 102, 204, 0.25);
+}
+.btn-primary:hover { filter: brightness(1.05); transform: translateY(-1px); }
+.btn-primary:active { transform: scale(0.97); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; filter: none; }
+.btn-ghost {
+    background: var(--glass-bg, rgba(255,255,255,0.65));
+    color: var(--text-primary, #1d1d1f);
+    border: var(--glass-border, 1px solid rgba(0,0,0,0.1));
+}
+.btn-ghost:hover { background: var(--glass-hover, rgba(255,255,255,0.85)); }
+.btn-ghost:active { transform: scale(0.97); }
+
+/* Keep the hub-actions variant visually distinct (gradient remains as-is) */
+.hub-actions .btn-primary {
+    background: linear-gradient(135deg, var(--orb-purple, #c471ed), var(--orb-pink, #ff758c));
+    box-shadow: 0 4px 12px rgba(196, 113, 237, 0.25);
+}
+
+/* Cards inside Personalize step */
+.card { background: var(--glass-bg, rgba(255,255,255,0.65)); border: var(--glass-border, 1px solid rgba(0,0,0,0.08)); border-radius: 14px; padding: 16px; margin-bottom: 12px; }
+.card-title { margin: 0 0 10px; font-size: 14px; font-weight: 600; color: var(--text-primary, #1d1d1f); }
+.row { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 8px; color: var(--text-primary, #1d1d1f); }

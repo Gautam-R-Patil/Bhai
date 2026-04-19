@@ -88,20 +88,49 @@ async function detectEmbeddingModel(fs, homeDir) {
 }
 
 function detectMacPermissions(systemPreferences) {
+    // Electron's getMediaAccessStatus returns "not-determined" for apps that have
+    // never invoked the matching OS API, even when the user has manually granted
+    // the permission in System Settings. We treat "not-determined" as "unknown"
+    // (not "denied") so the UI doesn't falsely claim a denial.
     const normalize = (raw) => {
         if (raw === "granted") return "granted";
         if (raw === "denied" || raw === "restricted") return "denied";
-        return "unknown";
+        return "unknown"; // not-determined or unrecognized
     };
     try {
+        // Accessibility: isTrustedAccessibilityClient returns boolean — granted/denied
+        // (no "not-determined" — either the app is in the list or it isn't).
         const acc = systemPreferences.isTrustedAccessibilityClient
             ? systemPreferences.isTrustedAccessibilityClient(false)
             : false;
+
+        // Microphone: supported media type on macOS.
+        let mic = "unknown";
+        try { mic = normalize(systemPreferences.getMediaAccessStatus("microphone")); } catch {}
+
+        // Screen Recording: "screen" is the Electron media type on macOS 10.15+.
+        let screen = "unknown";
+        try { screen = normalize(systemPreferences.getMediaAccessStatus("screen")); } catch {}
+
+        // Location: getMediaAccessStatus does NOT support "location". We call the
+        // dedicated API when available, or fall back to "unknown" so the UI shows
+        // "Not set" rather than a false denial.
+        let loc = "unknown";
+        try {
+            if (typeof systemPreferences.getUserDefault === "function") {
+                // macOS stores the CoreLocation authorization in a user-default.
+                // Values: 0 = notDetermined, 1 = restricted, 2 = denied,
+                // 3/4 = authorizedAlways / authorizedWhenInUse.
+                const raw = systemPreferences.getUserDefault("LocationServicesEnabled", "boolean");
+                if (raw === true) loc = "granted";
+            }
+        } catch {}
+
         return {
-            accessibility: acc ? "granted" : "unknown",
-            screen: normalize(systemPreferences.getMediaAccessStatus("screen")),
-            microphone: normalize(systemPreferences.getMediaAccessStatus("microphone")),
-            location: normalize(systemPreferences.getMediaAccessStatus("location")),
+            accessibility: acc ? "granted" : "denied",
+            screen: screen,
+            microphone: mic,
+            location: loc,
         };
     } catch {
         return { accessibility: "unknown", screen: "unknown", microphone: "unknown", location: "unknown" };
