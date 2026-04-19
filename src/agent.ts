@@ -168,6 +168,18 @@ async function musicMemoryPeek(userMessage: string, llmForRecall: LLMClient): Pr
     }
 }
 
+// Cheap synchronous heuristic used BEFORE the LLM classifier has run. It's used
+// only to skip the expensive memory briefing — any false positive here just
+// means the user gets a lighter memory context on a non-music turn, not a
+// broken agent. Keep it conservative to minimise those misses.
+const MUSIC_HEURISTIC_PATTERN = /\b(play|pause|resume|skip|next|previous|shuffle|repeat|queue|playlist|spotify|apple[- ]?music|song|track|album|artist|now[- ]?playing|volume up|volume down)\b/i;
+
+function isLikelyMusicCommand(userMessage: string): boolean {
+    const trimmed = userMessage.trim();
+    if (trimmed.length === 0 || trimmed.length > 120) return false;
+    return MUSIC_HEURISTIC_PATTERN.test(trimmed);
+}
+
 // ── Constants ─────────────────────────────────
 
 /** Hermes Agent periodic nudge interval: every N iterations, prompt the agent to persist valuable information. */
@@ -1084,6 +1096,12 @@ STRATEGY: Execute in as few tool calls as possible.
 
         // Auto-inject relevant memory and strategies on the first iteration of a user's prompt
         let activeInjection = "";
+        // Music fast-path state. Phase-1 is set BEFORE the tool-selection await
+        // (heuristic only — skips the heavy memory briefing). Phase-2 is set
+        // AFTER the await when the LLM classifier has populated its output.
+        let musicFastPathPhase1 = false;     // heuristic match — skip briefing only
+        let musicFastPathActive = false;     // full classifier match — skip orchestrator + verification + auto-reply
+        let musicFastPathHint: string | undefined;
         let toolSelectionPromise: Promise<Awaited<ReturnType<typeof selectTools>>> | null = null;
         if (iterations === 1 && userMessage) {
             const parts: string[] = [];
@@ -1503,10 +1521,18 @@ STRATEGY: Execute in as few tool calls as possible.
                     totalChars += part.length;
                 }
 
+                // Phase-1 heuristic: if this looks like a simple music command, skip the
+                // expensive memory briefing. False positives here are low-cost — the user
+                // just gets a leaner context on a non-music turn.
+                if (iterations === 1 && !isPlanMode() && isLikelyMusicCommand(rawUserMessage)) {
+                    musicFastPathPhase1 = true;
+                    console.log(`  ⚡ Music fast-path phase-1 (heuristic) — skipping memory briefing`);
+                }
+
                 // ── LLM Memory Briefing (Hermes pattern) ──
                 // When enabled, synthesize raw memory fragments into a cohesive briefing
                 // via a cheap Haiku call. Falls back to raw injection on failure.
-                if (USE_MEMORY_BRIEFING && queryMode !== "llm_only") {
+                if (USE_MEMORY_BRIEFING && queryMode !== "llm_only" && !musicFastPathPhase1) {
                     try {
                         const rawMemories: Record<string, string> = {};
                         for (const part of cappedParts) {
@@ -1588,6 +1614,25 @@ STRATEGY: Execute in as few tool calls as possible.
         const tools = toolSelection.tools;
         activeCategories = toolSelection.categories;
 
+        // Phase-2 full fast-path gate (requires classifier output — only available
+        // AFTER the await above populated lastClassification via selectTools).
+        if (
+            iterations === 1 &&
+            isMusicFastPathEligible({
+                userMessage: rawUserMessage,
+                iteration: iterations,
+                inPlanMode: isPlanMode(),
+            })
+        ) {
+            musicFastPathActive = true;
+            const peek = await musicMemoryPeek(rawUserMessage, llm);
+            musicFastPathHint = peek.musicMemoryHint;
+            console.log(`  ⚡ Music fast-path active${musicFastPathHint ? " (with memory hint)" : ""} — skipping orchestrator + auto-verification`);
+            if (musicFastPathHint) {
+                activeInjection = `${activeInjection ? activeInjection + "\n\n" : ""}${musicFastPathHint}`;
+            }
+        }
+
         // Skill slugs are sent to the server for server-side injection
         const iterSkillSlugs = iterations === 1 ? toolSelection.skillSlugs : [];
 
@@ -1617,7 +1662,7 @@ STRATEGY: Execute in as few tool calls as possible.
         const needsPlanning = activeCategories.some((c) =>
             ["os_control", "app_management", "browser", "media", "communication", "scheduling"].includes(c),
         );
-        if (iterations === 1 && needsPlanning) {
+        if (iterations === 1 && needsPlanning && !musicFastPathActive) {
             try {
                 const planStart = Date.now();
                 // ALWAYS use Sonnet for orchestrator — Haiku guesses wrong on ambiguous tasks
@@ -2546,7 +2591,7 @@ PLAN:`,
             );
         });
 
-        if ((hasToolFailure || hasAppOpened || hasSearch || (hasClick && !isPlaying)) && !usedVerification) {
+        if ((hasToolFailure || hasAppOpened || hasSearch || (hasClick && !isPlaying)) && !usedVerification && !musicFastPathActive) {
             messages.push({
                 role: "system",
                 content: `[VERIFICATION REQUIRED] Your last action may not have completed the task. Before responding to the user:
@@ -2555,6 +2600,15 @@ PLAN:`,
 3. Only tell the user "done" after you have CONFIRMED the task succeeded
 Do NOT assume success from a single click or tool call.`,
             });
+        }
+        if (musicFastPathActive && !hasToolFailure) {
+            const sawSpotifyCall = batchResults.some((r) => r.fnName === "spotify" || r.fnName === "music_control");
+            if (sawSpotifyCall) {
+                messages.push({
+                    role: "system",
+                    content: "[FAST_PATH_DONE] The music tool returned success. Reply briefly confirming the song is playing (one short sentence). Do NOT call now_playing or any other tool unless the user asks a follow-up question."
+                });
+            }
         }
 
         // ── Periodic progress for long tasks ──
