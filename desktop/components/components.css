@@ -53,3 +53,13 @@
 .sp-log__actions { display: inline-flex; gap: 6px; margin-left: 8px; }
 .sp-log__actions button { padding: 2px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.15); background: transparent; color: inherit; font-size: 11px; cursor: pointer; }
 .sp-log__actions button:hover { background: rgba(255,255,255,0.08); }
+.chip-strip { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 24px 12px; }
+.chip { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: #e8eaed; font-size: 12px; padding: 4px 10px; border-radius: 999px; cursor: pointer; }
+.chip:hover { background: rgba(255,255,255,0.14); }
+.step-dots { display: flex; gap: 6px; }
+.step-dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,0.35); cursor: pointer; transition: background 200ms; }
+.step-dot.active { background: linear-gradient(135deg, #a78bfa, #f472b6); }
+.step-dot.skipped { background: rgba(255,255,255,0.12); cursor: default; }
+.wizard-head { padding: 24px 24px 8px; display: flex; flex-direction: column; gap: 12px; }
+.wizard-head h1 { font-size: 24px; font-weight: 500; margin: 0; }
+.step-container { padding: 12px 24px 24px; }
