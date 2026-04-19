@@ -13,7 +13,7 @@ try {
     // bytenode not available - running in dev mode
 }
 
-const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, Tray, Menu, nativeImage, globalShortcut, screen, systemPreferences } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, Tray, Menu, nativeImage, globalShortcut, screen, systemPreferences, nativeTheme } = require("electron");
 const { spawn, execFile } = require("child_process");
 const path = require("path");
 const fs = require("fs");
@@ -1990,6 +1990,68 @@ function registerIPC() {
 
     // Setup: check if setup is complete
     ipcMain.handle("setup:is-complete", () => fs.existsSync(SETUP_FLAG));
+
+    // Setup: adaptive detection for the redesigned wizard (A.T.L.A.S wizard v2).
+    // Runs all Phase A signal probes in parallel with per-signal timeouts.
+    // Fail-safe: errors and timeouts never abort detection — every probe has a fallback.
+    ipcMain.handle("setup:detect", async () => {
+        const { runDetection } = require("./detection");
+        const os = require("os");
+        const { promisify } = require("util");
+        const execFn = promisify(require("child_process").exec);
+
+        // Pull OTPless session from electron-store; safeStorage may throw if key expired.
+        const prefs = (() => {
+            try {
+                return {
+                    account: store.get("account") || undefined,
+                    personalize: store.get("personalize") || undefined,
+                };
+            } catch { return {}; }
+        })();
+
+        // Parse the encrypted .env into a plain object so channel probes can read
+        // presence-only flags without the raw file ever leaving this function.
+        const envObj = (() => {
+            try {
+                const raw = loadEnvDecrypted();
+                if (!raw) return {};
+                const out = {};
+                for (const line of raw.split("\n")) {
+                    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/);
+                    if (m) out[m[1]] = m[2];
+                }
+                return out;
+            } catch { return {}; }
+        })();
+
+        const paths = {
+            setupFlag: SETUP_FLAG,
+            envFile: path.join(app.getPath("userData"), ".env.enc"),
+            googleTokens: path.join(app.getPath("userData"), "google-tokens"),
+            botDir: path.join(process.resourcesPath || app.getAppPath(), "bot"),
+            homeDir: app.getPath("home"),
+            workspace: path.join(app.getPath("desktop"), "A.T.L.A.S Files"),
+            storedVersion: path.join(app.getPath("userData"), "version.json"),
+            slackInstalls: path.join(app.getPath("userData"), "slack-installs"),
+            whatsappOwners: path.join(app.getPath("userData"), "whatsapp-users", "owners.json"),
+        };
+
+        return runDetection({
+            proc: process,
+            fs,
+            os,
+            systemPreferences,
+            nativeTheme,
+            globalShortcut,
+            prefs,
+            envObj,
+            execFn: async (cmd) => execFn(cmd),
+            paths,
+            currentVersion: app.getVersion(),
+            hotkey: process.platform === "win32" ? "Control+Space" : "Alt+Space",
+        });
+    });
 
 
     // App info
