@@ -2,47 +2,82 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import type { LLMClient, ChatCompletionMessageParam, ThinkingLevel } from "./llm.js";
-import { MODELS, MODEL_DISPLAY } from "./llm.js";
-import { selectForAgent, selectForFinalAnswer, selectForPlanning, shouldCascadeEscalate, getCascadeNext, updateConversationContext, getSessionCostSummary, updateToolStats, recordQualityFailure, type ModelSelection } from "./model-router.js";
-import { executeTool, clearCache, resetRateLimits } from "./tools/index.js";
-import { selectTools, selectToolsFast, handleToolRequest, isRequestToolsCall, clearToolRouterState, getLastIntent } from "./tool-router.js";
-import { recordIntentToolUsage, getPreferredTools, recordToolFailure, recordToolSuccess, recordToolRecovery } from "./tool-router-analytics.js";
-import { getStrategyContext, saveStrategy } from "./memory/strategy-library.js";
-import { pruneContext } from "./memory/context-pruning.js";
-import { checkAccountStatus, deductCredit, getSessionCreditStats, resetSessionCreditStats, getKnownCreditBalance } from "./account-guard.js";
-import { isPlanMode, filterToolsForPlanMode, planModeReminderBody, enterPlanMode } from "./agents/plan-mode.js";
+import { checkAccountStatus, getKnownCreditBalance, getSessionCreditStats } from "./account-guard.js";
 import { injectSystemReminder } from "./agent/system-reminders.js";
+import {
+    recordFailure as cbRecordFailure,
+    recordNoProgress as cbRecordNoProgress,
+    recordProgress as cbRecordProgress,
+    createCircuitBreaker,
+    getStatusMessage,
+    shouldTrip,
+    tryHalfOpen,
+} from "./agents/circuit-breaker.js";
 import { classifyComplexity } from "./agents/complexity-classifier.js";
-import { detectTaskType } from "./prompts/dynamic-assembler.js";
-import { getProjectMemorySnippet } from "./memory/project-memory.js";
+import { listActiveLongTasks } from "./agents/long-task.js";
+import { assess, createMetacognitionState, updateSignals } from "./agents/metacognition.js";
+import {
+    enterPlanMode,
+    filterToolsForPlanMode,
+    filterToolsForSpecMode,
+    isPlanMode,
+    isSpecMode,
+    planModeReminderBody,
+} from "./agents/plan-mode.js";
 import { offloadIfLarge } from "./agents/tool-output-offload.js";
-
-// ── Dynamic Context Injections ────────────────
-import { recall, getCoreMemory, recallConversation, remember } from "./memory/sqlite.js";
-import { findEntities, getKnowledgeGraphDB } from "./memory/knowledge-graph.js";
-import { getBrowserContext, trackBrowserStep, autoSaveSession } from "./tools/browser-memory.js";
-import { getTaskLearningsContext } from "./memory/task-learnings.js";
-import { getIdentityPromptSnippet } from "./memory/identity.js";
-import { getTraitsForInjection, resetSessionTraitCaps } from "./memory/traits.js";
-import { touchSession, getSessionSummary, shouldReflect, appendTurn } from "./memory/session.js";
+import type { ChatCompletionMessageParam, LLMClient, ThinkingLevel } from "./llm.js";
+import { MODEL_DISPLAY, MODELS } from "./llm.js";
+import { getLocationSnippet, getTimezone } from "./location/index.js";
+import { getAnticipationSnippet, trackSessionForAnticipation } from "./memory/anticipation.js";
+import { generateMemoryBriefing, USE_MEMORY_BRIEFING } from "./memory/briefing.js";
 import { classifyQuery } from "./memory/classifier.js";
-import { runReflection } from "./memory/reflection.js";
-import { getSelfStateSnippet } from "./memory/self-state.js";
+import { pruneContext } from "./memory/context-pruning.js";
 import { getEmotionalContextSnippet } from "./memory/emotional.js";
 import { getEpisodicSnippet } from "./memory/episodic.js";
+import { createGoal, detectGoalFromMessage, getGoalsSnippet } from "./memory/goals.js";
+import { getIdentityPromptSnippet } from "./memory/identity.js";
+import { findEntities, getKnowledgeGraphDB } from "./memory/knowledge-graph.js";
+import { getProjectMemorySnippet } from "./memory/project-memory.js";
+import { runReflection } from "./memory/reflection.js";
 import { getRelationshipSnippet } from "./memory/relationship.js";
-import { getAnticipationSnippet, trackSessionForAnticipation } from "./memory/anticipation.js";
+import { getSelfModelSnippet, recordOutcome as recordSelfModelOutcome } from "./memory/self-model.js";
+import { getSelfStateSnippet } from "./memory/self-state.js";
+import { appendTurn, getSessionSummary, shouldReflect, touchSession } from "./memory/session.js";
+// ── Dynamic Context Injections ────────────────
+import { getCoreMemory, recall, recallConversation, remember } from "./memory/sqlite.js";
+import { getStrategyContext, saveStrategy } from "./memory/strategy-library.js";
+import { getTaskLearningsContext } from "./memory/task-learnings.js";
+import { getTraitsForInjection, resetSessionTraitCaps } from "./memory/traits.js";
 import { getUserModelSnippet } from "./memory/user-model.js";
-import { getTimezone, getLocationSnippet } from "./location/index.js";
-import { recordSuccess as recordWorldSuccess, recordFailure as recordWorldFailure } from "./memory/world-model.js";
-import { getWMSnippet, retain as wmRetain, reflect as wmReflect } from "./memory/working-memory.js";
-import { createMetacognitionState, updateSignals, assess } from "./agents/metacognition.js";
-import { createCircuitBreaker, recordProgress as cbRecordProgress, recordFailure as cbRecordFailure, recordNoProgress as cbRecordNoProgress, shouldTrip, tryHalfOpen, getStatusMessage } from "./agents/circuit-breaker.js";
-import { listActiveLongTasks } from "./agents/long-task.js";
-import { recordOutcome as recordSelfModelOutcome, getSelfModelSnippet } from "./memory/self-model.js";
-import { detectGoalFromMessage, createGoal, getGoalsSnippet } from "./memory/goals.js";
-import { generateMemoryBriefing, USE_MEMORY_BRIEFING } from "./memory/briefing.js";
+import { getWMSnippet, reflect as wmReflect, retain as wmRetain } from "./memory/working-memory.js";
+import { recordFailure as recordWorldFailure, recordSuccess as recordWorldSuccess } from "./memory/world-model.js";
+import {
+    getCascadeNext,
+    type ModelSelection,
+    recordQualityFailure,
+    selectForAgent,
+    selectForFinalAnswer,
+    shouldCascadeEscalate,
+    updateToolStats,
+} from "./model-router.js";
+import { detectTaskType } from "./prompts/dynamic-assembler.js";
+import {
+    clearToolRouterState,
+    getLastIntent,
+    handleToolRequest,
+    isRequestToolsCall,
+    selectTools,
+    selectToolsFast,
+} from "./tool-router.js";
+import {
+    getPreferredTools,
+    recordIntentToolUsage,
+    recordToolFailure,
+    recordToolRecovery,
+    recordToolSuccess,
+} from "./tool-router-analytics.js";
+import { autoSaveSession, getBrowserContext, trackBrowserStep } from "./tools/browser-memory.js";
+import { clearCache, executeTool, resetRateLimits } from "./tools/index.js";
 
 // ── Constants ─────────────────────────────────
 
@@ -52,19 +87,32 @@ const MEMORY_NUDGE_INTERVAL = 5;
 // ── Browser tool names ────────────────────────
 
 const BROWSER_TOOLS = new Set([
-    "browser_navigate", "browser_click_at", "browser_type",
-    "browser_scan", "browser_extract", "browser_back", "browser_scroll",
-    "browser_analyze", "browser_run_js", "browser_wait", "browser_select",
-    "browser_right_click", "browser_hold_click", "browser_drag",
-    "browser_hover", "browser_keyboard", "browser_switch_tab",
+    "browser_navigate",
+    "browser_click_at",
+    "browser_type",
+    "browser_scan",
+    "browser_extract",
+    "browser_back",
+    "browser_scroll",
+    "browser_analyze",
+    "browser_run_js",
+    "browser_wait",
+    "browser_select",
+    "browser_right_click",
+    "browser_hold_click",
+    "browser_drag",
+    "browser_hover",
+    "browser_keyboard",
+    "browser_switch_tab",
     "browser_upload_file",
-    "browser_save_strategy", "browser_recall_strategy",
-    "browser_parallel_tabs", "browser_parallel_actions", "browser_multi_action",
+    "browser_save_strategy",
+    "browser_recall_strategy",
+    "browser_parallel_tabs",
+    "browser_parallel_actions",
+    "browser_multi_action",
 ]);
 
-const HARD_DECISION_TOOLS = new Set([
-    "web_search", "shell_exec", "memory_store",
-]);
+const HARD_DECISION_TOOLS = new Set(["web_search", "shell_exec", "memory_store"]);
 
 /** Tools whose results don't affect conversation flow — executed in background, synthetic success returned immediately */
 const DEFERRABLE_TOOLS = new Set(["memory_store"]);
@@ -84,9 +132,9 @@ function sanitizeAgentResponse(text: string): string {
 // ── Milestone tool descriptions ───────────────
 
 const MILESTONE_DESCRIPTIONS: Record<string, (args: Record<string, unknown>) => string> = {
-    browser_navigate: (a) => `🌐 Opening ${(a.url as string || "").substring(0, 60)}...`,
+    browser_navigate: (a) => `🌐 Opening ${((a.url as string) || "").substring(0, 60)}...`,
     web_search: (a) => `🔍 Searching: "${a.query || ""}"`,
-    shell_exec: (a) => `⚙️ Running command: ${(a.command as string || "").substring(0, 50)}`,
+    shell_exec: (a) => `⚙️ Running command: ${((a.command as string) || "").substring(0, 50)}`,
     browser_scan: () => `🔍 Scanning the active browser page DOM...`,
     browser_analyze: () => `🔎 Analyzing page elements...`,
     browser_run_js: () => `📊 Extracting data from the page...`,
@@ -97,8 +145,9 @@ const MILESTONE_DESCRIPTIONS: Record<string, (args: Record<string, unknown>) => 
     append_file: (a) => `➕ Appending to: ${a.file_path || ""}`,
     grep: (a) => `🔎 Searching: "${a.pattern || ""}"`,
     glob: (a) => `📂 Finding files: "${a.pattern || ""}"`,
-    memory_store: (a) => `🧠 Remembering: "${(a.content as string || "").substring(0, 40)}"`,
-    browser_parallel_tabs: (a) => `🔀 Processing ${Array.isArray(a.tab_actions) ? a.tab_actions.length : 0} tabs in parallel...`,
+    memory_store: (a) => `🧠 Remembering: "${((a.content as string) || "").substring(0, 40)}"`,
+    browser_parallel_tabs: (a) =>
+        `🔀 Processing ${Array.isArray(a.tab_actions) ? a.tab_actions.length : 0} tabs in parallel...`,
 };
 
 // ── Tool Result Truncation ────────────────────
@@ -120,7 +169,7 @@ const DEFAULT_RESULT_LIMIT = 4000;
 function truncateToolResult(toolName: string, result: string): string {
     const limit = TOOL_RESULT_LIMITS[toolName] ?? DEFAULT_RESULT_LIMIT;
     if (result.length <= limit) return result;
-    return result.substring(0, limit) + `\n[... truncated from ${result.length} chars]`;
+    return `${result.substring(0, limit)}\n[... truncated from ${result.length} chars]`;
 }
 
 // ── Turn ID for offload grouping ─────────────
@@ -128,7 +177,9 @@ function truncateToolResult(toolName: string, result: string): string {
 // Used to group offloaded tool outputs on disk by conversation turn.
 let _turnCounter = 0;
 let _currentTurnId = `boot-${Date.now()}`;
-function currentTurnId(): string { return _currentTurnId; }
+function currentTurnId(): string {
+    return _currentTurnId;
+}
 function nextTurnId(): string {
     _turnCounter++;
     _currentTurnId = `turn-${Date.now()}-${_turnCounter}`;
@@ -154,8 +205,10 @@ function formatDiffPreview(toolName: string, result: string): string | null {
             if (!preview) return null;
             const lines = preview.split("\n");
             const shown = lines.slice(0, DIFF_PREVIEW_LINE_CAP).join("\n");
-            const tail = lines.length > DIFF_PREVIEW_LINE_CAP
-                ? `\n... (${lines.length - DIFF_PREVIEW_LINE_CAP} more lines)` : "";
+            const tail =
+                lines.length > DIFF_PREVIEW_LINE_CAP
+                    ? `\n... (${lines.length - DIFF_PREVIEW_LINE_CAP} more lines)`
+                    : "";
             return `📝 Edited ${filePath || "file"}\n\`\`\`diff\n${shown}${tail}\n\`\`\``;
         }
 
@@ -178,11 +231,21 @@ export interface AgentResponse {
 }
 
 export interface ChannelContext {
-    channel: "telegram" | "whatsapp" | "discord" | "slack" | "overlay" | "email" | "matrix" | "web-widget" | "chrome-extension" | string;
+    channel:
+        | "telegram"
+        | "whatsapp"
+        | "discord"
+        | "slack"
+        | "overlay"
+        | "email"
+        | "matrix"
+        | "web-widget"
+        | "chrome-extension"
+        | string;
     userId: string;
     userName?: string;
     isOwner: boolean;
-    contactProfile?: any;  // WhatsApp ContactProfile
+    contactProfile?: any; // WhatsApp ContactProfile
 }
 
 // ── Session State ─────────────────────────────
@@ -201,9 +264,9 @@ export function getConversationCount(): number {
 
 export function clearConversation(): void {
     conversationHistory = [];
-    clearCache();            // Flush stale tool result cache
-    resetRateLimits();       // Reset rate limit buckets
-    clearToolRouterState();  // Reset tool router requested categories
+    clearCache(); // Flush stale tool result cache
+    resetRateLimits(); // Reset rate limit buckets
+    clearToolRouterState(); // Reset tool router requested categories
 }
 
 export function getConversationHistory(): ChatCompletionMessageParam[] {
@@ -229,7 +292,11 @@ function buildToolRouterContext(messages: ChatCompletionMessageParam[]): string 
             lines.push(`User: ${clean.substring(0, 100)}`);
         } else if (msg.role === "assistant" && typeof msg.content === "string") {
             // Only first sentence of assistant response — keep it compact
-            const first = msg.content.replace(/<[^>]+>/g, "").split(/[.!?\n]/)[0]?.trim().substring(0, 80);
+            const first = msg.content
+                .replace(/<[^>]+>/g, "")
+                .split(/[.!?\n]/)[0]
+                ?.trim()
+                .substring(0, 80);
             if (first) lines.push(`Assistant: ${first}`);
         }
         // Skip tool_call/tool_result messages — too verbose for the classifier
@@ -250,14 +317,7 @@ function chooseModel(
 ): ModelSelection {
     // Browser/OS tool override is handled by the Rust router (model_router.rs:1488-1501)
     // No need to duplicate it here — the router checks circuit breaker state too
-    return selectForAgent(
-        userMessage || "",
-        iteration,
-        errorCount,
-        modelHint,
-        lastToolCalls,
-        hasMedia,
-    );
+    return selectForAgent(userMessage || "", iteration, errorCount, modelHint, lastToolCalls, hasMedia);
 }
 
 // ── Progress Helpers ──────────────────────────
@@ -273,7 +333,9 @@ function getErrorMessage(toolName: string, result: string): string | null {
         if (parsed.error) {
             return `⚠️ ${toolName} failed: ${(parsed.error as string).substring(0, 80)}. Trying another approach...`;
         }
-    } catch { /* not JSON */ }
+    } catch {
+        /* not JSON */
+    }
     return null;
 }
 
@@ -292,12 +354,17 @@ interface ToolCallResult {
 /**
  * Create a synthetic success result for a deferred (fire-and-forget) tool call.
  */
-function createSyntheticDeferredResult(
-    toolCall: { id: string; function: { name: string; arguments: string } }
-): ToolCallResult {
+function createSyntheticDeferredResult(toolCall: {
+    id: string;
+    function: { name: string; arguments: string };
+}): ToolCallResult {
     const fnName = toolCall.function.name;
     let fnArgs: Record<string, unknown> = {};
-    try { fnArgs = JSON.parse(toolCall.function.arguments || "{}"); } catch { fnArgs = {}; }
+    try {
+        fnArgs = JSON.parse(toolCall.function.arguments || "{}");
+    } catch {
+        fnArgs = {};
+    }
     const result = JSON.stringify({ success: true, deferred: true, message: "Saved." });
     return { toolCallId: toolCall.id, fnName, fnArgs, result, finalContent: result, isBrowser: false, isError: false };
 }
@@ -313,11 +380,23 @@ async function executeAndProcessToolCall(
 ): Promise<ToolCallResult> {
     const fnName = toolCall.function.name;
     let fnArgs: Record<string, unknown> = {};
-    try { fnArgs = JSON.parse(toolCall.function.arguments || "{}"); } catch { fnArgs = {}; }
+    try {
+        fnArgs = JSON.parse(toolCall.function.arguments || "{}");
+    } catch {
+        fnArgs = {};
+    }
 
     // ── Hard block: reject tools not in the allowlist (defense-in-depth) ──
     if (toolAllowlist && toolAllowlist.length > 0 && !new Set(toolAllowlist).has(fnName)) {
-        return { toolCallId: toolCall.id, fnName, fnArgs, result: JSON.stringify({ error: `Tool "${fnName}" is restricted in this context.` }), finalContent: JSON.stringify({ error: `Tool "${fnName}" is restricted in this context.` }), isBrowser: false, isError: true };
+        return {
+            toolCallId: toolCall.id,
+            fnName,
+            fnArgs,
+            result: JSON.stringify({ error: `Tool "${fnName}" is restricted in this context.` }),
+            finalContent: JSON.stringify({ error: `Tool "${fnName}" is restricted in this context.` }),
+            isBrowser: false,
+            isError: true,
+        };
     }
 
     // Inject original user prompt for tools that support continuation (e.g. deep_research)
@@ -349,7 +428,12 @@ async function executeAndProcessToolCall(
 
     // ── Self-heal: if tool failed with a dependency error, auto-fix and retry ──
     let isError = false;
-    try { const p = JSON.parse(rawResult); if (p.error) isError = true; } catch { /* not json */ }
+    try {
+        const p = JSON.parse(rawResult);
+        if (p.error) isError = true;
+    } catch {
+        /* not json */
+    }
     if (isError) {
         try {
             const { attemptSelfHeal } = await import("./agents/self-heal.js");
@@ -358,9 +442,16 @@ async function executeAndProcessToolCall(
                 console.log(`  🔧 Self-healed (${heal.action}) — retrying ${fnName}`);
                 rawResult = await executeTool(fnName, fnArgs);
                 isError = false;
-                try { const p = JSON.parse(rawResult); if (p.error) isError = true; } catch { /* not json */ }
+                try {
+                    const p = JSON.parse(rawResult);
+                    if (p.error) isError = true;
+                } catch {
+                    /* not json */
+                }
             }
-        } catch { /* self-heal module not loaded — continue normally */ }
+        } catch {
+            /* self-heal module not loaded — continue normally */
+        }
     }
 
     // Large-output offload: if the raw result is over the offload threshold,
@@ -385,17 +476,19 @@ async function executeAndProcessToolCall(
         const parsed = JSON.parse(result);
         if (parsed.screenshot_base64) {
             const b64 = parsed.screenshot_base64;
-            const mimeType = parsed.mime_type || 'image/png';
+            const mimeType = parsed.mime_type || "image/png";
             delete parsed.screenshot_base64;
             delete parsed.mime_type;
             parsed.image_attached = true;
 
             finalContent = [
                 { type: "text", text: JSON.stringify(parsed) },
-                { type: "image_url", image_url: { url: `data:${mimeType};base64,${b64}` } }
+                { type: "image_url", image_url: { url: `data:${mimeType};base64,${b64}` } },
             ];
         }
-    } catch { /* not json */ }
+    } catch {
+        /* not json */
+    }
 
     return { toolCallId: toolCall.id, fnName, fnArgs, result, finalContent, isBrowser, isError };
 }
@@ -415,7 +508,7 @@ async function executeToolCallsBatch(
         onToolRequest?: (request: { capability: string; reason: string }) => Promise<string>;
         userMessage?: string;
         toolAllowlist?: string[];
-    }
+    },
 ): Promise<ToolCallResult[]> {
     // Separate browser, non-browser, and deferrable tool calls while preserving order
     const browserCalls: typeof toolCalls = [];
@@ -441,11 +534,11 @@ async function executeToolCallsBatch(
         console.log(`  🔧 Tool call: ${tc.function.name} (deferred)`, tc.function.arguments?.substring(0, 200));
         // Track the promise to prevent unhandled rejections
         const promise = executeAndProcessToolCall(tc, ctx.onToolRequest, ctx.userMessage, ctx.toolAllowlist)
-            .then(r => {
+            .then((r) => {
                 const preview = r.result ? r.result.substring(0, 200) : "(empty)";
                 console.log(`  ✅ Deferred tool ${r.fnName} completed: ${preview}`);
             })
-            .catch(err => console.error(`  ❌ Deferred tool ${tc.function.name} failed: ${(err as Error).message}`));
+            .catch((err) => console.error(`  ❌ Deferred tool ${tc.function.name} failed: ${(err as Error).message}`));
         // Ensure the promise is tracked to avoid unhandled rejection warnings
         void promise;
         deferredResults.push(createSyntheticDeferredResult(tc));
@@ -453,31 +546,43 @@ async function executeToolCallsBatch(
 
     // Fire all non-browser tools in parallel (with 120s safety timeout)
     const TOOL_BATCH_TIMEOUT_MS = 120_000;
-    const nonBrowserPromise = nonBrowserCalls.length > 0
-        ? Promise.race([
-            Promise.all(nonBrowserCalls.map(tc => executeAndProcessToolCall(tc, ctx.onToolRequest, ctx.userMessage, ctx.toolAllowlist))),
-            new Promise<ToolCallResult[]>((_, reject) =>
-                setTimeout(() => reject(new Error(`Tool batch timed out after ${TOOL_BATCH_TIMEOUT_MS / 1000}s`)), TOOL_BATCH_TIMEOUT_MS)
-            ),
-        ]).catch(err => {
-            console.error(`  ⚠️ Non-browser tool batch error: ${(err as Error).message}`);
-            return nonBrowserCalls.map(tc => ({
-                toolCallId: tc.id,
-                fnName: tc.function.name,
-                fnArgs: {} as Record<string, unknown>,
-                result: JSON.stringify({ error: (err as Error).message }),
-                finalContent: JSON.stringify({ error: (err as Error).message }),
-                isBrowser: false,
-                isError: true,
-            }));
-        })
-        : Promise.resolve([] as ToolCallResult[]);
+    const nonBrowserPromise =
+        nonBrowserCalls.length > 0
+            ? Promise.race([
+                  Promise.all(
+                      nonBrowserCalls.map((tc) =>
+                          executeAndProcessToolCall(tc, ctx.onToolRequest, ctx.userMessage, ctx.toolAllowlist),
+                      ),
+                  ),
+                  new Promise<ToolCallResult[]>((_, reject) =>
+                      setTimeout(
+                          () => reject(new Error(`Tool batch timed out after ${TOOL_BATCH_TIMEOUT_MS / 1000}s`)),
+                          TOOL_BATCH_TIMEOUT_MS,
+                      ),
+                  ),
+              ]).catch((err) => {
+                  console.error(`  ⚠️ Non-browser tool batch error: ${(err as Error).message}`);
+                  return nonBrowserCalls.map((tc) => ({
+                      toolCallId: tc.id,
+                      fnName: tc.function.name,
+                      fnArgs: {} as Record<string, unknown>,
+                      result: JSON.stringify({ error: (err as Error).message }),
+                      finalContent: JSON.stringify({ error: (err as Error).message }),
+                      isBrowser: false,
+                      isError: true,
+                  }));
+              })
+            : Promise.resolve([] as ToolCallResult[]);
 
     // Run browser tools sequentially (they share a page)
     const browserResults: ToolCallResult[] = [];
     for (const tc of browserCalls) {
         const fnArgs: Record<string, unknown> = {};
-        try { Object.assign(fnArgs, JSON.parse(tc.function.arguments || "{}")); } catch { /* */ }
+        try {
+            Object.assign(fnArgs, JSON.parse(tc.function.arguments || "{}"));
+        } catch {
+            /* */
+        }
         const milestone = getMilestoneMessage(tc.function.name, fnArgs);
         if (milestone) await ctx.sendProgress(milestone);
 
@@ -546,6 +651,13 @@ export async function runAgent(
     // tool outputs cluster per turn on disk.
     if (!isForked) nextTurnId();
 
+    // Tell tools which channel produced this turn so they can deliver back
+    // on the same channel. Cleared in finally below.
+    if (channelContext?.channel) {
+        const { setActiveChannel } = await import("./tools/channel-send.js");
+        setActiveChannel(channelContext.channel);
+    }
+
     // ── Account Gate ──────────────────────────
     // Check if account is active and has credits before processing
     if (true) {
@@ -572,7 +684,9 @@ export async function runAgent(
             createGoal(detectedGoal.description, detectedGoal.deadline ?? undefined);
             console.log(`  🎯 Goal detected: "${detectedGoal.description}"`);
         }
-    } catch { /* non-fatal */ }
+    } catch {
+        /* non-fatal */
+    }
 
     // When running on a fork, use the fork instead of global history
     let workingHistory = historyFork || conversationHistory;
@@ -581,9 +695,7 @@ export async function runAgent(
     const maybeReflect = () => {
         if (!isForked && shouldReflect()) {
             console.log(`  🔄 Triggering async reflection (periodic)`);
-            runReflection(llm, [...workingHistory]).catch(err =>
-                console.error("Reflection error (non-fatal):", err)
-            );
+            runReflection(llm, [...workingHistory]).catch((err) => console.error("Reflection error (non-fatal):", err));
         }
     };
 
@@ -634,8 +746,8 @@ export async function runAgent(
     // Hard cap: prevent conversationHistory from growing unbounded (memory leak prevention)
     if (!isForked && workingHistory.length > MAX_CONVERSATION_HISTORY) {
         // Keep system messages at the start, then trim oldest non-system messages
-        const systemMsgs = workingHistory.filter(m => m.role === "system");
-        const nonSystemMsgs = workingHistory.filter(m => m.role !== "system");
+        const systemMsgs = workingHistory.filter((m) => m.role === "system");
+        const nonSystemMsgs = workingHistory.filter((m) => m.role !== "system");
         const keepCount = MAX_CONVERSATION_HISTORY - systemMsgs.length;
         const trimmed = nonSystemMsgs.length - keepCount;
         // ── Auto-flush: save key facts from messages being dropped ──
@@ -646,13 +758,17 @@ export async function runAgent(
                 const text = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
                 if (!text || text.length < 50) continue;
                 if (text.startsWith("{") && text.endsWith("}")) continue;
-                const content = text.length > 500 ? text.substring(0, 497) + "..." : text;
+                const content = text.length > 500 ? `${text.substring(0, 497)}...` : text;
                 remember(content, "auto_flush", "hard_cap,auto", 5, "tool");
-            } catch { /* auto-flush non-fatal */ }
+            } catch {
+                /* auto-flush non-fatal */
+            }
         }
         workingHistory = [...systemMsgs, ...nonSystemMsgs.slice(-keepCount)];
         conversationHistory = workingHistory;
-        console.log(`  ✂️ Hard-capped conversation history: dropped ${trimmed} oldest messages (limit: ${MAX_CONVERSATION_HISTORY})`);
+        console.log(
+            `  ✂️ Hard-capped conversation history: dropped ${trimmed} oldest messages (limit: ${MAX_CONVERSATION_HISTORY})`,
+        );
     }
 
     if (!isForked) {
@@ -678,17 +794,14 @@ export async function runAgent(
     // Never triggers for sub-agent calls (historyFork) or non-coding tasks.
     // Fail-open: any classifier error leaves plan mode untouched.
     try {
-        if (
-            !isForked &&
-            process.env.ATLAS_AUTO_PLAN_MODE === "true" &&
-            !isPlanMode() &&
-            rawUserMessage
-        ) {
+        if (!isForked && process.env.ATLAS_AUTO_PLAN_MODE === "true" && !isPlanMode() && rawUserMessage) {
             const taskType = detectTaskType(rawUserMessage);
             if (taskType === "coding") {
                 const complexity = classifyComplexity(rawUserMessage);
                 if (complexity.score >= 0.3) {
-                    console.log(`[AGENT] auto-entering plan mode (score=${complexity.score.toFixed(2)}, signals=${complexity.signals.join(",")})`);
+                    console.log(
+                        `[AGENT] auto-entering plan mode (score=${complexity.score.toFixed(2)}, signals=${complexity.signals.join(",")})`,
+                    );
                     enterPlanMode(`auto: coding + complexity ${complexity.score.toFixed(2)}`, "auto");
                 }
             }
@@ -705,7 +818,9 @@ export async function runAgent(
         lastProgressTime = now;
         try {
             await onProgress(msg);
-        } catch { /* don't let progress errors kill the agent */ }
+        } catch {
+            /* don't let progress errors kill the agent */
+        }
     };
 
     let errorCount = 0;
@@ -713,7 +828,7 @@ export async function runAgent(
     // ── Plan-Then-Execute Detection ──
     // When the message contains multiple independent URLs or task markers,
     // inject a planning hint so the LLM plans upfront rather than going one-by-one.
-    const urlMatches = rawUserMessage.match(/https?:\/\/[^\s)\"'>]+/g);
+    const urlMatches = rawUserMessage.match(/https?:\/\/[^\s)"'>]+/g);
     const uniqueUrls = urlMatches ? [...new Set(urlMatches)] : [];
     const taskMarkers = (rawUserMessage.match(/\band also\b|\bthen do\b|\balso do\b|\band\s+https?:/gi) || []).length;
 
@@ -725,12 +840,18 @@ STRATEGY: Use browser_parallel_tabs to open all URLs simultaneously. The system 
 3. Then process each tab's content (switch between tabs with browser_switch_tab)
 Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then sequential per-tab work.`;
         workingHistory.push({ role: "system", content: planningHint });
-        console.log(`  📋 Plan-then-execute: detected ${uniqueUrls.length} URLs, ${taskMarkers} task markers — injecting planning hint`);
+        console.log(
+            `  📋 Plan-then-execute: detected ${uniqueUrls.length} URLs, ${taskMarkers} task markers — injecting planning hint`,
+        );
     }
 
     // Detect OS/app interaction tasks and inject planning hint
-    const osTaskPatterns = /\b(open|launch|send|type|click|navigate|go to|switch to|play|edit|cut|trim|paste|copy|save|export|import|record|delete|search|find|message|call|email)\b/i;
-    const isOsAppTask = osTaskPatterns.test(rawUserMessage) && !rawUserMessage.includes("http") && rawUserMessage.split(/\s+/).length > 3;
+    const osTaskPatterns =
+        /\b(open|launch|send|type|click|navigate|go to|switch to|play|edit|cut|trim|paste|copy|save|export|import|record|delete|search|find|message|call|email)\b/i;
+    const isOsAppTask =
+        osTaskPatterns.test(rawUserMessage) &&
+        !rawUserMessage.includes("http") &&
+        rawUserMessage.split(/\s+/).length > 3;
 
     if (isOsAppTask) {
         const planHint = `\n\n[OS TASK — Plan all steps upfront, minimize tool calls]
@@ -770,7 +891,9 @@ STRATEGY: Execute in as few tool calls as possible.
             }
             // Low confidence can inform cascade escalation
             if (metaCheck.confidence < 0.3 && !cascadeAttempted) {
-                console.log(`  🧠 Metacognition: low confidence (${metaCheck.confidence.toFixed(2)}) — may trigger cascade escalation`);
+                console.log(
+                    `  🧠 Metacognition: low confidence (${metaCheck.confidence.toFixed(2)}) — may trigger cascade escalation`,
+                );
             }
         }
 
@@ -792,17 +915,24 @@ STRATEGY: Execute in as few tool calls as possible.
                     const statusMsg = getStatusMessage(circuitBreaker);
                     console.warn(`  [CIRCUIT-BREAKER] ${statusMsg}`);
                     if (onProgress) {
-                        try { await onProgress(`\u26a0\ufe0f ${statusMsg}`); } catch { /* non-fatal */ }
+                        try {
+                            await onProgress(`\u26a0\ufe0f ${statusMsg}`);
+                        } catch {
+                            /* non-fatal */
+                        }
                     }
                     const partialResponses = messages
-                        .filter(m => m.role === "assistant" && typeof (m as { content?: string }).content === "string")
-                        .map(m => (m as { content: string }).content)
+                        .filter(
+                            (m) => m.role === "assistant" && typeof (m as { content?: string }).content === "string",
+                        )
+                        .map((m) => (m as { content: string }).content)
                         .filter(Boolean);
-                    const partialText = partialResponses.length > 0
-                        ? partialResponses[partialResponses.length - 1]
-                        : null;
+                    const partialText =
+                        partialResponses.length > 0 ? partialResponses[partialResponses.length - 1] : null;
                     return {
-                        text: partialText || `I've been having trouble completing this task (${tripResult.reason}). Please try again or try a different approach.`,
+                        text:
+                            partialText ||
+                            `I've been having trouble completing this task (${tripResult.reason}). Please try again or try a different approach.`,
                         toolCalls: totalToolCalls,
                     };
                 }
@@ -849,7 +979,14 @@ STRATEGY: Execute in as few tool calls as possible.
         // Only pass hasMedia on first iteration — subsequent iterations are tool loops,
         // not vision tasks. Without this, screenshots cause all iterations to use Vision routing.
         const hasMediaThisIter = iterations === 1 && !!(media && media.length > 0);
-        const selection = chooseModel(iterations, lastToolCalls, errorCount, modelHint, rawUserMessage, hasMediaThisIter);
+        const selection = chooseModel(
+            iterations,
+            lastToolCalls,
+            errorCount,
+            modelHint,
+            rawUserMessage,
+            hasMediaThisIter,
+        );
         // Circuit breaker half-open: force highest-tier model for recovery probe
         const model = circuitBreaker.state === "half-open" ? MODELS.PRO : selection.modelId;
         if (iterations <= 3 || iterations % 5 === 0) {
@@ -865,11 +1002,24 @@ STRATEGY: Execute in as few tool calls as possible.
             // ── Live datetime context (always first) ──
             const now = new Date();
             const tz = getTimezone();
-            const timeStr = now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: tz });
-            const dateStr = now.toLocaleDateString("en-IN", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: tz });
+            const timeStr = now.toLocaleTimeString("en-IN", {
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: true,
+                timeZone: tz,
+            });
+            const dateStr = now.toLocaleDateString("en-IN", {
+                weekday: "long",
+                year: "numeric",
+                month: "long",
+                day: "numeric",
+                timeZone: tz,
+            });
             // Parse local hour from the formatted time string (not system-local hours)
-            const localHour = parseInt(now.toLocaleString("en-US", { hour: "numeric", hour12: false, timeZone: tz })) || 0;
-            const greeting = localHour < 12 ? "morning" : localHour < 17 ? "afternoon" : localHour < 21 ? "evening" : "night";
+            const localHour =
+                parseInt(now.toLocaleString("en-US", { hour: "numeric", hour12: false, timeZone: tz }), 10) || 0;
+            const greeting =
+                localHour < 12 ? "morning" : localHour < 17 ? "afternoon" : localHour < 21 ? "evening" : "night";
             parts.push(`🕐 CURRENT CONTEXT:\n- Date: ${dateStr}\n- Time: ${timeStr} (${tz})\n- Period: ${greeting}`);
 
             // ── 0. Touch session (track turns) ───────
@@ -882,10 +1032,12 @@ STRATEGY: Execute in as few tool calls as possible.
 
                 // Fire reflection for expired session — use pre-expiry history, not current (mostly empty) workingHistory
                 if (expiredSession && expiredSession.turn_count > 3) {
-                    console.log(`[MEMORY][REFLECTION] Session expired — triggering reflection (${expiredSession.turn_count} turns)`);
+                    console.log(
+                        `[MEMORY][REFLECTION] Session expired — triggering reflection (${expiredSession.turn_count} turns)`,
+                    );
                     // Await reflection so its DB writes complete before memory retrieval runs
-                    await runReflection(llm, preSessionHistory).catch(err =>
-                        console.error("[MEMORY][REFLECTION] Expired session reflection failed:", err)
+                    await runReflection(llm, preSessionHistory).catch((err) =>
+                        console.error("[MEMORY][REFLECTION] Expired session reflection failed:", err),
                     );
                 }
             }
@@ -902,15 +1054,16 @@ STRATEGY: Execute in as few tool calls as possible.
             // ── Start tool selection in parallel with memory injection ──
             // For llm_only (greetings/acks): use fast-path (no embeddings, instant)
             // For everything else: start async embedding now, await later
-            toolSelectionPromise = queryMode === "llm_only"
-                ? Promise.resolve(selectToolsFast())
-                : selectTools({
-                    message: rawUserMessage,
-                    recentToolCalls: lastToolCalls?.map(tc => tc.function.name),
-                    iteration: iterations,
-                    requestedCategories,
-                    conversationContext: convCtx,
-                  });
+            toolSelectionPromise =
+                queryMode === "llm_only"
+                    ? Promise.resolve(selectToolsFast())
+                    : selectTools({
+                          message: rawUserMessage,
+                          recentToolCalls: lastToolCalls?.map((tc) => tc.function.name),
+                          iteration: iterations,
+                          requestedCategories,
+                          conversationContext: convCtx,
+                      });
 
             // ── 2. Identity profile + onboarding detection ──
             // Always inject personality context (including for llm_only) so the agent feels alive
@@ -930,7 +1083,9 @@ STRATEGY: Execute in as few tool calls as possible.
             try {
                 const locationSnippet = getLocationSnippet();
                 if (locationSnippet) parts.push(locationSnippet);
-            } catch { /* location not initialized */ }
+            } catch {
+                /* location not initialized */
+            }
 
             // ── Project memory (ATLAS.md walk-up) ──
             // Only for coding-classified queries to avoid injecting
@@ -940,13 +1095,52 @@ STRATEGY: Execute in as few tool calls as possible.
                     const projectMemory = getProjectMemorySnippet();
                     if (projectMemory) parts.push(projectMemory);
                 }
-            } catch { /* project memory not available */ }
+            } catch {
+                /* project memory not available */
+            }
+
+            // ── Repo map (structural symbol summary) ──
+            // Token-budgeted structural overview for coding queries so the agent
+            // knows "what's where" without reading every file. Kept tight at 1500
+            // tokens to avoid crowding the rest of the context injection.
+            try {
+                if (detectTaskType(rawUserMessage) === "coding" && process.env.ATLAS_NO_REPO_MAP !== "true") {
+                    const { generateRepoMap } = await import("./tools/repo-map.js");
+                    const map = await generateRepoMap(process.cwd(), {
+                        maxTokens: 1500,
+                        maxFiles: 200,
+                        maxSymbolsPerFile: 8,
+                    });
+                    if (map && !map.startsWith("[No source")) {
+                        parts.push(`<repo_map>\n${map}\n</repo_map>`);
+                    }
+                }
+            } catch (err) {
+                console.warn("[AGENT] repo_map injection failed (non-fatal):", (err as Error).message);
+            }
+
+            // ── Codebase index auto-trigger + architecture injection (Phase 4L) ──
+            // On the first iteration of a coding task: ensure the sidecar exists
+            // (block inline for tiny repos, async for anything larger) and inject
+            // an <architecture> block if available. Both steps fail-open.
+            try {
+                if (detectTaskType(rawUserMessage) === "coding") {
+                    const { ensureIndexForCoding, getArchitectureSnippet } = await import("./memory/codebase-index.js");
+                    await ensureIndexForCoding(process.cwd());
+                    const arch = await getArchitectureSnippet(process.cwd());
+                    if (arch) parts.push(arch);
+                }
+            } catch (err) {
+                console.warn("[AGENT] architecture injection failed (non-fatal):", (err as Error).message);
+            }
 
             // ── 3. Behavioral traits (token-budgeted, relevance-scored) ──
             try {
                 const traitsSnippet = getTraitsForInjection(userMessage, 600);
                 if (traitsSnippet) parts.push(traitsSnippet);
-            } catch { /* traits not initialized */ }
+            } catch {
+                /* traits not initialized */
+            }
 
             // ── 4. Session context (rolling summary) ──
             const sessionSummary = getSessionSummary();
@@ -956,32 +1150,42 @@ STRATEGY: Execute in as few tool calls as possible.
             try {
                 const selfStateSnippet = getSelfStateSnippet();
                 if (selfStateSnippet) parts.push(selfStateSnippet);
-            } catch { /* */ }
+            } catch {
+                /* */
+            }
 
             // ── 6. Emotional context ──
             try {
                 const emotionalSnippet = getEmotionalContextSnippet();
                 if (emotionalSnippet) parts.push(emotionalSnippet);
-            } catch { /* */ }
+            } catch {
+                /* */
+            }
 
             // ── 7. Episodic milestones ──
             try {
                 const episodicSnippet = getEpisodicSnippet();
                 if (episodicSnippet) parts.push(episodicSnippet);
-            } catch { /* */ }
+            } catch {
+                /* */
+            }
 
             // ── 8. Relationship tone modulation ──
             try {
                 const relationshipSnippet = getRelationshipSnippet();
                 if (relationshipSnippet) parts.push(relationshipSnippet);
-            } catch { /* */ }
+            } catch {
+                /* */
+            }
 
             // ── 9. Anticipation (proactive, gated — skip for simple greetings) ──
             if (queryMode !== "llm_only") {
                 try {
                     const anticipationSnippet = getAnticipationSnippet();
                     if (anticipationSnippet) parts.push(anticipationSnippet);
-                } catch { /* */ }
+                } catch {
+                    /* */
+                }
             }
 
             // ── 10. User model (aggregated profile: projects, routines, style) ──
@@ -989,7 +1193,9 @@ STRATEGY: Execute in as few tool calls as possible.
                 try {
                     const userModelSnippet = await getUserModelSnippet();
                     if (userModelSnippet) parts.push(userModelSnippet);
-                } catch { /* user model not initialized */ }
+                } catch {
+                    /* user model not initialized */
+                }
             }
 
             try {
@@ -997,7 +1203,9 @@ STRATEGY: Execute in as few tool calls as possible.
                 const coreMems = getCoreMemory(10);
                 if (coreMems && coreMems.length > 0) {
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    parts.push("🧠 CORE MEMORY (Always remember these facts about the user):\n" + coreMems.map((m: any) => `- (${m.category}) ${m.content}`).join("\n"));
+                    parts.push(
+                        `🧠 CORE MEMORY (Always remember these facts about the user):\n${coreMems.map((m: any) => `- (${m.category}) ${m.content}`).join("\n")}`,
+                    );
                 }
 
                 // 6. Query-specific recall — only for modes that need semantic search
@@ -1008,20 +1216,27 @@ STRATEGY: Execute in as few tool calls as possible.
                     // Enrich recall query with recent user messages for better semantic matching
                     // "how much?" alone won't match "WhatsApp transfer", but combined with recent context it will
                     const recentUserMsgs = workingHistory
-                        .filter(m => m.role === "user" && typeof m.content === "string")
+                        .filter((m) => m.role === "user" && typeof m.content === "string")
                         .slice(-3)
-                        .map(m => (m.content as string).substring(0, 150));
-                    const enrichedQuery = recentUserMsgs.length > 1
-                        ? recentUserMsgs.join(" ") + " " + userMessage
-                        : userMessage;
+                        .map((m) => (m.content as string).substring(0, 150));
+                    const enrichedQuery =
+                        recentUserMsgs.length > 1 ? `${recentUserMsgs.join(" ")} ${userMessage}` : userMessage;
 
                     const [queriedMems, pastConvos, learningsCtx] = await Promise.all([
                         recall(enrichedQuery, 10, llm, queryMode).catch(() => []),
                         Promise.resolve().then(() => {
-                            try { return recallConversation(userMessage, 3); } catch { return []; }
+                            try {
+                                return recallConversation(userMessage, 3);
+                            } catch {
+                                return [];
+                            }
                         }),
                         Promise.resolve().then(() => {
-                            try { return getTaskLearningsContext(userMessage); } catch { return null; }
+                            try {
+                                return getTaskLearningsContext(userMessage);
+                            } catch {
+                                return null;
+                            }
                         }),
                     ]);
 
@@ -1029,7 +1244,9 @@ STRATEGY: Execute in as few tool calls as possible.
                     const uniqueMems = queriedMems.filter((q: any) => !coreMems.some((c: any) => c.id === q.id));
                     if (uniqueMems && uniqueMems.length > 0) {
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        parts.push("🧠 RELEVANT RECALLED MEMORIES (Based on current prompt):\n" + uniqueMems.map((m: any) => `- (${m.category}) ${m.content}`).join("\n"));
+                        parts.push(
+                            `🧠 RELEVANT RECALLED MEMORIES (Based on current prompt):\n${uniqueMems.map((m: any) => `- (${m.category}) ${m.content}`).join("\n")}`,
+                        );
                     }
 
                     // Knowledge graph entity lookup (sync — fast SQLite)
@@ -1038,25 +1255,30 @@ STRATEGY: Execute in as few tool calls as possible.
                         if (kgDb) {
                             const entities = findEntities(kgDb, userMessage);
                             if (entities.length > 0) {
-                                const entityLines = entities.slice(0, 5).map(e =>
-                                    `- [${e.type}] ${e.name}${e.properties && Object.keys(e.properties).length > 0 ? ` (${JSON.stringify(e.properties)})` : ''}`
-                                );
-                                parts.push("🔗 RELATED ENTITIES:\n" + entityLines.join("\n"));
+                                const entityLines = entities
+                                    .slice(0, 5)
+                                    .map(
+                                        (e) =>
+                                            `- [${e.type}] ${e.name}${e.properties && Object.keys(e.properties).length > 0 ? ` (${JSON.stringify(e.properties)})` : ""}`,
+                                    );
+                                parts.push(`🔗 RELATED ENTITIES:\n${entityLines.join("\n")}`);
                             }
                         }
-                    } catch { /* KG not initialized */ }
+                    } catch {
+                        /* KG not initialized */
+                    }
 
                     if (pastConvos.length > 0) {
-                        const convoLines = pastConvos.map(c =>
-                            `- [${c.created_at}] ${c.summary}`
-                        );
-                        parts.push("💬 PAST CONVERSATIONS:\n" + convoLines.join("\n"));
+                        const convoLines = pastConvos.map((c) => `- [${c.created_at}] ${c.summary}`);
+                        parts.push(`💬 PAST CONVERSATIONS:\n${convoLines.join("\n")}`);
                     }
 
                     // Task learnings (already fetched in parallel above)
                     if (learningsCtx) parts.push(learningsCtx);
                 }
-            } catch { /* DB not initialized */ }
+            } catch {
+                /* DB not initialized */
+            }
 
             const browserCtx = getBrowserContext(userMessage);
             if (browserCtx) parts.push(browserCtx);
@@ -1065,7 +1287,9 @@ STRATEGY: Execute in as few tool calls as possible.
             // If the Chrome extension is connected, tell the agent what the user is viewing
             // so it can decide whether to use the real Chrome or headless Playwright.
             try {
-                const { isExtensionConnected, getExtensionTabs, getCurrentMode } = await import("./tools/browser/index.js");
+                const { isExtensionConnected, getExtensionTabs, getCurrentMode } = await import(
+                    "./tools/browser/index.js"
+                );
                 if (isExtensionConnected()) {
                     const tabs = await getExtensionTabs();
                     const activeTab = tabs.find((t: { active: boolean }) => t.active);
@@ -1077,26 +1301,34 @@ STRATEGY: Execute in as few tool calls as possible.
                     chromeCtx += `\n  Use browser_set_mode("chrome") to interact with the user's real Chrome, or "playwright" for independent research.`;
                     parts.push(chromeCtx);
                 }
-            } catch { /* chrome bridge not initialized */ }
+            } catch {
+                /* chrome bridge not initialized */
+            }
 
             // ── Working memory (active context from recent tool results & facts) ──
             try {
                 await wmReflect(rawUserMessage);
                 const wmSnippet = getWMSnippet();
                 if (wmSnippet) parts.push(wmSnippet);
-            } catch { /* working memory not initialized */ }
+            } catch {
+                /* working memory not initialized */
+            }
 
             // ── Self-model (capability confidence) ──
             try {
                 const selfSnippet = getSelfModelSnippet();
                 if (selfSnippet) parts.push(selfSnippet);
-            } catch { /* self-model not ready */ }
+            } catch {
+                /* self-model not ready */
+            }
 
             // ── Active goals ──
             try {
                 const goalsSnippet = getGoalsSnippet();
                 if (goalsSnippet) parts.push(goalsSnippet);
-            } catch { /* goals not ready */ }
+            } catch {
+                /* goals not ready */
+            }
 
             // ── Credit awareness context ──
             // Let the LLM know remaining credits so it can optimize its approach.
@@ -1116,14 +1348,15 @@ STRATEGY: Execute in as few tool calls as possible.
             try {
                 const allBgTasks = listActiveLongTasks();
                 if (allBgTasks.length > 0) {
-                    const runningTasks = allBgTasks.filter(t => t.status === "running");
-                    const completedTasks = allBgTasks.filter(t => t.status === "completed" || t.status === "failed");
+                    const runningTasks = allBgTasks.filter((t) => t.status === "running");
+                    const completedTasks = allBgTasks.filter((t) => t.status === "completed" || t.status === "failed");
 
                     const lines: string[] = [];
 
                     for (const t of runningTasks) {
                         const phase = `phase ${t.currentPhase + 1}/${t.phases.length}`;
-                        const elapsed = t.totalDurationMs > 0 ? `${(t.totalDurationMs / 1000).toFixed(0)}s` : "just started";
+                        const elapsed =
+                            t.totalDurationMs > 0 ? `${(t.totalDurationMs / 1000).toFixed(0)}s` : "just started";
                         const currentDesc = t.phases[t.currentPhase]?.description?.substring(0, 80) || "running";
                         lines.push(`  ▶ [${t.id}] RUNNING — ${phase} (${elapsed}): ${currentDesc}`);
                     }
@@ -1133,19 +1366,27 @@ STRATEGY: Execute in as few tool calls as possible.
                         const lastPhaseId = t.phases[t.phases.length - 1]?.id;
                         const lastOutput = lastPhaseId ? (t.checkpointData[lastPhaseId] || "").substring(0, 120) : "";
                         const statusIcon = t.status === "completed" ? "✅" : "❌";
-                        lines.push(`  ${statusIcon} [${t.id}] ${t.status.toUpperCase()} (${t.phases.length} phases, ${elapsed})${lastOutput ? `: ${lastOutput}` : ""}`);
+                        lines.push(
+                            `  ${statusIcon} [${t.id}] ${t.status.toUpperCase()} (${t.phases.length} phases, ${elapsed})${lastOutput ? `: ${lastOutput}` : ""}`,
+                        );
                     }
 
                     let instructions: string;
                     if (runningTasks.length > 0) {
-                        instructions = "These tasks are running autonomously in the background. Do NOT redo their work. If the user asks about progress, use check_long_task. If they ask for something new, handle it normally.";
+                        instructions =
+                            "These tasks are running autonomously in the background. Do NOT redo their work. If the user asks about progress, use check_long_task. If they ask for something new, handle it normally.";
                     } else {
-                        instructions = "All background tasks have finished. Use check_long_task to get full results if the user asks about them.";
+                        instructions =
+                            "All background tasks have finished. Use check_long_task to get full results if the user asks about them.";
                     }
 
-                    parts.push(`🔄 BACKGROUND TASKS (${runningTasks.length} running, ${completedTasks.length} finished):\n${lines.join("\n")}\n${instructions}`);
+                    parts.push(
+                        `🔄 BACKGROUND TASKS (${runningTasks.length} running, ${completedTasks.length} finished):\n${lines.join("\n")}\n${instructions}`,
+                    );
                 }
-            } catch { /* non-fatal if long-task module not loaded */ }
+            } catch {
+                /* non-fatal if long-task module not loaded */
+            }
 
             // ── Onboarding nudge for first-time users ──
             if (isFirstTime) {
@@ -1166,7 +1407,7 @@ STRATEGY: Execute in as few tool calls as possible.
                     if (totalChars + part.length > MAX_INJECTION_CHARS) {
                         // Truncate the last part that overflows
                         const remaining = MAX_INJECTION_CHARS - totalChars;
-                        if (remaining > 100) cappedParts.push(part.substring(0, remaining) + "...");
+                        if (remaining > 100) cappedParts.push(`${part.substring(0, remaining)}...`);
                         break;
                     }
                     cappedParts.push(part);
@@ -1182,23 +1423,30 @@ STRATEGY: Execute in as few tool calls as possible.
                         for (const part of cappedParts) {
                             // Extract section headers from the parts
                             const headerMatch = part.match(/^[^\n]+/);
-                            const key = headerMatch ? headerMatch[0].replace(/[^a-zA-Z0-9_ ]/g, "").trim().substring(0, 40) : "context";
+                            const key = headerMatch
+                                ? headerMatch[0]
+                                      .replace(/[^a-zA-Z0-9_ ]/g, "")
+                                      .trim()
+                                      .substring(0, 40)
+                                : "context";
                             rawMemories[key] = part;
                         }
                         const briefing = await generateMemoryBriefing(llm, rawMemories, rawUserMessage, 400);
                         if (briefing) {
-                            activeInjection = "[Memory Briefing — synthesized from " + cappedParts.length + " memory sources]\n" + briefing;
-                            console.log(`  📋 Memory briefing generated (${briefing.length} chars from ${cappedParts.length} sources)`);
+                            activeInjection = `[Memory Briefing — synthesized from ${cappedParts.length} memory sources]\n${briefing}`;
+                            console.log(
+                                `  📋 Memory briefing generated (${briefing.length} chars from ${cappedParts.length} sources)`,
+                            );
                         } else {
                             // Briefing returned null — fall back to raw injection
-                            activeInjection = "[Auto-Injected Memory & Strategy Context]\n" + cappedParts.join("\n\n");
+                            activeInjection = `[Auto-Injected Memory & Strategy Context]\n${cappedParts.join("\n\n")}`;
                         }
                     } catch {
                         // Briefing failed — fall back to raw injection (fail-open)
-                        activeInjection = "[Auto-Injected Memory & Strategy Context]\n" + cappedParts.join("\n\n");
+                        activeInjection = `[Auto-Injected Memory & Strategy Context]\n${cappedParts.join("\n\n")}`;
                     }
                 } else {
-                    activeInjection = "[Auto-Injected Memory & Strategy Context]\n" + cappedParts.join("\n\n");
+                    activeInjection = `[Auto-Injected Memory & Strategy Context]\n${cappedParts.join("\n\n")}`;
                 }
             }
 
@@ -1216,15 +1464,22 @@ STRATEGY: Execute in as few tool calls as possible.
         // Smart thinking: use router's recommended thinking level
         // Override: skip thinking for simple messages (more spontaneous)
         // Sparse thinking: disable reasoning for simple repetitive OS tool loops (iterations 4+)
-        const lastToolNames = lastToolCalls?.map(tc => tc.function.name) || [];
-        const isRepetitiveOsAction = iterations > 3 && lastToolNames.length > 0 && lastToolNames.every(name =>
-            name.startsWith("os_") || name === "app_manager"
-        );
+        const lastToolNames = lastToolCalls?.map((tc) => tc.function.name) || [];
+        const isRepetitiveOsAction =
+            iterations > 3 &&
+            lastToolNames.length > 0 &&
+            lastToolNames.every((name) => name.startsWith("os_") || name === "app_manager");
 
-        const iterThinking: ThinkingLevel = (iterations <= 1 && modelHint === "simple") ? "off"
-            : iterations <= 1 ? selection.thinkingLevel
-            : isRepetitiveOsAction ? "off"
-            : (_thinkingLevel === "off" ? "off" : _thinkingLevel);
+        const iterThinking: ThinkingLevel =
+            iterations <= 1 && modelHint === "simple"
+                ? "off"
+                : iterations <= 1
+                  ? selection.thinkingLevel
+                  : isRepetitiveOsAction
+                    ? "off"
+                    : _thinkingLevel === "off"
+                      ? "off"
+                      : _thinkingLevel;
 
         // ── Await tool selection (started in parallel with memory injection above) ──
         let toolSelection: Awaited<ReturnType<typeof selectTools>>;
@@ -1235,7 +1490,7 @@ STRATEGY: Execute in as few tool calls as possible.
             // Later iterations: run normally
             toolSelection = await selectTools({
                 message: userMessage,
-                recentToolCalls: lastToolCalls?.map(tc => tc.function.name),
+                recentToolCalls: lastToolCalls?.map((tc) => tc.function.name),
                 iteration: iterations,
                 requestedCategories,
                 conversationContext: buildToolRouterContext(workingHistory),
@@ -1270,8 +1525,8 @@ STRATEGY: Execute in as few tool calls as possible.
         }
 
         // ── Orchestrator Planning: Sonnet 4.6 generates execution plan for interactive tasks ──
-        const needsPlanning = activeCategories.some(c =>
-            ["os_control", "app_management", "browser", "media", "communication", "scheduling"].includes(c)
+        const needsPlanning = activeCategories.some((c) =>
+            ["os_control", "app_management", "browser", "media", "communication", "scheduling"].includes(c),
         );
         if (iterations === 1 && needsPlanning) {
             try {
@@ -1284,9 +1539,10 @@ STRATEGY: Execute in as few tool calls as possible.
                 const intent = getLastIntent() || "general";
                 const allMusicTools = ["spotify", "music_control"];
                 const prefTools = getPreferredTools(intent, allMusicTools);
-                const prefContext = prefTools.length > 0 && prefTools[0] !== allMusicTools[0]
-                    ? `\nUser's preferred tool for this intent: ${prefTools[0]}`
-                    : "";
+                const prefContext =
+                    prefTools.length > 0 && prefTools[0] !== allMusicTools[0]
+                        ? `\nUser's preferred tool for this intent: ${prefTools[0]}`
+                        : "";
                 // Get learned strategy from past tasks
                 const strategyContext = getStrategyContext(rawUserMessage);
 
@@ -1300,9 +1556,10 @@ STRATEGY: Execute in as few tool calls as possible.
                         recentPairs.push(`Assistant: ${msg.content.substring(0, 150)}`);
                     }
                 }
-                const conversationContext = recentPairs.length > 0
-                    ? `\n\nCONVERSATION CONTEXT (recent messages for reference):\n${recentPairs.join("\n")}`
-                    : "";
+                const conversationContext =
+                    recentPairs.length > 0
+                        ? `\n\nCONVERSATION CONTEXT (recent messages for reference):\n${recentPairs.join("\n")}`
+                        : "";
                 // Include memory context so orchestrator knows about ongoing topics
                 const memoryContext = activeInjection
                     ? `\n\nMEMORY CONTEXT:\n${activeInjection.substring(0, 800)}`
@@ -1314,7 +1571,9 @@ STRATEGY: Execute in as few tool calls as possible.
                     const { getSessionSummary } = await import("./memory/session.js");
                     const summary = getSessionSummary();
                     if (summary) sessionCtx = `\n\n${summary}`;
-                } catch { /* session not initialized */ }
+                } catch {
+                    /* session not initialized */
+                }
 
                 const planResponse = await llm.chat({
                     messages: [
@@ -1343,8 +1602,8 @@ CRITICAL RULES:
 5. If search_play fails, fallback: os_nav → os_click_element text="song name" action=double_click
 
 Write 3-8 numbered steps with exact tool calls.
-PLAN:`
-                        }
+PLAN:`,
+                        },
                     ],
                     modelOverride: planModel,
                 });
@@ -1353,24 +1612,35 @@ PLAN:`
                 if (planText.length > 20) {
                     // Check if orchestrator wants to ask the user a question
                     const firstLines = planText.split("\n").slice(0, 3).join(" ").toLowerCase();
-                    const isAskingUser = firstLines.includes("ask_user") || firstLines.includes("ask the user") || firstLines.includes("which ") || firstLines.includes("clarify");
+                    const isAskingUser =
+                        firstLines.includes("ask_user") ||
+                        firstLines.includes("ask the user") ||
+                        firstLines.includes("which ") ||
+                        firstLines.includes("clarify");
 
                     if (isAskingUser) {
                         // Extract the question and inject as the agent's response
                         const questionMatch = planText.match(/(?:ASK_USER|ask the user)[:\s]*["']?([^"'\n]+)/i);
-                        const question = questionMatch?.[1] || planText.split("\n").find(l => l.includes("?")) || "Could you clarify what you mean?";
+                        const question =
+                            questionMatch?.[1] ||
+                            planText.split("\n").find((l) => l.includes("?")) ||
+                            "Could you clarify what you mean?";
                         iterationMessages.push({
                             role: "system" as const,
-                            content: `[ORCHESTRATOR] The task is ambiguous. Ask the user this question before proceeding: "${question.trim()}"\nDo NOT guess or assume — relay this question to the user.`
+                            content: `[ORCHESTRATOR] The task is ambiguous. Ask the user this question before proceeding: "${question.trim()}"\nDo NOT guess or assume — relay this question to the user.`,
                         });
-                        console.log(`  📋 Orchestrator: Ambiguous task — asking user: ${question.trim().substring(0, 100)}`);
+                        console.log(
+                            `  📋 Orchestrator: Ambiguous task — asking user: ${question.trim().substring(0, 100)}`,
+                        );
                     } else {
                         iterationMessages.push({
                             role: "system" as const,
-                            content: `[ORCHESTRATOR PLAN — follow precisely]\n${planText}\n\n[EXECUTION RULES]\n- Follow the plan step by step\n- ALWAYS use os_click_element with text= (e.g., text="Perfect") — NOT label numbers\n- os_click_element auto-double-clicks in Spotify/Music apps (plays the song)\n- After playing a song: MUST call spotify action='now_playing' to VERIFY the correct track is actually playing\n- Do NOT say "Done" until now_playing confirms the correct song name\n- If a step fails, use os_nav + os_click_element text= as fallback`
+                            content: `[ORCHESTRATOR PLAN — follow precisely]\n${planText}\n\n[EXECUTION RULES]\n- Follow the plan step by step\n- ALWAYS use os_click_element with text= (e.g., text="Perfect") — NOT label numbers\n- os_click_element auto-double-clicks in Spotify/Music apps (plays the song)\n- After playing a song: MUST call spotify action='now_playing' to VERIFY the correct track is actually playing\n- Do NOT say "Done" until now_playing confirms the correct song name\n- If a step fails, use os_nav + os_click_element text= as fallback`,
                         });
                     }
-                    console.log(`  📋 Orchestrator plan (Sonnet 4.6, ${Date.now() - planStart}ms): ${planText.substring(0, 150)}...`);
+                    console.log(
+                        `  📋 Orchestrator plan (Sonnet 4.6, ${Date.now() - planStart}ms): ${planText.substring(0, 150)}...`,
+                    );
                 }
             } catch (err) {
                 console.warn(`  ⚠️ Orchestrator planning failed: ${(err as Error).message} — proceeding without plan`);
@@ -1383,19 +1653,26 @@ PLAN:`
         let finalTools = tools;
         if (toolAllowlist && toolAllowlist.length > 0) {
             const allowSet = new Set(toolAllowlist);
-            finalTools = tools.filter(t => allowSet.has(t.function.name));
+            finalTools = tools.filter((t) => allowSet.has(t.function.name));
             if (finalTools.length === 0) {
                 // Keep at least get_current_time so the LLM can still function
-                finalTools = tools.filter(t => t.function.name === "get_current_time");
+                finalTools = tools.filter((t) => t.function.name === "get_current_time");
             }
         }
 
-        // ── Plan Mode Gating ──
-        // When plan mode is active, filter the tool schema down to read-only
-        // tools and inject a reminder telling the model it's in plan mode.
+        // ── Plan/Spec Mode Gating ──
+        // When plan or spec mode is active, filter the tool schema and inject
+        // a reminder describing the current mode's constraints. Spec mode
+        // (Phase 4I) allows plan-mode reads + write to the spec file only.
         // Fail-open: any exception leaves finalTools / iterationMessages untouched.
         try {
-            if (isPlanMode()) {
+            if (isSpecMode()) {
+                finalTools = filterToolsForSpecMode(finalTools);
+                const reminderBody = planModeReminderBody();
+                if (reminderBody) {
+                    iterationMessages = injectSystemReminder(iterationMessages, reminderBody);
+                }
+            } else if (isPlanMode()) {
                 finalTools = filterToolsForPlanMode(finalTools);
                 const reminderBody = planModeReminderBody();
                 if (reminderBody) {
@@ -1442,18 +1719,24 @@ PLAN:`
                     // Only use a partial response if it was generated in THIS agent run (iterations > 0),
                     // not a leftover from conversation history.
                     const currentRunResponses = messages
-                        .filter((m, idx) => m.role === "assistant" && typeof (m as { content?: string }).content === "string" && idx >= messages.length - (iterations * 3))
-                        .map(m => (m as { content: string }).content)
+                        .filter(
+                            (m, idx) =>
+                                m.role === "assistant" &&
+                                typeof (m as { content?: string }).content === "string" &&
+                                idx >= messages.length - iterations * 3,
+                        )
+                        .map((m) => (m as { content: string }).content)
                         .filter(Boolean);
-                    const partialText = currentRunResponses.length > 0
-                        ? currentRunResponses.pop()
-                        : null;
-                    return { text: partialText || "I'm having trouble connecting right now. Please try again in a moment.", toolCalls: totalToolCalls };
+                    const partialText = currentRunResponses.length > 0 ? currentRunResponses.pop() : null;
+                    return {
+                        text: partialText || "I'm having trouble connecting right now. Please try again in a moment.",
+                        toolCalls: totalToolCalls,
+                    };
                 }
                 console.warn(`[AGENT] LLM error (attempt ${errorCount}/3) — retrying next iteration`);
                 messages.push({
                     role: "system" as const,
-                    content: "[SYSTEM] The LLM call failed. Retry with a different approach."
+                    content: "[SYSTEM] The LLM call failed. Retry with a different approach.",
                 });
                 continue;
             }
@@ -1463,16 +1746,17 @@ PLAN:`
         // If LLM returns empty/undefined, retry with escalating models before giving up.
         if (!response?.choices?.length) {
             console.warn(`[AGENT] LLM returned empty/undefined response from ${model} — attempting recovery`);
-            const retryModels = [
-                getCascadeNext(model),
-                MODELS.PRO,
-                MODELS.SONNET,
-            ].filter((m): m is string => !!m && m !== model);
+            const retryModels = [getCascadeNext(model), MODELS.PRO, MODELS.SONNET].filter(
+                (m): m is string => !!m && m !== model,
+            );
             // Deduplicate while preserving order
             const seen = new Set<string>();
             const uniqueRetryModels: string[] = [];
             for (const m of retryModels) {
-                if (!seen.has(m)) { seen.add(m); uniqueRetryModels.push(m); }
+                if (!seen.has(m)) {
+                    seen.add(m);
+                    uniqueRetryModels.push(m);
+                }
             }
 
             let recovered = false;
@@ -1512,14 +1796,17 @@ PLAN:`
                         recovered = true;
                         console.log(`  ✅ Empty response recovered on final retry with ${model}`);
                     }
-                } catch { /* fall through to error */ }
+                } catch {
+                    /* fall through to error */
+                }
             }
             if (!recovered) {
                 errorCount++;
                 console.error(`[AGENT] All empty response retries exhausted — continuing loop`);
                 messages.push({
                     role: "system" as const,
-                    content: "[SYSTEM] Previous LLM call returned empty. Take a different approach to complete the user's request."
+                    content:
+                        "[SYSTEM] Previous LLM call returned empty. Take a different approach to complete the user's request.",
                 });
                 continue;
             }
@@ -1529,11 +1816,16 @@ PLAN:`
         // ── Live Thinking Display ──
         // Fire reasoning content through onProgress so channels can show it live
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const reasoning = (choice as any)?.message?.reasoning_content
+        const reasoning =
+            (choice as any)?.message?.reasoning_content ||
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            || (choice as any)?.message?.reasoning;
+            (choice as any)?.message?.reasoning;
         if (reasoning && typeof reasoning === "string" && onProgress) {
-            try { await onProgress(`[THINKING] ${reasoning}`); } catch { /* non-fatal */ }
+            try {
+                await onProgress(`[THINKING] ${reasoning}`);
+            } catch {
+                /* non-fatal */
+            }
         }
 
         const assistantMessage = choice.message;
@@ -1556,70 +1848,130 @@ PLAN:`
             //  • The tool call count already >= 6 (most tasks finish in <6)
 
             // 1. Short / conversational response = model is done, not stuck
-            const isConversational = responseText.length < 300 && !responseTextLower.includes('error');
+            const isConversational = responseText.length < 300 && !responseTextLower.includes("error");
 
             // 2. Asking the user for something?
-            const isAskingUser = /\?\s*$/.test(responseText.trim()) ||
-                responseTextLower.includes('would you like') ||
-                responseTextLower.includes('do you want') ||
-                responseTextLower.includes('could you') ||
-                responseTextLower.includes('please provide') ||
-                responseTextLower.includes('need your') ||
-                responseTextLower.includes('what is your') ||
-                responseTextLower.includes('enter the otp') ||
-                responseTextLower.includes('waiting for') ||
-                responseTextLower.includes('let me know') ||
-                responseTextLower.includes('should i');
+            const isAskingUser =
+                /\?\s*$/.test(responseText.trim()) ||
+                responseTextLower.includes("would you like") ||
+                responseTextLower.includes("do you want") ||
+                responseTextLower.includes("could you") ||
+                responseTextLower.includes("please provide") ||
+                responseTextLower.includes("need your") ||
+                responseTextLower.includes("what is your") ||
+                responseTextLower.includes("enter the otp") ||
+                responseTextLower.includes("waiting for") ||
+                responseTextLower.includes("let me know") ||
+                responseTextLower.includes("should i");
 
             // 3. Agent is wrapping up — it consciously stopped or completed the task
             // NOTE: "couldn't complete"/"wasn't able" are NOT valid wrapping up — they're giving up.
             // Those are handled by isDelegatingToUser to force continuation.
             const isWrappingUp =
-                (responseTextLower.includes('task complete') && totalToolCalls >= 3) ||
-                (responseTextLower.includes('all done') && totalToolCalls >= 2) ||
-                responseTextLower.includes('here\'s the result') ||
-                responseTextLower.includes('here is the result') ||
-                responseTextLower.includes('here are the result') ||
-                responseTextLower.includes('briefing') ||
-                responseTextLower.includes('good morning') ||
-                responseTextLower.includes('good night') ||
-                responseTextLower.includes('phone verification') ||
-                responseTextLower.includes('verification required') ||
-                (responseTextLower.includes('verified') && responseTextLower.includes('success'));
+                (responseTextLower.includes("task complete") && totalToolCalls >= 3) ||
+                (responseTextLower.includes("all done") && totalToolCalls >= 2) ||
+                responseTextLower.includes("here's the result") ||
+                responseTextLower.includes("here is the result") ||
+                responseTextLower.includes("here are the result") ||
+                responseTextLower.includes("briefing") ||
+                responseTextLower.includes("good morning") ||
+                responseTextLower.includes("good night") ||
+                responseTextLower.includes("phone verification") ||
+                responseTextLower.includes("verification required") ||
+                (responseTextLower.includes("verified") && responseTextLower.includes("success"));
 
             // 4. Agent was exploring its own codebase = ran out of work
-            const selfCodebasePatterns = ['package.json', 'src/', 'tsconfig', 'git status', 'npm run build', 'node_modules', 'dist/'];
+            const selfCodebasePatterns = [
+                "package.json",
+                "src/",
+                "tsconfig",
+                "git status",
+                "npm run build",
+                "node_modules",
+                "dist/",
+            ];
             const codeCheckMessages = [...messages].slice(-10);
-            const isExploringOwnCode = codeCheckMessages.some(m => {
-                if (m.role !== 'tool' && m.role !== 'assistant') return false;
-                const txt = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
-                return selfCodebasePatterns.some(p => txt.includes(p));
+            const isExploringOwnCode = codeCheckMessages.some((m) => {
+                if (m.role !== "tool" && m.role !== "assistant") return false;
+                const txt = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+                return selfCodebasePatterns.some((p) => txt.includes(p));
             });
 
             // 5. User's last message is simple — greeting, acknowledgement, or stop
             const STOP_WORDS = [
                 // Explicit stop signals
-                'stop', 'cancel', 'no', "don't", 'dont', 'quit', 'abort', 'never mind', 'nevermind', 'enough', 'leave it',
+                "stop",
+                "cancel",
+                "no",
+                "don't",
+                "dont",
+                "quit",
+                "abort",
+                "never mind",
+                "nevermind",
+                "enough",
+                "leave it",
                 // Short acknowledgements — task is done, don't re-trigger
-                'ok', 'okay', 'got it', 'got that', 'thanks', 'thank you', 'cool', 'great', 'nice',
-                'alright', 'noted', 'sounds good', 'awesome', 'perfect', 'understood', 'sure',
-                'yep', 'yup', 'yeah', 'good', 'that\'s fine', 'thats fine',
+                "ok",
+                "okay",
+                "got it",
+                "got that",
+                "thanks",
+                "thank you",
+                "cool",
+                "great",
+                "nice",
+                "alright",
+                "noted",
+                "sounds good",
+                "awesome",
+                "perfect",
+                "understood",
+                "sure",
+                "yep",
+                "yup",
+                "yeah",
+                "good",
+                "that's fine",
+                "thats fine",
                 // Greetings / casual — not a task request
-                'hi', 'hey', 'hello', 'hii', 'yo', 'sup', 'hola',
-                'good morning', 'good night', 'gm', 'gn',
-                'how are you', 'what\'s up', 'whats up',
+                "hi",
+                "hey",
+                "hello",
+                "hii",
+                "yo",
+                "sup",
+                "hola",
+                "good morning",
+                "good night",
+                "gm",
+                "gn",
+                "how are you",
+                "what's up",
+                "whats up",
                 // Confirmations of completion
-                'done', 'thats it', 'that\'s it', 'all good', 'looks good',
-                '👍', '✅', '🫡', '🙌', '😊', '❤️', '🔥',
+                "done",
+                "thats it",
+                "that's it",
+                "all good",
+                "looks good",
+                "👍",
+                "✅",
+                "🫡",
+                "🙌",
+                "😊",
+                "❤️",
+                "🔥",
             ];
-            const lastUserMsg = [...messages]
-                .reverse()
-                .find(m => m.role === 'user' && typeof m.content === 'string');
-            const lastUserText = (typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '').toLowerCase().trim();
-            const isUserStopping = STOP_WORDS.some(w => lastUserText.includes(w)) && lastUserText.split(' ').length <= 10;
+            const lastUserMsg = [...messages].reverse().find((m) => m.role === "user" && typeof m.content === "string");
+            const lastUserText = (typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "")
+                .toLowerCase()
+                .trim();
+            const isUserStopping =
+                STOP_WORDS.some((w) => lastUserText.includes(w)) && lastUserText.split(" ").length <= 10;
 
             // 6. Is the user's message simple enough that it probably doesn't need tool use?
-            const isSimpleUserMessage = lastUserText.split(' ').length <= 6;
+            const isSimpleUserMessage = lastUserText.split(" ").length <= 6;
 
             // ── Smart Delegation Detection ─────────────────────────────
             // Instead of brittle regex, analyze the CONTEXT to determine if the
@@ -1631,43 +1983,52 @@ PLAN:`
 
             // Check if recent tool results had errors/failures
             const recentToolMessages = [...messages].slice(-10);
-            const recentToolErrors = recentToolMessages.filter(m => {
-                if (m.role !== 'tool') return false;
-                const txt = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
-                return txt.includes('"error"') || txt.includes('"success":false') || txt.includes('NOT_PLAYING') || txt.includes('NO_RESULTS') || txt.includes('failed');
+            const recentToolErrors = recentToolMessages.filter((m) => {
+                if (m.role !== "tool") return false;
+                const txt = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+                return (
+                    txt.includes('"error"') ||
+                    txt.includes('"success":false') ||
+                    txt.includes("NOT_PLAYING") ||
+                    txt.includes("NO_RESULTS") ||
+                    txt.includes("failed")
+                );
             });
             const hadRecentToolFailure = recentToolErrors.length > 0;
 
             // Check if the user's original message was an action command
-            const isActionTask = /\b(play|open|send|create|set|start|stop|run|install|build|find|show|take|click|type|write|download|upload|schedule|remind|pause|skip|next|search)\b/i.test(lastUserText);
+            const isActionTask =
+                /\b(play|open|send|create|set|start|stop|run|install|build|find|show|take|click|type|write|download|upload|schedule|remind|pause|skip|next|search)\b/i.test(
+                    lastUserText,
+                );
 
             // Detect explicit delegation patterns
             const isDelegatingToUser =
-                responseTextLower.includes('you can ') ||
-                responseTextLower.includes('you should ') ||
-                responseTextLower.includes('you need to ') ||
-                responseTextLower.includes('you\'ll need to') ||
-                responseTextLower.includes('go ahead and ') ||
-                responseTextLower.includes('from there') ||
-                responseTextLower.includes('i recommend you');
+                responseTextLower.includes("you can ") ||
+                responseTextLower.includes("you should ") ||
+                responseTextLower.includes("you need to ") ||
+                responseTextLower.includes("you'll need to") ||
+                responseTextLower.includes("go ahead and ") ||
+                responseTextLower.includes("from there") ||
+                responseTextLower.includes("i recommend you");
 
             // Detect "giving up" — agent had a tool failure and is now asking
             // instead of trying a different approach
-            const isGivingUp = hadRecentToolFailure && (
-                responseTextLower.includes('want me to try') ||
-                responseTextLower.includes('shall i try') ||
-                responseTextLower.includes('something else?') ||
-                responseTextLower.includes('another way') ||
-                responseTextLower.includes('isn\'t finding') ||
-                responseTextLower.includes('not finding') ||
-                responseTextLower.includes('couldn\'t find') ||
-                responseTextLower.includes('not in your library') ||
-                responseTextLower.includes('not available') ||
-                responseTextLower.includes('something\'s off') ||
-                responseTextLower.includes('having trouble') ||
-                responseTextLower.includes('doesn\'t seem') ||
-                responseTextLower.includes('unable to')
-            );
+            const isGivingUp =
+                hadRecentToolFailure &&
+                (responseTextLower.includes("want me to try") ||
+                    responseTextLower.includes("shall i try") ||
+                    responseTextLower.includes("something else?") ||
+                    responseTextLower.includes("another way") ||
+                    responseTextLower.includes("isn't finding") ||
+                    responseTextLower.includes("not finding") ||
+                    responseTextLower.includes("couldn't find") ||
+                    responseTextLower.includes("not in your library") ||
+                    responseTextLower.includes("not available") ||
+                    responseTextLower.includes("something's off") ||
+                    responseTextLower.includes("having trouble") ||
+                    responseTextLower.includes("doesn't seem") ||
+                    responseTextLower.includes("unable to"));
 
             // Determine if the agent should be forced to continue
             // TRUE = giving up after failure, or delegating to user on an action task
@@ -1675,27 +2036,35 @@ PLAN:`
             // Guard: ONLY force retry if there were actual tool errors AND response is short
             // (substantial responses >200 chars are likely genuine instructions, not giving up)
             const shouldForceRetry =
-                (isDelegatingToUser && isActionTask && hadRecentToolFailure && totalToolCalls < 15 && responseText.length < 200) ||
+                (isDelegatingToUser &&
+                    isActionTask &&
+                    hadRecentToolFailure &&
+                    totalToolCalls < 15 &&
+                    responseText.length < 200) ||
                 (isGivingUp && totalToolCalls < 15);
 
             if (shouldForceRetry) {
                 // Build context-aware continuation prompt based on what failed
-                const failedTools = recentToolErrors.map(m => {
-                    const txt = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
-                    // Extract tool name from context if possible
-                    return txt.substring(0, 100);
-                }).join("; ");
+                const failedTools = recentToolErrors
+                    .map((m) => {
+                        const txt = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+                        // Extract tool name from context if possible
+                        return txt.substring(0, 100);
+                    })
+                    .join("; ");
 
-                const hasVisualTools = toolSelection.categories.includes('os_control');
+                const hasVisualTools = toolSelection.categories.includes("os_control");
                 const continuationHint = hasVisualTools
                     ? "Use os_screenshot to see what's on screen right now, then os_click/os_ocr_click to interact with the visible UI elements. You have full mouse+keyboard control."
                     : "Try a completely different approach — use request_tools if you need different capabilities, or try browser_navigate to accomplish it via the web.";
 
-                console.log(`  🔄 Anti-giving-up: agent stopped after tool failure (${recentToolErrors.length} errors) — forcing retry with visual fallback`);
+                console.log(
+                    `  🔄 Anti-giving-up: agent stopped after tool failure (${recentToolErrors.length} errors) — forcing retry with visual fallback`,
+                );
                 messages.push({ role: "assistant", content: responseText });
                 messages.push({
                     role: "user",
-                    content: `Your previous approach didn't work, but the task is NOT done. Don't ask me — try a different approach yourself. ${continuationHint} If your dedicated tool failed, that's fine — you have dozens of other tools. Complete the task, then verify the result.`
+                    content: `Your previous approach didn't work, but the task is NOT done. Don't ask me — try a different approach yourself. ${continuationHint} If your dedicated tool failed, that's fine — you have dozens of other tools. Complete the task, then verify the result.`,
                 });
                 lastToolCalls = undefined;
                 continue;
@@ -1719,11 +2088,14 @@ PLAN:`
                 !isSimpleUserMessage;
 
             if (shouldNudge) {
-                console.log(`  🔄 Persistence nudge: model paused after ${totalToolCalls} tool calls — checking if more work needed`);
+                console.log(
+                    `  🔄 Persistence nudge: model paused after ${totalToolCalls} tool calls — checking if more work needed`,
+                );
                 messages.push({ role: "assistant", content: responseText });
                 messages.push({
                     role: "user",
-                    content: "It looks like there may be more steps to complete this task. If you are genuinely done, go ahead and give your final answer. Otherwise, continue working."
+                    content:
+                        "It looks like there may be more steps to complete this task. If you are genuinely done, go ahead and give your final answer. Otherwise, continue working.",
                 });
                 // Force PRO model for the assessment (without polluting errorCount)
                 // The next iteration will use PRO regardless of tool history
@@ -1757,13 +2129,22 @@ PLAN:`
                             function: { name: tc.function.name },
                         }));
                         const batchResults = await executeToolCallsBatch(
-                            finalChoice.message.tool_calls as Array<{ id: string; function: { name: string; arguments: string } }>,
+                            finalChoice.message.tool_calls as Array<{
+                                id: string;
+                                function: { name: string; arguments: string };
+                            }>,
                             {
                                 sendProgress,
-                                trackBrowserFn: (fn, args, ok) => { usedBrowserTools = true; trackBrowserStep(fn, args, ok, 0); },
-                                onError: () => { errorCount++; },
+                                trackBrowserFn: (fn, args, ok) => {
+                                    usedBrowserTools = true;
+                                    trackBrowserStep(fn, args, ok, 0);
+                                },
+                                onError: () => {
+                                    errorCount++;
+                                },
                                 onToolComplete: async (count) => {
-                                    if (count > 0 && count % 8 === 0) await sendProgress(`⏳ Still working... (${count} steps completed)`);
+                                    if (count > 0 && count % 8 === 0)
+                                        await sendProgress(`⏳ Still working... (${count} steps completed)`);
                                 },
                                 onToolRequest: async (req) => {
                                     const result = await handleToolRequest(req);
@@ -1772,7 +2153,7 @@ PLAN:`
                                 },
                                 userMessage,
                                 toolAllowlist,
-                            }
+                            },
                         );
                         totalToolCalls += batchResults.length;
                         for (const r of batchResults) {
@@ -1790,11 +2171,21 @@ PLAN:`
                     const rawText = finalChoice.message.content || "";
                     const text = sanitizeAgentResponse(rawText) || "(empty response)";
                     // Retry if final model produced empty response after tool calls
-                    if (text === "(empty response)" && lastToolCalls && lastToolCalls.length > 0 && emptyResponseRetries < MAX_EMPTY_RETRIES) {
+                    if (
+                        text === "(empty response)" &&
+                        lastToolCalls &&
+                        lastToolCalls.length > 0 &&
+                        emptyResponseRetries < MAX_EMPTY_RETRIES
+                    ) {
                         emptyResponseRetries++;
-                        console.log(`  🔄 Empty response from final model after tool calls — retry ${emptyResponseRetries}/${MAX_EMPTY_RETRIES}`);
+                        console.log(
+                            `  🔄 Empty response from final model after tool calls — retry ${emptyResponseRetries}/${MAX_EMPTY_RETRIES}`,
+                        );
                         messages.push({ role: "assistant", content: "" });
-                        messages.push({ role: "user", content: "You produced an empty response. Please provide a meaningful reply to the user." });
+                        messages.push({
+                            role: "user",
+                            content: "You produced an empty response. Please provide a meaningful reply to the user.",
+                        });
                         lastToolCalls = undefined;
                         continue;
                     }
@@ -1810,12 +2201,22 @@ PLAN:`
             let text = sanitizeAgentResponse(responseText) || "(empty response)";
 
             // ── Empty response retry: nudge the LLM instead of returning "(empty response)" ──
-            if (text === "(empty response)" && lastToolCalls && lastToolCalls.length > 0 && emptyResponseRetries < MAX_EMPTY_RETRIES) {
+            if (
+                text === "(empty response)" &&
+                lastToolCalls &&
+                lastToolCalls.length > 0 &&
+                emptyResponseRetries < MAX_EMPTY_RETRIES
+            ) {
                 cbRecordNoProgress(circuitBreaker);
                 emptyResponseRetries++;
-                console.log(`  🔄 Empty response after tool calls — retry ${emptyResponseRetries}/${MAX_EMPTY_RETRIES}`);
+                console.log(
+                    `  🔄 Empty response after tool calls — retry ${emptyResponseRetries}/${MAX_EMPTY_RETRIES}`,
+                );
                 messages.push({ role: "assistant", content: "" });
-                messages.push({ role: "user", content: "You produced an empty response. Please provide a meaningful reply to the user." });
+                messages.push({
+                    role: "user",
+                    content: "You produced an empty response. Please provide a meaningful reply to the user.",
+                });
                 lastToolCalls = undefined;
                 continue;
             }
@@ -1828,7 +2229,9 @@ PLAN:`
                     const nextModel = getCascadeNext(model);
                     if (nextModel) {
                         cascadeAttempted = true;
-                        console.log(`  🔄 Cascade escalation: ${cascadeCheck.reason} → ${MODEL_DISPLAY[nextModel] || nextModel}`);
+                        console.log(
+                            `  🔄 Cascade escalation: ${cascadeCheck.reason} → ${MODEL_DISPLAY[nextModel] || nextModel}`,
+                        );
                         // Feed quality failure back to router for future routing decisions
                         recordQualityFailure(model, selection.taskType, cascadeCheck.reason);
                         try {
@@ -1867,11 +2270,13 @@ PLAN:`
                     saveStrategy({
                         pattern,
                         description: `Task: "${rawUserMessage.substring(0, 100)}" — completed with ${totalToolCalls} tool calls`,
-                        steps: (lastToolCalls || []).map(tc => tc.function.name).slice(0, 10),
+                        steps: (lastToolCalls || []).map((tc) => tc.function.name).slice(0, 10),
                         success: true,
                         tags: activeCategories || [],
                     });
-                } catch { /* non-fatal */ }
+                } catch {
+                    /* non-fatal */
+                }
             }
 
             // Credits deducted per-API-call in llm.ts
@@ -1895,10 +2300,16 @@ PLAN:`
             assistantMessage.tool_calls as Array<{ id: string; function: { name: string; arguments: string } }>,
             {
                 sendProgress,
-                trackBrowserFn: (fn, args, ok) => { usedBrowserTools = true; trackBrowserStep(fn, args, ok, 0); },
-                onError: () => { errorCount++; },
+                trackBrowserFn: (fn, args, ok) => {
+                    usedBrowserTools = true;
+                    trackBrowserStep(fn, args, ok, 0);
+                },
+                onError: () => {
+                    errorCount++;
+                },
                 onToolComplete: async (count) => {
-                    if (count > 0 && count % 8 === 0) await sendProgress(`⏳ Still working... (${count} steps completed)`);
+                    if (count > 0 && count % 8 === 0)
+                        await sendProgress(`⏳ Still working... (${count} steps completed)`);
                 },
                 onToolRequest: async (req) => {
                     const result = await handleToolRequest(req);
@@ -1907,20 +2318,20 @@ PLAN:`
                 },
                 userMessage,
                 toolAllowlist,
-            }
+            },
         );
         totalToolCalls += batchResults.length;
 
         // Circuit breaker: tool calls completed = progress
-        const batchHasSuccess = batchResults.some(r => !r.isError);
+        const batchHasSuccess = batchResults.some((r) => !r.isError);
         if (batchHasSuccess) {
             cbRecordProgress(circuitBreaker);
-        } else if (batchResults.length > 0 && batchResults.every(r => r.isError)) {
+        } else if (batchResults.length > 0 && batchResults.every((r) => r.isError)) {
             cbRecordFailure(circuitBreaker);
         }
 
         // Record intent→tool preferences for personalization
-        const usedToolNames = batchResults.map(r => r.fnName);
+        const usedToolNames = batchResults.map((r) => r.fnName);
         const currentIntent = getLastIntent();
         if (currentIntent && usedToolNames.length > 0) {
             recordIntentToolUsage(currentIntent, usedToolNames);
@@ -1935,13 +2346,29 @@ PLAN:`
                 recordToolFailure(r.fnName, content.substring(0, 200));
                 lastFailedTool = r.fnName;
                 // World model + self-model: track tool failure
-                try { recordWorldFailure(r.fnName, "tool"); } catch { /* non-fatal */ }
-                try { recordSelfModelOutcome(r.fnName, false, 0); } catch { /* non-fatal */ }
+                try {
+                    recordWorldFailure(r.fnName, "tool");
+                } catch {
+                    /* non-fatal */
+                }
+                try {
+                    recordSelfModelOutcome(r.fnName, false, 0);
+                } catch {
+                    /* non-fatal */
+                }
             } else {
                 recordToolSuccess(r.fnName);
                 // World model + self-model: track tool success
-                try { recordWorldSuccess(r.fnName, "tool"); } catch { /* non-fatal */ }
-                try { recordSelfModelOutcome(r.fnName, true, 0); } catch { /* non-fatal */ }
+                try {
+                    recordWorldSuccess(r.fnName, "tool");
+                } catch {
+                    /* non-fatal */
+                }
+                try {
+                    recordSelfModelOutcome(r.fnName, true, 0);
+                } catch {
+                    /* non-fatal */
+                }
                 // If previous tool failed and this one succeeded → record recovery
                 if (lastFailedTool) {
                     recordToolRecovery(lastFailedTool, r.fnName, `${lastFailedTool} failed → ${r.fnName} succeeded`);
@@ -1965,10 +2392,12 @@ PLAN:`
             // ── Working memory: retain significant tool results ──
             try {
                 const resultText = typeof r.finalContent === "string" ? r.finalContent : JSON.stringify(r.finalContent);
-                const importance = r.isError ? 0.3 : (resultText.length > 200 ? 0.7 : 0.5);
-                const summary = resultText.length > 150 ? resultText.substring(0, 150) + "..." : resultText;
+                const importance = r.isError ? 0.3 : resultText.length > 200 ? 0.7 : 0.5;
+                const summary = resultText.length > 150 ? `${resultText.substring(0, 150)}...` : resultText;
                 wmRetain(`tool_${r.toolCallId}`, "tool_result", `[${r.fnName}] ${summary}`, importance);
-            } catch { /* working memory not initialized */ }
+            } catch {
+                /* working memory not initialized */
+            }
 
             // ── Metacognition: update signals per tool call ──
             updateSignals(metaState, {
@@ -1983,11 +2412,13 @@ PLAN:`
         // If the agent just called start_long_task, the work is delegated to
         // background sub-agents. Exit immediately to avoid the main agent loop
         // competing with the long-task phases (doing the same work twice).
-        const delegatedResult = batchResults.find(r => r.fnName === "start_long_task" && !r.isError);
+        const delegatedResult = batchResults.find((r) => r.fnName === "start_long_task" && !r.isError);
         if (delegatedResult) {
             try {
-                const delegatedContent = typeof delegatedResult.finalContent === "string"
-                    ? delegatedResult.finalContent : JSON.stringify(delegatedResult.finalContent);
+                const delegatedContent =
+                    typeof delegatedResult.finalContent === "string"
+                        ? delegatedResult.finalContent
+                        : JSON.stringify(delegatedResult.finalContent);
                 const parsed = JSON.parse(delegatedContent);
                 const taskId = parsed.task_id || "unknown";
                 const phaseCount = parsed.phases || 0;
@@ -1995,29 +2426,35 @@ PLAN:`
                 messages.push({ role: "assistant", content: delegationText });
                 appendTurn("assistant", delegationText);
                 return { text: delegationText, toolCalls: totalToolCalls };
-            } catch { /* fall through to normal loop if parse fails */ }
+            } catch {
+                /* fall through to normal loop if parse fails */
+            }
         }
 
         // ── Smart Completion Verification ──────────────────────────
         // Instead of hardcoded patterns, check if tool results indicate the task
         // is still in progress vs actually completed. Inject a verification nudge
         // that forces the agent to confirm success before declaring "done".
-        const resultTexts = batchResults.map(r => typeof r.finalContent === 'string' ? r.finalContent : JSON.stringify(r.finalContent));
+        const resultTexts = batchResults.map((r) =>
+            typeof r.finalContent === "string" ? r.finalContent : JSON.stringify(r.finalContent),
+        );
         const allResults = resultTexts.join(" ");
 
         // Detect states that need further action
         const hasToolFailure = allResults.includes('"success":false') || allResults.includes('"error"');
         const hasAppOpened = allResults.includes('"action":"activate"') || allResults.includes('"action":"launch"');
-        const hasClick = allResults.includes('"clicked"') || allResults.includes('os_click');
-        const hasSearch = allResults.includes('search_play') || allResults.includes('search_visible');
+        const hasClick = allResults.includes('"clicked"') || allResults.includes("os_click");
+        const hasSearch = allResults.includes("search_play") || allResults.includes("search_visible");
         const isPlaying = allResults.includes('"playing":true');
 
         // Key insight: if no verification tool was used in THIS batch, the task isn't done
-        const usedVerification = batchResults.some(r => {
+        const usedVerification = batchResults.some((r) => {
             const content = typeof r.finalContent === "string" ? r.finalContent : JSON.stringify(r.finalContent);
-            return (r.fnName === "spotify" && content.includes("now_playing")) ||
+            return (
+                (r.fnName === "spotify" && content.includes("now_playing")) ||
                 r.fnName === "os_visual_verify" ||
-                r.fnName === "os_nav";
+                r.fnName === "os_nav"
+            );
         });
 
         if ((hasToolFailure || hasAppOpened || hasSearch || (hasClick && !isPlaying)) && !usedVerification) {
@@ -2027,20 +2464,17 @@ PLAN:`
 1. VERIFY the result (e.g., spotify action='now_playing', os_nav to confirm state, os_visual_verify)
 2. If verification shows the task isn't done, keep working — try alternative approaches
 3. Only tell the user "done" after you have CONFIRMED the task succeeded
-Do NOT assume success from a single click or tool call.`
+Do NOT assume success from a single click or tool call.`,
             });
         }
 
         // ── Periodic progress for long tasks ──
         if (totalToolCalls > 0 && totalToolCalls % 8 === 0) {
             // Build a richer progress message based on what tools were recently used
-            const recentTools = lastToolCalls?.map(tc => tc.function.name).slice(0, 3) || [];
-            const toolHint = recentTools.length > 0
-                ? ` (last: ${recentTools.join(", ")})`
-                : "";
+            const recentTools = lastToolCalls?.map((tc) => tc.function.name).slice(0, 3) || [];
+            const toolHint = recentTools.length > 0 ? ` (last: ${recentTools.join(", ")})` : "";
             const tabCount = usedBrowserTools ? " 🌐" : "";
             await sendProgress(`⏳ Still working... (${totalToolCalls} steps done${toolHint}${tabCount})`);
         }
     }
-
 }

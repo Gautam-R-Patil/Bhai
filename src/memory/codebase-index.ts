@@ -554,3 +554,77 @@ export function wipeIndex(root: string): void {
     const repoRoot = resolveRepoRoot(root);
     wipeSidecar(repoRoot);
 }
+
+/**
+ * Best-effort architecture snippet. Returns an empty string when:
+ *  - the sidecar does not exist, OR
+ *  - ATLAS_NO_ARCHITECTURE_INJECTION=true, OR
+ *  - ATLAS_NO_CODEBASE_INDEX=true, OR
+ *  - any SQL / fs error occurs.
+ * Never throws.
+ */
+export async function getArchitectureSnippet(root: string): Promise<string> {
+    try {
+        if ((process.env.ATLAS_NO_ARCHITECTURE_INJECTION ?? "").toLowerCase() === "true") return "";
+        if ((process.env.ATLAS_NO_CODEBASE_INDEX ?? "").toLowerCase() === "true") return "";
+        const repoRoot = resolveRepoRoot(root);
+        const { hasSidecar, openSidecar } = await import("./codebase-sidecar.js");
+        if (!hasSidecar(repoRoot)) return "";
+        const db = openSidecar(repoRoot);
+        const rows = db.exec("SELECT path FROM files ORDER BY path");
+        if (rows.length === 0 || rows[0].values.length === 0) return "";
+        const group = new Map<string, number>();
+        for (const r of rows[0].values) {
+            const p = r[0] as string;
+            const segs = p.split("/");
+            const key = segs.slice(0, Math.min(2, segs.length - 1)).join("/") || ".";
+            group.set(key, (group.get(key) ?? 0) + 1);
+        }
+        const groups = Array.from(group.entries()).slice(0, 20);
+        const mermaidLines = ["flowchart LR", `  root["${path.basename(repoRoot)}"]`];
+        for (let i = 0; i < groups.length; i++) {
+            mermaidLines.push(`  n${i}["${groups[i][0]}\\n${groups[i][1]} files"]`);
+            mermaidLines.push(`  root --> n${i}`);
+        }
+        const asciiLines = [path.basename(repoRoot)];
+        for (let i = 0; i < groups.length; i++) {
+            const last = i === groups.length - 1;
+            asciiLines.push(`${last ? "└── " : "├── "}${groups[i][0]} (${groups[i][1]} files)`);
+        }
+        return `<architecture>\n\`\`\`mermaid\n${mermaidLines.join("\n")}\n\`\`\`\n\`\`\`\n${asciiLines.join("\n")}\n\`\`\`\n</architecture>`;
+    } catch {
+        return "";
+    }
+}
+
+/**
+ * First-iteration hook: auto-build or async-refresh the sidecar. Non-blocking
+ * beyond the ≤100-file case (per pickTiming). Never throws.
+ */
+export async function ensureIndexForCoding(root: string): Promise<void> {
+    try {
+        if ((process.env.ATLAS_NO_CODEBASE_INDEX ?? "").toLowerCase() === "true") return;
+        const repoRoot = resolveRepoRoot(root);
+        const { hasSidecar } = await import("./codebase-sidecar.js");
+        // Probe file count without opening the sidecar (quick walk, capped).
+        const files = listFiles(repoRoot, 200);
+        const timing = pickTiming(files.length);
+        if (!hasSidecar(repoRoot)) {
+            if (timing === "block") await buildIndex(repoRoot);
+            else {
+                void buildIndex(repoRoot).catch((err) =>
+                    console.warn("[codebase-index] bg build failed:", (err as Error).message),
+                );
+            }
+        } else {
+            if (timing === "block") await refreshIndex(repoRoot);
+            else {
+                void refreshIndex(repoRoot).catch((err) =>
+                    console.warn("[codebase-index] bg refresh failed:", (err as Error).message),
+                );
+            }
+        }
+    } catch (err) {
+        console.warn("[codebase-index] ensureIndexForCoding failed (non-fatal):", (err as Error).message);
+    }
+}
