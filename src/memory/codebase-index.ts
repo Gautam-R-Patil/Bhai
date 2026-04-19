@@ -285,6 +285,16 @@ async function doIndex(root: string, opts: BuildOptions, incremental: boolean): 
     }
 
     raw.exec("BEGIN");
+    // Prepared statements hoisted inside the transaction — reused across all files.
+    // Using raw.prepare gives direct access to lastInsertRowid (better-sqlite3 idiom)
+    // instead of the N+1 "SELECT last_insert_rowid()" pattern through the wrapper,
+    // which also avoids an undefined-access hazard if the wrapped exec silently fails.
+    const fileInsert = raw.prepare(
+        "INSERT INTO files (path, sha256, lang, loc, workspace, indexed_at) VALUES (?, ?, ?, ?, NULL, ?)",
+    );
+    const symbolInsert = raw.prepare(
+        "INSERT INTO symbols (file_id, name, kind, line_start, line_end, signature, exported) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    );
     try {
         const currentPaths = new Set<string>();
         for (const f of files) {
@@ -319,23 +329,23 @@ async function doIndex(root: string, opts: BuildOptions, incremental: boolean): 
                 db.run("DELETE FROM imports WHERE from_file_id = ?", [fileId]);
                 updated++;
             } else {
-                db.run(
-                    "INSERT INTO files (path, sha256, lang, loc, workspace, indexed_at) VALUES (?, ?, ?, ?, NULL, ?)",
-                    [f.rel, sha, f.lang, res.loc, Date.now()],
-                );
-                const r = db.exec("SELECT last_insert_rowid()");
-                fileId = r[0].values[0][0] as number;
+                const fileResult = fileInsert.run(f.rel, sha, f.lang, res.loc, Date.now());
+                fileId = Number(fileResult.lastInsertRowid);
                 added++;
             }
 
             const symbolIdByName = new Map<string, number>();
             for (const s of res.symbols) {
-                db.run(
-                    "INSERT INTO symbols (file_id, name, kind, line_start, line_end, signature, exported) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    [fileId, s.name, s.kind, s.lineStart, s.lineEnd, s.signature, s.exported ? 1 : 0],
+                const sr = symbolInsert.run(
+                    fileId,
+                    s.name,
+                    s.kind,
+                    s.lineStart,
+                    s.lineEnd,
+                    s.signature,
+                    s.exported ? 1 : 0,
                 );
-                const sr = db.exec("SELECT last_insert_rowid()");
-                const sid = sr[0].values[0][0] as number;
+                const sid = Number(sr.lastInsertRowid);
                 symbolIdByName.set(s.name, sid);
             }
 
@@ -394,7 +404,11 @@ async function doIndex(root: string, opts: BuildOptions, incremental: boolean): 
             );
         }
 
-        raw.exec("COMMIT");
+        try {
+            raw.exec("COMMIT");
+        } catch (commitErr) {
+            throw new Error(`commit-failed: ${(commitErr as Error).message}`);
+        }
 
         const elapsed = Date.now() - t0;
         console.log(
