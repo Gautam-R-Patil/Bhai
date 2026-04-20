@@ -30,7 +30,8 @@ type Operation =
     | "findReferences"
     | "hover"
     | "documentSymbol"
-    | "workspaceSymbol";
+    | "workspaceSymbol"
+    | "getDiagnostics";
 
 type Language = "typescript" | "javascript" | "python" | "rust" | "go";
 
@@ -106,10 +107,21 @@ interface Session {
     pending: Map<number, Pending>;
     buffer: Buffer;
     openDocs: Map<string, number>; // uri → version
+    /** Latest publishDiagnostics payload per URI — server-pushed after
+     * didOpen/didChange. Consumed by the getDiagnostics operation. */
+    diagnostics: Map<string, LspDiagnostic[]>;
     initPromise: Promise<void>;
     lastUsed: number;
     dead: boolean;
     idleTimer?: NodeJS.Timeout;
+}
+
+interface LspDiagnostic {
+    range: { start: { line: number; character: number }; end: { line: number; character: number } };
+    severity?: number; // 1=error, 2=warning, 3=info, 4=hint
+    code?: string | number;
+    source?: string;
+    message: string;
 }
 
 // ── Registry ──────────────────────────────────
@@ -218,7 +230,14 @@ function dispatchIncoming(session: Session, message: Record<string, unknown>): v
         writeMessage(session.child, { jsonrpc: "2.0", id, result: null });
         return;
     }
-    // Notifications (log, diagnostics) — silently ignore.
+    // Store publishDiagnostics so the getDiagnostics operation can return them.
+    // Other notifications (window/logMessage, telemetry/event) are ignored.
+    if (message.method === "textDocument/publishDiagnostics") {
+        const params = message.params as { uri?: string; diagnostics?: LspDiagnostic[] } | undefined;
+        if (params?.uri && Array.isArray(params.diagnostics)) {
+            session.diagnostics.set(params.uri, params.diagnostics);
+        }
+    }
 }
 
 // ── Request primitives ────────────────────────
@@ -301,6 +320,7 @@ async function getOrCreateSession(rootPath: string, language: Language): Promise
         pending: new Map(),
         buffer: Buffer.alloc(0),
         openDocs: new Map(),
+        diagnostics: new Map(),
         initPromise: Promise.resolve(),
         lastUsed: Date.now(),
         dead: false,
@@ -469,7 +489,8 @@ export const lsp: ToolDefinition = {
                 "Language Server Protocol operations for code navigation and inspection. " +
                 "Operations: 'goToDefinition' (find where a symbol is defined), " +
                 "'findReferences' (find all usages), 'hover' (type info + docs for a symbol), " +
-                "'documentSymbol' (all symbols in a file), 'workspaceSymbol' (search symbols across the workspace). " +
+                "'documentSymbol' (all symbols in a file), 'workspaceSymbol' (search symbols across the workspace), " +
+                "'getDiagnostics' (parse/type/lint errors for a file — call this after an edit to see if your change broke anything). " +
                 "Requires the language's LSP server to be installed: typescript-language-server for TS/JS, " +
                 "pyright-langserver for Python, rust-analyzer for Rust, gopls for Go.",
             parameters: {
@@ -477,7 +498,7 @@ export const lsp: ToolDefinition = {
                 properties: {
                     operation: {
                         type: "string",
-                        enum: ["goToDefinition", "findReferences", "hover", "documentSymbol", "workspaceSymbol"],
+                        enum: ["goToDefinition", "findReferences", "hover", "documentSymbol", "workspaceSymbol", "getDiagnostics"],
                     },
                     file_path: {
                         type: "string",
@@ -645,6 +666,43 @@ export const lsp: ToolDefinition = {
                     operation: op,
                     language: lang,
                     hover: text,
+                });
+            }
+
+            if (op === "getDiagnostics") {
+                // uri + filePath + session already exist from shared setup above.
+                // Wait a short window for the LSP to push publishDiagnostics.
+                const deadline = Date.now() + 2500;
+                // The LSP may push multiple updates as it analyzes; settle for
+                // the latest value by polling at short intervals.
+                let lastSeen: LspDiagnostic[] | undefined;
+                while (Date.now() < deadline) {
+                    lastSeen = session.diagnostics.get(uri);
+                    if (lastSeen !== undefined) break;
+                    await new Promise((r) => setTimeout(r, 100));
+                }
+                const diagnostics = (lastSeen ?? []).map((d) => ({
+                    line: (d.range.start.line ?? 0) + 1,
+                    character: (d.range.start.character ?? 0) + 1,
+                    severity:
+                        d.severity === 1 ? "error" :
+                        d.severity === 2 ? "warning" :
+                        d.severity === 3 ? "info" :
+                        d.severity === 4 ? "hint" : "unknown",
+                    source: d.source,
+                    code: d.code,
+                    message: d.message,
+                }));
+                const errorCount = diagnostics.filter((d) => d.severity === "error").length;
+                const warningCount = diagnostics.filter((d) => d.severity === "warning").length;
+                return JSON.stringify({
+                    success: true,
+                    operation: op,
+                    language: lang,
+                    file: filePath,
+                    diagnostics,
+                    error_count: errorCount,
+                    warning_count: warningCount,
                 });
             }
 

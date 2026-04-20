@@ -199,12 +199,53 @@ export const edit: ToolDefinition = {
 
         const preview = buildDiffPreview(before, after, oldStr, newStr);
 
+        // ── Post-edit LSP diagnostics (SOTA Tier-1) ──
+        // After the write, ask the LSP server whether this edit broke
+        // anything. Surfaces type/parse errors in the tool response so
+        // the next iteration sees them immediately — no need for the
+        // agent to remember to call `lsp getDiagnostics` itself.
+        // Gated by ATLAS_NO_POST_EDIT_DIAGNOSTICS for users who don't
+        // want the extra latency.
+        let diagnosticsSummary: string | undefined;
+        if (process.env.ATLAS_NO_POST_EDIT_DIAGNOSTICS !== "true" && isLspWorthy(filePath)) {
+            try {
+                const { lsp } = await import("./lsp.js");
+                const raw = await lsp.handler({
+                    operation: "getDiagnostics",
+                    file_path: filePath,
+                });
+                const parsed = JSON.parse(String(raw)) as {
+                    success?: boolean;
+                    error_count?: number;
+                    warning_count?: number;
+                    diagnostics?: Array<{ line: number; severity: string; message: string; source?: string }>;
+                };
+                if (parsed?.success && parsed.error_count && parsed.error_count > 0) {
+                    const top = (parsed.diagnostics ?? [])
+                        .filter((d) => d.severity === "error")
+                        .slice(0, 5)
+                        .map((d) => `  L${d.line}: [${d.source ?? "lsp"}] ${d.message}`);
+                    diagnosticsSummary = `⚠️ ${parsed.error_count} error(s)${parsed.warning_count ? ` + ${parsed.warning_count} warning(s)` : ""} after edit:\n${top.join("\n")}`;
+                }
+            } catch {
+                /* LSP not installed / language unsupported — silent */
+            }
+        }
+
         return JSON.stringify({
             success: true,
             path: filePath,
             replacements_made: replaceAll ? occurrences : 1,
             preview,
             ...(lspHint ? { lsp_preedit_hint: lspHint } : {}),
+            ...(diagnosticsSummary ? { post_edit_diagnostics: diagnosticsSummary } : {}),
         });
     },
 };
+
+// ── LSP-worthy extension allowlist ────────────
+const LSP_WORTHY_EXTS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".pyi", ".rs", ".go"]);
+function isLspWorthy(filePath: string): boolean {
+    const ext = path.extname(filePath).toLowerCase();
+    return LSP_WORTHY_EXTS.has(ext);
+}
