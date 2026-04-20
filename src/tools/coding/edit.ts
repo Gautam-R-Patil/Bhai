@@ -207,6 +207,8 @@ export const edit: ToolDefinition = {
         // Gated by ATLAS_NO_POST_EDIT_DIAGNOSTICS for users who don't
         // want the extra latency.
         let diagnosticsSummary: string | undefined;
+        let postEditErrorCount = 0;
+        let lspWasReached = false;
         if (process.env.ATLAS_NO_POST_EDIT_DIAGNOSTICS !== "true" && isLspWorthy(filePath)) {
             try {
                 const { lsp } = await import("./lsp.js");
@@ -220,23 +222,46 @@ export const edit: ToolDefinition = {
                     warning_count?: number;
                     diagnostics?: Array<{ line: number; severity: string; message: string; source?: string }>;
                 };
-                if (parsed?.success && parsed.error_count && parsed.error_count > 0) {
-                    const top = (parsed.diagnostics ?? [])
-                        .filter((d) => d.severity === "error")
-                        .slice(0, 5)
-                        .map((d) => `  L${d.line}: [${d.source ?? "lsp"}] ${d.message}`);
-                    diagnosticsSummary = `⚠️ ${parsed.error_count} error(s)${parsed.warning_count ? ` + ${parsed.warning_count} warning(s)` : ""} after edit:\n${top.join("\n")}`;
+                if (parsed?.success) {
+                    lspWasReached = true;
+                    postEditErrorCount = parsed.error_count ?? 0;
+                    if (postEditErrorCount > 0) {
+                        const top = (parsed.diagnostics ?? [])
+                            .filter((d) => d.severity === "error")
+                            .slice(0, 5)
+                            .map((d) => `  L${d.line}: [${d.source ?? "lsp"}] ${d.message}`);
+                        diagnosticsSummary = `⚠️ ${postEditErrorCount} error(s)${parsed.warning_count ? ` + ${parsed.warning_count} warning(s)` : ""} after edit:\n${top.join("\n")}`;
+                    }
                 }
             } catch {
                 /* LSP not installed / language unsupported — silent */
             }
         }
 
+        // ── Confidence score ─────────────────────
+        // A single number in [0, 1] summarizing how likely the edit did
+        // what the agent intended. Composes: pre-edit LSP hint availability
+        // (did we verify the target exists?), post-edit diagnostic errors,
+        // match fuzziness (long old_string = surgical context = higher
+        // chance of accidental duplicate match). Surfaced so downstream
+        // UIs can warn the user and so the agent itself can decide whether
+        // to proceed or backtrack on the next iteration.
+        let confidence = 1.0;
+        if (!lspHint && isLspWorthy(filePath)) confidence -= 0.1;          // pre-edit signal missing
+        if (lspWasReached && postEditErrorCount > 0) {
+            confidence -= Math.min(0.5, 0.2 + postEditErrorCount * 0.05);  // type/parse errors after edit
+        }
+        if (!lspWasReached && isLspWorthy(filePath)) confidence -= 0.05;   // couldn't verify
+        if (oldStr.length > 1500) confidence -= 0.05;                      // very long context — brittle
+        if (replaceAll && occurrences > 3) confidence -= 0.05;             // wide blast radius
+        confidence = Math.max(0, Math.min(1, confidence));
+
         return JSON.stringify({
             success: true,
             path: filePath,
             replacements_made: replaceAll ? occurrences : 1,
             preview,
+            confidence: Number(confidence.toFixed(2)),
             ...(lspHint ? { lsp_preedit_hint: lspHint } : {}),
             ...(diagnosticsSummary ? { post_edit_diagnostics: diagnosticsSummary } : {}),
         });
