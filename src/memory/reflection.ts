@@ -788,6 +788,7 @@ ${input.slice(0, 6000)}`;
             messages: [{ role: "user", content: prompt }],
             systemPrompt: "You are a JSON-only coding strategy extractor. Output valid JSON, no markdown.",
             modelOverride: "anthropic/claude-haiku-4.5",
+            responseFormat: "json_object",
         });
         const text = response.choices?.[0]?.message?.content || "";
         const jsonStr = extractJSON(text);

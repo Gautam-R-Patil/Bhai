@@ -26,6 +26,16 @@ export interface LLMClient {
         thinkingLevel?: ThinkingLevel;
         modelOverride?: string;
         skillSlugs?: string[];
+        /**
+         * When set, instructs the provider to constrain output to valid JSON.
+         * Server adds response_format: { type: "json_object" } for OpenAI-
+         * compatible providers; Gemini routes get responseMimeType:
+         * application/json. No-op for providers that don't support it —
+         * the existing extractJSON fallback still handles markdown-fenced
+         * output. Only pass this on calls that DON'T use `tools` — tool
+         * use and JSON mode are mutually exclusive on most providers.
+         */
+        responseFormat?: "json_object";
     }): Promise<ChatCompletion>;
     config: Config;
 }
@@ -124,7 +134,7 @@ export function createLLMClient(config: Config): LLMClient {
 
     return {
         config,
-        async chat({ messages, tools, systemPrompt, thinkingLevel, modelOverride, skillSlugs }) {
+        async chat({ messages, tools, systemPrompt, thinkingLevel, modelOverride, skillSlugs, responseFormat }) {
             // ── Network health guard: fail fast if internet is down ──
             try {
                 const { isOffline, reportNetworkError } = await import("./network-health.js");
@@ -153,6 +163,7 @@ export function createLLMClient(config: Config): LLMClient {
                 thinkingLevel,
                 modelOverride,
                 skillSlugs,
+                responseFormat,
                 _resolvedModel: model,
                 _isThinking: isThinking,
             };
@@ -192,6 +203,11 @@ export function createLLMClient(config: Config): LLMClient {
                     platform: PLATFORM,
                     skillSlugs: params.skillSlugs || [],
                     systemPromptOverride: params.systemPrompt || undefined,
+                    // Grammar-constrained decoding for JSON-expecting calls.
+                    // Mutually exclusive with tool use — the server drops it
+                    // when tools are present so the flag is safe to set in
+                    // middleware-agnostic code paths.
+                    response_format: responseFormat === "json_object" ? { type: "json_object" } : undefined,
                 };
 
                 // Model-aware provider routing

@@ -93,6 +93,7 @@ Output ONLY valid JSON:
             messages: [{ role: "user", content: prompt }] as ChatCompletionMessageParam[],
             systemPrompt: "You are a task plan reviewer. Output valid JSON only.",
             modelOverride: selectForPlanning(originalRequest).modelId,
+            responseFormat: "json_object",
         });
 
         const text = response.choices?.[0]?.message?.content || "";

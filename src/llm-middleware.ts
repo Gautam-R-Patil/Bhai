@@ -23,6 +23,7 @@ export interface ChatParams {
     thinkingLevel?: string;
     modelOverride?: string;
     skillSlugs?: string[];
+    responseFormat?: "json_object";
     /** Internal: the resolved model after routing */
     _resolvedModel?: string;
     /** Internal: pre-computed query embedding for cache */

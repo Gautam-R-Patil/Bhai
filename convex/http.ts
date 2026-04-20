@@ -369,6 +369,12 @@ http.route({
       reasoning: body.reasoning,
       provider: body.provider,
       modalities: body.modalities,
+      // Grammar-constrained decoding: forwarded to OpenRouter which maps
+      // to each provider's native JSON mode. Drop when tools are present
+      // — the two are mutually exclusive on most providers and tool use
+      // already produces structured output.
+      response_format:
+        body.response_format && (!body.tools || body.tools.length === 0) ? body.response_format : undefined,
     };
 
     // Remove undefined fields

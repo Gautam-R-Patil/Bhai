@@ -81,6 +81,7 @@ Output ONLY valid JSON:
             systemPrompt: "You are a strict quality evaluator. Output valid JSON only. Be honest — do not inflate scores.",
             // Use a light/fast model for evaluation to avoid self-confirmation bias
             // The selectForSubAgent with "simple" hint picks a cheaper model
+            responseFormat: "json_object",
         });
 
         const text = response.choices?.[0]?.message?.content || "";
