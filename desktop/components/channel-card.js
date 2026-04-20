@@ -238,20 +238,49 @@
         if (!this._form) return;
         const qrBox = this._form.querySelector("[data-sp-qr]");
         if (!qrBox) return;
-        while (qrBox.firstChild) qrBox.removeChild(qrBox.firstChild);
-        const generating = el("div", {}, "Generating pairing…");
-        generating.style.color = "#666";
-        qrBox.appendChild(generating);
 
         const self = this;
+        // Generation attempt counter — closures below bail out if a newer attempt started.
+        self._waAttempt = (self._waAttempt || 0) + 1;
+        const attempt = self._waAttempt;
+        // Clear any prior timeout/state from an earlier attempt.
+        if (self._waTimeout) { clearTimeout(self._waTimeout); self._waTimeout = null; }
+
+        function stale() { return self._waAttempt !== attempt; }
+        function clearBox() { while (qrBox.firstChild) qrBox.removeChild(qrBox.firstChild); }
+
+        clearBox();
+        const generating = el("div", {}, "Generating pairing\u2026");
+        generating.style.color = "#666";
+        qrBox.appendChild(generating);
+        const hint = el("div", {}, "This usually takes 3–10 seconds.");
+        hint.style.color = "#999";
+        hint.style.fontSize = "12px";
+        hint.style.marginTop = "6px";
+        qrBox.appendChild(hint);
+
+        function renderRetry(parent) {
+            const retry = el("button", { className: "sp-btn sp-btn--ghost" }, "Try again");
+            retry.style.marginTop = "12px";
+            retry.addEventListener("click", function () { self._startWhatsApp(); });
+            parent.appendChild(retry);
+        }
+
         function renderQr(qrString) {
-            while (qrBox.firstChild) qrBox.removeChild(qrBox.firstChild);
+            if (stale()) return;
+            if (self._waTimeout) { clearTimeout(self._waTimeout); self._waTimeout = null; }
+            clearBox();
             try {
                 const QR = window.QRCode || (typeof require === "function" ? require("qrcode") : null);
                 if (QR && typeof QR.toCanvas === "function") {
                     const canvas = el("canvas");
                     qrBox.appendChild(canvas);
                     QR.toCanvas(canvas, qrString, { width: 220 });
+                    const sub = el("div", {}, "Open WhatsApp \u2192 Settings \u2192 Linked Devices, then scan.");
+                    sub.style.color = "#999";
+                    sub.style.fontSize = "12px";
+                    sub.style.marginTop = "10px";
+                    qrBox.appendChild(sub);
                     return;
                 }
             } catch { /* fall through */ }
@@ -261,7 +290,9 @@
             qrBox.appendChild(code);
         }
         function renderConnected() {
-            while (qrBox.firstChild) qrBox.removeChild(qrBox.firstChild);
+            if (stale()) return;
+            if (self._waTimeout) { clearTimeout(self._waTimeout); self._waTimeout = null; }
+            clearBox();
             const ok = el("div", {}, "\u2713 WhatsApp paired. Ready.");
             ok.style.color = "#10b981";
             ok.style.fontWeight = "600";
@@ -270,35 +301,77 @@
             if (typeof self.props.onSaved === "function") self.props.onSaved("whatsapp");
         }
         function renderErr(msg) {
-            while (qrBox.firstChild) qrBox.removeChild(qrBox.firstChild);
-            const errEl = el("div", {}, "Pair failed: " + msg);
+            if (stale()) return;
+            if (self._waTimeout) { clearTimeout(self._waTimeout); self._waTimeout = null; }
+            clearBox();
+            const errEl = el("div", {}, "Couldn't pair: " + msg);
             errEl.style.color = "#f87171";
             qrBox.appendChild(errEl);
+            renderRetry(qrBox);
+        }
+        function renderTimeout() {
+            if (stale()) return;
+            self._waTimeout = null;
+            clearBox();
+            const warn = el("div", {}, "Still waiting on WhatsApp\u2026");
+            warn.style.color = "#f59e0b";
+            warn.style.fontWeight = "600";
+            qrBox.appendChild(warn);
+            const sub = el("div", {}, "Check your internet connection and try again.");
+            sub.style.color = "#999";
+            sub.style.fontSize = "12px";
+            sub.style.marginTop = "6px";
+            qrBox.appendChild(sub);
+            renderRetry(qrBox);
+            // Cancel the stalled socket so the next attempt gets a fresh one.
+            if (window.atlas && typeof window.atlas.setupWaPairCancel === "function") {
+                Promise.resolve(window.atlas.setupWaPairCancel()).catch(function () {});
+            }
         }
 
-        if (window.atlas && typeof window.atlas.onWhatsAppQR === "function") {
+        // Subscribe exactly once per ChannelCard instance (preload attaches
+        // with ipcRenderer.on, which accumulates — so guard here).
+        if (!self._waListenerAttached && window.atlas && typeof window.atlas.onWhatsAppQR === "function") {
             window.atlas.onWhatsAppQR(function (payload) {
+                // Use the latest renderers from the active attempt via closure on `self`.
                 if (payload === "connected") { renderConnected(); return; }
                 if (payload && typeof payload === "object" && payload.kind === "error") {
                     renderErr(payload.message || "unknown"); return;
                 }
                 if (typeof payload === "string") renderQr(payload);
             });
+            self._waListenerAttached = true;
         }
 
-        // Start the wizard-scoped Baileys pair flow. Falls back to the old
-        // bot-relay path only if the new IPC isn't present.
+        // 15s timeout: surface an actionable message + retry if nothing arrives.
+        self._waTimeout = setTimeout(renderTimeout, 15000);
+
+        // Ask main for a fresh pair session. If a prior one is still running,
+        // cancel first so we don't re-use a stuck socket.
+        if (window.atlas && typeof window.atlas.setupWaPairCancel === "function") {
+            try { await window.atlas.setupWaPairCancel(); } catch { /* ignore */ }
+        }
         if (window.atlas && typeof window.atlas.setupWaPairStart === "function") {
             try {
                 const res = await window.atlas.setupWaPairStart();
                 if (res && res.ok === false) renderErr(res.error || "could not start");
             } catch (e) { renderErr(e.message || String(e)); }
         } else if (window.atlas && typeof window.atlas.waGenerateOTP === "function") {
-            try { await window.atlas.waGenerateOTP(); } catch {}
+            try { await window.atlas.waGenerateOTP(); }
+            catch (e) { renderErr(e.message || String(e)); }
+        } else {
+            renderErr("WhatsApp pairing IPC unavailable.");
         }
     };
 
     ChannelCard.prototype.unmount = function () {
+        if (this._waTimeout) { clearTimeout(this._waTimeout); this._waTimeout = null; }
+        if (this._waAttempt) {
+            this._waAttempt = 0;
+            if (window.atlas && typeof window.atlas.setupWaPairCancel === "function") {
+                Promise.resolve(window.atlas.setupWaPairCancel()).catch(function () {});
+            }
+        }
         if (this._el && this._el.parentNode) this._el.parentNode.removeChild(this._el);
         this._el = null;
         this._form = null;

@@ -81,10 +81,21 @@
     }
 
     // Route a tile click based on its onClickRoute string.
-    function handleTileRoute(route, atlas) {
+    async function handleTileRoute(route, atlas) {
         if (!route || typeof route !== "string") return;
         if (route === "channels") { window.location.href = "channels.html"; return; }
         if (route === "settings:account") {
+            // Only open the auth window when actually signed out. Once the user
+            // is signed in the tile should jump to the Account panel tab — the
+            // old behavior reopened the login popup every click.
+            let signedIn = false;
+            if (atlas && typeof atlas.getAccountInfo === "function") {
+                try {
+                    const info = await atlas.getAccountInfo();
+                    signedIn = !!(info && info.signedIn);
+                } catch { signedIn = false; }
+            }
+            if (signedIn) { window.location.href = "panel.html#account"; return; }
             if (atlas && typeof atlas.openAuthWindow === "function") atlas.openAuthWindow();
             return;
         }
