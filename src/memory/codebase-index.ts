@@ -172,6 +172,13 @@ interface DiscoveredFile {
 function listFiles(root: string, maxFiles: number): DiscoveredFile[] {
     const out: DiscoveredFile[] = [];
     const visited = new Set<string>();
+    // Resolve root once so the symlink-escape check compares real paths.
+    let rootReal: string;
+    try {
+        rootReal = fs.realpathSync(root);
+    } catch {
+        rootReal = path.resolve(root);
+    }
     const visit = (dir: string): void => {
         if (out.length >= maxFiles) return;
         let real: string;
@@ -180,6 +187,10 @@ function listFiles(root: string, maxFiles: number): DiscoveredFile[] {
         } catch {
             return;
         }
+        // Refuse to follow symlinks that escape the repo — otherwise a
+        // stray `ln -s /etc etc-link` in the source tree would get indexed
+        // and leak /etc/* contents into the sidecar DB.
+        if (real !== rootReal && !real.startsWith(rootReal + path.sep)) return;
         if (visited.has(real)) return;
         visited.add(real);
 
