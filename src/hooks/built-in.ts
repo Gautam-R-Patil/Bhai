@@ -106,6 +106,18 @@ function extractIdentifiers(text: string, max = 4): string[] {
 
 const MAX_HOVER_BYTES = 600;
 
+// File extensions whose edits benefit from an LSP symbol lookup.
+// Everything else (markdown, JSON, YAML, plain text, SQL, lock files, etc.)
+// skips the hook — pattern-matching on identifiers-in-docs is noise and
+// the LSP roundtrips waste latency.
+const LSP_WORTHY_EXTS = new Set([
+    ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+    ".py", ".pyi", ".rs", ".go", ".java", ".kt",
+    ".cpp", ".cc", ".cxx", ".c", ".h", ".hpp",
+    ".swift", ".m", ".mm", ".cs", ".php", ".rb",
+    ".scala", ".lua",
+]);
+
 async function lspHoverBeforeEdit(payload: unknown): Promise<HookHandlerResult | null> {
     const p = payload as { tool?: string; input?: Record<string, unknown> } | null;
     if (!p || p.tool !== "edit" || !p.input) return null;
@@ -113,6 +125,11 @@ async function lspHoverBeforeEdit(payload: unknown): Promise<HookHandlerResult |
     const oldString = input.old_string as string | undefined;
     const filePath = input.file_path as string | undefined;
     if (!oldString || !filePath || oldString.length > 4000) return null;
+
+    // Short-circuit non-code file edits — avoids useless LSP calls on
+    // markdown / JSON / YAML changes.
+    const ext = path.extname(filePath).toLowerCase();
+    if (!LSP_WORTHY_EXTS.has(ext)) return null;
 
     const identifiers = extractIdentifiers(oldString);
     if (identifiers.length === 0) return null;
