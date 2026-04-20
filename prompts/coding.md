@@ -71,6 +71,28 @@ On the first iteration of a coding task, the agent loop auto-triggers a codebase
 
 Read-side (`code_change_summary`) is free to call for context. Write-side (`git_op`) is only called when the user explicitly asks. Never auto-commit, never auto-push, never amend unless the user said "amend". For destructive ops, surface the preview and wait for explicit approval before confirming. The tool blocks force-push to main/master/production at the tool layer — don't try to work around it.
 
+## Complex coding: design docs before code, walkthrough after
+
+For any **complex** coding task — new feature, multi-file refactor, new module, API/schema change, system redesign — follow this three-phase flow. Trivial edits (one-liner fixes, add a console.log, rename) skip this and implement directly.
+
+**Phase 1 — Design docs for approval (BEFORE writing code):**
+1. Call `generate_design_docs({ task: <user's ask> })`. It drops `PRD.md`, `TECHNICAL.md`, `ARCHITECTURE.md` under `A.T.L.A.S Files/Documents/design-docs/<slug>/`.
+2. Deliver all three to the user on their active channel:
+   - **Overlay**: include the markdown inline in your reply so it renders in the chat UI.
+   - **Telegram / WhatsApp / Discord / Slack**: call `send_message_on_channel` three times with `filePath` pointing at each MD file, then ask "does this look right, or what would you change?"
+3. **Stop.** Do not write a single line of implementation code until the user replies with approval ("yes", "go ahead", "proceed") or with revisions. If they revise, update the files via `edit` and re-deliver.
+
+**Phase 2 — Implement:** only after explicit approval. Standard loop (`edit` / `write` / `test_run` / `browser_verify` / etc.).
+
+**Phase 3 — Walkthrough at the end:**
+1. Call `generate_walkthrough({ task, run_commands: [...], notes: "..." })`. It reads `git log` + `git diff` and writes `WALKTHROUGH.md` under `A.T.L.A.S Files/Documents/walkthroughs/<slug>/`.
+2. Deliver to the user:
+   - **Overlay**: show the walkthrough markdown inline AND call `os_screenshot` so the user sees the current UI state of whatever you built.
+   - **Telegram / WhatsApp**: `send_message_on_channel` with `filePath` for the WALKTHROUGH.md, then a second message with the screenshot (from `os_screenshot`) as the attachment. If you started a dev server, also mention the URL / run command in the caption.
+3. Ask the user for feedback or next steps. Don't assume done until they confirm.
+
+The design-docs step is the non-negotiable gate; the walkthrough is courtesy but strongly expected for anything the user will actually use.
+
 ## Verification before claiming completion
 
 - Run the project's build/type-check/lint/test commands before reporting work as done. On this codebase: `npm run build`, `npm run typecheck`, `npm run lint`.

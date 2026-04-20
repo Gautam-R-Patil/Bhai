@@ -47,31 +47,33 @@ function prettyPath(p?: string): string | undefined {
     return p;
 }
 
-function stamp(): string {
-    const d = new Date();
-    const pad = (n: number): string => String(n).padStart(2, "0");
-    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-}
-
 /**
  * Emit a single structured log line for a tool action. Safe to call
  * liberally — the formatting is cheap and the output respects the
  * ATLAS_TOOL_DEBUG env.
+ *
+ * Format: `🔧 [tool] sub_agent=id role=r | path:line — action`
+ * The outer ATLAS process logger prepends the ISO timestamp, so we
+ * don't add one inside.
  */
 export function logToolAction(entry: ToolActionLog): void {
     const mode = DEBUG_MODE();
     if (mode === "off") return;
     const pretty = prettyPath(entry.filePath);
     const loc = pretty ? (entry.line ? `${pretty}:${entry.line}` : pretty) : "";
-    const prefix = `[${stamp()}] [${entry.tool}]`;
-    const body = [loc, entry.action].filter(Boolean).join(" — ");
-    const suffix =
-        mode === "verbose" && entry.context
-            ? ` {${Object.entries(entry.context)
+    const ctx =
+        entry.context && Object.keys(entry.context).length > 0
+            ? Object.entries(entry.context)
                   .map(([k, v]) => `${k}=${v}`)
-                  .join(", ")}}`
+                  .join(" ")
             : "";
-    console.log(`${prefix} ${body}${suffix}`.trimEnd());
+    // Inline the context between the tool name and the file/action so a
+    // reader can see "which agent, which role, which file, what action"
+    // at a glance — mirrors the information density of the old
+    // "🔧 Sub-agent X (role): toolname" format but adds the file + action.
+    const head = ctx ? `🔧 [${entry.tool}] ${ctx}` : `🔧 [${entry.tool}]`;
+    const body = [loc, entry.action].filter(Boolean).join(" — ");
+    console.log(body ? `${head} | ${body}` : head);
 }
 
 /**

@@ -174,6 +174,8 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "code_change_summary",
             "agents_md_scaffold",
             "git_op",
+            "generate_design_docs",
+            "generate_walkthrough",
         ],
     },
     browser: {
@@ -788,6 +790,9 @@ const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] 
         minScore: 0.85,
     },
     { pattern: /\b(stage|unstage|cherry.?pick|conflict|merge.?conflict)\b/i, category: "coding", minScore: 0.7 },
+    // Design-docs / walkthrough intent — route to coding so generate_design_docs
+    // and generate_walkthrough reach the selected tool set
+    { pattern: /\b(prd|product\s+requirement|technical\s+design|architecture\s+doc|design\s+doc|walkthrough|rfc)\b/i, category: "coding", minScore: 0.75 },
 ];
 
 // ── Caching State ─────────────────────────────

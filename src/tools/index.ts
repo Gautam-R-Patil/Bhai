@@ -62,6 +62,7 @@ import { browserVerify } from "./coding/browser-verify.js";
 import { codeChangeSummaryTool } from "./coding/code-change-summary.js";
 import { codebaseIndexTool } from "./coding/codebase-index.js";
 import { codebaseQueryTool } from "./coding/codebase-query.js";
+import { designDocsTool } from "./coding/design-docs.js";
 import { edit } from "./coding/edit.js";
 import { fixIssue } from "./coding/fix-issue.js";
 import { gitOpTool } from "./coding/git-op.js";
@@ -76,6 +77,7 @@ import { scaffoldProject } from "./coding/scaffold-project.js";
 import { enterSpecModeTool, finalizeSpecTool } from "./coding/spec-mode-tools.js";
 import { stockImageSearch } from "./coding/stock-image-search.js";
 import { testRun } from "./coding/test-run.js";
+import { walkthroughTool } from "./coding/walkthrough.js";
 import { webAssetDownload } from "./coding/web-asset-download.js";
 import { write } from "./coding/write.js";
 import { computerUseTool, setComputerUseLLM } from "./computer-use-tool.js";
@@ -504,6 +506,10 @@ registry.set(codebaseQueryTool.schema.function.name, codebaseQueryTool);
 registry.set(codeChangeSummaryTool.schema.function.name, codeChangeSummaryTool);
 registry.set(agentsMdScaffoldTool.schema.function.name, agentsMdScaffoldTool);
 registry.set(gitOpTool.schema.function.name, gitOpTool);
+
+// Complex-task docs: PRD / tech / arch pre-approval + post-impl walkthrough
+registry.set(designDocsTool.schema.function.name, designDocsTool);
+registry.set(walkthroughTool.schema.function.name, walkthroughTool);
 
 // Computer use agent (desktop automation)
 registry.set(computerUseTool.schema.function.name, computerUseTool);

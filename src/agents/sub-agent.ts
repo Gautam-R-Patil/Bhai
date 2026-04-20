@@ -156,6 +156,9 @@ const ROLE_TOOLS: Record<AgentRole, string[]> = {
         "code_change_summary",
         "agents_md_scaffold",
         "git_op",
+        // Complex-task docs: pre-approval + post-completion walkthrough
+        "generate_design_docs",
+        "generate_walkthrough",
     ],
     browser: [
         "web_search",
