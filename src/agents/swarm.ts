@@ -230,32 +230,45 @@ export async function runSwarm(
         meshResult.results,
     );
 
+    // Wall-clock budget for the optional post-synthesis polish stages
+    // (code-critic, multi-critic, MoA). Each stage checks remaining time
+    // and is skipped if the budget is exhausted. Keeps total swarm
+    // latency bounded when any individual stage goes slow.
+    const POST_SYNTHESIS_BUDGET_MS = Math.max(5000, Number(process.env.ATLAS_POST_SYNTHESIS_BUDGET_MS) || 90_000);
+    const postSynthesisDeadline = Date.now() + POST_SYNTHESIS_BUDGET_MS;
+    const budgetLeft = (): boolean => Date.now() < postSynthesisDeadline;
+
     // ── Code-Aware Critic: deterministic compile/lint/test checks when plan includes coder steps ──
     // Runs in parallel before the LLM multi-critic so cheap, objective signals fire first.
     // Returns null (skip) when no coder steps exist or ATLAS_NO_CODE_CRITIC=true.
-    try {
-        const planRoles = plan.steps.map((s) => s.role);
-        const codeReflection = await runCodeCriticIfCoder(planRoles, userRequest);
-        if (codeReflection && codeReflection.key_issues.length > 0) {
-            console.log(`[SWARM] 🧪 Code critic: score ${codeReflection.overall_score}, ${codeReflection.key_issues.length} issues`);
-            if (codeReflection.should_retry && codeReflection.consensus_suggestions.length > 0) {
-                const codeFeedback = `Compile/test/lint checks flagged issues: ${codeReflection.key_issues.slice(0, 3).join("; ")}. ${codeReflection.consensus_suggestions.join(" ")}`;
-                synthesis = await synthesize(llm, userRequest, plan, meshResult.results, codeFeedback);
-                evaluationScore = Math.min(evaluationScore, codeReflection.overall_score);
+    if (budgetLeft()) {
+        if (onProgress) await onProgress("🧪 code critic…").catch(() => {});
+        try {
+            const planRoles = plan.steps.map((s) => s.role);
+            const codeReflection = await runCodeCriticIfCoder(planRoles, userRequest);
+            if (codeReflection && codeReflection.key_issues.length > 0) {
+                console.log(`[SWARM] 🧪 Code critic: score ${codeReflection.overall_score}, ${codeReflection.key_issues.length} issues`);
+                if (codeReflection.should_retry && codeReflection.consensus_suggestions.length > 0 && budgetLeft()) {
+                    const codeFeedback = `Compile/test/lint checks flagged issues: ${codeReflection.key_issues.slice(0, 3).join("; ")}. ${codeReflection.consensus_suggestions.join(" ")}`;
+                    synthesis = await synthesize(llm, userRequest, plan, meshResult.results, codeFeedback);
+                    evaluationScore = Math.min(evaluationScore, codeReflection.overall_score);
+                }
             }
+        } catch (ccErr) {
+            console.warn("[SWARM] Code critic failed (non-fatal):", (ccErr as Error).message);
         }
-    } catch (ccErr) {
-        console.warn("[SWARM] Code critic failed (non-fatal):", (ccErr as Error).message);
+    } else {
+        console.log(`[SWARM] ⏱️ Post-synthesis budget exhausted before code critic — skipping`);
     }
 
     // ── Multi-Critic Debate: identify specific weaknesses if evaluation score is low ──
-    if (evaluationScore < 60) {
+    if (evaluationScore < 60 && budgetLeft()) {
+        if (onProgress) await onProgress("🎭 multi-critic…").catch(() => {});
         try {
             console.log(`[SWARM] 🎭 Evaluation score ${evaluationScore} < 60 — running multi-critic debate...`);
             const debate = await runMultiCriticDebate(llm, userRequest, synthesis);
-            if (debate.key_issues.length > 0) {
+            if (debate.key_issues.length > 0 && budgetLeft()) {
                 console.log(`[SWARM] 🎭 Multi-critic found ${debate.key_issues.length} issues (consensus score: ${debate.overall_score.toFixed(1)})`);
-                // Re-synthesize with critic feedback
                 const criticFeedback = debate.consensus_suggestions.join("; ");
                 if (criticFeedback) {
                     synthesis = await synthesize(llm, userRequest, plan, meshResult.results, criticFeedback);
@@ -267,7 +280,8 @@ export async function runSwarm(
     }
 
     // ── MoA fallback: re-synthesize via Mixture of Agents if quality is low ──
-    if (shouldUseMoA(stepsCompleted, stepsFailed) && evaluationScore < 70) {
+    if (shouldUseMoA(stepsCompleted, stepsFailed) && evaluationScore < 70 && budgetLeft()) {
+        if (onProgress) await onProgress("🔀 MoA…").catch(() => {});
         try {
             console.log(`[SWARM] 🔀 Evaluation score ${evaluationScore} < 70 — re-synthesizing via MoA...`);
             const moaSynthesis = await synthesizeWithMoA(llm, userRequest, plan, meshResult.results);
