@@ -158,6 +158,10 @@ function cmdPlan(task: string): string {
         const since = s.mode === "plan" ? Math.round((Date.now() - s.enteredAt) / 1000) : 0;
         return `🧭 Already in plan mode (${since}s). Reason: ${s.mode === "plan" ? s.reason : "—"}. Send a task or \`/noplan\` to exit.`;
     }
+    if (isSpecMode()) {
+        const s = getPlanModeState();
+        return `📝 Currently in spec mode (task: ${s.mode === "spec" ? s.task : "—"}). Run \`finalize_spec\` to transition to plan mode, or \`/noplan\` to cancel the spec first.`;
+    }
     const reason = task.trim() || "User-invoked plan mode";
     enterPlanMode(reason, "user");
     return [
@@ -181,6 +185,10 @@ function cmdSpec(task: string): string {
     if (isSpecMode()) {
         const s = getPlanModeState();
         return `📝 Already in spec mode. Task: ${s.mode === "spec" ? s.task : "—"}. Finish writing the spec, then call finalize_spec.`;
+    }
+    if (isPlanMode()) {
+        const s = getPlanModeState();
+        return `🧭 Currently in plan mode (reason: ${s.mode === "plan" ? s.reason : "—"}). Run \`/noplan\` to exit first, then \`/spec <task>\` for a fresh spec.`;
     }
     const trimmed = task.trim();
     if (!trimmed) {
