@@ -13,7 +13,7 @@
 // thread its path through SubAgentTask.workingDirectory.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import path from "node:path";
 
 const WORKTREES_ROOT = path.resolve("data", "agent-worktrees");
@@ -44,6 +44,7 @@ export interface AgentWorktree {
 
 const activeWorktrees = new Set<AgentWorktree>();
 let sigintHooked = false;
+let orphansPruned = false;
 
 function hookSigint(): void {
     if (sigintHooked) return;
@@ -63,6 +64,42 @@ function hookSigint(): void {
 }
 
 /**
+ * Reconcile orphaned worktree refs left behind by previous crashes
+ * (SIGKILL, OOM, hard reboots bypass the SIGINT handler). Runs
+ * `git worktree prune` once per process, and sweeps any directory
+ * under data/agent-worktrees/ whose git ref is gone. Idempotent.
+ */
+function pruneOrphanWorktrees(cwd: string): void {
+    if (orphansPruned) return;
+    orphansPruned = true;
+    try {
+        spawnSync("git", ["worktree", "prune"], { cwd, stdio: "pipe" });
+    } catch {
+        /* non-fatal — next `worktree add` will surface any remaining issue */
+    }
+    // Sweep data/agent-worktrees/ for dirs no longer registered
+    try {
+        if (!existsSync(WORKTREES_ROOT)) return;
+        const list = spawnSync("git", ["worktree", "list", "--porcelain"], { cwd, stdio: "pipe" });
+        const known = new Set<string>();
+        if (list.status === 0) {
+            for (const line of list.stdout.toString().split("\n")) {
+                if (line.startsWith("worktree ")) known.add(line.slice("worktree ".length).trim());
+            }
+        }
+        for (const entry of readdirSync(WORKTREES_ROOT, { withFileTypes: true })) {
+            if (!entry.isDirectory()) continue;
+            const full = path.join(WORKTREES_ROOT, entry.name);
+            if (!known.has(full)) {
+                try { rmSync(full, { recursive: true, force: true }); } catch { /* */ }
+            }
+        }
+    } catch {
+        /* sweep is best-effort */
+    }
+}
+
+/**
  * Create a throwaway git worktree at `data/agent-worktrees/{id}` with
  * a fresh branch. Returns a handle with a `cleanup()` function; the
  * caller MUST call cleanup (or rely on SIGINT/exit auto-cleanup).
@@ -74,6 +111,7 @@ export function setupAgentWorktree(id: string, cwd: string = process.cwd()): Age
     if (!isWorktreeEnabled() || !isGitRepo(cwd)) return null;
 
     hookSigint();
+    pruneOrphanWorktrees(cwd);
 
     if (!existsSync(WORKTREES_ROOT)) {
         try {
