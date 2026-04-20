@@ -15,7 +15,7 @@ import { repoHash } from "./codebase-merkle.js";
 import { type Database, wrapDatabase } from "./sqlite.js";
 
 /** Version bump forces a full sidecar rebuild on next open. */
-export const SIDECAR_SCHEMA_VERSION = "4L.1";
+export const SIDECAR_SCHEMA_VERSION = "4L.2";
 
 const DATA_DIR = process.env.ATLAS_DATA_DIR || path.resolve("data");
 const SIDECAR_DIR = path.join(DATA_DIR, "codebase-index");
@@ -94,6 +94,27 @@ CREATE INDEX IF NOT EXISTS idx_imports_from ON imports(from_file_id);
 CREATE INDEX IF NOT EXISTS idx_imports_to   ON imports(to_file_id);
 CREATE INDEX IF NOT EXISTS idx_calls_from   ON calls(from_symbol_id);
 CREATE INDEX IF NOT EXISTS idx_calls_to     ON calls(to_symbol_id);
+
+-- 4L.2: BM25 full-text search over symbol names + file paths.
+-- Populated on every symbol insert via triggers below so the FTS index
+-- always mirrors the canonical tables. Non-fatal if FTS5 is unavailable
+-- (the schema run catches the error and the search op returns [] — the
+-- exact-match find_symbol path still works).
+CREATE VIRTUAL TABLE IF NOT EXISTS symbols_fts USING fts5(
+    name, kind, file_path, signature,
+    tokenize = 'unicode61 remove_diacritics 2'
+);
+CREATE TRIGGER IF NOT EXISTS symbols_fts_ai AFTER INSERT ON symbols BEGIN
+    INSERT INTO symbols_fts(rowid, name, kind, file_path, signature)
+    VALUES (
+        new.id, new.name, new.kind,
+        (SELECT path FROM files WHERE id = new.file_id),
+        COALESCE(new.signature, '')
+    );
+END;
+CREATE TRIGGER IF NOT EXISTS symbols_fts_ad AFTER DELETE ON symbols BEGIN
+    DELETE FROM symbols_fts WHERE rowid = old.id;
+END;
 `;
 
 function runSchema(raw: BetterSqlite3.Database): void {
