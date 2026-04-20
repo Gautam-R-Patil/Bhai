@@ -263,6 +263,16 @@ export async function executeMesh(
             }
         }
 
+        // Cap the number of steps in this wave that may speculate (Phase 4F
+        // safety). Without a cap, three concurrent coder steps would fork
+        // to 6 parallel LLM conversations, doubling rate-limit pressure for
+        // marginal quality gains. Configurable via ATLAS_WAVE_SPECULATION_CAP
+        // (default 1; set to "off" to disable speculation entirely or a
+        // larger number for more aggressive racing).
+        const rawCap = process.env.ATLAS_WAVE_SPECULATION_CAP ?? "1";
+        const waveSpeculationCap = rawCap === "off" ? 0 : Math.max(0, Number.parseInt(rawCap, 10) || 1);
+        const speculationBudget = { remaining: waveSpeculationCap };
+
         // Run all ready steps in parallel
         const waveResults = await Promise.all(
             ready.map(async (step) => {
@@ -334,7 +344,15 @@ export async function executeMesh(
                 // the test-first alt_B approach is cheap to race.
                 const coderBreadth = effectiveRole === "coder" && shouldSpeculate(0, 0.35, "coder", step.description);
                 const workingDirectory = worktreeAssignments.get(step.id);
-                if ((step.priority === "critical" && shouldSpeculate(0.35)) || coderBreadth) {
+                const wantsSpeculation = (step.priority === "critical" && shouldSpeculate(0.35)) || coderBreadth;
+                let allowSpeculation = false;
+                if (wantsSpeculation && speculationBudget.remaining > 0) {
+                    speculationBudget.remaining--;
+                    allowSpeculation = true;
+                } else if (wantsSpeculation) {
+                    console.log(`    🎯 Speculation suppressed for ${step.id} (wave cap reached)`);
+                }
+                if (allowSpeculation) {
                     try {
                         console.log(`    🎯 Speculative execution for critical step ${step.id}`);
                         const specResult = await executeSpeculatively(llm, {
