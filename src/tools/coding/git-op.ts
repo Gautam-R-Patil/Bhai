@@ -35,7 +35,8 @@ function classify(op: string, input: Record<string, unknown>): Tier {
         op === "stash_list" ||
         op === "tag" ||
         op === "add" ||
-        op === "commit"
+        op === "commit" ||
+        op === "checkpoint"
     )
         return "safe";
     if (op === "revert" || op === "cherry_pick" || op === "merge") return "confirm";
@@ -43,6 +44,7 @@ function classify(op: string, input: Record<string, unknown>): Tier {
     if (op === "reset") return "destructive";
     if (op === "clean") return "destructive";
     if (op === "push") return "destructive";
+    if (op === "restore_checkpoint") return "confirm";
     return "blocked";
 }
 
@@ -124,8 +126,11 @@ interactive rebase, add -A/-u/.`,
                             "reset",
                             "clean",
                             "push",
+                            "checkpoint",
+                            "restore_checkpoint",
                         ],
                     },
+                    sha: { type: "string", description: "Checkpoint SHA (restore_checkpoint)." },
                     paths: { type: "array", items: { type: "string" }, description: "Explicit paths (add)." },
                     message: { type: "string", description: "Commit / tag message." },
                     name: { type: "string", description: "Branch / tag name." },
@@ -239,6 +244,46 @@ interactive rebase, add -A/-u/.`,
             if (operation === "stash_list") {
                 const r = runGit(root, ["stash", "list"]);
                 return JSON.stringify({ success: r.code === 0, stashes: r.stdout.split("\n").filter(Boolean) });
+            }
+            // ── AgentGit minimal v1: ephemeral checkpoints ────
+            // `git stash create` builds a stash commit WITHOUT pushing to
+            // the stash stack — it just returns a SHA. That SHA can be
+            // restored later with `git checkout <sha> -- .` without
+            // touching branch history or cluttering `git stash list`.
+            // Ideal for per-session autosave: the agent gets a rollback
+            // anchor, the user's git log stays clean.
+            if (operation === "checkpoint") {
+                const r = runGit(root, ["stash", "create"]);
+                if (r.code !== 0) return JSON.stringify({ success: false, stderr: r.stderr });
+                const sha = r.stdout.trim();
+                if (!sha) {
+                    return JSON.stringify({
+                        success: true,
+                        sha: null,
+                        note: "No uncommitted changes — nothing to checkpoint.",
+                    });
+                }
+                auditLog("git_op.checkpoint", { sha, code: r.code });
+                return JSON.stringify({ success: true, sha, hint: `Restore with git_op restore_checkpoint sha=${sha}` });
+            }
+            if (operation === "restore_checkpoint") {
+                const sha = typeof input.sha === "string" ? input.sha.trim() : "";
+                if (!/^[a-f0-9]{7,40}$/i.test(sha)) {
+                    return JSON.stringify({ success: false, error: "sha must be a 7-40 char git hash from a prior checkpoint op" });
+                }
+                // Sanity-check: confirm the SHA is reachable before overwriting anything
+                const exists = runGit(root, ["rev-parse", "--verify", `${sha}^{commit}`]);
+                if (exists.code !== 0) {
+                    return JSON.stringify({ success: false, error: `SHA ${sha} not found in this repo (checkpoints are local + ephemeral — may have been GC'd)` });
+                }
+                const r = runGit(root, ["checkout", sha, "--", "."]);
+                auditLog("git_op.restore_checkpoint", { sha, code: r.code });
+                return JSON.stringify({
+                    success: r.code === 0,
+                    sha,
+                    stderr: r.stderr,
+                    hint: "Restored working tree to the checkpoint. Your git index is unchanged — run `status` to see the diff.",
+                });
             }
             if (operation === "add") {
                 const paths = Array.isArray(input.paths) ? (input.paths as unknown[]).map(String) : [];
