@@ -742,13 +742,23 @@ const CODING_TOOL_SIGNATURES = new Set([
 function sessionTouchedCoding(history: ChatCompletionMessageParam[]): boolean {
     for (const msg of history) {
         if (msg.role !== "assistant" || !("tool_calls" in msg) || !msg.tool_calls) continue;
+        if (!Array.isArray(msg.tool_calls)) continue;
         for (const tc of msg.tool_calls) {
-            if (tc.type === "function" && CODING_TOOL_SIGNATURES.has(tc.function.name)) {
+            // Tolerate providers that omit tc.type or spell it differently —
+            // match on function.name presence alone, which is the stable
+            // contract across OpenAI, Anthropic, Gemini tool-call shapes.
+            const fnName = (tc as { function?: { name?: unknown } })?.function?.name;
+            if (typeof fnName === "string" && CODING_TOOL_SIGNATURES.has(fnName)) {
                 return true;
             }
         }
     }
     return false;
+}
+
+const STRATEGY_FIELD_CAP = 500;
+function clampStr(s: string): string {
+    return s.length > STRATEGY_FIELD_CAP ? s.slice(0, STRATEGY_FIELD_CAP) : s;
 }
 
 async function extractCodingStrategies(llm: LLMClient, input: string): Promise<CodingStrategy[]> {
@@ -790,11 +800,15 @@ ${input.slice(0, 6000)}`;
             const s = raw as Record<string, unknown>;
             if (typeof s.pattern !== "string" || s.pattern.length < 4) continue;
             out.push({
-                pattern: s.pattern,
-                context: typeof s.context === "string" ? s.context : "coding",
-                whatWorked: Array.isArray(s.whatWorked) ? (s.whatWorked as string[]).filter((x) => typeof x === "string") : [],
-                whatFailed: Array.isArray(s.whatFailed) ? (s.whatFailed as string[]).filter((x) => typeof x === "string") : [],
-                tips: Array.isArray(s.tips) ? (s.tips as string[]).filter((x) => typeof x === "string") : [],
+                pattern: clampStr(s.pattern),
+                context: clampStr(typeof s.context === "string" ? s.context : "coding"),
+                whatWorked: Array.isArray(s.whatWorked)
+                    ? (s.whatWorked as string[]).filter((x) => typeof x === "string").map(clampStr)
+                    : [],
+                whatFailed: Array.isArray(s.whatFailed)
+                    ? (s.whatFailed as string[]).filter((x) => typeof x === "string").map(clampStr)
+                    : [],
+                tips: Array.isArray(s.tips) ? (s.tips as string[]).filter((x) => typeof x === "string").map(clampStr) : [],
                 successScore: typeof s.successScore === "number" ? s.successScore : 0.7,
             });
         }
