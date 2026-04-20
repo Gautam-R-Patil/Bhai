@@ -23,6 +23,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { getCodeDir } from "../../config/paths.js";
 import { getPathBlockedReason, isPathAllowed } from "../../security/allowlist.js";
 import { auditLog } from "../../security/audit-log.js";
 import type { ToolDefinition } from "../get-current-time.js";
@@ -294,7 +295,7 @@ export const scaffoldProject: ToolDefinition = {
                     parent_dir: {
                         type: "string",
                         description:
-                            "Parent directory under which to create the project. Default current working directory.",
+                            "Parent directory under which to create the project. Defaults to the user's ATLAS workspace Code folder (A.T.L.A.S Files/Code on fresh installs). Pass an explicit path only when the user asked for a specific location.",
                     },
                     features: {
                         type: "array",
@@ -324,10 +325,19 @@ export const scaffoldProject: ToolDefinition = {
         if (!ALLOWED_TEMPLATES.includes(template)) {
             return JSON.stringify({ error: `Unsupported template: ${template}` });
         }
-        const parentDir = path.resolve((input.parent_dir as string) || process.cwd());
+        // Default parent: the user's workspace Code/ directory — `A.T.L.A.S Files/Code`
+        // on fresh installs. The installer sets ATLAS_WORKSPACE; fallbacks resolve
+        // to Desktop / Documents / ~/ variants. Explicit parent_dir from the user
+        // always wins.
+        const parentDir = path.resolve((input.parent_dir as string) || getCodeDir());
         if (!isPathAllowed(parentDir)) {
             const reason = getPathBlockedReason(parentDir) ?? `Parent dir not allowed: ${parentDir}`;
             return JSON.stringify({ error: reason });
+        }
+        if (!existsSync(parentDir)) {
+            try { mkdirSync(parentDir, { recursive: true }); } catch {
+                return JSON.stringify({ error: `Could not create parent dir: ${parentDir}` });
+            }
         }
         const projectDir = path.join(parentDir, name);
         if (existsSync(projectDir)) {
