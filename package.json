@@ -60,6 +60,8 @@
     "resumed": "^6.1.0",
     "sharp": "^0.33.5",
     "tar": "^7.5.13",
+    "tree-sitter": "^0.22.4",
+    "tree-sitter-typescript": "^0.23.2",
     "unpdf": "^1.6.0",
     "web-push": "^3.6.7",
     "ws": "^8.18.0",

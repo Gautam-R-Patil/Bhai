@@ -324,7 +324,7 @@ async function doIndex(root: string, opts: BuildOptions, incremental: boolean): 
                 continue;
             }
 
-            const res = parseFile(f.lang, f.abs, content);
+            const res = await parseFile(f.lang, f.abs, content);
 
             let fileId: number;
             if (prev) {
