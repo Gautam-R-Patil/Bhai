@@ -22,6 +22,7 @@ import type { ConsensusReflection } from "./multi-critic.js";
 const COMPILE_TIMEOUT_MS = 20_000;
 const LINT_TIMEOUT_MS = 15_000;
 const TEST_TIMEOUT_MS = 90_000;
+const SAST_TIMEOUT_MS = 30_000;
 
 // ── Options ──────────────────────────────────
 
@@ -36,10 +37,13 @@ export interface CodeCriticOptions {
     skipLint?: boolean;
     /** Skip the compile step. Default false. */
     skipCompile?: boolean;
+    /** Skip the SAST (Semgrep) security check. Default false. */
+    skipSast?: boolean;
     /** Per-check timeout override. */
     compileTimeoutMs?: number;
     lintTimeoutMs?: number;
     testTimeoutMs?: number;
+    sastTimeoutMs?: number;
     /**
      * Phase 4J: if a URL is provided, the ui_verify perspective runs
      * browser_verify against it as an additional check. Meant for coder
@@ -88,7 +92,7 @@ export function touchesUI(files: string[]): boolean {
 // ── Perspective Result Shape ─────────────────
 
 interface PerspectiveResult {
-    name: "compile_check" | "test_runner" | "lint_style" | "ui_verify";
+    name: "compile_check" | "test_runner" | "lint_style" | "ui_verify" | "sast";
     score: number; // 0-100
     weight: number; // aggregation weight
     issues: string[]; // short, actionable
@@ -358,6 +362,92 @@ async function runLintCheck(cwd: string, timeoutMs: number): Promise<Perspective
     return result;
 }
 
+// ── SAST Check (Semgrep) ──────────────────────
+// Runs `semgrep --config=auto --error` over the diff against origin/HEAD
+// (or the whole tree if no git). Only fires if `semgrep` is on PATH.
+// Fails open — the binary missing is not a quality signal, just
+// "we don't have this check available here".
+
+async function runSastCheck(cwd: string, timeoutMs: number): Promise<PerspectiveResult> {
+    const result: PerspectiveResult = {
+        name: "sast",
+        score: 100,
+        weight: 0.15,
+        issues: [],
+        suggestions: [],
+        ran: false,
+        tool: "semgrep",
+    };
+
+    // Honor a global kill-switch to avoid adding latency when the user
+    // hasn't opted into Semgrep (it can be slow on large repos).
+    if (process.env.ATLAS_NO_SAST === "true") return result;
+
+    // Scan only changed files if in a git repo — massively faster on big trees.
+    let scanArgs: string[] = ["--config=auto", "--json", "--quiet", "--error"];
+    try {
+        const diff = await runCmd("git", ["diff", "--name-only", "HEAD"], cwd, 3_000);
+        if (diff.code === 0) {
+            const files = diff.stdout
+                .split(/\r?\n/)
+                .map((s) => s.trim())
+                .filter((s) => s.length > 0 && /\.(ts|tsx|js|jsx|py|rs|go|java|rb|php|c|cpp|h)$/.test(s));
+            if (files.length > 0) scanArgs = scanArgs.concat(files);
+            else scanArgs.push(cwd);
+        } else {
+            scanArgs.push(cwd);
+        }
+    } catch {
+        scanArgs.push(cwd);
+    }
+
+    const run = await runCmd("semgrep", scanArgs, cwd, timeoutMs);
+    if (run.startupError) return result; // semgrep not installed — silent
+    result.ran = true;
+    if (run.timedOut) {
+        result.score = 75;
+        result.issues.push("semgrep timed out — narrow the scope or set ATLAS_NO_SAST=true");
+        return result;
+    }
+    if (run.code === 0) return result; // clean
+
+    // --error exits non-zero on findings. Parse --json output for detail.
+    try {
+        const parsed = JSON.parse(run.stdout || "{}") as {
+            results?: Array<{
+                check_id?: string;
+                path?: string;
+                start?: { line?: number };
+                extra?: { severity?: string; message?: string };
+            }>;
+        };
+        const results = parsed.results ?? [];
+        if (results.length === 0) return result;
+        const sev = (s?: string) => (s === "ERROR" ? 3 : s === "WARNING" ? 2 : 1);
+        results.sort((a, b) => sev(b.extra?.severity) - sev(a.extra?.severity));
+        const top = results.slice(0, 6);
+        result.issues = top.map((r) => {
+            const where = `${r.path ?? "?"}:${r.start?.line ?? "?"}`;
+            const msg = (r.extra?.message ?? r.check_id ?? "finding").toString().slice(0, 200);
+            return `[${(r.extra?.severity ?? "info").toLowerCase()}] ${where} — ${msg}`;
+        });
+        // Score scaled by worst severity + finding count
+        const errors = results.filter((r) => r.extra?.severity === "ERROR").length;
+        const warns = results.filter((r) => r.extra?.severity === "WARNING").length;
+        if (errors > 0) result.score = Math.max(20, 60 - errors * 5);
+        else if (warns > 3) result.score = 55;
+        else result.score = 70;
+        result.suggestions.push(
+            "Semgrep flagged patterns that may be unsafe or insecure. Inspect each finding — if false-positive, add a nosemgrep comment; otherwise fix the pattern at the reported line.",
+        );
+    } catch {
+        // Non-JSON output (error text) — fall back to a soft score
+        result.score = 60;
+        result.issues.push((run.stderr || run.stdout || "").slice(0, 300));
+    }
+    return result;
+}
+
 // ── Test Runner Check ────────────────────────
 
 async function runTestCheck(cwd: string, timeoutMs: number): Promise<PerspectiveResult> {
@@ -480,6 +570,9 @@ export async function runCodeMultiCritic(options: CodeCriticOptions = {}): Promi
     }
     if (!options.skipTests) {
         checks.push(runTestCheck(cwd, options.testTimeoutMs ?? TEST_TIMEOUT_MS));
+    }
+    if (!options.skipSast) {
+        checks.push(runSastCheck(cwd, options.sastTimeoutMs ?? SAST_TIMEOUT_MS));
     }
     if (options.verifyUrl) {
         checks.push(runUiVerify(options.verifyUrl, options.verifyExpectSelectors, options.verifyExpectText));
