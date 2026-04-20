@@ -351,14 +351,19 @@ interactive rebase, add -A/-u/.`,
                 const forceLease = input.force_with_lease === true;
                 const setUpstream = input.set_upstream === true;
 
-                if (force && (PROTECTED_BRANCHES.has(branch) || branch.startsWith(RELEASE_PREFIX))) {
+                // Both --force and --force-with-lease can rewrite remote history.
+                // Protected-branch + evidence-phrase gates apply to either variant.
+                const isRewrite = force || forceLease;
+                if (isRewrite && (PROTECTED_BRANCHES.has(branch) || branch.startsWith(RELEASE_PREFIX))) {
+                    const variant = force ? "force push" : "force-with-lease push";
                     return JSON.stringify({
                         success: false,
-                        error: `force push to ${branch} is blocked at the tool layer`,
+                        error: `${variant} to ${branch} is blocked at the tool layer`,
                     });
                 }
-                if (force) {
-                    const phraseErr = requirePhrase(input, "force push");
+                if (isRewrite) {
+                    const phrase = force ? "force push" : "force with lease";
+                    const phraseErr = requirePhrase(input, phrase);
                     if (phraseErr) return JSON.stringify({ success: false, error: phraseErr });
                 }
 
