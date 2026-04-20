@@ -192,8 +192,22 @@ export const browserVerify: ToolDefinition = {
             /* */
         }
 
-        const start = Date.now();
+        // Declare all output vars here so the finally-block cleanup below
+        // doesn't strand them inside a try scope.
         let navError: string | undefined;
+        let loadMs = 0;
+        const missingSelectors: string[] = [];
+        const missingText: string[] = [];
+        let bodyText = "";
+        let title = "";
+        let finalUrl = url;
+
+        // Wrap everything that uses the listeners in try/finally so cleanup
+        // runs even if a selector / evaluate / title call throws. Before
+        // this the listeners leaked on any unhandled throw between goto
+        // and the old explicit cleanup call.
+        try {
+        const start = Date.now();
         try {
             await (page as unknown as { goto: (u: string, opts?: unknown) => Promise<unknown> }).goto(url, {
                 waitUntil: "domcontentloaded",
@@ -202,7 +216,7 @@ export const browserVerify: ToolDefinition = {
         } catch (err) {
             navError = (err as Error).message;
         }
-        const loadMs = Date.now() - start;
+        loadMs = Date.now() - start;
 
         // Stabilization wait
         try {
@@ -212,7 +226,6 @@ export const browserVerify: ToolDefinition = {
         }
 
         // Selector checks
-        const missingSelectors: string[] = [];
         for (const sel of expectSelectors.slice(0, 20)) {
             try {
                 const handle = await (page as unknown as { $: (s: string) => Promise<unknown> }).$(sel);
@@ -223,8 +236,6 @@ export const browserVerify: ToolDefinition = {
         }
 
         // Text checks
-        const missingText: string[] = [];
-        let bodyText = "";
         if (expectText.length > 0) {
             try {
                 bodyText = await (page as unknown as { evaluate: (fn: unknown) => Promise<string> }).evaluate(
@@ -239,8 +250,6 @@ export const browserVerify: ToolDefinition = {
         }
 
         // Page state
-        let title = "";
-        let finalUrl = url;
         try {
             title = await (page as unknown as { title: () => Promise<string> }).title();
         } catch {
@@ -251,9 +260,13 @@ export const browserVerify: ToolDefinition = {
         } catch {
             /* */
         }
-
-        // Cleanup listeners
-        for (const off of listenerCleanups) off();
+        } finally {
+            // Listeners must always come off — leaking them accumulates zombie
+            // handlers on the shared page proxy across repeated browser_verify calls.
+            for (const off of listenerCleanups) {
+                try { off(); } catch { /* */ }
+            }
+        }
 
         const passed =
             !navError &&
