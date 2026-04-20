@@ -215,29 +215,46 @@ const RUNTIME_ERROR_PATTERNS = [
 
 const LOCATION_PATTERNS: RegExp[] = [
     // tsc: path(line,col): error ...
-    /([\w./\-]+)\((\d+),(\d+)\):/,
+    /([\w./\-]+)\((\d+),(\d+)\):/g,
+    // jest/vitest: at <fn> (path:line:col) — more specific than bare path:line:col
+    /at\s+[^\s]*\s+\(([\w./\-]+):(\d+):(\d+)\)/g,
     // eslint / rust / python: path:line:col
-    /([\w./\-]+):(\d+):(\d+)/,
-    // jest/vitest: at path:line:col
-    /at\s+[^\s]*\s+\(([\w./\-]+):(\d+):(\d+)\)/,
+    /([\w./\-]+):(\d+):(\d+)/g,
     // just path:line (no column)
-    /([\w./\-]+):(\d+)\b/,
+    /([\w./\-]+):(\d+)\b/g,
 ];
 
+// Paths under these prefixes are framework / dependency / build-output
+// noise. When a stack trace mentions both user code and these, we want the
+// user-code frame — so any match whose path starts with one of these is
+// only accepted if nothing better is available.
+const NOISE_PATH_PREFIXES = ["node_modules/", "dist/", "build/", ".next/", ".venv/", "venv/", "__pycache__/"];
+
+function isNoisePath(p: string): boolean {
+    const norm = p.replace(/^\.\//, "");
+    return NOISE_PATH_PREFIXES.some((prefix) => norm.includes(prefix));
+}
+
 export function extractCodeLocation(message: string): CodeErrorLocation | undefined {
+    let fallback: CodeErrorLocation | undefined;
     for (const p of LOCATION_PATTERNS) {
-        const m = message.match(p);
-        if (m) {
+        const iter = message.matchAll(p);
+        for (const m of iter) {
             const line = m[2] ? parseInt(m[2], 10) : undefined;
             const column = m[3] ? parseInt(m[3], 10) : undefined;
-            return {
+            const loc: CodeErrorLocation = {
                 file: m[1],
                 line: Number.isFinite(line) ? line : undefined,
                 column: Number.isFinite(column) ? column : undefined,
             };
+            if (isNoisePath(loc.file || "")) {
+                if (!fallback) fallback = loc; // remember in case nothing better exists
+                continue;
+            }
+            return loc; // first non-noise match wins within the earliest specific pattern
         }
     }
-    return undefined;
+    return fallback;
 }
 
 const USER_CAUSED_PATTERNS = [
