@@ -335,11 +335,30 @@ Root AGENTS.md has an auto-zone for stats + sub-doc index; human-written section
                   (x): x is SubDoc => typeof x === "string" && (SUB_DOCS as readonly string[]).includes(x),
               )
             : undefined;
+        return scaffoldWithMutex(path.resolve(root), only);
+    },
+};
+
+// Per-root mutex — two concurrent scaffold calls on the same repo (e.g.,
+// parallel coder sub-agents both triggering auto-scaffold) would otherwise
+// race on AGENTS.md read-modify-write. Promise-chain serialization keeps
+// them ordered without blocking other repos.
+const scaffoldLocks = new Map<string, Promise<string>>();
+
+async function scaffoldWithMutex(resolvedRoot: string, only: SubDoc[] | undefined): Promise<string> {
+    const prev = scaffoldLocks.get(resolvedRoot) ?? Promise.resolve("");
+    const next = prev.then(async () => {
         try {
-            const r = await scaffold(root, only);
+            const r = await scaffold(resolvedRoot, only);
             return JSON.stringify({ success: true, ...r });
         } catch (err) {
             return JSON.stringify({ success: false, error: `agents_md_scaffold failed: ${(err as Error).message}` });
         }
-    },
-};
+    });
+    scaffoldLocks.set(resolvedRoot, next);
+    // Clean up when this run is finished (or the next one is queued after it)
+    next.finally(() => {
+        if (scaffoldLocks.get(resolvedRoot) === next) scaffoldLocks.delete(resolvedRoot);
+    });
+    return next;
+}
