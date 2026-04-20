@@ -63,7 +63,7 @@ export function synapticPrune(db: Database): { pruned: number; weakened: number;
                 julianday('now') - julianday(COALESCE(accessed_at, created_at)) as days_since
          FROM memories
          WHERE consolidated_into IS NULL
-           AND (category IS NULL OR category NOT LIKE 'code\\_%' ESCAPE '\\')`,
+           AND (category IS NULL OR (category != 'code' AND category NOT LIKE 'code\\_%' ESCAPE '\\'))`,
     );
 
     if (results.length === 0 || results[0].values.length === 0) return stats;
@@ -142,7 +142,7 @@ export function findDuplicates(db: Database, threshold = 0.9): Array<{ id1: numb
         `SELECT m.id, e.embedding FROM memories m
          JOIN memory_embeddings e ON m.id = e.memory_id
          WHERE m.consolidated_into IS NULL
-           AND (m.category IS NULL OR m.category NOT LIKE 'code\\_%' ESCAPE '\\')
+           AND (m.category IS NULL OR (m.category != 'code' AND m.category NOT LIKE 'code\\_%' ESCAPE '\\'))
          ORDER BY m.id DESC LIMIT 200`,
     );
 
