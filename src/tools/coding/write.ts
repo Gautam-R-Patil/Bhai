@@ -15,6 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import { getPathBlockedReason, isPathAllowed, isProtectedPath } from "../../security/allowlist.js";
 import { auditLog } from "../../security/audit-log.js";
+import { logToolAction } from "../../utils/debug-log.js";
 import type { ToolDefinition } from "../get-current-time.js";
 import { hashContent, hasRegistryEntry, recordRead, wasRead } from "./read-registry.js";
 
@@ -83,6 +84,13 @@ export const write: ToolDefinition = {
         }
 
         recordRead(filePath, hashContent(content));
+
+        const lineCount = content.split("\n").length;
+        logToolAction({
+            tool: "write",
+            filePath,
+            action: `${fileExists ? "overwrote" : "created"} file (${content.length} bytes, ${lineCount} lines)`,
+        });
 
         const warning = isOutsideHome(filePath)
             ? `Note: This file is outside your home directory (${HOME_DIR}). Ensure this was intentional.`

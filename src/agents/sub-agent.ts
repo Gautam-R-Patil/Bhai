@@ -11,6 +11,7 @@ import path from "node:path";
 import type { ChatCompletionMessageParam, ChatCompletionTool, LLMClient } from "../llm.js";
 import { selectForSubAgent } from "../model-router.js";
 import { executeTool, getToolSchemasByNames } from "../tools/index.js";
+import { extractPrimaryPath, logToolAction, summarizeToolCall } from "../utils/debug-log.js";
 import { isToolError } from "./error-types.js";
 import { smartTruncate } from "./smart-truncate.js";
 
@@ -584,7 +585,15 @@ export async function runSubAgent(
                     rewritePathsForWorktree(fnName, fnArgs as Record<string, unknown>, task.workingDirectory);
                 }
 
-                console.log(`    🔧 Sub-agent ${task.id} (${task.role}): ${fnName}`);
+                // Structured, file-aware breadcrumb for every tool call —
+                // tells trace readers WHICH file the agent is touching and
+                // WHAT specifically it's doing, not just the tool name.
+                logToolAction({
+                    tool: fnName,
+                    filePath: extractPrimaryPath(fnArgs),
+                    action: summarizeToolCall(fnName, fnArgs),
+                    context: { sub_agent: task.id, role: task.role },
+                });
                 const result = await executeTool(fnName, fnArgs);
                 totalToolCalls++;
 

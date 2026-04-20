@@ -15,6 +15,7 @@ import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { getPathBlockedReason, isPathAllowed, isProtectedPath } from "../../security/allowlist.js";
 import { auditLog } from "../../security/audit-log.js";
+import { logToolAction } from "../../utils/debug-log.js";
 import type { ToolDefinition } from "../get-current-time.js";
 import { hashContent, hasRegistryEntry, recordRead, wasRead } from "./read-registry.js";
 
@@ -196,6 +197,18 @@ export const edit: ToolDefinition = {
 
         // Update registry so subsequent edits see the new hash
         recordRead(filePath, hashContent(after));
+
+        // Compute the line number of the edit (first line where the change landed)
+        // so the debug log points straight at the modified region.
+        const editLine = before.split(oldStr)[0].split("\n").length;
+        logToolAction({
+            tool: "edit",
+            filePath,
+            line: editLine,
+            action: replaceAll
+                ? `replaced ${occurrences} occurrence(s) of '${oldStr.slice(0, 50)}…'`
+                : `replaced '${oldStr.slice(0, 50)}…' with '${newStr.slice(0, 50)}…'`,
+        });
 
         const preview = buildDiffPreview(before, after, oldStr, newStr);
 
