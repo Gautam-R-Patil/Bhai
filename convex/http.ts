@@ -329,6 +329,33 @@ http.route({
         };
         body.tools = tools;
       }
+
+      // Cache conversation history: place a third cache_control marker on
+      // the second-to-last message so the growing prefix is cached across
+      // agent-loop iterations. The last message is excluded so each new
+      // turn adds unique content beyond the cached prefix (otherwise the
+      // cache would miss on every fresh user/tool message).
+      // Anthropic allows up to 4 cache breakpoints; we now use 3 (system
+      // + tools + history prefix).
+      if (messages.length > 2) {
+        const cutIdx = messages.length - 2;
+        const msg = messages[cutIdx];
+        if (msg && typeof msg === "object") {
+          const content = (msg as any).content;
+          if (typeof content === "string") {
+            (msg as any).content = [
+              { type: "text", text: content, cache_control: { type: "ephemeral" } },
+            ];
+          } else if (Array.isArray(content) && content.length > 0) {
+            const blocks = [...content];
+            blocks[blocks.length - 1] = {
+              ...blocks[blocks.length - 1],
+              cache_control: { type: "ephemeral" },
+            };
+            (msg as any).content = blocks;
+          }
+        }
+      }
     }
 
     // 6. Build the OpenRouter request
