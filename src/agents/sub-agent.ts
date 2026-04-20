@@ -7,11 +7,58 @@
 // Each sub-agent gets its own message history and can only see the tools it needs.
 // Uses smart context windowing to limit token usage in long-running tasks.
 
+import path from "node:path";
 import type { ChatCompletionMessageParam, ChatCompletionTool, LLMClient } from "../llm.js";
 import { selectForSubAgent } from "../model-router.js";
 import { executeTool, getToolSchemasByNames } from "../tools/index.js";
 import { isToolError } from "./error-types.js";
 import { smartTruncate } from "./smart-truncate.js";
+
+// ── Worktree path rewriting (Phase 4G) ────────
+// File-tool arg names that carry a path the operation will act on. For
+// each, when the sub-agent has a workingDirectory set, we reroute the
+// path into the worktree so edits don't race against each other in the
+// shared main checkout.
+const FILE_TOOL_PATH_ARGS: Record<string, string[]> = {
+    read: ["file_path"],
+    edit: ["file_path"],
+    write: ["file_path"],
+    append_file: ["file_path", "path"],
+    notebook_edit: ["notebook_path"],
+    grep: ["path"],
+    glob: ["path"],
+    list_directory: ["path"],
+    delete_file: ["file_path"],
+};
+const SHELL_TOOLS = new Set(["shell_exec", "shell_exec_background", "test_run"]);
+
+function rewritePathsForWorktree(fnName: string, fnArgs: Record<string, unknown>, workingDirectory: string): void {
+    // Shell-family tools: inject cwd (unchanged Phase 4G behavior).
+    if (SHELL_TOOLS.has(fnName)) {
+        if (!("cwd" in fnArgs)) fnArgs.cwd = workingDirectory;
+        return;
+    }
+    // File-family tools: rewrite each path arg.
+    const pathKeys = FILE_TOOL_PATH_ARGS[fnName];
+    if (!pathKeys) return;
+    const root = process.cwd();
+    const wd = path.resolve(workingDirectory);
+    for (const key of pathKeys) {
+        const val = fnArgs[key];
+        if (typeof val !== "string" || val.length === 0) continue;
+        if (path.isAbsolute(val)) {
+            // Absolute path under the main checkout → remap into the worktree.
+            // Absolute paths outside the main checkout are left alone so the
+            // agent can still reach /tmp or referenced external files.
+            const normalized = path.normalize(val);
+            if (normalized === root || normalized.startsWith(root + path.sep)) {
+                fnArgs[key] = path.join(wd, path.relative(root, normalized));
+            }
+        } else {
+            fnArgs[key] = path.resolve(wd, val);
+        }
+    }
+}
 
 // NOTE: a2a.ts imports sub-agent.ts, so we use lazy dynamic imports to break the cycle.
 
@@ -365,7 +412,7 @@ export async function runSubAgent(
     // Build a focused system prompt
     let systemPrompt = ROLE_PROMPTS[task.role];
     if (task.workingDirectory) {
-        systemPrompt += `\n\nYour working directory for this task is: ${task.workingDirectory}\nAll shell commands default to this cwd. For read/edit/write/grep/glob, use absolute paths rooted here (e.g., ${task.workingDirectory}/<subpath>) to avoid ambiguity.`;
+        systemPrompt += `\n\nYour working directory for this task is: ${task.workingDirectory}\nAll shell commands default to this cwd. File tools (read/edit/write/grep/glob/etc.) automatically reroute relative or main-checkout-rooted paths into this worktree — you can reference paths as they appear in the repo-map and they'll land in the right place. Only use absolute paths OUTSIDE this worktree when you deliberately need to reach something beyond the workspace (e.g., /tmp).`;
     }
 
     // Build initial message with task description + any upstream context
@@ -527,12 +574,13 @@ export async function runSubAgent(
                     await onProgress(task.id, `🔧 [${task.role}] ${fnName}`).catch(() => {});
                 }
 
-                // Phase 4G: inject workingDirectory into shell_exec cwd when
-                // the task has one set and the model didn't specify its own.
-                if (task.workingDirectory && typeof fnArgs === "object" && fnArgs && !("cwd" in fnArgs)) {
-                    if (fnName === "shell_exec" || fnName === "shell_exec_background" || fnName === "test_run") {
-                        (fnArgs as Record<string, unknown>).cwd = task.workingDirectory;
-                    }
+                // Phase 4G: workingDirectory enforcement.
+                // For shell-family tools: inject cwd (same as before).
+                // For file-family tools (read/edit/write/grep/glob/etc.):
+                // rewrite path-bearing args so the operation lands in the
+                // sub-agent's worktree instead of the shared main checkout.
+                if (task.workingDirectory && typeof fnArgs === "object" && fnArgs) {
+                    rewritePathsForWorktree(fnName, fnArgs as Record<string, unknown>, task.workingDirectory);
                 }
 
                 console.log(`    🔧 Sub-agent ${task.id} (${task.role}): ${fnName}`);
