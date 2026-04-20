@@ -166,26 +166,57 @@ export async function runSwarm(
     // Execute mesh — replanning happens internally via the replan callback
     const meshResult = await executeMesh(llm, plan.steps, onProgress, STEP_TIMEOUT_MS);
 
-    // Post-execution replan check: if there were failures, ask if we should revise
-    const waveResults = [...meshResult.results.values()];
-    const stepsCompleted = waveResults.filter(r => r.success).length;
-    const stepsFailed = waveResults.filter(r => !r.success).length;
+    // Post-execution replan loop: on failures, ask the LLM whether to revise.
+    // If it returns revisedSteps, run another mesh wave on those and merge
+    // results back. Capped at MAX_REPLANS to bound cost.
+    while (replanCount < MAX_REPLANS) {
+        const waveResults = [...meshResult.results.values()];
+        const stepsCompleted = waveResults.filter((r) => r.success).length;
+        const stepsFailed = waveResults.filter((r) => !r.success).length;
+        if (stepsFailed === 0) break;
+        if (!shouldConsiderReplan(waveResults, stepsCompleted, plan.steps.length)) break;
 
-    if (stepsFailed > 0 && replanCount < MAX_REPLANS && shouldConsiderReplan(waveResults, stepsCompleted, plan.steps.length)) {
+        let decision;
         try {
-            const decision = await replan(llm, userRequest, meshResult.results, []);
-            if (decision.action === "abort") {
-                console.log(`[SWARM] 🛑 Replanner recommends abort: ${decision.reason}`);
-            } else {
-                console.log(`[SWARM] 🔄 Replanner: ${decision.action} — ${decision.reason}`);
-            }
-            replanned = decision.action === "replan";
+            decision = await replan(llm, userRequest, meshResult.results, []);
         } catch {
-            // Replan failed — continue with what we have
+            break; // Replanner itself failed — stop retrying
+        }
+
+        if (decision.action === "abort") {
+            console.log(`[SWARM] 🛑 Replanner recommends abort: ${decision.reason}`);
+            break;
+        }
+        if (decision.action === "continue" || !decision.revisedSteps || decision.revisedSteps.length === 0) {
+            console.log(`[SWARM] 🔄 Replanner: ${decision.action} — ${decision.reason}`);
+            break;
+        }
+
+        replanCount++;
+        replanned = true;
+        console.log(`[SWARM] 🔄 Replan #${replanCount}: ${decision.revisedSteps.length} revised step(s) — ${decision.reason}`);
+        if (onProgress) {
+            await onProgress(`🔄 replanning: ${decision.revisedSteps.length} new step(s)`).catch(() => {});
+        }
+
+        try {
+            const revisedResult = await executeMesh(llm, decision.revisedSteps, onProgress, STEP_TIMEOUT_MS);
+            // Merge: revised wave results override any same-id earlier results,
+            // new IDs are added. meshResult.totalDurationMs / parallelGroups
+            // accumulate across waves.
+            for (const [id, r] of revisedResult.results) meshResult.results.set(id, r);
+            meshResult.totalDurationMs += revisedResult.totalDurationMs;
+            meshResult.parallelGroups += revisedResult.parallelGroups;
+        } catch (meshErr) {
+            console.warn(`[SWARM] Replanned mesh execution failed (non-fatal): ${(meshErr as Error).message}`);
+            break;
         }
     }
 
-    console.log(`[SWARM] 📊 Mesh complete: ${stepsCompleted} succeeded, ${stepsFailed} failed, ${meshResult.parallelGroups} waves, ${(meshResult.totalDurationMs / 1000).toFixed(1)}s`);
+    const finalWaveResults = [...meshResult.results.values()];
+    const stepsCompleted = finalWaveResults.filter((r) => r.success).length;
+    const stepsFailed = finalWaveResults.filter((r) => !r.success).length;
+    console.log(`[SWARM] 📊 Mesh complete: ${stepsCompleted} succeeded, ${stepsFailed} failed, ${meshResult.parallelGroups} waves, ${(meshResult.totalDurationMs / 1000).toFixed(1)}s${replanCount > 0 ? `, ${replanCount} replan(s)` : ""}`);
 
     // ── Step 3: Synthesize with evaluation (#7) ──
     if (onProgress) await onProgress("🧩 synthesizing results…").catch(() => { });
@@ -273,7 +304,7 @@ export async function runSwarm(
     // ── Auto-Skill Creation ─────────────────────────
     // After complex swarm tasks complete, try to extract a reusable skill
     try {
-        const totalToolCalls = waveResults.reduce((sum, r) => sum + r.toolCalls, 0);
+        const totalToolCalls = finalWaveResults.reduce((sum, r) => sum + r.toolCalls, 0);
         if (totalToolCalls >= 5) {
             const toolCallRecords: ToolCallRecord[] = plan.steps.map(step => {
                 const result = meshResult.results.get(step.id);
