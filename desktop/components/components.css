@@ -319,3 +319,258 @@ body .uth p { font-size: 13px; line-height: 1.55; }
 
 /* The wizard-content wrapper should scroll when hub grows taller than viewport */
 body .wizard-content { overflow-y: auto; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   Setup-wizard visual refresh — wrap each step in a glass surface,
+   polish step dots, richer cards + inputs, hero orb for welcome.
+   Pure CSS, no DOM changes — all component tests stay green.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* 1. Step surface — the welcome/signin/profile/personalize/permissions/
+   install bodies sit inside a single .step section. Give it the same
+   liquid-glass treatment as .surface-card so content no longer floats
+   naked on the orb background. */
+.step {
+    padding: 40px 44px 32px;
+    background: var(--glass-bg, rgba(255, 255, 255, 0.65));
+    -webkit-backdrop-filter: blur(var(--glass-blur, 40px));
+    backdrop-filter: blur(var(--glass-blur, 40px));
+    border: var(--glass-border, 1px solid rgba(255, 255, 255, 0.5));
+    border-radius: var(--radius-lg, 32px);
+    box-shadow: var(--shadow-glass, 0 8px 32px rgba(0, 0, 0, 0.08));
+    position: relative;
+    overflow: hidden;
+}
+/* Inner glass highlight along the top edge — matches .surface-card::before */
+.step::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: inset 0 1px 1px rgba(255, 255, 255, 1);
+    pointer-events: none;
+}
+/* Keep the hub surface flat (it already has its own grid + try-this layout). */
+.hub-root, #hub-root { background: transparent; border: none; box-shadow: none; padding: 0 0 32px; -webkit-backdrop-filter: none; backdrop-filter: none; }
+.hub-root::after, #hub-root::after { content: none; }
+
+/* Channels page wraps a .channels-grid rather than .step — leave it. */
+
+/* 2. Welcome hero — breathing orb above the title.
+   Added via ::before so no JS/DOM/test changes are needed. */
+.step-welcome { text-align: center; padding-top: 48px; }
+.step-welcome::before {
+    content: '';
+    display: block;
+    width: 80px;
+    height: 80px;
+    margin: 0 auto 20px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 30% 30%,
+        var(--orb-purple, #c471ed) 0%,
+        var(--orb-pink, #ff758c) 65%,
+        rgba(255, 117, 140, 0.6) 100%);
+    box-shadow:
+        0 18px 48px rgba(196, 113, 237, 0.4),
+        0 0 0 1px rgba(255, 255, 255, 0.6) inset;
+    animation: step-hero-breathe 3.2s ease-in-out infinite;
+}
+@keyframes step-hero-breathe {
+    0%, 100% { transform: scale(1); filter: brightness(1); }
+    50%      { transform: scale(1.05); filter: brightness(1.08); }
+}
+
+/* 3. Typography — bolder titles, softer sub-copy, more air. */
+.step-title {
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: -0.3px;
+    line-height: 1.2;
+    color: var(--text-primary, #1d1d1f);
+    margin: 0 0 8px;
+    text-align: center;
+}
+.step-sub {
+    font-size: 15px;
+    line-height: 1.55;
+    color: var(--text-secondary, #515154);
+    text-align: center;
+    margin: 0 auto 24px;
+    max-width: 440px;
+}
+.step-welcome .step-title { font-size: 32px; letter-spacing: -0.5px; }
+
+/* 4. Step-dots → segmented progress pills with labels. */
+.step-dots {
+    gap: 8px;
+    align-items: center;
+}
+.step-dot {
+    width: 28px;
+    height: 6px;
+    border-radius: 999px;
+    background: rgba(29, 29, 31, 0.08);
+    transition: background 220ms ease, width 220ms ease, box-shadow 220ms ease;
+}
+.step-dot:hover { background: rgba(29, 29, 31, 0.16); }
+.step-dot.active {
+    width: 42px;
+    background: linear-gradient(90deg, var(--orb-purple, #c471ed), var(--orb-pink, #ff758c));
+    box-shadow: 0 2px 8px rgba(196, 113, 237, 0.35);
+}
+.step-dot.skipped {
+    background: rgba(29, 29, 31, 0.04);
+    cursor: default;
+}
+
+/* 5. Form fields — richer focus states, placeholder colour. */
+.field { margin-bottom: 14px; }
+.field > span {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted, #86868b);
+}
+.field input, .field select {
+    padding: 12px 14px;
+    font-size: 15px;
+    border-radius: 14px;
+    background: var(--glass-input, rgba(255, 255, 255, 0.65));
+    border: 1px solid rgba(0, 0, 0, 0.06);
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.02), 0 1px 0 rgba(255, 255, 255, 0.8);
+    transition: background 150ms ease, border-color 150ms ease, box-shadow 150ms ease, transform 80ms ease;
+}
+.field input::placeholder { color: var(--text-muted, #86868b); }
+.field input:hover, .field select:hover { background: rgba(255, 255, 255, 0.82); }
+.field input:focus, .field select:focus {
+    outline: none;
+    background: rgba(255, 255, 255, 0.95);
+    border-color: rgba(196, 113, 237, 0.55);
+    box-shadow: 0 0 0 4px rgba(196, 113, 237, 0.15), inset 0 1px 2px rgba(0, 0, 0, 0.02);
+}
+
+/* 6. Personalize sub-cards — denser glass with hover lift. */
+.card {
+    padding: 18px 20px;
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.55);
+    -webkit-backdrop-filter: blur(20px);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.65);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.04);
+    margin-bottom: 12px;
+    transition: transform 160ms ease, box-shadow 160ms ease;
+}
+.card:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06);
+}
+.card-title {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted, #86868b);
+    margin: 0 0 12px;
+}
+.row { font-size: 14px; }
+
+/* 7. Button refinement — primary gets softer, confident shadow;
+   ghost reads as a clear secondary. Scoped to the wizard/hub surfaces
+   via .step and .hub-root so we don't disturb panel buttons. */
+.step .btn-primary, .hub-root .btn-primary, #hub-root .btn-primary {
+    padding: 12px 26px;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    border-radius: 14px;
+    background: linear-gradient(135deg, #0a84ff 0%, #0066cc 100%);
+    box-shadow:
+        0 6px 16px rgba(10, 132, 255, 0.28),
+        inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+.step .btn-primary:hover, .hub-root .btn-primary:hover, #hub-root .btn-primary:hover {
+    filter: brightness(1.06);
+    transform: translateY(-1px);
+    box-shadow: 0 10px 22px rgba(10, 132, 255, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+.step .btn-primary:active, .hub-root .btn-primary:active, #hub-root .btn-primary:active {
+    transform: translateY(0) scale(0.98);
+}
+.step .btn-ghost, .hub-root .btn-ghost, #hub-root .btn-ghost {
+    padding: 12px 22px;
+    font-size: 15px;
+    font-weight: 500;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.6);
+    border: 1px solid rgba(0, 0, 0, 0.06);
+    color: var(--text-primary, #1d1d1f);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.03);
+}
+.step .btn-ghost:hover, .hub-root .btn-ghost:hover, #hub-root .btn-ghost:hover {
+    background: rgba(255, 255, 255, 0.85);
+    transform: translateY(-1px);
+}
+
+/* Launch + Talk + Type on the Ready Hub — keep the gradient primary
+   but re-align sizing with the refreshed wizard primary. */
+.hub-actions .btn-launch {
+    padding: 14px 32px !important;
+    font-size: 16px !important;
+    border-radius: 16px !important;
+    background: linear-gradient(135deg, var(--orb-purple, #c471ed), var(--orb-pink, #ff758c)) !important;
+    box-shadow: 0 8px 22px rgba(196, 113, 237, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.35) !important;
+}
+
+/* 8. Step action row — generous top spacing so buttons breathe. */
+.step-actions { margin-top: 28px; gap: 10px; }
+
+/* 9. Error + note — soft inline banners when present. */
+.step-error:not(:empty) {
+    padding: 10px 14px;
+    border-radius: 12px;
+    background: rgba(255, 59, 48, 0.08);
+    border: 1px solid rgba(255, 59, 48, 0.18);
+    color: var(--accent-danger, #ff3b30);
+    margin-top: 14px;
+}
+.step-note:not(:empty) {
+    padding: 10px 14px;
+    border-radius: 12px;
+    background: rgba(10, 132, 255, 0.06);
+    border: 1px solid rgba(10, 132, 255, 0.18);
+    color: var(--text-secondary, #515154);
+    margin-top: 14px;
+}
+
+/* 10. Wizard header — a bit more breathing room around the title +
+   progress row, and a soft underline via gradient to frame the content. */
+.wizard-head {
+    padding: 28px 32px 16px;
+    gap: 14px;
+    align-items: center;
+}
+.wizard-head h1 {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted, #86868b);
+    margin: 0;
+}
+
+/* 11. Tighten wizard-content so the glass step has room on both sides. */
+body .wizard-content { padding: 16px 32px 32px; gap: 0; }
+.step, #hub-root, .hub-root { max-width: 640px; }
+
+/* 12. Already-set chip strip — centered, softer pill style. */
+.chip-strip { justify-content: center; padding: 4px 24px 16px; }
+.chip {
+    background: rgba(255, 255, 255, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.8);
+    color: var(--text-secondary, #515154);
+    font-weight: 500;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+}
+.chip:hover { background: rgba(255, 255, 255, 0.85); color: var(--text-primary, #1d1d1f); }
