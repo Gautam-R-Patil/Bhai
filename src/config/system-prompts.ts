@@ -23,6 +23,22 @@ interface CachedPrompt {
 }
 
 const cache = new Map<string, CachedPrompt>();
+// In-flight fetches are coalesced so parallel callers share a single network
+// roundtrip. Without this, a cold startup that fetches identity + rules +
+// rules-mac + coding + spec in parallel can stampede the endpoint and race
+// on the auth-refresh path.
+const inflight = new Map<string, Promise<string>>();
+// Single-flight auth refresh so concurrent 401s don't mint multiple tokens.
+let authRefreshPromise: Promise<string | null> | null = null;
+
+async function refreshAuthOnce(): Promise<string | null> {
+    if (!authRefreshPromise) {
+        authRefreshPromise = handleAuthError().finally(() => {
+            authRefreshPromise = null;
+        });
+    }
+    return authRefreshPromise;
+}
 
 /**
  * Fetch a system prompt by slug from the Convex server. Returns "" on
@@ -33,37 +49,47 @@ export async function fetchSystemPrompt(slug: string): Promise<string> {
     const cached = cache.get(slug);
     if (cached) return cached.content;
 
-    try {
-        const convexUrl = getConvexSiteUrl();
-        let token = await getSessionToken();
-        if (!token) return "";
+    const pending = inflight.get(slug);
+    if (pending) return pending;
 
-        const url = `${convexUrl}/api/system/prompt?slug=${encodeURIComponent(slug)}`;
-        let response = await encryptedFetch(url, {
-            method: "GET",
-            headers: { Authorization: `Bearer ${token}` },
-        });
-
-        if (response.status === 401) {
-            token = await handleAuthError();
+    const p = (async () => {
+        try {
+            const convexUrl = getConvexSiteUrl();
+            let token = await getSessionToken();
             if (!token) return "";
-            response = await encryptedFetch(url, {
+
+            const url = `${convexUrl}/api/system/prompt?slug=${encodeURIComponent(slug)}`;
+            let response = await encryptedFetch(url, {
                 method: "GET",
                 headers: { Authorization: `Bearer ${token}` },
             });
+
+            if (response.status === 401) {
+                token = await refreshAuthOnce();
+                if (!token) return "";
+                response = await encryptedFetch(url, {
+                    method: "GET",
+                    headers: { Authorization: `Bearer ${token}` },
+                });
+            }
+
+            if (!response.ok) return "";
+
+            const body = (await response.json()) as { slug: string; content: string; version: number };
+            if (!body?.content) return "";
+
+            cache.set(slug, { content: body.content, version: body.version, fetchedAt: Date.now() });
+            return body.content;
+        } catch (err) {
+            console.warn(`[system-prompts] Failed to fetch ${slug}:`, (err as Error).message);
+            return "";
+        } finally {
+            inflight.delete(slug);
         }
+    })();
 
-        if (!response.ok) return "";
-
-        const body = (await response.json()) as { slug: string; content: string; version: number };
-        if (!body?.content) return "";
-
-        cache.set(slug, { content: body.content, version: body.version, fetchedAt: Date.now() });
-        return body.content;
-    } catch (err) {
-        console.warn(`[system-prompts] Failed to fetch ${slug}:`, (err as Error).message);
-        return "";
-    }
+    inflight.set(slug, p);
+    return p;
 }
 
 /**
