@@ -113,6 +113,144 @@ function findUsages(
     return rows[0].values.map((r) => ({ file: r[0] as string, line: r[1] as number, caller: r[2] as string }));
 }
 
+// ── Line-level ego-graph retrieval (RepoGraph, ICLR 2025) ─────
+// For bug-fix and fault-localize tasks, the SOTA is to return the
+// symbols that surround a specific file:line in the call graph (both
+// directions, to depth N) instead of grep'ing the file in isolation.
+
+function symbolsNear(
+    db: ReturnType<typeof openSidecar>,
+    file: string,
+    line: number,
+): Array<{ id: number; name: string; kind: string; lineStart: number }> {
+    // Returns symbols whose definition range most likely contains the
+    // given line. regex-based parsers don't record line_end for every
+    // symbol, so we fall back to "the symbol with the greatest lineStart
+    // ≤ line in this file" — typically the enclosing function/class.
+    const sql = `SELECT s.id, s.name, s.kind, s.line_start
+                 FROM symbols s
+                 JOIN files f ON f.id = s.file_id
+                 WHERE f.path = ? AND s.line_start <= ?
+                 ORDER BY s.line_start DESC
+                 LIMIT 5`;
+    const rows = db.exec(sql, [file, line]);
+    if (rows.length === 0) return [];
+    return rows[0].values.map((r) => ({
+        id: r[0] as number,
+        name: r[1] as string,
+        kind: r[2] as string,
+        lineStart: r[3] as number,
+    }));
+}
+
+interface EgoEdge {
+    from: string;
+    to: string;
+    file: string;
+    line: number;
+    kind: "calls" | "called_by";
+}
+
+function egoGraph(
+    db: ReturnType<typeof openSidecar>,
+    seedSymbolIds: number[],
+    depth: number,
+    maxEdges: number,
+): { nodes: Array<{ id: number; name: string; kind: string; file: string; line: number }>; edges: EgoEdge[] } {
+    const nodes = new Map<number, { id: number; name: string; kind: string; file: string; line: number }>();
+    const edges: EgoEdge[] = [];
+    const frontier = new Set<number>(seedSymbolIds);
+    const visited = new Set<number>();
+
+    const resolveSymbol = (id: number): { name: string; kind: string; file: string; line: number } | null => {
+        const r = db.exec(
+            "SELECT s.name, s.kind, f.path, s.line_start FROM symbols s JOIN files f ON f.id = s.file_id WHERE s.id = ?",
+            [id],
+        );
+        if (r.length === 0 || r[0].values.length === 0) return null;
+        const v = r[0].values[0];
+        return { name: v[0] as string, kind: v[1] as string, file: v[2] as string, line: v[3] as number };
+    };
+
+    // Seed node hydration
+    for (const id of frontier) {
+        const info = resolveSymbol(id);
+        if (info) nodes.set(id, { id, ...info });
+    }
+
+    for (let hop = 0; hop < depth && frontier.size > 0 && edges.length < maxEdges; hop++) {
+        const nextFrontier = new Set<number>();
+        for (const id of frontier) {
+            if (visited.has(id)) continue;
+            visited.add(id);
+
+            // Outgoing calls (this symbol → others). Prefer resolved
+            // to_symbol_id; fall back to callee_name → symbol.name lookup.
+            const outgoing = db.exec(
+                `SELECT c.to_symbol_id, c.callee_name, c.line, f.path
+                 FROM calls c JOIN symbols fs ON fs.id = c.from_symbol_id
+                 JOIN files f ON f.id = fs.file_id
+                 WHERE c.from_symbol_id = ? LIMIT ?`,
+                [id, Math.min(30, maxEdges - edges.length)],
+            );
+            if (outgoing.length > 0) {
+                for (const r of outgoing[0].values) {
+                    const toId = r[0] as number | null;
+                    const calleeName = r[1] as string;
+                    const line = r[2] as number;
+                    const fromFile = r[3] as string;
+                    const fromInfo = nodes.get(id);
+                    if (!fromInfo) continue;
+                    edges.push({ from: fromInfo.name, to: calleeName, file: fromFile, line, kind: "calls" });
+                    if (toId != null && !visited.has(toId)) {
+                        if (!nodes.has(toId)) {
+                            const info = resolveSymbol(toId);
+                            if (info) nodes.set(toId, { id: toId, ...info });
+                        }
+                        nextFrontier.add(toId);
+                    }
+                    if (edges.length >= maxEdges) break;
+                }
+            }
+            if (edges.length >= maxEdges) break;
+
+            // Incoming calls (others → this symbol). Join on callee_name.
+            const incoming = db.exec(
+                `SELECT c.from_symbol_id, c.line, ff.path, fs.name
+                 FROM calls c
+                 JOIN symbols fs ON fs.id = c.from_symbol_id
+                 JOIN files ff ON ff.id = fs.file_id
+                 JOIN symbols target ON target.id = ?
+                 WHERE c.callee_name = target.name LIMIT ?`,
+                [id, Math.min(30, maxEdges - edges.length)],
+            );
+            if (incoming.length > 0) {
+                for (const r of incoming[0].values) {
+                    const fromId = r[0] as number;
+                    const line = r[1] as number;
+                    const fromFile = r[2] as string;
+                    const callerName = r[3] as string;
+                    const toInfo = nodes.get(id);
+                    if (!toInfo) continue;
+                    edges.push({ from: callerName, to: toInfo.name, file: fromFile, line, kind: "called_by" });
+                    if (!visited.has(fromId)) {
+                        if (!nodes.has(fromId)) {
+                            const info = resolveSymbol(fromId);
+                            if (info) nodes.set(fromId, { id: fromId, ...info });
+                        }
+                        nextFrontier.add(fromId);
+                    }
+                    if (edges.length >= maxEdges) break;
+                }
+            }
+        }
+        frontier.clear();
+        for (const id of nextFrontier) frontier.add(id);
+    }
+
+    return { nodes: Array.from(nodes.values()), edges };
+}
+
 function describeFile(
     db: ReturnType<typeof openSidecar>,
     file: string,
@@ -233,16 +371,17 @@ export const codebaseQueryTool: ToolDefinition = {
         type: "function",
         function: {
             name: "codebase_query",
-            description: `Query the persistent codebase index. Seven operations:
+            description: `Query the persistent codebase index. Eight operations:
 - find_symbol(name, kind?)             → exact-name symbol definitions with file:line
 - find_usages(name)                    → call-sites of a symbol across the repo
 - search(query)                        → BM25 full-text search over symbol names + signatures + paths (NL-friendly)
+- ego_graph(file, line, depth=2)       → BFS call-graph neighborhood around a file:line; pulls enclosing symbol + k-hop callers and callees (RepoGraph-style; great for fault localization)
 - describe_file(file)                  → symbols, imports, importers for a file
 - file_neighborhood(file, depth=1)     → imports + importers graph around a file
 - architecture_overview()              → Mermaid + ASCII subsystem overview
 - dependency_chain(from_file, to_file) → shortest import path between two files
 
-Use 'search' when the user asks something like "how do we authenticate users" — it ranks on name + signature + file tokens. Use 'find_symbol' when you already know the exact identifier.
+Use 'search' when the user asks something like "how do we authenticate users" — it ranks on name + signature + file tokens. Use 'find_symbol' when you already know the exact identifier. Use 'ego_graph' when you're localizing a bug at a specific file:line and need to see the surrounding call structure.
 
 Requires the index to exist. If not, returns { success: false } with a hint to run codebase_index build.`,
             parameters: {
@@ -254,6 +393,7 @@ Requires the index to exist. If not, returns { success: false } with a hint to r
                             "find_symbol",
                             "find_usages",
                             "search",
+                            "ego_graph",
                             "file_neighborhood",
                             "describe_file",
                             "architecture_overview",
@@ -266,11 +406,15 @@ Requires the index to exist. If not, returns { success: false } with a hint to r
                     limit: { type: "number", description: "Max results for 'search' (default 20, max 100)" },
                     file: {
                         type: "string",
-                        description: "Repo-relative file path (describe_file / file_neighborhood)",
+                        description: "Repo-relative file path (describe_file / file_neighborhood / ego_graph)",
                     },
+                    line: { type: "number", description: "1-based line number (ego_graph)" },
                     from_file: { type: "string", description: "Starting file (dependency_chain)" },
                     to_file: { type: "string", description: "Target file (dependency_chain)" },
-                    depth: { type: "number", description: "Neighborhood radius (file_neighborhood, default 1)" },
+                    depth: {
+                        type: "number",
+                        description: "Radius for file_neighborhood (default 1) and ego_graph (default 2)",
+                    },
                     path: { type: "string", description: "Repo root (defaults to cwd)" },
                 },
                 required: ["operation"],
@@ -307,6 +451,30 @@ Requires the index to exist. If not, returns { success: false } with a hint to r
                     });
                 }
                 return JSON.stringify({ success: true, matches });
+            }
+            if (operation === "ego_graph") {
+                const file = String(input.file ?? "");
+                if (!file) return JSON.stringify({ success: false, error: "file required" });
+                const line = Number(input.line);
+                if (!Number.isFinite(line) || line < 1) {
+                    return JSON.stringify({ success: false, error: "line (1-based) required" });
+                }
+                const depth = Math.min(4, Math.max(1, Number(input.depth) || 2));
+                const seeds = symbolsNear(g.db, file, line);
+                if (seeds.length === 0) {
+                    return JSON.stringify({
+                        success: false,
+                        error: `No symbol definitions found at or before ${file}:${line}. Is the file indexed at 'calls' depth? Re-run codebase_index build with ATLAS_INDEX_DEPTH=calls.`,
+                    });
+                }
+                const graph = egoGraph(g.db, seeds.map((s) => s.id), depth, 80);
+                return JSON.stringify({
+                    success: true,
+                    seed: { file, line, enclosing: seeds[0] },
+                    depth,
+                    nodes: graph.nodes,
+                    edges: graph.edges,
+                });
             }
             if (operation === "describe_file") {
                 const file = String(input.file ?? "");
