@@ -1210,35 +1210,37 @@ STRATEGY: Execute in as few tool calls as possible.
             // Token-budgeted structural overview for coding queries so the agent
             // knows "what's where" without reading every file. Kept tight at 1500
             // tokens to avoid crowding the rest of the context injection.
-            try {
-                if (detectTaskType(rawUserMessage) === "coding" && process.env.ATLAS_NO_REPO_MAP !== "true") {
-                    const { generateRepoMap } = await import("./tools/repo-map.js");
-                    const map = await generateRepoMap(process.cwd(), {
-                        maxTokens: 1500,
-                        maxFiles: 200,
-                        maxSymbolsPerFile: 8,
-                    });
-                    if (map && !map.startsWith("[No source")) {
-                        parts.push(`<repo_map>\n${map}\n</repo_map>`);
+            // ── repo_map + codebase index architecture injection (parallel) ──
+            // For coding tasks, run the repo_map walk and the codebase-index
+            // + architecture extraction concurrently. They hit disjoint caches
+            // so parallelism roughly halves first-iteration cold latency
+            // compared to the previous serial flow.
+            if (detectTaskType(rawUserMessage) === "coding") {
+                const cwd = process.cwd();
+                const repoMapTask = (async () => {
+                    if (process.env.ATLAS_NO_REPO_MAP === "true") return null;
+                    try {
+                        const { generateRepoMap } = await import("./tools/repo-map.js");
+                        const map = await generateRepoMap(cwd, { maxTokens: 1500, maxFiles: 200, maxSymbolsPerFile: 8 });
+                        return map && !map.startsWith("[No source") ? `<repo_map>\n${map}\n</repo_map>` : null;
+                    } catch (err) {
+                        console.warn("[AGENT] repo_map injection failed (non-fatal):", (err as Error).message);
+                        return null;
                     }
-                }
-            } catch (err) {
-                console.warn("[AGENT] repo_map injection failed (non-fatal):", (err as Error).message);
-            }
-
-            // ── Codebase index auto-trigger + architecture injection (Phase 4L) ──
-            // On the first iteration of a coding task: ensure the sidecar exists
-            // (block inline for tiny repos, async for anything larger) and inject
-            // an <architecture> block if available. Both steps fail-open.
-            try {
-                if (detectTaskType(rawUserMessage) === "coding") {
-                    const { ensureIndexForCoding, getArchitectureSnippet } = await import("./memory/codebase-index.js");
-                    await ensureIndexForCoding(process.cwd());
-                    const arch = await getArchitectureSnippet(process.cwd());
-                    if (arch) parts.push(arch);
-                }
-            } catch (err) {
-                console.warn("[AGENT] architecture injection failed (non-fatal):", (err as Error).message);
+                })();
+                const archTask = (async () => {
+                    try {
+                        const { ensureIndexForCoding, getArchitectureSnippet } = await import("./memory/codebase-index.js");
+                        await ensureIndexForCoding(cwd);
+                        return (await getArchitectureSnippet(cwd)) || null;
+                    } catch (err) {
+                        console.warn("[AGENT] architecture injection failed (non-fatal):", (err as Error).message);
+                        return null;
+                    }
+                })();
+                const [repoMap, arch] = await Promise.all([repoMapTask, archTask]);
+                if (repoMap) parts.push(repoMap);
+                if (arch) parts.push(arch);
             }
 
             // ── Past coding-strategy recall (Phase 4E read side) ──
