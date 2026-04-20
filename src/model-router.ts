@@ -386,10 +386,58 @@ const CODING_MULTIFILE_PATTERNS: RegExp[] = [
     /\bport\s+.*\s+to\b/i,
 ];
 
+// Non-trivial coding intent — anything beyond a one-liner tweak. If the
+// message shows any of these signals, default is Pro tier (Sonnet/Opus/
+// Gemini-Pro). Expanded beyond the multi-file list because "fix this
+// race condition in auth.ts" is single-file but definitely not a
+// one-liner — it still needs real reasoning.
+const CODING_INTENT_PATTERNS: RegExp[] = [
+    /\b(implement|build|create|write|add|extend|wire|integrate)\s+(?!a?\s?(?:log|console|comment))/i,
+    /\b(debug|diagnose|investigate|trace)\b/i,
+    /\b(optimize|improve|speed\s*up|reduce|fix\s+perf)\b/i,
+    /\b(race\s+condition|deadlock|memory\s+leak|flaky|intermittent)\b/i,
+    /\b(schema|migration|api\s+endpoint|handler|middleware)\b/i,
+    /\b(test|spec|failing|regression)\b/i,
+    /\b(refactor|rename|restructure|extract|inline)\b/i,
+    /\b(error|bug|issue|broken|doesn'?t\s+work|not\s+working)\b/i,
+];
+
+// Trivially-simple coding: one-off small edits that legitimately do not
+// need Pro reasoning. Matches act as a DOWNGRADE permission even when
+// the taskType is coding — callers that ask for "add a console.log",
+// "rename foo to bar", "fix this typo" shouldn't burn Opus.
+const CODING_TRIVIAL_PATTERNS: RegExp[] = [
+    /^\s*(?:add|insert|put)\s+(?:a\s+)?(?:console\.log|print|log(?:\s+statement)?|comment|todo)\b/i,
+    /^\s*(?:remove|delete|strip)\s+(?:unused|dead|commented|the)\s+/i,
+    /^\s*(?:fix|correct)\s+(?:a\s+)?typo\b/i,
+    /^\s*(?:rename|change)\s+\S+\s+to\s+\S+\s*$/i,
+    /^\s*update\s+(?:the\s+)?(?:comment|docstring|readme|version)\b/i,
+    /^\s*bump\s+(?:the\s+)?version\b/i,
+];
+
+function isTriviallySimpleCoding(message: string): boolean {
+    if (!message) return false;
+    // Long messages are rarely trivial — the user is explaining context.
+    if (message.length > 140) return false;
+    return CODING_TRIVIAL_PATTERNS.some((p) => p.test(message));
+}
+
+function hasCodingIntent(message: string): boolean {
+    if (!message) return false;
+    return CODING_INTENT_PATTERNS.some((p) => p.test(message));
+}
+
 const CODING_TOOL_NAMES: ReadonlySet<string> = new Set([
     "read", "edit", "write", "grep", "glob", "shell_exec",
     "code_action", "code_execute", "repo_map",
 ]);
+
+// Tier numbering in MODEL_REGISTRY is inverted from intuition:
+//   0 = Opus-class (top), 2 = Sonnet, 3 = Gemini Pro, 4 = Nova Pro,
+//   5 = Haiku / Gemini Flash, 6-9 = lighter variants.
+// So "Pro tier or better" = tier <= 4. Anything > 4 is Light and worth
+// escalating for coding work.
+const PRO_TIER_CEILING = 4;
 
 function maybeEscalateForCoding(
     base: ModelSelection,
@@ -397,25 +445,37 @@ function maybeEscalateForCoding(
     errorCount: number,
     lastToolCalls?: Array<{ function: { name: string } }>,
 ): ModelSelection | null {
-    // Only escalate when the base pick is light-tier (not already Sonnet/Opus).
+    // Never re-route vision / research — those have their own tier logic.
     if (base.taskType === "vision" || base.taskType === "research") return null;
-    const currentTier = MODEL_REGISTRY[base.modelId]?.tier ?? 0;
-    // Tiers: 1=Haiku-class, 2=Sonnet-class, 3=Opus-class. Don't downgrade or
-    // re-escalate if already >= Sonnet.
-    if (currentTier >= 2) return null;
+    const currentTier = MODEL_REGISTRY[base.modelId]?.tier ?? 99;
 
-    // Signal 1: explicit multi-file/refactor intent in the message.
+    // Already on Pro-tier (Sonnet/Opus/Gemini-Pro) → no escalation needed.
+    if (currentTier <= PRO_TIER_CEILING) return null;
+
+    // Trivial coding explicitly opted out of Pro — "add a console.log",
+    // "rename foo to bar", "fix typo". Keep Light tier; these are cheap
+    // and the router's base pick is already sane.
+    if (isTriviallySimpleCoding(message)) return null;
+
+    // Signals that demand Pro:
+    //   A. taskType was classified as coding upstream
+    //   B. message matches a multi-file / refactor intent
+    //   C. message has non-trivial coding intent (debug, build, fix bug...)
+    //   D. error-dense coding loop (debugging session)
+    const isCodingTask = base.taskType === "coding";
     const multiFile = CODING_MULTIFILE_PATTERNS.some((p) => p.test(message));
-
-    // Signal 2: debugging-intensive session (many errors + coding tools).
+    const hasIntent = hasCodingIntent(message);
     const inCodingLoop = !!lastToolCalls && lastToolCalls.some((t) => CODING_TOOL_NAMES.has(t.function.name));
     const errorDense = errorCount >= 3 && inCodingLoop;
 
-    if (!multiFile && !errorDense) return null;
+    if (!isCodingTask && !multiFile && !hasIntent && !errorDense) return null;
 
     // Find a tier-2 model in the registry (prefer the existing Sonnet).
-    const sonnet = Object.values(MODEL_REGISTRY).find((m) => m.tier === 2 && m.supportsTools);
+    // Native registry sometimes leaves supportsTools undefined; treat that
+    // as "supported" — only explicit false rules a model out.
+    const sonnet = Object.values(MODEL_REGISTRY).find((m) => m.tier === 2 && m.supportsTools !== false);
     if (!sonnet) return null;
+    const sonnetDisplay = sonnet.displayName || sonnet.id;
 
     // ── Phase 4F: extended thinking budget for complex coding ──
     // Gated by env so cost can be pulled without a redeploy. Lifts
@@ -430,12 +490,20 @@ function maybeEscalateForCoding(
         else if (thinkingLevel === "off") thinkingLevel = "medium";
     }
 
+    const trigger = multiFile
+        ? "multi-file intent"
+        : errorDense
+          ? "error-dense coding loop"
+          : hasIntent
+            ? "non-trivial coding intent"
+            : "coding task default";
+
     return {
         ...base,
         modelId: sonnet.id,
-        displayName: sonnet.displayName,
+        displayName: sonnetDisplay,
         thinkingLevel,
-        reason: `${base.reason} → coding escalation (${multiFile ? "multi-file intent" : "error-dense coding loop"}${thinkingLevel !== base.thinkingLevel ? `, thinking=${thinkingLevel}` : ""})`,
+        reason: `${base.reason} → coding escalation (${trigger}${thinkingLevel !== base.thinkingLevel ? `, thinking=${thinkingLevel}` : ""})`,
     };
 }
 
@@ -452,13 +520,38 @@ export function selectForPlanning(message?: string): ModelSelection {
     return selectModel({ taskType: "planning", message });
 }
 
-export function selectForSubAgent(message?: string, iteration?: number, errorCount?: number): ModelSelection {
-    return selectModel({
+export function selectForSubAgent(
+    message?: string,
+    iteration?: number,
+    errorCount?: number,
+    role?: string,
+): ModelSelection {
+    const base = selectModel({
         taskType: "sub_agent",
         message,
         iteration,
         errorCount,
     });
+    // Coder sub-agents default to Pro tier — coding work is where wrong
+    // tier hurts most. Trivial one-liners still downgrade via the
+    // isTriviallySimpleCoding check inside maybeEscalateForCoding.
+    if (role === "coder") {
+        const currentTier = MODEL_REGISTRY[base.modelId]?.tier ?? 99;
+        // Tier numbers go: 0=Opus, 2=Sonnet, 3=Gemini Pro, 4=Nova Pro,
+        // 5+=Light. Pin coder to tier <= 4 unless task is trivially simple.
+        if (currentTier > PRO_TIER_CEILING && !isTriviallySimpleCoding(message || "")) {
+            const sonnet = Object.values(MODEL_REGISTRY).find((m) => m.tier === 2 && m.supportsTools !== false);
+            if (sonnet) {
+                return {
+                    ...base,
+                    modelId: sonnet.id,
+                    displayName: sonnet.displayName || sonnet.id,
+                    reason: `${base.reason} → coder sub-agent pinned to Pro tier`,
+                };
+            }
+        }
+    }
+    return base;
 }
 
 export function selectForResearch(message?: string): ModelSelection {

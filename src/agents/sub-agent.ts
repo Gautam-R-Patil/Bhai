@@ -475,6 +475,7 @@ export async function runSubAgent(
                 task.priority === "critical" ? `[COMPLEX TASK] ${task.description}` : task.description,
                 iterations,
                 errorCount,
+                task.role,
             );
             estimatedCost += modelSelection.estimatedCostPerCall || 0; // (#16)
 
