@@ -241,3 +241,81 @@ body .uth p { font-size: 13px; line-height: 1.55; }
 .card { background: var(--glass-bg, rgba(255,255,255,0.65)); border: var(--glass-border, 1px solid rgba(0,0,0,0.08)); border-radius: 14px; padding: 16px; margin-bottom: 12px; }
 .card-title { margin: 0 0 10px; font-size: 14px; font-weight: 600; color: var(--text-primary, #1d1d1f); }
 .row { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 8px; color: var(--text-primary, #1d1d1f); }
+
+/* ═══════════════════════════════════════════════════════════════════
+   Install screen — ETA meter + fun-fact card (D7+)
+   ═══════════════════════════════════════════════════════════════════ */
+
+.progress-meta {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--text-secondary, #515154);
+}
+.progress-percent { font-weight: 600; color: var(--text-primary, #1d1d1f); }
+.progress-eta { font-style: italic; }
+
+.fun-fact-card {
+    margin: 16px 0;
+    padding: 14px 16px;
+    border-radius: 14px;
+    background: linear-gradient(135deg, rgba(196, 113, 237, 0.08), rgba(255, 117, 140, 0.08));
+    border: 1px solid rgba(196, 113, 237, 0.18);
+    min-height: 64px;
+}
+.fun-fact-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--orb-purple, #c471ed);
+    margin-bottom: 4px;
+}
+.fun-fact-body {
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-primary, #1d1d1f);
+    transition: opacity 250ms ease;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Ready Hub — Launch button, clickable tiles, scrollable body
+   ═══════════════════════════════════════════════════════════════════ */
+
+.btn-launch {
+    padding: 14px 36px !important;
+    font-size: 16px !important;
+    font-weight: 600 !important;
+    background: linear-gradient(135deg, var(--orb-purple, #c471ed), var(--orb-pink, #ff758c)) !important;
+    box-shadow: 0 6px 20px rgba(196, 113, 237, 0.35) !important;
+}
+.btn-launch:hover { transform: translateY(-2px); filter: brightness(1.08); }
+
+.hub-actions { margin: 20px 0; display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+
+.hub-tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+    margin: 16px 0;
+}
+
+/* Tiles on the hub are interactive — cursor + hover cue */
+.hub-tiles .sp-tile[role="button"] { cursor: pointer; }
+.hub-tiles .sp-tile[role="button"]:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08); }
+.hub-tiles .sp-tile[role="button"]:active { transform: translateY(0); }
+
+.hub-try-heading {
+    margin: 24px 0 10px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted, #86868b);
+}
+
+/* Hub root needs bottom padding so the try-this strip isn't clipped */
+.hub-root { padding-bottom: 32px; }
+
+/* The wizard-content wrapper should scroll when hub grows taller than viewport */
+body .wizard-content { overflow-y: auto; }

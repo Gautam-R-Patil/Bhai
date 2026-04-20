@@ -43,8 +43,8 @@ describe("mountHub — tile rendering via tile-model + StatusTile", () => {
     });
     afterEach(() => { document.body.innerHTML = ""; });
 
-    it("renders one StatusTile per model slot on macOS (8 tiles)", () => {
-        mountHub(container, baseState());
+    it("renders one StatusTile per model slot on macOS (8 tiles)", async () => {
+        await mountHub(container, baseState());
         const tiles = container.querySelectorAll("[data-sp-tile]");
         expect(tiles.length).toBe(8);
         // Sample the account tile
@@ -54,26 +54,26 @@ describe("mountHub — tile rendering via tile-model + StatusTile", () => {
         expect(acct.className).toMatch(/sp-tile--green/);
     });
 
-    it("omits the permissions tile on non-darwin", () => {
+    it("omits the permissions tile on non-darwin", async () => {
         const s = baseState(); s.platform = "win32";
-        mountHub(container, s);
+        await mountHub(container, s);
         const tiles = container.querySelectorAll("[data-sp-tile]");
         expect(tiles.length).toBe(7); // 8 minus permissions
         expect(container.querySelector('[data-sp-tile="permissions"]')).toBe(null);
     });
 
-    it("channels tile shows neutral '+ Add channel' when no channel connected", () => {
-        mountHub(container, baseState());
+    it("channels tile shows neutral '+ Add channel' when no channel connected", async () => {
+        await mountHub(container, baseState());
         const ch = container.querySelector('[data-sp-tile="channels"] .sp-tile');
         expect(ch.className).toMatch(/sp-tile--neutral/);
         expect(ch.querySelector(".sp-tile__value").textContent).toBe("+ Add channel");
     });
 
-    it("re-mount replaces previous content (no stale tiles)", () => {
-        mountHub(container, baseState());
+    it("re-mount replaces previous content (no stale tiles)", async () => {
+        await mountHub(container, baseState());
         expect(container.querySelectorAll("[data-sp-tile]").length).toBe(8);
         const s = baseState(); s.platform = "win32";
-        mountHub(container, s);
+        await mountHub(container, s);
         expect(container.querySelectorAll("[data-sp-tile]").length).toBe(7);
     });
 
@@ -89,10 +89,10 @@ describe("applyDiff — in-place update", () => {
     });
     afterEach(() => { document.body.innerHTML = ""; });
 
-    it("updates the changed tile in place via StatusTile.update", () => {
+    it("updates the changed tile in place via StatusTile.update", async () => {
         const s1 = baseState();
         const s2 = Object.assign({}, s1, { google: { connected: true, email: "new@x.com" } });
-        mountHub(container, s1);
+        await mountHub(container, s1);
         const tilesWrap = container.querySelector("#hub-tiles");
         const beforeNode = container.querySelector('[data-sp-tile="google"] .sp-tile');
         const { applyDiff } = require("../../components/ready-hub-body.js");
@@ -103,10 +103,10 @@ describe("applyDiff — in-place update", () => {
         expect(afterNode.className).toMatch(/sp-tile--green/);
     });
 
-    it("rebuilds when platform changes (permissions tile appears/disappears)", () => {
+    it("rebuilds when platform changes (permissions tile appears/disappears)", async () => {
         const s1 = Object.assign(baseState(), { platform: "win32" });
         const s2 = baseState(); // darwin — permissions tile now present
-        mountHub(container, s1);
+        await mountHub(container, s1);
         expect(container.querySelectorAll("[data-sp-tile]").length).toBe(7);
         const { applyDiff } = require("../../components/ready-hub-body.js");
         applyDiff(container.querySelector("#hub-tiles"), s1, s2);
@@ -114,9 +114,9 @@ describe("applyDiff — in-place update", () => {
         expect(container.querySelector('[data-sp-tile="permissions"]')).toBeTruthy();
     });
 
-    it("no-op when diff is empty", () => {
+    it("no-op when diff is empty", async () => {
         const s = baseState();
-        mountHub(container, s);
+        await mountHub(container, s);
         const { applyDiff } = require("../../components/ready-hub-body.js");
         // Should not throw, should not touch DOM.
         const beforeCount = container.querySelectorAll("[data-sp-tile]").length;
@@ -140,7 +140,7 @@ describe("startLiveUpdates — 3s polling gate", () => {
             setupDetect: async () => { detectCalls += 1; return baseState(); },
             onAccountStatusChange: () => {},
         };
-        const handle = mountHub(container, baseState(), atlas);
+        const handle = await mountHub(container, baseState(), atlas);
         expect(typeof handle.stop).toBe("function");
         // Fire one manual refresh (skip waiting 3s for real timer)
         await handle.refreshNow();
@@ -156,7 +156,7 @@ describe("startLiveUpdates — 3s polling gate", () => {
             onAccountStatusChange: (cb) => { subscribedCb = cb; },
         };
         const { mountHub } = require("../../components/ready-hub-body.js");
-        const handle = mountHub(container, baseState(), atlas);
+        const handle = await mountHub(container, baseState(), atlas);
         expect(typeof subscribedCb).toBe("function");
         handle.stop();
     });
@@ -178,14 +178,14 @@ describe("Talk / Type actions", () => {
     });
     afterEach(() => { document.body.innerHTML = ""; });
 
-    it("renders Talk + Type buttons in the actions row", () => {
-        mountHub(container, baseState(), atlas);
+    it("renders Talk + Type buttons in the actions row", async () => {
+        await mountHub(container, baseState(), atlas);
         expect(container.querySelector('[data-action="talk"]')).toBeTruthy();
         expect(container.querySelector('[data-action="type"]')).toBeTruthy();
     });
 
     it("Talk click calls atlas.triggerLiveVoice", async () => {
-        mountHub(container, baseState(), atlas);
+        await mountHub(container, baseState(), atlas);
         container.querySelector('[data-action="talk"]').click();
         await Promise.resolve(); await Promise.resolve();
         expect(calls.talks).toBe(1);
@@ -193,7 +193,7 @@ describe("Talk / Type actions", () => {
 
     it("Talk surfaces error when triggerLiveVoice returns {ok:false}", async () => {
         atlas.triggerLiveVoice = async () => ({ ok: false, error: "mic blocked" });
-        mountHub(container, baseState(), atlas);
+        await mountHub(container, baseState(), atlas);
         container.querySelector('[data-action="talk"]').click();
         await Promise.resolve(); await Promise.resolve();
         expect(container.querySelector("#hub-actions-err").textContent).toMatch(/mic blocked/);
@@ -201,29 +201,29 @@ describe("Talk / Type actions", () => {
 
     it("Talk surfaces error when triggerLiveVoice throws", async () => {
         atlas.triggerLiveVoice = async () => { throw new Error("IPC dead"); };
-        mountHub(container, baseState(), atlas);
+        await mountHub(container, baseState(), atlas);
         container.querySelector('[data-action="talk"]').click();
         await Promise.resolve(); await Promise.resolve();
         expect(container.querySelector("#hub-actions-err").textContent).toMatch(/IPC dead/);
     });
 
-    it("Type click calls atlas.showOverlay", () => {
-        mountHub(container, baseState(), atlas);
+    it("Type click calls atlas.showOverlay", async () => {
+        await mountHub(container, baseState(), atlas);
         container.querySelector('[data-action="type"]').click();
         expect(calls.overlays).toBe(1);
     });
 
     it("Talk with missing triggerLiveVoice shows 'unavailable'", async () => {
         delete atlas.triggerLiveVoice;
-        mountHub(container, baseState(), atlas);
+        await mountHub(container, baseState(), atlas);
         container.querySelector('[data-action="talk"]').click();
         await Promise.resolve();
         expect(container.querySelector("#hub-actions-err").textContent).toMatch(/unavailable/);
     });
 
-    it("Type with missing showOverlay shows 'unavailable'", () => {
+    it("Type with missing showOverlay shows 'unavailable'", async () => {
         delete atlas.showOverlay;
-        mountHub(container, baseState(), atlas);
+        await mountHub(container, baseState(), atlas);
         container.querySelector('[data-action="type"]').click();
         expect(container.querySelector("#hub-actions-err").textContent).toMatch(/unavailable/);
     });

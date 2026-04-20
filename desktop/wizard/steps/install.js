@@ -44,6 +44,36 @@
         progressWrap.appendChild(bar);
         section.appendChild(progressWrap);
 
+        // Progress meta — percent + ETA
+        const progressMeta = document.createElement("div");
+        progressMeta.className = "progress-meta";
+        const percentEl = document.createElement("span");
+        percentEl.className = "progress-percent";
+        percentEl.id = "progress-percent";
+        percentEl.textContent = "0%";
+        const etaEl = document.createElement("span");
+        etaEl.className = "progress-eta";
+        etaEl.id = "progress-eta";
+        etaEl.textContent = "Estimating…";
+        progressMeta.appendChild(percentEl);
+        progressMeta.appendChild(etaEl);
+        section.appendChild(progressMeta);
+
+        // Fun fact card — rotates every 7s during install
+        const factCard = document.createElement("div");
+        factCard.className = "fun-fact-card";
+        factCard.id = "fun-fact";
+        const factLabel = document.createElement("div");
+        factLabel.className = "fun-fact-label";
+        factLabel.textContent = "\u2728 Did you know?";
+        const factBody = document.createElement("div");
+        factBody.className = "fun-fact-body";
+        factBody.id = "fun-fact-body";
+        factBody.textContent = "A.T.L.A.S remembers your conversations across sessions — it learns how you work.";
+        factCard.appendChild(factLabel);
+        factCard.appendChild(factBody);
+        section.appendChild(factCard);
+
         const logHost = document.createElement("div");
         logHost.id = "log-host";
         logHost.className = "log-host";
@@ -122,6 +152,59 @@
             return;
         }
 
+        // ── Fun facts — rotate every 7s while install runs ──
+        const FUN_FACTS = [
+            "A.T.L.A.S remembers your conversations across sessions — it learns how you work.",
+            "Memory uses HNSW graphs for nearest-neighbor recall — the same tech Spotify uses for recommendations.",
+            "Tools are chosen by semantic similarity, not keywords — so you can ask for anything in your own words.",
+            "A.T.L.A.S dreams at 3am every night — consolidating the day's learnings into long-term memory.",
+            "The brain runs in Rust — ~15-20x faster than pure JavaScript for the hot paths.",
+            "You can summon A.T.L.A.S anywhere with Alt+Space — even while another app is fullscreen.",
+            "Live voice mode uses sub-second latency with Gemini Live or OpenAI Realtime — you talk, it replies instantly.",
+            "A.T.L.A.S reads your screen when you ask — no screenshots uploaded anywhere, all local.",
+            "It can book flights, draft emails, and run long research tasks in the background — for hours.",
+            "Every action is explained: A.T.L.A.S tells you what it's about to do before doing it.",
+            "Your memory is yours — SQLite on disk, encrypted, never synced to the cloud.",
+            "The wake word is customizable — call it anything from 'Hey Atlas' to 'Yo Jarvis'.",
+            "A.T.L.A.S can talk to you through Telegram, Discord, Slack, WhatsApp, Matrix, or email.",
+            "Errors auto-escalate the model tier — simple tasks stay cheap, hard ones get the big guns.",
+            "You're not locked in — A.T.L.A.S works with Opus, Sonnet, Haiku, GPT, and Gemini.",
+        ];
+        let factIdx = Math.floor(Math.random() * FUN_FACTS.length);
+        function rotateFact() {
+            factBody.style.opacity = "0";
+            setTimeout(function () {
+                factIdx = (factIdx + 1) % FUN_FACTS.length;
+                factBody.textContent = FUN_FACTS[factIdx];
+                factBody.style.opacity = "1";
+            }, 250);
+        }
+        factBody.textContent = FUN_FACTS[factIdx];
+        const factTimer = setInterval(rotateFact, 7000);
+
+        // ── ETA estimator — tracks percent-per-ms since install started ──
+        // Full install (Node + Playwright + embedding + data + workspace + finalize)
+        // empirically runs 30-90s on cold install, <5s on cached. We compute a
+        // rolling estimate from the current progress rate.
+        let installStartMs = 0;
+        let lastPercent = 0;
+        let etaTimer = null;
+        function formatEta(seconds) {
+            if (seconds < 0 || !Number.isFinite(seconds)) return "Estimating\u2026";
+            if (seconds < 5) return "Almost done\u2026";
+            if (seconds < 60) return "~" + Math.round(seconds) + "s remaining";
+            const m = Math.floor(seconds / 60);
+            const s = Math.round(seconds % 60);
+            return "~" + m + "m " + (s < 10 ? "0" : "") + s + "s remaining";
+        }
+        function updateEta() {
+            if (installStartMs === 0 || lastPercent <= 1) { etaEl.textContent = "Estimating\u2026"; return; }
+            const elapsed = Date.now() - installStartMs;
+            const rate = lastPercent / elapsed; // percent per ms
+            const remaining = (100 - lastPercent) / rate;
+            etaEl.textContent = formatEta(remaining / 1000);
+        }
+
         // Listen for progress + log streams from the main-process runner.
         if (typeof atlas.onInstallProgress === "function") {
             atlas.onInstallProgress(function (payload) {
@@ -129,7 +212,12 @@
                 const percent = payload.percent;
                 const message = payload.message;
                 if (typeof percent === "number" && percent >= 0) {
+                    if (installStartMs === 0 && percent > 0) installStartMs = Date.now();
+                    lastPercent = percent;
                     bar.style.width = Math.min(100, percent) + "%";
+                    percentEl.textContent = Math.round(percent) + "%";
+                    updateEta();
+                    if (!etaTimer) etaTimer = setInterval(updateEta, 1000);
                 }
                 if (typeof message === "string") {
                     const match = message.match(/^Running:\s*(.+)$/);
@@ -140,6 +228,9 @@
                     }
                 }
                 if (percent === 100) {
+                    etaEl.textContent = "Done \u2713";
+                    if (etaTimer) { clearInterval(etaTimer); etaTimer = null; }
+                    clearInterval(factTimer);
                     setTimeout(function () { window.location.href = "ready-hub.html"; }, 500);
                 }
             });

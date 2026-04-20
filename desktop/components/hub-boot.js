@@ -18,7 +18,7 @@
             try { state = await atlas.setupDetect(); }
             catch (err) { state = { __detectError: err.message || String(err) }; }
         }
-        RHB.mountHub(root, state);
+        await RHB.mountHub(root, state);
     }
 
     if (typeof document !== "undefined" && document.getElementById && document.getElementById("hub-root")) {
