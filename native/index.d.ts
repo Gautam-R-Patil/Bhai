@@ -2450,6 +2450,59 @@ export declare function validateBridgeCommand(jsonStr: string): string
 export declare function getBridgeStats(): string
 /** Record a bridge error */
 export declare function recordBridgeError(): void
+export interface RustProactiveIntent {
+  id: string
+  source: string
+  mode: string
+  urgency: string
+  channelPreference: string
+  topic: string
+  topicEmbedding: Array<number>
+  payloadKind: string
+  hasSuggestedAction: boolean
+  createdAt: number
+  expiresAt: number
+}
+export interface RustValidationResult {
+  ok: boolean
+  error?: string
+}
+export declare function validateIntentRust(intent: RustProactiveIntent): RustValidationResult
+export interface QueuedIntent {
+  id: string
+  source: string
+  mode: string
+  urgency: string
+  channel: string
+  topicEmbedding: Array<number>
+  createdAt: number
+  expiresAt: number
+  postureWeight: number
+  sourceWeight: number
+}
+export interface PostureParams {
+  channel: string
+  maxPerDay: number
+  minGapMin: number
+  heartbeatMin: number
+  boundaryOnly: boolean
+  urgentBypass: boolean
+}
+export interface DropEntry {
+  id: string
+  reason: string
+}
+export interface ReleaseResult {
+  released: Array<string>
+  dropped: Array<DropEntry>
+}
+export declare function schedulerConfigure(posture: PostureParams): void
+export declare function schedulerEnqueue(intent: QueuedIntent): string
+export declare function schedulerMarkBoundary(channel: string, windowMs: number): void
+export declare function schedulerSetDnd(channel: string, active: boolean): void
+export declare function schedulerTryRelease(channel: string): ReleaseResult
+export declare function schedulerDebugState(channel: string): string
+export declare function proactiveMonitorPing(): string
 /** Get the native module version */
 export declare function getVersion(): string
 /** Check if SIMD is available on this platform */

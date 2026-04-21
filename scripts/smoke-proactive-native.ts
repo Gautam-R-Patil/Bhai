@@ -4,7 +4,6 @@
 
 import * as native from "../native/index.js";
 const n = native as any;
-console.log("scheduler:", n.proactiveSchedulerPing?.());
 console.log("monitor:", n.proactiveMonitorPing?.());
 console.log("validate:", n.validateIntentRust?.({
   id: "x",
