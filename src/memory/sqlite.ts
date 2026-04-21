@@ -547,6 +547,12 @@ export function initProactiveSchema(db: CompatDatabase): void {
     )
   `);
     db.run(`CREATE INDEX IF NOT EXISTS idx_inbox_status ON inbox_items(status, created_at)`);
+    // ── Safe migration: add deferred_until column (Phase 4.1) ──
+    try {
+        db.run(`ALTER TABLE inbox_items ADD COLUMN deferred_until INTEGER`);
+    } catch {
+        /* column already exists */
+    }
     db.run(`
     CREATE TABLE IF NOT EXISTS proactive_outcomes (
       intent_id TEXT NOT NULL,
