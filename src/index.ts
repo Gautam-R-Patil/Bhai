@@ -552,6 +552,37 @@ async function boot() {
             setObserver(obs);
             console.log("💓 Proactive Observer started (V2 scheduler)");
 
+            // ── Initialize InboxManager (Phase 4.1/4.2) ──
+            try {
+                const { getRawDb } = await import("./memory/sqlite.js");
+                const { InboxStore } = await import("./proactive/inbox/store.js");
+                const { InboxManager, setInboxManager } = await import("./proactive/inbox/manager.js");
+                const raw = getRawDb();
+                if (raw) {
+                    const store = new InboxStore(raw);
+                    const manager = new InboxManager({ store });
+                    setInboxManager(manager);
+                    console.log(
+                        "💓 Inbox manager ready (%d pending)",
+                        manager.listPending().length,
+                    );
+
+                    // Periodic expiry sweep (every hour; items older than 7d expire)
+                    const EXPIRY_MS = 7 * 24 * 60 * 60_000;
+                    setInterval(() => { manager.expireOlderThan(EXPIRY_MS); }, 60 * 60_000);
+
+                    // Periodic deferred-ready sweep (every minute)
+                    setInterval(() => { manager.readyDeferred(); }, 60_000);
+                } else {
+                    console.log("[BOOT] InboxManager skipped: no raw DB handle");
+                }
+            } catch (err) {
+                console.log(
+                    "[BOOT] InboxManager init failed (non-fatal):",
+                    (err as Error).message,
+                );
+            }
+
             // ── Register memory_anticipation source (Phase 3 Task 3.2) ──
             try {
                 const { makeMemoryAnticipationSource } = await import("./proactive/sources/memory-anticipation.js");

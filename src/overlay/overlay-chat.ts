@@ -38,6 +38,7 @@ import {
     registerSubscription,
 } from "../notifications/push.js";
 import { isA2ARoute, handleA2ARequest } from "../agents/a2a.js";
+import { globalInboxBus, getInboxManager, type InboxEvent } from "../proactive/inbox/manager.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -243,6 +244,22 @@ export function initOverlayChat(llm: LLMClient): void {
     // WebSocket server — real-time chat
     wss = new WebSocketServer({ server: httpServer });
 
+    // ── Inbox event relay: broadcast inbox:* events to all connected clients ──
+    globalInboxBus.subscribe((ev: InboxEvent) => {
+        const payload =
+            ev.kind === "added"
+                ? { type: "inbox:item_added", item: inboxItemToWire(ev.item) }
+                : ev.kind === "updated"
+                    ? { type: "inbox:item_updated", item: inboxItemToWire(ev.item) }
+                    : { type: "inbox:expired", count: ev.count };
+        const json = JSON.stringify(payload);
+        for (const client of overlayClients) {
+            if (client.readyState === 1) {
+                try { client.send(json); } catch { /* ignore */ }
+            }
+        }
+    });
+
     wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
         // Validate widget token for web-widget connections
         const connUrl = new URL(req.url || "/", `http://127.0.0.1:${OVERLAY_PORT}`);
@@ -261,9 +278,71 @@ export function initOverlayChat(llm: LLMClient): void {
         // Send ready signal
         ws.send(JSON.stringify({ type: "ready" }));
 
+        // Send current inbox state on connect (so a fresh overlay sees pending items)
+        try {
+            const inbox = getInboxManager();
+            if (inbox) {
+                const items = inbox.listPending().map(inboxItemToWire);
+                ws.send(JSON.stringify({ type: "inbox:state", items }));
+            }
+        } catch { /* non-fatal */ }
+
         ws.on("message", async (data) => {
             try {
                 const msg = JSON.parse(data.toString());
+
+                // ── Inbox control messages (Task 4.2) ──
+                if (typeof msg.type === "string" && msg.type.startsWith("inbox:")) {
+                    const inbox = getInboxManager();
+                    if (!inbox) {
+                        ws.send(JSON.stringify({ type: "inbox:error", error: "inbox not initialized" }));
+                        return;
+                    }
+                    // inbox:refresh doesn't need an id
+                    if (msg.type === "inbox:refresh") {
+                        const items = inbox.listPending().map(inboxItemToWire);
+                        ws.send(JSON.stringify({ type: "inbox:state", items }));
+                        return;
+                    }
+                    const id = typeof msg.id === "string" ? msg.id : undefined;
+                    if (!id) {
+                        ws.send(JSON.stringify({ type: "inbox:error", error: "missing id" }));
+                        return;
+                    }
+                    if (msg.type === "inbox:approve") {
+                        const updated = inbox.approve(id);
+                        if (!updated) ws.send(JSON.stringify({ type: "inbox:error", id, error: "not found" }));
+                        return;
+                    }
+                    if (msg.type === "inbox:reject") {
+                        const reason = typeof msg.reason === "string" ? msg.reason : undefined;
+                        inbox.reject(id, reason);
+                        return;
+                    }
+                    if (msg.type === "inbox:edit") {
+                        const newText = typeof msg.newText === "string" ? msg.newText : "";
+                        if (!newText) {
+                            ws.send(JSON.stringify({ type: "inbox:error", id, error: "missing newText" }));
+                            return;
+                        }
+                        inbox.edit(id, newText);
+                        return;
+                    }
+                    if (msg.type === "inbox:defer") {
+                        // Accept either ms-epoch `until` or shorthand `inMs` (ms-from-now)
+                        let until = typeof msg.until === "number" ? msg.until : 0;
+                        if (!until && typeof msg.inMs === "number") until = Date.now() + msg.inMs;
+                        if (!until) {
+                            ws.send(JSON.stringify({ type: "inbox:error", id, error: "missing until/inMs" }));
+                            return;
+                        }
+                        inbox.defer(id, until);
+                        return;
+                    }
+                    ws.send(JSON.stringify({ type: "inbox:error", id, error: `unknown ${msg.type}` }));
+                    return;
+                }
+
                 if (msg.type === "chat" && msg.text) {
                     const messageSource = msg.meta?.source || (isWidget ? "web-widget" : "overlay");
                     console.log(`💬 [${messageSource}] message received`);
@@ -773,6 +852,52 @@ function sendToClient(ws: WebSocket, data: unknown): void {
             }
         }
     }
+}
+
+// ── Inbox helpers (Task 4.2) ──
+/** Returns true when at least one overlay client is currently connected. */
+export function isOverlayConnected(): boolean {
+    return overlayClients.size > 0;
+}
+
+// Structural type — loose on purpose so overlay-chat isn't coupled to the
+// InboxItem internal shape beyond what the wire payload needs.
+type InboxItemLike = {
+    intent: {
+        id: string;
+        source: string;
+        mode: string;
+        urgency: string;
+        topic: string;
+        evidence: Array<{ label: string; value: string; source?: string }>;
+        suggestedAction?: { summary: string };
+    };
+    status: string;
+    composedText: string;
+    editedText?: string;
+    executionStatus?: string;
+    executionResult?: string;
+    deferredUntil?: number;
+    createdAt: number;
+};
+
+function inboxItemToWire(item: InboxItemLike): Record<string, unknown> {
+    return {
+        id: item.intent.id,
+        source: item.intent.source,
+        mode: item.intent.mode,
+        urgency: item.intent.urgency,
+        topic: item.intent.topic,
+        evidence: item.intent.evidence,
+        suggestedActionSummary: item.intent.suggestedAction?.summary,
+        status: item.status,
+        composedText: item.composedText,
+        editedText: item.editedText,
+        executionStatus: item.executionStatus,
+        executionResult: item.executionResult,
+        deferredUntil: item.deferredUntil,
+        createdAt: item.createdAt,
+    };
 }
 
 function humanizeForOverlay(msg: string): string {

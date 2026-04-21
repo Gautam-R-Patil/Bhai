@@ -28,6 +28,7 @@ import {
 import * as native from "../../native/index.js";
 import { SourceRegistry } from "./sources/registry.js";
 import type { IntentSourceModule } from "./sources/source.js";
+import { getInboxManager } from "./inbox/manager.js";
 
 const SOURCE_WEIGHTS: Record<IntentSource, number> = {
     latent_topic_monitor: 1.5,
@@ -180,6 +181,23 @@ export class Observer {
             try {
                 const composed = await compose(intent, channel, { tone: "warm" }, recent, { llm: this.deps.llm });
                 if (!composed) continue;
+
+                // Phase 4 (Task 4.2): review-mode intents go to the inbox surface,
+                // NOT to the chat channel — they require user approval first.
+                if (intent.mode === "review") {
+                    const inbox = getInboxManager();
+                    if (inbox) {
+                        inbox.enqueue(intent, composed.text);
+                        debugProactive("observer_routed_to_inbox", { id: intent.id });
+                        // Intent ownership transferred to the inbox; skip dispatch and
+                        // do NOT update recentSends (no chat message was sent).
+                        continue;
+                    }
+                    // Fallback: no inbox manager registered — fall through to the
+                    // existing dispatch path so the intent isn't silently dropped.
+                    debugProactive("observer_inbox_absent_fallback", { id: intent.id });
+                }
+
                 await dispatchProactiveMessage(channel, composed.text, composed.modeTag);
                 const updated = [composed.text, ...recent].slice(0, RECENT_SENDS_PER_CHANNEL);
                 this.recentSendsByChannel.set(channel, updated);

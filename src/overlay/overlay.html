@@ -1482,6 +1482,163 @@
       border-color: rgba(255, 59, 48, 0.5);
     }
 
+    /* ── Inbox Panel (Task 4.2) ── */
+    #inbox-panel {
+      display: none;
+      background: rgba(28, 28, 30, 0.85);
+      backdrop-filter: blur(80px) saturate(220%) brightness(1.1);
+      -webkit-backdrop-filter: blur(80px) saturate(220%) brightness(1.1);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 14px;
+      margin-bottom: 4px;
+      padding: 8px 12px 10px 12px;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    #inbox-panel.visible {
+      display: block;
+    }
+
+    .inbox-header {
+      font-size: 11px;
+      font-weight: 600;
+      color: rgba(255, 255, 255, 0.6);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 4px 0 6px 0;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .inbox-header .inbox-count-badge {
+      background: rgba(59, 130, 246, 0.6);
+      color: #FFF;
+      font-size: 9px;
+      font-weight: 600;
+      padding: 1px 6px;
+      border-radius: 8px;
+      min-width: 16px;
+      text-align: center;
+    }
+
+    .inbox-item {
+      padding: 8px 0 10px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .inbox-item:last-child {
+      border-bottom: none;
+    }
+
+    .inbox-item-topic {
+      font-size: 12.5px;
+      font-weight: 600;
+      color: rgba(255, 255, 255, 0.9);
+      margin-bottom: 3px;
+    }
+
+    .inbox-item-body {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.75);
+      line-height: 1.4;
+      margin-bottom: 4px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .inbox-item-evidence {
+      font-size: 10.5px;
+      color: rgba(255, 255, 255, 0.45);
+      margin: 3px 0 6px 0;
+      line-height: 1.3;
+    }
+
+    .inbox-item-evidence-row {
+      display: flex;
+      gap: 6px;
+    }
+
+    .inbox-item-evidence-label {
+      color: rgba(255, 255, 255, 0.35);
+      flex-shrink: 0;
+    }
+
+    .inbox-item-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 4px;
+    }
+
+    .inbox-action-btn {
+      appearance: none;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      background: rgba(255, 255, 255, 0.06);
+      color: rgba(255, 255, 255, 0.8);
+      font-size: 10.5px;
+      padding: 3px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.15s;
+    }
+
+    .inbox-action-btn:hover {
+      background: rgba(255, 255, 255, 0.12);
+      color: #FFF;
+    }
+
+    .inbox-action-btn.approve {
+      border-color: rgba(52, 199, 89, 0.45);
+      background: rgba(52, 199, 89, 0.1);
+      color: rgba(120, 230, 150, 0.95);
+    }
+
+    .inbox-action-btn.approve:hover {
+      background: rgba(52, 199, 89, 0.25);
+      color: #8ff0a5;
+    }
+
+    .inbox-action-btn.reject {
+      border-color: rgba(255, 59, 48, 0.35);
+      background: rgba(255, 59, 48, 0.08);
+      color: rgba(255, 140, 140, 0.85);
+    }
+
+    .inbox-action-btn.reject:hover {
+      background: rgba(255, 59, 48, 0.2);
+      color: #ff9090;
+    }
+
+    .inbox-edit-row {
+      display: none;
+      margin-top: 6px;
+      gap: 5px;
+    }
+
+    .inbox-edit-row.visible {
+      display: flex;
+    }
+
+    .inbox-edit-input {
+      flex: 1;
+      appearance: none;
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 6px;
+      color: rgba(255, 255, 255, 0.9);
+      font-family: inherit;
+      font-size: 11.5px;
+      padding: 3px 8px;
+      outline: none;
+    }
+
+    .inbox-edit-input:focus {
+      border-color: rgba(168, 85, 247, 0.6);
+    }
+
     /* ── Focus Styles for Keyboard Nav ── */
     #input:focus-visible,
     #mic-btn:focus-visible,
@@ -1490,7 +1647,8 @@
     .copy-btn:focus-visible,
     .copy-response-btn:focus-visible,
     #task-drawer-toggle:focus-visible,
-    .task-cancel-btn:focus-visible {
+    .task-cancel-btn:focus-visible,
+    .inbox-action-btn:focus-visible {
       outline: 2px solid rgba(168, 85, 247, 0.7);
       outline-offset: 2px;
     }
@@ -1510,6 +1668,14 @@
       <div class="task-drawer-content" id="task-drawer-content">
         <div class="task-drawer-empty">No active tasks</div>
       </div>
+    </div>
+
+    <!-- Proactive Inbox Panel (Task 4.2) -->
+    <div id="inbox-panel" role="region" aria-label="Proactive inbox">
+      <div class="inbox-header">
+        Inbox <span class="inbox-count-badge" id="inbox-count-badge">0</span>
+      </div>
+      <div id="inbox-list"></div>
     </div>
 
     <div id="input-box-wrapper" style="position: relative; z-index: 10;">
@@ -1589,9 +1755,13 @@
       const taskDrawer = document.getElementById('task-drawer');
       const taskDrawerContent = document.getElementById('task-drawer-content');
       const taskCountBadge = document.getElementById('task-count-badge');
+      const inboxPanel = document.getElementById('inbox-panel');
+      const inboxList = document.getElementById('inbox-list');
+      const inboxCountBadge = document.getElementById('inbox-count-badge');
 
       let ws = null, waiting = false, notifTimer = null;
       let activeTasks = new Map(); // taskId -> { name, type, progress, phase }
+      let inboxItems = new Map();  // intentId -> wire item (status "pending" only)
 
       // ── Screen Reader Announcement ──
       function announceToSR(text) {
@@ -1654,6 +1824,98 @@
         }
       }
       window.cancelTask = cancelTask;
+
+      // ── Inbox Panel (Task 4.2) ──
+      function renderInbox() {
+        const count = inboxItems.size;
+        inboxCountBadge.textContent = String(count);
+        if (count === 0) {
+          inboxPanel.classList.remove('visible');
+          inboxList.innerHTML = '';
+          return;
+        }
+        inboxPanel.classList.add('visible');
+
+        let html = '';
+        for (const [id, item] of inboxItems) {
+          const topic = item.topic || '(untitled)';
+          const body = item.editedText || item.composedText || '';
+          const evidence = Array.isArray(item.evidence) ? item.evidence : [];
+          const safeId = esc(id);
+
+          html += `<div class="inbox-item" data-inbox-id="${safeId}" role="listitem" aria-label="Inbox item: ${esc(topic)}">`;
+          html += `  <div class="inbox-item-topic">${esc(topic)}</div>`;
+          html += `  <div class="inbox-item-body">${esc(body)}</div>`;
+          if (evidence.length > 0) {
+            html += `  <div class="inbox-item-evidence">`;
+            for (const e of evidence.slice(0, 4)) {
+              html += `<div class="inbox-item-evidence-row"><span class="inbox-item-evidence-label">${esc(e.label || '')}:</span><span>${esc(e.value || '')}</span></div>`;
+            }
+            html += `  </div>`;
+          }
+          html += `  <div class="inbox-item-actions">`;
+          html += `    <button class="inbox-action-btn approve" onclick="inboxApprove('${safeId}')">Approve</button>`;
+          html += `    <button class="inbox-action-btn" onclick="inboxDefer('${safeId}')">Defer 3h</button>`;
+          html += `    <button class="inbox-action-btn reject" onclick="inboxSkip('${safeId}')">Skip</button>`;
+          html += `    <button class="inbox-action-btn" onclick="inboxToggleEdit('${safeId}')">Edit</button>`;
+          html += `  </div>`;
+          html += `  <div class="inbox-edit-row" id="edit-row-${safeId}">`;
+          html += `    <input type="text" class="inbox-edit-input" id="edit-input-${safeId}" placeholder="Rewrite the draft…" value="${esc(body)}" />`;
+          html += `    <button class="inbox-action-btn" onclick="inboxSubmitEdit('${safeId}')">Save</button>`;
+          html += `  </div>`;
+          html += `</div>`;
+        }
+        inboxList.innerHTML = html;
+      }
+
+      function inboxSend(obj) {
+        if (ws && ws.readyState === 1) {
+          ws.send(JSON.stringify(obj));
+        }
+      }
+      function inboxApprove(id) {
+        inboxSend({ type: 'inbox:approve', id });
+        // Optimistic remove — server will also emit an updated event with non-pending status
+        inboxItems.delete(id);
+        renderInbox();
+        announceToSR('Inbox item approved');
+      }
+      function inboxSkip(id) {
+        inboxSend({ type: 'inbox:reject', id, reason: 'skipped from overlay' });
+        inboxItems.delete(id);
+        renderInbox();
+        announceToSR('Inbox item skipped');
+      }
+      function inboxDefer(id) {
+        inboxSend({ type: 'inbox:defer', id, inMs: 3 * 60 * 60 * 1000 });
+        inboxItems.delete(id);
+        renderInbox();
+        announceToSR('Inbox item deferred 3 hours');
+      }
+      function inboxToggleEdit(id) {
+        const row = document.getElementById('edit-row-' + id);
+        if (!row) return;
+        row.classList.toggle('visible');
+        if (row.classList.contains('visible')) {
+          const input = document.getElementById('edit-input-' + id);
+          if (input) setTimeout(() => input.focus(), 0);
+        }
+      }
+      function inboxSubmitEdit(id) {
+        const input = document.getElementById('edit-input-' + id);
+        if (!input) return;
+        const newText = input.value.trim();
+        if (!newText) return;
+        inboxSend({ type: 'inbox:edit', id, newText });
+        // Reflect locally immediately
+        const it = inboxItems.get(id);
+        if (it) { it.editedText = newText; inboxItems.set(id, it); renderInbox(); }
+      }
+      window.inboxApprove = inboxApprove;
+      window.inboxSkip = inboxSkip;
+      window.inboxDefer = inboxDefer;
+      window.inboxToggleEdit = inboxToggleEdit;
+      window.inboxSubmitEdit = inboxSubmitEdit;
 
       function grabFocus() {
         input.focus();
@@ -1725,6 +1987,47 @@
             phase: msg.phase || msg.status || (activeTasks.get(rid) || {}).phase,
           });
           updateTaskDrawer();
+          return;
+        }
+
+        // ── Inbox events (Task 4.2) ──
+        if (msg.type === 'inbox:state') {
+          inboxItems = new Map();
+          const items = Array.isArray(msg.items) ? msg.items : [];
+          for (const it of items) {
+            if (it && it.id && it.status === 'pending') inboxItems.set(it.id, it);
+          }
+          renderInbox();
+          return;
+        }
+        if (msg.type === 'inbox:item_added') {
+          if (msg.item && msg.item.id) {
+            inboxItems.set(msg.item.id, msg.item);
+            renderInbox();
+            announceToSR('New inbox item: ' + (msg.item.topic || ''));
+          }
+          return;
+        }
+        if (msg.type === 'inbox:item_updated') {
+          if (msg.item && msg.item.id) {
+            if (msg.item.status === 'pending') {
+              inboxItems.set(msg.item.id, msg.item);
+            } else {
+              inboxItems.delete(msg.item.id);
+            }
+            renderInbox();
+          }
+          return;
+        }
+        if (msg.type === 'inbox:expired') {
+          // Request fresh state rather than pruning locally
+          if (ws && ws.readyState === 1) {
+            ws.send(JSON.stringify({ type: 'inbox:refresh' }));
+          }
+          return;
+        }
+        if (msg.type === 'inbox:error') {
+          console.warn('[OVERLAY] inbox error:', msg.error, 'id:', msg.id);
           return;
         }
 
