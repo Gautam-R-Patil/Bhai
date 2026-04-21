@@ -85,3 +85,73 @@ describe("Observer", () => {
         expect(() => obs.stop()).not.toThrow();
     });
 });
+
+describe("Observer.tuneSourceWeights", () => {
+    let dir: string;
+    let configPath: string;
+
+    beforeEach(() => {
+        dir = mkdtempSync(join(tmpdir(), "atlas-obs-tune-"));
+        configPath = join(dir, "proactive-config.json");
+    });
+
+    afterEach(async () => {
+        const { setTelemetry } = await import("./telemetry.js");
+        setTelemetry(null);
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("leaves dynamicWeights unchanged when no telemetry", () => {
+        const obs = new Observer({ llm: null as never, configPath });
+        // no telemetry set
+        expect(() => obs.tuneSourceWeights()).not.toThrow();
+        // Dynamic weights should still equal base weights
+        expect(obs._getDynamicWeight("memory_anticipation")).toBe(0.7);
+        expect(obs._getDynamicWeight("latent_topic_monitor")).toBe(1.5);
+        obs.stop();
+    });
+
+    it("lowers weight when rejection rate > 0", async () => {
+        const { TelemetryLogger, setTelemetry } = await import("./telemetry.js");
+        const BS = (await import("better-sqlite3")).default;
+        const { wrapDatabase, initProactiveSchema } = await import("../memory/sqlite.js");
+        const raw = new BS(":memory:");
+        initProactiveSchema(wrapDatabase(raw));
+        const tl = new TelemetryLogger(raw);
+        setTelemetry(tl);
+
+        // Simulate 10 dispatched memory_anticipation intents on telegram,
+        // all marked not useful (rejection rate = 100%)
+        for (let i = 0; i < 10; i++) {
+            tl.log({
+                intentId: `i${i}`,
+                source: "memory_anticipation",
+                channel: "telegram",
+                decision: "dispatched",
+                userMarkedUseful: false,
+            });
+        }
+
+        const obs = new Observer({ llm: null as never, configPath });
+        obs.tuneSourceWeights();
+        // Base weight for memory_anticipation is 0.7. After 100% rejection,
+        // (1-1.0) = 0 would drive to 0, but clamp floor is 0.2.
+        const w = obs._getDynamicWeight("memory_anticipation");
+        expect(w).toBeLessThan(0.7);
+        expect(w).toBeGreaterThanOrEqual(0.2);
+
+        obs.stop();
+    });
+
+    it("clamps weight to base when no signal and resets from out-of-range", () => {
+        // Construct a scenario where weights would go up (they don't in the current formula,
+        // since (1-R) maxes at 1.0 when R=0 — formula won't produce > base).
+        const obs = new Observer({ llm: null as never, configPath });
+        // Manually set an out-of-range dynamic weight, then re-run with no
+        // telemetry — it should reset to base.
+        obs._setDynamicWeightForTest("memory_anticipation", 5.0);
+        obs.tuneSourceWeights();
+        expect(obs._getDynamicWeight("memory_anticipation")).toBe(0.7);
+        obs.stop();
+    });
+});

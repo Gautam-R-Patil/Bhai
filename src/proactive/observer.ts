@@ -63,6 +63,9 @@ export class Observer {
     private recentSendsByChannel = new Map<Channel, string[]>();
     private unsubBoundary: (() => void) | null = null;
     private tickTimer: NodeJS.Timeout | null = null;
+    private tuneTimer: NodeJS.Timeout | null = null;
+    /** Phase 5.3: per-source weights tuned hourly from telemetry rejection rates. */
+    private dynamicWeights: Record<string, number> = { ...SOURCE_WEIGHTS };
 
     constructor(private deps: ObserverDeps) {
         this.cfg = loadProactiveConfig(deps.configPath);
@@ -76,6 +79,7 @@ export class Observer {
                 debugProactive("observer_tick_err", { err: (err as Error).message })
             );
         }, SWEEP_INTERVAL_MS);
+        this.tuneTimer = setInterval(() => this.tuneSourceWeights(), 60 * 60_000);
     }
 
     stop(): void {
@@ -86,6 +90,10 @@ export class Observer {
         if (this.tickTimer) {
             clearInterval(this.tickTimer);
             this.tickTimer = null;
+        }
+        if (this.tuneTimer) {
+            clearInterval(this.tuneTimer);
+            this.tuneTimer = null;
         }
     }
 
@@ -147,7 +155,9 @@ export class Observer {
 
         const posture = getPosture(this.cfg, channel);
         const postureWeight = this.postureWeightFor(posture, intent.source);
-        const sourceWeight = SOURCE_WEIGHTS[intent.source] ?? 1.0;
+        const sourceWeight = this.dynamicWeights[intent.source]
+            ?? SOURCE_WEIGHTS[intent.source]
+            ?? 1.0;
 
         this.intentsById.set(intent.id, intent);
 
@@ -326,6 +336,56 @@ export class Observer {
         }
         if (posture === "calm") return 0.7;
         return 1.0;
+    }
+
+    /**
+     * Phase 5.3: recompute dynamicWeights based on recent rejection rates.
+     * Runs hourly from start(). For each source, we average rejectionRate
+     * across all configured channels that have any signal and apply
+     *   adjusted = base × (1 − avg_rejection)
+     * clamped to [0.2, 2.0]. Sources with no signal fall back to their base.
+     * Missing telemetry is treated as "no signal" — every source resets to base.
+     */
+    tuneSourceWeights(): void {
+        const tl = getTelemetry();
+        const since = Date.now() - 7 * 86_400_000;  // 7-day window
+        const channels = Object.keys(this.cfg.postures) as Channel[];
+
+        for (const source of Object.keys(SOURCE_WEIGHTS) as IntentSource[]) {
+            const rates = tl
+                ? channels
+                    .map((ch) => tl.rejectionRate(source, ch, since))
+                    .filter((r) => r > 0)
+                : [];
+            if (rates.length === 0) {
+                // No signal — reset to base weight
+                this.dynamicWeights[source] = SOURCE_WEIGHTS[source];
+                continue;
+            }
+            const avgRejection = rates.reduce((a, b) => a + b, 0) / rates.length;
+            const base = SOURCE_WEIGHTS[source];
+            const adjusted = base * (1 - avgRejection);
+            const clamped = Math.max(0.2, Math.min(2.0, adjusted));
+            this.dynamicWeights[source] = clamped;
+            debugProactive("observer_tune", {
+                source,
+                base,
+                rejection: avgRejection.toFixed(3),
+                weight: clamped.toFixed(3),
+            });
+        }
+    }
+
+    /** Test-only: read a dynamic weight. */
+    _getDynamicWeight(source: string): number {
+        return this.dynamicWeights[source]
+            ?? SOURCE_WEIGHTS[source as IntentSource]
+            ?? 1.0;
+    }
+
+    /** Test-only: set a dynamic weight (bypasses normal tune flow). */
+    _setDynamicWeightForTest(source: string, weight: number): void {
+        this.dynamicWeights[source] = weight;
     }
 }
 
