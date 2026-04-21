@@ -4,6 +4,8 @@
 
 import type { ToolDefinition } from "./get-current-time.js";
 import type { LLMClient } from "../llm.js";
+import { runBrandAudit } from "../marketing/brand-audit.js";
+import type { Platform } from "../marketing/brand-profile.js";
 
 let _llm: LLMClient | null = null;
 export function setBrandAuditLLM(llm: LLMClient): void { _llm = llm; }
@@ -27,7 +29,22 @@ export const brandAudit: ToolDefinition = {
       },
     },
   },
-  async handler(_input) {
-    return JSON.stringify({ status: "stub", message: "brand_audit not yet implemented — Plan 2" });
+  async handler(input) {
+    if (!_llm) return JSON.stringify({ error: "Brand audit LLM not initialised — call setBrandAuditLLM at boot" });
+    try {
+      const report = await runBrandAudit(
+        {
+          brandId: input.brand_id as string,
+          website: input.website as string,
+          socialHandles: (input.social_handles as Partial<Record<Platform, string>>) ?? {},
+          competitors: (input.competitors as string[]) ?? [],
+          depth: (input.depth as "quick" | "standard" | "deep") ?? "standard",
+        },
+        _llm
+      );
+      return JSON.stringify(report);
+    } catch (err) {
+      return JSON.stringify({ error: (err as Error).message });
+    }
   },
 };
