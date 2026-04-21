@@ -492,7 +492,77 @@ export async function initMemoryDB(): Promise<CompatDatabase> {
         );
     }
 
+    initProactiveSchema(db);
+
     return db;
+}
+
+// ── Proactive Subsystem Schema ────────────────────────────────
+
+/**
+ * Creates the three SQLite tables needed by the proactive messaging pipeline.
+ * Safe to call multiple times — all statements use CREATE TABLE/INDEX IF NOT EXISTS.
+ * Called automatically by initMemoryDB(); also exported for isolated unit tests.
+ *
+ * Timestamp convention: these tables use INTEGER (unix epoch ms) rather than
+ * TEXT datetime('now') like the older tables above. The proactive subsystem's
+ * TS types (ProactiveIntent.createdAt, ProactiveOutcome.dispatchedAt) are
+ * numbers, so storing them as INTEGER avoids per-read parsing.
+ *
+ * proactive_outcomes is intentionally an append-only log (no PRIMARY KEY on
+ * intent_id): a single intent produces multiple rows as it moves
+ * enqueued → released → dispatched, plus later rows recording user replies.
+ * Aggregations read by (source, channel) via idx_outcomes_source_channel.
+ */
+export function initProactiveSchema(db: CompatDatabase): void {
+    db.run(`
+    CREATE TABLE IF NOT EXISTS monitor_rules (
+      id TEXT PRIMARY KEY,
+      user_phrase TEXT NOT NULL,
+      topic TEXT NOT NULL,
+      topic_embedding BLOB NOT NULL,
+      scope_json TEXT NOT NULL,
+      urgency TEXT NOT NULL,
+      action_json TEXT NOT NULL,
+      threshold REAL NOT NULL,
+      cooldown_minutes INTEGER NOT NULL,
+      active INTEGER NOT NULL DEFAULT 1,
+      last_fired_at INTEGER,
+      expires_at INTEGER,
+      created_at INTEGER NOT NULL
+    )
+  `);
+    db.run(`
+    CREATE TABLE IF NOT EXISTS inbox_items (
+      intent_id TEXT PRIMARY KEY,
+      intent_json TEXT NOT NULL,
+      status TEXT NOT NULL,
+      composed_text TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      user_action_at INTEGER,
+      user_action TEXT,
+      edited_text TEXT,
+      execution_status TEXT,
+      execution_result TEXT
+    )
+  `);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_inbox_status ON inbox_items(status, created_at)`);
+    db.run(`
+    CREATE TABLE IF NOT EXISTS proactive_outcomes (
+      intent_id TEXT NOT NULL,
+      source TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      decision TEXT NOT NULL,
+      drop_reason TEXT,
+      dispatched_at INTEGER,
+      user_replied INTEGER NOT NULL DEFAULT 0,
+      user_reply_latency_ms INTEGER,
+      user_reply_sentiment TEXT,
+      user_marked_useful INTEGER,
+      created_at INTEGER NOT NULL
+    )
+  `);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_outcomes_source_channel ON proactive_outcomes(source, channel, created_at)`);
 }
 
 // ── FTS5 Backfill ────────────────────────────────
