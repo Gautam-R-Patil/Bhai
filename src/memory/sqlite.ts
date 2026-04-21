@@ -493,6 +493,7 @@ export async function initMemoryDB(): Promise<CompatDatabase> {
     }
 
     initProactiveSchema(db);
+    initMarketingDB(db);
 
     return db;
 }
@@ -2107,4 +2108,56 @@ export async function embedExistingMemories(): Promise<void> {
  */
 export function getRawDb(): BetterSqlite3.Database | null {
     return rawDb;
+}
+
+// ── getMemoryDB accessor ──────────────────────
+// Used by marketing modules that need direct SQL access.
+
+let _marketingDb: CompatDatabase | null = null;
+
+export function getMemoryDB(): CompatDatabase {
+    if (!_marketingDb) throw new Error("Memory DB not initialized — call initMemoryDB first");
+    return _marketingDb;
+}
+
+// ── Marketing tables ──────────────────────────
+
+export function initMarketingDB(db: CompatDatabase): void {
+    _marketingDb = db;
+
+    db.run(`CREATE TABLE IF NOT EXISTS marketing_calendar (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    brand_id TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    content_pillar TEXT,
+    caption TEXT,
+    media_path TEXT,
+    hashtags TEXT,
+    scheduled_at TEXT,
+    status TEXT NOT NULL DEFAULT 'draft',
+    post_url TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_mktcal_brand ON marketing_calendar(brand_id)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_mktcal_status ON marketing_calendar(status)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_mktcal_scheduled ON marketing_calendar(scheduled_at)`);
+
+    db.run(`CREATE TABLE IF NOT EXISTS marketing_outreach (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    brand_id TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    target_name TEXT,
+    target_contact TEXT NOT NULL,
+    subject TEXT,
+    body TEXT,
+    status TEXT NOT NULL DEFAULT 'draft',
+    sent_at TEXT,
+    opened_at TEXT,
+    replied_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_mktout_brand ON marketing_outreach(brand_id)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_mktout_status ON marketing_outreach(status)`);
 }
