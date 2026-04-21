@@ -737,6 +737,57 @@ async function handleOwnerMessage(
 
     console.log(`\n[WA] Owner message from ${jid}: ${text.substring(0, 120)}`);
 
+    // ── Latent-topic monitor matcher (Phase 3.9d) ──
+    // Every inbound owner text is embedded and checked against active monitor
+    // rules; hits are published to the bus for the latent_topic_monitor
+    // IntentSource to drain on the next Observer sweep. Fully fail-closed:
+    // any error here must not block the owner flow.
+    try {
+        const { embedText } = await import("./memory/embeddings.js");
+        const native = await import("../native/index.js");
+        const { getMonitorStore } = await import("./proactive/monitors/store-singleton.js");
+        const { globalMonitorHitBus } = await import("./proactive/monitors/monitor-hits.js");
+        const nativeMod = native as unknown as {
+            monitorCheck?: (
+                emb: number[], channel: string, sender: string, nowMs: number,
+            ) => Array<{ ruleId: string; score: number }>;
+            monitorMarkFired?: (id: string, tsMs: number) => void;
+        };
+        if (typeof nativeMod.monitorCheck === "function") {
+            const store = getMonitorStore();
+            if (store) {
+                const emb = await embedText(text, "query");
+                const embArr = Array.from(emb).map((n) => Number(n));
+                const hits = nativeMod.monitorCheck(embArr, "whatsapp", jid, Date.now());
+                if (hits.length > 0) {
+                    for (const h of hits) {
+                        const rule = store.get(h.ruleId);
+                        if (!rule) continue;
+                        globalMonitorHitBus.emit({
+                            ruleId: h.ruleId,
+                            ruleUserPhrase: rule.userPhrase,
+                            ruleTopic: rule.topic,
+                            ruleUrgency: rule.urgency,
+                            ruleActionDefaultMode: rule.action.defaultMode,
+                            ruleSuggestedFollowup: rule.action.suggestedFollowup,
+                            messageChannel: "whatsapp",
+                            messageSender: jid,
+                            messagePreview: text.slice(0, 200),
+                            score: h.score,
+                            ts: Date.now(),
+                        });
+                        store.markFired(h.ruleId, Date.now());
+                        if (typeof nativeMod.monitorMarkFired === "function") {
+                            nativeMod.monitorMarkFired(h.ruleId, Date.now());
+                        }
+                    }
+                }
+            }
+        }
+    } catch (err) {
+        console.log("[WA] monitor check failed (non-fatal):", (err as Error).message);
+    }
+
     // Check concurrent task limit
     const existingTasks = activeTasks.get(jid) || [];
     if (existingTasks.length >= MAX_CONCURRENT_TASKS) {
@@ -762,12 +813,34 @@ async function handleOwnerMessage(
         return;
     }
 
-    // ── Proactive-subsystem commands (shut up / resume / set posture / status) ──
+    // ── Proactive-subsystem commands (shut up / resume / set posture / status + monitor CRUD) ──
     {
         const { tryProactiveCommand } = await import("./proactive/chat-commands.js");
+        const { parseMonitorRule } = await import("./proactive/monitors/monitor-parser.js");
+        const { getMonitorStore } = await import("./proactive/monitors/store-singleton.js");
+        const { embedText } = await import("./memory/embeddings.js");
+        const native = await import("../native/index.js");
         const { join } = await import("node:path");
-        const result = tryProactiveCommand(text, {
+        const nativeMon = native as unknown as {
+            monitorUpsertRule?: (r: unknown) => void;
+            monitorDeleteRule?: (id: string) => void;
+        };
+        const result = await tryProactiveCommand(text, {
             configPath: join(process.cwd(), "data", "proactive-config.json"),
+            monitorStore: getMonitorStore() ?? undefined,
+            parseRule: async (phrase) =>
+                parseMonitorRule(phrase, {
+                    llm,
+                    embedText: async (t) => await embedText(t, "query"),
+                }),
+            nativeMonitor:
+                typeof nativeMon.monitorUpsertRule === "function" &&
+                typeof nativeMon.monitorDeleteRule === "function"
+                    ? {
+                          upsertRule: (r) => nativeMon.monitorUpsertRule!(r),
+                          deleteRule: (id) => nativeMon.monitorDeleteRule!(id),
+                      }
+                    : undefined,
         });
         if (result) {
             await sendMessage(jid, result.reply);

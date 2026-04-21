@@ -576,6 +576,47 @@ async function boot() {
             } catch (err) {
                 console.log("[BOOT] long_task_status source registration failed (non-fatal):", (err as Error).message);
             }
+
+            // ── Register latent_topic_monitor source (Phase 3 Task 3.9d) ──
+            // Opens the memory DB raw handle, constructs a MonitorStore around
+            // the monitor_rules table (created in Task 0.2), pushes all active
+            // rules into the Rust matcher at boot, and registers the source.
+            // Every piece is inside its own try/catch so partial failures keep
+            // the other sources running.
+            try {
+                const { getRawDb } = await import("./memory/sqlite.js");
+                const { MonitorStore } = await import("./proactive/monitors/monitor-store.js");
+                const { setMonitorStore } = await import("./proactive/monitors/store-singleton.js");
+                const { makeLatentTopicMonitorSource } = await import(
+                    "./proactive/sources/latent-topic-monitor.js"
+                );
+                const { ruleToRust } = await import("./proactive/chat-commands.js");
+                const native = await import("../native/index.js");
+                const rawDb = getRawDb();
+                if (!rawDb) {
+                    throw new Error("memory DB not initialized");
+                }
+                const store = new MonitorStore(rawDb);
+                setMonitorStore(store);
+
+                const nativeMon = native as unknown as {
+                    monitorLoadRules?: (rules: unknown[]) => void;
+                };
+                if (typeof nativeMon.monitorLoadRules === "function") {
+                    const activeRules = store.list(true).map(ruleToRust);
+                    nativeMon.monitorLoadRules(activeRules);
+                    console.log(
+                        `💓 Loaded ${activeRules.length} monitor rule(s) into Rust matcher`,
+                    );
+                }
+                obs.registerSource(makeLatentTopicMonitorSource());
+                console.log("💓 Registered source: latent_topic_monitor");
+            } catch (err) {
+                console.log(
+                    "[BOOT] latent_topic_monitor source registration failed (non-fatal):",
+                    (err as Error).message,
+                );
+            }
         } catch (err) {
             console.log("[BOOT] Observer init failed (non-fatal):", (err as Error).message);
         }
