@@ -326,6 +326,19 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
             return;
         }
 
+        // ── Proactive-subsystem commands (shut up / resume / set posture / status) ──
+        {
+            const { tryProactiveCommand } = await import("./proactive/chat-commands.js");
+            const { join } = await import("node:path");
+            const result = tryProactiveCommand(userMessage, {
+                configPath: join(process.cwd(), "data", "proactive-config.json"),
+            });
+            if (result) {
+                await ctx.reply(result.reply, { reply_parameters: { message_id: triggerMessageId } });
+                return;
+            }
+        }
+
         // Check for slash commands — instant, no debounce
         if (userMessage.startsWith("/")) {
             const cmdResult = await handleCommand(userMessage);

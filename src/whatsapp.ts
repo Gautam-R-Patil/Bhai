@@ -762,6 +762,19 @@ async function handleOwnerMessage(
         return;
     }
 
+    // ── Proactive-subsystem commands (shut up / resume / set posture / status) ──
+    {
+        const { tryProactiveCommand } = await import("./proactive/chat-commands.js");
+        const { join } = await import("node:path");
+        const result = tryProactiveCommand(text, {
+            configPath: join(process.cwd(), "data", "proactive-config.json"),
+        });
+        if (result) {
+            await sendMessage(jid, result.reply);
+            return;
+        }
+    }
+
     const controller = new AbortController();
     const taskId = `wa_task_${++taskIdCounter}`;
     const taskDescription = text.substring(0, 80).replace(/\n/g, " ");
