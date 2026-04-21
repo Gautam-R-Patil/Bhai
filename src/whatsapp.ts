@@ -610,6 +610,23 @@ async function handleOwnerMessage(
 ): Promise<void> {
     const lower = text.toLowerCase().trim();
 
+    // ── Inbox chat-fallback replies (Phase 4.3) ──
+    // When a review-mode inbox prompt was sent via WhatsApp (because the
+    // overlay is offline), the owner's next short reply — "1", "2", "3",
+    // "approve", "skip", etc. — should route to the inbox action rather
+    // than the normal agent flow. Strict matches only; unrelated text
+    // falls through.
+    try {
+        const { handleWhatsAppInboxReply } = await import("./proactive/inbox/chat-fallback.js");
+        const result = await handleWhatsAppInboxReply(text, jid);
+        if (result.handled) {
+            await sendMessage(jid, result.ack ?? "ok");
+            return;
+        }
+    } catch (err) {
+        console.log("[WA] inbox fallback check failed (non-fatal):", (err as Error).message);
+    }
+
     // ── Owner admin commands ──────────────────
 
     // "allow" — approve the most recent pending contact request
@@ -1656,6 +1673,11 @@ async function connectWhatsApp(llm: LLMClient): Promise<void> {
 export function getWhatsAppSocket(): WASocket | null {
     return socket;
 }
+
+// Re-export getOwners so external modules (e.g. the inbox chat-fallback
+// in src/proactive/inbox/chat-fallback.ts) can reach the owner list
+// without depending on the lower-level whatsapp-users module directly.
+export { getOwners } from "./whatsapp-users.js";
 
 /**
  * Send a proactive message to all registered owners (and legacy allowed JIDs).

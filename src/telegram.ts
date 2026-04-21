@@ -203,8 +203,26 @@ function formatDuration(ms: number): string {
 
 // ── Create Telegram Bot ───────────────────────
 
+// Module-scoped refs so external modules (e.g. the inbox chat-fallback
+// in src/proactive/inbox/chat-fallback.ts) can reach into the running
+// bot without threading the instance through every call site.
+let _moduleBot: Bot | null = null;
+let _moduleConfig: Config | null = null;
+
+/** Returns the running Telegram Bot instance, or null if not yet created. */
+export function getTelegramBot(): Bot | null {
+    return _moduleBot;
+}
+
+/** Returns the Config used to create the Telegram bot, or null if not yet created. */
+export function getTelegramConfig(): Config | null {
+    return _moduleConfig;
+}
+
 export function createTelegramBot(config: Config, llm: LLMClient): Bot {
     const bot = new Bot(config.telegramBotToken);
+    _moduleBot = bot;
+    _moduleConfig = config;
     const startTime = Date.now();
 
     // Initialize slash commands
@@ -980,6 +998,19 @@ ${combinedMessage}`;
     bot.on("callback_query:data", async (ctx) => {
         const data = ctx.callbackQuery.data;
         const chatId = ctx.chat?.id;
+
+        // ── Inbox chat-fallback callbacks: inbox:<action>:<id>[:<minutes>] (Phase 4.3) ──
+        if (data.startsWith("inbox:")) {
+            try {
+                const { handleTelegramInboxCallback } = await import("./proactive/inbox/chat-fallback.js");
+                const ack = await handleTelegramInboxCallback(data);
+                await ctx.answerCallbackQuery({ text: ack });
+            } catch (err) {
+                console.log("[TG] inbox callback failed (non-fatal):", (err as Error).message);
+                await ctx.answerCallbackQuery({ text: "error" });
+            }
+            return;
+        }
 
         // ── Human-in-the-loop interrupts: interrupt:<id>:<answer> ──
         if (data.startsWith("interrupt:")) {

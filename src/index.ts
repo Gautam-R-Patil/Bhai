@@ -583,6 +583,18 @@ async function boot() {
                 );
             }
 
+            // ── Chat fallback subscription (Phase 4.3) ──
+            // When the overlay isn't connected, review-mode inbox prompts
+            // surface on the primary chat channel (Telegram buttons or
+            // WhatsApp numbered reply) so the user can still act on them.
+            try {
+                const { startInboxChatFallback } = await import("./proactive/inbox/chat-fallback.js");
+                startInboxChatFallback();
+                console.log("💓 Inbox chat fallback subscribed");
+            } catch (err) {
+                console.log("[BOOT] inbox fallback init failed (non-fatal):", (err as Error).message);
+            }
+
             // ── Register memory_anticipation source (Phase 3 Task 3.2) ──
             try {
                 const { makeMemoryAnticipationSource } = await import("./proactive/sources/memory-anticipation.js");
