@@ -551,6 +551,22 @@ async function boot() {
             obs.start();
             setObserver(obs);
             console.log("💓 Proactive Observer started (V2 scheduler)");
+
+            // ── Register memory_anticipation source (Phase 3 Task 3.2) ──
+            try {
+                const { makeMemoryAnticipationSource } = await import("./proactive/sources/memory-anticipation.js");
+                const { tick: innerTick } = await import("./proactive/inner-thoughts.js");
+                const { getUserPresence } = await import("./proactive/activity.js");
+                const { embedText } = await import("./memory/embeddings.js");
+                obs.registerSource(makeMemoryAnticipationSource({
+                    tick: async (ctxIn) => innerTick(ctxIn),
+                    embedText: async (t) => await embedText(t, "query"),
+                    getPresence: () => getUserPresence(),
+                }));
+                console.log("💓 Registered source: memory_anticipation");
+            } catch (err) {
+                console.log("[BOOT] memory_anticipation source registration failed (non-fatal):", (err as Error).message);
+            }
         } catch (err) {
             console.log("[BOOT] Observer init failed (non-fatal):", (err as Error).message);
         }
