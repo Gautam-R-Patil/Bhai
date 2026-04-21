@@ -157,7 +157,11 @@ import { coreMemoryAppend, coreMemoryDelete, coreMemoryRead, coreMemoryReplace }
 import { IS_LINUX, IS_MAC, IS_WIN } from "./platform.js";
 import { createPresentation, exportPresentation, listPresentations, modifyPresentation } from "./presentation/index.js";
 import { repoMapTool } from "./repo-map.js";
+import { brandAudit } from "./brand-audit.js";
+import { coldOutreach } from "./cold-outreach.js";
+import { marketingSchedule } from "./marketing-schedule.js";
 import { cancelTask, listTasks, scheduleTask, setReminder } from "./scheduled.js";
+import { socialPost } from "./social-post.js";
 import { validateToolInput } from "./schema-validator.js";
 import { sendFileTool } from "./send-file.js";
 import { shellExec } from "./shell.js";
@@ -240,6 +244,7 @@ export {
     setSwarmLLM,
     setSwarmProgress,
 };
+export { setBrandAuditLLM } from "./brand-audit.js";
 
 // ── Tool Registry ─────────────────────────────
 
@@ -465,6 +470,12 @@ registry.set(scheduleTask.schema.function.name, scheduleTask);
 registry.set(setReminder.schema.function.name, setReminder);
 registry.set(listTasks.schema.function.name, listTasks);
 registry.set(cancelTask.schema.function.name, cancelTask);
+
+// Marketing tools
+registry.set(socialPost.schema.function.name, socialPost);
+registry.set(coldOutreach.schema.function.name, coldOutreach);
+registry.set(marketingSchedule.schema.function.name, marketingSchedule);
+registry.set(brandAudit.schema.function.name, brandAudit);
 
 // Webhooks
 registry.set(registerWebhook.schema.function.name, registerWebhook);

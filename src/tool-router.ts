@@ -390,6 +390,27 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "ingest_pdf_document",
         ],
     },
+    marketing: {
+        description:
+            "Marketing a business or product: posting to social media (Instagram Reels, LinkedIn, TikTok, Twitter/X, Facebook, YouTube, Reddit), scheduling content, cold email outreach, LinkedIn outreach, finding leads, auditing a brand's online presence, researching competitors, analysing trends, managing a content calendar, promoting a product on Product Hunt. Use when user wants to grow their audience, get more customers, run a campaign, or post content.",
+        tools: [
+            "social_post",
+            "cold_outreach",
+            "marketing_schedule",
+            "brand_audit",
+            "deep_research",
+            "web_search",
+            "browser_navigate",
+            "browser_extract",
+            "generate_image",
+            "video_create_project",
+            "video_analyze",
+            "video_plan_edit",
+            "video_render",
+            "send_file",
+            "schedule_task",
+        ],
+    },
 };
 
 // Skill category mapping is now server-side — categories come from skill metadata cache.
