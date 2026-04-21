@@ -1,0 +1,87 @@
+// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// This software is proprietary. Copying or reuse is prohibited.
+// See LICENSE.md for details.
+
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Observer } from "./observer.js";
+import type { ProactiveIntent } from "./intent.js";
+
+// Mock the native module so tests don't touch the Rust scheduler
+vi.mock("../../native/index.js", () => ({
+    schedulerConfigure: vi.fn(),
+    schedulerEnqueue: vi.fn().mockReturnValue("enqueued"),
+    schedulerMarkBoundary: vi.fn(),
+    schedulerSetDnd: vi.fn(),
+    schedulerTryRelease: vi.fn().mockReturnValue({ released: [], dropped: [] }),
+    schedulerDebugState: vi.fn().mockReturnValue(""),
+}));
+
+const validIntent = (): ProactiveIntent => ({
+    id: "x1",
+    source: "memory_anticipation",
+    mode: "fyi",
+    urgency: "normal",
+    channelPreference: "telegram",
+    topic: "test",
+    topicEmbedding: new Array(384).fill(0),
+    evidence: [],
+    payload: { kind: "memory_anticipation", hint: "hello" },
+    createdAt: Date.now(),
+    expiresAt: Date.now() + 60_000,
+});
+
+describe("Observer", () => {
+    let dir: string;
+    let configPath: string;
+    const originalEnv = { ...process.env };
+
+    beforeEach(() => {
+        dir = mkdtempSync(join(tmpdir(), "atlas-obs-"));
+        configPath = join(dir, "proactive-config.json");
+        for (const k of Object.keys(process.env)) {
+            if (k.startsWith("ATLAS_PROACTIVE")) delete process.env[k];
+        }
+    });
+
+    afterEach(() => {
+        rmSync(dir, { recursive: true, force: true });
+        process.env = { ...originalEnv };
+    });
+
+    it("enqueues a valid intent", () => {
+        const obs = new Observer({ llm: null as never, configPath });
+        expect(obs.enqueue(validIntent())).toBe(true);
+        obs.stop();
+    });
+
+    it("rejects invalid intent (missing embedding length)", () => {
+        const obs = new Observer({ llm: null as never, configPath });
+        const bad = { ...validIntent(), topicEmbedding: [1, 2, 3] };
+        expect(obs.enqueue(bad)).toBe(false);
+        obs.stop();
+    });
+
+    it("rejects when ATLAS_PROACTIVE_DISABLE=true", () => {
+        process.env.ATLAS_PROACTIVE_DISABLE = "true";
+        const obs = new Observer({ llm: null as never, configPath });
+        expect(obs.enqueue(validIntent())).toBe(false);
+        obs.stop();
+    });
+
+    it("rejects when source is disabled", () => {
+        process.env.ATLAS_PROACTIVE_DISABLE_SOURCES = "memory_anticipation";
+        const obs = new Observer({ llm: null as never, configPath });
+        expect(obs.enqueue(validIntent())).toBe(false);
+        obs.stop();
+    });
+
+    it("start() subscribes to boundary bus; stop() unsubscribes", () => {
+        const obs = new Observer({ llm: null as never, configPath });
+        obs.start();
+        // Can't easily observe the subscription count from outside; just assert stop() is safe.
+        expect(() => obs.stop()).not.toThrow();
+    });
+});

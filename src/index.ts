@@ -457,6 +457,24 @@ async function boot() {
         onNotification: async (message) => {
             console.log(`💓 Proactive: ${message.substring(0, 100)}...`);
 
+            // Phase 2: prefer Observer if scheduler is on — it owns posture, boundary timing, dispatch.
+            if (process.env.ATLAS_PROACTIVE_V2_SCHEDULER !== "false") {
+                try {
+                    const { getObserver } = await import("./proactive/observer.js");
+                    const obs = getObserver();
+                    if (obs) {
+                        const { intentFromThought } = await import("./proactive/intent-from-thought.js");
+                        obs.enqueue(intentFromThought(message, { hourNow: new Date().getHours() }));
+                        if (getSubscriptionCount() > 0) {
+                            sendPushNotification("A.T.L.A.S", message.substring(0, 180)).catch(() => {});
+                        }
+                        return;
+                    }
+                } catch (err) {
+                    console.log("[proactive] Observer dispatch failed, falling back:", (err as Error).message);
+                }
+            }
+
             // Phase 1 bug fix: route every channel send through the Composer so
             // third-person internal reasoning can't leak to the user. The Composer
             // post-filter rejects banned phrases + "the user" constructions.
@@ -520,6 +538,23 @@ async function boot() {
             }
         },
     });
+
+    // ── Proactive Observer (V2 scheduler) ─────
+    if (process.env.ATLAS_PROACTIVE_V2_SCHEDULER !== "false") {
+        try {
+            const { Observer, setObserver } = await import("./proactive/observer.js");
+            const { join } = await import("node:path");
+            const obs = new Observer({
+                llm,
+                configPath: join(process.cwd(), "data", "proactive-config.json"),
+            });
+            obs.start();
+            setObserver(obs);
+            console.log("💓 Proactive Observer started (V2 scheduler)");
+        } catch (err) {
+            console.log("[BOOT] Observer init failed (non-fatal):", (err as Error).message);
+        }
+    }
 
     // ── Scheduled Tasks ───────────────────────
     setTaskTriggerHandler(async (taskId: string, action: string) => {
