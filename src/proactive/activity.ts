@@ -8,6 +8,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { IS_MAC, IS_WIN } from "../tools/platform.js";
+import { globalBoundaryBus } from "./boundary-events.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -138,6 +139,7 @@ let lastAppChangeTime = Date.now();
 const appTransitions: string[] = []; // "From → To" history
 const appDurations = new Map<string, number>(); // app → cumulative minutes
 const MAX_TRANSITION_HISTORY = 20;
+let lastIsActive: boolean | null = null;
 
 /**
  * Get the last app transition (if any occurred since the previous check).
@@ -172,6 +174,11 @@ export async function getUserPresence(): Promise<UserPresence> {
 
         appTransitions.push(`${lastFrontmostApp} → ${frontmost}`);
         while (appTransitions.length > MAX_TRANSITION_HISTORY) appTransitions.shift();
+        globalBoundaryBus.emit({
+            kind: "app_switch",
+            ts: Date.now(),
+            meta: { from: lastFrontmostApp, to: frontmost },
+        });
 
         // Accumulate duration for the previous app
         appDurations.set(
@@ -182,6 +189,16 @@ export async function getUserPresence(): Promise<UserPresence> {
         lastAppChangeTime = now;
     }
     if (frontmost) lastFrontmostApp = frontmost;
+
+    // Fire idle transitions on the bus. First call establishes baseline.
+    if (lastIsActive !== null) {
+        if (lastIsActive && !isActive) {
+            globalBoundaryBus.emit({ kind: "idle_start", ts: Date.now() });
+        } else if (!lastIsActive && isActive) {
+            globalBoundaryBus.emit({ kind: "idle_end", ts: Date.now() });
+        }
+    }
+    lastIsActive = isActive;
 
     return {
         isActive,
