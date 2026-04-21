@@ -44,9 +44,24 @@ function makeProgressCallback(): ((progress: LongTaskProgress) => Promise<void>)
     return async (progress: LongTaskProgress) => {
         const elapsed = (progress.elapsedMs / 1000).toFixed(0);
         if (progress.status === "completed") {
-            // Completion notification — deliver reviewed result to user
+            // Completion notification — deliver reviewed result to user via the current channel
             const msg = `✅ **Task complete!** (${progress.phasesTotal} phases, ${elapsed}s)\n\n${progress.currentPhaseDescription}`;
             await fn(msg).catch(() => { });
+
+            // Also emit to the proactive subsystem so the V2 scheduler + Composer handle it
+            // across channels (template fast-path: "Done with X. <summary>").
+            try {
+                const { globalLongTaskBus } = await import("../proactive/long-task-events.js");
+                globalLongTaskBus.emit({
+                    taskId: progress.taskId,
+                    task: progress.currentPhaseDescription.substring(0, 80) || "long task",
+                    summary: progress.currentPhaseDescription,
+                    durationSec: Number(elapsed),
+                    ts: Date.now(),
+                });
+            } catch {
+                // non-fatal — proactive module not loaded or not available
+            }
         } else if (progress.currentPhaseId === "quality_review") {
             // Quality review in progress — brief status update
             await fn(`🔍 All phases done — reviewing quality of work...`).catch(() => { });

@@ -567,6 +567,15 @@ async function boot() {
             } catch (err) {
                 console.log("[BOOT] memory_anticipation source registration failed (non-fatal):", (err as Error).message);
             }
+
+            // ── Register long_task_status source (Phase 3 Task 3.3) ──
+            try {
+                const { makeLongTaskStatusSource } = await import("./proactive/sources/long-task-status.js");
+                obs.registerSource(makeLongTaskStatusSource());
+                console.log("💓 Registered source: long_task_status");
+            } catch (err) {
+                console.log("[BOOT] long_task_status source registration failed (non-fatal):", (err as Error).message);
+            }
         } catch (err) {
             console.log("[BOOT] Observer init failed (non-fatal):", (err as Error).message);
         }
