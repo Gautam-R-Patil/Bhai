@@ -551,10 +551,15 @@ async function boot() {
                 const { getRawDb } = await import("./memory/sqlite.js");
                 const { InboxStore } = await import("./proactive/inbox/store.js");
                 const { InboxManager, setInboxManager } = await import("./proactive/inbox/manager.js");
+                const { executeApprovedIntent } = await import("./proactive/inbox/executor.js");
+                const { executeTool } = await import("./tools/index.js");
                 const raw = getRawDb();
                 if (raw) {
                     const store = new InboxStore(raw);
-                    const manager = new InboxManager({ store });
+                    const manager = new InboxManager({
+                        store,
+                        executor: (toolCalls) => executeApprovedIntent(toolCalls, { executeTool }),
+                    });
                     setInboxManager(manager);
                     console.log(
                         "💓 Inbox manager ready (%d pending)",

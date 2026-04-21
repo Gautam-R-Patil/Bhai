@@ -6,8 +6,9 @@
 // for the overlay (Task 4.2) and chat fallback (Task 4.3) layers to
 // subscribe to. No WS/channel code lives here; pure bus.
 
-import type { ProactiveIntent } from "../intent.js";
+import type { ProactiveIntent, SuggestedToolCall } from "../intent.js";
 import type { InboxStore, InboxItem, InboxStatus } from "./store.js";
+import type { ExecutionResult } from "./executor.js";
 import { debugProactive } from "../kill-switches.js";
 
 export type InboxEvent =
@@ -37,15 +38,18 @@ export const globalInboxBus = new InboxEventBus();
 export type InboxManagerDeps = {
     store: InboxStore;
     bus?: InboxEventBus;
+    executor?: (calls: SuggestedToolCall[]) => Promise<ExecutionResult>;
 };
 
 export class InboxManager {
     private store: InboxStore;
     private bus: InboxEventBus;
+    private executor?: (calls: SuggestedToolCall[]) => Promise<ExecutionResult>;
 
     constructor(deps: InboxManagerDeps) {
         this.store = deps.store;
         this.bus = deps.bus ?? globalInboxBus;
+        this.executor = deps.executor;
     }
 
     /** Called by the Observer when a review-mode intent is released. */
@@ -67,7 +71,39 @@ export class InboxManager {
         if (!updated) return null;
         debugProactive("inbox_approved", { id });
         this.bus.emit({ kind: "updated", item: updated });
+
+        // Kick off execution in the background if an executor + suggestedAction are available
+        if (this.executor && updated.intent.suggestedAction) {
+            this.runExecution(id, updated.intent.suggestedAction.toolCalls).catch((err) => {
+                debugProactive("inbox_execution_unhandled", { id, err: (err as Error).message });
+            });
+        }
         return updated;
+    }
+
+    private async runExecution(id: string, toolCalls: SuggestedToolCall[]): Promise<void> {
+        if (!this.executor) return;
+        // Mark as running
+        const running = this.store.update(id, { executionStatus: "running" });
+        if (running) this.bus.emit({ kind: "updated", item: running });
+
+        try {
+            const result = await this.executor(toolCalls);
+            const done = this.store.update(id, {
+                executionStatus: result.status === "done" ? "done" : "failed",
+                executionResult: result.summary,
+            });
+            if (done) this.bus.emit({ kind: "updated", item: done });
+            debugProactive("inbox_execution_complete", { id, status: result.status });
+        } catch (err) {
+            const msg = (err as Error).message;
+            const failed = this.store.update(id, {
+                executionStatus: "failed",
+                executionResult: `Unexpected error: ${msg}`,
+            });
+            if (failed) this.bus.emit({ kind: "updated", item: failed });
+            debugProactive("inbox_execution_failed", { id, err: msg });
+        }
     }
 
     /** Called when the user clicks Reject. */
