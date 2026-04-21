@@ -1258,6 +1258,46 @@ STRATEGY: Execute in as few tool calls as possible.
                 /* task-learnings not initialized */
             }
 
+            // ── Coding complexity classification ──
+            // Inject a short reminder telling the agent which flow to
+            // follow: trivial skips design-docs, standard implements
+            // directly with Pro tier, complex triggers the full PRD →
+            // approval → walkthrough ceremony.
+            try {
+                if (detectTaskType(rawUserMessage) === "coding") {
+                    const { classifyCodingComplexity } = await import("./model-router.js");
+                    const c = classifyCodingComplexity(userMessage);
+                    if (c === "complex") {
+                        parts.push(
+                            "<coding_complexity level=\"complex\">\n" +
+                                "This task is classified as COMPLEX (multi-file / architectural / new-system / high-stakes).\n" +
+                                "YOU MUST follow the full flow in prompts/coding.md §Complex coding:\n" +
+                                "  1. generate_design_docs → auto-enters awaiting_approval mode\n" +
+                                "  2. render_md_to_pdf (TG/WA) or deliver MD (overlay/Discord/Slack)\n" +
+                                "  3. Wait for the user to approve, then call approve_design_docs\n" +
+                                "  4. Implement on Pro tier\n" +
+                                "  5. demo_project (if runnable) → generate_walkthrough → deliver with screenshots/recording\n" +
+                                "Do NOT skip Phase 1 — the tool machinery will refuse code edits until approval lands.\n" +
+                                "</coding_complexity>",
+                        );
+                    } else if (c === "trivial") {
+                        parts.push(
+                            "<coding_complexity level=\"trivial\">\n" +
+                                "This is a trivial edit (one-liner / typo / rename / log statement). Skip the design-docs flow and implement directly. Light tier is acceptable.\n" +
+                                "</coding_complexity>",
+                        );
+                    } else {
+                        parts.push(
+                            "<coding_complexity level=\"standard\">\n" +
+                                "Standard-scope coding task: debug / single feature / targeted fix. Implement directly on Pro tier. Skip design docs, but still finish with a short recap of what changed.\n" +
+                                "</coding_complexity>",
+                        );
+                    }
+                }
+            } catch {
+                /* classifier unavailable — don't block the agent */
+            }
+
             // ── 3. Behavioral traits (token-budgeted, relevance-scored) ──
             try {
                 const traitsSnippet = getTraitsForInjection(userMessage, 600);

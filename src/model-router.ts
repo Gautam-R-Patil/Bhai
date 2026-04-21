@@ -427,6 +427,68 @@ function hasCodingIntent(message: string): boolean {
     return CODING_INTENT_PATTERNS.some((p) => p.test(message));
 }
 
+// Signals a task deserves the full design-docs → approval → implement →
+// walkthrough ceremony. Distinct from hasCodingIntent (which fires for
+// any non-trivial coding) — "complex" specifically means multi-file,
+// architectural, new-system, or high-stakes work where a PRD genuinely
+// pays for itself.
+// Action verbs that indicate the user wants us to BUILD something, not
+// debug / investigate something that already exists. Used as an anchor
+// for high-stakes-domain patterns (auth, payments, schema, etc.) so
+// "debug auth middleware" classifies as standard instead of complex.
+const CODING_BUILD_VERB = /\b(implement|build|create|design|add|introduce|set\s+up|ship)\b/i;
+
+const CODING_COMPLEX_PATTERNS: RegExp[] = [
+    /\brefactor\b/i,
+    /\brewrite\b/i,
+    /\bmigrate\b/i,
+    /\bport\s+.*\s+to\b/i,
+    /\bacross\s+(?:multiple|several|many)\s+files?\b/i,
+    // "new <thing>" — broader so it catches "new rate limiter", "new
+    // endpoint", "new worker", etc. beyond the original fixed noun list.
+    /\ba?\s*new\s+\w+(?:\s+\w+){0,4}\s+(?:for|to|that|which)\b/i,
+    /\bnew\s+(?:feature|system|module|service|tool|package|component|endpoint|handler|worker|limiter|queue|pipeline|flow|page|route|screen|dashboard|widget)\b/i,
+    /\b(implement|build|create|design)\s+(?:a?\s?)?(?:full|complete|production|end.to.end)\b/i,
+    /\b(re.?architect|system\s+design|distributed|microservice)\b/i,
+    /\bend.to.end\b/i,
+    /\b(schema\s+migration|add.*migration|change\s+the\s+schema)\b/i,
+];
+
+// High-stakes domains — only complex when combined with a build verb.
+// "debug auth middleware" stays standard; "implement auth" goes complex.
+const CODING_HIGH_STAKES_DOMAINS: RegExp[] = [
+    /\bauth(?:entication|orization)?\b|\brbac\b|\bsso\b|\boauth\b|\bsaml\b/i,
+    /\bdatabase\b|\bschema\b|\bmigration\b/i,
+    /\bapi\s+endpoint\b|\brest\s+api\b|\bgraphql\b|\bwebsocket\s+server\b/i,
+    /\bpipeline\b|\bworkflow\b|\betl\b|\bscheduler\b|\bqueue\b|\bpub.?sub\b/i,
+    /\bpayment\b|\bbilling\b|\bsubscription\b|\bstripe\b|\bcheckout\s+flow\b/i,
+    /\bsecurity\b|\bcryptograph\b|\bencrypt(?:ion)?\b|\baudit\s+log\b|\bcompliance\b/i,
+];
+
+export type CodingComplexity = "trivial" | "standard" | "complex";
+
+/**
+ * Classify a user's coding request so downstream layers can gate on it.
+ *   trivial  → single-liner edits; skip design-docs ceremony, Light tier OK
+ *   standard → focused debugging / single-feature work; Pro tier, no PRD
+ *   complex  → architectural / new-system / high-stakes; full design-docs flow
+ *
+ * Best-effort heuristic — callers should treat the answer as a strong
+ * default, not a verdict.
+ */
+export function classifyCodingComplexity(message: string): CodingComplexity {
+    if (!message) return "standard";
+    if (isTriviallySimpleCoding(message)) return "trivial";
+    if (CODING_COMPLEX_PATTERNS.some((p) => p.test(message))) return "complex";
+    // High-stakes domains only qualify as complex when combined with a
+    // build verb — "implement auth" yes, "debug auth middleware" no.
+    if (CODING_BUILD_VERB.test(message) && CODING_HIGH_STAKES_DOMAINS.some((p) => p.test(message))) {
+        return "complex";
+    }
+    if (message.length > 400) return "complex"; // long detailed asks get the full flow
+    return "standard";
+}
+
 const CODING_TOOL_NAMES: ReadonlySet<string> = new Set([
     "read", "edit", "write", "grep", "glob", "shell_exec",
     "code_action", "code_execute", "repo_map",
