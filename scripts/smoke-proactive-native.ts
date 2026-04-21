@@ -4,7 +4,7 @@
 
 import * as native from "../native/index.js";
 const n = native as any;
-console.log("monitor:", n.proactiveMonitorPing?.());
+console.log("monitor rules loaded:", n.monitorCount?.());
 console.log("validate:", n.validateIntentRust?.({
   id: "x",
   source: "memory_anticipation",

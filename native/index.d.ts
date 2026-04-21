@@ -2502,7 +2502,27 @@ export declare function schedulerMarkBoundary(channel: string, windowMs: number)
 export declare function schedulerSetDnd(channel: string, active: boolean): void
 export declare function schedulerTryRelease(channel: string): ReleaseResult
 export declare function schedulerDebugState(channel: string): string
-export declare function proactiveMonitorPing(): string
+export interface MonitorRuleRust {
+  id: string
+  topicEmbedding: Array<number>
+  scopeChannels: Array<string>
+  scopeSenders?: Array<string>
+  excludeSelf: boolean
+  threshold: number
+  cooldownMinutes: number
+  active: boolean
+  lastFiredAt: number
+}
+export interface RuleHit {
+  ruleId: string
+  score: number
+}
+export declare function monitorLoadRules(rules: Array<MonitorRuleRust>): void
+export declare function monitorUpsertRule(rule: MonitorRuleRust): void
+export declare function monitorDeleteRule(id: string): void
+export declare function monitorCount(): number
+export declare function monitorCheck(msgEmbedding: Array<number>, channel: string, sender: string, nowMs: number): Array<RuleHit>
+export declare function monitorMarkFired(id: string, tsMs: number): void
 /** Get the native module version */
 export declare function getVersion(): string
 /** Check if SIMD is available on this platform */
