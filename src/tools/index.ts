@@ -246,6 +246,7 @@ export {
 };
 export { setBrandAuditLLM } from "./brand-audit.js";
 export { setScriptWriterLLM } from "../marketing/script-writer.js";
+export { setCampaignPlannerLLM } from "../marketing/campaign-planner.js";
 
 // ── Tool Registry ─────────────────────────────
 

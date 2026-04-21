@@ -6,7 +6,7 @@ import { loadConfig } from "./config.js";
 import { createLLMClient } from "./llm.js";
 import { createTelegramBot, sendProactiveMessage } from "./telegram.js";
 import { initWhatsApp, closeWhatsApp, sendWhatsAppProactiveMessage } from "./whatsapp.js";
-import { getToolNames, setSwarmLLM, setDeepResearchLLM, setLongTaskLLM, setDeepResearchNotifier, rotateAuditLog, loadDynamicTools, setCodeActionLLM, setCodeActionExecutor, setComputerUseLLM, executeTool, registerChannelSender, setPresentationLLM, setIngestLLM, setBrandAuditLLM, setScriptWriterLLM } from "./tools/index.js";
+import { getToolNames, setSwarmLLM, setDeepResearchLLM, setLongTaskLLM, setDeepResearchNotifier, rotateAuditLog, loadDynamicTools, setCodeActionLLM, setCodeActionExecutor, setComputerUseLLM, executeTool, registerChannelSender, setPresentationLLM, setIngestLLM, setBrandAuditLLM, setScriptWriterLLM, setCampaignPlannerLLM } from "./tools/index.js";
 import { initMemoryDB, embedExistingMemories, setMemoryLLM } from "./memory/sqlite.js";
 import { initKnowledgeGraph } from "./memory/knowledge-graph.js";
 import { initSupabase } from "./memory/supabase.js";
@@ -80,8 +80,9 @@ setComputerUseLLM(llm);    // Inject into computer use agent tool
 setMemoryLLM(llm);         // Inject into memory for smart write decisions
 setPresentationLLM(llm);   // Inject into presentation generator
 setIngestLLM(llm);         // Inject into PDF → JSON ingestion (vision-LLM fallback)
-setBrandAuditLLM(llm);     // Inject into brand audit orchestrator
-setScriptWriterLLM(llm);  // Inject into marketing script writer
+setBrandAuditLLM(llm);        // Inject into brand audit orchestrator
+setScriptWriterLLM(llm);      // Inject into marketing script writer
+setCampaignPlannerLLM(llm);   // Inject into campaign planner
 
 // ── Initialize Subsystems ─────────────────────
 
