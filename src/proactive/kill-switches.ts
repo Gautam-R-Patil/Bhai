@@ -2,7 +2,9 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import type { IntentSource, Channel } from "./intent.js";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
+import type { Channel, IntentSource } from "./intent.js";
 
 function isTrue(v: string | undefined): boolean {
     return v === "true" || v === "1";
@@ -10,7 +12,12 @@ function isTrue(v: string | undefined): boolean {
 
 function parseCsv(v: string | undefined): Set<string> {
     if (!v) return new Set();
-    return new Set(v.split(",").map((s) => s.trim()).filter(Boolean));
+    return new Set(
+        v
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
+    );
 }
 
 export function isProactiveDisabled(): boolean {
@@ -29,10 +36,73 @@ export function isShadowMode(): boolean {
     return isTrue(process.env.ATLAS_PROACTIVE_SHADOW);
 }
 
+// ── Log rotation state ────────────────────────────────
+
+const LOG_DIR = (): string =>
+    process.env.ATLAS_DATA_DIR ? join(process.env.ATLAS_DATA_DIR, "logs") : join(process.cwd(), "data", "logs");
+
+const LOG_RETENTION_DAYS = 7;
+const PRUNE_INTERVAL_MS = 60 * 60_000; // once per hour max
+const LOG_FILE_PATTERN = /^proactive-(\d{4}-\d{2}-\d{2})\.log$/;
+
+let lastPruneMs = 0;
+
+function todayStr(): string {
+    return new Date().toISOString().slice(0, 10);
+}
+
+function currentLogPath(): string {
+    return join(LOG_DIR(), `proactive-${todayStr()}.log`);
+}
+
+function pruneOldLogs(): void {
+    const now = Date.now();
+    if (now - lastPruneMs < PRUNE_INTERVAL_MS) return;
+    lastPruneMs = now;
+    try {
+        const dir = LOG_DIR();
+        if (!existsSync(dir)) return;
+        const files = readdirSync(dir);
+        const cutoffMs = now - LOG_RETENTION_DAYS * 86_400_000;
+        for (const f of files) {
+            const m = f.match(LOG_FILE_PATTERN);
+            if (!m) continue;
+            const path = join(dir, f);
+            try {
+                const s = statSync(path);
+                if (s.mtimeMs < cutoffMs) unlinkSync(path);
+            } catch {
+                // file disappeared or inaccessible — skip
+            }
+        }
+    } catch {
+        // directory unreadable — skip
+    }
+}
+
+function writeJsonLine(event: string, ctx: Record<string, unknown>): void {
+    try {
+        const dir = LOG_DIR();
+        if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+        const line = JSON.stringify({ ts: Date.now(), event, ...ctx }) + "\n";
+        appendFileSync(currentLogPath(), line);
+        pruneOldLogs();
+    } catch {
+        // fs error — silent; console log path still ran
+    }
+}
+
 export function debugProactive(event: string, ctx: Record<string, unknown>): void {
     if (process.env.ATLAS_PROACTIVE_DEBUG === "false") return;
     const flat = Object.entries(ctx)
         .map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`)
         .join(" ");
     console.log(`🔔 [proactive] ${event} | ${flat}`);
+    writeJsonLine(event, ctx);
+}
+
+// ── Test helpers (named _ prefixed so they can't collide with real exports) ──
+
+export function _resetProactiveLogPruneTimerForTests(): void {
+    lastPruneMs = 0;
 }
