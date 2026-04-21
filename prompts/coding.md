@@ -86,15 +86,16 @@ For any **complex** coding task — new feature, multi-file refactor, new module
 **Phase 2 — Implement:** only after `approve_design_docs` has run. Standard loop (`edit` / `write` / `test_run` / `browser_verify` / etc.).
 
 **Phase 3 — Walkthrough at the end:**
-1. Call `generate_walkthrough({ task, run_commands: [...], notes: "..." })`. It reads `git log` + `git diff` and writes `WALKTHROUGH.md` under `A.T.L.A.S Files/Documents/walkthroughs/<slug>/`.
-2. Deliver to the user:
+1. If the result is something runnable (web app, API, CLI), call `demo_project({ project_dir: <root> })` first. It auto-detects the stack (vite / next / astro / cargo / go / python / static) and launches the dev command in the background. For web stacks it waits until the URL responds and returns `{ url, pid, url_ready }` — feed the URL into `browser_verify` / `os_screenshot` / `screen_record` for the walkthrough visuals. When you're done capturing, stop it with `shell_kill_process({ process_id: <pid> })`.
+2. Call `generate_walkthrough({ task, run_commands: [...], notes: "..." })`. It reads `git log` + `git diff` and writes `WALKTHROUGH.md` under `A.T.L.A.S Files/Documents/walkthroughs/<slug>/`.
+3. Deliver to the user:
    - **Overlay**: show the walkthrough markdown inline AND call `os_screenshot` so the user sees the current UI state of whatever you built.
    - **Telegram / WhatsApp**: render to PDF first with `render_md_to_pdf({ md_path: <walkthrough path> })`, then `send_message_on_channel` with `filePath` for the PDF, then:
      - If the result is a single static state (page / dashboard / CLI output): a second message with `filePath` from a fresh `os_screenshot`.
      - If the result is interactive or time-based (an animation, a form flow, a CI run finishing, a live dev-server reload): prefer `screen_record({ duration_sec: 10..20 })` so the user sees the motion. Send the `.mp4` via `send_message_on_channel` with `filePath`.
      - If you started a dev server, mention the URL / run command in the caption.
    - **Discord / Slack / email**: attach the MD directly — PDF conversion optional.
-3. Ask the user for feedback or next steps. Don't assume done until they confirm.
+4. Ask the user for feedback or next steps. Don't assume done until they confirm.
 
 The design-docs step is the non-negotiable gate; the walkthrough is courtesy but strongly expected for anything the user will actually use.
 

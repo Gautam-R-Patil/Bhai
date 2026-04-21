@@ -62,6 +62,7 @@ import { browserVerify } from "./coding/browser-verify.js";
 import { codeChangeSummaryTool } from "./coding/code-change-summary.js";
 import { codebaseIndexTool } from "./coding/codebase-index.js";
 import { codebaseQueryTool } from "./coding/codebase-query.js";
+import { demoProjectTool } from "./coding/demo-project.js";
 import { approveDesignDocsTool, designDocsTool } from "./coding/design-docs.js";
 import { edit } from "./coding/edit.js";
 import { mdToPdfTool } from "./coding/md-to-pdf.js";
@@ -515,6 +516,7 @@ registry.set(approveDesignDocsTool.schema.function.name, approveDesignDocsTool);
 registry.set(walkthroughTool.schema.function.name, walkthroughTool);
 registry.set(mdToPdfTool.schema.function.name, mdToPdfTool);
 registry.set(screenRecordTool.schema.function.name, screenRecordTool);
+registry.set(demoProjectTool.schema.function.name, demoProjectTool);
 
 // Computer use agent (desktop automation)
 registry.set(computerUseTool.schema.function.name, computerUseTool);

@@ -162,6 +162,7 @@ const ROLE_TOOLS: Record<AgentRole, string[]> = {
         "generate_walkthrough",
         "render_md_to_pdf",
         "screen_record",
+        "demo_project",
     ],
     browser: [
         "web_search",
