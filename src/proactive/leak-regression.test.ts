@@ -85,3 +85,22 @@ describe("leak regression — verbatim strings from bug report must NEVER dispat
         }
     });
 });
+
+describe("Task 5.1 — legacy raw-dispatch path was deleted", () => {
+    it("the ATLAS_PROACTIVE_V2_COMPOSER flag no longer exists (Task 5.1 removed it)", async () => {
+        const { readFileSync } = await import("node:fs");
+        const indexSrc = readFileSync("src/index.ts", "utf8");
+        expect(indexSrc).not.toContain("ATLAS_PROACTIVE_V2_COMPOSER");
+    });
+
+    it("src/index.ts does not contain the legacy sendProactiveMessage fan-out pattern", async () => {
+        const { readFileSync } = await import("node:fs");
+        const indexSrc = readFileSync("src/index.ts", "utf8");
+        // The old pattern was: `telegram: () => sendProactiveMessage(bot, config, message)` inside onNotification.
+        // The setDeepResearchNotifier + setTaskTriggerHandler blocks STILL use this pattern — those are legal.
+        // But the onNotification-block pattern is gone. Count occurrences: used to be 3 (notifier + task + heartbeat).
+        // After Task 5.1 it's 2.
+        const occurrences = (indexSrc.match(/telegram: \(\) => sendProactiveMessage/g) || []).length;
+        expect(occurrences).toBeLessThanOrEqual(2);
+    });
+});

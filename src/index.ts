@@ -457,31 +457,38 @@ async function boot() {
         onNotification: async (message) => {
             console.log(`💓 Proactive: ${message.substring(0, 100)}...`);
 
-            // Phase 2: prefer Observer if scheduler is on — it owns posture, boundary timing, dispatch.
-            if (process.env.ATLAS_PROACTIVE_V2_SCHEDULER !== "false") {
-                try {
-                    const { getObserver } = await import("./proactive/observer.js");
-                    const obs = getObserver();
-                    if (obs) {
-                        const { intentFromThought } = await import("./proactive/intent-from-thought.js");
-                        obs.enqueue(intentFromThought(message, { hourNow: new Date().getHours() }));
-                        if (getSubscriptionCount() > 0) {
-                            sendPushNotification("A.T.L.A.S", message.substring(0, 180)).catch(() => {});
-                        }
-                        return;
+            // Phase 2.3+ architecture: the Observer owns dispatch end-to-end.
+            // It enqueues via Rust scheduler, releases at boundary events,
+            // runs every intent through the Composer (which rejects banned
+            // phrases + third-person text), and dispatches to channels.
+            //
+            // If the Observer isn't ready yet (init failed at boot, or the
+            // V2 flag is off), we fall back to the Phase 1 Composer+dispatch
+            // fan-out — still safe because every message still flows through
+            // the Composer's second-person post-filter.
+            //
+            // The pre-Phase-1 "legacy" path (raw fan-out) was removed in
+            // Task 5.1. If both Observer AND V2 Composer are unavailable,
+            // we stay silent rather than risk re-introducing the leak.
+
+            try {
+                const { getObserver } = await import("./proactive/observer.js");
+                const obs = getObserver();
+                if (obs) {
+                    const { intentFromThought } = await import("./proactive/intent-from-thought.js");
+                    obs.enqueue(intentFromThought(message, { hourNow: new Date().getHours() }));
+                    if (getSubscriptionCount() > 0) {
+                        sendPushNotification("A.T.L.A.S", message.substring(0, 180)).catch(() => {});
                     }
-                } catch (err) {
-                    console.log("[proactive] Observer dispatch failed, falling back:", (err as Error).message);
+                    return;
                 }
+            } catch (err) {
+                console.log("[proactive] Observer dispatch failed, falling back:", (err as Error).message);
             }
 
-            // Phase 1 bug fix: route every channel send through the Composer so
-            // third-person internal reasoning can't leak to the user. The Composer
-            // post-filter rejects banned phrases + "the user" constructions.
-            // Flag ATLAS_PROACTIVE_V2_COMPOSER=false reverts to the legacy path.
-            const useV2 = process.env.ATLAS_PROACTIVE_V2_COMPOSER !== "false";
-
-            if (useV2) {
+            // Fallback: Observer unavailable — still route through Composer + dispatch
+            // (this is what shipped in Phase 1, before the scheduler landed).
+            try {
                 const { intentFromThought } = await import("./proactive/intent-from-thought.js");
                 const { compose } = await import("./proactive/composer.js");
                 const { dispatchProactiveMessage } = await import("./proactive/dispatch.js");
@@ -504,37 +511,11 @@ async function boot() {
                 for (const c of rest) sendOne(c).catch((err) => {
                     console.log(`proactive dispatch failed (${c}):`, (err as Error).message);
                 });
-
                 if (getSubscriptionCount() > 0) {
                     sendPushNotification("A.T.L.A.S", message.substring(0, 180)).catch(() => {});
                 }
-                return;
-            }
-
-            // Legacy path (ATLAS_PROACTIVE_V2_COMPOSER=false)
-            const sendPrimary: Record<string, () => Promise<void>> = {
-                telegram: () => sendProactiveMessage(bot, config, message),
-                whatsapp: () => sendWhatsAppProactiveMessage(message),
-                discord: () => sendDiscordProactiveMessage(message),
-                slack: () => sendSlackProactiveMessage(message),
-                matrix: () => sendMatrixProactiveMessage(message),
-                overlay: () => { sendOverlayNotification(message); return Promise.resolve(); },
-            };
-
-            // Send to primary channel
-            const primaryFn = sendPrimary[PRIMARY_CHANNEL];
-            if (primaryFn) {
-                try { await primaryFn(); } catch { /* primary failed, will try others */ }
-            }
-
-            // Send to other active channels as backup (non-blocking)
-            for (const [channel, fn] of Object.entries(sendPrimary)) {
-                if (channel !== PRIMARY_CHANNEL) fn().catch(() => {});
-            }
-
-            // Always send push notification if subscriptions exist
-            if (getSubscriptionCount() > 0) {
-                sendPushNotification("A.T.L.A.S", message.substring(0, 180)).catch(() => {});
+            } catch (err) {
+                console.log("[proactive] Composer fallback also failed — staying silent:", (err as Error).message);
             }
         },
     });

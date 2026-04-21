@@ -4,10 +4,10 @@
 
 import { makeIntentId, type ProactiveIntent } from "./intent.js";
 
-// Bridge from the legacy heartbeat thought string to the new ProactiveIntent
-// shape. The embedding is a placeholder — Phase 2 will inject a real one from
-// the embeddings module. For Phase 1 the Composer doesn't use the embedding
-// (no dedup yet), so a zero vector is acceptable.
+// Adapts a raw heartbeat thought string into a ProactiveIntent so it can flow
+// through the Observer / Composer pipeline. The embedding is a zero-vector
+// placeholder; downstream consumers (Composer post-filter, dispatch) do not
+// require a real embedding for heartbeat-sourced intents.
 export function intentFromThought(
     rawThought: string,
     ctx: { hourNow: number },
