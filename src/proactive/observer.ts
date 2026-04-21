@@ -26,6 +26,8 @@ import {
     debugProactive,
 } from "./kill-switches.js";
 import * as native from "../../native/index.js";
+import { SourceRegistry } from "./sources/registry.js";
+import type { IntentSourceModule } from "./sources/source.js";
 
 const SOURCE_WEIGHTS: Record<IntentSource, number> = {
     latent_topic_monitor: 1.5,
@@ -54,6 +56,7 @@ export type ObserverDeps = {
 
 export class Observer {
     private cfg: ProactiveConfig;
+    private registry = new SourceRegistry();
     private intentsById = new Map<string, ProactiveIntent>();
     private recentSendsByChannel = new Map<Channel, string[]>();
     private unsubBoundary: (() => void) | null = null;
@@ -82,6 +85,10 @@ export class Observer {
             clearInterval(this.tickTimer);
             this.tickTimer = null;
         }
+    }
+
+    registerSource(src: IntentSourceModule): void {
+        this.registry.register(src);
     }
 
     enqueue(intent: ProactiveIntent): boolean {
@@ -142,6 +149,16 @@ export class Observer {
     }
 
     async tickAll(): Promise<void> {
+        // 1. Collect new intents from all registered sources
+        try {
+            const intents = await this.registry.collectAll({ now: Date.now() });
+            for (const intent of intents) {
+                this.enqueue(intent);
+            }
+        } catch (err) {
+            debugProactive("observer_collect_err", { err: (err as Error).message });
+        }
+        // 2. Release eligible intents per channel
         for (const ch of ALL_CHANNELS) {
             await this.releaseChannel(ch).catch((err) =>
                 debugProactive("observer_release_err", { ch, err: (err as Error).message })
