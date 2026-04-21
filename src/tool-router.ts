@@ -176,6 +176,7 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "git_op",
             "generate_design_docs",
             "generate_walkthrough",
+            "render_md_to_pdf",
         ],
     },
     browser: {

@@ -159,6 +159,7 @@ const ROLE_TOOLS: Record<AgentRole, string[]> = {
         // Complex-task docs: pre-approval + post-completion walkthrough
         "generate_design_docs",
         "generate_walkthrough",
+        "render_md_to_pdf",
     ],
     browser: [
         "web_search",
