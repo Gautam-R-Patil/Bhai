@@ -177,6 +177,7 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "generate_design_docs",
             "generate_walkthrough",
             "render_md_to_pdf",
+            "screen_record",
         ],
     },
     browser: {

@@ -65,6 +65,7 @@ import { codebaseQueryTool } from "./coding/codebase-query.js";
 import { designDocsTool } from "./coding/design-docs.js";
 import { edit } from "./coding/edit.js";
 import { mdToPdfTool } from "./coding/md-to-pdf.js";
+import { screenRecordTool } from "./coding/screen-record.js";
 import { fixIssue } from "./coding/fix-issue.js";
 import { gitOpTool } from "./coding/git-op.js";
 import { glob } from "./coding/glob.js";
@@ -512,6 +513,7 @@ registry.set(gitOpTool.schema.function.name, gitOpTool);
 registry.set(designDocsTool.schema.function.name, designDocsTool);
 registry.set(walkthroughTool.schema.function.name, walkthroughTool);
 registry.set(mdToPdfTool.schema.function.name, mdToPdfTool);
+registry.set(screenRecordTool.schema.function.name, screenRecordTool);
 
 // Computer use agent (desktop automation)
 registry.set(computerUseTool.schema.function.name, computerUseTool);

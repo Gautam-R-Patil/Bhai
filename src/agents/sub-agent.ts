@@ -160,6 +160,7 @@ const ROLE_TOOLS: Record<AgentRole, string[]> = {
         "generate_design_docs",
         "generate_walkthrough",
         "render_md_to_pdf",
+        "screen_record",
     ],
     browser: [
         "web_search",

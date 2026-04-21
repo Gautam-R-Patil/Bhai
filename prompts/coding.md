@@ -89,7 +89,10 @@ For any **complex** coding task — new feature, multi-file refactor, new module
 1. Call `generate_walkthrough({ task, run_commands: [...], notes: "..." })`. It reads `git log` + `git diff` and writes `WALKTHROUGH.md` under `A.T.L.A.S Files/Documents/walkthroughs/<slug>/`.
 2. Deliver to the user:
    - **Overlay**: show the walkthrough markdown inline AND call `os_screenshot` so the user sees the current UI state of whatever you built.
-   - **Telegram / WhatsApp**: render to PDF first with `render_md_to_pdf({ md_path: <walkthrough path> })`, then `send_message_on_channel` with `filePath` for the PDF, then a second message with `filePath` set to a fresh `os_screenshot` of the result. If you started a dev server, mention the URL / run command in the caption.
+   - **Telegram / WhatsApp**: render to PDF first with `render_md_to_pdf({ md_path: <walkthrough path> })`, then `send_message_on_channel` with `filePath` for the PDF, then:
+     - If the result is a single static state (page / dashboard / CLI output): a second message with `filePath` from a fresh `os_screenshot`.
+     - If the result is interactive or time-based (an animation, a form flow, a CI run finishing, a live dev-server reload): prefer `screen_record({ duration_sec: 10..20 })` so the user sees the motion. Send the `.mp4` via `send_message_on_channel` with `filePath`.
+     - If you started a dev server, mention the URL / run command in the caption.
    - **Discord / Slack / email**: attach the MD directly — PDF conversion optional.
 3. Ask the user for feedback or next steps. Don't assume done until they confirm.
 
