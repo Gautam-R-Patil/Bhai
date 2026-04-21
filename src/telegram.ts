@@ -1003,7 +1003,9 @@ ${combinedMessage}`;
         if (data.startsWith("inbox:")) {
             try {
                 const { handleTelegramInboxCallback } = await import("./proactive/inbox/chat-fallback.js");
-                const ack = await handleTelegramInboxCallback(data);
+                // Pass chatId so chat-fallback can record routing for the
+                // execution-result follow-up (Phase 6.2).
+                const ack = await handleTelegramInboxCallback(data, chatId);
                 await ctx.answerCallbackQuery({ text: ack });
             } catch (err) {
                 console.log("[TG] inbox callback failed (non-fatal):", (err as Error).message);

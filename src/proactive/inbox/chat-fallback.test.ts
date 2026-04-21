@@ -13,6 +13,8 @@ import {
     _resetChatFallbackForTests,
     _setWaitingForTests,
     _peekWaitingForTests,
+    _peekTelegramRoutingForTests,
+    _peekWhatsAppRoutingForTests,
 } from "./chat-fallback.js";
 import type { ProactiveIntent } from "../intent.js";
 
@@ -163,5 +165,65 @@ describe("chat-fallback — WhatsApp replies", () => {
         const r = await handleWhatsAppInboxReply("hey what's up", jid);
         expect(r.handled).toBe(false);
         expect(_peekWaitingForTests(jid)).toBeDefined();
+    });
+});
+
+describe("chat-fallback — execution result follow-up", () => {
+    beforeEach(() => _resetChatFallbackForTests());
+    afterEach(() => setInboxManager(null));
+
+    it("approving via Telegram callback records the chatId routing", async () => {
+        const manager = buildInbox();
+        manager.enqueue(reviewIntent("e1"), "msg");
+        await handleTelegramInboxCallback("inbox:approve:e1", 12345);
+        expect(_peekTelegramRoutingForTests("e1")?.chatId).toBe(12345);
+    });
+
+    it("Telegram callback without chatId does not record routing (no follow-up possible)", async () => {
+        const manager = buildInbox();
+        manager.enqueue(reviewIntent("e2"), "msg");
+        await handleTelegramInboxCallback("inbox:approve:e2");
+        expect(_peekTelegramRoutingForTests("e2")).toBeUndefined();
+    });
+
+    it("Telegram reject does not set routing (no follow-up on skip)", async () => {
+        const manager = buildInbox();
+        manager.enqueue(reviewIntent("e3"), "msg");
+        await handleTelegramInboxCallback("inbox:reject:e3", 12345);
+        expect(_peekTelegramRoutingForTests("e3")).toBeUndefined();
+    });
+
+    it("Telegram defer does not set routing", async () => {
+        const manager = buildInbox();
+        manager.enqueue(reviewIntent("e4"), "msg");
+        await handleTelegramInboxCallback("inbox:defer:e4:180", 12345);
+        expect(_peekTelegramRoutingForTests("e4")).toBeUndefined();
+    });
+
+    it("WhatsApp approve records the jid routing", async () => {
+        const manager = buildInbox();
+        const jid = "alice@s.whatsapp.net";
+        manager.enqueue(reviewIntent("w-approve"), "msg");
+        _setWaitingForTests(jid, "w-approve");
+        await handleWhatsAppInboxReply("1", jid);
+        expect(_peekWhatsAppRoutingForTests("w-approve")?.jid).toBe(jid);
+    });
+
+    it("WhatsApp reject does not set routing", async () => {
+        const manager = buildInbox();
+        const jid = "alice@s.whatsapp.net";
+        manager.enqueue(reviewIntent("w-reject"), "msg");
+        _setWaitingForTests(jid, "w-reject");
+        await handleWhatsAppInboxReply("3", jid);
+        expect(_peekWhatsAppRoutingForTests("w-reject")).toBeUndefined();
+    });
+
+    it("WhatsApp defer does not set routing", async () => {
+        const manager = buildInbox();
+        const jid = "alice@s.whatsapp.net";
+        manager.enqueue(reviewIntent("w-defer"), "msg");
+        _setWaitingForTests(jid, "w-defer");
+        await handleWhatsAppInboxReply("2", jid);
+        expect(_peekWhatsAppRoutingForTests("w-defer")).toBeUndefined();
     });
 });

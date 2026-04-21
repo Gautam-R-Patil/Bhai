@@ -21,6 +21,12 @@ type WaitingReply = {
 
 const waitingByJid = new Map<string, WaitingReply>();
 
+// Task 6.2: Track the chat route an approval arrived on so we can send a
+// follow-up when execution finishes. Only set on approve (not defer/reject),
+// since only approve kicks off execution. Keyed by inbox item id.
+const telegramResultRouting = new Map<string, { chatId: number }>();
+const whatsappResultRouting = new Map<string, { jid: string }>();
+
 function getPrimaryChannel(): "telegram" | "whatsapp" {
     const p = (process.env.PRIMARY_CHANNEL || "telegram").toLowerCase();
     if (p === "whatsapp") return "whatsapp";
@@ -47,22 +53,39 @@ export function startInboxChatFallback(): void {
     if (started) return;
     started = true;
     unsub = globalInboxBus.subscribe((ev) => {
-        if (ev.kind !== "added") return;
-        void (async () => {
-            try {
-                // Don't intercept if the overlay is live — Task 4.2 handles that path.
-                if (await isOverlayActiveSafely()) {
-                    debugProactive("inbox_fallback_skipped_overlay_live", { id: ev.item.intent.id });
-                    return;
+        if (ev.kind === "added") {
+            void (async () => {
+                try {
+                    // Don't intercept if the overlay is live — Task 4.2 handles that path.
+                    if (await isOverlayActiveSafely()) {
+                        debugProactive("inbox_fallback_skipped_overlay_live", { id: ev.item.intent.id });
+                        return;
+                    }
+                    await dispatchToPrimary(ev.item);
+                } catch (err) {
+                    debugProactive("inbox_fallback_dispatch_failed", {
+                        id: ev.item.intent.id,
+                        err: (err as Error).message,
+                    });
                 }
-                await dispatchToPrimary(ev.item);
-            } catch (err) {
-                debugProactive("inbox_fallback_dispatch_failed", {
-                    id: ev.item.intent.id,
-                    err: (err as Error).message,
-                });
-            }
-        })();
+            })();
+            return;
+        }
+        if (ev.kind === "updated") {
+            // Task 6.2: send a follow-up message once execution finishes on the
+            // same channel the approval came from. No-op if no routing recorded.
+            void (async () => {
+                try {
+                    await handleExecutionFinish(ev.item);
+                } catch (err) {
+                    debugProactive("inbox_fallback_result_dispatch_failed", {
+                        id: ev.item.intent.id,
+                        err: (err as Error).message,
+                    });
+                }
+            })();
+            return;
+        }
     });
 }
 
@@ -74,6 +97,8 @@ export function stopInboxChatFallback(): void {
     }
     started = false;
     waitingByJid.clear();
+    telegramResultRouting.clear();
+    whatsappResultRouting.clear();
 }
 
 /** Exported for tests: dispatch a single item to the primary channel. */
@@ -136,8 +161,10 @@ async function dispatchWhatsApp(item: InboxItem): Promise<void> {
 // ── Inbound handlers ──────────────────────────────────────────
 
 /** Telegram callback_data dispatch entrypoint. Returns a short ack for
- *  `ctx.answerCallbackQuery({ text: ... })`. */
-export async function handleTelegramInboxCallback(data: string): Promise<string> {
+ *  `ctx.answerCallbackQuery({ text: ... })`. When `chatId` is provided and
+ *  the action is `approve`, the chatId is recorded so the follow-up execution
+ *  result can be sent back to the same chat (Task 6.2). */
+export async function handleTelegramInboxCallback(data: string, chatId?: number): Promise<string> {
     const inbox = getInboxManager();
     if (!inbox) return "inbox not available";
 
@@ -147,7 +174,11 @@ export async function handleTelegramInboxCallback(data: string): Promise<string>
     if (!id) return "bad callback";
 
     if (action === "approve") {
+        // Record routing BEFORE approve() — approve() kicks off execution
+        // synchronously and can emit updated events before we return.
+        if (chatId != null) telegramResultRouting.set(id, { chatId });
         const updated = inbox.approve(id);
+        if (!updated) telegramResultRouting.delete(id);
         return updated ? "approved" : "not found";
     }
     if (action === "defer") {
@@ -187,7 +218,11 @@ export async function handleWhatsAppInboxReply(
 
     // Strict matches only — avoid consuming regular chat messages.
     if (lower === "1" || lower === "approve" || lower === "yes" || lower === "ok") {
-        inbox.approve(waiting.inboxId);
+        // Record routing BEFORE approve() — approve() kicks off execution
+        // synchronously and can emit updated events before we return. (Task 6.2)
+        whatsappResultRouting.set(waiting.inboxId, { jid: fromJid });
+        const updated = inbox.approve(waiting.inboxId);
+        if (!updated) whatsappResultRouting.delete(waiting.inboxId);
         waitingByJid.delete(fromJid);
         return { handled: true, ack: "approved." };
     }
@@ -206,10 +241,59 @@ export async function handleWhatsAppInboxReply(
     return { handled: false };
 }
 
+// ── Execution-result follow-up (Task 6.2) ───────────────────────
+
+/** Handle a bus "updated" event. If the item just hit a terminal execution
+ *  state (done | failed) AND we have recorded chat routing for the approval,
+ *  send a follow-up message to the originating channel. Best-effort: errors
+ *  are logged via `debugProactive` and never thrown back into the bus. */
+async function handleExecutionFinish(item: InboxItem): Promise<void> {
+    // Only act on terminal execution states. idle/running/undefined skip.
+    const execStatus = item.executionStatus;
+    if (execStatus !== "done" && execStatus !== "failed") return;
+
+    const id = item.intent.id;
+
+    // Telegram path
+    const tgRoute = telegramResultRouting.get(id);
+    if (tgRoute) {
+        telegramResultRouting.delete(id);
+        try {
+            const { getTelegramBot } = await import("../../telegram.js");
+            const bot = getTelegramBot();
+            if (bot) {
+                const emoji = execStatus === "done" ? "✓" : "⚠️";
+                const body = `${emoji} ${item.executionResult ?? (execStatus === "done" ? "done." : "failed.")}`;
+                await bot.api.sendMessage(tgRoute.chatId, body);
+                debugProactive("inbox_fallback_tg_result_sent", { id, status: execStatus });
+            }
+        } catch (err) {
+            debugProactive("inbox_fallback_tg_result_err", { id, err: (err as Error).message });
+        }
+    }
+
+    // WhatsApp path
+    const waRoute = whatsappResultRouting.get(id);
+    if (waRoute) {
+        whatsappResultRouting.delete(id);
+        try {
+            const { sendWhatsAppProactiveMessage } = await import("../../whatsapp.js");
+            const emoji = execStatus === "done" ? "✓" : "⚠️";
+            const body = `${emoji} ${item.executionResult ?? (execStatus === "done" ? "done." : "failed.")}`;
+            await sendWhatsAppProactiveMessage(body);
+            debugProactive("inbox_fallback_wa_result_sent", { id, status: execStatus });
+        } catch (err) {
+            debugProactive("inbox_fallback_wa_result_err", { id, err: (err as Error).message });
+        }
+    }
+}
+
 // ── Test helpers ──────────────────────────────────────────────
 
 export function _resetChatFallbackForTests(): void {
     waitingByJid.clear();
+    telegramResultRouting.clear();
+    whatsappResultRouting.clear();
     started = false;
     if (unsub) {
         unsub();
@@ -223,4 +307,12 @@ export function _peekWaitingForTests(fromJid: string): WaitingReply | undefined 
 
 export function _setWaitingForTests(fromJid: string, inboxId: string): void {
     waitingByJid.set(fromJid, { inboxId, sentAt: Date.now() });
+}
+
+export function _peekTelegramRoutingForTests(id: string): { chatId: number } | undefined {
+    return telegramResultRouting.get(id);
+}
+
+export function _peekWhatsAppRoutingForTests(id: string): { jid: string } | undefined {
+    return whatsappResultRouting.get(id);
 }
