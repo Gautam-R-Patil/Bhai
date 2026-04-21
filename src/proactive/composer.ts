@@ -23,6 +23,7 @@ const BANNED_PHRASES = [
     "a quick thought",
     "might be good to",
     "worth checking",
+    "might be useful",
 ];
 
 export async function compose(
