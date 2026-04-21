@@ -15,6 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import { getPathBlockedReason, isPathAllowed, isProtectedPath } from "../../security/allowlist.js";
 import { auditLog } from "../../security/audit-log.js";
+import { checkWritePathInApprovalMode } from "../../agents/plan-mode.js";
 import { logToolAction } from "../../utils/debug-log.js";
 import type { ToolDefinition } from "../get-current-time.js";
 import { hashContent, hasRegistryEntry, recordRead, wasRead } from "./read-registry.js";
@@ -65,6 +66,10 @@ export const write: ToolDefinition = {
             return JSON.stringify({
                 error: `Writing to "${filePath}" is not allowed — this path is part of the bot's own codebase and is write-protected.`,
             });
+        }
+        const approvalGate = checkWritePathInApprovalMode(filePath);
+        if (!approvalGate.allowed) {
+            return JSON.stringify({ error: approvalGate.reason });
         }
 
         const fileExists = existsSync(filePath);

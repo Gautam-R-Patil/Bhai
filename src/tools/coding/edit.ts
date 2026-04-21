@@ -13,6 +13,7 @@
 
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { checkWritePathInApprovalMode } from "../../agents/plan-mode.js";
 import { getPathBlockedReason, isPathAllowed, isProtectedPath } from "../../security/allowlist.js";
 import { auditLog } from "../../security/audit-log.js";
 import { logToolAction } from "../../utils/debug-log.js";
@@ -143,6 +144,11 @@ export const edit: ToolDefinition = {
             return JSON.stringify({
                 error: `Editing "${filePath}" is not allowed — this path is part of the bot's own codebase and is write-protected.`,
             });
+        }
+        // Awaiting-approval mode: only the current design-docs dir is writable.
+        const approvalGate = checkWritePathInApprovalMode(filePath);
+        if (!approvalGate.allowed) {
+            return JSON.stringify({ error: approvalGate.reason });
         }
 
         let stats;

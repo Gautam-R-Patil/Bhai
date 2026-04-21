@@ -21,6 +21,7 @@
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { approveAndExit, enterAwaitingApproval, isAwaitingApproval } from "../../agents/plan-mode.js";
 import { getConvexSiteUrl } from "../../config/keys.js";
 import { getWorkspaceSubdir } from "../../config/paths.js";
 import { encryptedFetch } from "../../crypto-transport.js";
@@ -183,13 +184,72 @@ export const designDocsTool: ToolDefinition = {
             return JSON.stringify({ success: false, error: `write failed: ${(err as Error).message}` });
         }
         const result: DesignDocResult = { slug, dir, files };
+
+        // Park the agent in awaiting_approval mode. The filter inside the
+        // main agent loop will strip code-mutation tools until the user
+        // approves; only the design docs themselves can be edited.
+        enterAwaitingApproval(task, dir, "auto");
+
         return JSON.stringify({
             success: true,
             ...result,
             approval_hint:
-                "Attach these three files to the current channel (use channel sender with filePath for each) " +
-                "and ask the user 'approve, or what changes?' Do NOT start implementation until the user " +
-                "explicitly approves or revises.",
+                "Agent is now in AWAITING_APPROVAL mode — your tool access is restricted to the design docs dir and channel senders. " +
+                "Deliver all three files to the user (render_md_to_pdf first for TG/WA) and ask 'approve, or what changes?' " +
+                "When the user explicitly approves, call approve_design_docs to exit this mode and begin implementation. " +
+                "If the user asks for revisions, edit the PRD/TECHNICAL/ARCHITECTURE files in place or call generate_design_docs again.",
+        });
+    },
+};
+
+// ── approve_design_docs ────────────────────────
+// Explicit exit from awaiting_approval → act. The agent calls this
+// only after the user has clearly said "approved / yes / proceed /
+// looks good / go ahead" in the current channel. No silent/implicit
+// transitions.
+export const approveDesignDocsTool: ToolDefinition = {
+    schema: {
+        type: "function",
+        function: {
+            name: "approve_design_docs",
+            description:
+                "Record that the user has approved the design docs and transition out of AWAITING_APPROVAL " +
+                "back to act mode. Only call this when the user's most recent message clearly expresses " +
+                "approval — do not invent approval. The tool refuses if no approval state is active.",
+            parameters: {
+                type: "object",
+                properties: {
+                    user_quote: {
+                        type: "string",
+                        description:
+                            "The short phrase from the user that expresses approval (e.g. 'yes go ahead', 'looks good, proceed'). Required for auditability.",
+                    },
+                },
+                required: ["user_quote"],
+            },
+        },
+    },
+    async handler(input) {
+        const quote = typeof input.user_quote === "string" ? input.user_quote.trim() : "";
+        if (!quote) {
+            return JSON.stringify({
+                success: false,
+                error: "user_quote is required — paste the user's own words expressing approval.",
+            });
+        }
+        if (!isAwaitingApproval()) {
+            return JSON.stringify({
+                success: false,
+                error: "Not in awaiting_approval mode — nothing to approve. Either design docs haven't been generated yet, or approval already landed.",
+            });
+        }
+        auditLog("approve_design_docs", { user_quote: quote.slice(0, 200) });
+        logToolAction({ tool: "approve_design_docs", action: `approved via user message: ${quote.slice(0, 80)}` });
+        approveAndExit();
+        return JSON.stringify({
+            success: true,
+            mode: "act",
+            hint: "Approval recorded. Proceed to implementation using the PRD + technical + architecture docs as ground truth.",
         });
     },
 };

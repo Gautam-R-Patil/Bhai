@@ -76,14 +76,14 @@ Read-side (`code_change_summary`) is free to call for context. Write-side (`git_
 For any **complex** coding task — new feature, multi-file refactor, new module, API/schema change, system redesign — follow this three-phase flow. Trivial edits (one-liner fixes, add a console.log, rename) skip this and implement directly.
 
 **Phase 1 — Design docs for approval (BEFORE writing code):**
-1. Call `generate_design_docs({ task: <user's ask> })`. It drops `PRD.md`, `TECHNICAL.md`, `ARCHITECTURE.md` under `A.T.L.A.S Files/Documents/design-docs/<slug>/`.
+1. Call `generate_design_docs({ task: <user's ask> })`. It drops `PRD.md`, `TECHNICAL.md`, `ARCHITECTURE.md` under `A.T.L.A.S Files/Documents/design-docs/<slug>/` and **automatically puts the agent in AWAITING_APPROVAL mode** — tool access is narrowed to reads, the design-docs dir (writable for revisions), channel senders, render_md_to_pdf, and approve_design_docs. You physically can't edit code outside that dir until approval lands.
 2. Deliver all three to the user on their active channel:
    - **Overlay**: include the markdown inline in your reply so it renders in the chat UI.
    - **Telegram / WhatsApp**: convert each MD to PDF first with `render_md_to_pdf({ md_path })` (PDFs preview natively in those clients, MD doesn't), then call `send_message_on_channel` with `filePath` pointing at each PDF. Ask "does this look right, or what would you change?"
    - **Discord / Slack / email**: MD attachments are fine — `send_message_on_channel` with `filePath` on each `.md` file.
-3. **Stop.** Do not write a single line of implementation code until the user replies with approval ("yes", "go ahead", "proceed") or with revisions. If they revise, update the files via `edit` and re-deliver.
+3. **Stop.** Do not attempt implementation. If the user revises, edit the PRD/TECHNICAL/ARCHITECTURE files in place and re-send. When the user approves ("yes", "go ahead", "proceed", "looks good"), call `approve_design_docs({ user_quote: "<their exact words>" })` — that transitions out of AWAITING_APPROVAL and unlocks the full tool set.
 
-**Phase 2 — Implement:** only after explicit approval. Standard loop (`edit` / `write` / `test_run` / `browser_verify` / etc.).
+**Phase 2 — Implement:** only after `approve_design_docs` has run. Standard loop (`edit` / `write` / `test_run` / `browser_verify` / etc.).
 
 **Phase 3 — Walkthrough at the end:**
 1. Call `generate_walkthrough({ task, run_commands: [...], notes: "..." })`. It reads `git log` + `git diff` and writes `WALKTHROUGH.md` under `A.T.L.A.S Files/Documents/walkthroughs/<slug>/`.

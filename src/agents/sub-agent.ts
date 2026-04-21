@@ -158,6 +158,7 @@ const ROLE_TOOLS: Record<AgentRole, string[]> = {
         "git_op",
         // Complex-task docs: pre-approval + post-completion walkthrough
         "generate_design_docs",
+        "approve_design_docs",
         "generate_walkthrough",
         "render_md_to_pdf",
         "screen_record",

@@ -18,8 +18,10 @@ import { listActiveLongTasks } from "./agents/long-task.js";
 import { assess, createMetacognitionState, updateSignals } from "./agents/metacognition.js";
 import {
     enterPlanMode,
+    filterToolsForAwaitingApproval,
     filterToolsForPlanMode,
     filterToolsForSpecMode,
+    isAwaitingApproval,
     isPlanMode,
     isSpecMode,
     planModeReminderBody,
@@ -1817,23 +1819,26 @@ PLAN:`,
         }
 
         // ── Plan/Spec Mode Gating ──
-        // When plan or spec mode is active, filter the tool schema and inject
-        // a reminder describing the current mode's constraints. Spec mode
-        // (Phase 4I) allows plan-mode reads + write to the spec file only.
+        // When plan / spec / awaiting_approval mode is active, filter the
+        // tool schema and inject a reminder describing the current mode's
+        // constraints. Spec mode (Phase 4I) allows plan reads + write to
+        // the spec file only. Awaiting-approval (design-docs flow) allows
+        // plan reads + write scoped to the design-docs dir + channel
+        // senders + approve_design_docs exit.
         // Fail-open: any exception leaves finalTools / iterationMessages untouched.
         try {
             if (isSpecMode()) {
                 finalTools = filterToolsForSpecMode(finalTools);
                 const reminderBody = planModeReminderBody();
-                if (reminderBody) {
-                    iterationMessages = injectSystemReminder(iterationMessages, reminderBody);
-                }
+                if (reminderBody) iterationMessages = injectSystemReminder(iterationMessages, reminderBody);
+            } else if (isAwaitingApproval()) {
+                finalTools = filterToolsForAwaitingApproval(finalTools);
+                const reminderBody = planModeReminderBody();
+                if (reminderBody) iterationMessages = injectSystemReminder(iterationMessages, reminderBody);
             } else if (isPlanMode()) {
                 finalTools = filterToolsForPlanMode(finalTools);
                 const reminderBody = planModeReminderBody();
-                if (reminderBody) {
-                    iterationMessages = injectSystemReminder(iterationMessages, reminderBody);
-                }
+                if (reminderBody) iterationMessages = injectSystemReminder(iterationMessages, reminderBody);
             }
         } catch (err) {
             console.warn(`[AGENT] plan-mode gating skipped: ${(err as Error).message}`);

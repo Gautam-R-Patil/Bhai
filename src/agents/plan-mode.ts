@@ -31,6 +31,14 @@ export type PlanModeState =
         task: string;
         specPath: string;
         source: "user" | "auto";
+    }
+    | {
+        mode: "awaiting_approval";
+        enteredAt: number;
+        task: string;
+        /** Directory containing PRD.md / TECHNICAL.md / ARCHITECTURE.md */
+        designDocsDir: string;
+        source: "user" | "auto";
     };
 
 let state: PlanModeState = { mode: "act" };
@@ -59,6 +67,10 @@ export function isSpecMode(): boolean {
     return state.mode === "spec";
 }
 
+export function isAwaitingApproval(): boolean {
+    return state.mode === "awaiting_approval";
+}
+
 export function getPlanModeState(): PlanModeState {
     return state;
 }
@@ -81,6 +93,23 @@ export function enterSpecMode(task: string, specPath: string, source: "user" | "
 /** Transition from spec → plan once the spec is finalized. */
 export function specToPlan(reason: string, source: "user" | "auto" = "auto"): void {
     state = { mode: "plan", enteredAt: Date.now(), reason, source };
+    emit();
+}
+
+/**
+ * Enter "awaiting approval" after generate_design_docs writes the
+ * PRD/technical/architecture trio. The agent can still read the repo
+ * and edit the design docs themselves (for revisions the user asks
+ * for) but cannot touch any other code until approved.
+ */
+export function enterAwaitingApproval(task: string, designDocsDir: string, source: "user" | "auto" = "auto"): void {
+    state = { mode: "awaiting_approval", enteredAt: Date.now(), task, designDocsDir, source };
+    emit();
+}
+
+/** User approved the design docs — transition to act mode so the agent can implement. */
+export function approveAndExit(): void {
+    state = { mode: "act" };
     emit();
 }
 
@@ -168,6 +197,37 @@ export function filterToolsForSpecMode<T extends { function: { name: string } }>
     return tools.filter((t) => SPEC_MODE_ALLOWED_TOOLS.has(t.function.name));
 }
 
+// ── Awaiting-Approval Allowlist ───────────────
+// After generate_design_docs writes the PRD/TECHNICAL/ARCHITECTURE
+// files, the agent is parked here until the user approves. Permitted
+// tools are the full read-only set + edit/write (path-scoped to the
+// design-docs dir via a runtime check in isToolAllowedInCurrentMode),
+// plus the three tools that let the agent send the docs to the user
+// and accept an approval signal:
+//
+//   - send_message_on_channel / send_push_notification — deliver docs
+//   - render_md_to_pdf — TG/WA conversion before sending
+//   - approve_design_docs — the explicit "user said yes" exit
+//   - generate_design_docs — regenerate from scratch if user rejects
+//   - generate_walkthrough is NOT here — that's Phase 3 (post-implement)
+export const AWAITING_APPROVAL_ALLOWED_TOOLS: ReadonlySet<string> = new Set([
+    ...PLAN_MODE_ALLOWED_TOOLS,
+    "edit",
+    "write",
+    "append_file",
+    "render_md_to_pdf",
+    "send_message_on_channel",
+    "send_push_notification",
+    "approve_design_docs",
+    "generate_design_docs",
+]);
+
+export function filterToolsForAwaitingApproval<T extends { function: { name: string } }>(
+    tools: T[],
+): T[] {
+    return tools.filter((t) => AWAITING_APPROVAL_ALLOWED_TOOLS.has(t.function.name));
+}
+
 /**
  * Is this a tool the agent can call right now, given the current mode?
  * Used as a last-resort safety check in the tool executor.
@@ -175,7 +235,29 @@ export function filterToolsForSpecMode<T extends { function: { name: string } }>
 export function isToolAllowedInCurrentMode(toolName: string): boolean {
     if (state.mode === "act") return true;
     if (state.mode === "spec") return SPEC_MODE_ALLOWED_TOOLS.has(toolName);
+    if (state.mode === "awaiting_approval") return AWAITING_APPROVAL_ALLOWED_TOOLS.has(toolName);
     return PLAN_MODE_ALLOWED_TOOLS.has(toolName);
+}
+
+/**
+ * Runtime path gate for edit/write while in awaiting_approval mode —
+ * only files under the current designDocsDir may be modified. Other
+ * states don't need this (plan-mode has no write tools, spec-mode
+ * has its own path check in finalize_spec, act mode is unrestricted).
+ *
+ * Returns { allowed: true } or { allowed: false, reason }.
+ */
+export function checkWritePathInApprovalMode(absPath: string): { allowed: boolean; reason?: string } {
+    if (state.mode !== "awaiting_approval") return { allowed: true };
+    const dir = state.designDocsDir;
+    const sep = "/";
+    const normalized = absPath.replace(/\\/g, sep);
+    const root = dir.replace(/\\/g, sep);
+    if (normalized === root || normalized.startsWith(root + sep)) return { allowed: true };
+    return {
+        allowed: false,
+        reason: `While awaiting design-doc approval, writes are restricted to ${dir}. Path ${absPath} is outside that directory.`,
+    };
 }
 
 /**
@@ -194,6 +276,14 @@ export function planModeReminderBody(): string {
             `Spec mode is active. Task: ${state.task}.`,
             `Write the specification to ${state.specPath}. It must include: problem statement, acceptance criteria (bullet list), test scenarios, and out-of-scope notes.`,
             "Call finalize_spec when the document is complete — that transitions to plan mode, where you can outline the implementation.",
+        ].join(" ");
+    }
+    if (state.mode === "awaiting_approval") {
+        return [
+            `Awaiting approval. Task: ${state.task}.`,
+            `Design docs are written to ${state.designDocsDir}. You have NOT been given permission to implement yet.`,
+            "Your next step is to deliver the docs to the user on the active channel and wait for their reply. Only when the user approves (yes / go ahead / looks good / proceed) do you call approve_design_docs to exit this mode and start implementation.",
+            "If the user asks for revisions, edit the PRD/TECHNICAL/ARCHITECTURE files in place and re-send, or call generate_design_docs again. Do NOT touch any other files.",
         ].join(" ");
     }
     return "";
