@@ -245,6 +245,7 @@ export {
     setSwarmProgress,
 };
 export { setBrandAuditLLM } from "./brand-audit.js";
+export { setScriptWriterLLM } from "../marketing/script-writer.js";
 
 // ── Tool Registry ─────────────────────────────
 
