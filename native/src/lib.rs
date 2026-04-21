@@ -51,6 +51,9 @@ mod skill_scorer;
 mod info_gain;
 mod citation_graph;
 mod chrome_bridge;
+mod proactive_intent;
+mod proactive_scheduler;
+mod proactive_monitor;
 
 use napi_derive::napi;
 
@@ -102,6 +105,9 @@ pub use skill_scorer::*;
 pub use info_gain::*;
 pub use citation_graph::*;
 pub use chrome_bridge::*;
+pub use proactive_intent::*;
+pub use proactive_scheduler::*;
+pub use proactive_monitor::*;
 
 /// Get the native module version
 #[napi]
