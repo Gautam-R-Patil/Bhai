@@ -312,3 +312,43 @@ describe("tryProactiveCommand — monitor CRUD", () => {
         expect(r4).toBeNull();
     });
 });
+
+describe("proactive stats command", () => {
+    afterEach(async () => {
+        const { setTelemetry } = await import("./telemetry.js");
+        setTelemetry(null);
+    });
+
+    it("returns 'not initialized' when telemetry is null", async () => {
+        const r = await tryProactiveCommand("proactive stats", { configPath: "x" });
+        expect(r?.reply).toMatch(/not initialized/i);
+    });
+
+    it("returns 'no activity' when table empty", async () => {
+        const { TelemetryLogger, setTelemetry } = await import("./telemetry.js");
+        const BS = (await import("better-sqlite3")).default;
+        const { wrapDatabase, initProactiveSchema } = await import("../memory/sqlite.js");
+        const raw = new BS(":memory:");
+        initProactiveSchema(wrapDatabase(raw));
+        setTelemetry(new TelemetryLogger(raw));
+        const r = await tryProactiveCommand("proactive stats", { configPath: "x" });
+        expect(r?.reply).toMatch(/no proactive activity/i);
+    });
+
+    it("returns per-source/channel breakdown when rows exist", async () => {
+        const { TelemetryLogger, setTelemetry } = await import("./telemetry.js");
+        const BS = (await import("better-sqlite3")).default;
+        const { wrapDatabase, initProactiveSchema } = await import("../memory/sqlite.js");
+        const raw = new BS(":memory:");
+        initProactiveSchema(wrapDatabase(raw));
+        const tl = new TelemetryLogger(raw);
+        setTelemetry(tl);
+
+        tl.log({ intentId: "a", source: "memory_anticipation", channel: "telegram", decision: "enqueued" });
+        tl.log({ intentId: "a", source: "memory_anticipation", channel: "telegram", decision: "dispatched" });
+
+        const r = await tryProactiveCommand("proactive stats", { configPath: "x" });
+        expect(r?.reply).toMatch(/memory_anticipation\/telegram/);
+        expect(r?.reply).toMatch(/1 dispatched/i);
+    });
+});

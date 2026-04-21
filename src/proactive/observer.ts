@@ -29,6 +29,7 @@ import * as native from "../../native/index.js";
 import { SourceRegistry } from "./sources/registry.js";
 import type { IntentSourceModule } from "./sources/source.js";
 import { getInboxManager } from "./inbox/manager.js";
+import { getTelemetry, type ProactiveOutcome } from "./telemetry.js";
 
 const SOURCE_WEIGHTS: Record<IntentSource, number> = {
     latent_topic_monitor: 1.5,
@@ -93,23 +94,54 @@ export class Observer {
     }
 
     enqueue(intent: ProactiveIntent): boolean {
+        // Pre-channel-known best-effort channel tag for early rejection telemetry.
+        const prechan: string = intent.channelPreference === "any" ? "any" : intent.channelPreference;
+
         if (isProactiveDisabled()) {
             debugProactive("observer_enqueue_suppressed_global", { id: intent.id });
+            this.telemetry().log({
+                intentId: intent.id,
+                source: intent.source,
+                channel: prechan,
+                decision: "dropped",
+                dropReason: "disabled_global",
+            });
             return false;
         }
         if (isSourceDisabled(intent.source)) {
             debugProactive("observer_enqueue_source_disabled", { id: intent.id, source: intent.source });
+            this.telemetry().log({
+                intentId: intent.id,
+                source: intent.source,
+                channel: prechan,
+                decision: "dropped",
+                dropReason: "source_disabled",
+            });
             return false;
         }
         const v = validateIntent(intent);
         if (!v.ok) {
             debugProactive("observer_enqueue_invalid", { id: intent.id, error: v.error });
+            this.telemetry().log({
+                intentId: intent.id,
+                source: intent.source,
+                channel: prechan,
+                decision: "dropped",
+                dropReason: "invalid",
+            });
             return false;
         }
 
         const channel: Channel = intent.channelPreference === "any" ? "telegram" : intent.channelPreference;
         if (isChannelDisabled(channel)) {
             debugProactive("observer_enqueue_channel_disabled", { id: intent.id, channel });
+            this.telemetry().log({
+                intentId: intent.id,
+                source: intent.source,
+                channel,
+                decision: "dropped",
+                dropReason: "channel_disabled",
+            });
             return false;
         }
 
@@ -134,9 +166,28 @@ export class Observer {
         debugProactive("observer_enqueued", { id: intent.id, channel, res });
         if (res !== "enqueued") {
             this.intentsById.delete(intent.id);
+            this.telemetry().log({
+                intentId: intent.id,
+                source: intent.source,
+                channel,
+                decision: "dropped",
+                dropReason: String(res),  // "dedup" | "no_posture_configured" | etc.
+            });
             return false;
         }
+        this.telemetry().log({
+            intentId: intent.id,
+            source: intent.source,
+            channel,
+            decision: "enqueued",
+        });
         return true;
+    }
+
+    /** Lazy telemetry fetch — returns a no-op logger when telemetry isn't initialized. */
+    private telemetry(): { log: (o: ProactiveOutcome) => void } {
+        const tl = getTelemetry();
+        return tl ?? { log: () => {} };
     }
 
     onBoundary(e: BoundaryEvent): void {
@@ -172,15 +223,38 @@ export class Observer {
         if (!r) return;
         for (const d of r.dropped) {
             debugProactive("observer_dropped", { id: d.id, reason: d.reason });
+            const droppedIntent = this.intentsById.get(d.id);
+            this.telemetry().log({
+                intentId: d.id,
+                source: droppedIntent?.source ?? "unknown",
+                channel,
+                decision: "dropped",
+                dropReason: d.reason,
+            });
             this.intentsById.delete(d.id);
         }
         for (const id of r.released) {
             const intent = this.intentsById.get(id);
             if (!intent) continue;
+            this.telemetry().log({
+                intentId: intent.id,
+                source: intent.source,
+                channel,
+                decision: "released",
+            });
             const recent = this.recentSendsByChannel.get(channel) ?? [];
             try {
                 const composed = await compose(intent, channel, { tone: "warm" }, recent, { llm: this.deps.llm });
-                if (!composed) continue;
+                if (!composed) {
+                    this.telemetry().log({
+                        intentId: intent.id,
+                        source: intent.source,
+                        channel,
+                        decision: "dropped",
+                        dropReason: "compose_failed",
+                    });
+                    continue;
+                }
 
                 // Phase 4 (Task 4.2): review-mode intents go to the inbox surface,
                 // NOT to the chat channel — they require user approval first.
@@ -189,6 +263,15 @@ export class Observer {
                     if (inbox) {
                         inbox.enqueue(intent, composed.text);
                         debugProactive("observer_routed_to_inbox", { id: intent.id });
+                        // Inbox-routed dispatch: log under "overlay" as the
+                        // effective channel where the user sees the prompt.
+                        this.telemetry().log({
+                            intentId: intent.id,
+                            source: intent.source,
+                            channel: "overlay",
+                            decision: "dispatched",
+                            dispatchedAt: Date.now(),
+                        });
                         // Intent ownership transferred to the inbox; skip dispatch and
                         // do NOT update recentSends (no chat message was sent).
                         continue;
@@ -199,10 +282,24 @@ export class Observer {
                 }
 
                 await dispatchProactiveMessage(channel, composed.text, composed.modeTag);
+                this.telemetry().log({
+                    intentId: intent.id,
+                    source: intent.source,
+                    channel,
+                    decision: "dispatched",
+                    dispatchedAt: Date.now(),
+                });
                 const updated = [composed.text, ...recent].slice(0, RECENT_SENDS_PER_CHANNEL);
                 this.recentSendsByChannel.set(channel, updated);
             } catch (err) {
                 debugProactive("observer_dispatch_failed", { id, channel, err: (err as Error).message });
+                this.telemetry().log({
+                    intentId: intent.id,
+                    source: intent.source,
+                    channel,
+                    decision: "dropped",
+                    dropReason: "dispatch_failed",
+                });
             } finally {
                 this.intentsById.delete(id);
             }

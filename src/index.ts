@@ -552,6 +552,19 @@ async function boot() {
             setObserver(obs);
             console.log("💓 Proactive Observer started (V2 scheduler)");
 
+            // ── Telemetry (Phase 5.2) ──
+            try {
+                const { getRawDb } = await import("./memory/sqlite.js");
+                const { TelemetryLogger, setTelemetry } = await import("./proactive/telemetry.js");
+                const raw = getRawDb();
+                if (raw) {
+                    setTelemetry(new TelemetryLogger(raw));
+                    console.log("💓 Proactive telemetry enabled");
+                }
+            } catch (err) {
+                console.log("[BOOT] telemetry init failed (non-fatal):", (err as Error).message);
+            }
+
             // ── Initialize InboxManager (Phase 4.1/4.2) ──
             try {
                 const { getRawDb } = await import("./memory/sqlite.js");

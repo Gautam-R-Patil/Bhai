@@ -102,6 +102,31 @@ export async function tryProactiveCommand(
         return { reply: `Got it — ${ch} is now on ${preset} posture.` };
     }
 
+    // `proactive stats` — telemetry rollup (Phase 5.2). Must appear BEFORE
+    // `proactive status` so the more specific pattern wins (neither regex
+    // matches the other's text, but keeping the order consistent with the
+    // spec avoids future regressions if the patterns loosen).
+    if (/^(atlas,?\s+)?proactive\s+stats$/.test(lower)) {
+        // Lazy-import telemetry so this command is callable in tests without deps.
+        const { getTelemetry } = await import("./telemetry.js");
+        const tl = getTelemetry();
+        if (!tl) {
+            return { reply: "Telemetry not initialized — stats unavailable." };
+        }
+        const since = Date.now() - 7 * 86_400_000;  // 7 days
+        const stats = tl.statsBySourceChannel(since);
+        if (stats.length === 0) {
+            return { reply: "No proactive activity in the last 7 days." };
+        }
+        const lines = ["Proactive stats (last 7d):"];
+        for (const s of stats) {
+            const dispatched = s.dispatched;
+            const dropPct = Math.round(s.dropRate * 100);
+            lines.push(`- ${s.source}/${s.channel}: ${dispatched} dispatched, ${dropPct}% dropped`);
+        }
+        return { reply: lines.join("\n") };
+    }
+
     // `proactive status`
     if (/^(atlas,?\s+)?proactive\s+status$/.test(lower)) {
         const cfg = loadProactiveConfig(opts.configPath);
