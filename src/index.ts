@@ -457,7 +457,43 @@ async function boot() {
         onNotification: async (message) => {
             console.log(`💓 Proactive: ${message.substring(0, 100)}...`);
 
-            // Primary channel gets the message first
+            // Phase 1 bug fix: route every channel send through the Composer so
+            // third-person internal reasoning can't leak to the user. The Composer
+            // post-filter rejects banned phrases + "the user" constructions.
+            // Flag ATLAS_PROACTIVE_V2_COMPOSER=false reverts to the legacy path.
+            const useV2 = process.env.ATLAS_PROACTIVE_V2_COMPOSER !== "false";
+
+            if (useV2) {
+                const { intentFromThought } = await import("./proactive/intent-from-thought.js");
+                const { compose } = await import("./proactive/composer.js");
+                const { dispatchProactiveMessage } = await import("./proactive/dispatch.js");
+                const intent = intentFromThought(message, { hourNow: new Date().getHours() });
+                const channelOrder: Array<"telegram" | "whatsapp" | "discord" | "slack" | "matrix" | "overlay"> = [
+                    "telegram", "whatsapp", "discord", "slack", "matrix", "overlay",
+                ];
+                const primary = channelOrder.find((c) => c === PRIMARY_CHANNEL);
+                const rest = channelOrder.filter((c) => c !== primary);
+                const sendOne = async (channel: typeof channelOrder[number]): Promise<void> => {
+                    const composed = await compose(intent, channel, { tone: "warm" }, [], { llm });
+                    if (!composed) return;
+                    await dispatchProactiveMessage(channel, composed.text, composed.modeTag);
+                };
+                if (primary) {
+                    try { await sendOne(primary); } catch (err) {
+                        console.log(`proactive dispatch failed (${primary}):`, (err as Error).message);
+                    }
+                }
+                for (const c of rest) sendOne(c).catch((err) => {
+                    console.log(`proactive dispatch failed (${c}):`, (err as Error).message);
+                });
+
+                if (getSubscriptionCount() > 0) {
+                    sendPushNotification("A.T.L.A.S", message.substring(0, 180)).catch(() => {});
+                }
+                return;
+            }
+
+            // Legacy path (ATLAS_PROACTIVE_V2_COMPOSER=false)
             const sendPrimary: Record<string, () => Promise<void>> = {
                 telegram: () => sendProactiveMessage(bot, config, message),
                 whatsapp: () => sendWhatsAppProactiveMessage(message),
