@@ -66,6 +66,7 @@
     "tree-sitter-python": "^0.21.0",
     "tree-sitter-rust": "^0.21.0",
     "tree-sitter-typescript": "^0.23.2",
+    "twitter-api-v2": "^1.29.0",
     "unpdf": "^1.6.0",
     "web-push": "^3.6.7",
     "ws": "^8.18.0",
