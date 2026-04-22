@@ -3,6 +3,7 @@
 // See LICENSE.md for details.
 
 import type { ToolDefinition } from "./get-current-time.js";
+import { runOutreachCampaign } from "../marketing/outreach-engine.js";
 
 export const coldOutreach: ToolDefinition = {
   schema: {
@@ -23,7 +24,18 @@ export const coldOutreach: ToolDefinition = {
       },
     },
   },
-  async handler(_input) {
-    return JSON.stringify({ status: "stub", message: "cold_outreach not yet implemented — Plan 4" });
+  async handler(input) {
+    try {
+      const result = await runOutreachCampaign({
+        brandId: input.brand_id as string,
+        channel: input.channel as "email" | "linkedin" | "twitter",
+        targetDescription: input.target_description as string,
+        messageTemplate: input.message_template as string,
+        maxLeads: (input.max_leads as number) ?? 10,
+      });
+      return JSON.stringify(result);
+    } catch (err) {
+      return JSON.stringify({ error: (err as Error).message });
+    }
   },
 };

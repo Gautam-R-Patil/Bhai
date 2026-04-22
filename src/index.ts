@@ -6,7 +6,7 @@ import { loadConfig } from "./config.js";
 import { createLLMClient } from "./llm.js";
 import { createTelegramBot, sendProactiveMessage } from "./telegram.js";
 import { initWhatsApp, closeWhatsApp, sendWhatsAppProactiveMessage } from "./whatsapp.js";
-import { getToolNames, setSwarmLLM, setDeepResearchLLM, setLongTaskLLM, setDeepResearchNotifier, rotateAuditLog, loadDynamicTools, setCodeActionLLM, setCodeActionExecutor, setComputerUseLLM, executeTool, registerChannelSender, setPresentationLLM, setIngestLLM, setBrandAuditLLM, setScriptWriterLLM, setCampaignPlannerLLM } from "./tools/index.js";
+import { getToolNames, setSwarmLLM, setDeepResearchLLM, setLongTaskLLM, setDeepResearchNotifier, rotateAuditLog, loadDynamicTools, setCodeActionLLM, setCodeActionExecutor, setComputerUseLLM, executeTool, registerChannelSender, setPresentationLLM, setIngestLLM, setBrandAuditLLM, setScriptWriterLLM, setCampaignPlannerLLM, setOutreachLLM } from "./tools/index.js";
 import { initMemoryDB, embedExistingMemories, setMemoryLLM } from "./memory/sqlite.js";
 import { initKnowledgeGraph } from "./memory/knowledge-graph.js";
 import { initSupabase } from "./memory/supabase.js";
@@ -83,6 +83,7 @@ setIngestLLM(llm);         // Inject into PDF → JSON ingestion (vision-LLM fal
 setBrandAuditLLM(llm);        // Inject into brand audit orchestrator
 setScriptWriterLLM(llm);      // Inject into marketing script writer
 setCampaignPlannerLLM(llm);   // Inject into campaign planner
+setOutreachLLM(llm);          // Inject into cold outreach engine
 
 // ── Initialize Subsystems ─────────────────────
 
