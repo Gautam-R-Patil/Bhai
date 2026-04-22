@@ -44,6 +44,8 @@ const SKILL_CATEGORIES: Record<string, string[]> = {
   "video_editing": ["os_control", "app_management", "media", "file_system"],
   "app_navigation": ["os_control", "app_management", "system_controls"],
   "gaming": ["os_control", "app_management"],
+  "web_browsing": ["browser", "web_search", "media", "integrations"],
+  "marketing": ["browser", "web_search", "integrations", "research"],
 };
 
 // ── Seed Prompts ─────────────────────────────────

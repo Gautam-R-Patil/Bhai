@@ -81,6 +81,9 @@ export {
     browserCacheActions
 } from "./extraction.js";
 
+// Export video control tool
+export { browserVideoControl } from "./video-control.js";
+
 // Export advanced tools
 export {
     browserParallelTabs,
@@ -164,6 +167,7 @@ import { browserClickAt, browserClick, browserRightClick, browserHoldClick, brow
 import { browserAnalyze, browserRunJs, browserWait, browserSelect, browserExtract, browserUploadFile, browserSaveStrategy, browserRecallStrategy, browserReplayActions, browserCacheActions } from "./extraction.js";
 import { browserParallelTabs, browserParallelActions, browserMultiAction } from "./advanced.js";
 import { browserSetMode, browserChromeStatus } from "./mode-tools.js";
+import { browserVideoControl } from "./video-control.js";
 
 export const browserTools = [
     // Navigation
@@ -183,6 +187,8 @@ export const browserTools = [
     browserHover,
     browserKeyboard,
     browserScrollElement,
+    // Video control (YouTube, Vimeo, HTML5 video)
+    browserVideoControl,
     // Extraction
     browserAnalyze,
     browserRunJs,

@@ -106,7 +106,7 @@ export const browserRunJs: ToolDefinition = {
         type: "function",
         function: {
             name: "browser_run_js",
-            description: "Execute JavaScript in the browser. Use for complex data extraction or interactions that other tools can't handle.",
+            description: "Execute JavaScript in the browser. Use for complex data extraction or direct API control: YouTube Player API (return document.getElementById('movie_player')?.seekTo(300, true)), HTML5 video control (return document.querySelector('video')?.currentTime), reading DOM state, or any interaction that requires JS. Always prefer browser_video_control for video playback tasks — it has automatic fallbacks.",
             parameters: {
                 type: "object",
                 properties: {
@@ -139,12 +139,13 @@ export const browserWait: ToolDefinition = {
         type: "function",
         function: {
             name: "browser_wait",
-            description: "Wait for page to load or a specific duration. Use 'timeout' with a value in ms for simple delays. Use 'load' to wait for DOM ready. Use 'selector' to wait for a specific element. Never fails — if timeout is reached, continues anyway.",
+            description: "Wait for page to load or a specific duration. 'timeout' = simple delay. 'load' = DOM ready. 'selector' = element appears. 'opacity' = element reaches visible opacity (e.g. wait for YouTube controls to fade in). Never fails — if timeout is reached, continues anyway.",
             parameters: {
                 type: "object",
                 properties: {
-                    type: { type: "string", description: "'timeout' (wait ms), 'load' (DOM ready), 'selector' (wait for element)" },
-                    value: { type: "string", description: "Milliseconds for timeout, or CSS selector for selector type" },
+                    type: { type: "string", description: "'timeout' (wait ms), 'load' (DOM ready), 'selector' (wait for element to appear), 'opacity' (wait for element opacity > threshold — for fade-in animations like video player controls)" },
+                    value: { type: "string", description: "Milliseconds for timeout, CSS selector for selector/opacity types" },
+                    threshold: { type: "number", description: "For 'opacity' type: minimum opacity to consider visible (default: 0.5)" },
                     timeout_ms: { type: "number", description: "Max wait time in ms (default: 15000)" },
                 },
                 required: ["type"],
@@ -172,6 +173,21 @@ export const browserWait: ToolDefinition = {
                 case "timeout":
                     await page.waitForTimeout(parseInt(input.value as string) || 2000);
                     break;
+                case "opacity": {
+                    const sel = input.value as string;
+                    const thresh = (input.threshold as number) ?? 0.5;
+                    if (sel) {
+                        await page.waitForFunction(
+                            ({ s, t }: { s: string; t: number }) => {
+                                const el = document.querySelector(s);
+                                return el ? parseFloat(window.getComputedStyle(el).opacity) >= t : false;
+                            },
+                            { s: sel, t: thresh },
+                            { timeout, polling: 100 }
+                        ).catch(() => {}); // non-fatal — continue if timed out
+                    }
+                    break;
+                }
                 default:
                     await page.waitForTimeout(2000);
             }

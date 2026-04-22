@@ -106,6 +106,7 @@ export async function getBrowser(): Promise<BrowserContext> {
             userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
             args: ["--no-sandbox", "--disable-blink-features=AutomationControlled"],
             serviceWorkers: "block", // Block service workers for consistent behavior
+            bypassCSP: true, // Allow page.evaluate() + waitForFunction() on strict-CSP sites (YouTube, etc.)
         });
 
         // Block unnecessary resources for faster page loads.
@@ -118,9 +119,15 @@ export async function getBrowser(): Promise<BrowserContext> {
             await browserContext.route("**/{analytics,tracking,telemetry,pixel,beacon}*", abort);
             await browserContext.route("**/google-analytics.com/**", abort);
             await browserContext.route("**/googletagmanager.com/**", abort);
+            await browserContext.route("**/googlesyndication.com/**", abort);
+            await browserContext.route("**/googleadservices.com/**", abort);
             await browserContext.route("**/facebook.net/**", abort);
             await browserContext.route("**/doubleclick.net/**", abort);
-            console.log("  🚫 Browser: blocked fonts, analytics, tracking for faster page loads");
+            await browserContext.route("**/hotjar.com/**", abort);
+            await browserContext.route("**/mixpanel.com/**", abort);
+            await browserContext.route("**/segment.io/**", abort);
+            await browserContext.route("**/amplitude.com/**", abort);
+            console.log("  🚫 Browser: blocked fonts, analytics, ads, tracking for faster page loads");
         } catch { /* route setup non-fatal */ }
     }
     return browserContext;

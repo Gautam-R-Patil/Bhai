@@ -604,13 +604,16 @@ export const browserHover: ToolDefinition = {
         type: "function",
         function: {
             name: "browser_hover",
-            description: "Move the mouse to x,y coordinates WITHOUT clicking. Use to reveal hover menus, tooltips, dropdown panels, context actions, or highlight elements in complex UIs like Figma.",
+            description: "Move the mouse to x,y WITHOUT clicking to reveal hover menus, tooltips, dropdown panels, video player controls (e.g. YouTube — hover center of player to reveal mute/captions/seek bar), or highlight elements in Figma/design tools. Uses interpolated mouse movement (steps) to properly trigger CSS :hover transitions — essential for opacity-animated controls. After hover, optionally rescans page to return newly visible elements.",
             parameters: {
                 type: "object",
                 properties: {
                     x: { type: "number", description: "X coordinate (0-1280)" },
                     y: { type: "number", description: "Y coordinate (0-800)" },
-                    duration: { type: "number", description: "How long to hover in ms (default: 500)" },
+                    duration: { type: "number", description: "How long to dwell after hover in ms (default: 600 — enough for CSS transitions)" },
+                    steps: { type: "number", description: "Interpolated mouse movement steps (default: 8). Higher = more intermediate mousemove events, better for CSS :hover transitions on video players and menus." },
+                    wait_for: { type: "string", description: "Optional CSS selector to wait for after hover (e.g. '.ytp-chrome-bottom', '.dropdown-menu'). Waits up to 3s for element to become visible." },
+                    rescan: { type: "boolean", description: "If true, rescans interactive elements after hover and returns newly visible ones (default: true). Use to see what the hover revealed." },
                 },
                 required: ["x", "y"],
             },
@@ -621,12 +624,86 @@ export const browserHover: ToolDefinition = {
             const page = await getActivePage();
             const x = input.x as number;
             const y = input.y as number;
-            const duration = (input.duration as number) || 200;
+            const duration = (input.duration as number) || 600;
+            const steps = (input.steps as number) || 8;
+            const waitFor = input.wait_for as string | undefined;
+            const rescan = (input.rescan as boolean) !== false; // default true
 
-            await page.mouse.move(x, y);
+            // Inject MutationObserver to capture DOM additions triggered by hover
+            await page.evaluate(() => {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const w = window as any;
+                w.__hoverAddedNodes = [];
+                w.__hoverObserver = new MutationObserver((mutations: MutationRecord[]) => {
+                    for (const m of mutations) {
+                        m.addedNodes.forEach((node: Node) => {
+                            if (node.nodeType === 1) {
+                                const el = node as Element;
+                                w.__hoverAddedNodes.push({
+                                    tag: el.tagName,
+                                    className: el.className?.toString().substring(0, 80),
+                                    id: el.id
+                                });
+                            }
+                        });
+                    }
+                });
+                w.__hoverObserver.observe(document.body, { childList: true, subtree: true });
+            }).catch(() => {}); // non-fatal
+
+            // Interpolated mouse movement — critical for CSS :hover transitions
+            await page.mouse.move(x, y, { steps });
             await page.waitForTimeout(duration);
 
-            return JSON.stringify({ success: true, hovered_at: { x, y }, duration_ms: duration });
+            // Wait for a specific element to appear if requested
+            let waitForResult = '';
+            if (waitFor) {
+                try {
+                    await page.waitForFunction(
+                        (sel: string) => {
+                            const el = document.querySelector(sel);
+                            if (!el) return false;
+                            const style = window.getComputedStyle(el);
+                            return style.display !== 'none' && style.visibility !== 'hidden' && parseFloat(style.opacity) > 0.1;
+                        },
+                        waitFor,
+                        { timeout: 3000, polling: 100 }
+                    );
+                    waitForResult = `"${waitFor}" is now visible`;
+                } catch {
+                    waitForResult = `"${waitFor}" did not appear within 3s`;
+                }
+            }
+
+            // Collect what appeared after hover
+            const addedNodes = await page.evaluate(() => {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const w = window as any;
+                const nodes = (w.__hoverAddedNodes || []) as Array<Record<string, string>>;
+                w.__hoverObserver?.disconnect();
+                delete w.__hoverAddedNodes;
+                delete w.__hoverObserver;
+                return nodes;
+            }).catch(() => []);
+
+            // Rescan interactive elements to capture newly revealed controls
+            let newElementsText = '';
+            if (rescan) {
+                const newElementMap = await getInteractiveElements(page, true); // force refresh
+                setLastElementMap(newElementMap);
+                newElementsText = buildElementsText();
+            }
+
+            return JSON.stringify({
+                success: true,
+                hovered_at: { x, y },
+                duration_ms: duration,
+                steps_used: steps,
+                ...(waitFor ? { wait_for_result: waitForResult } : {}),
+                dom_additions: addedNodes.length > 0 ? addedNodes.slice(0, 10) : 'none',
+                ...(rescan ? { interactive_elements_text: newElementsText } : {}),
+                tip: addedNodes.length > 0 || waitFor ? "Elements revealed — use updated interactive_elements_text to click them." : "No new elements detected. If controls are still hidden, try a longer duration or different coordinates."
+            });
         } catch (err) {
             return JSON.stringify({ error: `Hover failed: ${(err as Error).message}` });
         }
@@ -642,7 +719,7 @@ export const browserKeyboard: ToolDefinition = {
         type: "function",
         function: {
             name: "browser_keyboard",
-            description: "Press keyboard shortcuts and key combinations. Essential for complex UIs (Ctrl+Z undo, Ctrl+C copy, Ctrl+V paste, Space+drag in Figma, Delete, Escape, arrow keys, etc). Can also type raw text.",
+            description: "Press keyboard shortcuts and key combinations. Essential for complex UIs and video player control. YouTube shortcuts (player must be focused first by clicking it): 'k'=play/pause, 'm'=mute, 'c'=captions toggle, 'f'=fullscreen, 'j'=back 10s, 'l'=forward 10s, 'ArrowLeft'=back 5s, 'ArrowRight'=forward 5s, '0'-'9'=jump to 0-90%. Also: Ctrl+Z undo, Ctrl+C copy, Ctrl+V paste, Space+drag in Figma, Delete, Escape, arrow keys. Can also type raw text.",
             parameters: {
                 type: "object",
                 properties: {

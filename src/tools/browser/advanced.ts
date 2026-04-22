@@ -408,7 +408,7 @@ export const browserMultiAction: ToolDefinition = {
                             properties: {
                                 action: {
                                     type: "string",
-                                    description: "Type of action: 'navigate', 'click', 'type', 'wait', 'scroll', 'keyboard', 'select', 'hover', 'extract', 'screenshot', 'assert', 'if_visible'"
+                                    description: "Type of action: 'navigate', 'click', 'type', 'wait', 'scroll', 'keyboard', 'select', 'hover', 'hover_reveal', 'js_eval', 'wait_for_opacity', 'extract', 'screenshot', 'assert', 'if_visible'. Use 'hover_reveal' to hover and wait for hidden controls (e.g. YouTube video player controls). Use 'js_eval' to run arbitrary JS (e.g. YouTube player API). Use 'wait_for_opacity' to wait until an element becomes fully visible."
                                 },
                                 url: { type: "string" },
                                 selector: { type: "string" },
@@ -427,7 +427,12 @@ export const browserMultiAction: ToolDefinition = {
                                 then_actions: { type: "array", description: "For if_visible: actions to run if selector is visible" },
                                 else_actions: { type: "array", description: "For if_visible: actions to run if selector is NOT visible" },
                                 continue_on_error: { type: "boolean", description: "If true, continue executing even if this action fails" },
-                                fullPage: { type: "boolean", description: "For screenshot: capture full page" }
+                                fullPage: { type: "boolean", description: "For screenshot: capture full page" },
+                                steps: { type: "number", description: "For hover/hover_reveal: mouse interpolation steps (default: 8). Higher = smoother, better for CSS :hover transitions." },
+                                wait_for: { type: "string", description: "For hover_reveal: CSS selector to wait for after hover (e.g. '.ytp-chrome-bottom'). Waits up to 3s." },
+                                opacity_threshold: { type: "number", description: "For wait_for_opacity: minimum opacity to consider visible (default: 0.5)" },
+                                code: { type: "string", description: "For js_eval: JavaScript code to execute via page.evaluate(). Use 'return' to get data back. Example: 'return document.getElementById(\"movie_player\")?.getCurrentTime()'" },
+                                timeout_ms: { type: "number", description: "For wait_for_opacity/wait actions: max wait time in ms (default: 5000)" }
                             },
                             required: ["action"]
                         }
@@ -570,17 +575,92 @@ export const browserMultiAction: ToolDefinition = {
                         return { success: false, error: 'Selector and value/label required' };
                     }
                     case 'hover': {
+                        const hoverSteps = (act.steps as number) || 8;
                         if (act.x !== undefined && act.y !== undefined) {
-                            await page.mouse.move(act.x as number, act.y as number);
+                            await page.mouse.move(act.x as number, act.y as number, { steps: hoverSteps });
                             return { success: true };
                         } else if (act.label !== undefined) {
                             const el = lastElementMap.find(e => e.label === (act.label as number));
                             if (el) {
-                                await page.mouse.move(el.x, el.y);
+                                await page.mouse.move(el.x, el.y, { steps: hoverSteps });
                                 return { success: true };
                             }
+                        } else if (act.selector) {
+                            const loc = page.locator(act.selector as string).first();
+                            await loc.hover({ force: true }).catch(() => {});
+                            return { success: true };
                         }
-                        return { success: false, error: 'No coordinates or label provided' };
+                        return { success: false, error: 'No coordinates, label, or selector provided' };
+                    }
+
+                    // hover_reveal: hover + wait for hidden controls to appear + rescan elements
+                    // Perfect for YouTube player controls, nav dropdowns, tooltip menus
+                    case 'hover_reveal': {
+                        const hrSteps = (act.steps as number) || 8;
+                        const hrWaitFor = act.wait_for as string | undefined;
+                        let hx: number, hy: number;
+
+                        if (act.x !== undefined && act.y !== undefined) {
+                            hx = act.x as number; hy = act.y as number;
+                        } else if (act.selector) {
+                            const bbox = await page.locator(act.selector as string).first().boundingBox().catch(() => null);
+                            if (!bbox) return { success: false, error: `hover_reveal: selector "${act.selector}" not found` };
+                            hx = bbox.x + bbox.width / 2; hy = bbox.y + bbox.height / 2;
+                        } else if (act.label !== undefined) {
+                            const el = lastElementMap.find(e => e.label === (act.label as number));
+                            if (!el) return { success: false, error: `hover_reveal: label ${act.label} not found` };
+                            hx = el.x; hy = el.y;
+                        } else {
+                            return { success: false, error: 'hover_reveal: provide x+y, selector, or label' };
+                        }
+
+                        await page.mouse.move(hx, hy, { steps: hrSteps });
+                        await page.waitForTimeout((act.wait_ms as number) || 500);
+
+                        if (hrWaitFor) {
+                            await page.waitForFunction(
+                                (sel: string) => {
+                                    const el = document.querySelector(sel);
+                                    if (!el) return false;
+                                    const s = window.getComputedStyle(el);
+                                    return s.display !== 'none' && s.visibility !== 'hidden' && parseFloat(s.opacity) > 0.1;
+                                },
+                                hrWaitFor,
+                                { timeout: 3000, polling: 100 }
+                            ).catch(() => {});
+                        }
+
+                        // Force-rescan to capture newly revealed elements
+                        const revealedMap = await getInteractiveElements(page, true);
+                        setLastElementMap(revealedMap);
+                        return { success: true, result: { revealed_elements: buildElementsText(), hovered_at: { x: hx, y: hy } } };
+                    }
+
+                    // js_eval: run arbitrary JavaScript in the page context
+                    // Use for YouTube Player API, HTML5 video control, direct DOM manipulation
+                    case 'js_eval': {
+                        if (!act.code) return { success: false, error: 'js_eval requires "code"' };
+                        const wrappedCode = `(async () => { ${act.code} })()`;
+                        const jsResult = await page.evaluate(wrappedCode);
+                        const output = typeof jsResult === 'object' ? JSON.stringify(jsResult) : String(jsResult ?? 'undefined');
+                        return { success: true, result: { output: output.substring(0, 2000) } };
+                    }
+
+                    // wait_for_opacity: wait until a CSS element reaches a minimum opacity (e.g. controls fade in)
+                    case 'wait_for_opacity': {
+                        if (!act.selector) return { success: false, error: 'wait_for_opacity requires "selector"' };
+                        const threshold = (act.opacity_threshold as number) ?? 0.5;
+                        const timeout = (act.timeout_ms as number) || 5000;
+                        await page.waitForFunction(
+                            ({ sel, thresh }: { sel: string; thresh: number }) => {
+                                const el = document.querySelector(sel);
+                                if (!el) return false;
+                                return parseFloat(window.getComputedStyle(el).opacity) >= thresh;
+                            },
+                            { sel: act.selector as string, thresh: threshold },
+                            { timeout, polling: 100 }
+                        );
+                        return { success: true, result: { selector: act.selector, opacity_reached: threshold } };
                     }
                     case 'extract': {
                         const selector = act.selector as string;

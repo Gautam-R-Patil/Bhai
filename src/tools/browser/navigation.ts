@@ -139,13 +139,23 @@ export const browserScan: ToolDefinition = {
         type: "function",
         function: {
             name: "browser_scan",
-            description: "Scan the active browser page to get a textual DOM tree of all clickable/interactive elements. Returns an accessibility tree (compact semantic view) plus a labeled element list. Use the label numbers with browser_click_at's 'label' param for precise clicking. Set visual=true for design tools (Canva, Figma), maps, or any page where you need to SEE the layout visually.",
+            description: "Scan the active browser page to get a textual DOM tree of all clickable/interactive elements. Returns an accessibility tree (compact semantic view) plus a labeled element list. Use the label numbers with browser_click_at's 'label' param for precise clicking. Set visual=true for design tools (Canva, Figma), maps, or any page where you need to SEE the layout visually. Use hover_at to pre-hover before scanning — essential for pages like YouTube where controls are hidden until hover.",
             parameters: {
                 type: "object",
                 properties: {
                     full_page: { type: "boolean", description: "Capture full page (default: false)" },
                     clean: { type: "boolean", description: "No element labels — just the raw page (for reading text/images)" },
                     visual: { type: "boolean", description: "Attach a screenshot so you can SEE the page. Use for design tools, maps, image-heavy pages, or when you need visual context to make decisions." },
+                    hover_at: {
+                        type: "object",
+                        description: "If provided, hover at these coordinates (with interpolated steps) BEFORE scanning. Use to reveal hover-hidden controls — e.g. {x: 640, y: 400} on a YouTube page reveals the player controls. Wait is applied before scan.",
+                        properties: {
+                            x: { type: "number" },
+                            y: { type: "number" },
+                            steps: { type: "number", description: "Mouse interpolation steps (default: 8)" },
+                            wait_ms: { type: "number", description: "How long to dwell after hovering before scanning (default: 600ms)" },
+                        }
+                    },
                 },
                 required: [],
             },
@@ -154,6 +164,16 @@ export const browserScan: ToolDefinition = {
     async handler(input) {
         try {
             const page = await getActivePage();
+
+            // Pre-hover: reveal hidden controls before scanning (e.g. YouTube player controls)
+            if (input.hover_at) {
+                const ha = input.hover_at as { x?: number; y?: number; steps?: number; wait_ms?: number };
+                const hx = ha.x ?? 640, hy = ha.y ?? 400;
+                const hSteps = ha.steps ?? 8, hWait = ha.wait_ms ?? 600;
+                await page.mouse.move(hx, hy, { steps: hSteps });
+                await page.waitForTimeout(hWait);
+            }
+
             const title = await page.title();
             const url = page.url();
 
@@ -164,7 +184,8 @@ export const browserScan: ToolDefinition = {
             const a11yPromise = getAccessibilityTree(page);
 
             if (!input.clean) {
-                elementMap = await getInteractiveElements(page);
+                // Force-refresh cache when hover_at was used (new elements may be visible now)
+                elementMap = await getInteractiveElements(page, !!input.hover_at);
             }
 
             const accessibilityTree = await a11yPromise;

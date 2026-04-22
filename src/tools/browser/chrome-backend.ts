@@ -93,8 +93,20 @@ export class ChromePageProxy {
         dblclick: async (x: number, y: number) => {
             await sendBridgeCommand("click_at", { x, y, doubleClick: true });
         },
-        move: async (x: number, y: number) => {
-            await sendBridgeCommand("hover", { x, y });
+        move: async (x: number, y: number, opts?: { steps?: number }) => {
+            const steps = opts?.steps || 1;
+            if (steps <= 1) {
+                await sendBridgeCommand("hover", { x, y });
+                return;
+            }
+            // Simulate interpolated movement — needed for CSS :hover transitions.
+            // Get the last known position (approximation: start from page center if unknown).
+            const startX = 640, startY = 400;
+            for (let i = 1; i <= steps; i++) {
+                const ix = Math.round(startX + (x - startX) * (i / steps));
+                const iy = Math.round(startY + (y - startY) * (i / steps));
+                await sendBridgeCommand("hover", { x: ix, y: iy });
+            }
         },
     };
 
@@ -508,8 +520,17 @@ export class ChromeExtensionBackend implements BrowserBackend {
         await sendBridgeCommand("scroll", { direction, amount, selector: elementSelector });
     }
 
-    async hover(x: number, y: number): Promise<void> {
-        await sendBridgeCommand("hover", { x, y });
+    async hover(x: number, y: number, steps = 1): Promise<void> {
+        if (steps <= 1) {
+            await sendBridgeCommand("hover", { x, y });
+            return;
+        }
+        const startX = 640, startY = 400;
+        for (let i = 1; i <= steps; i++) {
+            const ix = Math.round(startX + (x - startX) * (i / steps));
+            const iy = Math.round(startY + (y - startY) * (i / steps));
+            await sendBridgeCommand("hover", { x: ix, y: iy });
+        }
     }
 
     async selectOption(selector: string, values: string[]): Promise<void> {
