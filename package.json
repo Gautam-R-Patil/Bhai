@@ -21,7 +21,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "smoke:video": "tsx scripts/video-studio-smoke.ts",
-    "postinstall": "bash scripts/patch-baileys.sh 2>/dev/null || true && npx tsx scripts/postinstall-video.ts 2>/dev/null || true"
+    "postinstall": "node scripts/patch-baileys.mjs || true && npx tsx scripts/postinstall-video.ts 2>/dev/null || true"
   },
   "dependencies": {
     "@discordjs/voice": "^0.19.2",
@@ -70,7 +70,10 @@
     "twitter-api-v2": "^1.29.0",
     "unpdf": "^1.6.0",
     "web-push": "^3.6.7",
+    "winreg2": "^2.0.0",
     "ws": "^8.18.0",
+    "clipboardy": "^4.0.0",
+    "screenshot-desktop": "^1.12.7",
     "zod": "^4.3.6"
   },
   "devDependencies": {

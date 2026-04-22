@@ -4,9 +4,11 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { ToolDefinition } from "./get-current-time.js";
-import { isSystemDestructive, shellArgsTargetProtectedPath, isShellBypass } from "../security/allowlist.js";
+import { isShellBypass, isSystemDestructive, shellArgsTargetProtectedPath } from "../security/allowlist.js";
 import { auditLog } from "../security/audit-log.js";
+import { resolveWindowsShell, wrapForShell } from "../utils/win-shell.js";
+import type { ToolDefinition } from "./get-current-time.js";
+import { IS_WIN } from "./platform.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -15,6 +17,30 @@ const execFileAsync = promisify(execFile);
 const MAX_OUTPUT = 10000; // characters
 const DEFAULT_TIMEOUT = 30000; // 30s
 
+// ── Cross-Platform Command Executor ──────────
+
+async function execCommand(
+    command: string,
+    args: string[],
+    options: { cwd: string; timeout: number },
+): Promise<{ stdout: string; stderr: string }> {
+    if (IS_WIN) {
+        const shell = await resolveWindowsShell();
+        const wrapped = wrapForShell(shell, command, args);
+        return execFileAsync(wrapped.command, wrapped.args, {
+            cwd: options.cwd,
+            timeout: options.timeout,
+            maxBuffer: 1024 * 1024,
+        });
+    }
+    return execFileAsync(command, args, {
+        cwd: options.cwd,
+        timeout: options.timeout,
+        maxBuffer: 1024 * 1024,
+        shell: true,
+    });
+}
+
 // ── Shell Command Tool ────────────────────────
 
 export const shellExec: ToolDefinition = {
@@ -22,7 +48,8 @@ export const shellExec: ToolDefinition = {
         type: "function",
         function: {
             name: "shell_exec",
-            description: "Execute a shell command and return its output. Use for system tasks, checking status, running scripts.",
+            description:
+                "Execute a shell command and return its output. Use for system tasks, checking status, running scripts.",
             parameters: {
                 type: "object",
                 properties: {
@@ -79,12 +106,7 @@ export const shellExec: ToolDefinition = {
         }
 
         try {
-            const { stdout, stderr } = await execFileAsync(command, args, {
-                cwd,
-                timeout,
-                maxBuffer: 1024 * 1024,
-                shell: true,
-            });
+            const { stdout, stderr } = await execCommand(command, args, { cwd, timeout });
 
             const output = (stdout || "").substring(0, MAX_OUTPUT);
             const errors = (stderr || "").substring(0, MAX_OUTPUT);
@@ -107,9 +129,7 @@ export const shellExec: ToolDefinition = {
                     if (heal.fixed) {
                         console.log(`  🔧 Shell self-healed (${heal.action}) — retrying: ${command}`);
                         try {
-                            const { stdout, stderr } = await execFileAsync(command, args, {
-                                cwd, timeout, maxBuffer: 1024 * 1024, shell: true,
-                            });
+                            const { stdout, stderr } = await execCommand(command, args, { cwd, timeout });
                             return JSON.stringify({
                                 success: true,
                                 stdout: (stdout || "").substring(0, MAX_OUTPUT),
@@ -126,7 +146,9 @@ export const shellExec: ToolDefinition = {
                             });
                         }
                     }
-                } catch { /* self-heal module unavailable */ }
+                } catch {
+                    /* self-heal module unavailable */
+                }
             }
 
             return JSON.stringify({
