@@ -398,6 +398,7 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "cold_outreach",
             "marketing_schedule",
             "brand_audit",
+            "credential_setup",
             "deep_research",
             "web_search",
             "browser_navigate",

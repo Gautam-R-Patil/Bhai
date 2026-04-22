@@ -155,10 +155,12 @@ import {
 } from "./memory-tools.js";
 import { coreMemoryAppend, coreMemoryDelete, coreMemoryRead, coreMemoryReplace } from "./memory-tools-advanced.js";
 import { IS_LINUX, IS_MAC, IS_WIN } from "./platform.js";
+import { platformInfoTool } from "./platform-info.js";
 import { createPresentation, exportPresentation, listPresentations, modifyPresentation } from "./presentation/index.js";
 import { repoMapTool } from "./repo-map.js";
 import { brandAudit } from "./brand-audit.js";
 import { coldOutreach } from "./cold-outreach.js";
+import { credentialSetup } from "./credential-setup.js";
 import { marketingSchedule } from "./marketing-schedule.js";
 import { cancelTask, listTasks, scheduleTask, setReminder } from "./scheduled.js";
 import { socialPost } from "./social-post.js";
@@ -327,6 +329,7 @@ if (IS_MAC) {
 registry.set(setVolume.schema.function.name, setVolume);
 registry.set(clipboard.schema.function.name, clipboard);
 registry.set(systemInfo.schema.function.name, systemInfo);
+registry.set(platformInfoTool.schema.function.name, platformInfoTool);
 registry.set(wifiControl.schema.function.name, wifiControl);
 registry.set(bluetoothControl.schema.function.name, bluetoothControl);
 registry.set(setDoNotDisturb.schema.function.name, setDoNotDisturb);
@@ -480,6 +483,7 @@ registry.set(socialPost.schema.function.name, socialPost);
 registry.set(coldOutreach.schema.function.name, coldOutreach);
 registry.set(marketingSchedule.schema.function.name, marketingSchedule);
 registry.set(brandAudit.schema.function.name, brandAudit);
+registry.set(credentialSetup.schema.function.name, credentialSetup);
 
 // Webhooks
 registry.set(registerWebhook.schema.function.name, registerWebhook);

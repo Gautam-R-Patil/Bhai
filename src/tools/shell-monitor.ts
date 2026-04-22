@@ -7,18 +7,20 @@
 // monitor their output, and wait for completion.
 // Uses child_process.spawn for streaming output.
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import { join } from "node:path";
-import type { ToolDefinition } from "./get-current-time.js";
 import { isCommandAllowed } from "../security/allowlist.js";
 import { auditLog } from "../security/audit-log.js";
+import { resolveWindowsShell, wrapForShell } from "../utils/win-shell.js";
+import type { ToolDefinition } from "./get-current-time.js";
+import { IS_WIN } from "./platform.js";
 
 // ── Constants ─────────────────────────────────
 
 const LOG_DIR = join(process.env.ATLAS_DATA_DIR || join(process.cwd(), "data"), "process-logs");
-const MAX_OUTPUT_PREVIEW = 5000;    // chars in status preview
-const MAX_WAIT_MS = 86_400_000;     // 24 hours max wait
+const MAX_OUTPUT_PREVIEW = 5000; // chars in status preview
+const MAX_WAIT_MS = 86_400_000; // 24 hours max wait
 
 // ── Process Store ─────────────────────────────
 
@@ -122,9 +124,20 @@ Returns a process_id that you can use with shell_check_process and shell_wait_pr
         const logFile = join(LOG_DIR, `${id}.log`);
 
         try {
-            const child = spawn(command, args, {
+            // Before spawn, resolve shell on Windows
+            let spawnCmd = command;
+            let spawnArgs = args;
+            if (IS_WIN) {
+                const shell = await resolveWindowsShell();
+                const wrapped = wrapForShell(shell, command, args);
+                spawnCmd = wrapped.command;
+                spawnArgs = wrapped.args;
+            }
+
+            const child = spawn(spawnCmd, spawnArgs, {
                 cwd,
-                shell: true,
+                shell: !IS_WIN, // Git Bash / PowerShell handle their own quoting; don't double-shell on Windows
+                env: { ...process.env },
                 stdio: ["ignore", "pipe", "pipe"],
             });
 
@@ -152,7 +165,7 @@ Returns a process_id that you can use with shell_check_process and shell_wait_pr
                     bp.stdout = bp.stdout.slice(-40000);
                 }
                 // Append to log file (fire and forget)
-                fs.appendFile(logFile, text).catch(() => { });
+                fs.appendFile(logFile, text).catch(() => {});
             });
 
             // Stream stderr
@@ -162,7 +175,7 @@ Returns a process_id that you can use with shell_check_process and shell_wait_pr
                 if (bp.stderr.length > 50000) {
                     bp.stderr = bp.stderr.slice(-40000);
                 }
-                fs.appendFile(logFile, `[STDERR] ${text}`).catch(() => { });
+                fs.appendFile(logFile, `[STDERR] ${text}`).catch(() => {});
             });
 
             // Handle exit
@@ -309,12 +322,12 @@ Maximum wait time is 24 hours.`,
         }
 
         // Wait loop
-        const deadline = Date.now() + (timeoutSeconds * 1000);
+        const deadline = Date.now() + timeoutSeconds * 1000;
         console.log(`[SHELL-MONITOR] Waiting for process ${processId} (timeout: ${timeoutSeconds}s)...`);
 
         while (Date.now() < deadline) {
             if (bp.status !== "running") break;
-            await new Promise(resolve => setTimeout(resolve, pollInterval * 1000));
+            await new Promise((resolve) => setTimeout(resolve, pollInterval * 1000));
         }
 
         if (bp.status === "running") {
