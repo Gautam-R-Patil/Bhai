@@ -259,11 +259,12 @@ const CATEGORIES: Record<string, CategoryDef> = {
     },
     system_controls: {
         description:
-            "System settings and hardware controls: volume, brightness, clipboard, system info, WiFi, Bluetooth, Do Not Disturb, dark mode, locking the screen, display sleep.",
+            "System settings and hardware controls: volume, brightness, clipboard, system info, WiFi, Bluetooth, Do Not Disturb, dark mode, locking the screen, display sleep. Platform capability detection: which shell, screenshot engine, clipboard, OCR, and automation tools are available at runtime.",
         tools: [
             "set_volume",
             "clipboard",
             "system_info",
+            "platform_info",
             "wifi_control",
             "bluetooth_control",
             "set_do_not_disturb",

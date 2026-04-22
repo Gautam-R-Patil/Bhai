@@ -91,7 +91,8 @@ import { clearCache, executeTool, resetRateLimits } from "./tools/index.js";
 // common variants observed in production: play_music, play_song, music_playback,
 // music_control, play, pause, resume, next/previous/skip, volume, shuffle,
 // repeat, now_playing.
-const MUSIC_INTENT_PATTERN = /^(play[_ ]?music|play[_ ]?song|music[_ ]?(playback|control|play)|play$|play[_ ]|pause|resume|next|previous|skip|volume|shuffle|repeat|now[_ ]?playing)/i;
+const MUSIC_INTENT_PATTERN =
+    /^(play[_ ]?music|play[_ ]?song|music[_ ]?(playback|control|play)|play$|play[_ ]|pause|resume|next|previous|skip|volume|shuffle|repeat|now[_ ]?playing)/i;
 const MUSIC_POSSESSIVE_PATTERN = /\b(my|our|the one|that|favorite|fav|usual|go[- ]?to|mine)\b/i;
 const SPOTIFY_URI_PATTERN = /spotify:(track|album|playlist|artist):[A-Za-z0-9]+/;
 
@@ -111,14 +112,14 @@ function isMusicFastPathEligible(opts: {
     inPlanMode: boolean;
     classification: { intent: string; specific_tools: string[]; confidence: number; categories: string[] } | null;
 }): boolean {
-    if (opts.iteration !== 1) return false;          // only first iteration of a turn
+    if (opts.iteration !== 1) return false; // only first iteration of a turn
     if (opts.inPlanMode) return false;
 
     const trimmed = opts.userMessage.trim();
     if (trimmed.length === 0 || trimmed.length > 80) return false;
 
     const cls = opts.classification;
-    if (!cls) return false;                           // structural fallback fired — not confident enough
+    if (!cls) return false; // structural fallback fired — not confident enough
     if (cls.confidence < 0.9) return false;
     if (!MUSIC_INTENT_PATTERN.test(cls.intent)) return false;
 
@@ -174,7 +175,8 @@ async function musicMemoryPeek(userMessage: string, llmForRecall: LLMClient): Pr
 // only to skip the expensive memory briefing — any false positive here just
 // means the user gets a lighter memory context on a non-music turn, not a
 // broken agent. Keep it conservative to minimise those misses.
-const MUSIC_HEURISTIC_PATTERN = /\b(play|pause|resume|skip|next|previous|shuffle|repeat|queue|playlist|spotify|apple[- ]?music|song|track|album|artist|now[- ]?playing|volume up|volume down)\b/i;
+const MUSIC_HEURISTIC_PATTERN =
+    /\b(play|pause|resume|skip|next|previous|shuffle|repeat|queue|playlist|spotify|apple[- ]?music|song|track|album|artist|now[- ]?playing|volume up|volume down)\b/i;
 
 function isLikelyMusicCommand(userMessage: string): boolean {
     const trimmed = userMessage.trim();
@@ -1101,8 +1103,8 @@ STRATEGY: Execute in as few tool calls as possible.
         // Music fast-path state. Phase-1 is set BEFORE the tool-selection await
         // (heuristic only — skips the heavy memory briefing). Phase-2 is set
         // AFTER the await when the LLM classifier has populated its output.
-        let musicFastPathPhase1 = false;     // heuristic match — skip briefing only
-        let musicFastPathActive = false;     // full classifier match — skip orchestrator + verification + auto-reply
+        let musicFastPathPhase1 = false; // heuristic match — skip briefing only
+        let musicFastPathActive = false; // full classifier match — skip orchestrator + verification + auto-reply
         let musicFastPathHint: string | undefined;
         let toolSelectionPromise: Promise<Awaited<ReturnType<typeof selectTools>>> | null = null;
         if (iterations === 1 && userMessage) {
@@ -1223,7 +1225,11 @@ STRATEGY: Execute in as few tool calls as possible.
                     if (process.env.ATLAS_NO_REPO_MAP === "true") return null;
                     try {
                         const { generateRepoMap } = await import("./tools/repo-map.js");
-                        const map = await generateRepoMap(cwd, { maxTokens: 1500, maxFiles: 200, maxSymbolsPerFile: 8 });
+                        const map = await generateRepoMap(cwd, {
+                            maxTokens: 1500,
+                            maxFiles: 200,
+                            maxSymbolsPerFile: 8,
+                        });
                         return map && !map.startsWith("[No source") ? `<repo_map>\n${map}\n</repo_map>` : null;
                     } catch (err) {
                         console.warn("[AGENT] repo_map injection failed (non-fatal):", (err as Error).message);
@@ -1232,7 +1238,9 @@ STRATEGY: Execute in as few tool calls as possible.
                 })();
                 const archTask = (async () => {
                     try {
-                        const { ensureIndexForCoding, getArchitectureSnippet } = await import("./memory/codebase-index.js");
+                        const { ensureIndexForCoding, getArchitectureSnippet } = await import(
+                            "./memory/codebase-index.js"
+                        );
                         await ensureIndexForCoding(cwd);
                         return (await getArchitectureSnippet(cwd)) || null;
                     } catch (err) {
@@ -1243,6 +1251,23 @@ STRATEGY: Execute in as few tool calls as possible.
                 const [repoMap, arch] = await Promise.all([repoMapTask, archTask]);
                 if (repoMap) parts.push(repoMap);
                 if (arch) parts.push(arch);
+            }
+
+            // ── Platform capabilities (injected once per session) ──
+            // Tells the LLM which shell, screenshot engine, clipboard engine, OCR
+            // tool, and automation helpers are actually available at runtime so it
+            // avoids calling tools that will fail on this platform.
+            if (process.env.ATLAS_NO_CAPABILITY_INJECTION !== "true") {
+                try {
+                    const { getPlatformCapabilities, formatCapabilitiesForContext } = await import(
+                        "./utils/platform-capabilities.js"
+                    );
+                    const caps = await getPlatformCapabilities();
+                    const capsText = formatCapabilitiesForContext(caps);
+                    parts.push(`<platform_capabilities>\n${capsText}\n</platform_capabilities>`);
+                } catch {
+                    /* non-fatal */
+                }
             }
 
             // ── Past coding-strategy recall (Phase 4E read side) ──
@@ -1269,7 +1294,7 @@ STRATEGY: Execute in as few tool calls as possible.
                     const c = classifyCodingComplexity(userMessage);
                     if (c === "complex") {
                         parts.push(
-                            "<coding_complexity level=\"complex\">\n" +
+                            '<coding_complexity level="complex">\n' +
                                 "This task is classified as COMPLEX (multi-file / architectural / new-system / high-stakes).\n" +
                                 "YOU MUST follow the full flow in prompts/coding.md §Complex coding:\n" +
                                 "  1. generate_design_docs → auto-enters awaiting_approval mode\n" +
@@ -1282,13 +1307,13 @@ STRATEGY: Execute in as few tool calls as possible.
                         );
                     } else if (c === "trivial") {
                         parts.push(
-                            "<coding_complexity level=\"trivial\">\n" +
+                            '<coding_complexity level="trivial">\n' +
                                 "This is a trivial edit (one-liner / typo / rename / log statement). Skip the design-docs flow and implement directly. Light tier is acceptable.\n" +
                                 "</coding_complexity>",
                         );
                     } else {
                         parts.push(
-                            "<coding_complexity level=\"standard\">\n" +
+                            '<coding_complexity level="standard">\n' +
                                 "Standard-scope coding task: debug / single feature / targeted fix. Implement directly on Pro tier. Skip design docs, but still finish with a short recap of what changed.\n" +
                                 "</coding_complexity>",
                         );
@@ -1691,7 +1716,9 @@ STRATEGY: Execute in as few tool calls as possible.
             musicFastPathActive = true;
             const peek = await musicMemoryPeek(rawUserMessage, llm);
             musicFastPathHint = peek.musicMemoryHint;
-            console.log(`  ⚡ Music fast-path active${musicFastPathHint ? " (with memory hint)" : ""} — skipping orchestrator + auto-verification`);
+            console.log(
+                `  ⚡ Music fast-path active${musicFastPathHint ? " (with memory hint)" : ""} — skipping orchestrator + auto-verification`,
+            );
             if (musicFastPathHint) {
                 activeInjection = `${activeInjection ? activeInjection + "\n\n" : ""}${musicFastPathHint}`;
             }
@@ -2658,7 +2685,11 @@ PLAN:`,
             );
         });
 
-        if ((hasToolFailure || hasAppOpened || hasSearch || (hasClick && !isPlaying)) && !usedVerification && !musicFastPathActive) {
+        if (
+            (hasToolFailure || hasAppOpened || hasSearch || (hasClick && !isPlaying)) &&
+            !usedVerification &&
+            !musicFastPathActive
+        ) {
             messages.push({
                 role: "system",
                 content: `[VERIFICATION REQUIRED] Your last action may not have completed the task. Before responding to the user:
@@ -2673,7 +2704,8 @@ Do NOT assume success from a single click or tool call.`,
             if (sawSpotifyCall) {
                 messages.push({
                     role: "system",
-                    content: "[FAST_PATH_DONE] The music tool returned success. Reply briefly confirming the song is playing (one short sentence). Do NOT call now_playing or any other tool unless the user asks a follow-up question."
+                    content:
+                        "[FAST_PATH_DONE] The music tool returned success. Reply briefly confirming the song is playing (one short sentence). Do NOT call now_playing or any other tool unless the user asks a follow-up question.",
                 });
             }
         }

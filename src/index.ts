@@ -53,6 +53,7 @@ import { autoResumeInterruptedTasks } from "./agents/long-task.js";
 import { initCredibilityModel } from "./research/credibility-model.js";
 import { initLocationService, refreshLocation, onLocationChange } from "./location/index.js";
 import { startNetworkWatcher, stopNetworkWatcher } from "./location/network-watcher.js";
+import { getPlatformCapabilities } from "./utils/platform-capabilities.js";
 
 // ── Primary Channel ──────────────────────────
 const PRIMARY_CHANNEL = process.env.PRIMARY_CHANNEL || "telegram";
@@ -372,6 +373,11 @@ async function boot() {
     initToolRouter().catch(err =>
         console.warn("[BOOT] Tool router init failed (non-fatal, will use structural fallback):", err)
     );
+
+    // Warm up platform capability probe (non-blocking)
+    if (process.env.ATLAS_SKIP_CAPABILITY_PROBE !== "true") {
+        getPlatformCapabilities().catch(err => console.warn("[boot] capability probe failed:", err));
+    }
 
     // Auto-resume any long tasks that were interrupted (async, non-blocking)
     autoResumeInterruptedTasks(llm)
