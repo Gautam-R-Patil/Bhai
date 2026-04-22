@@ -48,7 +48,8 @@
         "asarUnpack": [
             "node_modules/better-sqlite3/**",
             "node_modules/@xenova/**",
-            "node_modules/sharp/**"
+            "node_modules/sharp/**",
+            "native/*.node"
         ],
         "files": [
             "**/*",
@@ -171,6 +172,7 @@
             "installerHeaderIcon": "logo.ico",
             "createDesktopShortcut": true,
             "createStartMenuShortcut": true,
+            "runAfterFinish": true,
             "shortcutName": "A.T.L.A.S",
             "license": "../LICENSE.txt",
             "include": "./build/installer.nsh"

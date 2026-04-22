@@ -21,6 +21,58 @@ export const IS_MAC = process.platform === "darwin";
 export const IS_WIN = process.platform === "win32";
 export const IS_LINUX = process.platform === "linux";
 
+// ── PowerShell Automation Helpers ─────────────
+
+const PS_HELPERS = `
+if (-not $env:ATLAS_PS_HELPERS_LOADED) {
+    $env:ATLAS_PS_HELPERS_LOADED = "1"
+    Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
+    Add-Type -AssemblyName UIAutomationClient -ErrorAction SilentlyContinue
+    Add-Type -AssemblyName UIAutomationTypes -ErrorAction SilentlyContinue
+
+    $atlasWin32Code = @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public class AtlasWin32 {
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+}
+'@
+    if (-not ([System.Management.Automation.PSTypeName]'AtlasWin32').Type) {
+        Add-Type -TypeDefinition $atlasWin32Code -ErrorAction SilentlyContinue
+    }
+
+    function Atlas-FocusApp([string]$Name) {
+        $p = Get-Process $Name -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($p -and $p.MainWindowHandle -ne [IntPtr]::Zero) {
+            [AtlasWin32]::ShowWindow($p.MainWindowHandle, 9) | Out-Null
+            [AtlasWin32]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
+        }
+    }
+    function Atlas-GetFrontApp() {
+        $hwnd = [AtlasWin32]::GetForegroundWindow()
+        $sb = New-Object System.Text.StringBuilder 256
+        [AtlasWin32]::GetWindowText($hwnd, $sb, 256) | Out-Null
+        $sb.ToString()
+    }
+    function Atlas-SetDoNotDisturb([bool]$Enable) {
+        $path = "HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings"
+        $val = if ($Enable) { 0 } else { 1 }
+        Set-ItemProperty -Path $path -Name "NOC_GLOBAL_SETTING_TOASTS_ENABLED" -Value $val -Force -ErrorAction SilentlyContinue
+    }
+    function Atlas-GetRunningApps() {
+        Get-Process | Where-Object { $_.MainWindowTitle -ne "" } |
+            Select-Object ProcessName, Id, MainWindowTitle | ConvertTo-Json -Compress
+    }
+    function Atlas-LaunchApp([string]$App) { Start-Process $App }
+    function Atlas-CloseApp([string]$Name) {
+        Get-Process $Name -ErrorAction SilentlyContinue | Stop-Process -Force
+    }
+}`.trim();
+
 // ── PowerShell Helper (Windows) ───────────────
 
 /**
@@ -32,7 +84,7 @@ export async function runPowerShell(script: string, timeout = 10000): Promise<st
 
     const tmpFile = join(tmpdir(), `atlas_ps_${Date.now()}.ps1`);
     try {
-        await fs.writeFile(tmpFile, script, "utf-8");
+        await fs.writeFile(tmpFile, `${PS_HELPERS}\n${script}`, "utf-8");
         const { stdout } = await execFileAsync("powershell.exe", [
             "-NoProfile",
             "-NonInteractive",
@@ -73,7 +125,14 @@ export async function captureScreenshot(outputPath: string): Promise<void> {
     if (IS_MAC) {
         await execFileAsync("screencapture", ["-x", outputPath], { timeout: 10000 });
     } else if (IS_WIN) {
-        const psScript = `
+        try {
+            // Fast path: screenshot-desktop (no PowerShell spawn)
+            const { default: screenshot } = await import("screenshot-desktop");
+            const imgBuffer = await screenshot();
+            await fs.writeFile(outputPath, imgBuffer);
+        } catch {
+            // Fallback: PowerShell + System.Drawing
+            const psScript = `
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 $screens = [System.Windows.Forms.Screen]::AllScreens
@@ -86,13 +145,32 @@ $g.Dispose()
 $bmp.Save("${outputPath.replace(/\\/g, "\\\\")}")
 $bmp.Dispose()
 `;
-        await runPowerShell(psScript, 15000);
+            await runPowerShell(psScript, 15000);
+        }
     } else {
-        // Linux fallback: try scrot or gnome-screenshot
+        // Linux: try grim (Wayland-native), then scrot, then gnome-screenshot, then screenshot-desktop
+        const wayland = process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === "wayland";
+        if (wayland) {
+            try {
+                await execFileAsync("grim", [outputPath], { timeout: 10000 });
+                return;
+            } catch { /* fall through */ }
+        }
         try {
             await execFileAsync("scrot", [outputPath], { timeout: 10000 });
-        } catch {
+            return;
+        } catch { /* fall through */ }
+        try {
             await execFileAsync("gnome-screenshot", ["-f", outputPath], { timeout: 10000 });
+            return;
+        } catch { /* fall through */ }
+        // Last resort: screenshot-desktop npm package
+        try {
+            const { default: screenshot } = await import("screenshot-desktop");
+            const imgBuffer = await screenshot();
+            await fs.writeFile(outputPath, imgBuffer);
+        } catch {
+            throw new Error("No screenshot tool available on Linux. Install grim (Wayland) or scrot (X11).");
         }
     }
 }
@@ -180,10 +258,7 @@ export async function getFrontmostApp(): Promise<string> {
         } catch { return "unknown"; }
     } else if (IS_WIN) {
         try {
-            const result = await runPowerShellInline(
-                `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class WinAPI { [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId); }'; $hwnd = [WinAPI]::GetForegroundWindow(); $pid = 0; [WinAPI]::GetWindowThreadProcessId($hwnd, [ref]$pid) | Out-Null; (Get-Process -Id $pid).ProcessName`,
-                3000
-            );
+            const result = await runPowerShell(`Atlas-GetFrontApp`);
             return result.trim() || "unknown";
         } catch { return "unknown"; }
     }
@@ -240,11 +315,30 @@ export async function clipboardRead(): Promise<string> {
         const { stdout } = await execFileAsync("pbpaste", [], { timeout: 3000 });
         return stdout;
     } else if (IS_WIN) {
-        return await runPowerShellInline("Get-Clipboard", 3000);
+        try {
+            const { default: clipboardy } = await import("clipboardy");
+            return await clipboardy.read();
+        } catch {
+            return await runPowerShellInline("Get-Clipboard", 3000);
+        }
     }
-    // Linux
-    const { stdout } = await execFileAsync("xclip", ["-selection", "clipboard", "-o"], { timeout: 3000 });
-    return stdout;
+    // Linux — try multiple tools in order
+    const wayland = process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === "wayland";
+    if (wayland) {
+        try {
+            const { stdout } = await execFileAsync("wl-paste", ["--no-newline"], { timeout: 3000 });
+            return stdout;
+        } catch { /* fall through */ }
+    }
+    try {
+        const { stdout } = await execFileAsync("xclip", ["-selection", "clipboard", "-o"], { timeout: 3000 });
+        return stdout;
+    } catch { /* fall through */ }
+    try {
+        const { stdout } = await execFileAsync("xsel", ["--clipboard", "--output"], { timeout: 3000 });
+        return stdout;
+    } catch { /* fall through */ }
+    return "";
 }
 
 export async function clipboardWrite(text: string): Promise<void> {
@@ -254,12 +348,36 @@ export async function clipboardWrite(text: string): Promise<void> {
         await execFileAsync("bash", ["-c", `cat "${tmpFile}" | pbcopy`], { timeout: 3000 });
         await fs.unlink(tmpFile).catch(() => { });
     } else if (IS_WIN) {
-        const escaped = text.replace(/'/g, "''");
-        await runPowerShellInline(`Set-Clipboard -Value '${escaped}'`, 3000);
+        try {
+            const { default: clipboardy } = await import("clipboardy");
+            await clipboardy.write(text);
+        } catch {
+            const escaped = text.replace(/'/g, "''");
+            await runPowerShellInline(`Set-Clipboard -Value '${escaped}'`, 3000);
+        }
     } else {
+        // Linux — try multiple tools in order
+        const wayland = process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === "wayland";
         const tmpFile = join(tmpdir(), `atlas_clip_${Date.now()}.txt`);
         await fs.writeFile(tmpFile, text, "utf-8");
-        await execFileAsync("bash", ["-c", `cat "${tmpFile}" | xclip -selection clipboard`], { timeout: 3000 });
+        let written = false;
+        if (wayland) {
+            try {
+                await execFileAsync("bash", ["-c", `cat "${tmpFile}" | wl-copy`], { timeout: 3000 });
+                written = true;
+            } catch { /* fall through */ }
+        }
+        if (!written) {
+            try {
+                await execFileAsync("bash", ["-c", `cat "${tmpFile}" | xclip -selection clipboard`], { timeout: 3000 });
+                written = true;
+            } catch { /* fall through */ }
+        }
+        if (!written) {
+            try {
+                await execFileAsync("bash", ["-c", `cat "${tmpFile}" | xsel --clipboard --input`], { timeout: 3000 });
+            } catch { /* fall through */ }
+        }
         await fs.unlink(tmpFile).catch(() => { });
     }
 }

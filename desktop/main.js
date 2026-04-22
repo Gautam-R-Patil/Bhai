@@ -3874,6 +3874,12 @@ app.whenReady().then(async () => {
     // Run v1 → v2 migration before anything reads SETUP_FLAG or prefs.json.
     await runV2Migration();
 
+    // Windows: set AppUserModelID for Action Center notification grouping
+    if (process.platform === "win32") {
+        app.setAppUserModelId("com.xagilabs.atlas");
+        console.log("[INIT] Windows AppUserModelID set: com.xagilabs.atlas");
+    }
+
     initProtection();
     registerIPC();
     setupAutoUpdater();

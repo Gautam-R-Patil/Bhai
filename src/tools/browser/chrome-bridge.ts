@@ -168,7 +168,7 @@ function removeDiscoveryFile(): void {
 
 // ── Register Native Messaging Host ───────────
 
-function registerNativeMessagingHost(port: number): void {
+async function registerNativeMessagingHost(_port: number): Promise<void> {
     try {
         // Write the native host script next to the discovery file
         const hostScriptPath = path.join(homedir(), ".atlas", "atlas-bridge-host.js");
@@ -217,23 +217,6 @@ function sendMessage(msg) {
         fs.writeFileSync(hostScriptPath, hostScript, { mode: 0o755 });
 
         // Write the native messaging host manifest
-        // macOS: ~/Library/Application Support/Google/Chrome/NativeMessagingHosts/
-        // Linux: ~/.config/google-chrome/NativeMessagingHosts/
-        const platform = process.platform;
-        let manifestDir: string;
-        if (platform === "darwin") {
-            manifestDir = path.join(homedir(), "Library", "Application Support", "Google", "Chrome", "NativeMessagingHosts");
-        } else if (platform === "linux") {
-            manifestDir = path.join(homedir(), ".config", "google-chrome", "NativeMessagingHosts");
-        } else {
-            // Windows or unsupported — skip
-            return;
-        }
-
-        if (!fs.existsSync(manifestDir)) {
-            fs.mkdirSync(manifestDir, { recursive: true });
-        }
-
         const manifest = {
             name: "com.atlas.bridge",
             description: "ATLAS Browser Bridge — auto-discovery for Chrome extension",
@@ -241,6 +224,52 @@ function sendMessage(msg) {
             type: "stdio",
             allowed_origins: ["chrome-extension://*/"],
         };
+
+        // macOS: ~/Library/Application Support/Google/Chrome/NativeMessagingHosts/
+        // Linux: ~/.config/google-chrome/NativeMessagingHosts/
+        // Windows: HKCU registry keys for Chrome, Edge, and Chromium
+        const platform = process.platform;
+
+        if (platform === "win32") {
+            // Windows: register via registry
+            const atlasDir = path.join(homedir(), ".atlas");
+            if (!fs.existsSync(atlasDir)) fs.mkdirSync(atlasDir, { recursive: true });
+
+            const manifestPath = path.join(atlasDir, "com.atlas.bridge.json");
+            fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+
+            try {
+                const Winreg = (await import("winreg2")).default;
+                const browsers = [
+                    "SOFTWARE\\Google\\Chrome\\NativeMessagingHosts\\com.atlas.bridge",
+                    "SOFTWARE\\Microsoft\\Edge\\NativeMessagingHosts\\com.atlas.bridge",
+                    "SOFTWARE\\Chromium\\NativeMessagingHosts\\com.atlas.bridge",
+                ];
+                for (const keyPath of browsers) {
+                    const key = new Winreg({ hive: Winreg.HKCU, key: `\\${keyPath}` });
+                    await key.createAsync();
+                    await key.setAsync("", Winreg.REG_SZ, manifestPath);
+                }
+                console.log("✓ Chrome/Edge/Chromium native messaging host registered (Windows registry)");
+            } catch (err) {
+                console.warn("⚠️  Windows registry write failed (non-fatal):", (err as Error).message);
+            }
+            return;
+        }
+
+        let manifestDir: string;
+        if (platform === "darwin") {
+            manifestDir = path.join(homedir(), "Library", "Application Support", "Google", "Chrome", "NativeMessagingHosts");
+        } else if (platform === "linux") {
+            manifestDir = path.join(homedir(), ".config", "google-chrome", "NativeMessagingHosts");
+        } else {
+            // Unsupported platform — skip
+            return;
+        }
+
+        if (!fs.existsSync(manifestDir)) {
+            fs.mkdirSync(manifestDir, { recursive: true });
+        }
 
         fs.writeFileSync(
             path.join(manifestDir, "com.atlas.bridge.json"),
@@ -376,7 +405,9 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
     writeDiscoveryFile(port);
 
     // Register native messaging host (belt + suspenders for auto-discovery)
-    registerNativeMessagingHost(port);
+    registerNativeMessagingHost(port).catch((err) => {
+        console.warn("⚠️  Native messaging host registration failed (non-fatal):", (err as Error).message);
+    });
 }
 
 // ── Message Handler ──────────────────────────
