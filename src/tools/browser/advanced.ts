@@ -19,6 +19,7 @@ import {
     setActivePageIndex
 } from "./core.js";
 import { getResourceLimits } from "../../utils/system-resources.js";
+import { validateJsCode, signBrowserAction } from "./native-browser.js";
 
 // ═══════════════════════════════════════════════
 // TOOL: Parallel Tab Execution
@@ -637,10 +638,18 @@ export const browserMultiAction: ToolDefinition = {
                     }
 
                     // js_eval: run arbitrary JavaScript in the page context
-                    // Use for YouTube Player API, HTML5 video control, direct DOM manipulation
+                    // IP protection: code is validated by Rust ip_guard before execution
                     case 'js_eval': {
                         if (!act.code) return { success: false, error: 'js_eval requires "code"' };
-                        const wrappedCode = `(async () => { ${act.code} })()`;
+                        // Validate through native IP guard (blocks exfiltration, ATLAS var access, eval)
+                        let safeCode: string;
+                        try {
+                            safeCode = validateJsCode(act.code as string);
+                        } catch (guardErr) {
+                            return { success: false, error: `ip_guard: ${(guardErr as Error).message}` };
+                        }
+                        signBrowserAction("js_eval", safeCode.substring(0, 200));
+                        const wrappedCode = `(async () => { ${safeCode} })()`;
                         const jsResult = await page.evaluate(wrappedCode);
                         const output = typeof jsResult === 'object' ? JSON.stringify(jsResult) : String(jsResult ?? 'undefined');
                         return { success: true, result: { output: output.substring(0, 2000) } };

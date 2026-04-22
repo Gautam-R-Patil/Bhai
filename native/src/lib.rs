@@ -54,6 +54,8 @@ mod chrome_bridge;
 mod proactive_intent;
 mod proactive_scheduler;
 mod proactive_monitor;
+mod browser_agent;
+mod ip_guard;
 
 use napi_derive::napi;
 
@@ -108,6 +110,8 @@ pub use chrome_bridge::*;
 pub use proactive_intent::*;
 pub use proactive_scheduler::*;
 pub use proactive_monitor::*;
+pub use browser_agent::*;
+pub use ip_guard::*;
 
 /// Get the native module version
 #[napi]

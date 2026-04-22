@@ -27,6 +27,7 @@ import {
     getActionCacheStats
 } from "./action-cache.js";
 import type { CachedActionStep } from "./action-cache.js";
+import { validateJsCode, signBrowserAction } from "./native-browser.js";
 
 // ═══════════════════════════════════════════════
 // TOOL: Analyze page (smart element detection)
@@ -119,8 +120,16 @@ export const browserRunJs: ToolDefinition = {
     async handler(input) {
         try {
             const page = await getActivePage();
+            // IP guard: validate code before execution (blocks exfiltration & ATLAS internals access)
+            let safeCode: string;
+            try {
+                safeCode = validateJsCode(input.code as string);
+            } catch (guardErr) {
+                return JSON.stringify({ error: `ip_guard: ${(guardErr as Error).message}` });
+            }
+            signBrowserAction("browser_run_js", (safeCode as string).substring(0, 200));
             // Wrap in async IIFE so top-level 'return' statements work
-            const wrappedCode = `(async () => { ${input.code} })()`;
+            const wrappedCode = `(async () => { ${safeCode} })()`;
             const result = await page.evaluate(wrappedCode);
             const output = typeof result === "object" ? JSON.stringify(result, null, 2) : String(result ?? "undefined");
             return JSON.stringify({ success: true, result: output.substring(0, 15000), truncated: output.length > 15000 });

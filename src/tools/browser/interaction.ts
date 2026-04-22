@@ -18,6 +18,14 @@ import {
     setActivePageIndex,
     getActivePageIndex
 } from "./core.js";
+import {
+    getHoverHint,
+    recordHoverSuccess,
+    recordHoverFailure,
+    detectActionLoop,
+    recordBrowserAction,
+    obfuscateInjectedVariable,
+} from "./native-browser.js";
 
 // ═══════════════════════════════════════════════
 // TOOL: Click at coordinates or label
@@ -51,6 +59,15 @@ export const browserClickAt: ToolDefinition = {
             const context = await getBrowser();
             const page = await getActivePage();
             const lastElementMap = getLastElementMap();
+
+            // ── Loop detection: warn if agent is hammering the same failed target ──
+            const clickTarget = String(input.label ?? `${input.x},${input.y}`);
+            if (detectActionLoop("click", clickTarget, page.url())) {
+                return JSON.stringify({
+                    error: `Loop detected: "click ${clickTarget}" has failed ${3}+ consecutive times. Try: browser_scan to refresh labels, browser_hover to reveal hidden controls, or browser_video_control for video player actions.`,
+                    loop_detected: true,
+                });
+            }
 
             // ── Snapshot tab count BEFORE the click ──
             const tabCountBefore = context.pages().length;
@@ -208,6 +225,9 @@ export const browserClickAt: ToolDefinition = {
                 interactive_elements_text = serializedElements.map(e => `[${e.label}] ${e.tag} '${e.text}'`).join('\n');
             }
 
+            // Record success for native loop/rate tracker
+            recordBrowserAction("click", page.url(), String(input.label ?? `${x},${y}`), true);
+
             return JSON.stringify({
                 success: true,
                 clicked_at: { x, y },
@@ -221,6 +241,12 @@ export const browserClickAt: ToolDefinition = {
                 interactive_elements_text
             });
         } catch (err) {
+            // Record failure for loop detection
+            try {
+                const pg = await getActivePage();
+                const clickTarget = String(input.label ?? `${input.x},${input.y}`);
+                recordBrowserAction("click", pg.url(), clickTarget, false);
+            } catch { /* non-fatal */ }
             return JSON.stringify({ error: `Click failed: ${(err as Error).message}` });
         }
     },
@@ -628,18 +654,28 @@ export const browserHover: ToolDefinition = {
             const steps = (input.steps as number) || 8;
             const waitFor = input.wait_for as string | undefined;
             const rescan = (input.rescan as boolean) !== false; // default true
+            const url = page.url();
 
-            // Inject MutationObserver to capture DOM additions triggered by hover
-            await page.evaluate(() => {
+            // Derive session-scoped opaque names for our injected variables (IP protection)
+            const varNodes = obfuscateInjectedVariable("__hoverAddedNodes");
+            const varObserver = obfuscateInjectedVariable("__hoverObserver");
+
+            // Check native hover hint — skip hover if we have a confident cached coordinate
+            const hint = getHoverHint(url, waitFor ?? `${x},${y}`);
+            const effectiveX = (hint && hint.confidence > 0.7) ? hint.x : x;
+            const effectiveY = (hint && hint.confidence > 0.7) ? hint.y : y;
+
+            // Inject MutationObserver using obfuscated variable names (IP protection)
+            await page.evaluate(([nNodes, nObs]: string[]) => {
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const w = window as any;
-                w.__hoverAddedNodes = [];
-                w.__hoverObserver = new MutationObserver((mutations: MutationRecord[]) => {
+                w[nNodes] = [];
+                w[nObs] = new MutationObserver((mutations: MutationRecord[]) => {
                     for (const m of mutations) {
                         m.addedNodes.forEach((node: Node) => {
                             if (node.nodeType === 1) {
                                 const el = node as Element;
-                                w.__hoverAddedNodes.push({
+                                w[nNodes].push({
                                     tag: el.tagName,
                                     className: el.className?.toString().substring(0, 80),
                                     id: el.id
@@ -648,11 +684,11 @@ export const browserHover: ToolDefinition = {
                         });
                     }
                 });
-                w.__hoverObserver.observe(document.body, { childList: true, subtree: true });
-            }).catch(() => {}); // non-fatal
+                w[nObs].observe(document.body, { childList: true, subtree: true });
+            }, [varNodes, varObserver]).catch(() => {}); // non-fatal
 
             // Interpolated mouse movement — critical for CSS :hover transitions
-            await page.mouse.move(x, y, { steps });
+            await page.mouse.move(effectiveX, effectiveY, { steps });
             await page.waitForTimeout(duration);
 
             // Wait for a specific element to appear if requested
@@ -675,16 +711,27 @@ export const browserHover: ToolDefinition = {
                 }
             }
 
-            // Collect what appeared after hover
-            const addedNodes = await page.evaluate(() => {
+            // Collect what appeared after hover (using obfuscated variable names)
+            const addedNodes = await page.evaluate(([nNodes, nObs]: string[]) => {
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const w = window as any;
-                const nodes = (w.__hoverAddedNodes || []) as Array<Record<string, string>>;
-                w.__hoverObserver?.disconnect();
-                delete w.__hoverAddedNodes;
-                delete w.__hoverObserver;
+                const nodes = (w[nNodes] || []) as Array<Record<string, string>>;
+                w[nObs]?.disconnect();
+                delete w[nNodes];
+                delete w[nObs];
                 return nodes;
-            }).catch(() => []);
+            }, [varNodes, varObserver]).catch(() => []);
+
+            // Record hover outcome for native cache
+            if (waitFor) {
+                const revealed = addedNodes.length > 0 || (waitFor && /* check visibility */ true);
+                if (revealed) {
+                    recordHoverSuccess(url, waitFor, effectiveX, effectiveY);
+                } else {
+                    recordHoverFailure(url, waitFor);
+                }
+            }
+            recordBrowserAction("hover", url, waitFor ?? "", addedNodes.length > 0);
 
             // Rescan interactive elements to capture newly revealed controls
             let newElementsText = '';

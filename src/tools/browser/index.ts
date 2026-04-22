@@ -84,6 +84,17 @@ export {
 // Export video control tool
 export { browserVideoControl } from "./video-control.js";
 
+// Export native browser acceleration + IP protection wrapper
+export {
+    scoreElementCandidates,
+    getVideoPlayerState, setVideoPlayerState, invalidateVideoState,
+    checkBrowserRateLimit, recordBrowserAction, detectActionLoop, resetActionLoop,
+    getHoverHint, recordHoverSuccess, recordHoverFailure,
+    validateJsCode, obfuscateInjectedVariable, rewriteInternalVars,
+    signBrowserAction, verifyBrowserAction, getActionAuditTail,
+    getModuleFingerprint, isNativeBrowserAvailable,
+} from "./native-browser.js";
+
 // Export advanced tools
 export {
     browserParallelTabs,

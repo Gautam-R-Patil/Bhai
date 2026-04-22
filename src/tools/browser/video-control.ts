@@ -8,6 +8,12 @@
 
 import type { ToolDefinition } from "../get-current-time.js";
 import { getActivePage } from "./core.js";
+import {
+    getVideoPlayerState,
+    setVideoPlayerState,
+    invalidateVideoState,
+    signBrowserAction,
+} from "./native-browser.js";
 
 // ─── YouTube Player API JS ────────────────────────────────────────────────────
 
@@ -143,6 +149,21 @@ export const browserVideoControl: ToolDefinition = {
             const isVimeo = url.includes('vimeo.com');
             const siteHint = (input.site as string) || (isYouTube ? 'youtube' : isVimeo ? 'vimeo' : 'html5');
 
+            // Sign this action for tamper-evident audit trail (IP protection)
+            signBrowserAction("browser_video_control", JSON.stringify({ action, seekTo, volumeLevel }));
+
+            // For get_info/get_state: check native cache first to avoid redundant evaluate()
+            if ((action === 'get_info' || action === 'get_state') && !forcedMethod) {
+                const cached = getVideoPlayerState(url);
+                if (cached) {
+                    return JSON.stringify({ success: true, method: 'native_cache', site: siteHint, action, info: JSON.parse(cached) });
+                }
+            }
+            // Invalidate state cache for mutating actions (they change player state)
+            if (['seek', 'mute', 'unmute', 'toggle_mute', 'play', 'pause', 'toggle_play', 'volume', 'set_speed'].includes(action)) {
+                invalidateVideoState(url);
+            }
+
             // ── TIER 1: JavaScript Player API ─────────────────────────────────
             if (!forcedMethod || forcedMethod === 'js_api') {
                 try {
@@ -212,6 +233,8 @@ export const browserVideoControl: ToolDefinition = {
                                     return JSON.stringify({ success: true, method: 'js_api', site: 'youtube', player_state: result, state_meaning: { '-1': 'unstarted', '0': 'ended', '1': 'playing', '2': 'paused', '3': 'buffering', '5': 'cued' }[String(result)] });
                                 case 'get_info':
                                     result = await page.evaluate(`(async()=>{ ${YT_API.get_info} })()`);
+                                    // Cache in native for future get_info calls (avoids page.evaluate round-trip)
+                                    setVideoPlayerState(url, JSON.stringify(result));
                                     return JSON.stringify({ success: true, method: 'js_api', site: 'youtube', info: result });
                                 default:
                                     throw new Error(`Unknown action: ${action}`);
