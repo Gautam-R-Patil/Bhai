@@ -41,7 +41,9 @@ export async function runVideoPipeline(opts: VideoPipelineOptions): Promise<Vide
     rawVideoPath = userVideoPath;
   } else {
     const scenePrompts = script.scenes.map((s) => s.visualDescription);
+    if (!scenePrompts.length) throw new Error("No scenes in script — cannot generate video clips");
     const clips = await generateMultipleClips(scenePrompts, "9:16");
+    if (!clips.length) throw new Error("No video clips generated");
     rawVideoPath = clips[0].filePath;
   }
 

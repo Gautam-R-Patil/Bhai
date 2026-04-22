@@ -37,7 +37,7 @@ export async function runOutreachCampaign(req: OutreachRequest): Promise<Outreac
     const msg = [
       "**LinkedIn Outreach — Choose your approach:**",
       "",
-      ...LINKEDIN_OPTIONS.map((o) => `• **${o}`),
+      ...LINKEDIN_OPTIONS.map((o) => `• ${o}`),
       "",
       "Reply: `linkedin A`, `linkedin B`, or `linkedin C`",
     ].join("\n");

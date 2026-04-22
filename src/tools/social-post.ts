@@ -22,7 +22,7 @@ export const socialPost: ToolDefinition = {
       parameters: {
         type: "object",
         properties: {
-          platform: { type: "string", enum: ["instagram", "linkedin", "tiktok", "twitter", "facebook", "youtube", "reddit"] },
+          platform: { type: "string", enum: ["instagram", "linkedin", "tiktok", "twitter", "facebook", "youtube", "reddit", "producthunt"] },
           brand_id: { type: "string" },
           content_type: { type: "string", enum: ["reel", "post", "story", "carousel", "thread", "article", "video", "text"] },
           caption: { type: "string" },

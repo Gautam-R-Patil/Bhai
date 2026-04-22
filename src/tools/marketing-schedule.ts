@@ -3,7 +3,7 @@
 // See LICENSE.md for details.
 
 import type { ToolDefinition } from "./get-current-time.js";
-import { updateCalendarItem, getScheduledItems } from "../marketing/content-calendar.js";
+import { updateCalendarItem, getScheduledItems, getCalendarItem } from "../marketing/content-calendar.js";
 import { scheduleTask } from "./scheduled.js";
 
 export const marketingSchedule: ToolDefinition = {
@@ -34,15 +34,31 @@ export const marketingSchedule: ToolDefinition = {
       if (!itemId || !scheduledAt) {
         return JSON.stringify({ error: "item_id and scheduled_at are required for schedule action" });
       }
+      const item = getCalendarItem(itemId);
+      if (!item) return JSON.stringify({ error: `Calendar item ${itemId} not found` });
+
       updateCalendarItem(itemId, { status: "scheduled", scheduledAt });
 
       const dt = new Date(scheduledAt);
+      // Use the specific date + time — the trigger handler detects the JSON action and stops the cron after firing
       const cronExpr = `${dt.getMinutes()} ${dt.getHours()} ${dt.getDate()} ${dt.getMonth() + 1} *`;
+
+      // Encode full post params as JSON so the trigger handler can call social_post directly
+      const actionPayload = JSON.stringify({
+        __marketing_post: true,
+        brandId,
+        itemId,
+        platform: item.platform,
+        contentType: item.contentType,
+        caption: item.caption ?? "",
+        mediaPath: item.mediaPath,
+        hashtags: item.hashtags ?? [],
+      });
 
       const scheduleResult = await scheduleTask.handler({
         expression: cronExpr,
-        description: `Post calendar item ${itemId} for brand ${brandId}`,
-        action: `social_post for calendar item ${itemId} brand ${brandId}`,
+        description: `Post calendar item ${itemId} for brand ${brandId} on ${scheduledAt}`,
+        action: actionPayload,
       });
 
       return JSON.stringify({

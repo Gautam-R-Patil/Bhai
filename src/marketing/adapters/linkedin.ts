@@ -46,9 +46,13 @@ export async function postLinkedIn(
 
     // Step 2: upload binary
     const fileBuffer = fs.readFileSync(mediaPath);
+    const mimeType = mediaPath.endsWith(".mp4") ? "video/mp4"
+      : mediaPath.endsWith(".png") ? "image/png"
+      : mediaPath.endsWith(".gif") ? "image/gif"
+      : "image/jpeg";
     const uploadRes = await fetch(uploadUrl, {
       method: "PUT",
-      headers: { "Content-Type": "image/jpeg" },
+      headers: { "Content-Type": mimeType },
       body: fileBuffer,
     });
     if (!uploadRes.ok) throw new Error(`LinkedIn image upload failed: ${await uploadRes.text()}`);

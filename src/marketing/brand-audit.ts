@@ -44,7 +44,12 @@ export async function runBrandAudit(
       instructions:
         "Extract: product description, target audience, unique value proposition, tone of voice, main features",
     });
-    websiteText = extractResult.slice(0, 3000);
+    try {
+      const parsed = JSON.parse(extractResult) as { text?: string; content?: string };
+      websiteText = (parsed.text ?? parsed.content ?? extractResult).slice(0, 3000);
+    } catch {
+      websiteText = extractResult.slice(0, 3000);
+    }
   } catch (err) {
     websiteText = `Website scrape failed: ${(err as Error).message}`;
   }
@@ -57,7 +62,12 @@ export async function runBrandAudit(
         query: `Competitor analysis for ${competitors.join(", ")} — marketing strategy, content approach, target audience, strengths and weaknesses`,
         profile: depth === "deep" ? "deep" : "standard",
       });
-      competitorSummary = researchResult.slice(0, 2000);
+      try {
+        const parsed = JSON.parse(researchResult) as { summary?: string; result?: string };
+        competitorSummary = (parsed.summary ?? parsed.result ?? researchResult).slice(0, 2000);
+      } catch {
+        competitorSummary = researchResult.slice(0, 2000);
+      }
     } catch (err) {
       competitorSummary = `Competitor research failed: ${(err as Error).message}`;
     }

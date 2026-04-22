@@ -671,6 +671,44 @@ async function boot() {
 
     // ── Scheduled Tasks ───────────────────────
     setTaskTriggerHandler(async (taskId: string, action: string) => {
+        // ── Marketing scheduled post detection ──────────────────────────────
+        // Actions encoded as JSON by marketing_schedule tool are executed directly.
+        // Format: {"__marketing_post":true,"brandId":"...","itemId":N,"platform":"...","caption":"...","mediaPath":"...","hashtags":[...]}
+        if (action.startsWith('{"__marketing_post":')) {
+            try {
+                const params = JSON.parse(action) as {
+                    __marketing_post: boolean;
+                    brandId: string;
+                    itemId: number;
+                    platform: string;
+                    contentType: string;
+                    caption: string;
+                    mediaPath?: string;
+                    hashtags?: string[];
+                };
+                const result = await executeTool("social_post", {
+                    platform: params.platform,
+                    brand_id: params.brandId,
+                    content_type: params.contentType,
+                    caption: params.caption,
+                    media_path: params.mediaPath,
+                    hashtags: params.hashtags ?? [],
+                    item_id: params.itemId,
+                });
+                const parsed = JSON.parse(result) as { success?: boolean; postUrl?: string; error?: string };
+                const confirmMsg = parsed.success
+                    ? `✅ Posted to ${params.platform}! ${parsed.postUrl ?? ""}`
+                    : `❌ Marketing post failed: ${parsed.error ?? result}`;
+                sendPushNotification("Marketing Post", confirmMsg.substring(0, 180)).catch(() => {});
+                // Deliver confirmation to active channels
+                const { deliverToActiveChannel } = await import("./tools/channel-send.js");
+                deliverToActiveChannel(confirmMsg, "").catch(() => {});
+            } catch (err) {
+                sendPushNotification("Marketing Post Failed", (err as Error).message.substring(0, 180)).catch(() => {});
+            }
+            return;
+        }
+
         const message = `🔔 **Task Triggered**\n\n${action}`;
 
         // Primary channel gets the message first

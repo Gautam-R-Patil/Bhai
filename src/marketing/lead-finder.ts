@@ -31,7 +31,6 @@ export async function findLeadsApollo(params: LeadSearchParams): Promise<Lead[]>
   if (!apiKey) throw new Error("APOLLO_API_KEY not set");
 
   const body: Record<string, unknown> = {
-    api_key: apiKey,
     per_page: Math.min(params.limit ?? 25, 100),
     page: 1,
   };
@@ -46,7 +45,7 @@ export async function findLeadsApollo(params: LeadSearchParams): Promise<Lead[]>
 
   const res = await fetch("https://api.apollo.io/api/v1/mixed_people/search", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "Cache-Control": "no-cache" },
+    headers: { "Content-Type": "application/json", "Cache-Control": "no-cache", "X-Api-Key": apiKey },
     body: JSON.stringify(body),
   });
 
