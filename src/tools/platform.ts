@@ -8,10 +8,10 @@
 // Windows → powershell.exe, user32.dll, Windows.Media.Ocr
 
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { promises as fs } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
@@ -85,16 +85,15 @@ export async function runPowerShell(script: string, timeout = 10000): Promise<st
     const tmpFile = join(tmpdir(), `atlas_ps_${Date.now()}.ps1`);
     try {
         await fs.writeFile(tmpFile, `${PS_HELPERS}\n${script}`, "utf-8");
-        const { stdout } = await execFileAsync("powershell.exe", [
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy", "Bypass",
-            "-File", tmpFile,
-        ], { timeout });
-        await fs.unlink(tmpFile).catch(() => { });
+        const { stdout } = await execFileAsync(
+            "powershell.exe",
+            ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", tmpFile],
+            { timeout },
+        );
+        await fs.unlink(tmpFile).catch(() => {});
         return stdout.trim();
     } catch (err) {
-        await fs.unlink(tmpFile).catch(() => { });
+        await fs.unlink(tmpFile).catch(() => {});
         throw err;
     }
 }
@@ -105,12 +104,11 @@ export async function runPowerShell(script: string, timeout = 10000): Promise<st
 export async function runPowerShellInline(command: string, timeout = 10000): Promise<string> {
     if (!IS_WIN) throw new Error("runPowerShellInline is only available on Windows.");
 
-    const { stdout } = await execFileAsync("powershell.exe", [
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy", "Bypass",
-        "-Command", command,
-    ], { timeout });
+    const { stdout } = await execFileAsync(
+        "powershell.exe",
+        ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command],
+        { timeout },
+    );
     return stdout.trim();
 }
 
@@ -154,16 +152,22 @@ $bmp.Dispose()
             try {
                 await execFileAsync("grim", [outputPath], { timeout: 10000 });
                 return;
-            } catch { /* fall through */ }
+            } catch {
+                /* fall through */
+            }
         }
         try {
             await execFileAsync("scrot", [outputPath], { timeout: 10000 });
             return;
-        } catch { /* fall through */ }
+        } catch {
+            /* fall through */
+        }
         try {
             await execFileAsync("gnome-screenshot", ["-f", outputPath], { timeout: 10000 });
             return;
-        } catch { /* fall through */ }
+        } catch {
+            /* fall through */
+        }
         // Last resort: screenshot-desktop npm package
         try {
             const { default: screenshot } = await import("screenshot-desktop");
@@ -183,22 +187,33 @@ $bmp.Dispose()
 export async function getScreenResolution(): Promise<{ width: number; height: number }> {
     if (IS_MAC) {
         try {
-            const { stdout } = await execFileAsync("osascript", ["-l", "JavaScript", "-e",
-                'ObjC.import("AppKit"); var f = $.NSScreen.mainScreen.frame; `${f.size.width},${f.size.height}`'
-            ], { timeout: 3000 });
+            const { stdout } = await execFileAsync(
+                "osascript",
+                [
+                    "-l",
+                    "JavaScript",
+                    "-e",
+                    'ObjC.import("AppKit"); var f = $.NSScreen.mainScreen.frame; `${f.size.width},${f.size.height}`',
+                ],
+                { timeout: 3000 },
+            );
             const [w, h] = stdout.trim().split(",").map(Number);
             if (w > 0 && h > 0) return { width: w, height: h };
-        } catch { /* fallback */ }
+        } catch {
+            /* fallback */
+        }
         return { width: 1440, height: 900 };
     } else if (IS_WIN) {
         try {
             const result = await runPowerShellInline(
                 `$s = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; "$($s.Width),$($s.Height)"`,
-                3000
+                3000,
             );
             const [w, h] = result.trim().split(",").map(Number);
             if (w > 0 && h > 0) return { width: w, height: h };
-        } catch { /* fallback */ }
+        } catch {
+            /* fallback */
+        }
         return { width: 1920, height: 1080 };
     }
     // Linux
@@ -212,7 +227,9 @@ export async function getScreenResolution(): Promise<{ width: number; height: nu
                 const h = parseInt(match[2]);
                 if (w > 0 && h > 0) return { width: w, height: h };
             }
-        } catch { /* not X11 or xdpyinfo not available */ }
+        } catch {
+            /* not X11 or xdpyinfo not available */
+        }
 
         try {
             // Wayland / fallback: try xrandr
@@ -223,13 +240,20 @@ export async function getScreenResolution(): Promise<{ width: number; height: nu
                 const h = parseInt(match[2]);
                 if (w > 0 && h > 0) return { width: w, height: h };
             }
-        } catch { /* fallback */ }
+        } catch {
+            /* fallback */
+        }
 
         try {
             // Wayland: try wlr-randr or swaymsg
-            const { stdout } = await execFileAsync("bash", ["-c",
-                `swaymsg -t get_outputs 2>/dev/null | grep -o '"current_mode":{[^}]*}' | head -1 | grep -o '"width":[0-9]*,"height":[0-9]*'`
-            ], { timeout: 3000 });
+            const { stdout } = await execFileAsync(
+                "bash",
+                [
+                    "-c",
+                    `swaymsg -t get_outputs 2>/dev/null | grep -o '"current_mode":{[^}]*}' | head -1 | grep -o '"width":[0-9]*,"height":[0-9]*'`,
+                ],
+                { timeout: 3000 },
+            );
             const wMatch = stdout.match(/"width":(\d+)/);
             const hMatch = stdout.match(/"height":(\d+)/);
             if (wMatch && hMatch) {
@@ -237,7 +261,9 @@ export async function getScreenResolution(): Promise<{ width: number; height: nu
                 const h = parseInt(hMatch[1]);
                 if (w > 0 && h > 0) return { width: w, height: h };
             }
-        } catch { /* fallback */ }
+        } catch {
+            /* fallback */
+        }
     }
 
     return { width: 1920, height: 1080 };
@@ -251,31 +277,40 @@ export async function getScreenResolution(): Promise<{ width: number; height: nu
 export async function getFrontmostApp(): Promise<string> {
     if (IS_MAC) {
         try {
-            const { stdout } = await execFileAsync("osascript", ["-e",
-                'tell application "System Events" to get name of first process whose frontmost is true'
-            ], { timeout: 2000 });
+            const { stdout } = await execFileAsync(
+                "osascript",
+                ["-e", 'tell application "System Events" to get name of first process whose frontmost is true'],
+                { timeout: 2000 },
+            );
             return stdout.trim();
-        } catch { return "unknown"; }
+        } catch {
+            return "unknown";
+        }
     } else if (IS_WIN) {
         try {
             const result = await runPowerShell(`Atlas-GetFrontApp`);
             return result.trim() || "unknown";
-        } catch { return "unknown"; }
+        } catch {
+            return "unknown";
+        }
     }
 
     // Linux
     if (IS_LINUX) {
         try {
-            const { stdout } = await execFileAsync("xdotool", [
-                "getactivewindow", "getwindowname"
-            ], { timeout: 2000 });
+            const { stdout } = await execFileAsync("xdotool", ["getactivewindow", "getwindowname"], { timeout: 2000 });
             return stdout.trim() || "unknown";
         } catch {
             // Wayland fallback
             try {
-                const { stdout } = await execFileAsync("bash", ["-c",
-                    `swaymsg -t get_tree 2>/dev/null | grep -o '"focused":true' -A 5 | grep -o '"name":"[^"]*"' | head -1 | sed 's/"name":"\\(.*\\)"/\\1/'`
-                ], { timeout: 2000 });
+                const { stdout } = await execFileAsync(
+                    "bash",
+                    [
+                        "-c",
+                        `swaymsg -t get_tree 2>/dev/null | grep -o '"focused":true' -A 5 | grep -o '"name":"[^"]*"' | head -1 | sed 's/"name":"\\(.*\\)"/\\1/'`,
+                    ],
+                    { timeout: 2000 },
+                );
                 return stdout.trim() || "unknown";
             } catch {
                 return "unknown";
@@ -328,16 +363,22 @@ export async function clipboardRead(): Promise<string> {
         try {
             const { stdout } = await execFileAsync("wl-paste", ["--no-newline"], { timeout: 3000 });
             return stdout;
-        } catch { /* fall through */ }
+        } catch {
+            /* fall through */
+        }
     }
     try {
         const { stdout } = await execFileAsync("xclip", ["-selection", "clipboard", "-o"], { timeout: 3000 });
         return stdout;
-    } catch { /* fall through */ }
+    } catch {
+        /* fall through */
+    }
     try {
         const { stdout } = await execFileAsync("xsel", ["--clipboard", "--output"], { timeout: 3000 });
         return stdout;
-    } catch { /* fall through */ }
+    } catch {
+        /* fall through */
+    }
     return "";
 }
 
@@ -346,7 +387,7 @@ export async function clipboardWrite(text: string): Promise<void> {
         const tmpFile = join(tmpdir(), `atlas_clip_${Date.now()}.txt`);
         await fs.writeFile(tmpFile, text, "utf-8");
         await execFileAsync("bash", ["-c", `cat "${tmpFile}" | pbcopy`], { timeout: 3000 });
-        await fs.unlink(tmpFile).catch(() => { });
+        await fs.unlink(tmpFile).catch(() => {});
     } else if (IS_WIN) {
         try {
             const { default: clipboardy } = await import("clipboardy");
@@ -365,19 +406,25 @@ export async function clipboardWrite(text: string): Promise<void> {
             try {
                 await execFileAsync("bash", ["-c", `cat "${tmpFile}" | wl-copy`], { timeout: 3000 });
                 written = true;
-            } catch { /* fall through */ }
+            } catch {
+                /* fall through */
+            }
         }
         if (!written) {
             try {
                 await execFileAsync("bash", ["-c", `cat "${tmpFile}" | xclip -selection clipboard`], { timeout: 3000 });
                 written = true;
-            } catch { /* fall through */ }
+            } catch {
+                /* fall through */
+            }
         }
         if (!written) {
             try {
                 await execFileAsync("bash", ["-c", `cat "${tmpFile}" | xsel --clipboard --input`], { timeout: 3000 });
-            } catch { /* fall through */ }
+            } catch {
+                /* fall through */
+            }
         }
-        await fs.unlink(tmpFile).catch(() => { });
+        await fs.unlink(tmpFile).catch(() => {});
     }
 }

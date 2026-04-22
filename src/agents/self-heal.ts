@@ -7,7 +7,7 @@
 // this module attempts to diagnose and fix the issue automatically
 // before falling back to error messages.
 
-import { execFile, exec } from "node:child_process";
+import { exec, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { ErrorCategory } from "./error-types.js";
 
@@ -28,9 +28,9 @@ interface DepFix {
     binary: string;
     /** Install commands per platform: [command, args[]] */
     install: {
-        darwin?: [string, string[]][];   // macOS — try in order
-        linux?: [string, string[]][];    // Linux
-        win32?: [string, string[]][];    // Windows
+        darwin?: [string, string[]][]; // macOS — try in order
+        linux?: [string, string[]][]; // Linux
+        win32?: [string, string[]][]; // Windows
     };
     /** npm package to install if it's a Node module */
     npmPackage?: string;
@@ -42,7 +42,10 @@ const KNOWN_DEPS: DepFix[] = [
         patterns: [/sox/i, /\brec\b.*ENOENT/i, /\bplay\b.*ENOENT/i, /spawn rec/i, /spawn play/i],
         install: {
             darwin: [["brew", ["install", "sox"]]],
-            linux: [["sudo", ["apt-get", "install", "-y", "sox"]], ["sudo", ["dnf", "install", "-y", "sox"]]],
+            linux: [
+                ["sudo", ["apt-get", "install", "-y", "sox"]],
+                ["sudo", ["dnf", "install", "-y", "sox"]],
+            ],
             win32: [["choco", ["install", "sox", "-y"]]],
         },
     },
@@ -51,8 +54,22 @@ const KNOWN_DEPS: DepFix[] = [
         patterns: [/ffmpeg/i, /ffprobe/i, /spawn ffmpeg/i, /spawn ffprobe/i],
         install: {
             darwin: [["brew", ["install", "ffmpeg"]]],
-            linux: [["sudo", ["apt-get", "install", "-y", "ffmpeg"]], ["sudo", ["dnf", "install", "-y", "ffmpeg"]]],
+            linux: [
+                ["sudo", ["apt-get", "install", "-y", "ffmpeg"]],
+                ["sudo", ["dnf", "install", "-y", "ffmpeg"]],
+            ],
             win32: [["choco", ["install", "ffmpeg", "-y"]]],
+        },
+    },
+    {
+        binary: "tesseract",
+        patterns: [/tesseract.*not found/i, /spawn tesseract/i, /ENOENT.*tesseract/i, /No OCR tool available/i],
+        install: {
+            linux: [
+                ["sudo", ["apt-get", "install", "-y", "tesseract-ocr"]],
+                ["sudo", ["dnf", "install", "-y", "tesseract"]],
+                ["sudo", ["pacman", "-S", "--noconfirm", "tesseract"]],
+            ],
         },
     },
     {
@@ -82,15 +99,15 @@ export async function attemptSelfHeal(
     errorMessage: string,
     errorCategory?: ErrorCategory,
 ): Promise<{ fixed: boolean; action: string }> {
-
     // Only attempt for dependency errors, ENOENT/spawn errors, or module errors
-    const isDependencyError = errorCategory === ErrorCategory.DependencyMissing
-        || /ENOENT.*spawn/i.test(errorMessage)
-        || /spawn.*ENOENT/i.test(errorMessage)
-        || /command not found/i.test(errorMessage)
-        || /not recognized as.*command/i.test(errorMessage)
-        || /Cannot find module/i.test(errorMessage)
-        || /MODULE_NOT_FOUND/i.test(errorMessage);
+    const isDependencyError =
+        errorCategory === ErrorCategory.DependencyMissing ||
+        /ENOENT.*spawn/i.test(errorMessage) ||
+        /spawn.*ENOENT/i.test(errorMessage) ||
+        /command not found/i.test(errorMessage) ||
+        /not recognized as.*command/i.test(errorMessage) ||
+        /Cannot find module/i.test(errorMessage) ||
+        /MODULE_NOT_FOUND/i.test(errorMessage);
 
     if (!isDependencyError) {
         return { fixed: false, action: "not_applicable" };
@@ -98,7 +115,7 @@ export async function attemptSelfHeal(
 
     // ── Check known system dependencies ──
     for (const dep of KNOWN_DEPS) {
-        const matches = dep.patterns.some(p => p.test(errorMessage));
+        const matches = dep.patterns.some((p) => p.test(errorMessage));
         if (!matches) continue;
 
         // Check cooldown

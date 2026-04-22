@@ -9,15 +9,14 @@
 // Supports both X11 and basic Wayland (via wl-* tools).
 
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { promises as fs } from "node:fs";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { existsSync, promises as fs, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import type { ToolDefinition } from "./get-current-time.js";
-import { getTelegramContext } from "./send-file.js";
 import { captureScreenshot, getScreenResolution } from "./platform.js";
+import { getTelegramContext } from "./send-file.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -36,7 +35,36 @@ let lastScreenHeight = 0;
 // ── Wayland Detection ────────────────────────
 
 function isWayland(): boolean {
-    return !!(process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === "wayland");
+    if (process.env.WAYLAND_DISPLAY) return true;
+    if (process.env.XDG_SESSION_TYPE === "wayland") return true;
+    // Check Wayland socket file — most reliable indicator
+    try {
+        const uid = process.getuid?.() ?? 1000;
+        return existsSync(`/run/user/${uid}/wayland-0`);
+    } catch {
+        return false;
+    }
+}
+
+// ── ydotoold Daemon Helper ────────────────────
+
+/** Ensure the ydotoold daemon is running before using ydotool */
+async function ensureYdotoold(): Promise<boolean> {
+    try {
+        // Check if daemon is running
+        await execFileAsync("pgrep", ["ydotoold"], { timeout: 2000 });
+        return true;
+    } catch {
+        // Try to start it
+        try {
+            const { spawn } = await import("node:child_process");
+            spawn("ydotoold", [], { detached: true, stdio: "ignore" }).unref();
+            await new Promise((r) => setTimeout(r, 500)); // brief wait for daemon start
+            return true;
+        } catch {
+            return false;
+        }
+    }
 }
 
 // ── Shell Script Tool ────────────────────────
@@ -46,13 +74,14 @@ export const linuxShellScript: ToolDefinition = {
         type: "function",
         function: {
             name: "linux_shell_script",
-            description: "Execute a shell script on Linux for system automation. Use for controlling apps, system settings, and desktop automation. Equivalent of apple_script on macOS. IMPORTANT: To LAUNCH apps, use the app name directly or xdg-open.",
+            description:
+                "Execute a shell script on Linux for system automation. Use for controlling apps, system settings, and desktop automation. Equivalent of apple_script on macOS. IMPORTANT: To LAUNCH apps, use the app name directly or xdg-open.",
             parameters: {
                 type: "object",
                 properties: {
                     script: {
                         type: "string",
-                        description: "The bash script to execute. Write raw bash commands."
+                        description: "The bash script to execute. Write raw bash commands.",
                     },
                     timeout: { type: "number", description: "Timeout in ms (default 30000)" },
                 },
@@ -74,7 +103,7 @@ export const linuxShellScript: ToolDefinition = {
             /(?:google-chrome|firefox|chromium|brave-browser|microsoft-edge)\s/i,
             /xdg-open\s+['"]?https?:\/\//i,
         ];
-        if (BROWSER_PATTERNS.some(p => p.test(script))) {
+        if (BROWSER_PATTERNS.some((p) => p.test(script))) {
             return JSON.stringify({
                 error: "BLOCKED: Do NOT open native browsers for web tasks. Use browser_navigate with the URL directly instead.",
                 fix: "Call browser_navigate with the target URL.",
@@ -113,7 +142,8 @@ export const linuxOsScreenshot: ToolDefinition = {
         type: "function",
         function: {
             name: "os_screenshot",
-            description: "Takes a screenshot of the current Linux screen. Returns the image, which app is focused, screen resolution, and coordinate mapping info. ALWAYS take a screenshot after os_click or os_type to verify your action worked.",
+            description:
+                "Takes a screenshot of the current Linux screen. Returns the image, which app is focused, screen resolution, and coordinate mapping info. ALWAYS take a screenshot after os_click or os_type to verify your action worked.",
             parameters: {
                 type: "object",
                 properties: {},
@@ -142,9 +172,7 @@ export const linuxOsScreenshot: ToolDefinition = {
             // Resize to 1920px width for LLM coordinate accuracy
             const RESIZE_WIDTH = 1920;
             try {
-                await execFileAsync("convert", [
-                    tmpPng, "-resize", `${RESIZE_WIDTH}x`, tmpPng
-                ], { timeout: 10000 });
+                await execFileAsync("convert", [tmpPng, "-resize", `${RESIZE_WIDTH}x`, tmpPng], { timeout: 10000 });
             } catch {
                 // ImageMagick not available; proceed with raw size
             }
@@ -160,10 +188,10 @@ export const linuxOsScreenshot: ToolDefinition = {
                 } catch {
                     // Fallback: convert to JPEG via ImageMagick
                     try {
-                        await execFileAsync("convert", [
-                            tmpPng, "-quality", "85", tmpJpg
-                        ], { timeout: 5000 });
-                    } catch { /* use PNG */ }
+                        await execFileAsync("convert", [tmpPng, "-quality", "85", tmpJpg], { timeout: 5000 });
+                    } catch {
+                        /* use PNG */
+                    }
                 }
             }
 
@@ -171,7 +199,7 @@ export const linuxOsScreenshot: ToolDefinition = {
             const finalFile = existsSync(tmpJpg) ? tmpJpg : tmpPng;
             const buffer = await fs.readFile(finalFile);
             const base64 = buffer.toString("base64");
-            const mimeType = finalFile.endsWith('.jpg') ? 'image/jpeg' : 'image/png';
+            const mimeType = finalFile.endsWith(".jpg") ? "image/jpeg" : "image/png";
 
             // Cleanup
             await fs.unlink(tmpPng).catch(() => {});
@@ -184,17 +212,24 @@ export const linuxOsScreenshot: ToolDefinition = {
             let frontmostApp = "unknown";
             try {
                 if (isWayland()) {
-                    const { stdout } = await execFileAsync("bash", ["-c",
-                        `swaymsg -t get_tree 2>/dev/null | grep -o '"app_id":"[^"]*"' | head -1 | sed 's/"app_id":"\\(.*\\)"/\\1/' || echo unknown`
-                    ], { timeout: 2000 });
+                    const { stdout } = await execFileAsync(
+                        "bash",
+                        [
+                            "-c",
+                            `swaymsg -t get_tree 2>/dev/null | grep -o '"app_id":"[^"]*"' | head -1 | sed 's/"app_id":"\\(.*\\)"/\\1/' || echo unknown`,
+                        ],
+                        { timeout: 2000 },
+                    );
                     frontmostApp = stdout.trim() || "unknown";
                 } else {
-                    const { stdout } = await execFileAsync("xdotool", [
-                        "getactivewindow", "getwindowname"
-                    ], { timeout: 2000 });
+                    const { stdout } = await execFileAsync("xdotool", ["getactivewindow", "getwindowname"], {
+                        timeout: 2000,
+                    });
                     frontmostApp = stdout.trim() || "unknown";
                 }
-            } catch { /* unknown */ }
+            } catch {
+                /* unknown */
+            }
 
             return JSON.stringify({
                 success: true,
@@ -204,7 +239,7 @@ export const linuxOsScreenshot: ToolDefinition = {
                 image_width: RESIZE_WIDTH,
                 scale_factor: Math.round(scaleFactor * 1000) / 1000,
                 frontmost_app: frontmostApp,
-                tip: `Image is ${RESIZE_WIDTH}px wide with a coordinate GRID overlay. Use the grid lines and labels to pick PRECISE x,y coordinates. Pass them to os_click — auto-scaled to screen. ALWAYS verify with another screenshot after clicking.`
+                tip: `Image is ${RESIZE_WIDTH}px wide with a coordinate GRID overlay. Use the grid lines and labels to pick PRECISE x,y coordinates. Pass them to os_click — auto-scaled to screen. ALWAYS verify with another screenshot after clicking.`,
             });
         } catch (err) {
             await fs.unlink(tmpPng).catch(() => {});
@@ -225,7 +260,8 @@ export const linuxOsClick: ToolDefinition = {
         type: "function",
         function: {
             name: "os_click",
-            description: "Click, double-click, right-click, or move the mouse on Linux. Pass x,y coordinates as you see them in the os_screenshot image — they are auto-scaled to actual screen resolution.",
+            description:
+                "Click, double-click, right-click, or move the mouse on Linux. Pass x,y coordinates as you see them in the os_screenshot image — they are auto-scaled to actual screen resolution.",
             parameters: {
                 type: "object",
                 properties: {
@@ -234,9 +270,12 @@ export const linuxOsClick: ToolDefinition = {
                     action: {
                         type: "string",
                         enum: ["click", "double_click", "right_click", "move"],
-                        description: "Mouse action (default: click)"
+                        description: "Mouse action (default: click)",
                     },
-                    raw: { type: "boolean", description: "If true, treat x/y as raw screen pixels without scaling (default: false)" },
+                    raw: {
+                        type: "boolean",
+                        description: "If true, treat x/y as raw screen pixels without scaling (default: false)",
+                    },
                 },
                 required: ["x", "y"],
             },
@@ -266,21 +305,30 @@ export const linuxOsClick: ToolDefinition = {
         try {
             if (isWayland()) {
                 // Wayland: try ydotool (needs root or ydotoold running)
+                await ensureYdotoold();
                 const ydoArgs: string[] = [];
                 switch (action) {
                     case "move":
-                        await execFileAsync("ydotool", ["mousemove", "--absolute", "-x", String(x), "-y", String(y)], { timeout: 3000 });
+                        await execFileAsync("ydotool", ["mousemove", "--absolute", "-x", String(x), "-y", String(y)], {
+                            timeout: 3000,
+                        });
                         break;
                     case "right_click":
-                        await execFileAsync("ydotool", ["mousemove", "--absolute", "-x", String(x), "-y", String(y)], { timeout: 3000 });
+                        await execFileAsync("ydotool", ["mousemove", "--absolute", "-x", String(x), "-y", String(y)], {
+                            timeout: 3000,
+                        });
                         await execFileAsync("ydotool", ["click", "0xC0"], { timeout: 3000 }); // right click
                         break;
                     case "double_click":
-                        await execFileAsync("ydotool", ["mousemove", "--absolute", "-x", String(x), "-y", String(y)], { timeout: 3000 });
+                        await execFileAsync("ydotool", ["mousemove", "--absolute", "-x", String(x), "-y", String(y)], {
+                            timeout: 3000,
+                        });
                         await execFileAsync("ydotool", ["click", "0x40", "0x40"], { timeout: 3000 });
                         break;
                     default: // click
-                        await execFileAsync("ydotool", ["mousemove", "--absolute", "-x", String(x), "-y", String(y)], { timeout: 3000 });
+                        await execFileAsync("ydotool", ["mousemove", "--absolute", "-x", String(x), "-y", String(y)], {
+                            timeout: 3000,
+                        });
                         await execFileAsync("ydotool", ["click", "0x40"], { timeout: 3000 }); // left click
                         break;
                 }
@@ -298,7 +346,9 @@ export const linuxOsClick: ToolDefinition = {
                     break;
                 case "double_click":
                     await execFileAsync("xdotool", ["mousemove", String(x), String(y)], { timeout: 3000 });
-                    await execFileAsync("xdotool", ["click", "--repeat", "2", "--delay", "100", "1"], { timeout: 3000 });
+                    await execFileAsync("xdotool", ["click", "--repeat", "2", "--delay", "100", "1"], {
+                        timeout: 3000,
+                    });
                     break;
                 default: // click
                     await execFileAsync("xdotool", ["mousemove", String(x), String(y)], { timeout: 3000 });
@@ -320,13 +370,22 @@ export const linuxOsType: ToolDefinition = {
         type: "function",
         function: {
             name: "os_type",
-            description: "Type text or press keys/hotkeys at the OS level on Linux. Works on ANY focused application. Use for typing into native apps, pressing shortcuts (Ctrl+C, Ctrl+V, etc.).",
+            description:
+                "Type text or press keys/hotkeys at the OS level on Linux. Works on ANY focused application. Use for typing into native apps, pressing shortcuts (Ctrl+C, Ctrl+V, etc.).",
             parameters: {
                 type: "object",
                 properties: {
                     text: { type: "string", description: "Text to type (types character by character)" },
-                    key: { type: "string", description: "Special key to press: Return, Tab, Escape, Delete, space, Up, Down, Left, Right, F1-F12" },
-                    combo: { type: "string", description: "Hotkey combo like 'ctrl+c', 'ctrl+shift+s', 'alt+tab'. Use + to separate modifiers and key." },
+                    key: {
+                        type: "string",
+                        description:
+                            "Special key to press: Return, Tab, Escape, Delete, space, Up, Down, Left, Right, F1-F12",
+                    },
+                    combo: {
+                        type: "string",
+                        description:
+                            "Hotkey combo like 'ctrl+c', 'ctrl+shift+s', 'alt+tab'. Use + to separate modifiers and key.",
+                    },
                     delay_ms: { type: "number", description: "Delay in ms after action (default: 200)" },
                 },
                 required: [],
@@ -341,39 +400,58 @@ export const linuxOsType: ToolDefinition = {
 
         const delayMs = (input.delay_ms as number) || 200;
         const tool = isWayland() ? "ydotool" : "xdotool";
+        if (tool === "ydotool") await ensureYdotoold();
 
         try {
             if (input.combo) {
                 // Parse combo like "ctrl+shift+s"
-                const parts = (input.combo as string).toLowerCase().split("+").map(s => s.trim());
+                const parts = (input.combo as string)
+                    .toLowerCase()
+                    .split("+")
+                    .map((s) => s.trim());
 
                 if (tool === "xdotool") {
                     // xdotool key combos use modifier+key format
                     const modMap: Record<string, string> = {
-                        "ctrl": "ctrl", "control": "ctrl",
-                        "shift": "shift", "alt": "alt", "option": "alt",
-                        "super": "super", "win": "super", "command": "super", "cmd": "super",
-                        "meta": "super",
+                        ctrl: "ctrl",
+                        control: "ctrl",
+                        shift: "shift",
+                        alt: "alt",
+                        option: "alt",
+                        super: "super",
+                        win: "super",
+                        command: "super",
+                        cmd: "super",
+                        meta: "super",
                     };
 
-                    const keyParts = parts.map(p => modMap[p] || p);
+                    const keyParts = parts.map((p) => modMap[p] || p);
                     const combo = keyParts.join("+");
                     await execFileAsync("xdotool", ["key", combo], { timeout: 5000 });
                 } else {
                     // ydotool key combos
                     const modMap: Record<string, string> = {
-                        "ctrl": "29:1", "control": "29:1",
-                        "shift": "42:1", "alt": "56:1",
-                        "super": "125:1", "win": "125:1",
+                        ctrl: "29:1",
+                        control: "29:1",
+                        shift: "42:1",
+                        alt: "56:1",
+                        super: "125:1",
+                        win: "125:1",
                     };
                     const releaseMap: Record<string, string> = {
-                        "ctrl": "29:0", "control": "29:0",
-                        "shift": "42:0", "alt": "56:0",
-                        "super": "125:0", "win": "125:0",
+                        ctrl: "29:0",
+                        control: "29:0",
+                        shift: "42:0",
+                        alt: "56:0",
+                        super: "125:0",
+                        win: "125:0",
                     };
                     const key = parts.pop() || "";
-                    const presses = parts.map(p => modMap[p]).filter(Boolean);
-                    const releases = parts.map(p => releaseMap[p]).filter(Boolean).reverse();
+                    const presses = parts.map((p) => modMap[p]).filter(Boolean);
+                    const releases = parts
+                        .map((p) => releaseMap[p])
+                        .filter(Boolean)
+                        .reverse();
                     // This is simplified; ydotool keycodes are complex
                     await execFileAsync("ydotool", ["key", ...presses, key, ...releases], { timeout: 5000 });
                 }
@@ -386,16 +464,36 @@ export const linuxOsType: ToolDefinition = {
             }
 
             if (input.key) {
-                const key = (input.key as string);
+                const key = input.key as string;
                 const keyMap: Record<string, string> = {
-                    "return": "Return", "enter": "Return", "tab": "Tab",
-                    "escape": "Escape", "esc": "Escape", "delete": "Delete",
-                    "backspace": "BackSpace", "space": "space",
-                    "up": "Up", "down": "Down", "left": "Left", "right": "Right",
-                    "f1": "F1", "f2": "F2", "f3": "F3", "f4": "F4",
-                    "f5": "F5", "f6": "F6", "f7": "F7", "f8": "F8",
-                    "f9": "F9", "f10": "F10", "f11": "F11", "f12": "F12",
-                    "home": "Home", "end": "End", "pageup": "Prior", "pagedown": "Next",
+                    return: "Return",
+                    enter: "Return",
+                    tab: "Tab",
+                    escape: "Escape",
+                    esc: "Escape",
+                    delete: "Delete",
+                    backspace: "BackSpace",
+                    space: "space",
+                    up: "Up",
+                    down: "Down",
+                    left: "Left",
+                    right: "Right",
+                    f1: "F1",
+                    f2: "F2",
+                    f3: "F3",
+                    f4: "F4",
+                    f5: "F5",
+                    f6: "F6",
+                    f7: "F7",
+                    f8: "F8",
+                    f9: "F9",
+                    f10: "F10",
+                    f11: "F11",
+                    f12: "F12",
+                    home: "Home",
+                    end: "End",
+                    pageup: "Prior",
+                    pagedown: "Next",
                 };
 
                 const mapped = keyMap[key.toLowerCase()] || key;
@@ -417,7 +515,9 @@ export const linuxOsType: ToolDefinition = {
                 const text = input.text as string;
 
                 if (tool === "xdotool") {
-                    await execFileAsync("xdotool", ["type", "--clearmodifiers", "--delay", "12", text], { timeout: 15000 });
+                    await execFileAsync("xdotool", ["type", "--clearmodifiers", "--delay", "12", text], {
+                        timeout: 15000,
+                    });
                 } else {
                     await execFileAsync("ydotool", ["type", text], { timeout: 15000 });
                 }
@@ -444,7 +544,8 @@ export const linuxOsContext: ToolDefinition = {
         type: "function",
         function: {
             name: "os_context",
-            description: "Get current OS context: which app is focused, window title, and screen resolution. Very fast (no screenshot).",
+            description:
+                "Get current OS context: which app is focused, window title, and screen resolution. Very fast (no screenshot).",
             parameters: {
                 type: "object",
                 properties: {},
@@ -468,8 +569,11 @@ export const linuxOsContext: ToolDefinition = {
 
             if (isWayland()) {
                 try {
-                    const { stdout } = await execFileAsync("bash", ["-c",
-                        `swaymsg -t get_tree 2>/dev/null | python3 -c "
+                    const { stdout } = await execFileAsync(
+                        "bash",
+                        [
+                            "-c",
+                            `swaymsg -t get_tree 2>/dev/null | python3 -c "
 import sys, json
 tree = json.load(sys.stdin)
 def find_focused(node):
@@ -484,29 +588,37 @@ if f:
     print(f.get('app_id', f.get('name', 'unknown')) + '|||' + f.get('name', ''))
 else:
     print('unknown|||')
-"`
-                    ], { timeout: 3000 });
+"`,
+                        ],
+                        { timeout: 3000 },
+                    );
                     const [app, title] = stdout.trim().split("|||");
                     appName = app || "unknown";
                     windowTitle = title || "";
-                } catch { /* fallback */ }
+                } catch {
+                    /* fallback */
+                }
             } else {
                 try {
-                    const { stdout: winName } = await execFileAsync("xdotool", [
-                        "getactivewindow", "getwindowname"
-                    ], { timeout: 2000 });
+                    const { stdout: winName } = await execFileAsync("xdotool", ["getactivewindow", "getwindowname"], {
+                        timeout: 2000,
+                    });
                     windowTitle = winName.trim();
 
                     try {
-                        const { stdout: pidStr } = await execFileAsync("xdotool", [
-                            "getactivewindow", "getwindowpid"
-                        ], { timeout: 2000 });
-                        const { stdout: comm } = await execFileAsync("ps", [
-                            "-p", pidStr.trim(), "-o", "comm="
-                        ], { timeout: 2000 });
+                        const { stdout: pidStr } = await execFileAsync("xdotool", ["getactivewindow", "getwindowpid"], {
+                            timeout: 2000,
+                        });
+                        const { stdout: comm } = await execFileAsync("ps", ["-p", pidStr.trim(), "-o", "comm="], {
+                            timeout: 2000,
+                        });
                         appName = comm.trim() || "unknown";
-                    } catch { /* pid not available for all windows */ }
-                } catch { /* fallback */ }
+                    } catch {
+                        /* pid not available for all windows */
+                    }
+                } catch {
+                    /* fallback */
+                }
             }
 
             return JSON.stringify({
@@ -554,27 +666,27 @@ export const linuxSetBrightness: ToolDefinition = {
 
         // Try brightnessctl first (most common on modern distros)
         try {
-            await execFileAsync("brightnessctl", [
-                "set", `${clamped}%`
-            ], { timeout: 5000 });
+            await execFileAsync("brightnessctl", ["set", `${clamped}%`], { timeout: 5000 });
             return JSON.stringify({
                 success: true,
                 brightness: clamped,
                 method: "brightnessctl",
             });
-        } catch { /* fallback */ }
+        } catch {
+            /* fallback */
+        }
 
         // Try xbacklight
         try {
-            await execFileAsync("xbacklight", [
-                "-set", String(clamped)
-            ], { timeout: 5000 });
+            await execFileAsync("xbacklight", ["-set", String(clamped)], { timeout: 5000 });
             return JSON.stringify({
                 success: true,
                 brightness: clamped,
                 method: "xbacklight",
             });
-        } catch { /* fallback */ }
+        } catch {
+            /* fallback */
+        }
 
         // Direct sysfs fallback
         try {
@@ -583,20 +695,19 @@ export const linuxSetBrightness: ToolDefinition = {
             const device = lsOut.trim().split("\n")[0];
             if (device) {
                 const maxBrightness = parseInt(
-                    await fs.readFile(join(backlightDir, device, "max_brightness"), "utf-8")
+                    await fs.readFile(join(backlightDir, device, "max_brightness"), "utf-8"),
                 );
                 const target = Math.round((clamped / 100) * maxBrightness);
-                await fs.writeFile(
-                    join(backlightDir, device, "brightness"),
-                    String(target)
-                );
+                await fs.writeFile(join(backlightDir, device, "brightness"), String(target));
                 return JSON.stringify({
                     success: true,
                     brightness: clamped,
                     method: "sysfs",
                 });
             }
-        } catch { /* no backlight control */ }
+        } catch {
+            /* no backlight control */
+        }
 
         return JSON.stringify({
             success: false,
@@ -672,6 +783,59 @@ export const linuxSendScreenshot: ToolDefinition = {
         }
     },
 };
+
+// ── Linux Tesseract OCR ──────────────────────
+
+interface OcrElement {
+    text: string;
+    boundingBox: { x: number; y: number; width: number; height: number };
+}
+interface OcrResult {
+    elements: OcrElement[];
+    fullText: string;
+}
+
+let _tesseractAvailable: boolean | null = null;
+
+async function checkTesseract(): Promise<boolean> {
+    if (_tesseractAvailable !== null) return _tesseractAvailable;
+    try {
+        await execFileAsync("tesseract", ["--version"], { timeout: 3000 });
+        _tesseractAvailable = true;
+    } catch {
+        _tesseractAvailable = false;
+    }
+    return _tesseractAvailable;
+}
+
+export async function runLinuxOcr(imgPath: string | null): Promise<OcrResult | null> {
+    if (!(await checkTesseract())) return null;
+
+    let tempCapture = false;
+    if (!imgPath) {
+        imgPath = join(tmpdir(), `atlas_ocr_${Date.now()}.png`);
+        await captureScreenshot(imgPath);
+        tempCapture = true;
+    }
+
+    try {
+        const { stdout } = await execFileAsync("tesseract", [imgPath, "stdout", "-l", "eng"], { timeout: 20000 });
+        if (tempCapture) await fs.unlink(imgPath).catch(() => {});
+        const lines = stdout
+            .trim()
+            .split("\n")
+            .filter((l) => l.trim());
+        // Tesseract stdout gives plain text; synthesize elements with approximate positions
+        const elements: OcrElement[] = lines.map((text, i) => ({
+            text: text.trim(),
+            boundingBox: { x: 0, y: i * 20, width: 800, height: 18 },
+        }));
+        return { elements, fullText: stdout.trim() };
+    } catch {
+        if (tempCapture && imgPath) await fs.unlink(imgPath).catch(() => {});
+        return null;
+    }
+}
 
 // ── Exported screen dimensions for other tools ─
 

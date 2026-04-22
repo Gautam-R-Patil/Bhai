@@ -9,20 +9,48 @@
 // and Windows.Media.Ocr for OCR.
 
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { promises as fs } from "node:fs";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { existsSync, promises as fs, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import type { ToolDefinition } from "./get-current-time.js";
+import {
+    captureScreenshot,
+    getFrontmostApp,
+    getScreenResolution,
+    runPowerShell,
+    runPowerShellInline,
+} from "./platform.js";
 import { getTelegramContext } from "./send-file.js";
-import { runPowerShell, runPowerShellInline, captureScreenshot, getScreenResolution, getFrontmostApp } from "./platform.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const execFileAsync = promisify(execFile);
+
+// ── OCR Script Resolver ───────────────────────
+
+function findOcrScript(): string | null {
+    // process.resourcesPath is injected by Electron at runtime; not in Node types
+    const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+    const candidates = [
+        // Dev: src/tools/ -> ../../scripts/
+        join(__dirname, "..", "..", "scripts", "ocr_screen.ps1"),
+        // Compiled: dist/tools/ -> ../../scripts/
+        join(__dirname, "..", "..", "scripts", "ocr_screen.ps1"),
+        // CWD fallback
+        join(process.cwd(), "scripts", "ocr_screen.ps1"),
+        // Electron packaged: process.resourcesPath/scripts/
+        ...(resourcesPath ? [join(resourcesPath, "scripts", "ocr_screen.ps1")] : []),
+        // Electron packaged: process.resourcesPath/bot/scripts/
+        ...(resourcesPath ? [join(resourcesPath, "bot", "scripts", "ocr_screen.ps1")] : []),
+    ];
+    for (const p of candidates) {
+        if (existsSync(p)) return p;
+    }
+    return null;
+}
 
 // ── Constants ─────────────────────────────────
 
@@ -40,13 +68,15 @@ export const powerShellScript: ToolDefinition = {
         type: "function",
         function: {
             name: "powershell_script",
-            description: "Execute a PowerShell script on Windows. Use for controlling apps, system settings, and automation. Equivalent of apple_script on macOS. IMPORTANT: To LAUNCH apps, use: Start-Process 'AppName' — do NOT use browser automation tools for native Windows apps.",
+            description:
+                "Execute a PowerShell script on Windows. Use for controlling apps, system settings, and automation. Equivalent of apple_script on macOS. IMPORTANT: To LAUNCH apps, use: Start-Process 'AppName' — do NOT use browser automation tools for native Windows apps.",
             parameters: {
                 type: "object",
                 properties: {
                     script: {
                         type: "string",
-                        description: "The PowerShell script to execute. Write raw PowerShell, no extra escaping needed."
+                        description:
+                            "The PowerShell script to execute. Write raw PowerShell, no extra escaping needed.",
                     },
                     timeout: { type: "number", description: "Timeout in ms (default 30000)" },
                 },
@@ -70,7 +100,7 @@ export const powerShellScript: ToolDefinition = {
             /start-process\s+['"]?https?:\/\//i,
             /start\s+['"]?https?:\/\//i,
         ];
-        if (BROWSER_PATTERNS.some(p => p.test(script))) {
+        if (BROWSER_PATTERNS.some((p) => p.test(script))) {
             return JSON.stringify({
                 error: "BLOCKED: Do NOT open native browsers for web tasks. Use browser_navigate with the URL directly instead.",
                 fix: "Call browser_navigate with the target URL.",
@@ -103,7 +133,8 @@ export const winOsScreenshot: ToolDefinition = {
         type: "function",
         function: {
             name: "os_screenshot",
-            description: "Takes a screenshot of the current Windows screen. Returns the image, which app is focused, screen resolution, and coordinate mapping info. ALWAYS take a screenshot after os_click or os_type to verify your action worked.",
+            description:
+                "Takes a screenshot of the current Windows screen. Returns the image, which app is focused, screen resolution, and coordinate mapping info. ALWAYS take a screenshot after os_click or os_type to verify your action worked.",
             parameters: {
                 type: "object",
                 properties: {},
@@ -133,7 +164,8 @@ export const winOsScreenshot: ToolDefinition = {
             const RESIZE_WIDTH = 1920;
             try {
                 // Use PowerShell to resize
-                await runPowerShell(`
+                await runPowerShell(
+                    `
 Add-Type -AssemblyName System.Drawing
 $img = [System.Drawing.Image]::FromFile("${tmpPng.replace(/\\/g, "\\\\")}")
 $ratio = ${RESIZE_WIDTH} / $img.Width
@@ -146,8 +178,12 @@ $g.Dispose()
 $img.Dispose()
 $bmp.Save("${tmpPng.replace(/\\/g, "\\\\")}", [System.Drawing.Imaging.ImageFormat]::Png)
 $bmp.Dispose()
-`, 10000);
-            } catch { /* proceed with raw size */ }
+`,
+                    10000,
+                );
+            } catch {
+                /* proceed with raw size */
+            }
 
             // Add grid overlay using Python + Pillow
             const projectRoot = join(__dirname, "..", "..");
@@ -160,7 +196,8 @@ $bmp.Dispose()
                 } catch {
                     // Fallback: convert to JPEG via PowerShell
                     try {
-                        await runPowerShell(`
+                        await runPowerShell(
+                            `
 Add-Type -AssemblyName System.Drawing
 $img = [System.Drawing.Image]::FromFile("${tmpPng.replace(/\\/g, "\\\\")}")
 $encoder = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }
@@ -168,8 +205,12 @@ $encoderParams = New-Object System.Drawing.Imaging.EncoderParameters(1)
 $encoderParams.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality, 85L)
 $img.Save("${tmpJpg.replace(/\\/g, "\\\\")}", $encoder, $encoderParams)
 $img.Dispose()
-`, 5000);
-                    } catch { /* use PNG */ }
+`,
+                            5000,
+                        );
+                    } catch {
+                        /* use PNG */
+                    }
                 }
             }
 
@@ -177,11 +218,11 @@ $img.Dispose()
             const finalFile = existsSync(tmpJpg) ? tmpJpg : tmpPng;
             const buffer = await fs.readFile(finalFile);
             const base64 = buffer.toString("base64");
-            const mimeType = finalFile.endsWith('.jpg') ? 'image/jpeg' : 'image/png';
+            const mimeType = finalFile.endsWith(".jpg") ? "image/jpeg" : "image/png";
 
             // Cleanup
-            await fs.unlink(tmpPng).catch(() => { });
-            await fs.unlink(tmpJpg).catch(() => { });
+            await fs.unlink(tmpPng).catch(() => {});
+            await fs.unlink(tmpJpg).catch(() => {});
 
             // Scale factor
             const scaleFactor = screen.width / RESIZE_WIDTH;
@@ -197,11 +238,11 @@ $img.Dispose()
                 image_width: RESIZE_WIDTH,
                 scale_factor: Math.round(scaleFactor * 1000) / 1000,
                 frontmost_app: frontmostApp,
-                tip: `Image is ${RESIZE_WIDTH}px wide with a coordinate GRID overlay. Use the grid lines and labels to pick PRECISE x,y coordinates. Pass them to os_click — auto-scaled to screen. ALWAYS verify with another screenshot after clicking.`
+                tip: `Image is ${RESIZE_WIDTH}px wide with a coordinate GRID overlay. Use the grid lines and labels to pick PRECISE x,y coordinates. Pass them to os_click — auto-scaled to screen. ALWAYS verify with another screenshot after clicking.`,
             });
         } catch (err) {
-            await fs.unlink(tmpPng).catch(() => { });
-            await fs.unlink(tmpJpg).catch(() => { });
+            await fs.unlink(tmpPng).catch(() => {});
+            await fs.unlink(tmpJpg).catch(() => {});
             const error = err as { message?: string };
             return JSON.stringify({
                 success: false,
@@ -218,7 +259,8 @@ export const winOsClick: ToolDefinition = {
         type: "function",
         function: {
             name: "os_click",
-            description: "Click, double-click, right-click, or move the mouse on Windows. Pass x,y coordinates as you see them in the os_screenshot image — they are auto-scaled to actual screen resolution.",
+            description:
+                "Click, double-click, right-click, or move the mouse on Windows. Pass x,y coordinates as you see them in the os_screenshot image — they are auto-scaled to actual screen resolution.",
             parameters: {
                 type: "object",
                 properties: {
@@ -227,9 +269,12 @@ export const winOsClick: ToolDefinition = {
                     action: {
                         type: "string",
                         enum: ["click", "double_click", "right_click", "move"],
-                        description: "Mouse action (default: click)"
+                        description: "Mouse action (default: click)",
                     },
-                    raw: { type: "boolean", description: "If true, treat x/y as raw screen pixels without scaling (default: false)" },
+                    raw: {
+                        type: "boolean",
+                        description: "If true, treat x/y as raw screen pixels without scaling (default: false)",
+                    },
                 },
                 required: ["x", "y"],
             },
@@ -326,13 +371,22 @@ export const winOsType: ToolDefinition = {
         type: "function",
         function: {
             name: "os_type",
-            description: "Type text or press keys/hotkeys at the OS level on Windows. Works on ANY focused application. Use for typing into native apps, pressing shortcuts (Ctrl+C, Ctrl+V, etc.).",
+            description:
+                "Type text or press keys/hotkeys at the OS level on Windows. Works on ANY focused application. Use for typing into native apps, pressing shortcuts (Ctrl+C, Ctrl+V, etc.).",
             parameters: {
                 type: "object",
                 properties: {
                     text: { type: "string", description: "Text to type (types character by character)" },
-                    key: { type: "string", description: "Special key to press: return, tab, escape, delete, space, up, down, left, right, f1-f12" },
-                    combo: { type: "string", description: "Hotkey combo like 'ctrl+c', 'ctrl+shift+s', 'alt+tab'. Use + to separate modifiers and key." },
+                    key: {
+                        type: "string",
+                        description:
+                            "Special key to press: return, tab, escape, delete, space, up, down, left, right, f1-f12",
+                    },
+                    combo: {
+                        type: "string",
+                        description:
+                            "Hotkey combo like 'ctrl+c', 'ctrl+shift+s', 'alt+tab'. Use + to separate modifiers and key.",
+                    },
                     delay_ms: { type: "number", description: "Delay in ms after action (default: 200)" },
                 },
                 required: [],
@@ -350,7 +404,10 @@ export const winOsType: ToolDefinition = {
 
         if (input.combo) {
             // Parse combo like "ctrl+shift+s"
-            const parts = (input.combo as string).toLowerCase().split("+").map(s => s.trim());
+            const parts = (input.combo as string)
+                .toLowerCase()
+                .split("+")
+                .map((s) => s.trim());
             const key = parts.pop() || "";
             const modifiers: string[] = [];
 
@@ -363,15 +420,35 @@ export const winOsType: ToolDefinition = {
 
             // Map special keys to SendKeys format
             const specialKeyMap: Record<string, string> = {
-                "return": "{ENTER}", "enter": "{ENTER}", "tab": "{TAB}",
-                "escape": "{ESC}", "esc": "{ESC}", "delete": "{DELETE}", "del": "{DELETE}",
-                "backspace": "{BACKSPACE}", "space": " ",
-                "up": "{UP}", "down": "{DOWN}", "left": "{LEFT}", "right": "{RIGHT}",
-                "f1": "{F1}", "f2": "{F2}", "f3": "{F3}", "f4": "{F4}",
-                "f5": "{F5}", "f6": "{F6}", "f7": "{F7}", "f8": "{F8}",
-                "f9": "{F9}", "f10": "{F10}", "f11": "{F11}", "f12": "{F12}",
-                "home": "{HOME}", "end": "{END}",
-                "pageup": "{PGUP}", "pagedown": "{PGDN}",
+                return: "{ENTER}",
+                enter: "{ENTER}",
+                tab: "{TAB}",
+                escape: "{ESC}",
+                esc: "{ESC}",
+                delete: "{DELETE}",
+                del: "{DELETE}",
+                backspace: "{BACKSPACE}",
+                space: " ",
+                up: "{UP}",
+                down: "{DOWN}",
+                left: "{LEFT}",
+                right: "{RIGHT}",
+                f1: "{F1}",
+                f2: "{F2}",
+                f3: "{F3}",
+                f4: "{F4}",
+                f5: "{F5}",
+                f6: "{F6}",
+                f7: "{F7}",
+                f8: "{F8}",
+                f9: "{F9}",
+                f10: "{F10}",
+                f11: "{F11}",
+                f12: "{F12}",
+                home: "{HOME}",
+                end: "{END}",
+                pageup: "{PGUP}",
+                pagedown: "{PGDN}",
             };
 
             const mappedKey = specialKeyMap[key] || key;
@@ -385,13 +462,31 @@ Start-Sleep -Milliseconds ${delayMs}
         } else if (input.key) {
             const key = (input.key as string).toLowerCase();
             const specialKeyMap: Record<string, string> = {
-                "return": "{ENTER}", "enter": "{ENTER}", "tab": "{TAB}",
-                "escape": "{ESC}", "esc": "{ESC}", "delete": "{DELETE}", "del": "{DELETE}",
-                "backspace": "{BACKSPACE}", "space": " ",
-                "up": "{UP}", "down": "{DOWN}", "left": "{LEFT}", "right": "{RIGHT}",
-                "f1": "{F1}", "f2": "{F2}", "f3": "{F3}", "f4": "{F4}",
-                "f5": "{F5}", "f6": "{F6}", "f7": "{F7}", "f8": "{F8}",
-                "f9": "{F9}", "f10": "{F10}", "f11": "{F11}", "f12": "{F12}",
+                return: "{ENTER}",
+                enter: "{ENTER}",
+                tab: "{TAB}",
+                escape: "{ESC}",
+                esc: "{ESC}",
+                delete: "{DELETE}",
+                del: "{DELETE}",
+                backspace: "{BACKSPACE}",
+                space: " ",
+                up: "{UP}",
+                down: "{DOWN}",
+                left: "{LEFT}",
+                right: "{RIGHT}",
+                f1: "{F1}",
+                f2: "{F2}",
+                f3: "{F3}",
+                f4: "{F4}",
+                f5: "{F5}",
+                f6: "{F6}",
+                f7: "{F7}",
+                f8: "{F8}",
+                f9: "{F9}",
+                f10: "{F10}",
+                f11: "{F11}",
+                f12: "{F12}",
             };
             const mapped = specialKeyMap[key] || `{${key.toUpperCase()}}`;
 
@@ -450,29 +545,34 @@ interface OcrResult {
 
 // Levenshtein distance for fuzzy text matching
 function levenshtein(a: string, b: string): number {
-    const m = a.length, n = b.length;
+    const m = a.length,
+        n = b.length;
     const dp: number[][] = Array.from({ length: m + 1 }, (_, i) =>
-        Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0))
+        Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)),
     );
     for (let i = 1; i <= m; i++) {
         for (let j = 1; j <= n; j++) {
-            dp[i][j] = a[i - 1] === b[j - 1]
-                ? dp[i - 1][j - 1]
-                : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+            dp[i][j] =
+                a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
         }
     }
     return dp[m][n];
 }
 
 function similarity(a: string, b: string): number {
-    const al = a.toLowerCase(), bl = b.toLowerCase();
+    const al = a.toLowerCase(),
+        bl = b.toLowerCase();
     if (al === bl) return 1.0;
     if (bl.includes(al) || al.includes(bl)) return 0.9;
     const dist = levenshtein(al, bl);
     return Math.max(0, 1 - dist / Math.max(al.length, bl.length, 1));
 }
 
-function findBestMatch(elements: OcrElement[], label: string, threshold = 0.55): { element: OcrElement; score: number } | null {
+function findBestMatch(
+    elements: OcrElement[],
+    label: string,
+    threshold = 0.55,
+): { element: OcrElement; score: number } | null {
     let best: { element: OcrElement; score: number } | null = null;
     for (const el of elements) {
         const score = similarity(label, el.text);
@@ -494,21 +594,22 @@ async function runWinOcr(screenshotPath: string | null): Promise<OcrResult | nul
         tempCapture = true;
     }
 
-    const projectRoot = join(__dirname, "..", "..");
-    const ocrScript = join(projectRoot, "scripts", "ocr_screen.ps1");
+    const ocrScript = findOcrScript();
+    if (!ocrScript) return null;
 
     try {
-        const { stdout } = await execFileAsync("powershell.exe", [
-            "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-            "-File", ocrScript, imgPath,
-        ], { timeout: 20000 });
+        const { stdout } = await execFileAsync(
+            "powershell.exe",
+            ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", ocrScript, imgPath],
+            { timeout: 20000 },
+        );
 
-        if (tempCapture) await fs.unlink(imgPath).catch(() => { });
+        if (tempCapture) await fs.unlink(imgPath).catch(() => {});
 
         const parsed = JSON.parse(stdout.trim()) as OcrResult;
         return parsed;
     } catch {
-        if (tempCapture && imgPath) await fs.unlink(imgPath).catch(() => { });
+        if (tempCapture && imgPath) await fs.unlink(imgPath).catch(() => {});
         return null;
     }
 }
@@ -516,7 +617,8 @@ async function runWinOcr(screenshotPath: string | null): Promise<OcrResult | nul
 /** Perform a native click at screen coordinates on Windows. */
 async function winNativeClick(x: number, y: number): Promise<boolean> {
     try {
-        await runPowerShell(`
+        await runPowerShell(
+            `
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -532,7 +634,9 @@ Start-Sleep -Milliseconds 60
 [WinAPI]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
 Start-Sleep -Milliseconds 70
 [WinAPI]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
-`, 5000);
+`,
+            5000,
+        );
         return true;
     } catch {
         return false;
@@ -546,13 +650,15 @@ export const winOsOcrClick: ToolDefinition = {
         type: "function",
         function: {
             name: "os_ocr_click",
-            description: "PREFERRED click method for native Windows apps. Finds a UI element by its visible text label using OCR (Windows.Media.Ocr), then clicks it. Includes an automatic retry loop with coordinate jitter + visual verification.",
+            description:
+                "PREFERRED click method for native Windows apps. Finds a UI element by its visible text label using OCR (Windows.Media.Ocr), then clicks it. Includes an automatic retry loop with coordinate jitter + visual verification.",
             parameters: {
                 type: "object",
                 properties: {
                     label: {
                         type: "string",
-                        description: "The visible text of the element to click (e.g. 'Send', 'Open', 'Cancel'). Fuzzy matched — partial text is fine.",
+                        description:
+                            "The visible text of the element to click (e.g. 'Send', 'Open', 'Cancel'). Fuzzy matched — partial text is fine.",
                     },
                     max_attempts: { type: "number", description: "Max retry attempts (default: 3)" },
                     verify_appears: { type: "string", description: "Text that should APPEAR after clicking" },
@@ -574,13 +680,20 @@ export const winOsOcrClick: ToolDefinition = {
         const verifyGone = (input.verify_gone as boolean) || false;
 
         const attemptLog: Array<{
-            attempt: number; matched_text: string | null; score: number | null;
-            x: number | null; y: number | null; outcome: string;
+            attempt: number;
+            matched_text: string | null;
+            score: number | null;
+            x: number | null;
+            y: number | null;
+            outcome: string;
         }> = [];
 
         const jitterOffsets = [
-            { dx: 0, dy: 0 }, { dx: 5, dy: 3 }, { dx: -5, dy: -3 },
-            { dx: 8, dy: -5 }, { dx: -8, dy: 5 },
+            { dx: 0, dy: 0 },
+            { dx: 5, dy: 3 },
+            { dx: -5, dy: -3 },
+            { dx: 8, dy: -5 },
+            { dx: -8, dy: 5 },
         ];
 
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -589,14 +702,21 @@ export const winOsOcrClick: ToolDefinition = {
             const ocrResult = await runWinOcr(null);
             if (!ocrResult || ocrResult.elements.length === 0) {
                 attemptLog.push({ attempt, matched_text: null, score: null, x: null, y: null, outcome: "ocr_failed" });
-                await new Promise(r => setTimeout(r, 600));
+                await new Promise((r) => setTimeout(r, 600));
                 continue;
             }
 
             const match = findBestMatch(ocrResult.elements, label);
             if (!match) {
-                attemptLog.push({ attempt, matched_text: null, score: null, x: null, y: null, outcome: `no_match (${ocrResult.elements.length} elements)` });
-                await new Promise(r => setTimeout(r, 600));
+                attemptLog.push({
+                    attempt,
+                    matched_text: null,
+                    score: null,
+                    x: null,
+                    y: null,
+                    outcome: `no_match (${ocrResult.elements.length} elements)`,
+                });
+                await new Promise((r) => setTimeout(r, 600));
                 continue;
             }
 
@@ -604,15 +724,24 @@ export const winOsOcrClick: ToolDefinition = {
             const clickX = Math.round(match.element.cx_screen + jitter.dx);
             const clickY = Math.round(match.element.cy_screen + jitter.dy);
 
-            console.log(`  🎯 [OCR-CLICK] Matched "${match.element.text}" (score=${match.score.toFixed(2)}) → screen(${clickX}, ${clickY})`);
+            console.log(
+                `  🎯 [OCR-CLICK] Matched "${match.element.text}" (score=${match.score.toFixed(2)}) → screen(${clickX}, ${clickY})`,
+            );
 
             const clicked = await winNativeClick(clickX, clickY);
             if (!clicked) {
-                attemptLog.push({ attempt, matched_text: match.element.text, score: match.score, x: clickX, y: clickY, outcome: "click_failed" });
+                attemptLog.push({
+                    attempt,
+                    matched_text: match.element.text,
+                    score: match.score,
+                    x: clickX,
+                    y: clickY,
+                    outcome: "click_failed",
+                });
                 continue;
             }
 
-            await new Promise(r => setTimeout(r, 500));
+            await new Promise((r) => setTimeout(r, 500));
 
             // Verification
             if (verifyAppears || verifyGone) {
@@ -621,11 +750,21 @@ export const winOsOcrClick: ToolDefinition = {
                     if (verifyAppears) {
                         const found = findBestMatch(verifyOcr.elements, verifyAppears, 0.6);
                         if (found) {
-                            attemptLog.push({ attempt, matched_text: match.element.text, score: match.score, x: clickX, y: clickY, outcome: "success_verified" });
+                            attemptLog.push({
+                                attempt,
+                                matched_text: match.element.text,
+                                score: match.score,
+                                x: clickX,
+                                y: clickY,
+                                outcome: "success_verified",
+                            });
                             return JSON.stringify({
-                                success: true, matched_text: match.element.text,
-                                similarity_score: match.score, clicked: { x: clickX, y: clickY },
-                                attempts: attempt + 1, verification: `verified_appears: "${found.element.text}"`,
+                                success: true,
+                                matched_text: match.element.text,
+                                similarity_score: match.score,
+                                clicked: { x: clickX, y: clickY },
+                                attempts: attempt + 1,
+                                verification: `verified_appears: "${found.element.text}"`,
                                 attempts_log: attemptLog,
                             });
                         }
@@ -633,26 +772,53 @@ export const winOsOcrClick: ToolDefinition = {
                     if (verifyGone) {
                         const stillThere = findBestMatch(verifyOcr.elements, label, 0.7);
                         if (!stillThere) {
-                            attemptLog.push({ attempt, matched_text: match.element.text, score: match.score, x: clickX, y: clickY, outcome: "success_verified_gone" });
+                            attemptLog.push({
+                                attempt,
+                                matched_text: match.element.text,
+                                score: match.score,
+                                x: clickX,
+                                y: clickY,
+                                outcome: "success_verified_gone",
+                            });
                             return JSON.stringify({
-                                success: true, matched_text: match.element.text,
-                                similarity_score: match.score, clicked: { x: clickX, y: clickY },
-                                attempts: attempt + 1, verification: `verified_gone: "${label}" no longer on screen`,
+                                success: true,
+                                matched_text: match.element.text,
+                                similarity_score: match.score,
+                                clicked: { x: clickX, y: clickY },
+                                attempts: attempt + 1,
+                                verification: `verified_gone: "${label}" no longer on screen`,
                                 attempts_log: attemptLog,
                             });
                         }
                     }
                 }
-                attemptLog.push({ attempt, matched_text: match.element.text, score: match.score, x: clickX, y: clickY, outcome: "verification_failed" });
+                attemptLog.push({
+                    attempt,
+                    matched_text: match.element.text,
+                    score: match.score,
+                    x: clickX,
+                    y: clickY,
+                    outcome: "verification_failed",
+                });
                 continue;
             }
 
             // No verification — trust click
-            attemptLog.push({ attempt, matched_text: match.element.text, score: match.score, x: clickX, y: clickY, outcome: "clicked_no_verify" });
+            attemptLog.push({
+                attempt,
+                matched_text: match.element.text,
+                score: match.score,
+                x: clickX,
+                y: clickY,
+                outcome: "clicked_no_verify",
+            });
             return JSON.stringify({
-                success: true, matched_text: match.element.text,
-                similarity_score: match.score, clicked: { x: clickX, y: clickY },
-                attempts: attempt + 1, verification: "not_requested",
+                success: true,
+                matched_text: match.element.text,
+                similarity_score: match.score,
+                clicked: { x: clickX, y: clickY },
+                attempts: attempt + 1,
+                verification: "not_requested",
                 tip: "Take an os_screenshot to visually confirm the action worked.",
                 attempts_log: attemptLog,
             });
@@ -673,7 +839,8 @@ export const winOsVisualVerify: ToolDefinition = {
         type: "function",
         function: {
             name: "os_visual_verify",
-            description: "Visually verify task completion by checking if specific text is visible on screen — or has disappeared. Use this at the END of any OS task to confirm success.",
+            description:
+                "Visually verify task completion by checking if specific text is visible on screen — or has disappeared. Use this at the END of any OS task to confirm success.",
             parameters: {
                 type: "object",
                 properties: {
@@ -711,7 +878,8 @@ export const winOsVisualVerify: ToolDefinition = {
             const found = findBestMatch(ocrResult.elements, expectText, 0.6);
             const pass = !!found;
             results.expect_text = {
-                query: expectText, found: pass,
+                query: expectText,
+                found: pass,
                 matched: found?.element.text ?? null,
                 score: found ? Number(found.score.toFixed(3)) : null,
             };
@@ -726,9 +894,7 @@ export const winOsVisualVerify: ToolDefinition = {
         }
 
         results.success = overallSuccess;
-        results.verdict = overallSuccess
-            ? `✅ Verified: ${description}`
-            : `❌ Verification FAILED: ${description}`;
+        results.verdict = overallSuccess ? `✅ Verified: ${description}` : `❌ Verification FAILED: ${description}`;
 
         return JSON.stringify(results);
     },
@@ -741,7 +907,8 @@ export const winOsContext: ToolDefinition = {
         type: "function",
         function: {
             name: "os_context",
-            description: "Get current OS context: which app is focused, window title, and screen resolution. Very fast (no screenshot).",
+            description:
+                "Get current OS context: which app is focused, window title, and screen resolution. Very fast (no screenshot).",
             parameters: {
                 type: "object",
                 properties: {},
@@ -756,7 +923,8 @@ export const winOsContext: ToolDefinition = {
         }
 
         try {
-            const result = await runPowerShell(`
+            const result = await runPowerShell(
+                `
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -781,7 +949,9 @@ $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
 $appName = if ($proc) { $proc.ProcessName } else { "unknown" }
 $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
 "$appName|$title|$($screen.Width)|$($screen.Height)"
-`, 3000);
+`,
+                3000,
+            );
 
             const parts = result.split("|");
             const screen = await getScreenResolution();
@@ -831,9 +1001,12 @@ export const winSetBrightness: ToolDefinition = {
         const clamped = Math.max(0, Math.min(100, Math.round(rawLevel)));
 
         try {
-            await runPowerShell(`
+            await runPowerShell(
+                `
 (Get-WmiObject -Namespace root/WMI -Class WmiMonitorBrightnessMethods).WmiSetBrightness(1, ${clamped})
-`, 5000);
+`,
+                5000,
+            );
             return JSON.stringify({
                 success: true,
                 brightness: clamped,
@@ -844,7 +1017,7 @@ export const winSetBrightness: ToolDefinition = {
             try {
                 await runPowerShellInline(
                     `powershell -Command "(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods).WmiSetBrightness(1,${clamped})"`,
-                    5000
+                    5000,
                 );
                 return JSON.stringify({
                     success: true,
@@ -903,7 +1076,7 @@ export const winSendScreenshot: ToolDefinition = {
 
             const stats = statSync(tmpPng);
             if (stats.size === 0) {
-                await fs.unlink(tmpPng).catch(() => { });
+                await fs.unlink(tmpPng).catch(() => {});
                 return JSON.stringify({ error: "Screenshot produced an empty file." });
             }
 
@@ -912,7 +1085,7 @@ export const winSendScreenshot: ToolDefinition = {
             const inputFile = new InputFile(fileBuffer, `screenshot_${Date.now()}.png`);
             await bot.api.sendPhoto(chatId, inputFile, { caption });
 
-            await fs.unlink(tmpPng).catch(() => { });
+            await fs.unlink(tmpPng).catch(() => {});
 
             return JSON.stringify({
                 success: true,
@@ -920,7 +1093,7 @@ export const winSendScreenshot: ToolDefinition = {
                 size_kb: Math.round(stats.size / 1024),
             });
         } catch (err) {
-            await fs.unlink(tmpPng).catch(() => { });
+            await fs.unlink(tmpPng).catch(() => {});
             const error = err as { message?: string };
             return JSON.stringify({
                 success: false,
