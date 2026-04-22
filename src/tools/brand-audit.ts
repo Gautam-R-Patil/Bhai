@@ -44,7 +44,19 @@ export const brandAudit: ToolDefinition = {
       );
       return JSON.stringify(report);
     } catch (err) {
-      return JSON.stringify({ error: (err as Error).message });
+      const msg = (err as Error).message;
+      if (
+        msg.toLowerCase().includes("credential") ||
+        msg.toLowerCase().includes("not set") ||
+        msg.toLowerCase().includes("missing")
+      ) {
+        return JSON.stringify({
+          error: msg,
+          action_required: "credential_setup",
+          hint: `A platform credential is missing for brand "${input.brand_id as string}". Call credential_setup with the appropriate platform and brand_id to set up the missing credentials, then retry brand_audit.`,
+        });
+      }
+      return JSON.stringify({ error: msg });
     }
   },
 };

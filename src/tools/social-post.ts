@@ -111,7 +111,19 @@ export const socialPost: ToolDefinition = {
 
       return JSON.stringify({ success: true, platform, postUrl });
     } catch (err) {
-      return JSON.stringify({ error: (err as Error).message });
+      const msg = (err as Error).message;
+      if (
+        msg.toLowerCase().includes("credential") ||
+        msg.toLowerCase().includes("not set") ||
+        msg.toLowerCase().includes("missing")
+      ) {
+        return JSON.stringify({
+          error: msg,
+          action_required: "credential_setup",
+          hint: `Call credential_setup with platform="${platform}" and brand_id="${brandId}" to set up the missing credentials, then retry social_post.`,
+        });
+      }
+      return JSON.stringify({ error: msg });
     }
   },
 };

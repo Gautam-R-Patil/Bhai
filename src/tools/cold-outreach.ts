@@ -35,7 +35,19 @@ export const coldOutreach: ToolDefinition = {
       });
       return JSON.stringify(result);
     } catch (err) {
-      return JSON.stringify({ error: (err as Error).message });
+      const msg = (err as Error).message;
+      if (
+        msg.toLowerCase().includes("credential") ||
+        msg.toLowerCase().includes("not set") ||
+        msg.toLowerCase().includes("missing")
+      ) {
+        return JSON.stringify({
+          error: msg,
+          action_required: "credential_setup",
+          hint: `Call credential_setup with platform="${input.channel as string}" and brand_id="${input.brand_id as string}" to set up the missing credentials, then retry cold_outreach.`,
+        });
+      }
+      return JSON.stringify({ error: msg });
     }
   },
 };

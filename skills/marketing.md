@@ -92,3 +92,17 @@ When the user replies "approve [ID]" or "reject [ID]: feedback" — resolve the 
 - `generate_image` — for static post visuals
 - `deep_research` — for trend research, competitor deep-dives
 - `web_search` — quick trend and hashtag lookups
+
+## Credential Setup
+
+Before running brand_audit, social_post, or cold_outreach for a brand, check if required credentials exist. If a platform credential is missing AND you get an error with `action_required: "credential_setup"`:
+
+1. Ask the user: "Do you want me to set this up for you automatically (I'll open the developer portal and handle it), or would you prefer I walk you through it step by step?"
+2. Call `credential_setup` with `mode="autonomous"` or `mode="guided"` accordingly.
+3. After successful credential setup, automatically retry the original action — don't ask the user to repeat themselves.
+
+For first-time setup: proactively check which platforms are missing credentials and offer to set them all up before starting the content calendar.
+
+**Minimum to start:**
+- `APIFY_TOKEN` — trend research (easiest, start here)
+- `IG_ACCESS_TOKEN_{brand}` + `IG_USER_ID_{brand}` — Instagram posting (recommended first platform)
