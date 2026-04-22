@@ -3,6 +3,15 @@
 // See LICENSE.md for details.
 
 import type { ToolDefinition } from "./get-current-time.js";
+import { validateCredential, getMissingCredentials } from "../marketing/credential-manager.js";
+import { deliverToActiveChannel } from "./channel-send.js";
+import { setupApifyAutonomous, getApifyGuidedInstructions } from "../marketing/credential-setup/apify.js";
+import { setupApolloAutonomous, getApolloGuidedInstructions } from "../marketing/credential-setup/apollo.js";
+import { setupInstagramAutonomous, getInstagramGuidedInstructions } from "../marketing/credential-setup/instagram.js";
+import { setupLinkedInAutonomous, getLinkedInGuidedInstructions } from "../marketing/credential-setup/linkedin.js";
+import { setupTikTokAutonomous, getTikTokGuidedInstructions } from "../marketing/credential-setup/tiktok.js";
+import { setupTwitterGuided, getTwitterGuidedInstructions } from "../marketing/credential-setup/twitter.js";
+import { setupRedditAutonomous, getRedditGuidedInstructions } from "../marketing/credential-setup/reddit.js";
 
 export const credentialSetup: ToolDefinition = {
 	schema: {
@@ -28,7 +37,90 @@ export const credentialSetup: ToolDefinition = {
 			},
 		},
 	},
-	async handler(_input) {
-		return JSON.stringify({ status: "stub", message: "credential_setup not yet implemented — Plan 2" });
+	async handler(input) {
+		const platform = input.platform as string;
+		const brandId = input.brand_id as string;
+		const mode = input.mode as "autonomous" | "guided";
+
+		try {
+			if (mode === "guided") {
+				const instructions = getGuidedInstructions(platform, brandId);
+				await deliverToActiveChannel(instructions, "");
+				return JSON.stringify({ success: true, mode: "guided", message: "Instructions sent to your active channel" });
+			}
+
+			// Autonomous mode
+			let result: { success: boolean; error?: string };
+			switch (platform) {
+				case "apify":
+					result = await setupApifyAutonomous();
+					break;
+				case "apollo":
+					result = await setupApolloAutonomous();
+					break;
+				case "instagram":
+					result = await setupInstagramAutonomous(brandId);
+					break;
+				case "linkedin":
+					result = await setupLinkedInAutonomous(brandId);
+					break;
+				case "tiktok":
+					result = await setupTikTokAutonomous(brandId);
+					break;
+				case "twitter":
+					// Twitter is guided-only due to CAPTCHA
+					result = await setupTwitterGuided(brandId);
+					break;
+				case "reddit":
+					result = await setupRedditAutonomous(brandId);
+					break;
+				default:
+					return JSON.stringify({ success: false, error: `Unknown platform: ${platform}` });
+			}
+
+			if (!result.success) {
+				// Fall back to guided instructions on autonomous failure
+				const instructions = getGuidedInstructions(platform, brandId);
+				await deliverToActiveChannel(
+					`Autonomous setup failed: ${result.error}\n\nHere are manual instructions instead:\n\n${instructions}`,
+					""
+				);
+				return JSON.stringify({
+					success: false,
+					error: result.error,
+					nextStep: "Guided instructions sent to your active channel",
+				});
+			}
+
+			// Check if credential is now valid
+			const valid = await validateCredential(platform, brandId);
+			return JSON.stringify({
+				success: result.success,
+				platform,
+				validated: valid,
+				message: valid
+					? `${platform} credentials set up and validated successfully`
+					: `${platform} credentials saved but could not be validated — they may still work`,
+			});
+		} catch (err) {
+			return JSON.stringify({ success: false, error: (err as Error).message });
+		}
 	},
 };
+
+function getGuidedInstructions(platform: string, brandId: string): string {
+	switch (platform) {
+		case "apify": return getApifyGuidedInstructions();
+		case "apollo": return getApolloGuidedInstructions();
+		case "instagram": return getInstagramGuidedInstructions(brandId);
+		case "linkedin": return getLinkedInGuidedInstructions(brandId);
+		case "tiktok": return getTikTokGuidedInstructions(brandId);
+		case "twitter": return getTwitterGuidedInstructions(brandId);
+		case "reddit": return getRedditGuidedInstructions(brandId);
+		default: return `No setup instructions available for platform: ${platform}`;
+	}
+}
+
+// Re-export getMissingCredentials for convenience — callers that import this tool
+// file can also surface missing-credential info without a separate import.
+export { getMissingCredentials };
