@@ -79,7 +79,10 @@ export async function validateCredential(platform: string, brandId: string): Pro
   try {
     switch (platform) {
       case "instagram": {
-        const res = await fetch(`https://graph.facebook.com/v19.0/me?fields=id&access_token=${encodeURIComponent(token)}`);
+        // Use Authorization header to avoid token in URL (which appears in server logs)
+        const res = await fetch("https://graph.facebook.com/v19.0/me?fields=id", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
         return res.ok;
       }
       case "linkedin": {
@@ -90,7 +93,16 @@ export async function validateCredential(platform: string, brandId: string): Pro
         const res = await fetch("https://open.tiktokapis.com/v2/user/info/?fields=display_name", { headers: { Authorization: `Bearer ${token}` } });
         return res.ok;
       }
-      case "twitter": return true;
+      case "twitter": {
+        // All 4 keys are required — check existence of all
+        const allSet = [
+          `X_API_KEY_${brandId}`,
+          `X_API_SECRET_${brandId}`,
+          `X_ACCESS_TOKEN_${brandId}`,
+          `X_ACCESS_SECRET_${brandId}`,
+        ].every((k) => !!getCredential(k));
+        return allSet;
+      }
       case "apify": {
         const res = await fetch(`https://api.apify.com/v2/users/me?token=${encodeURIComponent(token)}`);
         return res.ok;
@@ -113,6 +125,25 @@ export interface MissingCredential {
 export function getMissingCredentials(platforms: string[], brandId: string): MissingCredential[] {
   const missing: MissingCredential[] = [];
   for (const platform of platforms) {
+    // Twitter requires 4 keys — check all of them
+    if (platform === "twitter") {
+      const twitterKeys = [
+        `X_API_KEY_${brandId}`,
+        `X_API_SECRET_${brandId}`,
+        `X_ACCESS_TOKEN_${brandId}`,
+        `X_ACCESS_SECRET_${brandId}`,
+      ];
+      const missingKey = twitterKeys.find((k) => !getCredential(k));
+      if (missingKey) {
+        missing.push({
+          platform,
+          envKey: twitterKeys.join(", "),
+          description: PLATFORM_DESCRIPTIONS["twitter"] ?? "Twitter/X API credentials (4 keys required)",
+        });
+      }
+      continue;
+    }
+
     const keyFn = PLATFORM_ENV_KEYS[platform];
     if (!keyFn) continue;
     const envKey = keyFn(brandId);

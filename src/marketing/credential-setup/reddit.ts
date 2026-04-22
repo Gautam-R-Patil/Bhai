@@ -90,7 +90,10 @@ export async function completeRedditOAuth(
       return { success: false, error: `Reddit token exchange failed: ${err}` };
     }
 
-    const tokenData = (await tokenRes.json()) as { refresh_token: string; access_token: string };
+    const tokenData = (await tokenRes.json()) as { refresh_token?: string; access_token?: string };
+    if (!tokenData.refresh_token) {
+      return { success: false, error: "Reddit did not return a refresh_token — ensure app type is 'script' and duration=permanent" };
+    }
     setCredential(`REDDIT_CLIENT_ID_${brandId}`, clientId);
     setCredential(`REDDIT_CLIENT_SECRET_${brandId}`, clientSecret);
     setCredential(`REDDIT_REFRESH_TOKEN_${brandId}`, tokenData.refresh_token);
