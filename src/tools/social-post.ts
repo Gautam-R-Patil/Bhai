@@ -8,6 +8,10 @@ import { postInstagram } from "../marketing/adapters/instagram.js";
 import { postLinkedIn } from "../marketing/adapters/linkedin.js";
 import { postTikTok } from "../marketing/adapters/tiktok.js";
 import { postTwitter } from "../marketing/adapters/twitter.js";
+import { postFacebook } from "../marketing/adapters/facebook.js";
+import { postYouTube } from "../marketing/adapters/youtube.js";
+import { postReddit } from "../marketing/adapters/reddit.js";
+import { prepareLaunchChecklist, sendLaunchChecklist } from "../marketing/product-hunt.js";
 
 export const socialPost: ToolDefinition = {
   schema: {
@@ -68,10 +72,35 @@ export const socialPost: ToolDefinition = {
           postUrl = result.url;
           break;
         }
-        case "facebook":
-        case "youtube":
-        case "reddit":
-          return JSON.stringify({ status: "stub", message: `${platform} posting implemented in Plan 4B` });
+        case "facebook": {
+          const result = await postFacebook(brandId, caption, mediaPath);
+          postUrl = `https://facebook.com/${result.postId}`;
+          break;
+        }
+        case "youtube": {
+          if (!mediaPath) return JSON.stringify({ error: "media_path required for YouTube" });
+          const titleLine = caption.split("\n")[0].slice(0, 100);
+          const result = await postYouTube(brandId, titleLine, caption, mediaPath);
+          postUrl = result.url;
+          break;
+        }
+        case "reddit": {
+          const subreddit = (input.subreddit as string) ?? "general";
+          const titleLine = caption.split("\n")[0].slice(0, 300);
+          const result = await postReddit(brandId, subreddit, titleLine, caption);
+          postUrl = result.url;
+          break;
+        }
+        case "producthunt": {
+          const checklist = prepareLaunchChecklist(
+            brandId,
+            caption.split("\n")[0].slice(0, 60),
+            caption,
+            mediaPath ? [mediaPath] : []
+          );
+          await sendLaunchChecklist(checklist);
+          return JSON.stringify({ status: "checklist_sent", message: "Launch checklist sent to your active channel" });
+        }
         default:
           return JSON.stringify({ error: `Unknown platform: ${platform}` });
       }

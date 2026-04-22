@@ -3,6 +3,8 @@
 // See LICENSE.md for details.
 
 import type { ToolDefinition } from "./get-current-time.js";
+import { updateCalendarItem, getScheduledItems } from "../marketing/content-calendar.js";
+import { scheduleTask } from "./scheduled.js";
 
 export const marketingSchedule: ToolDefinition = {
   schema: {
@@ -22,7 +24,57 @@ export const marketingSchedule: ToolDefinition = {
       },
     },
   },
-  async handler(_input) {
-    return JSON.stringify({ status: "stub", message: "marketing_schedule not yet implemented — Plan 4" });
+  async handler(input) {
+    const action = input.action as string;
+    const brandId = input.brand_id as string;
+    const itemId = input.item_id as number | undefined;
+    const scheduledAt = input.scheduled_at as string | undefined;
+
+    if (action === "schedule") {
+      if (!itemId || !scheduledAt) {
+        return JSON.stringify({ error: "item_id and scheduled_at are required for schedule action" });
+      }
+      updateCalendarItem(itemId, { status: "scheduled", scheduledAt });
+
+      const dt = new Date(scheduledAt);
+      const cronExpr = `${dt.getMinutes()} ${dt.getHours()} ${dt.getDate()} ${dt.getMonth() + 1} *`;
+
+      const scheduleResult = await scheduleTask.handler({
+        expression: cronExpr,
+        description: `Post calendar item ${itemId} for brand ${brandId}`,
+        action: `social_post for calendar item ${itemId} brand ${brandId}`,
+      });
+
+      return JSON.stringify({
+        success: true,
+        itemId,
+        scheduledAt,
+        cronExpression: cronExpr,
+        scheduleResult: JSON.parse(scheduleResult),
+      });
+    }
+
+    if (action === "list") {
+      const until = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      const items = getScheduledItems(brandId, until);
+      if (!items.length) return JSON.stringify({ items: [], message: "No scheduled posts in the next 30 days" });
+      const formatted = items.map((item) => ({
+        id: item.id,
+        platform: item.platform,
+        type: item.contentType,
+        scheduledAt: item.scheduledAt,
+        caption: (item.caption?.slice(0, 80) ?? "") + (item.caption && item.caption.length > 80 ? "…" : ""),
+        status: item.status,
+      }));
+      return JSON.stringify({ items: formatted, count: items.length });
+    }
+
+    if (action === "cancel") {
+      if (!itemId) return JSON.stringify({ error: "item_id required for cancel" });
+      updateCalendarItem(itemId, { status: "draft" });
+      return JSON.stringify({ success: true, message: `Item ${itemId} moved back to draft — not scheduled` });
+    }
+
+    return JSON.stringify({ error: `Unknown action: ${action}` });
   },
 };
