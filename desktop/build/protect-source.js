@@ -88,7 +88,12 @@ const OBFUSCATION_OPTIONS = {
     // Keep module exports working
     renameGlobals: false,
     renameProperties: false,
-    reservedNames: ["^exports$", "^module$", "^require$", "^__dirname$", "^__filename$", "^import$", "^from$"],
+    reservedNames: [
+        "^exports$", "^module$", "^require$", "^__dirname$", "^__filename$",
+        "^import$", "^from$",
+        "^esmRequire$",    // createRequire(import.meta.url) alias in vector-index.js
+        "^nativeModule$",  // the loaded native binding reference variable
+    ],
     reservedStrings: ["import", "export", "from", "require"],
 
     // Target Node.js
@@ -107,7 +112,6 @@ const SKIP_PATTERNS = [
     /\.d\.ts$/,
     /node_modules/,
     /package\.json$/,
-    /vector-index\.js$/, // Skip to preserve createRequire for native module loading
     /voice\/live\/.*\.js$/, // Skip live voice API clients — property names must be sent verbatim to Google/OpenAI
 ];
 

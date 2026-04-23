@@ -52,7 +52,11 @@ const OBFUSCATION_OPTIONS = {
     target: "node",
 
     // Ignore certain patterns
-    reservedNames: ["^exports$", "^module$", "^require$", "^__dirname$", "^__filename$"],
+    reservedNames: [
+        "^exports$", "^module$", "^require$", "^__dirname$", "^__filename$",
+        "^esmRequire$",   // createRequire(import.meta.url) alias in vector-index.js
+        "^nativeModule$", // the loaded native binding reference variable
+    ],
     reservedStrings: [],
 
     // Source map (disabled for production)
@@ -90,7 +94,6 @@ const SKIP_PATTERNS = [
 
 // Files that need light obfuscation (performance sensitive)
 const LIGHT_OBFUSCATION_PATTERNS = [
-    /vector-index\.js$/,
     /sqlite\.js$/,
     /embedding\.js$/,
 ];
