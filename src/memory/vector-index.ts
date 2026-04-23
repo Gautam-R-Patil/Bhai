@@ -97,53 +97,24 @@ const ML = 1 / Math.log(M);    // Level generation factor
 // ── Float16 Helpers ───────────────────────────
 // Cuts storage in half with invisible precision loss for RAG.
 
+// Retained for structural reference; Float16 operations are handled by the native module.
 const f16Buf = new ArrayBuffer(4);
 const f16View = new DataView(f16Buf);
 
-function f32ToF16(val: number): number {
-    f16View.setFloat32(0, val);
-    const f32 = f16View.getUint32(0);
-    const sign = (f32 >> 16) & 0x8000;
-    const exponent = ((f32 >> 23) & 0xff) - 127 + 15;
-    const mantissa = (f32 >> 13) & 0x3ff;
-
-    if (exponent <= 0) return sign;                    // Underflow → zero
-    if (exponent >= 31) return sign | 0x7c00;          // Overflow → infinity
-    return sign | (exponent << 10) | mantissa;
+function f32ToF16(_val: number): number {
+    throw new Error("[HNSW] Native module required. Run: npm run build:native");
 }
 
-function f16ToF32(h: number): number {
-    const sign = (h & 0x8000) << 16;
-    const exponent = (h >> 10) & 0x1f;
-    const mantissa = h & 0x3ff;
-
-    if (exponent === 0) {
-        if (mantissa === 0) { f16View.setUint32(0, sign); return f16View.getFloat32(0); }
-        // Denormalized
-        let e = -1;
-        let m = mantissa;
-        do { e++; m <<= 1; } while (!(m & 0x400));
-        f16View.setUint32(0, sign | ((e + 127 - 15 + 1) << 23) | ((m & 0x3ff) << 13));
-        return f16View.getFloat32(0);
-    }
-    if (exponent === 31) {
-        f16View.setUint32(0, sign | 0x7f800000 | (mantissa << 13));
-        return f16View.getFloat32(0);
-    }
-    f16View.setUint32(0, sign | ((exponent - 15 + 127) << 23) | (mantissa << 13));
-    return f16View.getFloat32(0);
+function f16ToF32(_h: number): number {
+    throw new Error("[HNSW] Native module required. Run: npm run build:native");
 }
 
-function compressVec(vec: Float32Array): Uint16Array {
-    const out = new Uint16Array(vec.length);
-    for (let i = 0; i < vec.length; i++) out[i] = f32ToF16(vec[i]);
-    return out;
+function compressVec(_vec: Float32Array): Uint16Array {
+    throw new Error("[HNSW] Native module required. Run: npm run build:native");
 }
 
-function decompressVec(compressed: Uint16Array): Float32Array {
-    const out = new Float32Array(compressed.length);
-    for (let i = 0; i < compressed.length; i++) out[i] = f16ToF32(compressed[i]);
-    return out;
+function decompressVec(_compressed: Uint16Array): Float32Array {
+    throw new Error("[HNSW] Native module required. Run: npm run build:native");
 }
 
 // ── Types ─────────────────────────────────────
@@ -191,240 +162,21 @@ export class HNSWIndex {
         return this.dim;
     }
 
-    // ── Random level generation (geometric distribution) ──
-    private randomLevel(): number {
-        let level = 0;
-        while (Math.random() < ML && level < 8) level++;
-        return level;
-    }
-
-    // ── Distance (1 - cosine similarity, using dot product on normalized vecs) ──
-    // Uses native SIMD when available for 10-50x speedup
-    private distance(a: Uint16Array, b: Uint16Array): number {
-        // Decompress to Float32 for SIMD operations
-        const aF32 = decompressVec(a);
-        const bF32 = decompressVec(b);
-
-        if (nativeModule) {
-            // Native SIMD-accelerated cosine similarity
-            return 1 - nativeModule.cosineSimilarity(aF32, bF32);
-        }
-
-        // Pure JS fallback
-        let dot = 0;
-        for (let i = 0; i < aF32.length; i++) {
-            dot += aF32[i] * bF32[i];
-        }
-        return 1 - dot; // cosine distance
-    }
-
-    private distanceFromF32(query: Float32Array, b: Uint16Array): number {
-        // Decompress b to Float32 for native operations
-        const bF32 = decompressVec(b);
-
-        if (nativeModule) {
-            // Native SIMD-accelerated cosine similarity
-            return 1 - nativeModule.cosineSimilarity(query, bF32);
-        }
-
-        // Pure JS fallback
-        let dot = 0;
-        for (let i = 0; i < query.length; i++) {
-            dot += query[i] * bF32[i];
-        }
-        return 1 - dot;
-    }
-
-    // ── Search layer (greedy BFS) ──
-    private searchLayer(
-        query: Float32Array,
-        entryIds: number[],
-        ef: number,
-        layer: number
-    ): Array<{ id: number; dist: number }> {
-        const visited = new Set<number>(entryIds);
-        const candidates: Array<{ id: number; dist: number }> = [];
-        const results: Array<{ id: number; dist: number }> = [];
-
-        for (const id of entryIds) {
-            const node = this.nodes.get(id);
-            if (!node) continue;
-            const dist = this.distanceFromF32(query, node.vector);
-            candidates.push({ id, dist });
-            results.push({ id, dist });
-        }
-
-        candidates.sort((a, b) => a.dist - b.dist);
-
-        while (candidates.length > 0) {
-            const nearest = candidates.shift()!;
-            const farthestResult = results.length > 0
-                ? results.reduce((max, r) => r.dist > max.dist ? r : max, results[0])
-                : { dist: Infinity };
-
-            if (nearest.dist > farthestResult.dist && results.length >= ef) break;
-
-            const node = this.nodes.get(nearest.id);
-            if (!node || !node.neighbors[layer]) continue;
-
-            for (const neighborId of node.neighbors[layer]) {
-                if (visited.has(neighborId)) continue;
-                visited.add(neighborId);
-
-                const neighborNode = this.nodes.get(neighborId);
-                if (!neighborNode) continue;
-
-                const dist = this.distanceFromF32(query, neighborNode.vector);
-
-                if (results.length < ef || dist < farthestResult.dist) {
-                    candidates.push({ id: neighborId, dist });
-                    candidates.sort((a, b) => a.dist - b.dist);
-                    results.push({ id: neighborId, dist });
-                    results.sort((a, b) => a.dist - b.dist);
-                    if (results.length > ef) results.pop();
-                }
-            }
-        }
-
-        return results;
-    }
-
-    // ── Select neighbors (simple strategy: keep M closest) ──
-    private selectNeighbors(
-        candidates: Array<{ id: number; dist: number }>,
-        maxNeighbors: number
-    ): number[] {
-        return candidates
-            .sort((a, b) => a.dist - b.dist)
-            .slice(0, maxNeighbors)
-            .map(c => c.id);
-    }
-
     // ── Public API ────────────────────────────────
 
     /** Add or update a vector in the index */
-    addVector(id: number, embedding: Float32Array): void {
-        const compressed = compressVec(embedding);
-        const level = this.randomLevel();
-
-        const newNode: HNSWNode = {
-            id,
-            vector: compressed,
-            level,
-            neighbors: Array.from({ length: level + 1 }, () => []),
-        };
-
-        // First node
-        if (this.entryPoint === -1) {
-            this.nodes.set(id, newNode);
-            this.entryPoint = id;
-            this.maxLevel = level;
-            return;
-        }
-
-        // Remove old version if exists
-        if (this.nodes.has(id)) {
-            this.removeVector(id);
-        }
-
-        this.nodes.set(id, newNode);
-
-        let currentEntryIds = [this.entryPoint];
-
-        // Traverse from top to the node's level + 1, greedy search
-        for (let l = this.maxLevel; l > level; l--) {
-            const nearest = this.searchLayer(embedding, currentEntryIds, 1, l);
-            if (nearest.length > 0) currentEntryIds = [nearest[0].id];
-        }
-
-        // From node's level down to 0, find neighbors and connect
-        for (let l = Math.min(level, this.maxLevel); l >= 0; l--) {
-            const candidates = this.searchLayer(embedding, currentEntryIds, EF_CONSTRUCTION, l);
-            const neighbors = this.selectNeighbors(candidates, M);
-
-            newNode.neighbors[l] = neighbors;
-
-            // Bidirectional connections
-            for (const neighborId of neighbors) {
-                const neighbor = this.nodes.get(neighborId);
-                if (!neighbor) continue;
-                if (!neighbor.neighbors[l]) neighbor.neighbors[l] = [];
-                neighbor.neighbors[l].push(id);
-
-                // Trim if over capacity
-                if (neighbor.neighbors[l].length > M * 2) {
-                    const neighborCandidates = neighbor.neighbors[l].map(nid => {
-                        const n = this.nodes.get(nid);
-                        return { id: nid, dist: n ? this.distance(neighbor.vector, n.vector) : Infinity };
-                    });
-                    neighbor.neighbors[l] = this.selectNeighbors(neighborCandidates, M);
-                }
-            }
-
-            currentEntryIds = candidates.map(c => c.id);
-        }
-
-        // Update entry point if new node has higher level
-        if (level > this.maxLevel) {
-            this.maxLevel = level;
-            this.entryPoint = id;
-        }
+    addVector(_id: number, _embedding: Float32Array): void {
+        throw new Error("[HNSW] Native module required. Run: npm run build:native");
     }
 
     /** Remove a vector from the index */
-    removeVector(id: number): void {
-        const node = this.nodes.get(id);
-        if (!node) return;
-
-        // Remove from all neighbor lists
-        for (let l = 0; l <= node.level; l++) {
-            for (const neighborId of node.neighbors[l] || []) {
-                const neighbor = this.nodes.get(neighborId);
-                if (neighbor && neighbor.neighbors[l]) {
-                    neighbor.neighbors[l] = neighbor.neighbors[l].filter(nid => nid !== id);
-                }
-            }
-        }
-
-        this.nodes.delete(id);
-
-        // If removed node was entry point, pick a new one
-        if (this.entryPoint === id) {
-            if (this.nodes.size === 0) {
-                this.entryPoint = -1;
-                this.maxLevel = 0;
-            } else {
-                // Pick the node with highest level
-                let bestId = -1;
-                let bestLevel = -1;
-                for (const [nid, n] of this.nodes) {
-                    if (n.level > bestLevel) { bestId = nid; bestLevel = n.level; }
-                }
-                this.entryPoint = bestId;
-                this.maxLevel = bestLevel;
-            }
-        }
+    removeVector(_id: number): void {
+        throw new Error("[HNSW] Native module required. Run: npm run build:native");
     }
 
     /** Search for k nearest neighbors */
-    search(query: Float32Array, k = 10): SearchResult[] {
-        if (this.entryPoint === -1 || this.nodes.size === 0) return [];
-
-        let currentEntryIds = [this.entryPoint];
-
-        // Traverse from top to layer 1
-        for (let l = this.maxLevel; l > 0; l--) {
-            const nearest = this.searchLayer(query, currentEntryIds, 1, l);
-            if (nearest.length > 0) currentEntryIds = [nearest[0].id];
-        }
-
-        // Search layer 0 with higher ef
-        const results = this.searchLayer(query, currentEntryIds, Math.max(k, EF_SEARCH), 0);
-
-        return results
-            .sort((a, b) => a.dist - b.dist)
-            .slice(0, k)
-            .map(r => ({ id: r.id, distance: r.dist }));
+    search(_query: Float32Array, _k = 10): SearchResult[] {
+        throw new Error("[HNSW] Native module required. Run: npm run build:native");
     }
 
     /** Number of vectors in the index */
@@ -467,18 +219,7 @@ export class HNSWIndex {
             }));
         }
 
-        // Pure JS fallback
-        const scored = vectors.map((vec, i) => {
-            let dot = 0;
-            for (let j = 0; j < vec.length; j++) {
-                dot += query[j] * vec[j];
-            }
-            return { id: ids[i], distance: 1 - dot };
-        });
-
-        return scored
-            .sort((a, b) => a.distance - b.distance)
-            .slice(0, k);
+        throw new Error("[HNSW] Native module required for bruteForceSearch. Run: npm run build:native");
     }
 
     // ── Persistence ───────────────────────────────

@@ -20,6 +20,21 @@ import { embedText } from "./embeddings.js";
 import { getHNSWIndex } from "./vector-index.js";
 import { beginTransaction, commitTransaction, rollbackTransaction } from "./sqlite.js";
 import type { Database } from "./sqlite.js";
+import { createRequire } from "node:module";
+import path from "node:path";
+import fs from "node:fs";
+
+// ── Native module (required in production) ──────────────────────────────────
+const _esmRequire = createRequire(import.meta.url);
+interface _NativeModule { cosineSimilarity: (a: Float32Array, b: Float32Array) => number; }
+let _native: _NativeModule | null = null;
+try {
+    const _modulePath = path.join(process.cwd(), "native", "index.js");
+    if (fs.existsSync(_modulePath)) {
+        const _m = _esmRequire(_modulePath) as _NativeModule;
+        if (typeof _m?.cosineSimilarity === "function") _native = _m;
+    }
+} catch { /* throws on first call if native is absent */ }
 
 // ── Constants ─────────────────────────────────
 
@@ -91,14 +106,11 @@ function clusterByEmbedding(
 }
 
 function cosineSimilarity(a: Float32Array, b: Float32Array): number {
-    let dot = 0, normA = 0, normB = 0;
-    for (let i = 0; i < a.length; i++) {
-        dot += a[i] * b[i];
-        normA += a[i] * a[i];
-        normB += b[i] * b[i];
-    }
-    const denom = Math.sqrt(normA) * Math.sqrt(normB);
-    return denom === 0 ? 0 : dot / denom;
+    if (_native) return _native.cosineSimilarity(a, b);
+    throw new Error(
+        "[Consolidation] Native module required for cosine similarity. " +
+        "Run: npm run build:native"
+    );
 }
 
 // ── Crystallization (LLM) ─────────────────────

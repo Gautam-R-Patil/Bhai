@@ -276,30 +276,17 @@ export function selectModel(opts: {
         );
         return convertSelection(raw);
     }
-    // Fallback: complexity-aware routing using Claude models for personality
-    const isSimple = opts.modelHint === "simple"
-        || opts.taskType === "simple_chat"
-        || opts.taskType === "classify";
-
-    if (isSimple) {
-        return {
-            modelId: "anthropic/claude-haiku-4.5",
-            displayName: "Haiku 4.5 (fallback)",
-            thinkingLevel: "off" as ThinkingLevel,
-            reason: "fallback:simple_message",
-            complexityScore: 10,
-            taskType: opts.taskType || "simple_chat",
-            estimatedCostPerCall: 0.001,
-        };
-    }
+    // Native model router is required. Return Haiku as a minimum-cost safe default
+    // and log a clear error so misconfigured builds are immediately visible.
+    console.error("[ModelRouter] Native module unavailable — falling back to Haiku. Run: npm run build:native");
     return {
-        modelId: "anthropic/claude-sonnet-4.6",
-        displayName: "Sonnet 4.6",
-        thinkingLevel: "off",
-        reason: "fallback:native_unavailable",
-        complexityScore: 50,
-        taskType: opts.taskType || "first_iteration",
-        estimatedCostPerCall: 0.009,
+        modelId: "anthropic/claude-haiku-4.5",
+        displayName: "Haiku 4.5 (native-unavailable fallback)",
+        thinkingLevel: "off" as ThinkingLevel,
+        reason: "fallback:native_required",
+        complexityScore: 10,
+        taskType: opts.taskType || "simple_chat",
+        estimatedCostPerCall: 0.001,
     };
 }
 
@@ -375,45 +362,20 @@ export function selectForAgent(
 
 // ── Coding Escalation Helper ──────────────────
 
-const CODING_MULTIFILE_PATTERNS: RegExp[] = [
-    /\brefactor\b/i,
-    /\bmigrate\b/i,
-    /\bacross\s+(?:multiple|several|many)\s+files?\b/i,
-    /\bfor each\s+file\b/i,
-    /\bnew\s+feature\b/i,
-    /\bimplement\s+a\s+(?:new\s+)?system\b/i,
-    /\bwrite\s+(?:a\s+)?(?:new\s+)?module\b/i,
-    /\bport\s+.*\s+to\b/i,
-];
+const CODING_MULTIFILE_PATTERNS: RegExp[] = [];
 
 // Non-trivial coding intent — anything beyond a one-liner tweak. If the
 // message shows any of these signals, default is Pro tier (Sonnet/Opus/
 // Gemini-Pro). Expanded beyond the multi-file list because "fix this
 // race condition in auth.ts" is single-file but definitely not a
 // one-liner — it still needs real reasoning.
-const CODING_INTENT_PATTERNS: RegExp[] = [
-    /\b(implement|build|create|write|add|extend|wire|integrate)\s+(?!a?\s?(?:log|console|comment))/i,
-    /\b(debug|diagnose|investigate|trace)\b/i,
-    /\b(optimize|improve|speed\s*up|reduce|fix\s+perf)\b/i,
-    /\b(race\s+condition|deadlock|memory\s+leak|flaky|intermittent)\b/i,
-    /\b(schema|migration|api\s+endpoint|handler|middleware)\b/i,
-    /\b(test|spec|failing|regression)\b/i,
-    /\b(refactor|rename|restructure|extract|inline)\b/i,
-    /\b(error|bug|issue|broken|doesn'?t\s+work|not\s+working)\b/i,
-];
+const CODING_INTENT_PATTERNS: RegExp[] = [];
 
 // Trivially-simple coding: one-off small edits that legitimately do not
 // need Pro reasoning. Matches act as a DOWNGRADE permission even when
 // the taskType is coding — callers that ask for "add a console.log",
 // "rename foo to bar", "fix this typo" shouldn't burn Opus.
-const CODING_TRIVIAL_PATTERNS: RegExp[] = [
-    /^\s*(?:add|insert|put)\s+(?:a\s+)?(?:console\.log|print|log(?:\s+statement)?|comment|todo)\b/i,
-    /^\s*(?:remove|delete|strip)\s+(?:unused|dead|commented|the)\s+/i,
-    /^\s*(?:fix|correct)\s+(?:a\s+)?typo\b/i,
-    /^\s*(?:rename|change)\s+\S+\s+to\s+\S+\s*$/i,
-    /^\s*update\s+(?:the\s+)?(?:comment|docstring|readme|version)\b/i,
-    /^\s*bump\s+(?:the\s+)?version\b/i,
-];
+const CODING_TRIVIAL_PATTERNS: RegExp[] = [];
 
 function isTriviallySimpleCoding(message: string): boolean {
     if (!message) return false;
@@ -436,34 +398,13 @@ function hasCodingIntent(message: string): boolean {
 // debug / investigate something that already exists. Used as an anchor
 // for high-stakes-domain patterns (auth, payments, schema, etc.) so
 // "debug auth middleware" classifies as standard instead of complex.
-const CODING_BUILD_VERB = /\b(implement|build|create|design|add|introduce|set\s+up|ship)\b/i;
+const CODING_BUILD_VERB = /(?:)/; // stub — classification handled by native module
 
-const CODING_COMPLEX_PATTERNS: RegExp[] = [
-    /\brefactor\b/i,
-    /\brewrite\b/i,
-    /\bmigrate\b/i,
-    /\bport\s+.*\s+to\b/i,
-    /\bacross\s+(?:multiple|several|many)\s+files?\b/i,
-    // "new <thing>" — broader so it catches "new rate limiter", "new
-    // endpoint", "new worker", etc. beyond the original fixed noun list.
-    /\ba?\s*new\s+\w+(?:\s+\w+){0,4}\s+(?:for|to|that|which)\b/i,
-    /\bnew\s+(?:feature|system|module|service|tool|package|component|endpoint|handler|worker|limiter|queue|pipeline|flow|page|route|screen|dashboard|widget)\b/i,
-    /\b(implement|build|create|design)\s+(?:a?\s?)?(?:full|complete|production|end.to.end)\b/i,
-    /\b(re.?architect|system\s+design|distributed|microservice)\b/i,
-    /\bend.to.end\b/i,
-    /\b(schema\s+migration|add.*migration|change\s+the\s+schema)\b/i,
-];
+const CODING_COMPLEX_PATTERNS: RegExp[] = [];
 
 // High-stakes domains — only complex when combined with a build verb.
 // "debug auth middleware" stays standard; "implement auth" goes complex.
-const CODING_HIGH_STAKES_DOMAINS: RegExp[] = [
-    /\bauth(?:entication|orization)?\b|\brbac\b|\bsso\b|\boauth\b|\bsaml\b/i,
-    /\bdatabase\b|\bschema\b|\bmigration\b/i,
-    /\bapi\s+endpoint\b|\brest\s+api\b|\bgraphql\b|\bwebsocket\s+server\b/i,
-    /\bpipeline\b|\bworkflow\b|\betl\b|\bscheduler\b|\bqueue\b|\bpub.?sub\b/i,
-    /\bpayment\b|\bbilling\b|\bsubscription\b|\bstripe\b|\bcheckout\s+flow\b/i,
-    /\bsecurity\b|\bcryptograph\b|\bencrypt(?:ion)?\b|\baudit\s+log\b|\bcompliance\b/i,
-];
+const CODING_HIGH_STAKES_DOMAINS: RegExp[] = [];
 
 export type CodingComplexity = "trivial" | "standard" | "complex";
 
@@ -477,15 +418,8 @@ export type CodingComplexity = "trivial" | "standard" | "complex";
  * default, not a verdict.
  */
 export function classifyCodingComplexity(message: string): CodingComplexity {
-    if (!message) return "standard";
-    if (isTriviallySimpleCoding(message)) return "trivial";
-    if (CODING_COMPLEX_PATTERNS.some((p) => p.test(message))) return "complex";
-    // High-stakes domains only qualify as complex when combined with a
-    // build verb — "implement auth" yes, "debug auth middleware" no.
-    if (CODING_BUILD_VERB.test(message) && CODING_HIGH_STAKES_DOMAINS.some((p) => p.test(message))) {
-        return "complex";
-    }
-    if (message.length > 400) return "complex"; // long detailed asks get the full flow
+    // Complexity classification handled by the native Rust module.
+    // This stub returns "standard" (Pro-tier routing) as a safe default.
     return "standard";
 }
 

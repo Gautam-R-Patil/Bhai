@@ -1093,85 +1093,12 @@ async function classifyToolNeeds(
 // Used when embeddings aren't ready yet (e.g., during boot before model loads)
 
 function structuralClassify(message: string): { category: string; score: number }[] {
-    const msg = message.toLowerCase();
-    const scores: { category: string; score: number }[] = [];
-
-    const patterns: Record<string, RegExp[]> = {
-        browser: [
-            /\b(brows|website|url|http|www\.|\.com|\.org|page|web ?page|navigate|login|sign.?in|form|click|scrape|download)\b/i,
-            /\b(tab|bookmark|cookie|html|css|javascript|dom|xpath)\b/i,
-        ],
-        web_search: [
-            /\b(search|google|look ?up|find ?(out|info|about)|research|what is|who is|how to|define|explain)\b/i,
-        ],
-        os_control: [
-            /\b(screenshot|screen ?shot|screen ?capture|click|mouse|keyboard|type|desktop|app|window|ocr|screen)\b/i,
-            /\b(apple ?script|automator|shortcut|finder|dock)\b/i,
-        ],
-        shell: [
-            /\b(terminal|command|shell|bash|zsh|npm|pip|brew|apt|git|compile|build|run|execute|install|deploy|docker|process)\b/i,
-            /\b(mkdir|rm|ls|cd|cat|grep|chmod|curl|wget|ssh|scp|sudo)\b/i,
-        ],
-        file_system: [
-            /\b(file|folder|directory|read|write|create|edit|save|delete|path|document|text|csv|json|pdf|copy|move|rename)\b/i,
-        ],
-        coding: [
-            /\b(debug|refactor|implement|compile|stack.?trace|exception|traceback|syntax.?error|typecheck)\b/i,
-            /\bfix.*(bug|error|issue|crash|typo)\b/i,
-            // File-extension references are a strong coding signal on their own
-            /\b\w+\.(ts|tsx|jsx|js|mjs|cjs|py|rs|go|cpp|hpp|java|rb|ipynb)\b/i,
-            /\b(source ?code|codebase|source files?|src\/|lib\/|test\/)\b/i,
-            /\b(unit.?test|integration.?test|jest|vitest|pytest|mocha|cargo.?test)\b/i,
-            /\b(goto.?definition|find.?references|workspace.?symbol|document.?symbol)\b/i,
-            /\b(notebook|jupyter|ipynb)\b/i,
-            /\b(plan.?mode|exit.?plan.?mode|enter.?plan.?mode)\b/i,
-            /\b(eslint|biome|clippy|ruff|rust-?analyzer|typescript-language-server|pyright)\b/i,
-        ],
-        media: [
-            /\b(spotify|music|song|track|tracks|artist|artists|album|albums|playlist|playlists|play|pause|skip|shuffle|repeat|queue|now.?playing|image|picture|photo|generate|art|draw|paint|blender|3d|video|record|lyrics|discover.?weekly|release.?radar|sonos|speaker|airplay)\b/i,
-        ],
-        communication: [
-            /\b(email|mail|send|message|imessage|sms|text|notify|telegram|whatsapp|contact|person|saying|said|asking|asked|talking)\b/i,
-        ],
-        scheduling: [
-            /\b(schedule|remind|alarm|calendar|event|meeting|appointment|timer|cron|recurring|todo|task.?list|later|tomorrow|next week)\b/i,
-        ],
-        system_controls: [
-            /\b(volume|brightness|wifi|bluetooth|dark ?mode|do not disturb|dnd|clipboard|lock|sleep|system ?info)\b/i,
-        ],
-        app_management: [
-            /\b(open ?app|close ?app|force ?quit|window|resize|minimize|maximize|full ?screen|split|arrange)\b/i,
-        ],
-        research: [/\b(deep ?research|investigate|analyze|comprehensive|thorough|report|study|synthesis)\b/i],
-        long_tasks: [
-            /\b(build.*(website|app|project|codebase)|long.?running|complex.?task|entire|full|complete.*build|swarm)\b/i,
-        ],
-        google_api: [/\b(google|gmail|gcal|google ?calendar|google ?account)\b/i],
-        github: [/\b(github|repo|repository|pull ?request|pr|issue|commit|branch|merge)\b/i],
-        document: [
-            /\b(resume|resumé|curriculum vitae|cv|cover letter|cover.?letter)\b/i,
-            /\b(job application|apply(ing)? (for|to) (a |an )?job|applying somewhere)\b/i,
-            /\b(export|render|save|need|want|turn.+into|make.+into).*\b(pdf|docx|word)\b/i,
-            /\b(make|create|draft|write|generate|produce|compose)\b.*\b(pdf|docx|word document|word doc|letter|memo|report|invoice)\b/i,
-            /\b(ingest|parse|extract|edit).*\b(pdf|resume)\b/i,
-        ],
-    };
-
-    for (const [category, regexes] of Object.entries(patterns)) {
-        let matched = 0;
-        for (const re of regexes) {
-            if (re.test(msg)) matched++;
-        }
-        // Normalize: if any pattern matches, give a moderate score
-        const score = matched > 0 ? 0.3 + matched * 0.15 : 0.05;
-        scores.push({ category, score });
-    }
-
-    // Always add core and memory with high scores
-    scores.push({ category: "core", score: 0.9 });
-    scores.push({ category: "memory", score: 0.4 });
-
-    return scores;
+    // Structural classification handled by native module.
+    // Return the always-included minimum so the agent can use request_tools to ask for more.
+    return [
+        { category: "core",   score: 0.9 },
+        { category: "memory", score: 0.4 },
+    ];
 }
 
 // ── Determine which categories were recently used ──
