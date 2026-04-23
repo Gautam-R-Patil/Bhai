@@ -2,14 +2,14 @@
 // Server-side runtime key derivation for A.T.L.A.S desktop app.
 
 import { v } from "convex/values";
-import { internalQuery } from "./_generated/server";
+import { internalAction } from "./_generated/server";
 
 /**
  * Derive a per-installation runtime key.
  * Key = HMAC-SHA256(ATLAS_RUNTIME_MASTER_SECRET, deviceFingerprint || otplessUserId)
  * Returns the key as a hex string (64 chars).
  */
-export const deriveRuntimeKey = internalQuery({
+export const deriveRuntimeKey = internalAction({
   args: {
     otplessUserId: v.string(),
     deviceFingerprint: v.optional(v.string()),

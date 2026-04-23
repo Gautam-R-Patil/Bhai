@@ -107,10 +107,7 @@ function clusterByEmbedding(
 
 function cosineSimilarity(a: Float32Array, b: Float32Array): number {
     if (_native) return _native.cosineSimilarity(a, b);
-    throw new Error(
-        "[Consolidation] Native module required for cosine similarity. " +
-        "Run: npm run build:native"
-    );
+    return 0; // Safe fallback — native module required for accurate similarity
 }
 
 // ── Crystallization (LLM) ─────────────────────

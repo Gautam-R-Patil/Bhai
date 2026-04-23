@@ -307,6 +307,9 @@ let _legacyIndex: HNSWIndex | null = null;
  * Used during migration to query old embeddings that haven't been re-embedded yet.
  */
 export function getLegacyHNSWIndex(): HNSWIndex | null {
+    // Only attempt legacy index rebuild when native module is available
+    if (!nativeModule) return null;
+
     if (_legacyIndex) return _legacyIndex;
 
     const backupPath = `${INDEX_PATH}.v1.bak`;

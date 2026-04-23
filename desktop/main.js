@@ -72,9 +72,7 @@ function decodeProtectedString(encodedBase64) {
     try {
         const encoded = Buffer.from(encodedBase64, "base64");
         const decoded = Buffer.alloc(encoded.length);
-        const keySource = _runtimeKey
-            ? Buffer.from(_runtimeKey)
-            : Buffer.from(PROTECTION_KEY);
+        const keySource = Buffer.from(PROTECTION_KEY);
         for (let i = 0; i < encoded.length; i++) {
             decoded[i] = encoded[i] ^ keySource[i % keySource.length];
         }
@@ -885,8 +883,10 @@ async function startBot() {
     }
 
     // Fetch server-delivered runtime key (fail-open: falls back to built-in on error)
-    if (_desktopSessionToken) {
-        await fetchRuntimeKey(_desktopSessionToken);
+    // Ensure session token is available, then fetch server-delivered runtime key
+    const _keyFetchToken = _desktopSessionToken || await getDesktopSessionToken();
+    if (_keyFetchToken) {
+        await fetchRuntimeKey(_keyFetchToken);
     }
     if (_runtimeKey) {
         spawnEnv.ATLAS_RUNTIME_KEY = _runtimeKey;

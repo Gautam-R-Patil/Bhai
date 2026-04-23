@@ -1516,7 +1516,7 @@ http.route({
     const session = await ctx.runQuery(internal.sessions.getSessionByToken, { token });
     const deviceFingerprint = session?.deviceFingerprint ?? undefined;
 
-    const runtimeKey: string = await ctx.runQuery(
+    const runtimeKey: string = await ctx.runAction(
       internal.appRuntime.deriveRuntimeKey,
       {
         otplessUserId: account.otplessUserId,
