@@ -322,3 +322,20 @@ export const checkRateLimit = internalMutation({
   },
 });
 
+/** Lightweight session lookup — returns only fields needed for key derivation. */
+export const getSessionByToken = internalQuery({
+  args: { token: v.string() },
+  handler: async (ctx, { token }) => {
+    const session = await ctx.db
+      .query("sessions")
+      .withIndex("by_token", (q) => q.eq("token", token))
+      .unique();
+
+    if (!session || session.expiresAt < Date.now()) return null;
+
+    return {
+      deviceFingerprint: session.deviceFingerprint ?? null,
+    };
+  },
+});
+

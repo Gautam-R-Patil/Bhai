@@ -25,12 +25,58 @@ const { autoUpdater } = require("electron-updater");
 
 const PROTECTION_KEY = Buffer.from("ATLAS_PROTECTED_2026");
 
+// Runtime key delivered from Convex — replaces PROTECTION_KEY when available.
+let _runtimeKey = null;
+
+async function fetchRuntimeKey(sessionToken) {
+    try {
+        const https = require("https");
+        const bodyStr = JSON.stringify({});
+        const result = await new Promise((resolve) => {
+            const url = new URL(`${CONVEX_SITE_URL}/api/app/runtime-key`);
+            const req = https.request(url, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Content-Length": Buffer.byteLength(bodyStr),
+                    "Authorization": `Bearer ${sessionToken}`,
+                },
+                timeout: 8000,
+            }, (res) => {
+                let raw = "";
+                res.on("data", (c) => (raw += c));
+                res.on("end", () => {
+                    try {
+                        const data = JSON.parse(raw);
+                        resolve(res.statusCode === 200 && data.key ? data.key : null);
+                    } catch { resolve(null); }
+                });
+            });
+            req.on("error", () => resolve(null));
+            req.on("timeout", () => { req.destroy(); resolve(null); });
+            req.write(bodyStr);
+            req.end();
+        });
+        if (result) {
+            _runtimeKey = result;
+            console.log("[runtime-key] Fetched server-delivered key");
+        } else {
+            console.warn("[runtime-key] Fetch returned no key — using built-in fallback");
+        }
+    } catch (err) {
+        console.warn("[runtime-key] Key fetch failed, using built-in fallback:", err.message);
+    }
+}
+
 function decodeProtectedString(encodedBase64) {
     try {
         const encoded = Buffer.from(encodedBase64, "base64");
         const decoded = Buffer.alloc(encoded.length);
+        const keySource = _runtimeKey
+            ? Buffer.from(_runtimeKey)
+            : Buffer.from(PROTECTION_KEY);
         for (let i = 0; i < encoded.length; i++) {
-            decoded[i] = encoded[i] ^ PROTECTION_KEY[i % PROTECTION_KEY.length];
+            decoded[i] = encoded[i] ^ keySource[i % keySource.length];
         }
         return decoded.toString("utf8");
     } catch {
@@ -750,7 +796,7 @@ function getBotStatus() {
     return botProcess && !botProcess.killed ? "running" : "stopped";
 }
 
-function startBot() {
+async function startBot() {
     if (botProcess && !botProcess.killed) return { status: "already_running" };
 
     // ── Account gate: check status before starting ──
@@ -836,6 +882,14 @@ function startBot() {
         // This guarantees ABI compatibility with native modules built by electron-builder.
         executable = process.execPath;
         spawnEnv.ELECTRON_RUN_AS_NODE = "1";
+    }
+
+    // Fetch server-delivered runtime key (fail-open: falls back to built-in on error)
+    if (_desktopSessionToken) {
+        await fetchRuntimeKey(_desktopSessionToken);
+    }
+    if (_runtimeKey) {
+        spawnEnv.ATLAS_RUNTIME_KEY = _runtimeKey;
     }
 
     try {
@@ -1817,17 +1871,42 @@ function registerIPC() {
         return { success: true };
     });
 
+    // Shared helper — finds google-credentials.json across all possible locations.
+    // Checks the writable userData dir first (survives reinstalls), then the
+    // bundled read-only resources (works when packed on Mac/Windows), then the
+    // user's Downloads folder as a last resort.
+    function findGoogleCredentials() {
+        const candidates = [
+            path.join(DATA_DIR, "google-credentials.json"),           // writable userData
+            path.join(BOT_DIR, "data", "google-credentials.json"),    // bundled resources
+            // Downloads — supports both POSIX ($HOME) and Windows ($USERPROFILE)
+            path.join(process.env.HOME || process.env.USERPROFILE || "", "Downloads", "google-credentials.json"),
+        ];
+        for (const p of candidates) {
+            if (fs.existsSync(p)) {
+                try {
+                    const raw = JSON.parse(fs.readFileSync(p, "utf-8"));
+                    const creds = raw.installed || raw.web;
+                    if (creds) {
+                        // Cache to DATA_DIR so future lookups are instant
+                        const dest = path.join(DATA_DIR, "google-credentials.json");
+                        if (p !== dest) {
+                            try { fs.mkdirSync(DATA_DIR, { recursive: true }); fs.writeFileSync(dest, JSON.stringify(raw, null, 2)); } catch { /* non-fatal */ }
+                        }
+                        return creds;
+                    }
+                } catch { /* invalid file, try next */ }
+            }
+        }
+        return null;
+    }
+
     // Setup: Google OAuth
     ipcMain.handle("setup:google-oauth", async () => {
         try {
-            const credPath = path.join(BOT_DIR, "data", "google-credentials.json");
-            if (!fs.existsSync(credPath)) {
-                return { success: false, error: "Google credentials file not found." };
-            }
-            const credsRaw = JSON.parse(fs.readFileSync(credPath, "utf-8"));
-            const clientCreds = credsRaw.installed || credsRaw.web;
+            const clientCreds = findGoogleCredentials();
             if (!clientCreds) {
-                return { success: false, error: "Invalid credentials file format." };
+                return { success: false, error: "Google credentials file not found." };
             }
 
             const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
@@ -1936,11 +2015,8 @@ function registerIPC() {
         try {
             // Delegate to setup:google-oauth for the token exchange
             const result = await (async () => {
-                const credPath = path.join(BOT_DIR, "data", "google-credentials.json");
-                if (!fs.existsSync(credPath)) return { success: false, error: "Google credentials file not found." };
-                const credsRaw = JSON.parse(fs.readFileSync(credPath, "utf-8"));
-                const clientCreds = credsRaw.installed || credsRaw.web;
-                if (!clientCreds) return { success: false, error: "Invalid credentials file format." };
+                const clientCreds = findGoogleCredentials();
+                if (!clientCreds) return { success: false, error: "Google credentials file not found." };
 
                 const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
                     `client_id=${clientCreds.client_id}` +

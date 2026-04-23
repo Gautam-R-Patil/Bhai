@@ -9,7 +9,9 @@
 import fs from "node:fs";
 
 // Must match the key used in desktop/build/protect-source.js
-const PROTECTION_KEY = Buffer.from("ATLAS_PROTECTED_2026");
+const PROTECTION_KEY = process.env.ATLAS_RUNTIME_KEY
+    ? Buffer.from(process.env.ATLAS_RUNTIME_KEY)
+    : Buffer.from("ATLAS_PROTECTED_2026");
 
 /**
  * Decode a XOR-encoded base64 string

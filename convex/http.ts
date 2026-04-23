@@ -1502,4 +1502,33 @@ http.route({
   }),
 });
 
+// ── POST /api/app/runtime-key — Per-installation XOR key delivery ──────────
+http.route({
+  path: "/api/app/runtime-key",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+
+    const authHeader = request.headers.get("Authorization")!;
+    const token = authHeader.slice(7);
+    const session = await ctx.runQuery(internal.sessions.getSessionByToken, { token });
+    const deviceFingerprint = session?.deviceFingerprint ?? undefined;
+
+    const runtimeKey: string = await ctx.runQuery(
+      internal.appRuntime.deriveRuntimeKey,
+      {
+        otplessUserId: account.otplessUserId,
+        deviceFingerprint,
+      },
+    );
+
+    return new Response(JSON.stringify({ key: runtimeKey }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
+
 export default http;
