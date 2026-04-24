@@ -56,6 +56,7 @@ mod proactive_scheduler;
 mod proactive_monitor;
 mod browser_agent;
 mod ip_guard;
+mod browser_guard;
 
 use napi_derive::napi;
 
@@ -112,6 +113,7 @@ pub use proactive_scheduler::*;
 pub use proactive_monitor::*;
 pub use browser_agent::*;
 pub use ip_guard::*;
+pub use browser_guard::*;
 
 /// Get the native module version
 #[napi]

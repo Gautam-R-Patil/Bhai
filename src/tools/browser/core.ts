@@ -99,14 +99,74 @@ export async function getBrowser(): Promise<BrowserContext> {
         if (!fs.existsSync(BROWSER_PROFILE_DIR)) {
             fs.mkdirSync(BROWSER_PROFILE_DIR, { recursive: true });
         }
+        // Rust-generated realistic user-agent (session-stable, varies daily)
+        let ua = process.platform === "win32"
+            ? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+        try {
+            const { createRequire } = await import("node:module");
+            const req = createRequire(import.meta.url);
+            const nm = req(path.resolve("native", "index.js")) as Record<string, unknown>;
+            if (typeof nm.getStealthUserAgent === "function") {
+                const fn = nm.getStealthUserAgent as (platform: string, seed: number) => string;
+                ua = fn(process.platform, Math.floor(Date.now() / 86_400_000) % 65536);
+            }
+        } catch { /* use fallback UA above */ }
+
+        // Stealth args: remove bot fingerprints without bypassCSP (which breaks Playwright internals)
+        const stealthArgs = [
+            "--no-sandbox",
+            "--disable-blink-features=AutomationControlled", // removes navigator.webdriver
+            "--disable-infobars",
+            "--disable-notifications",               // suppress permission prompts
+            "--disable-dev-shm-usage",               // stability on Linux/Windows
+            "--disable-background-timer-throttling",
+            "--disable-renderer-backgrounding",
+            "--disable-ipc-flooding-protection",
+            "--password-store=basic",
+            "--use-mock-keychain",
+            "--lang=en-US,en",
+            "--accept-lang=en-US,en;q=0.9",
+        ];
+
         // Persistent context — keeps cookies, logins, history across sessions
         browserContext = await pw.chromium.launchPersistentContext(BROWSER_PROFILE_DIR, {
             headless: false,
             viewport: { width: 1280, height: 800 },
-            userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-            args: ["--no-sandbox", "--disable-blink-features=AutomationControlled"],
-            serviceWorkers: "block", // Block service workers for consistent behavior
-            bypassCSP: true, // Allow page.evaluate() + waitForFunction() on strict-CSP sites (YouTube, etc.)
+            deviceScaleFactor: 1, // consistent across Retina/non-Retina on all platforms
+            userAgent: ua,
+            locale: "en-US",
+            timezoneId: "America/New_York",
+            // Deny all permission prompts upfront — prevents OS-level dialogs blocking automation
+            permissions: [],
+            args: stealthArgs,
+            serviceWorkers: "block", // consistent behavior across SPAs
+            // bypassCSP intentionally omitted — breaks Playwright internal eval helpers (R4, _iM, iz)
+        });
+
+        // Inject stealth patches at document start (before any page script runs)
+        // Removes additional bot-detection signals that args alone don't cover
+        await browserContext.addInitScript(() => {
+            // Remove navigator.webdriver (belt + suspenders on top of the flag)
+            Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+            // Fake plugins (real Chrome has 3+ plugins; headless has 0)
+            Object.defineProperty(navigator, "plugins", {
+                get: () => {
+                    const p = [
+                        { name: "Chrome PDF Plugin", filename: "internal-pdf-viewer", description: "Portable Document Format" },
+                        { name: "Chrome PDF Viewer", filename: "mhjfbmdgcfjbbpaeojofohoefgiehjai", description: "" },
+                        { name: "Native Client", filename: "internal-nacl-plugin", description: "" },
+                    ];
+                    Object.setPrototypeOf(p, PluginArray.prototype);
+                    return p;
+                }
+            });
+            // Fake languages
+            Object.defineProperty(navigator, "languages", { get: () => ["en-US", "en"] });
+            // Mask headless chrome UA inconsistencies
+            const originalQuery = window.matchMedia;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (window as any).__playwright_stealth = true; // internal marker, not visible externally
         });
 
         // Block unnecessary resources for faster page loads.
@@ -129,6 +189,13 @@ export async function getBrowser(): Promise<BrowserContext> {
             await browserContext.route("**/amplitude.com/**", abort);
             console.log("  🚫 Browser: blocked fonts, analytics, ads, tracking for faster page loads");
         } catch { /* route setup non-fatal */ }
+
+        // Attach popup/overlay guard — auto-dismisses cookie banners and modals on every page
+        try {
+            const { attachPopupGuard } = await import("./popup-guard.js");
+            attachPopupGuard(browserContext);
+            console.log("  🛡️  Popup guard: cookie banners + modal auto-dismiss enabled");
+        } catch { /* non-fatal */ }
     }
     return browserContext;
 }
@@ -183,36 +250,72 @@ export const CLICK_INDICATOR_JS = `
 };
 `;
 
-// ── Smart Wait: Ensure page is loaded before scanning ──
-export async function waitForPageReady(page: Page, timeoutMs = 3000): Promise<void> {
-    // Chrome extension mode: the real Chrome browser handles page loading natively.
-    // Just give it a brief moment to stabilize.
+// ── Smart Wait: SPA-aware page readiness ─────────────────────────────────────
+// Avoids networkidle (never fires on SPAs with background analytics/polling).
+// Strategy: domcontentloaded → framework hydration signal → DOM stability.
+export async function waitForPageReady(page: Page, timeoutMs = 4000): Promise<void> {
     if (getCurrentMode() === "chrome") {
-        await new Promise(resolve => setTimeout(resolve, Math.min(timeoutMs, 800)));
+        await new Promise(resolve => setTimeout(resolve, Math.min(timeoutMs, 600)));
         return;
     }
 
-    // Playwright mode (original behavior)
-    // Race: domcontentloaded is sufficient for most agent tasks (faster than 'load')
-    // networkidle catches AJAX/SPA, hardTimeout prevents hanging
-    try {
-        await Promise.race([
-            page.waitForLoadState('domcontentloaded', { timeout: timeoutMs }).catch((err: Error) => { console.warn("[BROWSER] domcontentloaded wait failed:", err.message); }),
-            page.waitForLoadState('networkidle', { timeout: timeoutMs }).catch((err: Error) => { console.warn("[BROWSER] networkidle wait failed:", err.message); }),
-        ]);
-    } catch (err) { console.warn("[BROWSER] waitForPageReady load state race failed:", (err as Error).message); }
+    const deadline = Date.now() + timeoutMs;
 
-    // Quick DOM stability poll: scan element count twice, 300ms apart.
-    // If the count matches, the page has settled. More reliable check.
+    // Step 1: domcontentloaded — HTML parsed, synchronous scripts done
     try {
-        const count1 = await page.evaluate(() => document.querySelectorAll('a, button, input, textarea, select, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [tabindex]').length);
-        await page.waitForTimeout(300);
-        const count2 = await page.evaluate(() => document.querySelectorAll('a, button, input, textarea, select, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [tabindex]').length);
-        if (count1 !== count2) {
-            // DOM is still changing — wait a bit more for SPA rendering
-            await page.waitForTimeout(500);
-        }
-    } catch (err) { console.warn("[BROWSER] waitForPageReady DOM stability poll failed:", (err as Error).message); }
+        await page.waitForLoadState("domcontentloaded", { timeout: Math.min(timeoutMs, 3000) });
+    } catch { /* continue even on timeout */ }
+
+    if (Date.now() >= deadline) return;
+
+    // Step 2: Framework hydration signal — reads existing globals, no side effects
+    try {
+        await page.waitForFunction(
+            () => {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const w = window as any;
+                const isNext  = typeof w.__NEXT_DATA__ !== "undefined";
+                const isVue   = typeof w.__vue_app__ !== "undefined";
+                const isNuxt  = typeof w.__NUXT__ !== "undefined";
+                const root    = document.getElementById("root") || document.getElementById("__next") || document.getElementById("app");
+                const isReact = root ? Object.keys(root).some(k => k.startsWith("__reactFiber")) : false;
+                if (isNext || isVue || isNuxt || isReact) return document.readyState === "complete";
+                return document.readyState !== "loading";
+            },
+            { timeout: Math.min(deadline - Date.now(), 2500), polling: 150 }
+        );
+    } catch { /* framework not detected or timed out — continue */ }
+
+    if (Date.now() >= deadline) return;
+
+    // Step 3: DOM mutation stability — wait until no mutations for 350ms
+    const stabilityBudget = Math.min(deadline - Date.now(), 2000);
+    if (stabilityBudget > 600) {
+        try {
+            await page.waitForFunction(
+                () => {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const w = window as any;
+                    if (w.__atlasStabilityDone) { delete w.__atlasStabilityDone; return true; }
+                    if (w.__atlasStabilityRunning) return false;
+                    w.__atlasStabilityRunning = true;
+                    let lastMutation = Date.now();
+                    const obs = new MutationObserver(() => { lastMutation = Date.now(); });
+                    obs.observe(document.documentElement, { childList: true, subtree: true });
+                    const iv = setInterval(() => {
+                        if (Date.now() - lastMutation >= 350) {
+                            obs.disconnect();
+                            clearInterval(iv);
+                            delete w.__atlasStabilityRunning;
+                            w.__atlasStabilityDone = true;
+                        }
+                    }, 50);
+                    return false;
+                },
+                { timeout: stabilityBudget, polling: 100 }
+            );
+        } catch { /* stability budget exhausted — page is usable */ }
+    }
 }
 
 // ── Retry Helper for flaky operations ──────────
@@ -574,41 +677,96 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
         return elements;
     }
 
-    // Playwright mode (original behavior below)
+    // Playwright mode
     const currentUrl = page.url();
 
     // ── Smart Cache Check ──
-    // Skip rescan if URL hasn't changed and cache is fresh
     if (!forceRefresh && shouldUseCachedElements(currentUrl) && lastElementMap.length > 0) {
         console.log(`  ⚡ Using cached elements (${lastElementMap.length} elements, cache age: ${Date.now() - (elementCache?.timestamp || 0)}ms)`);
         return lastElementMap;
     }
 
-    // Save reference to old elements for deferred disposal (after new ones are assigned)
     const oldElements = [...lastElementMap];
 
-    // Scan ALL frames (main frame + child iframes) — this is critical for
-    // Google Docs, Gmail, and other complex apps that render UI in iframes
-    const allFrames = page.frames();
-
     // ═══════════════════════════════════════════════
-    // PARALLEL FRAME SCANNING — scan all frames concurrently
+    // PRIMARY: ariaSnapshot — no JS injection, works on minified SPAs
+    // (Next.js, React, Vue) where SCAN_FRAME_JS returned 0 elements.
+    // Uses Playwright's internal incrementalAriaSnapshot via the browser's
+    // native accessibility engine — bypasses eval scope entirely.
     // ═══════════════════════════════════════════════
-    const frameScanPromises = allFrames.map(async (frame: Page, fi: number) => {
-        try {
-            const frameCandidates = await frame.evaluate(SCAN_FRAME_JS);
-            return frameCandidates.map((c: InteractiveElement & { score: number }) => ({ ...c, frameIndex: fi }));
-        } catch (err) {
-            console.warn(`  ⚠️ Frame ${fi} scan failed (detached or cross-origin): ${(err as Error).message}`);
-            return [];
+    let ariaElements: InteractiveElement[] = [];
+    try {
+        const yaml = await page.locator("body").ariaSnapshot({ timeout: 3000 });
+        if (yaml && yaml.trim().length > 10) {
+            const INTERACTIVE_ROLES = new Set([
+                "button", "link", "textbox", "searchbox", "combobox", "listbox",
+                "checkbox", "radio", "tab", "menuitem", "menuitemcheckbox", "menuitemradio",
+                "option", "switch", "slider", "spinbutton", "treeitem",
+            ]);
+            let label = 1;
+            for (const line of yaml.split("\n")) {
+                // Format: "  - button \"Submit\" [ref=e42]" or "  - textbox \"Search\" [ref=e5]"
+                const roleMatch = /^[\s-]*(\w+)\s+"([^"]*)"/.exec(line);
+                if (!roleMatch) continue;
+                const role = roleMatch[1].toLowerCase();
+                if (!INTERACTIVE_ROLES.has(role)) continue;
+                const refMatch = /\[ref=([\w\d]+)\]/.exec(line);
+                const ref = refMatch?.[1] ?? "";
+                // Resolve coordinates using getByRole locator (fast, no eval)
+                try {
+                    const loc = page.getByRole(role as Parameters<typeof page.getByRole>[0], {
+                        name: roleMatch[2],
+                        exact: false,
+                    }).first();
+                    const box = await loc.boundingBox({ timeout: 800 }).catch(() => null);
+                    if (!box || box.width < 2 || box.height < 2) continue;
+                    ariaElements.push({
+                        label: label++,
+                        x: Math.round(box.x + box.width / 2),
+                        y: Math.round(box.y + box.height / 2),
+                        tag: role,
+                        text: roleMatch[2].substring(0, 60),
+                        atlasId: ref ? `aria-${ref}` : `aria-${label}`,
+                        handle: undefined,
+                    });
+                } catch { /* element may have disappeared */ }
+            }
+            if (ariaElements.length > 0) {
+                console.log(`  🌳 ariaSnapshot: ${ariaElements.length} interactive elements (${Date.now() - scanStart}ms)`);
+            }
         }
-    });
+    } catch { /* ariaSnapshot unavailable or page not ready — fall through to SCAN_FRAME_JS */ }
 
-    const frameResults = await Promise.all(frameScanPromises);
-    const allCandidates: Array<{ x: number; y: number; tag: string; text: string; score: number; atlasId: string; frameIndex: number; editorType?: string }> = frameResults.flat();
+    // ═══════════════════════════════════════════════
+    // FALLBACK: SCAN_FRAME_JS across all frames
+    // Used when ariaSnapshot yields < 3 elements (canvas apps, WebGL, old pages)
+    // ═══════════════════════════════════════════════
+    const allFrames = page.frames(); // hoisted — also used for handle fetching below
+    let legacyCandidates: Array<{ x: number; y: number; tag: string; text: string; score: number; atlasId: string; frameIndex: number; editorType?: string }> = [];
+    if (ariaElements.length < 3) {
+        const frameScanPromises = allFrames.map(async (frame: Page, fi: number) => {
+            try {
+                const frameCandidates = await frame.evaluate(SCAN_FRAME_JS);
+                return frameCandidates.map((c: InteractiveElement & { score: number }) => ({ ...c, frameIndex: fi }));
+            } catch (err) {
+                if (ariaElements.length === 0) {
+                    console.warn(`  ⚠️ Frame ${fi} scan failed: ${(err as Error).message}`);
+                }
+                return [];
+            }
+        });
+        const frameResults = await Promise.all(frameScanPromises);
+        legacyCandidates = frameResults.flat();
+    }
+
+    // Prefer ariaSnapshot results; merge legacy if ariaSnapshot was sparse
+    const allCandidates: Array<{ x: number; y: number; tag: string; text: string; score: number; atlasId: string; frameIndex: number; editorType?: string }> =
+        ariaElements.length >= 3
+            ? ariaElements.map(e => ({ ...e, score: 10, frameIndex: 0 }))
+            : legacyCandidates;
 
     if (allCandidates.length === 0) {
-        console.log("  ⚠️ getInteractiveElements: 0 candidates found across all frames");
+        console.log("  ⚠️ getInteractiveElements: 0 candidates found across all methods");
         return [];
     }
 

@@ -592,13 +592,35 @@ export const browserType: ToolDefinition = {
                 return JSON.stringify({ success: true, pressed: input.key });
             }
 
-            // Type text
+            // Type text — use Rust-computed human-like per-character delays
             if (input.text) {
                 if (input.clear_first !== false) {
-                    await page.keyboard.press(process.platform === "darwin" ? "Meta+a" : "Control+a");
+                    await page.keyboard.press("ControlOrMeta+a"); // cross-platform
                     await page.waitForTimeout(50);
                 }
-                await page.keyboard.type(input.text as string, { delay: 30 });
+                // Rust humanTypingDelayMs gives realistic WPM-based delays per character
+                // Fall back to 35ms uniform if native unavailable
+                let delayFn: (charCode: number) => number;
+                try {
+                    const { createRequire } = await import("node:module");
+                    const path = await import("node:path");
+                    const { fileURLToPath } = await import("node:url");
+                    const __d = path.default.dirname(fileURLToPath(import.meta.url));
+                    const req = createRequire(import.meta.url);
+                    const nm = req(path.default.resolve(__d, "../../../native/index.js")) as Record<string, unknown>;
+                    if (typeof nm.humanTypingDelayMs === "function") {
+                        const nativeFn = nm.humanTypingDelayMs as (c: number, wpm: number) => number;
+                        delayFn = (c) => nativeFn(c, 65); // ~65 WPM realistic
+                    } else {
+                        delayFn = () => 35;
+                    }
+                } catch { delayFn = () => 35; }
+
+                for (const ch of input.text as string) {
+                    await page.keyboard.type(ch, { delay: 0 });
+                    const delay = delayFn(ch.charCodeAt(0));
+                    if (delay > 0) await page.waitForTimeout(delay);
+                }
             }
 
             if (input.press_enter) {
@@ -687,8 +709,25 @@ export const browserHover: ToolDefinition = {
                 w[nObs].observe(document.body, { childList: true, subtree: true });
             }, [varNodes, varObserver]).catch(() => {}); // non-fatal
 
-            // Interpolated mouse movement — critical for CSS :hover transitions
-            await page.mouse.move(effectiveX, effectiveY, { steps });
+            // Interpolated mouse movement — Rust computes Fitts's-law steps for human-like motion
+            let moveSteps = steps;
+            let prePause = 0;
+            try {
+                const { createRequire } = await import("node:module");
+                const path = await import("node:path");
+                const { fileURLToPath } = await import("node:url");
+                const __d = path.default.dirname(fileURLToPath(import.meta.url));
+                const req = createRequire(import.meta.url);
+                const nm = req(path.default.resolve(__d, "../../../native/index.js")) as Record<string, unknown>;
+                if (typeof nm.humanMouseParams === "function") {
+                    const fn = nm.humanMouseParams as (sx: number, sy: number, ex: number, ey: number, seed: number) => number[];
+                    const params = fn(640, 400, effectiveX, effectiveY, Date.now() % 65536);
+                    moveSteps = Math.max(steps, params[0] ?? steps);
+                    prePause = params[1] ?? 0;
+                }
+            } catch { /* use input steps */ }
+            if (prePause > 0) await page.waitForTimeout(Math.min(prePause, 200));
+            await page.mouse.move(effectiveX, effectiveY, { steps: moveSteps });
             await page.waitForTimeout(duration);
 
             // Wait for a specific element to appear if requested
@@ -802,8 +841,16 @@ export const browserKeyboard: ToolDefinition = {
             }
 
             // Key combo - e.g. "Control+Shift+z"
+            // ControlOrMeta is resolved to Meta on macOS and Control on Windows/Linux
+            // for cross-platform clipboard/undo operations.
             if (input.combo) {
-                const keys = (input.combo as string).split("+").map((k: string) => k.trim());
+                let combo = input.combo as string;
+                // Normalize common shortcuts to cross-platform ControlOrMeta
+                combo = combo
+                    .replace(/^Meta\+/i, "ControlOrMeta+")
+                    .replace(/\+Meta\+/i, "+ControlOrMeta+");
+
+                const keys = combo.split("+").map((k: string) => k.trim());
                 const modifiers = keys.slice(0, -1);
                 const key = keys[keys.length - 1];
 
@@ -812,7 +859,7 @@ export const browserKeyboard: ToolDefinition = {
                 for (const mod of modifiers.reverse()) await page.keyboard.up(mod);
 
                 await page.waitForTimeout(150);
-                return JSON.stringify({ success: true, combo: input.combo });
+                return JSON.stringify({ success: true, combo });
             }
 
             return JSON.stringify({ error: "Provide 'combo', 'text', 'hold', or 'release'" });

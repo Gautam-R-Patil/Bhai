@@ -84,6 +84,12 @@ export {
 // Export video control tool
 export { browserVideoControl } from "./video-control.js";
 
+// Export CAPTCHA handler
+export { browserHandleCaptcha, detectCaptcha, handleCaptchaIfPresent } from "./captcha.js";
+
+// Export popup guard utilities
+export { dismissCookieBanner, dismissOverlayModals, attachPopupGuard } from "./popup-guard.js";
+
 // Export native browser acceleration + IP protection wrapper
 export {
     scoreElementCandidates,
@@ -179,6 +185,7 @@ import { browserAnalyze, browserRunJs, browserWait, browserSelect, browserExtrac
 import { browserParallelTabs, browserParallelActions, browserMultiAction } from "./advanced.js";
 import { browserSetMode, browserChromeStatus } from "./mode-tools.js";
 import { browserVideoControl } from "./video-control.js";
+import { browserHandleCaptcha } from "./captcha.js";
 
 export const browserTools = [
     // Navigation
@@ -200,6 +207,8 @@ export const browserTools = [
     browserScrollElement,
     // Video control (YouTube, Vimeo, HTML5 video)
     browserVideoControl,
+    // CAPTCHA solving
+    browserHandleCaptcha,
     // Extraction
     browserAnalyze,
     browserRunJs,

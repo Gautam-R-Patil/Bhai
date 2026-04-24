@@ -50,11 +50,9 @@ const BLOCKED_PATTERNS: &[&str] = &[
     "__atlasCapture",
     "__atlasClickPos",
     "__ytPlayerEvents",
-    // Dynamic code execution
+    // Dynamic code evaluation (NOT setTimeout/setInterval — those are legitimate for waits)
     "eval(",
     "Function(",
-    "setTimeout(",
-    "setInterval(",
     // Prototype poisoning
     "__proto__",
     "prototype.constructor",
