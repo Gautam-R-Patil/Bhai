@@ -67,6 +67,15 @@ interface NativeBrowserModule {
     getModuleFingerprint(): string;
     encryptSensitive(plaintext: string): string;
     decryptSensitive(encrypted: string): string;
+    // browser_guard
+    classifyCaptcha(html: string): { kind: string; confidence: number; signals: string[] };
+    scorePopupRisk(html: string): { cookieBannerProb: number; modalProb: number; runGuardEagerly: boolean; signals: string[] };
+    getStealthUserAgent(platform: string, seed: number): string;
+    getStealthInitScript(seed: number): string;
+    compressElementsForLlm(elements: object[], maxTextLen?: number | null, maxElements?: number | null): string;
+    humanTypingDelayMs(charCode: number, baseWpm: number): number;
+    humanClickDwellMs(elementArea: number, seed: number): number;
+    humanMouseParams(startX: number, startY: number, endX: number, endY: number, seed: number): number[];
 }
 
 // ── Load native module ────────────────────────────────────────────────────────
@@ -262,4 +271,48 @@ export function decryptSensitive(encrypted: string): string | null {
 /** Whether the native module is loaded and active. */
 export function isNativeBrowserAvailable(): boolean {
     return native !== null;
+}
+
+// ── browser_guard exports ─────────────────────────────────────────────────────
+
+/** Classify CAPTCHA type from page HTML. Rust pattern matching — zero JS eval overhead. */
+export function classifyCaptchaFromHtml(html: string): { kind: string; confidence: number; signals: string[] } {
+    return native?.classifyCaptcha(html) ?? { kind: "none", confidence: 0, signals: [] };
+}
+
+/** Score popup/overlay risk from page HTML. Returns probabilities for cookie banner and modals. */
+export function scorePopupRisk(html: string): { cookieBannerProb: number; modalProb: number; runGuardEagerly: boolean } {
+    return native?.scorePopupRisk(html) ?? { cookieBannerProb: 0, modalProb: 0, runGuardEagerly: false };
+}
+
+/** Get Rust-generated stealth init script to inject via addInitScript(). Varies by session seed. */
+export function getStealthInitScript(seed: number): string | null {
+    return native?.getStealthInitScript(seed) ?? null;
+}
+
+/** Compress element list for LLM — deduplicates, groups repeats, truncates. ~30-50% fewer tokens. */
+export function compressElementsForLlm(
+    elements: Array<{ label: number; tag: string; text: string; x: number; y: number; isOcr?: boolean; editorType?: string | null }>,
+    maxTextLen = 40,
+    maxElements = 80,
+): string {
+    if (native) {
+        try { return native.compressElementsForLlm(elements, maxTextLen, maxElements); } catch { /* fallback */ }
+    }
+    return elements.slice(0, maxElements).map(e =>
+        e.editorType ? `[${e.label}] CODE_EDITOR:${e.editorType}`
+        : e.isOcr    ? `[${e.label}] ocr:"${e.text?.substring(0, maxTextLen)}"`
+        :               `[${e.label}] ${e.tag} "${e.text?.substring(0, maxTextLen)}"`
+    ).join('\n');
+}
+
+/** Rust human-like typing delay for a character (WPM-based with punctuation pauses). */
+export function humanTypingDelayMs(charCode: number, wpm = 65): number {
+    return native?.humanTypingDelayMs(charCode, wpm) ?? 35;
+}
+
+/** Rust Fitts's-law mouse movement: returns [steps, pre_pause_ms]. */
+export function humanMouseParams(sx: number, sy: number, ex: number, ey: number, seed: number): [number, number] {
+    const r = native?.humanMouseParams(sx, sy, ex, ey, seed);
+    return r ? [r[0], r[1]] : [8, 120];
 }

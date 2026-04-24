@@ -33,6 +33,8 @@ triggers:
 | Situation | Best tool |
 |---|---|
 | Video player control (YouTube, Vimeo, HTML5) | `browser_video_control` |
+| CAPTCHA blocking the page | `browser_handle_captcha` (call first, then proceed) |
+| Cookie/consent banner blocking | Auto-handled — popup guard fires on every page load |
 | Hover-hidden controls (nav dropdowns, video bars) | `browser_hover` with `wait_for` + `rescan:true` |
 | Scan page + reveal hidden controls in one call | `browser_scan` with `hover_at` |
 | Multi-step workflows (navigate → click → type) | `browser_multi_action` |
@@ -139,6 +141,28 @@ After key actions, verify they worked:
 - After seeking: `browser_video_control(action: "get_info")` → check `currentTime ≈ target`
 - After clicking: check returned `interactive_elements_text` for state change
 - After form fill: `browser_run_js(code: "return document.querySelector('input').value")`
+
+## CAPTCHA Handling
+
+If a page shows a CAPTCHA (Turnstile, reCAPTCHA, hCaptcha):
+1. **Always call `browser_handle_captcha` first** — it tries passive stealth bypass (often auto-passes Cloudflare Turnstile in 20s), then uses 2captcha if `CAPTCHA_API_KEY` is set
+2. After `browser_handle_captcha` returns `handled: true`, proceed with the original task
+3. If `handled: false`, the CAPTCHA could not be solved automatically — inform the user
+
+```
+browser_handle_captcha()
+→ { captcha_present: true, captcha_type: "turnstile", method: "passive_stealth", success: true }
+→ now navigate/click as normal
+```
+
+## Cookie Banners & Popups
+
+Cookie consent banners and modal overlays are **automatically dismissed** on every page load by the popup guard. You do NOT need to manually click "Accept" — it fires 800ms after `domcontentloaded` on every page.
+
+If a banner persists unusually (unusual CMP), you can manually trigger:
+```
+browser_run_js(code: "document.querySelector('#onetrust-accept-btn-handler')?.click()")
+```
 
 ## Error Recovery
 
