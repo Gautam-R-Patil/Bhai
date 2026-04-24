@@ -843,12 +843,15 @@ function sendToClient(ws: WebSocket, data: unknown): void {
     const json = JSON.stringify(data);
     if (ws.readyState === 1) {
         ws.send(json);
-    } else {
-        // Original socket died (overlay hidden/refocused) — broadcast to any live client
+    } else if (overlayClients.size === 1) {
+        // Fallback: original ws died (overlay hidden/refocused) and there is exactly
+        // one client connected — safe to redirect to it (the reconnected native overlay).
+        // When multiple clients are connected (e.g. concurrent sessions or test runners),
+        // we drop silently rather than deliver the response to the wrong session.
         for (const client of overlayClients) {
             if (client.readyState === 1) {
                 client.send(json);
-                break; // Only need one — there's typically a single overlay
+                break;
             }
         }
     }
