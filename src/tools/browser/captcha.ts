@@ -41,27 +41,29 @@ async function ensureCaptchaKeys(): Promise<void> {
     // Deduplicate concurrent calls — return the same in-flight promise to all callers
     if (_captchaKeysFetchInFlight) return _captchaKeysFetchInFlight;
     _captchaKeysFetchInFlight = (async () => {
-    try {
+        // Node.js is single-threaded: the check above and the finally below are
+        // atomic w.r.t. the event loop — no true TOCTOU race is possible here.
+        try {
         const { getConvexSiteUrl } = await import("../../config/keys.js");
         const { getSessionToken } = await import("../../session.js");
-        const convexUrl = getConvexSiteUrl();
-        const sessionToken = await getSessionToken().catch(() => null);
-        if (!convexUrl || !sessionToken) return;
-        const resp = await fetch(`${convexUrl}/api/config/secrets`, {
-            headers: { Authorization: `Bearer ${sessionToken}` },
-        });
-        if (!resp.ok) return;
-        const secrets = await resp.json() as Record<string, string>;
-        if (secrets.NOPECHA_API_KEY && !process.env.NOPECHA_API_KEY) {
-            process.env.NOPECHA_API_KEY = secrets.NOPECHA_API_KEY;
-            console.log("  🔑 CAPTCHA: NOPECHA_API_KEY loaded from Convex");
-        }
-        if (secrets.CAPTCHA_API_KEY && !process.env.CAPTCHA_API_KEY) {
-            process.env.CAPTCHA_API_KEY = secrets.CAPTCHA_API_KEY;
-            console.log("  🔑 CAPTCHA: CAPTCHA_API_KEY loaded from Convex");
-        }
-    } catch { /* non-fatal — keys may still be available via process.env */ }
-    finally { _captchaKeysFetched = true; _captchaKeysFetchInFlight = null; }
+            const convexUrl = getConvexSiteUrl();
+            const sessionToken = await getSessionToken().catch(() => null);
+            if (!convexUrl || !sessionToken) return;
+            const resp = await fetch(`${convexUrl}/api/config/secrets`, {
+                headers: { Authorization: `Bearer ${sessionToken}` },
+            });
+            if (!resp.ok) return;
+            const secrets = await resp.json() as Record<string, string>;
+            if (secrets.NOPECHA_API_KEY && !process.env.NOPECHA_API_KEY) {
+                process.env.NOPECHA_API_KEY = secrets.NOPECHA_API_KEY;
+                console.log("  🔑 CAPTCHA: NOPECHA_API_KEY loaded from Convex");
+            }
+            if (secrets.CAPTCHA_API_KEY && !process.env.CAPTCHA_API_KEY) {
+                process.env.CAPTCHA_API_KEY = secrets.CAPTCHA_API_KEY;
+                console.log("  🔑 CAPTCHA: CAPTCHA_API_KEY loaded from Convex");
+            }
+        } catch { /* non-fatal — keys may still be available via process.env */ }
+        finally { _captchaKeysFetched = true; _captchaKeysFetchInFlight = null; }
     })();
     return _captchaKeysFetchInFlight;
 }
@@ -82,7 +84,11 @@ export async function detectCaptcha(page: ReturnType<typeof getActivePage> exten
             const result = nativeClassifyCaptcha(html);
             if (result.kind !== "none" && result.confidence > 0.7) {
                 console.log(`  🦀 Rust CAPTCHA classifier: ${result.kind} (confidence ${result.confidence.toFixed(2)})`);
-                return { type: result.kind as CaptchaType, siteKey: null }; // siteKey resolved by full JS eval below only if needed
+                // siteKey is null here by design — the Rust classifier only reads raw HTML
+                // and cannot safely extract dynamic sitekeys (they may be injected by JS).
+                // Tiers requiring siteKey (NopeCHA, 2captcha) will skip; audio bypass and
+                // Turnstile passive stealth work without it and are the preferred free paths.
+                return { type: result.kind as CaptchaType, siteKey: null };
             }
             if (result.kind === "none" && result.confidence === 0) {
                 return { type: "none", siteKey: null }; // definitively no CAPTCHA
@@ -248,11 +254,14 @@ async function solveAudioCaptcha(page: any): Promise<string | null> {
         }
 
         // Find the reCAPTCHA bframe (the interactive challenge iframe)
-        const frames: ReturnType<typeof page.frames> = page.frames ? page.frames() : [];
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const rcFrame = (frames as any[]).find((f: any) =>
-            f.url().includes("google.com/recaptcha") ||
-            f.url().includes("recaptcha.net/recaptcha")
+        const frames: any[] = typeof page.frames === "function" ? page.frames() : [];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const rcFrame = frames.find((f: any) =>
+            typeof f.url === "function" && (
+                f.url().includes("google.com/recaptcha") ||
+                f.url().includes("recaptcha.net/recaptcha")
+            )
         );
         if (!rcFrame) {
             console.log("  🎧 Audio CAPTCHA: reCAPTCHA frame not found");
@@ -386,7 +395,8 @@ async function solveViaNopeCHA(
             body: JSON.stringify({ type: nopechaType, sitekey: siteKey, url: pageUrl, key: apiKey }),
         });
         const submitData = await submitRes.json() as { id?: string; error?: number; data?: string };
-        if (submitData.error) {
+        // error === 0 means success in some NopeCHA response variants — only abort on non-zero
+        if (submitData.error !== undefined && submitData.error !== 0) {
             console.warn(`  ⚠️ NopeCHA submit error: ${submitData.error}`);
             return null;
         }
@@ -403,7 +413,10 @@ async function solveViaNopeCHA(
             if (!pollRes.ok) { console.warn(`  ⚠️ NopeCHA poll HTTP error: ${pollRes.status}`); return null; }
             const pollData = await pollRes.json() as { error?: number; data?: string };
             if (pollData.error === 10) continue; // not ready yet
-            if (pollData.error) { console.warn(`  ⚠️ NopeCHA poll error: ${pollData.error}`); return null; }
+            // error === 0 is success; only abort on non-zero, non-10 codes
+            if (pollData.error !== undefined && pollData.error !== 0 && pollData.error !== 10) {
+                console.warn(`  ⚠️ NopeCHA poll error: ${pollData.error}`); return null;
+            }
             if (pollData.data && typeof pollData.data === "string") {
                 console.log(`  🟢 NopeCHA: solved ${type} (${i * 3 + 3}s)`);
                 return pollData.data;
