@@ -1126,8 +1126,24 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
     }));
 
     // Parallel handle fetching (18-20x faster than sequential)
+    // ariaSnapshot elements (atlasId starts with "aria-") skip DOM handle lookup —
+    // they have no data-atlas-id in the DOM. Coordinate-based clicking works fine for them.
     const handleResults = await Promise.all(
         labeled.map(async (item) => {
+            // ariaSnapshot path: return immediately without handle (coordinate click used)
+            if (item.atlasId?.startsWith("aria-")) {
+                return {
+                    label: item.label,
+                    x: item.x,
+                    y: item.y,
+                    tag: item.tag,
+                    text: item.text,
+                    atlasId: item.atlasId,
+                    handle: undefined,
+                    editorType: item.editorType,
+                } as InteractiveElement;
+            }
+            // SCAN_FRAME_JS path: look up data-atlas-id DOM handle for precise clicking
             try {
                 const frame = allFrames[item.frameIndex];
                 if (!frame) return null;
@@ -1141,7 +1157,7 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
                     text: item.text,
                     atlasId: item.atlasId,
                     handle,
-                    editorType: item.editorType
+                    editorType: item.editorType,
                 } as InteractiveElement;
             } catch {
                 return null;

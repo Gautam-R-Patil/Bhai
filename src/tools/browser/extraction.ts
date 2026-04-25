@@ -270,13 +270,17 @@ export const browserExtract: ToolDefinition = {
     async handler(input) {
         try {
             const page = await getActivePage();
+            const selector = (input.selector as string).replace(/`/g, '\\`').replace(/\\/g, '\\\\');
             const attr = (input.attribute as string) || "textContent";
-            const elements = await page.$$eval(
-                input.selector as string,
-                (els: Element[], a: string) => els.map((el: Element) => a === "textContent" ? el.textContent?.trim() : el.getAttribute(a)).slice(0, 50),
-                attr
+            // Use evaluate with inline string code to avoid compiled-lambda ReferenceErrors
+            const elements = await page.evaluate(
+                `Array.from(document.querySelectorAll(\`${selector}\`)).slice(0,50).map(el => ${
+                    attr === "textContent"
+                        ? "el.textContent?.trim()"
+                        : `el.getAttribute("${attr.replace(/"/g, '\\"')}")`
+                })`
             );
-            return JSON.stringify({ success: true, elements, count: elements.length });
+            return JSON.stringify({ success: true, elements, count: (elements as unknown[]).length });
         } catch (err) {
             return JSON.stringify({ error: `Extract failed: ${(err as Error).message}` });
         }

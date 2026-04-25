@@ -186,10 +186,8 @@ export const browserParallelTabs: ToolDefinition = {
                         if (tabAction.extract_text) {
                             extracted = await page.evaluate(() => document.body.innerText.substring(0, 5000));
                         } else if (tabAction.extract_selector) {
-                            const els = await page.$$eval(
-                                tabAction.extract_selector as string,
-                                (elements: Element[]) => elements.map(e => e.textContent?.trim()).slice(0, 50)
-                            ).catch(() => []);
+                            const _sel = (tabAction.extract_selector as string).replace(/`/g, '\\`');
+                            const els = await page.evaluate(`Array.from(document.querySelectorAll(\`${_sel}\`)).slice(0,50).map(e=>e.textContent?.trim())`).catch(() => []) as string[];
                             extracted = els.join('\n');
                         }
 
@@ -326,14 +324,8 @@ export const browserParallelActions: ToolDefinition = {
                 try {
                     switch (action.type) {
                         case 'extract': {
-                            const selector = action.selector as string;
-                            const elements = await page.$$eval(
-                                selector,
-                                (els: Element[]) => els.map(e => ({
-                                    text: e.textContent?.trim().substring(0, 200),
-                                    href: e.getAttribute('href'),
-                                })).slice(0, 30)
-                            ).catch(() => []);
+                            const _s = (action.selector as string).replace(/`/g, '\\`');
+                            const elements = await page.evaluate(`Array.from(document.querySelectorAll(\`${_s}\`)).slice(0,30).map(e=>({text:e.textContent?.trim().substring(0,200),href:e.getAttribute('href')}))`).catch(() => []);
                             return { id, success: true, data: elements };
                         }
 
@@ -671,13 +663,10 @@ export const browserMultiAction: ToolDefinition = {
                         return { success: true, result: { selector: act.selector, opacity_reached: threshold } };
                     }
                     case 'extract': {
-                        const selector = act.selector as string;
+                        const _sel2 = (act.selector as string).replace(/`/g, '\\`');
                         const attr = (act.attribute as string) || 'textContent';
-                        const elements = await page.$$eval(
-                            selector,
-                            (els: Element[], a: string) => els.map((el: Element) => a === 'textContent' ? el.textContent?.trim() : el.getAttribute(a)).slice(0, 30),
-                            attr
-                        ).catch(() => []);
+                        const _attrExpr = attr === 'textContent' ? `el.textContent?.trim()` : `el.getAttribute("${attr.replace(/"/g, '\\"')}")`;
+                        const elements = await page.evaluate(`Array.from(document.querySelectorAll(\`${_sel2}\`)).slice(0,30).map(el=>${_attrExpr})`).catch(() => []) as unknown[];
                         return { success: true, result: { elements, count: elements.length } };
                     }
                     case 'screenshot': {
