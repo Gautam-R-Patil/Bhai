@@ -8,7 +8,7 @@
 // switch between headless Playwright and the user's real Chrome.
 
 import type { InteractiveElement, TabInfo, ClickOptions, BrowserMode } from "./types.js";
-import { isExtensionConnected } from "./chrome-bridge.js";
+import { isExtensionConnected, waitForExtensionConnection } from "./chrome-bridge.js";
 
 // ── BrowserBackend Interface ─────────────────
 
@@ -89,8 +89,11 @@ export function setPreferredMode(mode: "auto" | "playwright" | "chrome"): void {
 /**
  * Get the currently active backend. Lazily resolves based on preferred mode.
  * In "auto" mode, re-checks extension status every time so switches are instant.
+ * On the very first call (no activeBackend yet), waits up to 3s for the
+ * extension to connect before falling back to Playwright — fixes the boot
+ * race where the extension connects 1-2s after the first tool invocation.
  */
-export function getActiveBackend(): BrowserBackend {
+export async function getActiveBackend(): Promise<BrowserBackend> {
     // In "auto" mode, always re-check extension status.
     // This ensures the backend switches when the extension connects/disconnects
     // without needing an explicit call to browser_set_mode.
@@ -108,9 +111,20 @@ export function getActiveBackend(): BrowserBackend {
             console.log("🔌 Chrome extension disconnected — auto-switching to Playwright");
             activeBackend = createPlaywrightBackend();
         }
-        // First call — resolve fresh
+        // First call — wait briefly for extension before falling back to Playwright
         else if (!activeBackend) {
-            activeBackend = extensionUp ? createChromeBackend() : createPlaywrightBackend();
+            if (!extensionUp) {
+                // Give the extension up to 3s to connect before falling back
+                const connected = await waitForExtensionConnection(3000);
+                if (connected && chromeBackendFactory) {
+                    console.log("🔌 Chrome extension connected — using real browser");
+                    activeBackend = createChromeBackend();
+                } else {
+                    activeBackend = createPlaywrightBackend();
+                }
+            } else {
+                activeBackend = createChromeBackend();
+            }
         }
 
         return activeBackend;
@@ -150,15 +164,12 @@ export function resolveBackend(forceMode?: "playwright" | "chrome"): BrowserBack
 
 /**
  * Get the current browser mode.
- * Resolves the backend if not yet initialized (prevents returning "none").
+ * Returns the cached mode — callers that need a fresh resolution should
+ * await getActiveBackend() first.  getCurrentMode() is intentionally
+ * synchronous so it can be used in conditional branches inside already-
+ * running async functions without re-triggering the extension-wait path.
  */
 export function getCurrentMode(): BrowserMode | "none" {
-    if (!activeBackend) {
-        // Force resolution so we never return "none" when factories are registered
-        if (playwrightBackendFactory || chromeBackendFactory) {
-            getActiveBackend();
-        }
-    }
     return activeBackend?.mode || "none";
 }
 

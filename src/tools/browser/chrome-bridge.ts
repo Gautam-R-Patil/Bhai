@@ -399,14 +399,12 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
     httpServer.listen(port, "127.0.0.1", () => {
         console.log(`🔌 Chrome Bridge server on http://127.0.0.1:${port} (WS + HTTP discovery)`);
         console.log(`   Extension auto-connects via GET /discover — no manual config needed`);
-    });
-
-    // Write discovery file so native messaging host can find us
-    writeDiscoveryFile(port);
-
-    // Register native messaging host (belt + suspenders for auto-discovery)
-    registerNativeMessagingHost(port).catch((err) => {
-        console.warn("⚠️  Native messaging host registration failed (non-fatal):", (err as Error).message);
+        // Write discovery file AFTER server is bound and listening (Windows safety)
+        writeDiscoveryFile(port);
+        // Register native messaging host (belt + suspenders for auto-discovery)
+        registerNativeMessagingHost(port).catch((err) => {
+            console.warn("⚠️  Native messaging host registration failed (non-fatal):", (err as Error).message);
+        });
     });
 }
 
@@ -527,6 +525,38 @@ export async function sendBridgeCommand(
  */
 export function isExtensionConnected(): boolean {
     return authenticated && extensionSocket !== null && extensionSocket.readyState === 1;
+}
+
+/**
+ * Wait up to `timeoutMs` for the Chrome extension to connect.
+ * Returns true if connected within the timeout, false otherwise.
+ */
+export function waitForExtensionConnection(timeoutMs: number): Promise<boolean> {
+    if (isExtensionConnected()) return Promise.resolve(true);
+    return new Promise((resolve) => {
+        const interval = 200;
+        let elapsed = 0;
+        const timer = setInterval(() => {
+            elapsed += interval;
+            if (isExtensionConnected()) {
+                clearInterval(timer);
+                resolve(true);
+            } else if (elapsed >= timeoutMs) {
+                clearInterval(timer);
+                resolve(false);
+            }
+        }, interval);
+    });
+}
+
+/**
+ * Get a descriptive status string for the Chrome extension connection.
+ * Useful for agent diagnostics when the extension isn't connected.
+ */
+export function getExtensionStatus(): string {
+    if (isExtensionConnected()) return "connected";
+    if (httpServer?.listening) return "waiting_for_extension";
+    return "server_not_started";
 }
 
 /**

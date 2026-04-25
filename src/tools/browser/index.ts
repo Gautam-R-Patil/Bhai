@@ -112,6 +112,8 @@ export {
 export {
     initChromeBridge,
     isExtensionConnected,
+    waitForExtensionConnection,
+    getExtensionStatus,
     getExtensionTabs,
     getActiveExtensionTab,
     sendBridgeCommand,

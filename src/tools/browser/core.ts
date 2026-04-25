@@ -223,7 +223,7 @@ export async function getBrowser(): Promise<BrowserContext> {
 export async function getActivePage(): Promise<Page> {
     // Chrome extension mode: return a proxy that routes to the real Chrome tab
     if (getCurrentMode() === "chrome") {
-        const backend = getActiveBackend() as ChromeExtensionBackend;
+        const backend = await getActiveBackend() as ChromeExtensionBackend;
         return await backend.getPageProxy() as unknown as Page;
     }
 
@@ -669,7 +669,7 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
 
     // Chrome extension mode: delegate to the Chrome backend's scanner
     if (getCurrentMode() === "chrome") {
-        const backend = getActiveBackend();
+        const backend = await getActiveBackend();
         const elements = await backend.scanElements(forceRefresh);
         lastElementMap = elements;
         const url = (typeof page.url === "function") ? page.url() : "";
