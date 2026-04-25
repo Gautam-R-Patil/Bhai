@@ -30,7 +30,7 @@ import {
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { randomUUID } from "crypto";
-import type { CandidateManifest, HarnessConfig, HarnessScore } from "./types.js";
+import type { CandidateManifest, DimensionGradient, HarnessConfig, HarnessScore } from "./types.js";
 import { snapshotConfig, formatRegistrySummary } from "./registry.js";
 import { readCandidateTraces } from "./trace-store.js";
 
@@ -209,6 +209,22 @@ export class HarnessRunStore {
         this._writeJson(join(dir, "proposed-config.json"), config);
         // Also write as harness-config.json for consistency
         this._writeJson(join(dir, "harness-config.json"), config);
+    }
+
+    /** Write TextGrad dimension gradient hints into the candidate's .metaharness/. */
+    writeGradientHints(candidateId: string, gradients: DimensionGradient[]): void {
+        const metaDir = join(this.candidatesDir, candidateId, ".metaharness");
+        mkdirSync(metaDir, { recursive: true });
+        const lines: string[] = ["# Dimension Gradient Hints", ""];
+        for (const g of gradients) {
+            lines.push(`## ${g.dimensionId}`);
+            lines.push(`- Direction: ${g.proposedDirection}`);
+            lines.push(`- Severity: ${g.severity}`);
+            lines.push(`- Current value: \`${JSON.stringify(g.currentValue)}\``);
+            lines.push(`- Critique: ${g.critique}`);
+            lines.push("");
+        }
+        writeFileSync(join(metaDir, "gradient-hints.md"), lines.join("\n"), "utf-8");
     }
 
     // ── Internal helpers ──────────────────────────────────────────────────

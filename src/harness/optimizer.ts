@@ -2,33 +2,36 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-// ── Meta-Harness: Optimization Outer Loop ────────────────────────────────
-// The top-level orchestrator that mirrors the MetaHarnessEngine from the
-// research paper: propose → apply → evaluate → store → repeat.
-//
-// Each iteration:
-//   1. Materialize a new candidate workspace (copy of best parent)
-//   2. Write .metaharness/ instruction bundle (AGENTS.md + all history)
-//   3. Proposer agent reads filesystem and proposes HarnessConfig changes
-//   4. Apply proposed config to registry
-//   5. Run benchmark suite → HarnessScore
-//   6. Compare to parent — keep if improved, discard otherwise
-//   7. Restore best config, write manifest, continue
-//
-// After all iterations: persist best config to data/harness/active/harness-config.json
+// ── Meta-Harness: Optimization Outer Loop (v2) ─────────────────────────
+// Full paper-fidelity loop (arxiv 2603.28052):
+//   Phase 0: Population init — 4 seeds evaluated in parallel
+//   Phase 1: For each iteration:
+//     - NSGA-II select parent from Pareto frontier (or scalar best-of)
+//     - Materialize candidate workspace
+//     - TextGrad gradient hints if previous iter didn't improve
+//     - Propose via filesystem-agent (or legacy) — proposer reads individual trace files
+//     - Patch-validate code changes; apply if clean, else scope-violation
+//     - Surrogate pre-screen; skip if predicted worse
+//     - Evaluate, update Pareto, revert patches on regression
 
 import type { LLMClient } from "../llm.js";
-import type { CandidateManifest, OptimizeOptions, OptimizeResult } from "./types.js";
+import type { CandidateManifest, OptimizeOptions, OptimizeResult, ParetoPoint } from "./types.js";
 import { HarnessRunStore } from "./run-store.js";
 import { proposeNextCandidate } from "./proposer.js";
+import { proposeWithFilesystemAgent, type CodeChange } from "./code-proposer.js";
 import { evaluateCandidate } from "./evaluator.js";
-import { applyConfig, persistActiveConfig, snapshotConfig } from "./registry.js";
-import { setActiveCandidate, clearActiveCandidate, flushTracesToCandidate } from "./trace-store.js";
+import { applyConfig, persistActiveConfig } from "./registry.js";
+import { setActiveCandidate, clearActiveCandidate, flushTracesToCandidate, readCandidateTraces } from "./trace-store.js";
 import { recordOutcome } from "../prompts/prompt-evolver.js";
+import { initializePopulation } from "./population.js";
+import { computeParetoFrontier, selectFromFrontier } from "./pareto.js";
+import { buildSurrogate, shouldEvaluate } from "./surrogate.js";
+import { generateDimensionGradients } from "./gradient.js";
+import { validatePatch, applyCodeChange, revertCodeChanges } from "./patch-validator.js";
 
-// Native Rust acceleration for candidate comparison and leaderboard ranking
-let nativeCompare: ((parent: number, challenger: number, threshold?: number) => { challenger_wins: boolean; delta: number; significant: boolean }) | null = null;
-let nativeRank: ((candidates: Array<{ candidate_id: string; objective: number; outcome: string }>) => { ranked: Array<{ candidate_id: string; objective: number; outcome: string }>; best_candidate_id: string; best_objective: number; improvement_over_baseline: number }) | null = null;
+// Native Rust acceleration for comparison and ranking
+let nativeCompare: ((parent: number, challenger: number, threshold?: number) => { challengerWins: boolean; delta: number; significant: boolean }) | null = null;
+let nativeRank: ((candidates: Array<{ candidateId: string; objective: number; outcome: string }>) => { ranked: Array<{ candidateId: string; objective: number; outcome: string }>; bestCandidateId: string; bestObjective: number; improvementOverBaseline: number }) | null = null;
 
 try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -40,113 +43,157 @@ try {
 const DEFAULT_OPTIONS: OptimizeOptions = {
     budget: 20,
     fastMode: false,
-    searchMode: "hill-climb",
+    searchMode: "frontier",
     proposalBatchSize: 1,
-    objective: "Maximize ATLAS agent quality: improve memory retrieval precision, tool selection accuracy, and task completion score while maintaining token efficiency.",
+    objective: "Maximize ATLAS agent quality: improve memory retrieval, tool selection accuracy, and task completion score while maintaining token efficiency.",
     usePareto: true,
     useSurrogate: true,
+    useCodeSearch: true,
+    useGradients: true,
 };
-
-// ── Main entry point ────────────────────────────────────────────────────────
 
 export async function runMetaHarnessOptimization(
     llm: LLMClient,
     options: Partial<OptimizeOptions> = {},
     onProgress?: (msg: string) => Promise<void>,
 ): Promise<OptimizeResult> {
-    const opts = { ...DEFAULT_OPTIONS, ...options };
+    const opts: OptimizeOptions = { ...DEFAULT_OPTIONS, ...options };
     const runStart = Date.now();
 
-    console.log(`[META-HARNESS] Starting optimization run — budget=${opts.budget}, fastMode=${opts.fastMode}, mode=${opts.searchMode}`);
-    await onProgress?.("🔬 Meta-Harness: initializing optimization run…").catch(() => {});
+    console.log(`[META-HARNESS v2] budget=${opts.budget} fast=${opts.fastMode} pareto=${opts.usePareto} surrogate=${opts.useSurrogate} codeSearch=${opts.useCodeSearch} gradients=${opts.useGradients}`);
+    await onProgress?.("🔬 Meta-Harness v2: initializing…").catch(() => {});
 
     const store = new HarnessRunStore();
     store.initializeRun({
-        budget: opts.budget,
-        fastMode: opts.fastMode,
-        searchMode: opts.searchMode,
-        proposalBatchSize: opts.proposalBatchSize,
-        objective: opts.objective,
+        budget: opts.budget, fastMode: opts.fastMode, searchMode: opts.searchMode,
+        proposalBatchSize: opts.proposalBatchSize, objective: opts.objective,
+        usePareto: opts.usePareto, useSurrogate: opts.useSurrogate,
+        useCodeSearch: opts.useCodeSearch, useGradients: opts.useGradients,
     });
 
-    // ── Step 1: Baseline ──────────────────────────────────────────────────
-    await onProgress?.("🔬 Meta-Harness: scoring baseline…").catch(() => {});
-    let best = store.materializeBaseline();
-    setActiveCandidate(store.runDir, best.candidateId);
+    // ── Phase 0: Population ───────────────────────────────────────────────
+    const seeds = await initializePopulation(store, llm, opts.fastMode, onProgress);
+    if (seeds.length === 0) throw new Error("All population seeds failed — cannot proceed.");
 
-    const baselineScores = await evaluateCandidate(llm, best.candidateId, best.harnessConfig, { fastMode: opts.fastMode });
-    best.scores = baselineScores;
-    best.objective = baselineScores.composite;
-    best.valid = true;
-    best.outcome = "baseline";
-    best.outcomeSummary = `Baseline composite score: ${baselineScores.composite}`;
-    store.writeScores(best.candidateId, baselineScores);
-    store.writeManifest(best);
-    flushTracesToCandidate(store.runDir, best.candidateId);
-    clearActiveCandidate();
+    let paretoFrontier: ParetoPoint[] = opts.usePareto ? computeParetoFrontier(seeds) : [];
+    const allIds: string[] = seeds.map(m => m.candidateId);
+    let best = _pickBest(seeds, paretoFrontier, opts.usePareto);
+    let previousBestId = best.candidateId;
 
-    console.log(`[META-HARNESS] Baseline: composite=${baselineScores.composite} mem=${(baselineScores.memoryRecallScore*100).toFixed(0)} tool=${(baselineScores.toolSelectionScore*100).toFixed(0)}`);
-
-    const allCandidateIds: string[] = [best.candidateId];
     let iterationsRun = 0;
+    let surrogateSkips = 0;
+    let lastIterImproved: boolean | null = null;
 
-    // ── Main optimization loop ────────────────────────────────────────────
+    // ── Phase 1: Proposal iterations ──────────────────────────────────────
     for (let iter = 0; iter < opts.budget; iter++) {
         iterationsRun++;
-        console.log(`[META-HARNESS] Iteration ${iter + 1}/${opts.budget} (best=${best.objective})`);
-        await onProgress?.(`🔬 Meta-Harness: iteration ${iter + 1}/${opts.budget} (best=${best.objective})…`).catch(() => {});
+        await onProgress?.(`🔬 iter ${iter + 1}/${opts.budget} (best=${best.objective})…`).catch(() => {});
 
-        // Materialize new candidate workspace
-        const candidate = store.materializeCandidate(best);
-        allCandidateIds.push(candidate.candidateId);
+        // NSGA-II parent selection
+        const parent: CandidateManifest = opts.usePareto && paretoFrontier.length > 0
+            ? (store.readCandidateHistory().find(c => c.candidateId === selectFromFrontier(paretoFrontier)) ?? best)
+            : best;
 
-        // Write the .metaharness/ instruction bundle for the proposer
-        store.writeInstructionBundle(candidate, best, opts.objective);
+        const candidate = store.materializeCandidate(parent);
+        allIds.push(candidate.candidateId);
+        store.writeInstructionBundle(candidate, parent, opts.objective);
 
-        // ── Propose ──────────────────────────────────────────────────────
+        // TextGrad hints if previous iter regressed
+        if (opts.useGradients && lastIterImproved === false) {
+            try {
+                const parentTraces = readCandidateTraces(store.runDir, parent.candidateId);
+                const gradients = await generateDimensionGradients(llm, parent, parentTraces, { bestScore: best.objective ?? 0 });
+                if (gradients.length > 0) store.writeGradientHints(candidate.candidateId, gradients);
+            } catch (err) {
+                console.warn(`[META-HARNESS v2] Gradient generation failed: ${(err as Error).message}`);
+            }
+        }
+
+        // Propose
         let proposed;
+        let codeChanges: CodeChange[] = [];
         try {
-            proposed = await proposeNextCandidate(llm, candidate, store);
-        } catch (propErr) {
-            console.warn(`[META-HARNESS] Proposer failed (iter ${iter + 1}):`, (propErr as Error).message);
+            if (opts.useCodeSearch) {
+                const r = await proposeWithFilesystemAgent(llm, candidate, store);
+                proposed = r.config;
+                codeChanges = r.codeChanges;
+            } else {
+                proposed = await proposeNextCandidate(llm, candidate, store);
+            }
+        } catch (err) {
+            console.warn(`[META-HARNESS v2] Proposer crashed iter ${iter + 1}: ${(err as Error).message}`);
             candidate.outcome = "crash";
-            candidate.outcomeSummary = `Proposer error: ${(propErr as Error).message}`;
+            candidate.outcomeSummary = `Proposer error: ${(err as Error).message}`;
             candidate.valid = false;
             store.writeManifest(candidate);
             continue;
+        }
+
+        // Validate + apply code changes
+        if (codeChanges.length > 0) {
+            const violations: string[] = codeChanges.flatMap(c => {
+                const r = validatePatch(c.content, c.patchFile);
+                return r.valid ? [] : r.violations;
+            });
+            if (violations.length > 0) {
+                console.warn(`[META-HARNESS v2] Patch rejected for ${candidate.candidateId}: ${violations.length} violations`);
+                candidate.outcome = "scope-violation";
+                candidate.outcomeSummary = `Violations: ${violations.slice(0, 3).join("; ")}`;
+                candidate.valid = false;
+                store.writeManifest(candidate);
+                continue;
+            }
+            for (const change of codeChanges) applyCodeChange(change, process.cwd());
         }
 
         store.writeProposedConfig(candidate.candidateId, proposed);
 
-        // Check if proposer made no changes (no-op)
-        const parentDims = best.harnessConfig.dimensions;
-        const proposedDims = proposed.dimensions;
-        const changedDims = Object.keys(proposedDims).filter(
-            id => JSON.stringify(proposedDims[id]) !== JSON.stringify(parentDims[id])
+        // No-op check
+        const changedDims = Object.keys(proposed.dimensions).filter(
+            id => JSON.stringify(proposed.dimensions[id]) !== JSON.stringify(parent.harnessConfig.dimensions[id])
         );
-        if (changedDims.length === 0) {
+        if (changedDims.length === 0 && codeChanges.length === 0) {
             candidate.outcome = "no-change";
-            candidate.outcomeSummary = "Proposer made no dimension changes";
-            candidate.valid = best.valid;
-            candidate.objective = best.objective;
-            candidate.scores = best.scores;
+            candidate.outcomeSummary = "No dimension or code changes proposed";
+            candidate.valid = parent.valid;
+            candidate.objective = parent.objective;
+            candidate.scores = parent.scores;
             store.writeManifest(candidate);
             continue;
         }
 
-        // ── Evaluate ─────────────────────────────────────────────────────
+        // Surrogate pre-screen
+        if (opts.useSurrogate) {
+            try {
+                const surrogate = buildSurrogate(store.readCandidateHistory());
+                if (!shouldEvaluate(surrogate, proposed, best.objective ?? 0)) {
+                    candidate.outcome = "surrogate-skip";
+                    candidate.outcomeSummary = "Surrogate predicted no improvement";
+                    candidate.valid = false;
+                    surrogateSkips++;
+                    store.writeManifest(candidate);
+                    if (codeChanges.length > 0) revertCodeChanges(process.cwd());
+                    continue;
+                }
+            } catch (err) {
+                console.warn(`[META-HARNESS v2] Surrogate check failed: ${(err as Error).message}`);
+            }
+        }
+
+        // Evaluate
         setActiveCandidate(store.runDir, candidate.candidateId);
         let scores;
         try {
+            applyConfig(proposed);
             scores = await evaluateCandidate(llm, candidate.candidateId, proposed, { fastMode: opts.fastMode });
-        } catch (evalErr) {
-            console.warn(`[META-HARNESS] Evaluation failed (iter ${iter + 1}):`, (evalErr as Error).message);
+        } catch (err) {
+            console.warn(`[META-HARNESS v2] Evaluation crashed: ${(err as Error).message}`);
             candidate.outcome = "crash";
-            candidate.outcomeSummary = `Evaluation error: ${(evalErr as Error).message}`;
+            candidate.outcomeSummary = `Eval error: ${(err as Error).message}`;
             candidate.valid = false;
             store.writeManifest(candidate);
             clearActiveCandidate();
-            // Restore best config
+            if (codeChanges.length > 0) revertCodeChanges(process.cwd());
             applyConfig(best.harnessConfig);
             continue;
         }
@@ -157,70 +204,79 @@ export async function runMetaHarnessOptimization(
         candidate.objective = scores.composite;
         candidate.valid = true;
 
-        // ── Select (use Rust native comparison if available) ─────────────
-        let improved: boolean;
-        if (nativeCompare) {
-            const cmp = nativeCompare(best.objective ?? 0, scores.composite);
-            improved = cmp.challenger_wins;
+        // Update Pareto + best
+        const allValid = [...store.readCandidateHistory().filter(c => c.valid && c.candidateId !== candidate.candidateId), candidate];
+        if (opts.usePareto) {
+            paretoFrontier = computeParetoFrontier(allValid);
+            const newBestId = selectFromFrontier(paretoFrontier);
+            lastIterImproved = newBestId !== previousBestId;
+            previousBestId = newBestId;
+            best = allValid.find(c => c.candidateId === newBestId) ?? best;
         } else {
-            improved = scores.composite > (best.objective ?? 0);
+            const improved = nativeCompare
+                ? nativeCompare(best.objective ?? 0, scores.composite).challengerWins
+                : scores.composite > (best.objective ?? 0);
+            lastIterImproved = improved;
+            if (improved) { best = candidate; previousBestId = candidate.candidateId; }
         }
-        if (improved) {
-            console.log(`[META-HARNESS] ✅ New best: ${candidate.candidateId} (${best.objective} → ${scores.composite}, changed: ${changedDims.join(", ")})`);
+
+        if (lastIterImproved) {
             candidate.outcome = "keep";
-            candidate.outcomeSummary = `Improved from ${best.objective} to ${scores.composite} by changing: ${changedDims.join(", ")}`;
-
-            // Record to prompt-evolver for cross-system tracking
-            try {
-                await recordOutcome("harness-meta", true, scores.composite / 100, scores.tokensUsed, true);
-            } catch { /* non-fatal */ }
-
-            best = candidate;
+            candidate.outcomeSummary = `Improved: ${parent.objective} → ${scores.composite}`;
+            try { await recordOutcome("harness-meta", true, scores.composite / 100, scores.tokensUsed, true); } catch { /* */ }
             applyConfig(proposed);
         } else {
-            console.log(`[META-HARNESS] ⬇️ Discarded: ${candidate.candidateId} (${scores.composite} ≤ ${best.objective})`);
             candidate.outcome = "discard";
-            candidate.outcomeSummary = `Score ${scores.composite} did not improve over parent ${best.objective}`;
-            // Restore best config
+            candidate.outcomeSummary = `Score ${scores.composite} did not improve frontier (best=${best.objective})`;
+            if (codeChanges.length > 0) revertCodeChanges(process.cwd());
             applyConfig(best.harnessConfig);
         }
 
         store.writeScores(candidate.candidateId, scores);
         store.writeManifest(candidate);
-
-        await onProgress?.(`🔬 Meta-Harness: iter ${iter + 1} → ${scores.composite} (best: ${best.objective}) ${improved ? "✅ improved" : "⬇️ discarded"}`).catch(() => {});
+        await onProgress?.(`🔬 iter ${iter + 1} → ${scores.composite} (best=${best.objective}) ${lastIterImproved ? "✅" : "⬇️"}`).catch(() => {});
     }
 
-    // ── Persist best config ───────────────────────────────────────────────
+    // Finalize
     applyConfig(best.harnessConfig);
     persistActiveConfig(best.candidateId);
 
-    // Use Rust native ranking for the final leaderboard if available
     if (nativeRank) {
         const history = store.readCandidateHistory();
-        const ranked = nativeRank(history.map(c => ({
-            candidate_id: c.candidateId,
-            objective: c.objective ?? 0,
-            outcome: c.outcome,
-        })));
-        console.log(`[META-HARNESS] Improvement over baseline: +${ranked.improvement_over_baseline} points`);
+        const ranked = nativeRank(history.map(c => ({ candidateId: c.candidateId, objective: c.objective ?? 0, outcome: c.outcome })));
+        console.log(`[META-HARNESS v2] Improvement over baseline: +${ranked.improvementOverBaseline}`);
     }
-
-    store.writeLeaderboard(best, allCandidateIds);
+    store.writeLeaderboard(best, allIds);
 
     const result: OptimizeResult = {
         runId: store.runId,
         runDir: store.runDir,
         bestCandidateId: best.candidateId,
         bestObjective: best.objective ?? 0,
-        candidateIds: allCandidateIds,
+        candidateIds: allIds,
         iterationsRun,
         durationMs: Date.now() - runStart,
-        paretoFrontier: [],
+        paretoFrontier,
+        surrogateSkips,
     };
 
-    console.log(`[META-HARNESS] Run complete. Best: ${best.candidateId} (score=${best.objective}) in ${(result.durationMs / 1000).toFixed(0)}s`);
-    await onProgress?.(`✅ Meta-Harness complete: best score ${best.objective}/100 (${best.candidateId}), ${iterationsRun} iterations`).catch(() => {});
-
+    console.log(`[META-HARNESS v2] Done. Best=${best.candidateId} (${best.objective}) in ${(result.durationMs / 1000).toFixed(0)}s surrogateSkips=${surrogateSkips}`);
+    await onProgress?.(`✅ Meta-Harness v2 complete: ${best.objective}/100 (${best.candidateId}), ${iterationsRun} iters`).catch(() => {});
     return result;
+}
+
+function _pickBest(
+    manifests: CandidateManifest[],
+    frontier: ParetoPoint[],
+    usePareto: boolean,
+): CandidateManifest {
+    if (usePareto && frontier.length > 0) {
+        const id = selectFromFrontier(frontier);
+        const m = manifests.find(c => c.candidateId === id);
+        if (m) return m;
+    }
+    return manifests.reduce(
+        (best, c) => ((c.objective ?? -Infinity) > (best.objective ?? -Infinity) ? c : best),
+        manifests[0],
+    );
 }

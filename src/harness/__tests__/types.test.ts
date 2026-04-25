@@ -80,7 +80,7 @@ describe("harness v2 types", () => {
         expect(o.score).toBe(62);
     });
 
-    it("OptimizeOptions carries usePareto + useSurrogate", () => {
+    it("OptimizeOptions carries usePareto + useSurrogate + useCodeSearch + useGradients", () => {
         const opts: OptimizeOptions = {
             budget: 20,
             fastMode: false,
@@ -89,12 +89,16 @@ describe("harness v2 types", () => {
             objective: "increase memory recall",
             usePareto: true,
             useSurrogate: true,
+            useCodeSearch: true,
+            useGradients: true,
         };
         expect(opts.usePareto).toBe(true);
         expect(opts.useSurrogate).toBe(true);
+        expect(opts.useCodeSearch).toBe(true);
+        expect(opts.useGradients).toBe(true);
     });
 
-    it("OptimizeResult carries paretoFrontier", () => {
+    it("OptimizeResult carries paretoFrontier + surrogateSkips", () => {
         const r: OptimizeResult = {
             runId: "run_x",
             runDir: "/tmp/x",
@@ -104,7 +108,9 @@ describe("harness v2 types", () => {
             iterationsRun: 2,
             durationMs: 1000,
             paretoFrontier: [],
+            surrogateSkips: 0,
         };
         expect(r.paretoFrontier).toEqual([]);
+        expect(r.surrogateSkips).toBe(0);
     });
 });

@@ -63,7 +63,7 @@ export interface CandidateManifest {
     parentCandidateId: string | null;
     objective: number | null;       // primary optimization metric (= composite score)
     valid: boolean;
-    outcome: 'baseline' | 'keep' | 'discard' | 'crash' | 'timeout' | 'no-change';
+    outcome: 'baseline' | 'keep' | 'discard' | 'crash' | 'timeout' | 'no-change' | 'surrogate-skip' | 'scope-violation';
     outcomeSummary: string;
     harnessConfig: HarnessConfig;
     scores: HarnessScore | null;
@@ -81,6 +81,7 @@ export interface OptimizeResult {
     iterationsRun: number;
     durationMs: number;
     paretoFrontier: ParetoPoint[];  // v2: multi-objective frontier (empty if not enabled)
+    surrogateSkips: number;          // v2: count of iterations skipped by surrogate pre-screen
 }
 
 // Options for the outer optimization loop
@@ -92,6 +93,8 @@ export interface OptimizeOptions {
     objective: string;
     usePareto: boolean;      // v2: track + emit Pareto frontier
     useSurrogate: boolean;   // v2: screen candidates with GP surrogate before evaluating
+    useCodeSearch: boolean;  // v2: use filesystem-agent code-proposer instead of legacy JSON proposer
+    useGradients: boolean;   // v2: generate TextGrad dimension hints between iterations
 }
 
 // ── Meta-Harness v2 additions ───────────────────────────────────────────────
