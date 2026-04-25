@@ -115,11 +115,15 @@ export async function transcribeBuffer(
     buffer: Buffer,
     filename = "audio.ogg"
 ): Promise<string> {
+    // Derive MIME type from filename extension
+    const ext = filename.split(".").pop()?.toLowerCase() ?? "ogg";
+    const mimeType = ext === "wav" ? "audio/wav" : ext === "mp3" ? "audio/mpeg" : "audio/ogg";
+
     const client = getWhisperClient();
     if (client) {
         const model = whisperProvider === "groq" ? "whisper-large-v3-turbo" : "whisper-1";
-        const blob = new Blob([new Uint8Array(buffer)], { type: "audio/ogg" });
-        const file = new File([blob], filename, { type: "audio/ogg" });
+        const blob = new Blob([new Uint8Array(buffer)], { type: mimeType });
+        const file = new File([blob], filename, { type: mimeType });
         const response = await client.audio.transcriptions.create({
             model,
             file,
@@ -130,6 +134,5 @@ export async function transcribeBuffer(
 
     // Fallback: OpenRouter via Convex proxy
     const base64 = buffer.toString("base64");
-    const mimeType = filename.endsWith(".wav") ? "audio/wav" : "audio/ogg";
     return transcribeViaOpenRouter(base64, mimeType);
 }

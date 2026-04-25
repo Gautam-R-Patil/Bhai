@@ -1025,9 +1025,10 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
             ariaParsedCount = parsed.length;
 
             // Resolve bounding boxes in parallel.
-            // Process all in a single Promise.all — each tryBox is already parallel (300ms cap).
-            // 80-element cap; DOM order ensures the most important elements come first.
-            const BATCH = 80;
+            // Process in batches of 20 to avoid saturating CDP with 320 simultaneous calls
+            // (80 elements × 4 tryBox variants = 320 concurrent CDP protocol messages).
+            // Each batch is still fully parallel internally; 4 batches of 20 is the right balance.
+            const BATCH = 20;
             const vw = 1280, vh = 800; // viewport dimensions
             for (let i = 0; i < Math.min(parsed.length, 80); i += BATCH) {
                 const batch = parsed.slice(i, i + BATCH);

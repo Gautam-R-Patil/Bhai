@@ -34,7 +34,8 @@ let _captchaKeysFetched = false;
 
 async function ensureCaptchaKeys(): Promise<void> {
     if (_captchaKeysFetched) return;
-    if (process.env.NOPECHA_API_KEY && process.env.CAPTCHA_API_KEY) { _captchaKeysFetched = true; return; }
+    // Skip Convex fetch if either key already present — no need to make a network round-trip
+    if (process.env.NOPECHA_API_KEY || process.env.CAPTCHA_API_KEY) { _captchaKeysFetched = true; return; }
     try {
         const { getConvexSiteUrl } = await import("../../config/keys.js");
         const { getSessionToken } = await import("../../session.js");
@@ -232,10 +233,19 @@ async function solveAudioCaptcha(page: any): Promise<string | null> {
     try {
         console.log("  🎧 Audio CAPTCHA bypass: attempting...");
 
+        // Audio bypass only works in Playwright mode — ChromePageProxy.frames() returns
+        // only [this] (the main page), so the reCAPTCHA bframe will never be found.
+        // Check for Chrome extension mode explicitly and skip early.
+        const { getCurrentMode } = await import("./browser-backend.js");
+        if (getCurrentMode() === "chrome") {
+            console.log("  🎧 Audio CAPTCHA: not supported in Chrome extension mode (no frame access)");
+            return null;
+        }
+
         // Find the reCAPTCHA bframe (the interactive challenge iframe)
-        const frames = page.frames ? page.frames() : [];
+        const frames: ReturnType<typeof page.frames> = page.frames ? page.frames() : [];
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const rcFrame = frames.find((f: any) =>
+        const rcFrame = (frames as any[]).find((f: any) =>
             f.url().includes("google.com/recaptcha") ||
             f.url().includes("recaptcha.net/recaptcha")
         );
@@ -385,6 +395,7 @@ async function solveViaNopeCHA(
         for (let i = 0; i < 20; i++) {
             await new Promise(r => setTimeout(r, 3000));
             const pollRes = await fetch(`https://api.nopecha.com/?key=${apiKey}&id=${taskId}`);
+            if (!pollRes.ok) { console.warn(`  ⚠️ NopeCHA poll HTTP error: ${pollRes.status}`); return null; }
             const pollData = await pollRes.json() as { error?: number; data?: string };
             if (pollData.error === 10) continue; // not ready yet
             if (pollData.error) { console.warn(`  ⚠️ NopeCHA poll error: ${pollData.error}`); return null; }
@@ -423,7 +434,9 @@ export async function handleCaptchaIfPresent(page: any): Promise<{ handled: bool
     if (info.type === "recaptcha-v2") {
         const token = await solveAudioCaptcha(page);
         if (token) {
-            await injectToken(page, "recaptcha-v2", token);
+            // Do NOT call injectToken here — the audio path has reCAPTCHA verify its own
+            // answer and populate #g-recaptcha-response + fire the callback itself.
+            // Calling injectToken again would double-fire the callback, risking double-submit.
             return { handled: true, type: "recaptcha-v2", method: "audio_bypass" };
         }
     }
@@ -456,7 +469,7 @@ export const browserHandleCaptcha: ToolDefinition = {
         type: "function",
         function: {
             name: "browser_handle_captcha",
-            description: "Detect and solve CAPTCHA challenges on the current page. Supports Cloudflare Turnstile (tries passive stealth first), reCAPTCHA v2/v3, and hCaptcha (requires CAPTCHA_API_KEY env var for automated solving). Call this when a page is blocked by a CAPTCHA before proceeding.",
+            description: "Detect and solve CAPTCHA challenges on the current page. Solving waterfall (all automatic): 1) Cloudflare Turnstile — passive stealth bypass; 2) reCAPTCHA v2 — free audio challenge bypass (no API key needed); 3) All types — NopeCHA free API (set NOPECHA_API_KEY in Convex, 100 free solves/day); 4) All types — 2captcha paid fallback (set CAPTCHA_API_KEY in Convex). Call this when a page is blocked by a CAPTCHA before proceeding.",
             parameters: {
                 type: "object",
                 properties: {},
