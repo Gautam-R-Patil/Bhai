@@ -217,6 +217,8 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "browser_set_mode",
             "browser_chrome_status",
             "browser_click",
+            "browser_video_control",
+            "browser_handle_captcha",
         ],
     },
     web_search: {

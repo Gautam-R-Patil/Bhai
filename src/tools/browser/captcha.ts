@@ -36,8 +36,10 @@ let _captchaKeysFetchInFlight: Promise<void> | null = null;
 
 async function ensureCaptchaKeys(): Promise<void> {
     if (_captchaKeysFetched) return;
-    // Skip Convex fetch if either key already present — no need to make a network round-trip
-    if (process.env.NOPECHA_API_KEY || process.env.CAPTCHA_API_KEY) { _captchaKeysFetched = true; return; }
+    // Skip Convex fetch if any solving key already present locally
+    if (process.env.NOPECHA_API_KEY || process.env.CAPTCHA_API_KEY || process.env.TWO_CAPTCHA_API_KEY) {
+        _captchaKeysFetched = true; return;
+    }
     // Deduplicate concurrent calls — return the same in-flight promise to all callers
     if (_captchaKeysFetchInFlight) return _captchaKeysFetchInFlight;
     _captchaKeysFetchInFlight = (async () => {
@@ -394,6 +396,7 @@ async function solveViaNopeCHA(
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ type: nopechaType, sitekey: siteKey, url: pageUrl, key: apiKey }),
         });
+        if (!submitRes.ok) { console.warn(`  ⚠️ NopeCHA submit HTTP error: ${submitRes.status}`); return null; }
         const submitData = await submitRes.json() as { id?: string; error?: number; data?: string };
         // error === 0 means success in some NopeCHA response variants — only abort on non-zero
         if (submitData.error !== undefined && submitData.error !== 0) {
@@ -468,8 +471,8 @@ export async function handleCaptchaIfPresent(page: any): Promise<{ handled: bool
         }
     }
 
-    // ── Tier 4: 2captcha (paid fallback — set CAPTCHA_API_KEY) ───────────────
-    if (info.siteKey && process.env.CAPTCHA_API_KEY) {
+    // ── Tier 4: 2captcha (paid fallback — set CAPTCHA_API_KEY or TWO_CAPTCHA_API_KEY) ──
+    if (info.siteKey && (process.env.CAPTCHA_API_KEY || process.env.TWO_CAPTCHA_API_KEY)) {
         const token = await solve2captcha(info.type, info.siteKey, page.url());
         if (token) {
             await injectToken(page, info.type, token);
