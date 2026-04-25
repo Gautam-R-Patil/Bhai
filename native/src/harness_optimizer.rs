@@ -485,6 +485,150 @@ fn pareto_objective_axis(v: &ObjectiveVector, axis: usize) -> f64 {
     }
 }
 
+// ── GP surrogate (v2) ────────────────────────────────────────────────────────
+
+#[napi(object)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GpPrediction {
+    pub mean: f64,
+    pub variance: f64,
+    pub expected_improvement: f64,
+}
+
+/// Fit a GP with RBF kernel and return prediction + EI at query_x.
+/// Length-scale = median pairwise distance across training X.
+/// Noise jitter = 1e-6 * mean(y^2).
+/// EI formula: (mu - best - 0.01)*Phi(z) + sigma*phi(z) where z = (mu-best-0.01)/sigma.
+#[napi]
+pub fn fit_and_predict_gp(
+    observations_x: Vec<Vec<f64>>,
+    observations_y: Vec<f64>,
+    query_x: Vec<f64>,
+    best_so_far: f64,
+) -> GpPrediction {
+    let n = observations_x.len();
+    if n == 0 || observations_y.len() != n || query_x.is_empty() {
+        return GpPrediction { mean: 0.0, variance: 1.0, expected_improvement: 0.0 };
+    }
+    let d = query_x.len();
+    for row in &observations_x {
+        if row.len() != d {
+            return GpPrediction { mean: gp_mean_vec(&observations_y), variance: 1.0, expected_improvement: 0.0 };
+        }
+    }
+
+    let length_scale = gp_median_pairwise_dist(&observations_x).max(1e-3);
+    let l2 = 2.0 * length_scale * length_scale;
+    let mean_y = gp_mean_vec(&observations_y);
+    let y_c: Vec<f64> = observations_y.iter().map(|v| v - mean_y).collect();
+    let jitter = 1e-6 * (observations_y.iter().map(|v| v * v).sum::<f64>() / n as f64).max(1.0);
+
+    let mut k_mat = vec![vec![0.0f64; n]; n];
+    for i in 0..n {
+        for j in 0..n {
+            let v = gp_rbf(&observations_x[i], &observations_x[j], l2);
+            k_mat[i][j] = v + if i == j { jitter } else { 0.0 };
+        }
+    }
+
+    let Some(l_chol) = gp_cholesky(&k_mat) else {
+        return GpPrediction { mean: mean_y, variance: 1.0, expected_improvement: 0.0 };
+    };
+    let alpha = gp_chol_solve(&l_chol, &y_c);
+    let k_star: Vec<f64> = (0..n).map(|i| gp_rbf(&query_x, &observations_x[i], l2)).collect();
+    let mu = mean_y + gp_dot(&k_star, &alpha);
+    let v = gp_chol_fwd(&l_chol, &k_star);
+    let var_ = (1.0 - gp_dot(&v, &v)).max(1e-9);
+    let sigma = var_.sqrt();
+
+    let xi = 0.01;
+    let ei = if sigma < 1e-9 {
+        0.0
+    } else {
+        let z = (mu - best_so_far - xi) / sigma;
+        (mu - best_so_far - xi) * gp_normal_cdf(z) + sigma * gp_normal_pdf(z)
+    };
+
+    GpPrediction { mean: mu, variance: var_, expected_improvement: ei.max(0.0) }
+}
+
+#[inline] fn gp_rbf(a: &[f64], b: &[f64], l2: f64) -> f64 {
+    let s: f64 = a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum();
+    (-s / l2).exp()
+}
+
+fn gp_median_pairwise_dist(xs: &[Vec<f64>]) -> f64 {
+    let n = xs.len();
+    if n < 2 { return 1.0; }
+    let mut dists: Vec<f64> = Vec::with_capacity(n * (n - 1) / 2);
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let s: f64 = xs[i].iter().zip(xs[j].iter()).map(|(a, b)| (a - b).powi(2)).sum();
+            dists.push(s.sqrt());
+        }
+    }
+    dists.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    dists[dists.len() / 2].max(1e-3)
+}
+
+fn gp_cholesky(a: &[Vec<f64>]) -> Option<Vec<Vec<f64>>> {
+    let n = a.len();
+    let mut l = vec![vec![0.0f64; n]; n];
+    for i in 0..n {
+        for j in 0..=i {
+            let s: f64 = (0..j).map(|k| l[i][k] * l[j][k]).sum();
+            if i == j {
+                let v = a[i][i] - s;
+                if v <= 0.0 { return None; }
+                l[i][j] = v.sqrt();
+            } else {
+                l[i][j] = (a[i][j] - s) / l[j][j];
+            }
+        }
+    }
+    Some(l)
+}
+
+fn gp_chol_fwd(l: &[Vec<f64>], b: &[f64]) -> Vec<f64> {
+    let n = b.len();
+    let mut y = vec![0.0f64; n];
+    for i in 0..n {
+        let s: f64 = (0..i).map(|k| l[i][k] * y[k]).sum();
+        y[i] = (b[i] - s) / l[i][i];
+    }
+    y
+}
+
+fn gp_chol_solve(l: &[Vec<f64>], b: &[f64]) -> Vec<f64> {
+    let n = b.len();
+    let y = gp_chol_fwd(l, b);
+    let mut x = vec![0.0f64; n];
+    for i in (0..n).rev() {
+        let s: f64 = ((i + 1)..n).map(|k| l[k][i] * x[k]).sum();
+        x[i] = (y[i] - s) / l[i][i];
+    }
+    x
+}
+
+#[inline] fn gp_dot(a: &[f64], b: &[f64]) -> f64 { a.iter().zip(b.iter()).map(|(x, y)| x * y).sum() }
+
+#[inline] fn gp_mean_vec(xs: &[f64]) -> f64 {
+    if xs.is_empty() { return 0.0; }
+    xs.iter().sum::<f64>() / xs.len() as f64
+}
+
+#[inline] fn gp_normal_pdf(z: f64) -> f64 { (-0.5 * z * z).exp() / (2.0 * std::f64::consts::PI).sqrt() }
+
+#[inline] fn gp_normal_cdf(z: f64) -> f64 { 0.5 * (1.0 + gp_erf(z / std::f64::consts::SQRT_2)) }
+
+fn gp_erf(x: f64) -> f64 {
+    let sign = if x < 0.0 { -1.0 } else { 1.0 };
+    let ax = x.abs();
+    let t = 1.0 / (1.0 + 0.3275911 * ax);
+    let y = 1.0 - (((((1.061405429_f64 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * (-ax * ax).exp();
+    sign * y
+}
+
 // ── Internal helpers ─────────────────────────────────────────────────────────
 
 #[inline]
