@@ -82,42 +82,36 @@ export async function initializePopulation(
         entries.push({ manifest, seed, config: seedConfig });
     }
 
-    // Evaluate all seeds in parallel
-    const results = await Promise.allSettled(
-        entries.map(async ({ manifest, seed, config }) => {
-            try {
-                await onProgress?.(`🌱 Evaluating seed: ${seed.id}…`).catch(() => {});
-                setActiveCandidate(store.runDir, manifest.candidateId);
-                applyConfig(config);
-                const scores = await evaluateCandidate(llm, manifest.candidateId, config, { fastMode });
-                flushTracesToCandidate(store.runDir, manifest.candidateId);
-                clearActiveCandidate();
-                resetToDefaults();
-
-                manifest.scores = scores;
-                manifest.objective = scores.composite;
-                manifest.valid = true;
-                manifest.outcome = manifest.candidateId === "c0000" ? "baseline" : "keep";
-                manifest.outcomeSummary = `Seed "${seed.id}": composite=${scores.composite.toFixed(1)}`;
-                store.writeScores(manifest.candidateId, scores);
-                store.writeManifest(manifest);
-                return manifest;
-            } catch (err) {
-                clearActiveCandidate();
-                resetToDefaults();
-                manifest.outcome = "crash";
-                manifest.outcomeSummary = `Seed "${seed.id}" crashed: ${(err as Error).message}`;
-                manifest.valid = false;
-                store.writeManifest(manifest);
-                console.warn(`[POPULATION] Seed ${seed.id} failed: ${(err as Error).message}`);
-                return null;
-            }
-        }),
-    );
-
+    // Evaluate seeds sequentially — the registry is a process-singleton, so parallel
+    // evaluations would trample each other's applyConfig/resetToDefaults calls.
     const valid: CandidateManifest[] = [];
-    for (const r of results) {
-        if (r.status === "fulfilled" && r.value !== null) valid.push(r.value);
+    for (const { manifest, seed, config } of entries) {
+        try {
+            await onProgress?.(`🌱 Evaluating seed: ${seed.id}…`).catch(() => {});
+            setActiveCandidate(store.runDir, manifest.candidateId);
+            applyConfig(config);
+            const scores = await evaluateCandidate(llm, manifest.candidateId, config, { fastMode });
+            flushTracesToCandidate(store.runDir, manifest.candidateId);
+            clearActiveCandidate();
+            resetToDefaults();
+
+            manifest.scores = scores;
+            manifest.objective = scores.composite;
+            manifest.valid = true;
+            manifest.outcome = manifest.candidateId === "c0000" ? "baseline" : "keep";
+            manifest.outcomeSummary = `Seed "${seed.id}": composite=${scores.composite.toFixed(1)}`;
+            store.writeScores(manifest.candidateId, scores);
+            store.writeManifest(manifest);
+            valid.push(manifest);
+        } catch (err) {
+            clearActiveCandidate();
+            resetToDefaults();
+            manifest.outcome = "crash";
+            manifest.outcomeSummary = `Seed "${seed.id}" crashed: ${(err as Error).message}`;
+            manifest.valid = false;
+            store.writeManifest(manifest);
+            console.warn(`[POPULATION] Seed ${seed.id} failed: ${(err as Error).message}`);
+        }
     }
 
     await onProgress?.(`🌱 Population initialized: ${valid.length}/${ATLAS_SEED_CONFIGS.length} seeds valid.`).catch(() => {});

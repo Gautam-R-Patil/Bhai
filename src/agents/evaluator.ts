@@ -12,6 +12,12 @@ import type { SubAgentResult } from "./sub-agent.js";
 import type { SwarmPlan } from "./swarm.js";
 import { extractJSON } from "../utils/json-extract.js";
 import { textGradRefine } from "./textgrad-refiner.js";
+import { getDimensionValue } from "../harness/registry.js";
+import { recordEvaluationScore } from "../harness/trace-store.js";
+
+// Module-level trace ID set by the outer agent loop for score capture
+let _activeTraceId: string | null = null;
+export function setActiveEvalTraceId(id: string | null): void { _activeTraceId = id; }
 
 // ── Types ────────────────────────────────────
 
@@ -29,11 +35,15 @@ export interface EvaluationResult {
     feedback: string;           // Specific issues found
 }
 
-// ── Constants ────────────────────────────────
+// ── Constants (tunable via Meta-Harness registry) ────────────────────────
 
-const ACCEPT_THRESHOLD = 70;
-const RETRY_THRESHOLD = 40;
-const MAX_RETRIES = 2;
+const ACCEPT_THRESHOLD_DEFAULT = 70;
+const RETRY_THRESHOLD_DEFAULT = 40;
+const MAX_RETRIES_DEFAULT = 2;
+
+function getAcceptThreshold(): number { return getDimensionValue<number>("evaluator.acceptThreshold") ?? ACCEPT_THRESHOLD_DEFAULT; }
+function getRetryThreshold(): number { return getDimensionValue<number>("evaluator.retryThreshold") ?? RETRY_THRESHOLD_DEFAULT; }
+function getMaxRetries(): number { return getDimensionValue<number>("evaluator.maxRetries") ?? MAX_RETRIES_DEFAULT; }
 
 // ── Evaluator ────────────────────────────────
 
@@ -51,6 +61,9 @@ export async function evaluate(
     const stepSummary = [...stepResults.entries()]
         .map(([id, r]) => `${id}: ${r.success ? "OK" : "FAILED"} — ${r.output.substring(0, 150)}`)
         .join("\n");
+
+    const ACCEPT_THRESHOLD = getAcceptThreshold();
+    const RETRY_THRESHOLD = getRetryThreshold();
 
     const prompt = `You are a quality evaluator. Score this AI response on a 0-100 scale for each dimension.
 
@@ -105,7 +118,12 @@ Output ONLY valid JSON:
 
         const verdict = score >= ACCEPT_THRESHOLD ? "accept"
             : score >= RETRY_THRESHOLD ? "retry"
-            : "replan";
+            : "replan" as const;
+
+        // Record to harness trace store if a trace is active
+        if (_activeTraceId) {
+            try { recordEvaluationScore(_activeTraceId, score); } catch { /* non-fatal */ }
+        }
 
         return {
             verdict: (["accept", "retry", "replan"] as const).includes(parsed.verdict) ? parsed.verdict : verdict,
@@ -131,6 +149,7 @@ export async function evaluateAndOptimize(
 ): Promise<{ synthesis: string; evaluationScore: number }> {
     let synthesis = await synthesizeFn();
     let bestScore = 0;
+    const MAX_RETRIES = getMaxRetries();
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         const result = await evaluate(llm, userRequest, synthesis, stepResults);

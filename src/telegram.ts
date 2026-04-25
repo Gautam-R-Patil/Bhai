@@ -234,6 +234,8 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
         setThinkingLevel: (level: string) => setThinkingLevel(level),
         clearConversation,
         conversationCount: getConversationCount(),
+        llm,
+        sendProgress: async (msg: string) => { await sendProactiveMessage(bot, config, msg); },
     });
 
     // ── Security: User ID whitelist middleware ──

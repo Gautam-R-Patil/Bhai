@@ -2,9 +2,12 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Config } from "../config.js";
 import { enterPlanMode, exitPlanMode, isPlanMode, isSpecMode, getPlanModeState, enterSpecMode } from "../agents/plan-mode.js";
 import path from "node:path";
+import type { LLMClient } from "../llm.js";
 
 // ── Types ─────────────────────────────────────
 
@@ -21,6 +24,8 @@ interface CommandContext {
     thinkingLevel: string;
     setThinkingLevel: (level: string) => void;
     clearConversation: () => void;
+    llm?: LLMClient;
+    sendProgress?: (msg: string) => Promise<void>;
 }
 
 // ── State ─────────────────────────────────────
@@ -68,6 +73,11 @@ export async function handleCommand(text: string): Promise<CommandResult> {
             return { handled: true, response: cmdNoPlan() };
         case "/spec":
             return { handled: true, response: cmdSpec(args.join(" ")) };
+        case "/optimize-harness":
+        case "/harness-optimize":
+            return cmdOptimizeHarness(args);
+        case "/harness-status":
+            return cmdHarnessStatus();
         default:
             return { handled: false };
     }
@@ -146,6 +156,8 @@ function cmdHelp(): string {
         "`/plan [task]` — Enter plan mode (research before acting)",
         "`/spec <task>` — Enter spec mode (write acceptance criteria first)",
         "`/noplan` — Exit plan/spec mode",
+        "`/optimize-harness [n] [--fast]` — Run Meta-Harness optimization (n iterations)",
+        "`/harness-status` — Show harness optimization history",
         "`/help` — This message",
         "",
         "Or use the quick action buttons below.",
@@ -212,4 +224,71 @@ function cmdSpec(task: string): string {
         "",
         "The agent will write a specification (problem, acceptance criteria, test scenarios, out-of-scope) before planning implementation. Send your next message to start. Finalize with `finalize_spec` or `/noplan` to cancel.",
     ].join("\n");
+}
+
+async function cmdOptimizeHarness(args: string[]): Promise<CommandResult> {
+    if (!_ctx?.llm) {
+        return { handled: true, response: "⚠️ LLM not available for harness optimization." };
+    }
+    const budget = parseInt(args[0] ?? "5", 10) || 5;
+    const fastMode = args.includes("--fast");
+
+    // Fire and forget — optimization runs in background
+    setImmediate(async () => {
+        try {
+            const { runMetaHarnessOptimization } = await import("../harness/optimizer.js");
+            await runMetaHarnessOptimization(_ctx!.llm!, { budget, fastMode }, _ctx!.sendProgress);
+        } catch (err) {
+            console.error("[HARNESS-CMD] Optimization failed:", (err as Error).message);
+            _ctx?.sendProgress?.(`❌ Harness optimization failed: ${(err as Error).message}`).catch(() => {});
+        }
+    });
+
+    return {
+        handled: true,
+        response: [
+            `🔬 **Harness optimization started** (budget=${budget} iterations, fast=${fastMode})`,
+            "",
+            "The Meta-Harness optimizer will run in the background, evaluating configuration candidates and reporting progress.",
+            fastMode ? "Fast mode: skipping network-dependent benchmarks." : "Full mode: running all benchmarks including task completion.",
+            "",
+            "Use `/harness-status` to check progress.",
+        ].join("\n"),
+    };
+}
+
+function cmdHarnessStatus(): CommandResult {
+    try {
+        const ATLAS_DATA_DIR = process.env.ATLAS_DATA_DIR || "data";
+        const runsDir = join(ATLAS_DATA_DIR, "harness/runs");
+        const activeConfig = join(ATLAS_DATA_DIR, "harness/active/harness-config.json");
+
+        const lines = ["🔬 **Harness Optimization Status**", ""];
+
+        if (existsSync(activeConfig)) {
+            const cfg = JSON.parse(readFileSync(activeConfig, "utf-8"));
+            lines.push(`✅ Active config: candidate \`${cfg.candidateId}\` (set ${new Date(cfg.createdAt).toLocaleDateString()})`);
+        } else {
+            lines.push("ℹ️ No active harness config — using defaults.");
+        }
+
+        if (existsSync(runsDir)) {
+            const runs = readdirSync(runsDir).filter((d: string) => d.startsWith("run_")).sort().slice(-5);
+            if (runs.length > 0) {
+                lines.push("", `📁 Recent runs (${runs.length} shown):`);
+                for (const run of runs) {
+                    const lb = join(ATLAS_DATA_DIR, "harness/runs", run, "indexes/leaderboard.json");
+                    if (existsSync(lb)) {
+                        const d = JSON.parse(readFileSync(lb, "utf-8"));
+                        lines.push(`  - \`${run}\`: best=${d.bestCandidateId} score=${d.bestObjective?.toFixed(0) ?? "n/a"} (${d.candidates?.length ?? 0} candidates)`);
+                    }
+                }
+            }
+        }
+
+        lines.push("", "Use `/optimize-harness [budget] [--fast]` to run a new optimization.");
+        return { handled: true, response: lines.join("\n") };
+    } catch (err) {
+        return { handled: true, response: `⚠️ Could not read harness status: ${(err as Error).message}` };
+    }
 }

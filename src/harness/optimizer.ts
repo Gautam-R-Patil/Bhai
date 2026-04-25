@@ -155,10 +155,12 @@ export async function runMetaHarnessOptimization(
         if (changedDims.length === 0 && codeChanges.length === 0) {
             candidate.outcome = "no-change";
             candidate.outcomeSummary = "No dimension or code changes proposed";
-            candidate.valid = parent.valid;
+            // Mark valid=false so no-change duplicates don't contaminate Pareto frontier or GP surrogate
+            candidate.valid = false;
             candidate.objective = parent.objective;
             candidate.scores = parent.scores;
             store.writeManifest(candidate);
+            lastIterImproved = false;  // treat as regression so next iter generates gradients
             continue;
         }
 
@@ -173,6 +175,7 @@ export async function runMetaHarnessOptimization(
                     surrogateSkips++;
                     store.writeManifest(candidate);
                     if (codeChanges.length > 0) revertCodeChanges(process.cwd());
+                    lastIterImproved = false;  // trigger gradients next iteration
                     continue;
                 }
             } catch (err) {

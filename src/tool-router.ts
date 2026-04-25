@@ -41,6 +41,7 @@ import {
 } from "./tool-router-analytics.js";
 import { getToolSchemas } from "./tools/index.js";
 import { extractJSON } from "./utils/json-extract.js";
+import { getDimensionValue } from "./harness/registry.js";
 
 // ── Types ─────────────────────────────────────
 
@@ -1165,8 +1166,9 @@ export function getLastClassification(): {
 // from alwaysInclude categories (memory=13, core=1, tool_creation=3) PLUS
 // a meaningful contribution from whatever categories the query triggered —
 // especially `coding`, which has 21 candidate tools that need real room.
-const MAX_TOOLS_TOTAL = 36;
+const MAX_TOOLS_TOTAL_DEFAULT = 36;
 const MAX_TOOLS_PER_CATEGORY = 12;
+function getMaxToolsTotal(): number { return getDimensionValue<number>("toolRouter.maxToolsTotal") ?? MAX_TOOLS_TOTAL_DEFAULT; }
 
 export async function selectTools(opts: {
     message: string;
@@ -1212,7 +1214,7 @@ export async function selectTools(opts: {
     // Try LLM classifier first (primary path)
     const llmResult = await classifyWithLLM(opts.message, opts.recentToolCalls, opts.conversationContext);
 
-    if (llmResult && llmResult.categories.length > 0 && llmResult.confidence >= 0.4) {
+    if (llmResult && llmResult.categories.length > 0 && llmResult.confidence >= (getDimensionValue<number>("toolRouter.llmConfidenceThreshold") ?? 0.4)) {
         selectedCategories = [...llmResult.categories];
         specificTools = llmResult.specific_tools || [];
         lastClassifiedIntent = llmResult.intent;
@@ -1386,7 +1388,7 @@ export async function selectTools(opts: {
     // Add candidates up to the cap, respecting per-category limits
     const catToolCounts = new Map<string, number>();
     for (const tool of candidateTools) {
-        if (selectedToolNames.size >= MAX_TOOLS_TOTAL) break;
+        if (selectedToolNames.size >= getMaxToolsTotal()) break;
         if (selectedToolNames.has(tool)) continue;
 
         // Find which category this tool belongs to
@@ -1415,7 +1417,7 @@ export async function selectTools(opts: {
     // ── Include relevant MCP tools ──
     const mcpSchemas = getMCPToolSchemas();
     if (mcpSchemas.length > 0) {
-        if (embeddingsReady && selectedSchemas.length < MAX_TOOLS_TOTAL) {
+        if (embeddingsReady && selectedSchemas.length < getMaxToolsTotal()) {
             try {
                 const { cosineSimilarity } = await import("./memory/embeddings.js");
                 const messageEmb = await getCachedMessageEmbedding(opts.message);
@@ -1435,20 +1437,20 @@ export async function selectTools(opts: {
                 // Add top MCP tools that fit within the cap
                 mcpScored.sort((a, b) => b.score - a.score);
                 for (const { schema, score } of mcpScored) {
-                    if (selectedSchemas.length >= MAX_TOOLS_TOTAL) break;
-                    if (score >= 0.25) selectedSchemas.push(schema);
+                    if (selectedSchemas.length >= getMaxToolsTotal()) break;
+                    if (score >= (getDimensionValue<number>("toolRouter.mcpSimilarityThreshold") ?? 0.25)) selectedSchemas.push(schema);
                 }
             } catch {
                 // If embedding fails, include top 5 MCP tools
                 for (const mcpTool of mcpSchemas.slice(0, 5)) {
-                    if (selectedSchemas.length < MAX_TOOLS_TOTAL) {
+                    if (selectedSchemas.length < getMaxToolsTotal()) {
                         selectedSchemas.push(mcpTool);
                     }
                 }
             }
         } else if (!embeddingsReady) {
             for (const mcpTool of mcpSchemas.slice(0, 5)) {
-                if (selectedSchemas.length < MAX_TOOLS_TOTAL) {
+                if (selectedSchemas.length < getMaxToolsTotal()) {
                     selectedSchemas.push(mcpTool);
                 }
             }

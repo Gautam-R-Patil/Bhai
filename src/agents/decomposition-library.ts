@@ -10,6 +10,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
 import type { MeshStep } from "./mesh.js";
+import { getDimensionValue } from "../harness/registry.js";
 
 // ── Types ────────────────────────────────────
 
@@ -127,7 +128,7 @@ export function findTemplates(taskDescription: string): TemplateMatch[] {
         if (daysSinceUse > DECAY_DAYS && template.averageSuccessRate < MIN_SUCCESS_RATE) continue;
 
         const similarity = keywordSimilarity(taskKeywords, template.keywords);
-        if (similarity >= MATCH_THRESHOLD) {
+        if (similarity >= (getDimensionValue<number>("decomposition.matchThreshold") ?? MATCH_THRESHOLD)) {
             matches.push({ template, similarity });
         }
     }

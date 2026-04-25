@@ -19,6 +19,7 @@ import { rankSource, deduplicateFindings, crossReferenceFindings } from "./scori
 import { saveResearchState, deleteResearchState, storeResearchInMemory } from "./persistence.js";
 import { generateHypotheses, updateHypothesis, type Hypothesis, type ResearchPlan } from "./hypothesis-engine.js";
 import { getCredibility, recordClaimVerification } from "./credibility-model.js";
+import { getDimensionValue } from "../harness/registry.js";
 
 // ── Main Background Execution ────────────────
 
@@ -78,9 +79,11 @@ export async function executeDeepResearch(
             console.warn(`[RESEARCH] Hypothesis generation failed (non-fatal):`, (hypErr as Error).message);
         }
 
-        // ── Phase distribution ──
-        const phase1Rounds = Math.ceil(research.depth * 0.4);  // Discovery
-        const phase2Rounds = Math.ceil(research.depth * 0.4);  // Deep Reading
+        // ── Phase distribution (tunable via Meta-Harness registry) ──
+        const p1Ratio = getDimensionValue<number>("research.discoveryPhaseRatio") ?? 0.4;
+        const p2Ratio = getDimensionValue<number>("research.deepReadPhaseRatio") ?? 0.4;
+        const phase1Rounds = Math.ceil(research.depth * p1Ratio);  // Discovery
+        const phase2Rounds = Math.ceil(research.depth * p2Ratio);  // Deep Reading
         const phase3Rounds = research.depth - phase1Rounds - phase2Rounds; // Verification
 
         let globalRound = 0;

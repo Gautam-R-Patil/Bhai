@@ -80,6 +80,9 @@ import {
 } from "./tool-router-analytics.js";
 import { autoSaveSession, getBrowserContext, trackBrowserStep } from "./tools/browser-memory.js";
 import { clearCache, executeTool, resetRateLimits } from "./tools/index.js";
+import { startTrace, finalizeTrace, recordToolsSelected, recordContextSources, recordMemoryHit } from "./harness/trace-store.js";
+import { setActiveEvalTraceId } from "./agents/evaluator.js";
+import { getDimensionValue } from "./harness/registry.js";
 
 // ── Music fast-path helpers ──────────────────────
 // Short-circuits the Sonnet orchestrator + heavy memory briefing when the LLM
@@ -752,6 +755,12 @@ export async function runAgent(
 ): Promise<AgentResponse> {
     const isForked = !!historyFork;
 
+    // True when serving a non-owner contact (e.g. WhatsApp persona).
+    // In this mode all owner-personal memory injection is skipped — the
+    // historyFork already supplies the contact's context and we must not
+    // leak the owner's identity, memories, location, or traits.
+    const isContactAgent = isForked && channelContext?.isOwner === false;
+
     // Tag every runAgent invocation with a unique turn id so offloaded
     // tool outputs cluster per turn on disk.
     if (!isForked) nextTurnId();
@@ -781,6 +790,14 @@ export async function runAgent(
     // these to every message, inflating word count and breaking simple-message detection.
     // The full tagged message is still sent to the LLM for context.
     const rawUserMessage = userMessage.replace(/\n*\[SOURCE:.*\]$/s, "").trim();
+
+    // ── Harness trace: start per-invocation telemetry ──
+    const _harnessTraceId = startTrace(
+        channelContext?.channel || "default",
+        rawUserMessage,
+        0,
+    );
+    setActiveEvalTraceId(_harnessTraceId);
 
     // ── Goal detection: check if user mentioned a goal ──
     try {
@@ -1034,6 +1051,7 @@ STRATEGY: Execute in as few tool calls as possible.
                         .filter(Boolean);
                     const partialText =
                         partialResponses.length > 0 ? partialResponses[partialResponses.length - 1] : null;
+                    setActiveEvalTraceId(null); finalizeTrace(_harnessTraceId, false);
                     return {
                         text:
                             partialText ||
@@ -1050,6 +1068,7 @@ STRATEGY: Execute in as few tool calls as possible.
             workingHistory.push({ role: "assistant", content: "Task cancelled by user." });
             // Credit already deducted per-API-call, just return
             const stats = getSessionCreditStats();
+            setActiveEvalTraceId(null); finalizeTrace(_harnessTraceId, false);
             return { text: `✅ Task stopped. (${stats.creditsUsed} credits used)`, toolCalls: totalToolCalls };
         }
 
@@ -1062,6 +1081,7 @@ STRATEGY: Execute in as few tool calls as possible.
                     console.log(`[AccountGuard] Credits exhausted mid-task after ${totalToolCalls} tool calls`);
                     const exhaustedMsg = `⛔ ${midCheck.reason || "Your AI credits have run out."} Task stopped after ${totalToolCalls} steps.`;
                     workingHistory.push({ role: "assistant", content: exhaustedMsg });
+                    setActiveEvalTraceId(null); finalizeTrace(_harnessTraceId, false);
                     return { text: exhaustedMsg, toolCalls: totalToolCalls };
                 }
             } catch {
@@ -1177,25 +1197,30 @@ STRATEGY: Execute in as few tool calls as possible.
                       });
 
             // ── 2. Identity profile + onboarding detection ──
-            // Always inject personality context (including for llm_only) so the agent feels alive
+            // Skipped for contact agents: the identity snippet says "your user is Dheeraj,
+            // working on Midnight Library..." — injecting it causes the LLM to describe the
+            // OWNER whenever a contact asks "do you know me?". The owner's name is already
+            // present in the contact system prompt; the full demographic profile must not leak.
             let isFirstTime = false;
-            try {
-                const identitySnippet = getIdentityPromptSnippet();
-                if (identitySnippet) {
-                    parts.push(identitySnippet);
-                } else {
+            if (!isContactAgent) {
+                try {
+                    const identitySnippet = getIdentityPromptSnippet();
+                    if (identitySnippet) {
+                        parts.push(identitySnippet);
+                    } else {
+                        isFirstTime = true;
+                    }
+                } catch {
                     isFirstTime = true;
                 }
-            } catch {
-                isFirstTime = true;
-            }
 
-            // ── Location context ──
-            try {
-                const locationSnippet = getLocationSnippet();
-                if (locationSnippet) parts.push(locationSnippet);
-            } catch {
-                /* location not initialized */
+                // ── Location context — owner-private, skip for contact agents ──
+                try {
+                    const locationSnippet = getLocationSnippet();
+                    if (locationSnippet) parts.push(locationSnippet);
+                } catch {
+                    /* location not initialized */
+                }
             }
 
             // ── Project memory (ATLAS.md walk-up) ──
@@ -1388,8 +1413,8 @@ STRATEGY: Execute in as few tool calls as possible.
             }
 
             try {
-                // 5. Core Identity & Important Facts (Always injected)
-                const coreMems = getCoreMemory(10);
+                // Core Identity & Important Facts (Always injected)
+                const coreMems = getCoreMemory(getDimensionValue<number>("memory.coreMemory.k") ?? 10);
                 if (coreMems && coreMems.length > 0) {
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     parts.push(
@@ -1398,12 +1423,10 @@ STRATEGY: Execute in as few tool calls as possible.
                 }
 
                 // 6. Query-specific recall — only for modes that need semantic search
-                // llm_only skips recall/vector search entirely (greetings don't need "find memories related to hello")
-                // llm_with_traits gets full retrieval for contextual awareness
-                // retrieve gets full retrieval for explicit memory lookups
                 if (queryMode === "retrieve" || queryMode === "llm_with_traits") {
+                    const recallK = getDimensionValue<number>("memory.recall.k") ?? 10;
+                    const convRecallK = getDimensionValue<number>("memory.conversationRecall.k") ?? 3;
                     // Enrich recall query with recent user messages for better semantic matching
-                    // "how much?" alone won't match "WhatsApp transfer", but combined with recent context it will
                     const recentUserMsgs = workingHistory
                         .filter((m) => m.role === "user" && typeof m.content === "string")
                         .slice(-3)
@@ -1412,10 +1435,10 @@ STRATEGY: Execute in as few tool calls as possible.
                         recentUserMsgs.length > 1 ? `${recentUserMsgs.join(" ")} ${userMessage}` : userMessage;
 
                     const [queriedMems, pastConvos, learningsCtx] = await Promise.all([
-                        recall(enrichedQuery, 10, llm, queryMode).catch(() => []),
+                        recall(enrichedQuery, recallK, llm, queryMode).catch(() => []),
                         Promise.resolve().then(() => {
                             try {
-                                return recallConversation(userMessage, 3);
+                                return recallConversation(userMessage, convRecallK);
                             } catch {
                                 return [];
                             }
@@ -1431,6 +1454,10 @@ STRATEGY: Execute in as few tool calls as possible.
 
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     const uniqueMems = queriedMems.filter((q: any) => !coreMems.some((c: any) => c.id === q.id));
+                    // Record memory hits for harness traces
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const topScore = queriedMems.length > 0 ? (queriedMems[0] as any).score ?? 0 : 0;
+                    recordMemoryHit(_harnessTraceId, uniqueMems.length, topScore);
                     if (uniqueMems && uniqueMems.length > 0) {
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
                         parts.push(
@@ -1586,10 +1613,43 @@ STRATEGY: Execute in as few tool calls as possible.
 - After this chat, you'll remember everything. Never re-introduce or re-ask.`);
             }
 
+            // Contact agents: drain ALL owner memory that was just collected and
+            // replace with only the contact's own profile. The LLM must not have
+            // the owner's identity, projects, episodic history, or remembered facts
+            // in its context — that is what causes it to describe the owner when
+            // contacts ask "do you know me?". PA tools (google_calendar, ask_owner)
+            // handle any on-demand owner lookups instead.
+            if (isContactAgent) {
+                const datetimePart = parts[0]; // preserve the clock context (always first)
+                parts.length = 0;
+                if (datetimePart) parts.push(datetimePart);
+
+                const cp = channelContext?.contactProfile as any;
+                if (cp) {
+                    const contactName = cp.displayName || cp.pushName || "Contact";
+                    const contactLines: string[] = [];
+                    if (cp.context?.relation) contactLines.push(`Relation to owner: ${cp.context.relation}`);
+                    if (cp.notes) contactLines.push(`Notes: ${cp.notes}`);
+                    if (cp.messageCount > 0) contactLines.push(`Past messages: ${cp.messageCount}`);
+                    if (cp.memories?.length) {
+                        contactLines.push(
+                            `Saved notes:\n${cp.memories.slice(-5).map((m: any) => `- ${m.content}`).join("\n")}`,
+                        );
+                    }
+                    if (contactLines.length > 0) {
+                        parts.push(`[CONTACT — ${contactName}]\n${contactLines.join("\n")}`);
+                    }
+                }
+            }
+
             if (parts.length > 0) {
-                // Cap total injected context to ~4000 chars (~1000 tokens) to avoid
-                // overwhelming the context window as memories grow
-                const MAX_INJECTION_CHARS = 8000;
+                // Record context sources for harness traces
+                if (iterations === 1) {
+                    recordContextSources(_harnessTraceId, parts.map(p => p.split("\n")[0].substring(0, 60)));
+                }
+
+                // Cap total injected context — tunable via Meta-Harness registry
+                const MAX_INJECTION_CHARS = getDimensionValue<number>("agent.contextCap") ?? 8000;
                 let totalChars = 0;
                 const cappedParts: string[] = [];
                 for (const part of parts) {
@@ -1699,6 +1759,11 @@ STRATEGY: Execute in as few tool calls as possible.
         }
         const tools = toolSelection.tools;
         activeCategories = toolSelection.categories;
+
+        // ── Harness trace: record selected tools ──
+        if (iterations === 1 && _harnessTraceId) {
+            recordToolsSelected(_harnessTraceId, tools.map(t => t.function?.name ?? String(t)).filter(Boolean));
+        }
 
         // Phase-2 full fast-path gate (requires classifier output — threaded
         // through toolSelection.classification so it's guaranteed to reflect
@@ -1956,6 +2021,7 @@ PLAN:`,
                         .map((m) => (m as { content: string }).content)
                         .filter(Boolean);
                     const partialText = currentRunResponses.length > 0 ? currentRunResponses.pop() : null;
+                    setActiveEvalTraceId(null); finalizeTrace(_harnessTraceId, false);
                     return {
                         text: partialText || "I'm having trouble connecting right now. Please try again in a moment.",
                         toolCalls: totalToolCalls,
@@ -2422,6 +2488,7 @@ PLAN:`,
                     maybeReflect();
                     if (usedBrowserTools) autoSaveSession();
                     // Credits deducted per-API-call in llm.ts
+                    setActiveEvalTraceId(null); finalizeTrace(_harnessTraceId, true);
                     return { text, toolCalls: totalToolCalls };
                 }
             }
@@ -2508,6 +2575,7 @@ PLAN:`,
             }
 
             // Credits deducted per-API-call in llm.ts
+            setActiveEvalTraceId(null); finalizeTrace(_harnessTraceId, true);
             return { text, toolCalls: totalToolCalls };
         }
 
@@ -2653,6 +2721,7 @@ PLAN:`,
                 const delegationText = `I've started working on your task in the background (${phaseCount} phases). Task ID: ${taskId}. I'll keep you updated on progress — you can also ask me to check anytime.`;
                 messages.push({ role: "assistant", content: delegationText });
                 appendTurn("assistant", delegationText);
+                setActiveEvalTraceId(null); finalizeTrace(_harnessTraceId, true);
                 return { text: delegationText, toolCalls: totalToolCalls };
             } catch {
                 /* fall through to normal loop if parse fails */

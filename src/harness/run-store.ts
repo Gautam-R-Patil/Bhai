@@ -95,19 +95,29 @@ export class HarnessRunStore {
         // Copy parent artifacts into experience/parent/
         this._copyParentArtifacts(parent, experienceDir);
 
-        // Copy parent traces into experience/parent/traces/
+        // Copy individual parent trace files into experience/parent/traces/
+        // The proposer must read individual files (not summaries) — paper ablation shows
+        // summary-only context gives median accuracy 34.9 vs 50.0 for raw-trace access.
+        const parentTracesSourceDir = join(this.runDir, "candidates", parent.candidateId, "traces");
         const parentTraces = readCandidateTraces(this.runDir, parent.candidateId);
+        const destTracesDir = join(experienceDir, "traces");
+        mkdirSync(destTracesDir, { recursive: true });
+        if (existsSync(parentTracesSourceDir)) {
+            try {
+                for (const file of readdirSync(parentTracesSourceDir).filter(f => f.endsWith(".json"))) {
+                    copyFileSync(join(parentTracesSourceDir, file), join(destTracesDir, file));
+                }
+            } catch { /* non-fatal — proposer can still read from original path */ }
+        }
+        // Also write an aggregate summary alongside the individual files
         if (parentTraces.length > 0) {
-            const tracesDir = join(experienceDir, "traces");
-            mkdirSync(tracesDir, { recursive: true });
-            this._writeJson(join(tracesDir, "summary.json"), {
+            this._writeJson(join(destTracesDir, "summary.json"), {
                 count: parentTraces.length,
                 successRate: parentTraces.filter(t => t.taskSucceeded).length / parentTraces.length,
                 avgEvalScore: parentTraces
                     .filter(t => t.evaluationScore !== null)
                     .reduce((s, t) => s + (t.evaluationScore ?? 0), 0)
                     / (parentTraces.filter(t => t.evaluationScore !== null).length || 1),
-                traces: parentTraces.slice(-20),  // last 20 for proposer context
             });
         }
 

@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import BetterSqlite3 from "better-sqlite3";
 import type { LLMClient } from "../llm.js";
+import { getDimensionValue } from "../harness/registry.js";
 import {
     bufferToEmbedding,
     cosineSimilarity,
@@ -1417,8 +1418,11 @@ export async function recall(
         const hoursAgo = record.created_at ? (Date.now() - new Date(record.created_at).getTime()) / 3600000 : 168; // default 1 week
         const recencyWeight = Math.exp(-0.01 * hoursAgo); // exponential decay, half-life ~70h
         const importanceWeight = (record.importance || 5) / 10; // normalized 0-1
-        // RRF score already encodes relevance, so blend with recency + importance
-        score = 0.5 * score + 0.25 * recencyWeight + 0.25 * importanceWeight;
+        // Weights tunable via Meta-Harness registry
+        const wRel = getDimensionValue<number>("memory.fusion.relevanceWeight") ?? 0.5;
+        const wRec = getDimensionValue<number>("memory.fusion.recencyWeight") ?? 0.25;
+        const wImp = getDimensionValue<number>("memory.fusion.importanceWeight") ?? 0.25;
+        score = wRel * score + wRec * recencyWeight + wImp * importanceWeight;
 
         fusedScores.push({ id, record, score });
     }
@@ -1433,11 +1437,12 @@ export async function recall(
             }
             const sanResults = spreadActivation(seedScores, db);
             if (sanResults.length > 0) {
+                const sanW = getDimensionValue<number>("memory.san.weight") ?? 0.3;
                 // Merge SAN results — load full records for new IDs
                 for (const san of sanResults) {
                     const existing = fusedScores.find((f) => f.id === san.memoryId);
                     if (existing) {
-                        existing.score += 0.3 * san.activationScore;
+                        existing.score += sanW * san.activationScore;
                     } else {
                         const memResult = db.exec(
                             `SELECT id, content, category, tags, importance, created_at, access_count
@@ -1448,7 +1453,7 @@ export async function recall(
                             fusedScores.push({
                                 id: san.memoryId,
                                 record: rowToMemory(memResult[0].values[0]),
-                                score: 0.3 * san.activationScore,
+                                score: sanW * san.activationScore,
                             });
                         }
                     }
@@ -1465,12 +1470,14 @@ export async function recall(
         const { associativeRecall, getPatternCount } = await import("./hopfield-memory.js");
         if (getPatternCount() > 0) {
             const hopfieldResults = await associativeRecall(query, 5);
+            const hopW = getDimensionValue<number>("memory.hopfield.weight") ?? 0.15;
+            const hopSim = getDimensionValue<number>("memory.hopfield.similarityThreshold") ?? 0.3;
             for (const hr of hopfieldResults) {
-                if (hr.similarity > 0.3) {
+                if (hr.similarity > hopSim) {
                     const existing = fusedScores.find((f) => f.id === hr.memoryId);
                     if (existing) {
                         // Boost existing results found associatively
-                        existing.score += 0.15 * hr.similarity;
+                        existing.score += hopW * hr.similarity;
                     } else {
                         // Add new associative results
                         const memResult = db.exec(
@@ -1482,7 +1489,7 @@ export async function recall(
                             fusedScores.push({
                                 id: hr.memoryId,
                                 record: rowToMemory(memResult[0].values[0]),
-                                score: 0.15 * hr.similarity,
+                                score: hopW * hr.similarity,
                             });
                         }
                     }
@@ -1501,11 +1508,12 @@ export async function recall(
         try {
             const queryEmb = await embedText(query);
             const topN = fusedScores.slice(0, Math.min(fusedScores.length, limit * 2));
+            const wCE = getDimensionValue<number>("memory.crossEncoder.blend") ?? 0.6;
             for (const item of topN) {
                 const contentEmb = await embedText(item.record.content.substring(0, 200));
                 const rerankSim = cosineSimilarity(queryEmb, contentEmb);
-                // Blend: 60% RRF score, 40% re-rank similarity (normalized to 0-0.03 range)
-                item.score = item.score * 0.6 + rerankSim * 0.012;
+                // Blend: wCE × RRF score + (1-wCE) × re-rank similarity (normalized)
+                item.score = item.score * wCE + rerankSim * (1 - wCE) * 0.03;
             }
         } catch {
             /* re-ranking non-fatal — fall through to RRF sort */
@@ -1567,7 +1575,8 @@ export async function recall(
     if (
         llm &&
         isEmbeddingReady() &&
-        (fusedScores.length < 3 || (fusedScores.length > 0 && fusedScores[0].score < 0.15))
+        (fusedScores.length < (getDimensionValue<number>("memory.hyde.minResults") ?? 3) ||
+            (fusedScores.length > 0 && fusedScores[0].score < (getDimensionValue<number>("memory.hyde.minTopScore") ?? 0.15)))
     ) {
         try {
             console.log(
