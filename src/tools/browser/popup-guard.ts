@@ -122,8 +122,9 @@ export async function dismissOverlayModals(page: Page): Promise<void> {
                     const s = window.getComputedStyle(el);
                     if (s.display !== "none" && s.visibility !== "hidden" && s.opacity !== "0") {
                         const rect = el.getBoundingClientRect();
-                        // Only hide full-page overlays (width > 50% of viewport)
-                        if (rect.width > window.innerWidth * 0.4 && rect.height > 50) {
+                        // Only hide near-fullscreen overlays (width > 65% AND height > 15%)
+                        // to avoid accidentally hiding legitimate sidebars or narrow drawers
+                        if (rect.width > window.innerWidth * 0.65 && rect.height > window.innerHeight * 0.15) {
                             (el as HTMLElement).style.display = "none";
                         }
                     }

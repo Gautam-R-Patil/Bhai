@@ -436,7 +436,7 @@ export const ATLAS_HUD_JS = `
 // ── Smart Wait: SPA-aware page readiness ─────────────────────────────────────
 // Avoids networkidle (never fires on SPAs with background analytics/polling).
 // Strategy: domcontentloaded → framework hydration signal → DOM stability.
-export async function waitForPageReady(page: Page, timeoutMs = 4000): Promise<void> {
+export async function waitForPageReady(page: Page, timeoutMs = 2500): Promise<void> {
     if (getCurrentMode() === "chrome") {
         await new Promise(resolve => setTimeout(resolve, Math.min(timeoutMs, 600)));
         return;
@@ -446,7 +446,7 @@ export async function waitForPageReady(page: Page, timeoutMs = 4000): Promise<vo
 
     // Step 1: domcontentloaded — HTML parsed, synchronous scripts done
     try {
-        await page.waitForLoadState("domcontentloaded", { timeout: Math.min(timeoutMs, 3000) });
+        await page.waitForLoadState("domcontentloaded", { timeout: Math.min(timeoutMs, 2000) });
     } catch { /* continue even on timeout */ }
 
     if (Date.now() >= deadline) return;
@@ -520,15 +520,19 @@ export async function withRetry<T>(
 // The JS function injected into EACH frame to find interactive elements.
 // Returns raw candidates with coordinates relative to the frame's viewport.
 
-export const SCAN_FRAME_JS = () => {
+// SCAN_FRAME_JS is stored as a raw JS string (not a compiled TypeScript function).
+// Reason: tsx/esbuild JIT-compiles TypeScript functions and may introduce module-level
+// helper variables (e.g. _d4, ht) that are unavailable when Playwright stringifies
+// the function and re-evaluates it inside the browser frame (ReferenceError: _d4).
+// Storing as a string bypasses all TypeScript/esbuild compilation of the body.
+// Call site: frame.evaluate(`(${SCAN_FRAME_JS})()`)
+export const SCAN_FRAME_JS = `function scanFrame() {
     const els = Array.from(document.querySelectorAll('*'));
 
     // ── UI Modal Context Guard ──
-    // Only treat modals as active if they're actually visible (not hidden off-screen or display:none)
     const activeModals = els.filter(el => {
         const role = el.getAttribute('role');
         if (role !== 'dialog' && role !== 'menu' && role !== 'alertdialog' && role !== 'listbox') return false;
-        // Check CSS visibility — hidden modals (dropdowns, drawers) shouldn't filter out the page
         try {
             const style = window.getComputedStyle(el);
             if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
@@ -538,19 +542,17 @@ export const SCAN_FRAME_JS = () => {
         return true;
     });
 
-    let activeModalRect: DOMRect | null = null;
+    let activeModalRect = null;
     if (activeModals.length > 0) {
         const activeModal = activeModals[activeModals.length - 1];
         activeModalRect = activeModal.getBoundingClientRect();
     }
 
-    // fingerprint = stable identity string for 3-tier element resolution (OpenCLI pattern).
-    // Format: "tag|id|role|trimmedText|ariaLabel" — survives SPA re-renders.
-    const candidateMap: Array<{ index: number; x: number; y: number; width: number; height: number; tag: string; text: string; score: number; editorType?: string; fingerprint?: string; hash?: number }> = [];
-    const seenCoords = new Set<string>();
+    const candidateMap = [];
+    const seenCoords = new Set();
 
     for (let i = 0; i < els.length; i++) {
-        const el = els[i] as HTMLElement;
+        const el = els[i];
 
         const tag = el.tagName.toLowerCase();
         const role = el.getAttribute('role');
@@ -605,14 +607,17 @@ export const SCAN_FRAME_JS = () => {
         const rect = el.getBoundingClientRect();
         if (rect.width < 5 || rect.height < 5) continue;
         // Check if element is inside a scrollable container — don't filter by window viewport alone
+        // Depth limit of 15 prevents runaway traversal on deeply nested DOM structures.
         const isInScrollableContainer = (() => {
             let parent = el.parentElement;
-            while (parent && parent !== document.documentElement) {
+            let depth = 0;
+            while (parent && parent !== document.documentElement && depth < 15) {
                 const ps = window.getComputedStyle(parent);
                 if ((ps.overflowY === 'auto' || ps.overflowY === 'scroll') && parent.scrollHeight > parent.clientHeight) {
                     return true;
                 }
                 parent = parent.parentElement;
+                depth++;
             }
             return false;
         })();
@@ -623,12 +628,12 @@ export const SCAN_FRAME_JS = () => {
         }
 
         // ── Paint-order occlusion detection (OpenCLI step 7) ────────────────
-        // Only run for first 60 candidates to avoid performance hit on large pages.
-        // elementFromPoint forces layout reflow — expensive on Amazon/large SPAs.
+        // Only run for first 10 candidates — elementFromPoint forces a full layout
+        // reflow and is very expensive on large SPAs like Amazon (500+ elements).
         let isOccluded = false;
         const cx = Math.round(rect.left + rect.width / 2);
         const cy = Math.round(rect.top + rect.height / 2);
-        if (candidateMap.length < 60 && cx >= 0 && cy >= 0 && cx < window.innerWidth && cy < window.innerHeight) {
+        if (candidateMap.length < 10 && cx >= 0 && cy >= 0 && cx < window.innerWidth && cy < window.innerHeight) {
             try {
                 const topEl = document.elementFromPoint(cx, cy);
                 if (topEl && topEl !== el && !el.contains(topEl) && !topEl.contains(el)) {
@@ -652,7 +657,7 @@ export const SCAN_FRAME_JS = () => {
             }
         }
 
-        const coordKey = `${x},${y}`;
+        const coordKey = x + ',' + y;
         if (seenCoords.has(coordKey)) continue;
         seenCoords.add(coordKey);
 
@@ -663,73 +668,68 @@ export const SCAN_FRAME_JS = () => {
         let text = '';
 
         if (tag === 'input' || tag === 'textarea' || tag === 'select') {
-            const inputEl = el as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
-            const inputType = (inputEl as HTMLInputElement).type || 'text';
+            const inputEl = el;
+            const inputType = inputEl.type || 'text';
 
             // Resolve the accessible label in priority order:
             // 1. aria-label / aria-labelledby  2. <label for=id>  3. placeholder  4. name
             let labelText = el.getAttribute('aria-label') || '';
             if (!labelText && el.id) {
-                const labelEl = document.querySelector(`label[for="${el.id}"]`);
-                if (labelEl) labelText = (labelEl as HTMLElement).innerText?.trim() || '';
+                const labelEl = document.querySelector('label[for="' + el.id + '"]');
+                if (labelEl) labelText = labelEl.innerText?.trim() || '';
             }
             if (!labelText) {
-                // Check if directly wrapped in a <label>
                 const parentLabel = el.closest('label');
                 if (parentLabel) {
-                    labelText = (parentLabel as HTMLElement).innerText?.replace(/\n/g, ' ').trim().substring(0, 30) || '';
+                    labelText = parentLabel.innerText?.replace(/\\n/g, ' ').trim().substring(0, 30) || '';
                 }
             }
-            const placeholder = (inputEl as HTMLInputElement).placeholder || '';
-            const currentVal  = (inputEl as HTMLInputElement).value?.substring(0, 30) || '';
+            const placeholder = inputEl.placeholder || '';
+            const currentVal  = inputEl.value?.substring(0, 30) || '';
             const ariaLblBy   = el.getAttribute('aria-labelledby');
             if (!labelText && ariaLblBy) {
                 const lbEl = document.getElementById(ariaLblBy);
-                if (lbEl) labelText = (lbEl as HTMLElement).innerText?.trim() || '';
+                if (lbEl) labelText = lbEl.innerText?.trim() || '';
             }
 
             if (tag === 'select') {
                 // OpenCLI: list all options (up to 20) so agent can pick the right one
-                const selectEl = el as HTMLSelectElement;
+                const selectEl = el;
                 const opts = Array.from(selectEl.options).slice(0, 20).map(o => o.text.trim()).filter(Boolean);
                 const selectedText = selectEl.options[selectEl.selectedIndex]?.text.trim() || '';
                 let t = labelText || placeholder || el.getAttribute('name') || 'select';
-                if (selectedText) t += ` value=${selectedText}`;
-                if (opts.length > 0) t += ` options=[${opts.join(', ')}]`;
+                if (selectedText) t += ' value=' + selectedText;
+                if (opts.length > 0) t += ' options=[' + opts.join(', ') + ']';
                 text = t.substring(0, 80);
             } else if (inputType === 'date' || inputType === 'datetime-local' || inputType === 'month' || inputType === 'week' || inputType === 'time') {
                 // Date inputs: expose format hint and constraints
                 let t = labelText || placeholder || el.getAttribute('name') || inputType;
-                const min = (el as HTMLInputElement).min;
-                const max = (el as HTMLInputElement).max;
+                const min = inputEl.min;
+                const max = inputEl.max;
                 const fmt = inputType === 'date' ? 'YYYY-MM-DD' : inputType === 'time' ? 'HH:MM' : inputType;
-                t += ` format=${fmt}`;
-                if (min) t += ` min=${min}`;
-                if (max) t += ` max=${max}`;
-                if (currentVal) t += ` value=${currentVal}`;
+                t += ' format=' + fmt;
+                if (min) t += ' min=' + min;
+                if (max) t += ' max=' + max;
+                if (currentVal) t += ' value=' + currentVal;
                 text = t.substring(0, 80);
             } else if (inputType === 'checkbox' || inputType === 'radio') {
-                const checked = (el as HTMLInputElement).checked;
+                const checked = inputEl.checked;
                 const lbl = labelText || el.getAttribute('value') || placeholder || el.getAttribute('name') || inputType;
-                text = `${lbl.substring(0, 30)} [${checked ? '✓' : ' '}]`;
+                text = lbl.substring(0, 30) + ' [' + (checked ? '✓' : ' ') + ']';
             } else if (inputType === 'file') {
-                const accept = (el as HTMLInputElement).accept || '';
-                const multiple = (el as HTMLInputElement).multiple;
-                text = `${labelText || 'file upload'}${accept ? ` accept=${accept}` : ''}${multiple ? ' multiple' : ''}`.substring(0, 60);
+                const accept = inputEl.accept || '';
+                const multiple = inputEl.multiple;
+                text = ((labelText || 'file upload') + (accept ? ' accept=' + accept : '') + (multiple ? ' multiple' : '')).substring(0, 60);
             } else {
                 // Text, email, tel, number, search, password, url, textarea
-                const displayType = inputType !== 'text' ? `[${inputType}]` : '';
-                let t = `${displayType}${labelText || placeholder || el.getAttribute('name') || ''}`;
-                if (currentVal && inputType !== 'password') t += ` value=${currentVal}`;
+                const displayType = inputType !== 'text' ? '[' + inputType + ']' : '';
+                let t = displayType + (labelText || placeholder || el.getAttribute('name') || '');
+                if (currentVal && inputType !== 'password') t += ' value=' + currentVal;
                 text = t.substring(0, 60);
-            }
-            // Tag enrichment: input[type] for non-text inputs in the tag field
-            if (tag === 'input' && inputType !== 'text' && inputType !== 'submit' && inputType !== 'button') {
-                // Handled by the text prefix above; tag stays as 'input'
             }
         } else {
             // Non-form elements: use innerText / aria-label as before
-            text = (el as HTMLElement).innerText?.replace(/\n/g, ' ').substring(0, 40)
+            text = el.innerText?.replace(/\\n/g, ' ').substring(0, 40)
                 || el.getAttribute('aria-label')
                 || el.getAttribute('title')
                 || '';
@@ -765,11 +765,11 @@ export const SCAN_FRAME_JS = () => {
 
     // ── Shadow DOM traversal ──
     for (let si = 0; si < els.length; si++) {
-        const shadowHost = els[si] as HTMLElement;
+        const shadowHost = els[si];
         if (!shadowHost.shadowRoot) continue;
         const shadowEls = Array.from(shadowHost.shadowRoot.querySelectorAll('*'));
         for (const sel of shadowEls) {
-            const sTag = (sel as HTMLElement).tagName?.toLowerCase() || '';
+            const sTag = sel.tagName?.toLowerCase() || '';
             const sRole = sel.getAttribute?.('role') || '';
             const sIsInt = ['a', 'button', 'input', 'textarea', 'select'].includes(sTag) ||
                           ['button', 'link', 'tab', 'menuitem', 'checkbox', 'radio'].includes(sRole || '') ||
@@ -779,24 +779,24 @@ export const SCAN_FRAME_JS = () => {
             if (sRect.width < 5 || sRect.height < 5) continue;
             const sx = Math.round(sRect.left + sRect.width / 2);
             const sy = Math.round(sRect.top + sRect.height / 2);
-            const sKey = `${sx},${sy}`;
+            const sKey = sx + ',' + sy;
             if (seenCoords.has(sKey)) continue;
             seenCoords.add(sKey);
-            const sText = (sel as HTMLElement).innerText?.replace(/\n/g, ' ').substring(0, 40) ||
+            const sText = sel.innerText?.replace(/\\n/g, ' ').substring(0, 40) ||
                           sel.getAttribute?.('aria-label') || '';
             candidateMap.push({ index: -1, x: sx, y: sy, width: sRect.width, height: sRect.height, tag: sTag, text: sText.trim(), score: 10 });
         }
     }
 
     // ── Editor Detection ──
-    const editorDetections: typeof candidateMap = [];
+    const editorDetections = [];
     const edTs = Date.now();
 
     // Monaco
     document.querySelectorAll('.monaco-editor').forEach((el, i) => {
         const rect = el.getBoundingClientRect();
         if (rect.width < 50 || rect.height < 50) return;
-        const eid = `atlas-editor-monaco-${edTs}-${i}`;
+        const eid = 'atlas-editor-monaco-' + edTs + '-' + i;
         el.setAttribute('data-atlas-id', eid);
         editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'code-editor', text: 'Code Editor (Monaco)', score: 25, editorType: 'monaco' });
     });
@@ -804,16 +804,16 @@ export const SCAN_FRAME_JS = () => {
     document.querySelectorAll('.cm-editor').forEach((el, i) => {
         const rect = el.getBoundingClientRect();
         if (rect.width < 50 || rect.height < 50) return;
-        const eid = `atlas-editor-cm6-${edTs}-${i}`;
+        const eid = 'atlas-editor-cm6-' + edTs + '-' + i;
         el.setAttribute('data-atlas-id', eid);
         editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'code-editor', text: 'Code Editor (CodeMirror)', score: 25, editorType: 'codemirror6' });
     });
     // CodeMirror 5
     document.querySelectorAll('.CodeMirror').forEach((el, i) => {
-        if ((el as HTMLElement).closest('.cm-editor')) return;
+        if (el.closest('.cm-editor')) return;
         const rect = el.getBoundingClientRect();
         if (rect.width < 50 || rect.height < 50) return;
-        const eid = `atlas-editor-cm5-${edTs}-${i}`;
+        const eid = 'atlas-editor-cm5-' + edTs + '-' + i;
         el.setAttribute('data-atlas-id', eid);
         editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'code-editor', text: 'Code Editor (CodeMirror)', score: 25, editorType: 'codemirror5' });
     });
@@ -821,7 +821,7 @@ export const SCAN_FRAME_JS = () => {
     document.querySelectorAll('.ace_editor').forEach((el, i) => {
         const rect = el.getBoundingClientRect();
         if (rect.width < 50 || rect.height < 50) return;
-        const eid = `atlas-editor-ace-${edTs}-${i}`;
+        const eid = 'atlas-editor-ace-' + edTs + '-' + i;
         el.setAttribute('data-atlas-id', eid);
         editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'code-editor', text: 'Code Editor (Ace)', score: 25, editorType: 'ace' });
     });
@@ -829,7 +829,7 @@ export const SCAN_FRAME_JS = () => {
     document.querySelectorAll('.ql-editor[contenteditable]').forEach((el, i) => {
         const rect = el.getBoundingClientRect();
         if (rect.width < 50 || rect.height < 50) return;
-        const eid = `atlas-editor-quill-${edTs}-${i}`;
+        const eid = 'atlas-editor-quill-' + edTs + '-' + i;
         el.setAttribute('data-atlas-id', eid);
         editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: 'Rich Text Editor (Quill)', score: 25, editorType: 'quill' });
     });
@@ -837,25 +837,25 @@ export const SCAN_FRAME_JS = () => {
     document.querySelectorAll('.tox-tinymce').forEach((el, i) => {
         const rect = el.getBoundingClientRect();
         if (rect.width < 50 || rect.height < 50) return;
-        const eid = `atlas-editor-tinymce-${edTs}-${i}`;
+        const eid = 'atlas-editor-tinymce-' + edTs + '-' + i;
         el.setAttribute('data-atlas-id', eid);
         editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: 'Rich Text Editor (TinyMCE)', score: 25, editorType: 'tinymce' });
     });
     // ProseMirror / Tiptap
     document.querySelectorAll('.ProseMirror[contenteditable]').forEach((el, i) => {
-        const isTiptap = !!(el as HTMLElement).closest('.tiptap') || el.classList.contains('tiptap');
+        const isTiptap = !!el.closest('.tiptap') || el.classList.contains('tiptap');
         const rect = el.getBoundingClientRect();
         if (rect.width < 50 || rect.height < 50) return;
         const type = isTiptap ? 'tiptap' : 'prosemirror';
-        const eid = `atlas-editor-${type}-${edTs}-${i}`;
+        const eid = 'atlas-editor-' + type + '-' + edTs + '-' + i;
         el.setAttribute('data-atlas-id', eid);
-        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: `Rich Text Editor (${isTiptap ? 'Tiptap' : 'ProseMirror'})`, score: 25, editorType: type });
+        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: 'Rich Text Editor (' + (isTiptap ? 'Tiptap' : 'ProseMirror') + ')', score: 25, editorType: type });
     });
     // Slate
     document.querySelectorAll('[data-slate-editor]').forEach((el, i) => {
         const rect = el.getBoundingClientRect();
         if (rect.width < 50 || rect.height < 50) return;
-        const eid = `atlas-editor-slate-${edTs}-${i}`;
+        const eid = 'atlas-editor-slate-' + edTs + '-' + i;
         el.setAttribute('data-atlas-id', eid);
         editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: 'Rich Text Editor (Slate)', score: 25, editorType: 'slate' });
     });
@@ -863,15 +863,15 @@ export const SCAN_FRAME_JS = () => {
     document.querySelectorAll('.DraftEditor-root').forEach((el, i) => {
         const rect = el.getBoundingClientRect();
         if (rect.width < 50 || rect.height < 50) return;
-        const eid = `atlas-editor-draftjs-${edTs}-${i}`;
+        const eid = 'atlas-editor-draftjs-' + edTs + '-' + i;
         el.setAttribute('data-atlas-id', eid);
         editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: 'Rich Text Editor (Draft.js)', score: 25, editorType: 'draftjs' });
     });
 
     // Merge: editors first, then deduplicate by coords
     if (editorDetections.length > 0) {
-        const editorCoords = new Set(editorDetections.map(e => `${e.x},${e.y}`));
-        const filtered = candidateMap.filter(c => !editorCoords.has(`${c.x},${c.y}`));
+        const editorCoords = new Set(editorDetections.map(e => e.x + ',' + e.y));
+        const filtered = candidateMap.filter(c => !editorCoords.has(c.x + ',' + c.y));
         candidateMap.length = 0;
         candidateMap.push(...editorDetections, ...filtered);
     }
@@ -882,16 +882,15 @@ export const SCAN_FRAME_JS = () => {
         return a.x - b.x;
     });
 
-    // Tag them in the DOM and return metadata.
     // Cap at 150 elements — more than enough for any page, saves token budget.
     const finalMap = candidateMap.slice(0, 150).map((c, i) => {
-        const id = `atlas-el-${Date.now()}-${i}`;
+        const id = 'atlas-el-' + Date.now() + '-' + i;
         if (c.index >= 0) {
-            const el = els[c.index] as HTMLElement;
+            const el = els[c.index];
             el.setAttribute('data-atlas-id', id);
         }
         return {
-            label: -1, // Labels assigned AFTER merging across frames
+            label: -1,
             x: c.x,
             y: c.y,
             tag: c.tag,
@@ -903,7 +902,7 @@ export const SCAN_FRAME_JS = () => {
     });
 
     return finalMap;
-};
+}`;
 
 // ── Batch dispose handles asynchronously ───────
 async function batchDisposeHandles(elements: InteractiveElement[]): Promise<void> {
@@ -1001,8 +1000,9 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
     // native accessibility engine — bypasses eval scope entirely.
     // ═══════════════════════════════════════════════
     let ariaElements: InteractiveElement[] = [];
+    let ariaParsedCount = 0; // track how many were parsed (vs resolved) to detect low-resolution pages
     try {
-        const yaml = await page.locator("body").ariaSnapshot({ timeout: 3000 });
+        const yaml = await page.locator("body").ariaSnapshot({ timeout: 1200 });
         if (yaml && yaml.trim().length > 10) {
             const INTERACTIVE_ROLES = new Set([
                 "button", "link", "textbox", "searchbox", "combobox", "listbox",
@@ -1022,14 +1022,14 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
                 const ref = (/\[ref=([\w\d]+)\]/.exec(line)?.[1]) ?? "";
                 parsed.push({ role, name: m[2], ref, idx });
             });
+            ariaParsedCount = parsed.length;
 
             // Resolve bounding boxes in parallel.
-            // Cap at 60 elements — beyond that the scan becomes too slow for real-time use.
-            // On pages with 100+ interactive elements (Amazon), the top 60 by DOM order
-            // are almost always sufficient to find the target element.
-            const BATCH = 20;
+            // Process all in a single Promise.all — each tryBox is already parallel (300ms cap).
+            // 80-element cap; DOM order ensures the most important elements come first.
+            const BATCH = 80;
             const vw = 1280, vh = 800; // viewport dimensions
-            for (let i = 0; i < Math.min(parsed.length, 60); i += BATCH) {
+            for (let i = 0; i < Math.min(parsed.length, 80); i += BATCH) {
                 const batch = parsed.slice(i, i + BATCH);
                 const boxes = await Promise.all(
                     batch.map(async (p) => {
@@ -1037,10 +1037,8 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
                         const tryBox = async (exact: boolean, visibleOnly: boolean) => {
                             try {
                                 const loc = page.getByRole(roleType, { name: p.name, exact });
-                                // Prefer visible elements — avoids off-screen duplicates
                                 const target = visibleOnly ? loc.filter({ visible: true }).first() : loc.first();
-                                const box = await target.boundingBox({ timeout: 400 }).catch(() => null);
-                                // Only accept boxes that are within the viewport (or close)
+                                const box = await target.boundingBox({ timeout: 300 }).catch(() => null);
                                 if (box && box.width > 2 && box.height > 2 &&
                                     box.x > -200 && box.y > -200 &&
                                     box.x < vw + 200 && box.y < vh + 200) {
@@ -1049,11 +1047,27 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
                                 return null;
                             } catch { return null; }
                         };
-                        // Try: exact+visible → exact+any → fuzzy+visible → fuzzy+any
-                        const box = await tryBox(true, true)
-                            ?? await tryBox(true, false)
-                            ?? await tryBox(false, true)
-                            ?? await tryBox(false, false);
+                        // Race all 4 variants in parallel — first non-null wins (~300ms vs 1.6s sequential)
+                        const raceResults = await Promise.all([
+                            tryBox(true, true),
+                            tryBox(true, false),
+                            tryBox(false, true),
+                            tryBox(false, false),
+                        ]);
+                        let box = raceResults.find(b => b !== null) ?? null;
+                        // Fallback for long-named elements (e.g. Amazon product links):
+                        // getByRole with full 80-char title fails; try short prefix match instead.
+                        if (!box && (p.role === 'link' || p.role === 'button') && p.name.length > 5) {
+                            try {
+                                const shortName = p.name.substring(0, 25);
+                                const fallbackLoc = page.locator(p.role === 'link' ? 'a' : 'button')
+                                    .filter({ hasText: shortName });
+                                const fb = await fallbackLoc.first().boundingBox({ timeout: 400 }).catch(() => null);
+                                if (fb && fb.width > 2 && fb.height > 2 && fb.x > -200 && fb.y > -200 && fb.x < vw + 200 && fb.y < vh + 200) {
+                                    box = fb;
+                                }
+                            } catch { /* ignore */ }
+                        }
                         return box ? { p, box } : null;
                     })
                 );
@@ -1079,16 +1093,23 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
     } catch { /* ariaSnapshot unavailable or page not ready — fall through to SCAN_FRAME_JS */ }
 
     // ═══════════════════════════════════════════════
-    // FALLBACK: SCAN_FRAME_JS across all frames
-    // Used when ariaSnapshot yields < 3 elements (canvas apps, WebGL, old pages)
+    // FALLBACK / SUPPLEMENT: SCAN_FRAME_JS across all frames
+    // Runs when: (a) ariaSnapshot returns < 3 elements (canvas/WebGL pages), OR
+    //            (b) ariaSnapshot parsed many elements but resolved very few —
+    //                indicates low-resolution rate (e.g. Amazon: 274 parsed, 8 resolved = 3%).
+    //                In that case SCAN_FRAME_JS supplements with DOM-based candidates.
     // ═══════════════════════════════════════════════
+    // Low-resolution: ariaSnapshot parsed many elements but resolved very few.
+    // This indicates getByRole matching failure (e.g. Amazon: 274 parsed, 8 resolved).
+    // Trigger SCAN_FRAME_JS to supplement with DOM-based candidates.
+    const ariaResolutionPoor = ariaParsedCount > 20 && ariaElements.length < 15 && ariaElements.length < ariaParsedCount * 0.25;
     const allFrames = page.frames(); // hoisted — also used for handle fetching below
     let legacyCandidates: Array<{ x: number; y: number; tag: string; text: string; score: number; atlasId: string; frameIndex: number; editorType?: string }> = [];
-    if (ariaElements.length < 3) {
+    if (ariaElements.length < 3 || ariaResolutionPoor) {
         const frameScanPromises = allFrames.map(async (frame: Page, fi: number) => {
             try {
-                const frameCandidates = await frame.evaluate(SCAN_FRAME_JS);
-                return frameCandidates.map((c: InteractiveElement & { score: number }) => ({ ...c, frameIndex: fi }));
+                const frameCandidates = await frame.evaluate(`(${SCAN_FRAME_JS})()`);
+                return (frameCandidates as Array<InteractiveElement & { score: number }>).map(c => ({ ...c, frameIndex: fi }));
             } catch (err) {
                 if (ariaElements.length === 0) {
                     console.warn(`  ⚠️ Frame ${fi} scan failed: ${(err as Error).message}`);
@@ -1100,11 +1121,27 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
         legacyCandidates = frameResults.flat();
     }
 
-    // Prefer ariaSnapshot results; merge legacy if ariaSnapshot was sparse
-    const allCandidates: Array<{ x: number; y: number; tag: string; text: string; score: number; atlasId: string; frameIndex: number; editorType?: string }> =
-        ariaElements.length >= 3
+    // Merge strategy: if SCAN_FRAME_JS ran and has more results, use it as base
+    // and prepend ariaSnapshot results (which have better semantic labels).
+    // Otherwise use whichever returned more elements.
+    let allCandidates: Array<{ x: number; y: number; tag: string; text: string; score: number; atlasId: string; frameIndex: number; editorType?: string }>;
+    if (legacyCandidates.length > ariaElements.length) {
+        // SCAN_FRAME_JS found more — merge: aria first (semantic priority), then legacy
+        const ariaCoords = new Set(ariaElements.map(e => `${e.x},${e.y}`));
+        const deduped = legacyCandidates.filter(c => !ariaCoords.has(`${c.x},${c.y}`));
+        allCandidates = [
+            ...ariaElements.map(e => ({ ...e, score: 15, frameIndex: 0 })),
+            ...deduped,
+        ];
+        console.log(`  🔍 Scanned ${allFrames.length} frame(s) in parallel, found ${allCandidates.length} interactive elements`);
+    } else {
+        allCandidates = ariaElements.length >= 3
             ? ariaElements.map(e => ({ ...e, score: 10, frameIndex: 0 }))
             : legacyCandidates;
+        if (ariaElements.length >= 3) {
+            console.log(`  🔍 Scanned ${allFrames.length} frame(s) in parallel, found ${ariaElements.length} interactive elements`);
+        }
+    }
 
     if (allCandidates.length === 0) {
         console.log("  ⚠️ getInteractiveElements: 0 candidates found across all methods");

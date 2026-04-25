@@ -545,6 +545,8 @@ export const browserMultiAction: ToolDefinition = {
                         await page.mouse.wheel(deltaX, deltaY);
                         invalidateCache();
                         setLastElementMap([]); // clear stale positions after scroll
+                        // Allow DOM to settle before final_scan ariaSnapshot runs
+                        await new Promise(r => setTimeout(r, 500));
                         return { success: true };
                     }
                     case 'keyboard': {
@@ -555,6 +557,8 @@ export const browserMultiAction: ToolDefinition = {
                             for (const mod of modifiers) await page.keyboard.down(mod);
                             await page.keyboard.press(key);
                             for (const mod of modifiers.reverse()) await page.keyboard.up(mod);
+                            // Let DOM settle after keyboard action (e.g. form submit, dialog dismiss)
+                            await new Promise(r => setTimeout(r, 150));
                             return { success: true };
                         }
                         return { success: false, error: 'No combo provided' };
