@@ -43,7 +43,11 @@ export {
     CLICK_INDICATOR_JS,
     SCROLL_INDICATOR_JS,
     ATLAS_HUD_JS,
-    SCAN_FRAME_JS
+    SCAN_FRAME_JS,
+    GET_FORM_STATE_JS,
+    SCROLL_TO_ELEMENT_JS,
+    AUTO_SCROLL_JS,
+    NETWORK_REQUESTS_JS,
 } from "./core.js";
 
 // Export navigation tools
@@ -91,6 +95,14 @@ export { browserHandleCaptcha, detectCaptcha, handleCaptchaIfPresent } from "./c
 
 // Export popup guard utilities
 export { dismissCookieBanner, dismissOverlayModals, attachPopupGuard } from "./popup-guard.js";
+
+// Export OpenCLI-inspired advanced tools
+export {
+    browserBatchFetch, browserAutoScroll, browserNetworkRequests, browserFormState,
+    browserScrollToElement, browserInterceptStart, browserInterceptRead,
+    browserExtractArticle, browserConnectElectron, browserWaitForSelector,
+    openCliTools,
+} from "./opencli-tools.js";
 
 // Export native browser acceleration + IP protection wrapper
 export {
@@ -190,6 +202,7 @@ import { browserParallelTabs, browserParallelActions, browserMultiAction } from 
 import { browserSetMode, browserChromeStatus } from "./mode-tools.js";
 import { browserVideoControl } from "./video-control.js";
 import { browserHandleCaptcha } from "./captcha.js";
+import { openCliTools } from "./opencli-tools.js";
 
 export const browserTools = [
     // Navigation
@@ -228,6 +241,8 @@ export const browserTools = [
     browserParallelTabs,
     browserParallelActions,
     browserMultiAction,
+    // OpenCLI-inspired tools
+    ...openCliTools,
     // Chrome Extension Mode
     browserSetMode,
     browserChromeStatus,

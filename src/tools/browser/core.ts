@@ -239,6 +239,73 @@ export async function getActivePage(): Promise<Page> {
     return pages[idx];
 }
 
+// ── Form State Snapshot (OpenCLI getFormStateJs) ─────────────────────────────
+// Returns all form field values as { name/id → value } map in one evaluate() call.
+// Handles checkbox/radio as boolean, select-multiple as array.
+export const GET_FORM_STATE_JS = `() => {
+    const out = {};
+    const fields = document.querySelectorAll('input,select,textarea');
+    for (const el of fields) {
+        const key = el.id || el.name || el.getAttribute('aria-label') || null;
+        if (!key) continue;
+        if (el.type === 'checkbox' || el.type === 'radio') {
+            out[key] = el.checked;
+        } else if (el.tagName === 'SELECT' && el.multiple) {
+            out[key] = Array.from(el.selectedOptions).map(o => o.value);
+        } else {
+            out[key] = el.value;
+        }
+    }
+    return out;
+}`;
+
+// ── Scroll to ref (OpenCLI scrollToRefJs) ────────────────────────────────────
+// Scroll a data-atlas-id (or CSS selector) into view with instant behavior.
+export const SCROLL_TO_ELEMENT_JS = `(selector) => {
+    const el = document.querySelector('[data-atlas-id="' + selector + '"]')
+             || document.querySelector(selector);
+    if (el) el.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'nearest' });
+    return !!el;
+}`;
+
+// ── AutoScroll with DOM mutation settle (OpenCLI autoScrollJs) ───────────────
+// Scrolls page N times with settle detection between each scroll.
+// Resolves after each scroll when no DOM mutations for QUIET_MS.
+export const AUTO_SCROLL_JS = `(times, delayMs, quietMs) => {
+    return new Promise(async (resolve) => {
+        for (let i = 0; i < (times || 3); i++) {
+            window.scrollBy({ top: window.innerHeight * 0.85, behavior: 'smooth' });
+            await new Promise(r => {
+                let timer = setTimeout(r, quietMs || 800);
+                const obs = new MutationObserver(() => {
+                    clearTimeout(timer);
+                    timer = setTimeout(() => { obs.disconnect(); r(); }, quietMs || 800);
+                });
+                obs.observe(document.body, { childList: true, subtree: true });
+                setTimeout(() => { obs.disconnect(); r(); }, delayMs || 2000);
+            });
+        }
+        resolve(true);
+    });
+}`;
+
+// ── Network requests via Performance API (OpenCLI networkRequestsJs) ─────────
+// Returns all network requests made by the page without CDP Network domain.
+// Works in both Playwright and Chrome extension modes.
+export const NETWORK_REQUESTS_JS = `(includeStatic) => {
+    const staticExts = /\\.(png|jpg|jpeg|gif|webp|svg|ico|woff2?|ttf|eot|css)$/i;
+    return performance.getEntriesByType('resource').filter(e => {
+        if (!includeStatic && staticExts.test(e.name)) return false;
+        return true;
+    }).map(e => ({
+        url: e.name,
+        type: e.initiatorType,
+        duration: Math.round(e.duration),
+        transferSize: e.transferSize || 0,
+        status: e.responseStatus || 0,
+    }));
+}`;
+
 // ── Visual Indicators (Playwright / Headless) ────────────────────────────────
 // Injected into the page on each interaction to give the user clear, polished
 // feedback about what the browser agent is doing.
@@ -404,32 +471,27 @@ export async function waitForPageReady(page: Page, timeoutMs = 4000): Promise<vo
 
     if (Date.now() >= deadline) return;
 
-    // Step 3: DOM mutation stability — wait until no mutations for 350ms
+    // Step 3: DOM stability (OpenCLI waitForDomStableJs pattern)
+    // MutationObserver resets a quiet-timer on every mutation.
+    // Resolves when quiet for QUIET_MS or after MAX_MS cap.
+    // More reliable than the setInterval approach — no polling, immediate resolution.
     const stabilityBudget = Math.min(deadline - Date.now(), 2000);
     if (stabilityBudget > 600) {
+        const QUIET_MS = Math.min(350, stabilityBudget / 3);
         try {
-            await page.waitForFunction(
-                () => {
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    const w = window as any;
-                    if (w.__atlasStabilityDone) { delete w.__atlasStabilityDone; return true; }
-                    if (w.__atlasStabilityRunning) return false;
-                    w.__atlasStabilityRunning = true;
-                    let lastMutation = Date.now();
-                    const obs = new MutationObserver(() => { lastMutation = Date.now(); });
-                    obs.observe(document.documentElement, { childList: true, subtree: true });
-                    const iv = setInterval(() => {
-                        if (Date.now() - lastMutation >= 350) {
-                            obs.disconnect();
-                            clearInterval(iv);
-                            delete w.__atlasStabilityRunning;
-                            w.__atlasStabilityDone = true;
-                        }
-                    }, 50);
-                    return false;
-                },
-                { timeout: stabilityBudget, polling: 100 }
-            );
+            await page.evaluate((maxMs: number, quietMs: number) => {
+                return new Promise<string>((resolve) => {
+                    let timer: ReturnType<typeof setTimeout> | null = null;
+                    const cap = setTimeout(() => { obs.disconnect(); resolve('capped'); }, maxMs);
+                    const obs = new MutationObserver(() => {
+                        if (timer) clearTimeout(timer);
+                        timer = setTimeout(() => { clearTimeout(cap); obs.disconnect(); resolve('quiet'); }, quietMs);
+                    });
+                    obs.observe(document.documentElement, { childList: true, subtree: true, attributes: false });
+                    // Start quiet timer immediately — resolve if nothing changes
+                    timer = setTimeout(() => { clearTimeout(cap); obs.disconnect(); resolve('quiet'); }, quietMs);
+                });
+            }, stabilityBudget, QUIET_MS).catch(() => {}); // non-fatal
         } catch { /* stability budget exhausted — page is usable */ }
     }
 }
@@ -484,7 +546,7 @@ export const SCAN_FRAME_JS = () => {
 
     // fingerprint = stable identity string for 3-tier element resolution (OpenCLI pattern).
     // Format: "tag|id|role|trimmedText|ariaLabel" — survives SPA re-renders.
-    const candidateMap: Array<{ index: number; x: number; y: number; width: number; height: number; tag: string; text: string; score: number; editorType?: string; fingerprint?: string }> = [];
+    const candidateMap: Array<{ index: number; x: number; y: number; width: number; height: number; tag: string; text: string; score: number; editorType?: string; fingerprint?: string; hash?: number }> = [];
     const seenCoords = new Set<string>();
 
     for (let i = 0; i < els.length; i++) {
@@ -520,7 +582,23 @@ export const SCAN_FRAME_JS = () => {
             } catch { continue; }
         }
 
+        // ── Framework listener detection (OpenCLI dom-snapshot.ts) ──────────
+        // React/Vue/Angular attach event listeners as non-enumerable properties.
+        // Check for framework fiber keys to mark framework-wired elements interactive
+        // even when they have no native onclick or cursor:pointer.
+        let hasFrameworkListener = false;
         if (!(isNativeInt || isRoleInt || hasOnClick || isContentEditable || hasTabIndex || hasCursorPointer || hasButtonClass || hasAriaPopup || hasAriaExpanded || hasAriaControls)) {
+            for (const k of Object.keys(el)) {
+                if (k.startsWith('__reactFiber') || k.startsWith('__reactEventHandlers') ||
+                    k.startsWith('__vue') || k.startsWith('ng-reflect') ||
+                    k.startsWith('_nghost') || k.startsWith('_ngcontent')) {
+                    hasFrameworkListener = true;
+                    break;
+                }
+            }
+        }
+
+        if (!(isNativeInt || isRoleInt || hasOnClick || isContentEditable || hasTabIndex || hasCursorPointer || hasButtonClass || hasAriaPopup || hasAriaExpanded || hasAriaControls || hasFrameworkListener)) {
             continue;
         }
 
@@ -542,6 +620,27 @@ export const SCAN_FRAME_JS = () => {
             // Allow elements up to 2x viewport height for pages that render below the fold
             if (rect.top > window.innerHeight * 2 || rect.bottom < -window.innerHeight) continue;
             if (rect.left > window.innerWidth * 2 || rect.right < -window.innerWidth) continue;
+        }
+
+        // ── Paint-order occlusion detection (OpenCLI step 7) ────────────────
+        // elementFromPoint samples center — if another element is in front with
+        // solid background (opacity > 0.5 and non-transparent BG), the element
+        // is behind an overlay and should be deprioritized (not removed, just lower score).
+        let isOccluded = false;
+        const cx = Math.round(rect.left + rect.width / 2);
+        const cy = Math.round(rect.top + rect.height / 2);
+        if (cx >= 0 && cy >= 0 && cx < window.innerWidth && cy < window.innerHeight) {
+            try {
+                const topEl = document.elementFromPoint(cx, cy);
+                if (topEl && topEl !== el && !el.contains(topEl) && !topEl.contains(el)) {
+                    const tcs = window.getComputedStyle(topEl);
+                    const tOpacity = parseFloat(tcs.opacity || '1');
+                    const tBg = tcs.backgroundColor;
+                    if (tOpacity >= 0.5 && tBg !== 'rgba(0, 0, 0, 0)' && tBg !== 'transparent') {
+                        isOccluded = true;
+                    }
+                }
+            } catch { /* elementFromPoint can throw in iframes */ }
         }
 
         const x = Math.round(rect.left + rect.width / 2);
@@ -643,6 +742,14 @@ export const SCAN_FRAME_JS = () => {
         if (text.trim().length > 0) score += 5;
         if (hasCursorPointer) score += 3;
         if (hasButtonClass) score += 2;
+        if (hasFrameworkListener) score += 4;
+        if (isOccluded) score -= 6;   // deprioritize occluded elements (don't remove)
+
+        // DJB2 hash for incremental diff marking (OpenCLI dom-snapshot.ts step 13)
+        // New elements (not in previous scan) get * prefix in output
+        const fpStr = tag + '|' + (el.id||'') + '|' + (typeof className==='string'?className.slice(0,50):'') + '|' + text.trim().slice(0,40);
+        let djb2 = 5381;
+        for (let ci = 0; ci < fpStr.length; ci++) djb2 = ((djb2 * 33) + fpStr.charCodeAt(ci)) >>> 0;
 
         // Stable fingerprint for three-tier resolution (OpenCLI innovation)
         const fp = [
@@ -654,7 +761,7 @@ export const SCAN_FRAME_JS = () => {
             el.getAttribute('data-testid') || '',
         ].join('|');
 
-        candidateMap.push({ index: i, x, y, width: rect.width, height: rect.height, tag, text: text.trim(), score, fingerprint: fp });
+        candidateMap.push({ index: i, x, y, width: rect.width, height: rect.height, tag, text: text.trim(), score, fingerprint: fp, hash: djb2 });
     }
 
     // ── Shadow DOM traversal ──

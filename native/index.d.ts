@@ -2739,9 +2739,29 @@ export interface ElementForCompression {
  */
 export declare function compressElementsForLlm(elements: Array<ElementForCompression>, maxTextLen?: number | undefined | null, maxElements?: number | undefined | null): string
 /**
- * Return the JavaScript string to inject via addInitScript() for stealth.
- * Stored in Rust binary — not visible in TypeScript source or unpacked apps.
- * `session_seed`: any u32 — used to vary internal variable names per session.
+ * Compute a DJB2-style 32-bit hash over an element descriptor string.
+ * Used for incremental snapshot diff marking — new elements (not in prevHashes)
+ * get a `*` prefix so agents see only what changed after an action.
+ *
+ * Input format: "tag|id|class[:50]|text[:40]"
+ * Same algorithm as OpenCLI's hashElement() — compatible hash values.
+ */
+export declare function djb2ElementHash(descriptor: string): number
+/**
+ * Batch hash a list of element descriptors. Returns parallel array of u32 hashes.
+ * More efficient than N individual calls for large element lists.
+ */
+export declare function djb2BatchHash(descriptors: Array<string>): Array<number>
+/**
+ * Generate the JS string for element hashing in-page (injected via evaluate).
+ * Produces the same DJB2 hash as djb2_element_hash() for cross-validation.
+ */
+export declare function getElementHashJs(): string
+/**
+ * Return the fully upgraded 13-patch stealth script (OpenCLI-inspired).
+ * Compiled into Rust binary — never readable from TypeScript source or unpacked apps.
+ * Uses WeakMap toString disguise so patched functions return `[native code]`.
+ * Variable names are session-seeded to defeat fingerprint pattern matching.
  */
 export declare function getStealthInitScript(sessionSeed: number): string
 /**

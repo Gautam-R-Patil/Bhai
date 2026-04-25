@@ -560,6 +560,32 @@ export class ChromeExtensionBackend implements BrowserBackend {
         }
     }
 
+    // ── Native input via CDP (OpenCLI nativeType + setFileInput) ──
+
+    /** nativeType via Input.insertText — single CDP call, handles Unicode/CJK correctly.
+     *  Much faster than per-character key dispatch. Focus element first via evaluate. */
+    async nativeType(text: string): Promise<void> {
+        // First focus the active element if needed, then insert text in one shot
+        await sendBridgeCommand("execute_js", {
+            code: `(function(){const a=document.activeElement; if(a&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA'||a.isContentEditable)){a.focus();}})()`,
+        }, 3000).catch(() => {});
+        await sendBridgeCommand("cdp", { method: "Input.insertText", params: { text } }, 5000);
+    }
+
+    /** setFileInput via DOM.setFileInputFiles — Chrome reads from filesystem, no base64. */
+    async setFileInput(paths: string[], selector: string): Promise<void> {
+        // Get backendNodeId for the selector
+        const domResult = await sendBridgeCommand("execute_js", {
+            code: `(function(){const el=document.querySelector(${JSON.stringify(selector)});return el?Array.from(el.getAttributeNames()).reduce((a,k)=>{a[k]=el.getAttribute(k);return a;},{}):null;})()`,
+        }, 5000) as Record<string, string> | null;
+        if (!domResult) throw new Error(`setFileInput: element not found: ${selector}`);
+        // Use CDP DOM.setFileInputFiles
+        await sendBridgeCommand("cdp", {
+            method: "DOM.setFileInputFiles",
+            params: { files: paths, selector },
+        }, 10000);
+    }
+
     // ── Playwright-specific (not available in Chrome mode) ──
 
     async getPlaywrightPage(): Promise<unknown | null> {

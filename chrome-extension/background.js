@@ -419,6 +419,10 @@ async function handleCommand(cmd) {
         result = await waitFor(payload);
         break;
 
+      case "cdp":
+        result = await rawCDP(payload);
+        break;
+
       default:
         throw new Error(`Unknown command: ${type}`);
     }
@@ -1202,6 +1206,25 @@ async function executeJS(payload) {
   });
 
   return results[0]?.result;
+}
+
+// Raw CDP passthrough for nativeType, setFileInput, and other CDP methods.
+// Allowlisted to prevent arbitrary CDP abuse.
+const CDP_ALLOWED_METHODS = new Set([
+  'Input.insertText', 'Input.dispatchKeyEvent',
+  'DOM.setFileInputFiles', 'DOM.getBoxModel', 'DOM.getContentQuads',
+  'Page.captureScreenshot', 'Network.enable', 'Network.disable',
+  'Accessibility.getFullAXTree',
+]);
+
+async function rawCDP(payload) {
+  if (!CDP_ALLOWED_METHODS.has(payload.method)) {
+    throw new Error(`CDP method not allowed: ${payload.method}`);
+  }
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab || !tab.id) throw new Error("No active tab");
+  const result = await chrome.debugger.sendCommand({ tabId: tab.id }, payload.method, payload.params || {});
+  return result || { success: true };
 }
 
 async function navigate(payload) {

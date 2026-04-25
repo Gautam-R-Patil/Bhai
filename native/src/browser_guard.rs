@@ -264,10 +264,26 @@ pub fn compress_elements_for_llm(
         return "No interactive elements.".to_string();
     }
 
-    // ── Step 1: 99% bounding-box containment dedup (OpenCLI technique) ──────
-    // If element A's bounding box contains ≥99% of element B's area,
-    // they represent the same UI target. Keep the one with more text (richer label).
-    // This eliminates button+icon, link+svg, div+span nesting noise patterns.
+    // ── Step 1: Two-tier bounding-box containment dedup (OpenCLI dom-snapshot.ts) ───
+    //
+    // Tier A (non-interactive, 95% threshold): SVG/span/icon wrappers with no semantic
+    // value that are nearly fully contained in a parent interactive element.
+    // Exempt: aria-label, aria roles, form controls (input/select/textarea/label).
+    //
+    // Tier B (interactive, 99% threshold): button+icon pairs, link+svg, etc.
+    // where both are interactive but one is redundant.
+    // For each pair, keep the element with richer text (more descriptive for LLM).
+
+    // Classify elements as interactive (has rich semantic role)
+    const INTERACTIVE_TAGS: &[&str] = &["button","a","input","select","textarea","summary","details"];
+    const INTERACTIVE_ROLES: &[&str] = &["button","link","tab","menuitem","checkbox","radio","switch",
+        "option","combobox","listbox","treeitem","slider","spinbutton","textbox","searchbox"];
+
+    let is_interactive = |el: &ElementForCompression| -> bool {
+        INTERACTIVE_TAGS.contains(&el.tag.as_str()) ||
+        INTERACTIVE_ROLES.iter().any(|r| el.tag == *r)
+    };
+
     let mut containment_removed: Vec<bool> = vec![false; elements.len()];
 
     if elements.iter().any(|e| e.width > 0.0 && e.height > 0.0) {
@@ -280,6 +296,7 @@ pub fn compress_elements_for_llm(
             let a_right = a.x + a.width / 2.0;
             let a_bot   = a.y + a.height / 2.0;
             let a_area  = a.width * a.height;
+            let a_interactive = is_interactive(a);
 
             for j in (i + 1)..elements.len() {
                 if containment_removed[j] { continue; }
@@ -290,8 +307,9 @@ pub fn compress_elements_for_llm(
                 let b_right = b.x + b.width / 2.0;
                 let b_bot   = b.y + b.height / 2.0;
                 let b_area  = b.width * b.height;
+                let b_interactive = is_interactive(b);
 
-                // Compute intersection
+                // Intersection area
                 let ix = (a_right.min(b_right) - a_left.max(b_left)).max(0.0);
                 let iy = (a_bot.min(b_bot)     - a_top.max(b_top)).max(0.0);
                 let inter = ix * iy;
@@ -300,16 +318,34 @@ pub fn compress_elements_for_llm(
                 let overlap_a = inter / a_area;
                 let overlap_b = inter / b_area;
 
-                // If either is 99%+ contained in the other, remove the one with less text
-                if overlap_a >= 0.99 || overlap_b >= 0.99 {
-                    // Keep the one with more text content (richer label for LLM)
-                    let a_rich = a.text.trim().len();
-                    let b_rich = b.text.trim().len();
-                    if a_rich >= b_rich {
-                        containment_removed[j] = true; // remove B, keep A
-                    } else {
-                        containment_removed[i] = true; // remove A, keep B
-                        break; // A is removed; no point comparing A further
+                // Tier B: both interactive → 99% threshold
+                if a_interactive && b_interactive {
+                    if overlap_a >= 0.99 || overlap_b >= 0.99 {
+                        let a_rich = a.text.trim().len();
+                        let b_rich = b.text.trim().len();
+                        if a_rich >= b_rich {
+                            containment_removed[j] = true;
+                        } else {
+                            containment_removed[i] = true;
+                            break;
+                        }
+                    }
+                } else {
+                    // Tier A: one is non-interactive → 95% threshold
+                    // Exempt non-interactive elements that have their own semantic value
+                    let non_int = if !a_interactive { Some(i) } else if !b_interactive { Some(j) } else { None };
+                    if let Some(ni) = non_int {
+                        let ne = &elements[ni];
+                        // Exempt form inputs, aria-bearing, and labelled elements
+                        let is_form = ["input","select","textarea","label"].contains(&ne.tag.as_str());
+                        let has_aria = ne.text.contains("aria") || ne.text.contains("label=") || ne.text.contains('[');
+                        if !is_form && !has_aria {
+                            let contained = if ni == i { overlap_a >= 0.95 } else { overlap_b >= 0.95 };
+                            if contained {
+                                containment_removed[ni] = true;
+                                if ni == i { break; }
+                            }
+                        }
                     }
                 }
             }
@@ -393,72 +429,242 @@ pub fn compress_elements_for_llm(
 }
 
 // ═══════════════════════════════════════════════
+// ELEMENT HASHING (OpenCLI dom-snapshot.ts DJB2)
+// ═══════════════════════════════════════════════
+
+/// Compute a DJB2-style 32-bit hash over an element descriptor string.
+/// Used for incremental snapshot diff marking — new elements (not in prevHashes)
+/// get a `*` prefix so agents see only what changed after an action.
+///
+/// Input format: "tag|id|class[:50]|text[:40]"
+/// Same algorithm as OpenCLI's hashElement() — compatible hash values.
+#[napi]
+pub fn djb2_element_hash(descriptor: String) -> u32 {
+    let mut h: u32 = 5381;
+    for b in descriptor.bytes() {
+        h = h.wrapping_mul(33).wrapping_add(b as u32);
+    }
+    h
+}
+
+/// Batch hash a list of element descriptors. Returns parallel array of u32 hashes.
+/// More efficient than N individual calls for large element lists.
+#[napi]
+pub fn djb2_batch_hash(descriptors: Vec<String>) -> Vec<u32> {
+    descriptors.iter().map(|d| {
+        let mut h: u32 = 5381;
+        for b in d.bytes() { h = h.wrapping_mul(33).wrapping_add(b as u32); }
+        h
+    }).collect()
+}
+
+/// Generate the JS string for element hashing in-page (injected via evaluate).
+/// Produces the same DJB2 hash as djb2_element_hash() for cross-validation.
+#[napi]
+pub fn get_element_hash_js() -> String {
+    r#"(function(tag, id, cls, text) {
+  const s = tag + '|' + (id||'') + '|' + (cls||'').slice(0,50) + '|' + (text||'').trim().slice(0,40);
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h * 33) + s.charCodeAt(i)) >>> 0;
+  return h;
+})"#.to_string()
+}
+
+// ═══════════════════════════════════════════════
 // STEALTH: INIT SCRIPT (compiled into binary)
 // The stealth patches are stored here in Rust so they cannot be read from
 // decompiled TypeScript source or inspected from an unpacked Electron app.
 // ═══════════════════════════════════════════════
 
-/// Return the JavaScript string to inject via addInitScript() for stealth.
-/// Stored in Rust binary — not visible in TypeScript source or unpacked apps.
-/// `session_seed`: any u32 — used to vary internal variable names per session.
+/// Return the fully upgraded 13-patch stealth script (OpenCLI-inspired).
+/// Compiled into Rust binary — never readable from TypeScript source or unpacked apps.
+/// Uses WeakMap toString disguise so patched functions return `[native code]`.
+/// Variable names are session-seeded to defeat fingerprint pattern matching.
 #[napi]
 pub fn get_stealth_init_script(session_seed: u32) -> String {
-    // Variable names derived from seed — different every session, harder to fingerprint
-    let v1 = format!("_p{:x}", (session_seed ^ 0xA5F3) & 0xFFFF);
-    let v2 = format!("_q{:x}", (session_seed ^ 0x3C21) & 0xFFFF);
-    let v3 = format!("_r{:x}", (session_seed ^ 0x7E9B) & 0xFFFF);
+    // Session-scoped obfuscated variable names — change every session
+    let v_guard   = format!("_{:x}g", (session_seed ^ 0xA5F3) & 0xFFFF);
+    let v_plugins = format!("_{:x}p", (session_seed ^ 0x3C21) & 0xFFFF);
+    let v_perm    = format!("_{:x}q", (session_seed ^ 0x7E9B) & 0xFFFF);
+    let v_wm      = format!("_{:x}w", (session_seed ^ 0x1D4E) & 0xFFFF);  // WeakMap for toString disguise
+    let v_orig_ts = format!("_{:x}t", (session_seed ^ 0xF2A1) & 0xFFFF);  // original toString
+    let v_disguis = format!("_{:x}d", (session_seed ^ 0xC3B8) & 0xFFFF);  // disguise function
+    let v_chrome  = format!("_{:x}c", (session_seed ^ 0x8E76) & 0xFFFF);  // chrome stub
+    let v_debug_re= format!("_{:x}r", (session_seed ^ 0x6F4D) & 0xFFFF);  // debugger regex
 
     format!(r#"(function() {{
-  // Remove navigator.webdriver — primary bot signal
+  // ── Guard: run once per page load ──────────────────────────────────────────
+  // Use EventTarget.prototype as anchor — unlikely to be scanned by anti-bot.
+  // Non-enumerable so Object.keys won't expose it.
+  if (EventTarget.prototype['{v_guard}']) return;
+  Object.defineProperty(EventTarget.prototype, '{v_guard}', {{value:true,enumerable:false,configurable:true}});
+
+  // ── WeakMap toString disguise infrastructure (OpenCLI pattern) ─────────────
+  // Stores function → native-looking string OUTSIDE the function object.
+  // Fingerprinters cannot find it via enumeration or property inspection.
+  const {v_wm} = new WeakMap();
+  const {v_orig_ts} = Function.prototype.toString;
+  Object.defineProperty(Function.prototype, 'toString', {{
+    value: function() {{
+      const ov = {v_wm}.get(this);
+      return ov !== undefined ? ov : {v_orig_ts}.call(this);
+    }},
+    writable: true, configurable: true
+  }});
+  {v_wm}.set(Function.prototype.toString, 'function toString() {{ [native code] }}');
+  const {v_disguis} = (fn, name) => {{
+    {v_wm}.set(fn, 'function ' + name + '() {{ [native code] }}');
+    try {{ Object.defineProperty(fn, 'name', {{value:name,configurable:true}}); }} catch(_) {{}}
+    return fn;
+  }};
+
+  // ── Patch 1: navigator.webdriver → false (not undefined — undefined is detectable) ──
   try {{
-    const {v1} = Object.getOwnPropertyDescriptor(Navigator.prototype, 'webdriver');
-    Object.defineProperty(Navigator.prototype, 'webdriver', {{
-      get: () => undefined, configurable: true
-    }});
-  }} catch(e) {{
-    try {{ Object.defineProperty(navigator, 'webdriver', {{ get: () => undefined }}); }} catch(_) {{}}
+    const d = Object.getOwnPropertyDescriptor(Navigator.prototype, 'webdriver');
+    Object.defineProperty(Navigator.prototype, 'webdriver', {{get: {v_disguis}(() => false, 'get webdriver'), configurable:true}});
+  }} catch(_) {{
+    try {{ Object.defineProperty(navigator, 'webdriver', {{get: () => false, configurable:true}}); }} catch(__) {{}}
   }}
-  // Realistic plugin list (headless has 0, real Chrome has 3+)
-  const {v2} = [
-    {{name:'Chrome PDF Plugin',filename:'internal-pdf-viewer',description:'Portable Document Format'}},
-    {{name:'Chrome PDF Viewer',filename:'mhjfbmdgcfjbbpaeojofohoefgiehjai',description:''}},
-    {{name:'Native Client',filename:'internal-nacl-plugin',description:''}}
-  ];
-  try {{
-    Object.defineProperty(navigator, 'plugins', {{
-      get: function() {{
-        const arr = [{v2}[0],{v2}[1],{v2}[2]];
-        Object.setPrototypeOf(arr, PluginArray.prototype);
-        return arr;
-      }}, configurable: true
-    }});
-  }} catch(_) {{}}
-  // Realistic language list
-  try {{
-    Object.defineProperty(navigator, 'languages', {{
-      get: () => ['en-US', 'en'], configurable: true
-    }});
-  }} catch(_) {{}}
-  // Permissions API — return 'default' state for notifications (not 'denied')
-  const {v3} = navigator.permissions && navigator.permissions.query;
-  if ({v3}) {{
-    navigator.permissions.query = function(params) {{
+
+  // ── Patch 2: window.chrome → realistic runtime stub ──
+  const {v_chrome} = {{
+    runtime: {{
+      onConnect: {{addListener: {v_disguis}(()=>{{}}, 'addListener')}},
+      onMessage: {{addListener: {v_disguis}(()=>{{}}, 'addListener')}},
+      connect: {v_disguis}(()=>({{postMessage:()=>{{}},onMessage:{{addListener:()=>{{}}}},disconnect:()=>{{}}}}), 'connect'),
+      sendMessage: {v_disguis}(()=>{{}}, 'sendMessage'),
+      id: 'cjpalhdlnbpafiamejdnhcphjbkeiagm',
+    }},
+    loadTimes: {v_disguis}(()=>({{commitLoadTime:0,connectionInfo:'h2',finishDocumentLoadTime:0,finishLoadTime:0,firstPaintAfterLoadTime:0,firstPaintTime:0,navigationType:'Other',requestTime:0,startLoadTime:0,wasAlternateProtocolAvailable:false,wasFetchedViaSpdy:false,wasNpnNegotiated:false}}), 'loadTimes'),
+    csi: {v_disguis}(()=>({{onloadT:0,pageT:0,startE:0,tran:15}}), 'csi'),
+    app: {{isInstalled:false}},
+  }};
+  if (!window.chrome) {{
+    try {{ Object.defineProperty(window, 'chrome', {{value:{v_chrome},writable:true,configurable:true}}); }} catch(_) {{ window.chrome={v_chrome}; }}
+  }}
+
+  // ── Patch 3: navigator.plugins — 5 realistic entries when empty ──
+  if (navigator.plugins.length === 0) {{
+    const {v_plugins} = [
+      {{name:'Chrome PDF Plugin',filename:'internal-pdf-viewer',description:'Portable Document Format',length:1}},
+      {{name:'Chrome PDF Viewer',filename:'mhjfbmdgcfjbbpaeojofohoefgiehjai',description:'',length:1}},
+      {{name:'Native Client',filename:'internal-nacl-plugin',description:'',length:0}},
+      {{name:'Widevine Content Decryption Module',filename:'widevinecdmadapter.plugin',description:'',length:0}},
+      {{name:'Microsoft Edge PDF Plugin',filename:'edge-pdf-plugin',description:'',length:1}},
+    ];
+    try {{
+      Object.defineProperty(navigator, 'plugins', {{
+        get: {v_disguis}(function() {{
+          const arr = [...{v_plugins}];
+          try {{ Object.setPrototypeOf(arr, PluginArray.prototype); }} catch(_) {{}}
+          return arr;
+        }}, 'get plugins'), configurable:true
+      }});
+    }} catch(_) {{}}
+  }}
+
+  // ── Patch 4: navigator.languages — ensure non-empty ──
+  if (!navigator.languages || navigator.languages.length === 0) {{
+    try {{ Object.defineProperty(navigator, 'languages', {{get:()=>['en-US','en'],configurable:true}}); }} catch(_) {{}}
+  }}
+
+  // ── Patch 5: Permissions.query — normalize notifications ──
+  const {v_perm} = navigator.permissions && navigator.permissions.query?.bind(navigator.permissions);
+  if ({v_perm}) {{
+    navigator.permissions.query = {v_disguis}(function(params) {{
       if (params && params.name === 'notifications') {{
-        return Promise.resolve({{ state: 'default', onchange: null }});
+        return Promise.resolve({{state:Notification?.permission||'default',onchange:null}});
       }}
-      return {v3}.call(navigator.permissions, params);
-    }};
+      return {v_perm}(params);
+    }}, 'query');
   }}
-  // Hardware concurrency — realistic value (not 0 like some headless)
-  try {{
-    Object.defineProperty(navigator, 'hardwareConcurrency', {{ get: () => 8, configurable: true }});
-  }} catch(_) {{}}
-  // deviceMemory — realistic (instead of headless default of 0)
-  try {{
-    Object.defineProperty(navigator, 'deviceMemory', {{ get: () => 8, configurable: true }});
-  }} catch(_) {{}}
+
+  // ── Patch 6: Remove automation artifacts (CDP/Puppeteer/Playwright markers) ──
+  try {{ delete window.__playwright; delete window.__puppeteer; delete window._playwrightruntime; }} catch(_) {{}}
+  for (const k of Object.getOwnPropertyNames(window)) {{
+    if (k.startsWith('cdc_') || k.startsWith('__cdc_') || k === '$cdc_asdjflasutopfhvcZLmcfl_') {{
+      try {{ delete window[k]; }} catch(_) {{}}
+    }}
+  }}
+
+  // ── Patch 7: CDP stack trace cleanup in Error.stack ──
+  const _OrigErr = Error;
+  Object.defineProperty(Error.prototype, 'stack', {{
+    get: {v_disguis}(function() {{
+      const s = Object.getOwnPropertyDescriptor(_OrigErr.prototype, 'stack')?.get?.call(this) || '';
+      return s.split('\n').filter(l =>
+        !l.includes('pptr:') && !l.includes('__puppeteer') && !l.includes('__playwright') &&
+        !l.includes('puppeteer_evaluation_script') && !l.includes('debugger://') &&
+        !l.includes('<anonymous>:')
+      ).join('\n');
+    }}, 'get stack'), configurable:true
+  }});
+
+  // ── Patch 8: Strip debugger statements from dynamic code ──
+  const {v_debug_re} = /(?:^|(?<=[;{{}}\n\r]))\s*debugger\s*;?/g;
+  const _stripDebug = (src) => typeof src === 'string' ? src.replace({v_debug_re}, '') : src;
+  const _OrigFn = window.Function;
+  window.Function = {v_disguis}(function(...args) {{
+    if (args.length > 0) args[args.length-1] = _stripDebug(args[args.length-1]);
+    return new _OrigFn(...args);
+  }}, 'Function');
+  Object.defineProperty(window.Function, 'prototype', {{value:_OrigFn.prototype,writable:false}});
+  const _OrigEval = window.eval;
+  window.eval = {v_disguis}(function(src) {{ return _OrigEval(_stripDebug(src)); }}, 'eval');
+
+  // ── Patch 9: Hardware concurrency + device memory (realistic values) ──
+  try {{ Object.defineProperty(navigator, 'hardwareConcurrency', {{get:()=>8,configurable:true}}); }} catch(_) {{}}
+  try {{ Object.defineProperty(navigator, 'deviceMemory', {{get:()=>8,configurable:true}}); }} catch(_) {{}}
+
+  // ── Patch 10: Window outer dimensions — fix headless mismatch ──
+  const _wd = window.outerWidth - window.innerWidth;
+  const _hd = window.outerHeight - window.innerHeight;
+  if (Math.abs(_wd) > 100 || Math.abs(_hd) > 200) {{
+    try {{
+      Object.defineProperty(window, 'outerWidth', {{get:()=>window.innerWidth,configurable:true}});
+      const _hoff = Math.min(120, Math.max(40, _hd));
+      Object.defineProperty(window, 'outerHeight', {{get:()=>window.innerHeight+_hoff,configurable:true}});
+    }} catch(_) {{}}
+  }}
+
+  // ── Patch 11: Performance API — filter CDP resource entries ──
+  const _origGetEntries = PerformanceObserver?.prototype && performance.getEntriesByType;
+  if (_origGetEntries) {{
+    const _CDPfilter = (entries) => entries.filter(e =>
+      !e.name?.includes('pptr:') && !e.name?.includes('__puppeteer') &&
+      !e.name?.includes('__playwright') && !e.name?.includes('debugger://')
+    );
+    ['getEntries','getEntriesByType','getEntriesByName'].forEach(m => {{
+      if (performance[m]) {{
+        performance[m] = {v_disguis}(function(...a) {{ return _CDPfilter(_origGetEntries.apply?.(performance,...a)||[]); }}, m);
+      }}
+    }});
+  }}
+
+  // ── Patch 12: Document property cleanup ($cdc_ keys) ──
+  for (const k of Object.getOwnPropertyNames(document)) {{
+    if (k.startsWith('$cdc_') || k.startsWith('$chrome_')) {{
+      try {{ Object.defineProperty(document, k, {{value:undefined,configurable:true}}); }} catch(_) {{}}
+    }}
+  }}
+
+  // ── Patch 13: iframe contentWindow.chrome consistency ──
+  const _origCWDesc = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentWindow');
+  if (_origCWDesc?.get) {{
+    Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {{
+      get: {v_disguis}(function() {{
+        const cw = _origCWDesc.get.call(this);
+        if (cw && !cw.chrome) {{
+          try {{ Object.defineProperty(cw, 'chrome', {{value:{v_chrome},writable:true,configurable:true}}); }} catch(_) {{}}
+        }}
+        return cw;
+      }}, 'get contentWindow'), configurable:true
+    }});
+  }}
 }})();"#,
-        v1 = v1, v2 = v2, v3 = v3
+        v_guard=v_guard, v_plugins=v_plugins, v_perm=v_perm,
+        v_wm=v_wm, v_orig_ts=v_orig_ts, v_disguis=v_disguis,
+        v_chrome=v_chrome, v_debug_re=v_debug_re
     )
 }
 
