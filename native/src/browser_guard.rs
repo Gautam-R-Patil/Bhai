@@ -52,9 +52,15 @@ const HCAPTCHA_PATTERNS: &[&str] = &[
 
 const RECAPTCHA_V3_PATTERNS: &[&str] = &[
     "recaptcha/api.js?render=",
+    "recaptcha/api.js?hl=",       // parameterised v3 includes
+    "recaptchaenterprise/api.js",
     "grecaptcha.execute",
-    "g-recaptcha-response",
-    "recaptcha/api2/reload",
+    "grecaptcha.ready",
+    "recaptcha/api2/bframe",
+    "recaptcha/api2/anchor",
+    "recaptcha__en.js",           // gstatic bundled v3 script
+    "recaptcha/releases/",        // gstatic release builds
+    "grecaptcha.enterprise",
 ];
 
 const RECAPTCHA_V2_PATTERNS: &[&str] = &[
@@ -144,15 +150,32 @@ const COOKIE_SIGNALS: &[&str] = &[
     "onetrust", "cookiebot", "quantcast", "cookieconsent",
     "cookie-consent", "cookie_consent", "gdpr", "ccpa",
     "didomi", "trustarc", "usercentrics",
-    "accept.*cookie", "cookie.*accept", "consent.*banner",
-    "data-cc", // cookieconsent v3
+    "data-cc",              // cookieconsent v3
+    "cookielaw.org",        // cookielaw CDN
+    "consent.cookiefirst",
+    "cookie-banner",
+    "cookie-notice",
+    "cookiehub",
+    "iubenda",              // iubenda consent
+    "termly.io",
+    "cookiepro",
 ];
 
 const MODAL_SIGNALS: &[&str] = &[
-    "exit-intent", "exit_intent", "newsletter-popup", "email-capture",
-    "subscribe-modal", "lead-capture", "popup-overlay",
-    "modal-backdrop", "intercom-lightweight-app",
-    "hubspot-messages", "drift-widget", "olark",
+    "exit-intent", "exit_intent",
+    "newsletter-popup", "newsletter_popup",
+    "email-capture", "email_capture",
+    "subscribe-modal", "subscribe_modal",
+    "lead-capture", "lead_capture",
+    "popup-overlay", "popup_overlay",
+    "modal-backdrop",
+    "intercom-lightweight-app",
+    "hubspot-messages",
+    "drift-widget",
+    "olark",
+    "klaviyo",              // Klaviyo email capture popups
+    "attentive_overlay",    // Attentive SMS capture
+    "privy",                // Privy popups
 ];
 
 /// Score the popup risk of a page from its HTML source.
@@ -184,7 +207,7 @@ pub fn score_popup_risk(html: String) -> PopupRiskScore {
     PopupRiskScore {
         cookie_banner_prob: cookie_prob,
         modal_prob,
-        run_guard_eagerly: cookie_prob > 0.3 || modal_prob > 0.3,
+        run_guard_eagerly: cookie_prob >= 0.3 || modal_prob >= 0.3,
         signals,
     }
 }

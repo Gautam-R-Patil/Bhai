@@ -2523,6 +2523,239 @@ export declare function monitorDeleteRule(id: string): void
 export declare function monitorCount(): number
 export declare function monitorCheck(msgEmbedding: Array<number>, channel: string, sender: string, nowMs: number): Array<RuleHit>
 export declare function monitorMarkFired(id: string, tsMs: number): void
+/** A candidate DOM element passed in from TypeScript after browser_scan */
+export interface ElementCandidate {
+  label: number
+  tag: string
+  text: string
+  className: string
+  ariaLabel: string
+  x: number
+  y: number
+  width: number
+  height: number
+}
+/** Scored result returned to TypeScript */
+export interface ScoredElement {
+  label: number
+  score: number
+  reason: string
+}
+/**
+ * Score a list of DOM element candidates against a natural-language description.
+ * Returns candidates sorted best-first with a confidence score (0.0–1.0).
+ *
+ * Scoring factors:
+ * 1. Token overlap between description and (text + aria_label + class_name)
+ * 2. Tag affinity bonuses (button/a for action verbs, input for "type/fill")
+ * 3. YouTube-specific class bonuses (.ytp-* selector matches)
+ * 4. Size/position bias (prefer larger, more central elements)
+ * 5. Exact text match bonus
+ */
+export declare function scoreElementCandidates(description: string, candidates: Array<ElementCandidate>, viewportWidth?: number | undefined | null, viewportHeight?: number | undefined | null): Array<ScoredElement>
+/**
+ * Store video player state after an action (mute, seek, play, etc.)
+ * Keyed by the full tab URL. Evicts oldest entry when capacity is reached.
+ */
+export declare function setVideoPlayerState(url: string, stateJson: string): void
+/**
+ * Retrieve cached video player state. Returns None if not cached or stale (>10s).
+ * TypeScript should call page.evaluate() only when this returns None.
+ */
+export declare function getVideoPlayerState(url: string): string | null
+/** Invalidate video state cache for a URL (call on navigation or page reload) */
+export declare function invalidateVideoState(url: string): void
+/** Get cache statistics as JSON */
+export declare function getVideoCacheStats(): string
+/**
+ * Check if an action is within the rate limit for the given URL.
+ * Returns false (throttled) if the action type has exceeded MAX_ACTIONS_PER_SECOND on this URL.
+ */
+export declare function checkBrowserActionRateLimit(actionType: string, url: string): boolean
+/**
+ * Record an executed browser action. Call this after every tool execution.
+ * Used by the loop detector and for stats.
+ */
+export declare function recordBrowserAction(actionType: string, url: string, selector: string, success: boolean): void
+/**
+ * Returns true if the agent appears to be looping on the same action.
+ * Trigger: same (action_type, selector, normalised_url) failed ≥ LOOP_THRESHOLD times
+ * consecutively without a successful action in between.
+ */
+export declare function detectActionLoop(actionType: string, selector: string, url: string): boolean
+/** Reset loop counter for a selector (call when agent intentionally switches strategy) */
+export declare function resetActionLoop(actionType: string, selector: string, url: string): void
+/** Get action statistics as a JSON string */
+export declare function getBrowserActionStats(): string
+/** A cached hover coordinate with confidence score */
+export interface HoverHint {
+  x: number
+  y: number
+  /** 0.0–1.0: fraction of past hover attempts at this (url, selector) that succeeded */
+  confidence: number
+}
+/**
+ * Look up cached hover coordinates for a (url, selector) pair.
+ * Returns None if not cached or confidence < 0.3.
+ */
+export declare function getHoverHint(url: string, selector: string): HoverHint | null
+/** Record a successful hover. Updates cached coordinates with exponential moving average. */
+export declare function recordHoverSuccess(url: string, selector: string, x: number, y: number): void
+/** Record a failed hover attempt. */
+export declare function recordHoverFailure(url: string, selector: string): void
+/**
+ * Validate JavaScript code before passing it to page.evaluate().
+ *
+ * Blocks:
+ * - Network exfiltration (fetch, XHR, WebSocket, sendBeacon)
+ * - Access to ATLAS internal injected variables
+ * - Dynamic code execution (eval, Function constructor)
+ * - Prototype pollution (__proto__, constructor)
+ * - Node.js escape (process.env, require)
+ *
+ * Returns the original code if clean, or an error with the blocked pattern.
+ */
+export declare function validateJsCode(code: string): string
+/**
+ * Return the session-scoped opaque name for a proprietary internal variable.
+ *
+ * Example: `obfuscate_injected_variable("__hoverAddedNodes")` → `"__a8f3c2b1"`
+ *
+ * The mapping is stable within a session (same input → same output).
+ * Different sessions produce different opaque names, preventing hardcoded
+ * reverse-engineering of our injection patterns.
+ */
+export declare function obfuscateInjectedVariable(name: string): string
+/**
+ * Rewrite all ATLAS internal variable references in a JS code string to their
+ * obfuscated session-scoped equivalents. Call this before any page.evaluate()
+ * that injects our MutationObserver or other internal JS.
+ */
+export declare function rewriteInternalVars(code: string): string
+/**
+ * Compute HMAC-SHA256 of (tool_name + params_json) using the session key.
+ * Returns a hex-encoded 32-byte MAC.
+ *
+ * Wire this into every browser tool call to create a tamper-evident audit trail.
+ */
+export declare function signBrowserAction(toolName: string, paramsJson: string): string
+/** Verify a previously-issued action signature. Returns true if the MAC matches. */
+export declare function verifyBrowserAction(toolName: string, paramsJson: string, signature: string): boolean
+/**
+ * Return the last N entries of the audit log as a JSON array.
+ * Each entry: { tool_name, params_hash, signature, timestamp_ms }
+ */
+export declare function getActionAuditTail(n: number): string
+/** Get IP guard statistics as JSON */
+export declare function getIpGuardStats(): string
+/**
+ * Return the compile-time module fingerprint (SHA-256 of internal sentinels).
+ * TypeScript should check this on boot to detect tampered .node binaries.
+ */
+export declare function getModuleFingerprint(): string
+/**
+ * Encrypt a sensitive string using the session HMAC key + AES-256-GCM.
+ * Use to protect any proprietary data that must be stored outside the process.
+ * Format: hex(nonce):hex(ciphertext+tag)
+ */
+export declare function encryptSensitive(plaintext: string): string
+/** Decrypt a string previously encrypted with encrypt_sensitive() */
+export declare function decryptSensitive(encrypted: string): string
+/** Detected CAPTCHA type (string_enum — no extra derives needed, napi adds them) */
+export const enum CaptchaKind {
+  RecaptchaV2 = 'RecaptchaV2',
+  RecaptchaV3 = 'RecaptchaV3',
+  Hcaptcha = 'Hcaptcha',
+  Turnstile = 'Turnstile',
+  Funcaptcha = 'Funcaptcha',
+  None = 'None'
+}
+/** Result of CAPTCHA classification from page HTML */
+export interface CaptchaClassification {
+  kind: string
+  confidence: number
+  signals: Array<string>
+}
+/**
+ * Classify CAPTCHA from page HTML/source text.
+ * Pass `document.documentElement.innerHTML` or a portion of it.
+ * Returns the most confident match with detected signal names.
+ */
+export declare function classifyCaptcha(html: string): CaptchaClassification
+/**
+ * Score the "popup risk" of a page from its HTML — higher = more likely to
+ * have blocking overlays that need dismissal before automation can proceed.
+ * Runs before page.evaluate() to decide whether popup-guard should fire eagerly.
+ */
+export interface PopupRiskScore {
+  /** 0.0–1.0 probability of a consent/cookie banner */
+  cookieBannerProb: number
+  /** 0.0–1.0 probability of a newsletter/modal overlay */
+  modalProb: number
+  /** Whether to run popup guard immediately (true = run before scanning) */
+  runGuardEagerly: boolean
+  /** Detected signals */
+  signals: Array<string>
+}
+/**
+ * Score the popup risk of a page from its HTML source.
+ * Cheap Rust string scan — call with page HTML to decide guard strategy.
+ */
+export declare function scorePopupRisk(html: string): PopupRiskScore
+/** A single interactive element for compression input */
+export interface ElementForCompression {
+  label: number
+  tag: string
+  text: string
+  x: number
+  y: number
+  isOcr: boolean
+  editorType?: string | undefined | null
+}
+/**
+ * Compress an element list for LLM consumption.
+ *
+ * Reductions applied (in order):
+ * 1. Truncate text to max_text_len chars (default 40)
+ * 2. Remove empty-text elements that are non-interactive roles
+ * 3. De-duplicate elements with identical (tag, text) within 30px radius
+ * 4. Group repeated same-text buttons: "[5,6,7] btn 'Load more'" → "[5..7×3] btn 'Load more'"
+ * 5. Limit total output to max_elements (default 80)
+ *
+ * Returns compact single-line-per-element string; ~30–50% fewer tokens than raw list.
+ */
+export declare function compressElementsForLlm(elements: Array<ElementForCompression>, maxTextLen?: number | undefined | null, maxElements?: number | undefined | null): string
+/**
+ * Return the JavaScript string to inject via addInitScript() for stealth.
+ * Stored in Rust binary — not visible in TypeScript source or unpacked apps.
+ * `session_seed`: any u32 — used to vary internal variable names per session.
+ */
+export declare function getStealthInitScript(sessionSeed: number): string
+/**
+ * Return a realistic Chrome user-agent string for the current platform.
+ * `platform`: "windows", "mac", "linux" (or empty for auto-detect via cfg).
+ * `session_seed`: any u32 — used to select deterministically within the session
+ *   (prevents UA from changing mid-session, which bots sometimes do).
+ */
+export declare function getStealthUserAgent(platform: string, sessionSeed: number): string
+/**
+ * Compute realistic human typing delay in ms for a given character.
+ * Humans type faster on common letters, slower on punctuation/numbers.
+ * Returns delay to wait AFTER typing the character.
+ */
+export declare function humanTypingDelayMs(charCode: number, baseWpm: number): number
+/**
+ * Compute a realistic pre-click mouse dwell time in ms.
+ * Real humans pause 150-400ms after moving to an element before clicking.
+ * `element_size`: bounding box area (width*height) — smaller = more careful = longer dwell.
+ */
+export declare function humanClickDwellMs(elementArea: number, seed: number): number
+/**
+ * Compute interpolated mouse movement steps for human-like motion.
+ * Returns (steps, pause_ms_before_click) for page.mouse.move(x, y, { steps }).
+ * Real humans: fast movement → slow down near target (Fitts's law).
+ */
+export declare function humanMouseParams(startX: number, startY: number, endX: number, endY: number, seed: number): Array<number>
 /** Get the native module version */
 export declare function getVersion(): string
 /** Check if SIMD is available on this platform */

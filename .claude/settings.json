@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run typecheck *)",
+      "Bash(npx tsc --noEmit *)",
+      "Bash(npm run build:native *)",
+      "Bash(npm run lint *)",
+      "Bash(npm test *)",
+      "Bash(node -e *)",
+      "Bash(grep -n *)",
+      "Bash(grep -rn *)",
+      "Bash(grep -r *)",
+      "Bash(git diff --cached *)",
+      "Bash(git log --oneline *)",
+      "Bash(git show *)",
+      "Bash(curl -s *)",
+      "Bash(wc -l *)",
+      "Bash(ls *)",
+      "Bash(ls -t *)",
+      "Bash(ls -la *)",
+      "mcp__plugin_context7_context7__resolve-library-id",
+      "mcp__plugin_context7_context7__query-docs"
+    ]
+  }
+}

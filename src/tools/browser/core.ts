@@ -719,36 +719,61 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
                 "checkbox", "radio", "tab", "menuitem", "menuitemcheckbox", "menuitemradio",
                 "option", "switch", "slider", "spinbutton", "treeitem",
             ]);
-            let label = 1;
-            for (const line of yaml.split("\n")) {
-                // Format: "  - button \"Submit\" [ref=e42]" or "  - textbox \"Search\" [ref=e5]"
-                const roleMatch = /^[\s-]*(\w+)\s+"([^"]*)"/.exec(line);
-                if (!roleMatch) continue;
-                const role = roleMatch[1].toLowerCase();
-                if (!INTERACTIVE_ROLES.has(role)) continue;
-                const refMatch = /\[ref=([\w\d]+)\]/.exec(line);
-                const ref = refMatch?.[1] ?? "";
-                // Resolve coordinates using getByRole locator (fast, no eval)
-                try {
-                    const loc = page.getByRole(role as Parameters<typeof page.getByRole>[0], {
-                        name: roleMatch[2],
-                        exact: false,
-                    }).first();
-                    const box = await loc.boundingBox({ timeout: 800 }).catch(() => null);
-                    if (!box || box.width < 2 || box.height < 2) continue;
+
+            // Parse YAML into (role, name, ref) tuples — works with and without [ref=] annotations
+            // Playwright 1.58 format: "- button \"Submit\"" (no refs)
+            // Playwright 1.60+ format: "- button \"Submit\" [ref=e42]"
+            const parsed: Array<{ role: string; name: string; ref: string; idx: number }> = [];
+            yaml.split("\n").forEach((line: string, idx: number) => {
+                const m = /^[\s-]*(\w+)\s+"([^"]*)"/.exec(line);
+                if (!m) return;
+                const role = m[1].toLowerCase();
+                if (!INTERACTIVE_ROLES.has(role)) return;
+                const ref = (/\[ref=([\w\d]+)\]/.exec(line)?.[1]) ?? "";
+                parsed.push({ role, name: m[2], ref, idx });
+            });
+
+            // Resolve bounding boxes in parallel (much faster than sequential)
+            const BATCH = 20; // max concurrent boundingBox calls
+            for (let i = 0; i < Math.min(parsed.length, 120); i += BATCH) {
+                const batch = parsed.slice(i, i + BATCH);
+                const boxes = await Promise.all(
+                    batch.map(async (p) => {
+                        try {
+                            const loc = page.getByRole(
+                                p.role as Parameters<typeof page.getByRole>[0],
+                                { name: p.name, exact: true }
+                            ).first();
+                            const box = await loc.boundingBox({ timeout: 1200 }).catch(() => null);
+                            if (box && box.width > 2 && box.height > 2) return { p, box };
+                            // Retry with exact:false for partial name matches
+                            const loc2 = page.getByRole(
+                                p.role as Parameters<typeof page.getByRole>[0],
+                                { name: p.name, exact: false }
+                            ).first();
+                            const box2 = await loc2.boundingBox({ timeout: 800 }).catch(() => null);
+                            if (box2 && box2.width > 2 && box2.height > 2) return { p, box: box2 };
+                            return null;
+                        } catch { return null; }
+                    })
+                );
+                for (const result of boxes) {
+                    if (!result) continue;
+                    const { p, box } = result;
                     ariaElements.push({
-                        label: label++,
+                        label: ariaElements.length + 1,
                         x: Math.round(box.x + box.width / 2),
                         y: Math.round(box.y + box.height / 2),
-                        tag: role,
-                        text: roleMatch[2].substring(0, 60),
-                        atlasId: ref ? `aria-${ref}` : `aria-${label}`,
+                        tag: p.role,
+                        text: p.name.substring(0, 60),
+                        atlasId: p.ref ? `aria-${p.ref}` : `aria-${p.idx}`,
                         handle: undefined,
                     });
-                } catch { /* element may have disappeared */ }
+                }
             }
+
             if (ariaElements.length > 0) {
-                console.log(`  🌳 ariaSnapshot: ${ariaElements.length} interactive elements (${Date.now() - scanStart}ms)`);
+                console.log(`  🌳 ariaSnapshot: ${ariaElements.length}/${parsed.length} interactive elements (${Date.now() - scanStart}ms)`);
             }
         }
     } catch { /* ariaSnapshot unavailable or page not ready — fall through to SCAN_FRAME_JS */ }
