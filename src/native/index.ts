@@ -33,8 +33,8 @@ let nativeModule: NativeModule | null = null;
 let useNative = false;
 
 try {
-    const __dirname = path.dirname(fileURLToPath(import.meta.url));
-    const nativePath = path.resolve(__dirname, "../../native/index.js");
+    // process.cwd() = project root in dev, BOT_DIR in production build/bundle.
+    const nativePath = path.join(process.cwd(), "native", "index.js");
 
     // Dynamic import of CommonJS module
     const { createRequire } = await import("node:module");

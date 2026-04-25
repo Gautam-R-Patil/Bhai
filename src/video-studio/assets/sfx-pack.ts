@@ -4,10 +4,9 @@
 
 import { createRequire } from "node:module";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { getVSSfxDir } from "../util/resolve-paths.js";
 
-const __dirname = fileURLToPath(new URL(".", import.meta.url));
-const SFX_DIR = join(__dirname, "sfx");
+const SFX_DIR = getVSSfxDir();
 const _require = createRequire(import.meta.url);
 
 export type SFXCategory = "whoosh" | "pop" | "ding" | "impact" | "transition" | "notification" | "typing" | "ambient";

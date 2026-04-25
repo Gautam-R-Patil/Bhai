@@ -6,10 +6,11 @@ import fs from "node:fs";
 import { mkdir, statfs, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { runPython } from "./python-sidecar.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+import { runPython } from "./python-sidecar.js";
+import { getVSPythonScript } from "./resolve-paths.js";
+
+
 
 export type ModelName = "birefnet" | "mediapipe_face";
 
@@ -93,7 +94,7 @@ export async function ensureModel(name: ModelName, opts: EnsureModelOpts = {}): 
 }
 
 async function downloadBirefnet(dest: string): Promise<void> {
-    const scriptPath = path.join(__dirname, "..", "python", "model_loader.py");
+    const scriptPath = getVSPythonScript("model_loader.py");
     await runPython(scriptPath, ["birefnet", dest], { timeoutMs: 30 * 60 * 1000 });
     await writeFile(path.join(dest, ".ready"), new Date().toISOString(), "utf-8");
 }

@@ -819,7 +819,12 @@ async function startBot() {
         fs.writeFileSync(tempEnvPath, envContent, { mode: 0o600 });
     }
 
-    const entryPoint = path.join(BOT_DIR, "dist", "index.js");
+    // Use the single bundled file if available (production build).
+    // Falls back to the compiled dist/index.js for dev mode.
+    const bundlePath = path.join(BOT_DIR, "bot-bundle.mjs");
+    const entryPoint = fs.existsSync(bundlePath)
+        ? bundlePath
+        : path.join(BOT_DIR, "dist", "index.js");
 
     // Helper: send log line to renderer and save to file
     const sendLog = (msg) => {

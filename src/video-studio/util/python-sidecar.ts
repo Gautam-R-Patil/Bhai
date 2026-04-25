@@ -5,20 +5,18 @@
 import { execFile, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { getDataDir } from "../../config/paths.js";
+import { getVSPythonScript } from "./resolve-paths.js";
 
 const execFileAsync = promisify(execFile);
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function getVenvDir(): string {
     return path.join(getDataDir(), "video-studio", "venv");
 }
 
 function getPyprojectPath(): string {
-    return path.join(__dirname, "..", "python", "pyproject.toml");
+    return getVSPythonScript("pyproject.toml");
 }
 
 function getPythonBin(): string {

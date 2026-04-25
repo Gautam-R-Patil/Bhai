@@ -17,9 +17,8 @@ try {
     const { createRequire } = await import("node:module");
     const { fileURLToPath } = await import("node:url");
     const path = await import("node:path");
-    const __dirname = path.default.dirname(fileURLToPath(import.meta.url));
     const require = createRequire(import.meta.url);
-    const mod = require(path.default.resolve(__dirname, "../../../native/index.js")) as Record<string, unknown>;
+    const mod = require(path.default.join(process.cwd(), "native", "index.js")) as Record<string, unknown>;
     if (typeof mod.classifyCaptcha === "function") {
         nativeClassifyCaptcha = mod.classifyCaptcha as (html: string) => { kind: string; confidence: number };
     }

@@ -2,13 +2,11 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { EditPlan, VideoTrack } from "../plan/schema.js";
 import { ensurePythonEnv, runPython } from "../util/python-sidecar.js";
+import { getVSPythonScript } from "../util/resolve-paths.js";
 
-const __dirname = fileURLToPath(new URL(".", import.meta.url));
-const PYTHON_SCRIPT = join(__dirname, "../python/beat_detect.py");
+const PYTHON_SCRIPT = getVSPythonScript("beat_detect.py");
 
 function nearestBeat(t: number, beats: number[]): { beat: number; distance: number } {
     let best = beats[0];

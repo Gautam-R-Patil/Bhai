@@ -5,10 +5,11 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { ensurePythonEnv, runPython } from "../util/python-sidecar.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+import { ensurePythonEnv, runPython } from "../util/python-sidecar.js";
+import { getVSPythonScript } from "../util/resolve-paths.js";
+
+
 
 export interface FaceBBox {
     h: number;
@@ -52,7 +53,7 @@ export async function detectFaces(videoPath: string, projectRoot: string): Promi
     fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
 
     await ensurePythonEnv();
-    const scriptPath = path.join(__dirname, "..", "python", "face_track.py");
+    const scriptPath = getVSPythonScript("face_track.py");
     const tmpOut = `${cacheFile}.tmp.json`;
 
     await runPython(scriptPath, [videoPath, tmpOut]);

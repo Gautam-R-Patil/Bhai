@@ -7,12 +7,13 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+
 import { transcribeAudio } from "../../voice/transcribe.js";
 import { ffmpegPath } from "../util/ffmpeg-bin.js";
 import { ensurePythonEnv, runPython } from "../util/python-sidecar.js";
+import { getVSPythonScript } from "../util/resolve-paths.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 
 // Call-time wrapper so vi.mock("node:child_process") intercepts us in tests
 function execFileP(
@@ -81,7 +82,7 @@ export async function transcribeVideo(videoPath: string, projectRoot: string, mo
 
     try {
         await ensurePythonEnv();
-        const scriptPath = path.join(__dirname, "..", "python", "faster_whisper_transcribe.py");
+        const scriptPath = getVSPythonScript("faster_whisper_transcribe.py");
         const tmpOut = `${cacheFile}.tmp.json`;
         await runPython(scriptPath, [tmpWav, tmpOut, modelSize]);
         transcript = JSON.parse(fs.readFileSync(tmpOut, "utf-8")) as Transcript;

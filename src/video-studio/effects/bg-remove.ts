@@ -5,12 +5,11 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { ensureModel, ModelDownloadBlockedError } from "../util/model-cache.js";
 import { ensurePythonEnv, runPython } from "../util/python-sidecar.js";
+import { getVSPythonScript } from "../util/resolve-paths.js";
 
-const __dirname = fileURLToPath(new URL(".", import.meta.url));
-const BG_MATTE_PY = join(__dirname, "../python/bg_matte.py");
+const BG_MATTE_PY = getVSPythonScript("bg_matte.py");
 
 export interface AlphaMatteOpts {
     confirm?: (info: { name: string; sizeBytes: number }) => Promise<boolean>;

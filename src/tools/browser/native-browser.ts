@@ -83,8 +83,7 @@ interface NativeBrowserModule {
 let native: NativeBrowserModule | null = null;
 
 try {
-    const __dirname = path.dirname(fileURLToPath(import.meta.url));
-    const nativePath = path.resolve(__dirname, "../../../native/index.js");
+    const nativePath = path.join(process.cwd(), "native", "index.js");
     const require = createRequire(import.meta.url);
     const mod = require(nativePath) as Record<string, unknown>;
     // Verify the key functions are present

@@ -109,8 +109,9 @@ interface NativeModelRouter {
 let native: NativeModelRouter | null = null;
 
 try {
-    const __dirname = path.dirname(fileURLToPath(import.meta.url));
-    const nativePath = path.resolve(__dirname, "../native/index.js");
+    // process.cwd() = project root in dev, BOT_DIR in production Electron build.
+    // This works whether the code runs as individual dist/ files or as a single bundle.
+    const nativePath = path.join(process.cwd(), "native", "index.js");
     const { createRequire } = await import("node:module");
     const require = createRequire(import.meta.url);
     const mod = require(nativePath);

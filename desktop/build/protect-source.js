@@ -4,7 +4,8 @@
 
 // ── Post-Pack Source Protection ───────────────
 // Runs after electron-builder packs the app.
-// 1. Obfuscates JavaScript source code
+// 0. Bundles bot/dist/ → bot/bot-bundle.mjs (hides all 450+ file names)
+// 1. Obfuscates bot/bot-bundle.mjs
 // 2. Compiles to V8 bytecode
 // 3. Encodes sensitive strings (prompts/skills)
 // 4. Generates ASAR integrity checksum (SHA-256)
@@ -370,10 +371,36 @@ exports.default = async function afterPack(context) {
     console.log("[PROTECT] Starting multi-layer source protection...");
     console.log("[PROTECT] ═══════════════════════════════════════\n");
 
-    // 1. Protect bot source code (obfuscation + bytecode)
+    // 0. Bundle bot/dist/ → bot/bot-bundle.mjs
+    // This replaces 450+ named source files with one opaque bundle file,
+    // completely hiding the internal architecture from the shipped app.
     const botDistDir = path.join(botDir, "dist");
+    const bundleFile = path.join(botDir, "bot-bundle.mjs");
     if (fs.existsSync(botDistDir)) {
-        console.log("[PROTECT] Layer 1-2: Obfuscation + Bytecode compilation...");
+        console.log("[PROTECT] Layer 0: Bundling dist/ → bot-bundle.mjs...");
+        try {
+            const { bundleBot } = await import("./bundle.mjs");
+            await bundleBot(botDistDir, bundleFile);
+            // Delete the dist/ directory — the bundle replaces it entirely
+            fs.rmSync(botDistDir, { recursive: true, force: true });
+            console.log(`[PROTECT] → Deleted bot/dist/ (${botDistDir})`);
+        } catch (bundleErr) {
+            console.error("[PROTECT] ✗ Bundle failed:", bundleErr.message);
+            console.warn("[PROTECT] Falling back to obfuscating dist/ directly (file names will be visible)");
+        }
+    }
+
+    // 1. Protect bot source code (obfuscation + bytecode)
+    // After bundling, only bot-bundle.mjs needs protection. If bundling failed,
+    // fall back to protecting the dist/ directory as before.
+    if (fs.existsSync(bundleFile)) {
+        console.log("[PROTECT] Layer 1-2: Obfuscation + Bytecode of bundle...");
+        const ok = obfuscateFile(bundleFile);
+        if (ok) console.log("[PROTECT] → Obfuscated: bot-bundle.mjs");
+        const bytecodeOk = await compileToBytecode(bundleFile);
+        if (bytecodeOk) console.log("[PROTECT] → Bytecode: bot-bundle.jsc");
+    } else if (fs.existsSync(botDistDir)) {
+        console.log("[PROTECT] Layer 1-2: Obfuscation + Bytecode compilation (fallback)...");
         const stats = await protectDirectory(botDistDir);
         console.log(`[PROTECT] → Obfuscated: ${stats.obfuscated}/${stats.total} files`);
         console.log(`[PROTECT] → Bytecode: ${stats.bytecode}/${stats.total} files`);
