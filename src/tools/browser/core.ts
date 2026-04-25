@@ -623,13 +623,12 @@ export const SCAN_FRAME_JS = () => {
         }
 
         // ── Paint-order occlusion detection (OpenCLI step 7) ────────────────
-        // elementFromPoint samples center — if another element is in front with
-        // solid background (opacity > 0.5 and non-transparent BG), the element
-        // is behind an overlay and should be deprioritized (not removed, just lower score).
+        // Only run for first 60 candidates to avoid performance hit on large pages.
+        // elementFromPoint forces layout reflow — expensive on Amazon/large SPAs.
         let isOccluded = false;
         const cx = Math.round(rect.left + rect.width / 2);
         const cy = Math.round(rect.top + rect.height / 2);
-        if (cx >= 0 && cy >= 0 && cx < window.innerWidth && cy < window.innerHeight) {
+        if (candidateMap.length < 60 && cx >= 0 && cy >= 0 && cx < window.innerWidth && cy < window.innerHeight) {
             try {
                 const topEl = document.elementFromPoint(cx, cy);
                 if (topEl && topEl !== el && !el.contains(topEl) && !topEl.contains(el)) {
@@ -1024,28 +1023,38 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
                 parsed.push({ role, name: m[2], ref, idx });
             });
 
-            // Resolve bounding boxes in parallel (much faster than sequential)
-            const BATCH = 20; // max concurrent boundingBox calls
-            for (let i = 0; i < Math.min(parsed.length, 120); i += BATCH) {
+            // Resolve bounding boxes in parallel.
+            // Cap at 60 elements — beyond that the scan becomes too slow for real-time use.
+            // On pages with 100+ interactive elements (Amazon), the top 60 by DOM order
+            // are almost always sufficient to find the target element.
+            const BATCH = 20;
+            const vw = 1280, vh = 800; // viewport dimensions
+            for (let i = 0; i < Math.min(parsed.length, 60); i += BATCH) {
                 const batch = parsed.slice(i, i + BATCH);
                 const boxes = await Promise.all(
                     batch.map(async (p) => {
-                        try {
-                            const loc = page.getByRole(
-                                p.role as Parameters<typeof page.getByRole>[0],
-                                { name: p.name, exact: true }
-                            ).first();
-                            const box = await loc.boundingBox({ timeout: 1200 }).catch(() => null);
-                            if (box && box.width > 2 && box.height > 2) return { p, box };
-                            // Retry with exact:false for partial name matches
-                            const loc2 = page.getByRole(
-                                p.role as Parameters<typeof page.getByRole>[0],
-                                { name: p.name, exact: false }
-                            ).first();
-                            const box2 = await loc2.boundingBox({ timeout: 800 }).catch(() => null);
-                            if (box2 && box2.width > 2 && box2.height > 2) return { p, box: box2 };
-                            return null;
-                        } catch { return null; }
+                        const roleType = p.role as Parameters<typeof page.getByRole>[0];
+                        const tryBox = async (exact: boolean, visibleOnly: boolean) => {
+                            try {
+                                const loc = page.getByRole(roleType, { name: p.name, exact });
+                                // Prefer visible elements — avoids off-screen duplicates
+                                const target = visibleOnly ? loc.filter({ visible: true }).first() : loc.first();
+                                const box = await target.boundingBox({ timeout: 400 }).catch(() => null);
+                                // Only accept boxes that are within the viewport (or close)
+                                if (box && box.width > 2 && box.height > 2 &&
+                                    box.x > -200 && box.y > -200 &&
+                                    box.x < vw + 200 && box.y < vh + 200) {
+                                    return box;
+                                }
+                                return null;
+                            } catch { return null; }
+                        };
+                        // Try: exact+visible → exact+any → fuzzy+visible → fuzzy+any
+                        const box = await tryBox(true, true)
+                            ?? await tryBox(true, false)
+                            ?? await tryBox(false, true)
+                            ?? await tryBox(false, false);
+                        return box ? { p, box } : null;
                     })
                 );
                 for (const result of boxes) {

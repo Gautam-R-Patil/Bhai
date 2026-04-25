@@ -61,14 +61,14 @@ export const browserNavigate: ToolDefinition = {
             const timeout = (input.timeout_ms as number) || 30000;
             // Show HUD while navigating
             const navDomain = (input.url as string).replace(/^https?:\/\/(www\.)?/, '').split('/')[0];
-            await page.evaluate(ATLAS_HUD_JS, { label: `🌐 Navigating to ${navDomain}`, done: false }).catch(() => {});
+            await page.evaluate(`(${ATLAS_HUD_JS})(${JSON.stringify({ label: `🌐 Navigating to ${navDomain}`, done: false })})`).catch(() => {});
             // Catch navigation timeouts — page is likely usable even if not fully loaded
             await page.goto(input.url as string, { waitUntil: "domcontentloaded", timeout }).catch(() => null);
 
             // Smart wait for the page to stabilize
             await waitForPageReady(page);
             // Clear HUD once page is ready
-            await page.evaluate(ATLAS_HUD_JS, { label: '', done: true }).catch(() => {});
+            await page.evaluate(`(${ATLAS_HUD_JS})(${JSON.stringify({ label: '', done: true })})`).catch(() => {});
 
             if (input.wait_for) {
                 await page.waitForSelector(input.wait_for as string, { timeout: 10000 }).catch(() => null);

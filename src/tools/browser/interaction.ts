@@ -100,7 +100,7 @@ export const browserClickAt: ToolDefinition = {
             const hudLabel = input.label !== undefined
                 ? `🖱 Clicking "${(lastElementMap.find(e => e.label === Number(input.label))?.text || '').substring(0, 30) || `#${input.label}`}"`
                 : `🖱 Clicking (${Math.round(x)}, ${Math.round(y)})`;
-            await page.evaluate(ATLAS_HUD_JS, { label: hudLabel, done: false }).catch(() => {});
+            await page.evaluate(`(${ATLAS_HUD_JS})(${JSON.stringify({ label: hudLabel, done: false })})`).catch(() => {});
 
             const modifiers: string[] = [];
             if (input.ctrl) { await page.keyboard.down("Control"); modifiers.push("Ctrl"); }
@@ -236,7 +236,7 @@ export const browserClickAt: ToolDefinition = {
 
             // Record success for native loop/rate tracker
             recordBrowserAction("click", page.url(), String(input.label ?? `${x},${y}`), true);
-            await page.evaluate(ATLAS_HUD_JS, { label: '', done: true }).catch(() => {});
+            await page.evaluate(`(${ATLAS_HUD_JS})(${JSON.stringify({ label: '', done: true })})`).catch(() => {});
 
             return JSON.stringify({
                 success: true,
@@ -518,14 +518,16 @@ export const browserScroll: ToolDefinition = {
                 await page.mouse.move(x, y);
                 await page.mouse.wheel(deltaX, deltaY);
                 // Scroll direction indicator
-                await page.evaluate(SCROLL_INDICATOR_JS, {
-                    direction: input.direction, amount, x, y
-                }).catch(() => {});
+                await page.evaluate(`(${SCROLL_INDICATOR_JS})(${JSON.stringify({ direction: input.direction, amount, x, y })})`).catch(() => {});
             }
 
             await page.waitForTimeout(300);
-            // Invalidate element cache — positions change after scroll
+            // Invalidate element cache AND clear lastElementMap — all stored element
+            // positions are now stale. Clearing lastElementMap forces the agent to
+            // call browser_scan before using label-based clicking, preventing clicks
+            // at wrong coordinates (e.g. 300px off after scrolling 300px down).
             invalidateCache();
+            setLastElementMap([]);
 
             return JSON.stringify({ success: true, scrolled: input.direction, pixels: amount, zoom: !!input.zoom });
         } catch (err) {

@@ -543,7 +543,8 @@ export const browserMultiAction: ToolDefinition = {
                         }
                         // mouse.wheel uses native CDP — no eval/compiled-lambda issues
                         await page.mouse.wheel(deltaX, deltaY);
-                        invalidateCache(); // Positions changed
+                        invalidateCache();
+                        setLastElementMap([]); // clear stale positions after scroll
                         return { success: true };
                     }
                     case 'keyboard': {
