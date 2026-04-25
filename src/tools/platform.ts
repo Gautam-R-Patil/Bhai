@@ -324,6 +324,40 @@ export async function getFrontmostApp(): Promise<string> {
 // ── Cross-Platform "Open" ─────────────────────
 
 /**
+ * Maps common human-readable app names to their Windows executable names.
+ * `cmd /c start` resolves short exe names via PATH; full paths must be quoted separately.
+ */
+const WIN_APP_MAP: Record<string, string> = {
+    chrome: "chrome",
+    "google chrome": "chrome",
+    firefox: "firefox",
+    "mozilla firefox": "firefox",
+    edge: "msedge",
+    "microsoft edge": "msedge",
+    msedge: "msedge",
+    brave: "brave",
+    "brave browser": "brave",
+    spotify: "spotify",
+    notepad: "notepad",
+    "notepad++": "notepad++",
+    explorer: "explorer",
+    "file explorer": "explorer",
+    calculator: "calc",
+    calc: "calc",
+    paint: "mspaint",
+    word: "winword",
+    excel: "excel",
+    powerpoint: "powerpnt",
+    outlook: "outlook",
+    teams: "teams",
+    discord: "discord",
+    slack: "slack",
+    code: "code",
+    vscode: "code",
+    "visual studio code": "code",
+};
+
+/**
  * Open a file, URL, or app using the system's default handler.
  * macOS: open
  * Windows: start / Start-Process
@@ -334,7 +368,11 @@ export async function nativeOpen(target: string, app?: string): Promise<void> {
         await execFileAsync("open", args, { timeout: 5000 });
     } else if (IS_WIN) {
         if (app) {
-            await execFileAsync("cmd.exe", ["/c", "start", "", app, target], { timeout: 5000 });
+            // Normalise: look up short exe name from friendly name, fallback to the raw string
+            const normalised = WIN_APP_MAP[app.toLowerCase()] ?? app;
+            // `cmd /c start "" <app> <target>` — the empty-string first arg is the window title
+            // (required when app contains spaces, to distinguish it from the title arg)
+            await execFileAsync("cmd.exe", ["/c", "start", "", normalised, target], { timeout: 5000 });
         } else {
             await execFileAsync("cmd.exe", ["/c", "start", "", target], { timeout: 5000 });
         }

@@ -24,6 +24,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { ToolDefinition } from "./get-current-time.js";
 import { IS_LINUX, IS_MAC, IS_WIN } from "./platform.js";
+import { installSpogo, spogoBinaryPath } from "./spotify-installer.js";
 import {
     ensureSpotifyAppRunning,
     osLaunchUri,
@@ -34,7 +35,6 @@ import {
     osPrev,
     osVolume,
 } from "./spotify-os.js";
-import { installSpogo, spogoBinaryPath } from "./spotify-installer.js";
 import { fastSearchTrack } from "./spotify-search.js";
 
 const execFileAsync = promisify(execFile);
@@ -61,22 +61,11 @@ async function findSpogo(): Promise<string | null> {
     const candidates: string[] = [spogoBinaryPath(), "spogo"];
     // Common install locations
     if (IS_MAC) {
-        candidates.push(
-            "/opt/homebrew/bin/spogo",
-            "/usr/local/bin/spogo",
-            `${process.env.HOME}/go/bin/spogo`,
-        );
+        candidates.push("/opt/homebrew/bin/spogo", "/usr/local/bin/spogo", `${process.env.HOME}/go/bin/spogo`);
     } else if (IS_LINUX) {
-        candidates.push(
-            "/usr/local/bin/spogo",
-            "/usr/bin/spogo",
-            `${process.env.HOME}/go/bin/spogo`,
-        );
+        candidates.push("/usr/local/bin/spogo", "/usr/bin/spogo", `${process.env.HOME}/go/bin/spogo`);
     } else if (IS_WIN) {
-        candidates.push(
-            `${process.env.USERPROFILE}\\go\\bin\\spogo.exe`,
-            "spogo.exe",
-        );
+        candidates.push(`${process.env.USERPROFILE}\\go\\bin\\spogo.exe`, "spogo.exe");
     }
 
     for (const cand of candidates) {
@@ -173,6 +162,20 @@ async function detectBrowser(): Promise<"chrome" | "safari" | "firefox" | "brave
         if (existsSync("/Applications/Firefox.app")) return "firefox";
         if (existsSync("/Applications/Safari.app")) return "safari";
     }
+    if (IS_WIN) {
+        // Safari is not available on Windows — check in priority order
+        const localAppData = process.env.LOCALAPPDATA ?? "";
+        const programFilesX86 =
+            process.env["PROGRAMFILES(X86)"] ?? process.env.PROGRAMFILES ?? "C:\\Program Files (x86)";
+        if (existsSync(`${localAppData}\\Google\\Chrome\\Application\\chrome.exe`)) return "chrome";
+        if (existsSync(`${programFilesX86}\\Microsoft\\Edge\\Application\\msedge.exe`)) return "edge";
+        if (existsSync(`${localAppData}\\BraveSoftware\\Brave-Browser\\Application\\brave.exe`)) return "brave";
+        if (existsSync(`${programFilesX86}\\Mozilla Firefox\\firefox.exe`)) return "firefox";
+        const programFiles64 = process.env.PROGRAMFILES ?? "C:\\Program Files";
+        if (existsSync(`${programFiles64}\\Mozilla Firefox\\firefox.exe`)) return "firefox";
+        // Default to chrome — most common on Windows
+        return "chrome";
+    }
     return "chrome";
 }
 
@@ -227,7 +230,12 @@ async function ensureAuth(): Promise<{ ok: boolean; error?: string; hint?: strin
 // Guard so a single tool invocation tries the auto-install at most once.
 let _autoInstallAttempted = false;
 
-async function call(args: string[], opts: { timeout?: number; withJson?: boolean; allowOsFallback?: boolean } = {}): Promise<{ ok: true; data: unknown; stdout: string } | { ok: false; error: string; exitCode: number; hint?: string }> {
+async function call(
+    args: string[],
+    opts: { timeout?: number; withJson?: boolean; allowOsFallback?: boolean } = {},
+): Promise<
+    { ok: true; data: unknown; stdout: string } | { ok: false; error: string; exitCode: number; hint?: string }
+> {
     let res = await runSpogo(args, opts);
 
     if (res.exitCode === 127) {
@@ -297,14 +305,14 @@ async function call(args: string[], opts: { timeout?: number; withJson?: boolean
 
 // In-memory cache for resolved URIs — if the user asks for the same song twice
 // in a session, skip the ~15s spogo search roundtrip entirely.
-interface SearchCacheEntry { result: { uri: string; name?: string; artists?: string }; at: number; }
+interface SearchCacheEntry {
+    result: { uri: string; name?: string; artists?: string };
+    at: number;
+}
 const _searchCache = new Map<string, SearchCacheEntry>();
 const SEARCH_CACHE_TTL_MS = 15 * 60 * 1000; // 15 min
 
-function writeSearchCache(
-    cacheKey: string,
-    result: { uri: string; name?: string; artists?: string },
-): void {
+function writeSearchCache(cacheKey: string, result: { uri: string; name?: string; artists?: string }): void {
     _searchCache.set(cacheKey, { result, at: Date.now() });
     if (_searchCache.size > 200) {
         const oldest = [..._searchCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
@@ -312,7 +320,10 @@ function writeSearchCache(
     }
 }
 
-async function searchTop(type: "track" | "album" | "artist" | "playlist", query: string): Promise<{ uri: string; name?: string; artists?: string } | null> {
+async function searchTop(
+    type: "track" | "album" | "artist" | "playlist",
+    query: string,
+): Promise<{ uri: string; name?: string; artists?: string } | null> {
     const cacheKey = `${type}:${query.toLowerCase().trim()}`;
     const cached = _searchCache.get(cacheKey);
     if (cached && Date.now() - cached.at < SEARCH_CACHE_TTL_MS) {
@@ -336,14 +347,21 @@ async function searchTop(type: "track" | "album" | "artist" | "playlist", query:
     const r = await call(["search", type, query, "--limit", "10"]);
     if (!r.ok || !r.data) return null;
     const d = r.data as Record<string, unknown>;
-    const arr = (d[`${type}s`] as Array<Record<string, unknown>> | undefined) || (d.items as Array<Record<string, unknown>> | undefined) || (d.results as Array<Record<string, unknown>> | undefined);
+    const arr =
+        (d[`${type}s`] as Array<Record<string, unknown>> | undefined) ||
+        (d.items as Array<Record<string, unknown>> | undefined) ||
+        (d.results as Array<Record<string, unknown>> | undefined);
     const first = Array.isArray(arr) && arr.length > 0 ? arr[0] : null;
     if (!first) return null;
     const idFromField = typeof first.id === "string" ? first.id : "";
-    const uri = (typeof first.uri === "string" ? first.uri : "") || (idFromField ? `spotify:${type}:${idFromField}` : "");
+    const uri =
+        (typeof first.uri === "string" ? first.uri : "") || (idFromField ? `spotify:${type}:${idFromField}` : "");
     if (!uri) return null;
     const artists = Array.isArray(first.artists)
-        ? (first.artists as Array<Record<string, unknown>>).map((a) => a.name as string).filter(Boolean).join(", ")
+        ? (first.artists as Array<Record<string, unknown>>)
+              .map((a) => a.name as string)
+              .filter(Boolean)
+              .join(", ")
         : undefined;
     const result = { uri, name: first.name as string | undefined, artists };
     writeSearchCache(cacheKey, result);
@@ -360,9 +378,7 @@ async function doPlay(input: Record<string, unknown>): Promise<string> {
     // Kick off a Spotify-app wakeup in parallel — on the common "play X" path we'll
     // need an active device anyway. Running it concurrently with the ~15s spogo search
     // cuts ~3s off the perceived latency when the app wasn't already running.
-    const appWakeup = (rawUri || query)
-        ? ensureSpotifyAppRunning().catch(() => false)
-        : Promise.resolve(true);
+    const appWakeup = rawUri || query ? ensureSpotifyAppRunning().catch(() => false) : Promise.resolve(true);
 
     // Resolve URI if only a query was given
     let targetUri = rawUri;
@@ -370,10 +386,13 @@ async function doPlay(input: Record<string, unknown>): Promise<string> {
     if (!targetUri && query) {
         // Heuristic: infer type from wording
         const lower = query.toLowerCase();
-        const type: "track" | "album" | "playlist" | "artist" =
-            /\bplaylist\b/.test(lower) ? "playlist" :
-            /\balbum\b/.test(lower) ? "album" :
-            /\bartist\b/.test(lower) ? "artist" : "track";
+        const type: "track" | "album" | "playlist" | "artist" = /\bplaylist\b/.test(lower)
+            ? "playlist"
+            : /\balbum\b/.test(lower)
+              ? "album"
+              : /\bartist\b/.test(lower)
+                ? "artist"
+                : "track";
         const cleaned = query.replace(/\b(playlist|album|artist|track|song)\b/gi, "").trim() || query;
         const resolved = await searchTop(type, cleaned);
         if (resolved) {
@@ -415,8 +434,8 @@ async function doPlay(input: Record<string, unknown>): Promise<string> {
         const note = isNoDevice
             ? "No active Spotify device — woke the local app via URI launch. Playback will start once the app finishes loading."
             : isNotInstalled
-                ? `spogo not installed; used OS URI launch. ${spogoInstallHelp()}`
-                : `spogo error (${r.error}); used OS URI launch.`;
+              ? `spogo not installed; used OS URI launch. ${spogoInstallHelp()}`
+              : `spogo error (${r.error}); used OS URI launch.`;
         return ok({
             action: "play",
             mode: "os_launch_uri",
@@ -440,13 +459,24 @@ async function fallbackResume(err: string): Promise<string> {
     }
 }
 
-async function doSimple(kind: "pause" | "resume" | "next" | "previous" | "seek" | "volume" | "shuffle" | "repeat", input: Record<string, unknown>): Promise<string> {
+async function doSimple(
+    kind: "pause" | "resume" | "next" | "previous" | "seek" | "volume" | "shuffle" | "repeat",
+    input: Record<string, unknown>,
+): Promise<string> {
     let args: string[];
     switch (kind) {
-        case "pause": args = ["pause"]; break;
-        case "resume": args = ["play"]; break;
-        case "next": args = ["next"]; break;
-        case "previous": args = ["prev"]; break;
+        case "pause":
+            args = ["pause"];
+            break;
+        case "resume":
+            args = ["play"];
+            break;
+        case "next":
+            args = ["next"];
+            break;
+        case "previous":
+            args = ["prev"];
+            break;
         case "seek": {
             const ms = Number(input.position_ms);
             if (!Number.isFinite(ms) || ms < 0) return fail("position_ms must be a non-negative number");
@@ -467,7 +497,8 @@ async function doSimple(kind: "pause" | "resume" | "next" | "previous" | "seek" 
         }
         case "repeat": {
             const mode = (input.mode as string) || "off";
-            if (!["off", "context", "track"].includes(mode)) return fail("repeat mode must be 'off' | 'context' | 'track'");
+            if (!["off", "context", "track"].includes(mode))
+                return fail("repeat mode must be 'off' | 'context' | 'track'");
             args = ["repeat", mode];
             break;
         }
@@ -479,13 +510,24 @@ async function doSimple(kind: "pause" | "resume" | "next" | "previous" | "seek" 
     // OS fallback for the simple transport controls
     try {
         switch (kind) {
-            case "pause": await osPause(); return ok({ action: "pause", mode: "os_fallback" });
-            case "resume": await osPlay(); return ok({ action: "resume", mode: "os_fallback" });
-            case "next": await osNext(); return ok({ action: "next", mode: "os_fallback" });
-            case "previous": await osPrev(); return ok({ action: "previous", mode: "os_fallback" });
+            case "pause":
+                await osPause();
+                return ok({ action: "pause", mode: "os_fallback" });
+            case "resume":
+                await osPlay();
+                return ok({ action: "resume", mode: "os_fallback" });
+            case "next":
+                await osNext();
+                return ok({ action: "next", mode: "os_fallback" });
+            case "previous":
+                await osPrev();
+                return ok({ action: "previous", mode: "os_fallback" });
             case "volume": {
                 const level = Number(input.level);
-                if (Number.isFinite(level)) { await osVolume(level); return ok({ action: "volume", mode: "os_fallback", level: Math.round(level) }); }
+                if (Number.isFinite(level)) {
+                    await osVolume(level);
+                    return ok({ action: "volume", mode: "os_fallback", level: Math.round(level) });
+                }
                 break;
             }
             case "seek":
@@ -502,7 +544,9 @@ async function doSimple(kind: "pause" | "resume" | "next" | "previous" | "seek" 
 async function doSearch(input: Record<string, unknown>): Promise<string> {
     const query = (input.query as string) || "";
     if (!query) return fail("Provide 'query'");
-    const types = ((input.types as string[]) || ["track"]).filter((t) => ["track", "album", "artist", "playlist", "show", "episode"].includes(t));
+    const types = ((input.types as string[]) || ["track"]).filter((t) =>
+        ["track", "album", "artist", "playlist", "show", "episode"].includes(t),
+    );
     const limit = Math.min(20, Math.max(1, Number(input.limit) || 5));
 
     const out: Record<string, unknown> = { query };
@@ -545,9 +589,14 @@ async function doStatus(which: "now_playing" | "playback_state"): Promise<string
         const local = await osNowPlayingLocal();
         if (local.track) {
             return ok({
-                action: which, mode: "os_fallback",
-                playing: local.playing, track: local.track, artist: local.artist,
-                album: local.album, position_ms: local.position_ms, duration_ms: local.duration_ms,
+                action: which,
+                mode: "os_fallback",
+                playing: local.playing,
+                track: local.track,
+                artist: local.artist,
+                album: local.album,
+                position_ms: local.position_ms,
+                duration_ms: local.duration_ms,
                 uri: local.track_uri,
             });
         }
@@ -651,36 +700,77 @@ export const spotifyTool: ToolDefinition = {
                     action: {
                         type: "string",
                         enum: [
-                            "play", "pause", "resume", "next", "previous", "seek", "volume",
-                            "shuffle", "repeat",
+                            "play",
+                            "pause",
+                            "resume",
+                            "next",
+                            "previous",
+                            "seek",
+                            "volume",
+                            "shuffle",
+                            "repeat",
                             "search",
-                            "queue_add", "queue_get",
-                            "now_playing", "playback_state",
-                            "devices_list", "transfer",
-                            "saved_tracks", "followed_artists",
-                            "save_track", "unsave_track", "follow_artist", "unfollow_artist",
-                            "playlists_list", "playlist_create", "playlist_tracks",
-                            "playlist_add_tracks", "playlist_remove_tracks",
-                            "auth_import", "auth_status",
+                            "queue_add",
+                            "queue_get",
+                            "now_playing",
+                            "playback_state",
+                            "devices_list",
+                            "transfer",
+                            "saved_tracks",
+                            "followed_artists",
+                            "save_track",
+                            "unsave_track",
+                            "follow_artist",
+                            "unfollow_artist",
+                            "playlists_list",
+                            "playlist_create",
+                            "playlist_tracks",
+                            "playlist_add_tracks",
+                            "playlist_remove_tracks",
+                            "auth_import",
+                            "auth_status",
                             "install",
                         ],
                         description: "The Spotify action to perform.",
                     },
-                    query: { type: "string", description: "Natural-language search query (for 'play', 'search', 'queue_add')." },
-                    uri: { type: "string", description: "A Spotify URI (e.g. 'spotify:track:<id>'). Alternative to 'query'." },
-                    context_uri: { type: "string", description: "Context URI (album/playlist/artist) to play from. Alternative to 'uri'." },
+                    query: {
+                        type: "string",
+                        description: "Natural-language search query (for 'play', 'search', 'queue_add').",
+                    },
+                    uri: {
+                        type: "string",
+                        description: "A Spotify URI (e.g. 'spotify:track:<id>'). Alternative to 'query'.",
+                    },
+                    context_uri: {
+                        type: "string",
+                        description: "Context URI (album/playlist/artist) to play from. Alternative to 'uri'.",
+                    },
                     id: { type: "string", description: "A Spotify ID (track/playlist) for library/playlist actions." },
-                    uris: { type: "array", items: { type: "string" }, description: "Track URIs for playlist_add_tracks / playlist_remove_tracks." },
+                    uris: {
+                        type: "array",
+                        items: { type: "string" },
+                        description: "Track URIs for playlist_add_tracks / playlist_remove_tracks.",
+                    },
                     device_id: { type: "string", description: "Target device id or name (for 'transfer')." },
-                    name: { type: "string", description: "Playlist name (for 'playlist_create') or device name (for 'transfer')." },
+                    name: {
+                        type: "string",
+                        description: "Playlist name (for 'playlist_create') or device name (for 'transfer').",
+                    },
                     position_ms: { type: "number", description: "Seek position in milliseconds." },
                     level: { type: "number", description: "Volume 0-100." },
                     enabled: { type: "boolean", description: "For 'shuffle': true/false." },
                     mode: { type: "string", enum: ["off", "context", "track"], description: "For 'repeat'." },
-                    types: { type: "array", items: { type: "string", enum: ["track", "album", "artist", "playlist", "show", "episode"] }, description: "Search result types. Defaults to ['track']." },
+                    types: {
+                        type: "array",
+                        items: { type: "string", enum: ["track", "album", "artist", "playlist", "show", "episode"] },
+                        description: "Search result types. Defaults to ['track'].",
+                    },
                     limit: { type: "number", description: "Result limit for search (default 5, max 20)." },
                     shuffle: { type: "boolean", description: "For 'play': start in shuffle mode." },
-                    force: { type: "boolean", description: "For 'install': force re-download even if already installed." },
+                    force: {
+                        type: "boolean",
+                        description: "For 'install': force re-download even if already installed.",
+                    },
                 },
                 required: ["action"],
             },
@@ -709,13 +799,19 @@ export const spotifyTool: ToolDefinition = {
                 }
                 case "auth_import": {
                     const r = await spogoAuthImport();
-                    if (r.ok) return ok({ action, browser: r.browser, message: "Cookies imported from browser. You can now play music." });
+                    if (r.ok)
+                        return ok({
+                            action,
+                            browser: r.browser,
+                            message: "Cookies imported from browser. You can now play music.",
+                        });
                     return fail(r.error || "auth import failed", {
                         browser: r.browser,
                         hint: `Make sure you're logged into https://open.spotify.com in ${r.browser}. Supported browsers: chrome, brave, edge, firefox, safari.`,
                     });
                 }
-                case "play": return await doPlay(input);
+                case "play":
+                    return await doPlay(input);
                 case "pause":
                 case "resume":
                 case "next":
@@ -725,7 +821,8 @@ export const spotifyTool: ToolDefinition = {
                 case "shuffle":
                 case "repeat":
                     return await doSimple(action, input);
-                case "search": return await doSearch(input);
+                case "search":
+                    return await doSearch(input);
                 case "queue_add":
                 case "queue_get":
                     return await doQueue(action, input);
@@ -773,7 +870,9 @@ export async function initSpotify(): Promise<void> {
             _spogoPath = null;
             bin = await findSpogo();
         } else {
-            console.warn(`🎵 Spotify: auto-install failed (${result.error}). Will retry on first use. Fallback: URI launch + OS media keys.`);
+            console.warn(
+                `🎵 Spotify: auto-install failed (${result.error}). Will retry on first use. Fallback: URI launch + OS media keys.`,
+            );
             return;
         }
     }
@@ -787,6 +886,8 @@ export async function initSpotify(): Promise<void> {
     if (status.authed) {
         console.log("🎵 Spotify ready via spogo (authed)");
     } else {
-        console.log("🎵 Spotify: spogo installed but not authed. Will auto-import cookies on first use (make sure you're logged into open.spotify.com in your browser).");
+        console.log(
+            "🎵 Spotify: spogo installed but not authed. Will auto-import cookies on first use (make sure you're logged into open.spotify.com in your browser).",
+        );
     }
 }

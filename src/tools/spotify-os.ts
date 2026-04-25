@@ -9,10 +9,10 @@
 // regardless of account tier. Secondary helpers (play/pause/next/prev/volume)
 // drive the local app via AppleScript (mac), media keys (win), or playerctl (linux).
 
-import { execFile } from "node:child_process";
-import { promises as fs } from "node:fs";
+import { execFile, spawn } from "node:child_process";
+import { existsSync, promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import path, { join } from "node:path";
 import { promisify } from "node:util";
 import { IS_LINUX, IS_MAC, IS_WIN, runPowerShellInline } from "./platform.js";
 
@@ -69,8 +69,26 @@ export async function ensureSpotifyAppRunning(): Promise<boolean> {
             return true;
         }
         if (IS_WIN) {
-            await execFileAsync("cmd.exe", ["/c", "start", "", "spotify:"], { timeout: 5000 });
-            return true;
+            try {
+                await execFileAsync("cmd.exe", ["/c", "start", "", "spotify:"], { timeout: 5000 });
+                return true;
+            } catch {
+                // cmd.exe start failed (spotify: protocol not registered) — try direct .exe paths
+                const spotifyPaths = [
+                    path.join(process.env.APPDATA ?? "", "Spotify", "Spotify.exe"),
+                    path.join(process.env.LOCALAPPDATA ?? "", "Microsoft", "WindowsApps", "Spotify.exe"),
+                    "C:\\Program Files\\Spotify\\Spotify.exe",
+                    "C:\\Program Files (x86)\\Spotify\\Spotify.exe",
+                ];
+                for (const p of spotifyPaths) {
+                    if (existsSync(p)) {
+                        const child = spawn(p, [], { detached: true, stdio: "ignore" });
+                        child.unref();
+                        return true;
+                    }
+                }
+                return false;
+            }
         }
         if (IS_LINUX) {
             // Detach so we don't wait for the app lifetime
