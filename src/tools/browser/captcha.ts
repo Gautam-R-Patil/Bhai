@@ -11,6 +11,7 @@ import type { ToolDefinition } from "../get-current-time.js";
 import { getActivePage } from "./core.js";
 import { isNativeBrowserAvailable } from "./native-browser.js";
 import { transcribeBuffer } from "../../voice/transcribe.js";
+import { getCurrentMode } from "./browser-backend.js";
 
 // Try to use Rust-native CAPTCHA classifier for speed
 let nativeClassifyCaptcha: ((html: string) => { kind: string; confidence: number }) | null = null;
@@ -31,11 +32,15 @@ export type CaptchaType = "recaptcha-v2" | "recaptcha-v3" | "hcaptcha" | "turnst
 // CAPTCHA API keys are stored as Convex environment variables (never bundled
 // into the app). Fetched lazily on first use and cached in process.env.
 let _captchaKeysFetched = false;
+let _captchaKeysFetchInFlight: Promise<void> | null = null;
 
 async function ensureCaptchaKeys(): Promise<void> {
     if (_captchaKeysFetched) return;
     // Skip Convex fetch if either key already present — no need to make a network round-trip
     if (process.env.NOPECHA_API_KEY || process.env.CAPTCHA_API_KEY) { _captchaKeysFetched = true; return; }
+    // Deduplicate concurrent calls — return the same in-flight promise to all callers
+    if (_captchaKeysFetchInFlight) return _captchaKeysFetchInFlight;
+    _captchaKeysFetchInFlight = (async () => {
     try {
         const { getConvexSiteUrl } = await import("../../config/keys.js");
         const { getSessionToken } = await import("../../session.js");
@@ -56,7 +61,9 @@ async function ensureCaptchaKeys(): Promise<void> {
             console.log("  🔑 CAPTCHA: CAPTCHA_API_KEY loaded from Convex");
         }
     } catch { /* non-fatal — keys may still be available via process.env */ }
-    finally { _captchaKeysFetched = true; }
+    finally { _captchaKeysFetched = true; _captchaKeysFetchInFlight = null; }
+    })();
+    return _captchaKeysFetchInFlight;
 }
 
 export interface CaptchaInfo {
@@ -235,8 +242,6 @@ async function solveAudioCaptcha(page: any): Promise<string | null> {
 
         // Audio bypass only works in Playwright mode — ChromePageProxy.frames() returns
         // only [this] (the main page), so the reCAPTCHA bframe will never be found.
-        // Check for Chrome extension mode explicitly and skip early.
-        const { getCurrentMode } = await import("./browser-backend.js");
         if (getCurrentMode() === "chrome") {
             console.log("  🎧 Audio CAPTCHA: not supported in Chrome extension mode (no frame access)");
             return null;

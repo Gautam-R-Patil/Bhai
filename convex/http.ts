@@ -1403,6 +1403,7 @@ http.route({
     const nopechaKey = process.env.NOPECHA_API_KEY;
     if (nopechaKey) secrets.NOPECHA_API_KEY = nopechaKey;
 
+    // TWO_CAPTCHA_API_KEY is an alias — both names work, returned as CAPTCHA_API_KEY to client
     const captchaKey = process.env.CAPTCHA_API_KEY || process.env.TWO_CAPTCHA_API_KEY;
     if (captchaKey) secrets.CAPTCHA_API_KEY = captchaKey;
 

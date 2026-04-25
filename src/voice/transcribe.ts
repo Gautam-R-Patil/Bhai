@@ -44,7 +44,7 @@ async function transcribeViaOpenRouter(base64Audio: string, mimeType: string): P
         throw new Error("Not authenticated — cannot transcribe via OpenRouter");
     }
 
-    const format = mimeType.includes("wav") ? "wav" : "ogg";
+    const format = mimeType.includes("wav") ? "wav" : mimeType.includes("mpeg") ? "mp3" : "ogg";
     const response = await encryptedFetch(`${convexUrl}/api/llm/chat`, {
         method: "POST",
         headers: {
@@ -103,7 +103,8 @@ export async function transcribeAudio(audioPath: string): Promise<string> {
     // Fallback: OpenRouter via Convex proxy
     const audioBuffer = fs.readFileSync(audioPath);
     const base64 = audioBuffer.toString("base64");
-    const mimeType = audioPath.endsWith(".wav") ? "audio/wav" : "audio/ogg";
+    const ext = audioPath.split(".").pop()?.toLowerCase() ?? "ogg";
+    const mimeType = ext === "wav" ? "audio/wav" : ext === "mp3" ? "audio/mpeg" : "audio/ogg";
     return transcribeViaOpenRouter(base64, mimeType);
 }
 

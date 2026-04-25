@@ -10,6 +10,7 @@ import { firePostToolUse, firePreToolUse } from "../hooks/index.js";
 import { executeMCPTool, getMCPToolSchemas, isMCPTool } from "../mcp/client.js";
 import { sideloadSkillTool } from "../store/sideload.js";
 import { contactLookupTool, whatsappGroupInfoTool, whatsappSendTool, whatsappStickerTool } from "../whatsapp.js";
+import { askOwnerTool } from "./ask-owner.js";
 import {
     appManager,
     calendarTool,
@@ -53,6 +54,8 @@ import {
     browserType,
     browserUploadFile,
     browserWait,
+    browserVideoControl,
+    browserHandleCaptcha,
 } from "./browser/index.js";
 import { channelSendTool } from "./channel-send.js";
 import { codeActionTool, codeExecuteTool, setCodeActionExecutor, setCodeActionLLM } from "./code-action-tool.js";
@@ -459,6 +462,8 @@ registry.set(browserCacheActions.schema.function.name, browserCacheActions);
 registry.set(browserParallelActions.schema.function.name, browserParallelActions);
 registry.set(browserSetMode.schema.function.name, browserSetMode);
 registry.set(browserChromeStatus.schema.function.name, browserChromeStatus);
+registry.set(browserVideoControl.schema.function.name, browserVideoControl);
+registry.set(browserHandleCaptcha.schema.function.name, browserHandleCaptcha);
 
 // File sending
 registry.set(sendFileTool.schema.function.name, sendFileTool);
@@ -545,6 +550,7 @@ registry.set(whatsappSendTool.schema.function.name, whatsappSendTool);
 registry.set(contactLookupTool.schema.function.name, contactLookupTool);
 registry.set(whatsappStickerTool.schema.function.name, whatsappStickerTool);
 registry.set(whatsappGroupInfoTool.schema.function.name, whatsappGroupInfoTool);
+registry.set(askOwnerTool.schema.function.name, askOwnerTool);
 
 // Cross-channel messaging tool (send messages to user on any active channel)
 registry.set(channelSendTool.schema.function.name, channelSendTool);
