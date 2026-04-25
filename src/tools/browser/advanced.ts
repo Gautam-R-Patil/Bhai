@@ -169,7 +169,7 @@ export const browserParallelTabs: ToolDefinition = {
                                         break;
                                     }
                                     case 'scroll': {
-                                        await page.evaluate(() => window.scrollBy(0, 500));
+                                        await page.mouse.wheel(0, 500);
                                         await page.waitForTimeout(300);
                                         break;
                                     }
@@ -549,9 +549,8 @@ export const browserMultiAction: ToolDefinition = {
                             case "left": deltaX = -amount; break;
                             case "right": deltaX = amount; break;
                         }
-                        await page.evaluate(({ dx, dy }: { dx: number, dy: number }) => {
-                            window.scrollBy({ left: dx, top: dy, behavior: "smooth" });
-                        }, { dx: deltaX, dy: deltaY });
+                        // mouse.wheel uses native CDP — no eval/compiled-lambda issues
+                        await page.mouse.wheel(deltaX, deltaY);
                         invalidateCache(); // Positions changed
                         return { success: true };
                     }

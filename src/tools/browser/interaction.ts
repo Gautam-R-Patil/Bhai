@@ -501,23 +501,12 @@ export const browserScroll: ToolDefinition = {
                 await page.mouse.wheel(deltaX, deltaY);
                 await page.keyboard.up("Control");
             } else {
-                // Smart scroll: find the scrollable container at the cursor position
-                await page.evaluate(({ dx, dy, cx, cy }: { dx: number, dy: number, cx: number, cy: number }) => {
-                    let el = document.elementFromPoint(cx, cy) as HTMLElement | null;
-                    while (el && el !== document.documentElement) {
-                        const style = window.getComputedStyle(el);
-                        const overflowY = style.overflowY;
-                        const overflowX = style.overflowX;
-                        const isScrollableY = (overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight;
-                        const isScrollableX = (overflowX === 'auto' || overflowX === 'scroll') && el.scrollWidth > el.clientWidth;
-                        if ((dy !== 0 && isScrollableY) || (dx !== 0 && isScrollableX)) {
-                            el.scrollBy({ left: dx, top: dy, behavior: "smooth" });
-                            return;
-                        }
-                        el = el.parentElement;
-                    }
-                    window.scrollBy({ left: dx, top: dy, behavior: "smooth" });
-                }, { dx: deltaX, dy: deltaY, cx: x, cy: y });
+                // Use page.mouse.wheel() — native CDP Input.dispatchMouseEvent.
+                // Never throws ReferenceErrors unlike page.evaluate() with compiled lambdas.
+                // Also correctly triggers virtual scroll lists (React, AG Grid, etc.)
+                // and fires scroll event handlers that page.evaluate/scrollBy can miss.
+                await page.mouse.move(x, y);
+                await page.mouse.wheel(deltaX, deltaY);
             }
 
             await page.waitForTimeout(300);

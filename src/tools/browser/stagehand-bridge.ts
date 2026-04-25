@@ -216,7 +216,7 @@ async function executeAction(page: Page, action: CachedAction): Promise<void> {
             await page.selectOption(action.selector, action.value || "");
             break;
         case "scroll":
-            await page.evaluate(() => window.scrollBy(0, 500));
+            await page.mouse.wheel(0, 500); // native CDP — no eval ReferenceErrors
             break;
         case "navigate":
             if (action.value) await page.goto(action.value);

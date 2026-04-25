@@ -248,7 +248,7 @@ export async function replayActions(page: Page, cached: CachedAction): Promise<b
 
                 case "scroll": {
                     const amount = parseInt(step.value || "300", 10);
-                    await page.evaluate((px: number) => window.scrollBy(0, px), amount);
+                    await page.mouse.wheel(0, amount); // native CDP — no eval ReferenceErrors
                     await page.waitForTimeout(200).catch(() => {});
                     break;
                 }
