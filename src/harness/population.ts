@@ -11,7 +11,7 @@ import type { CandidateManifest, HarnessConfig, SeedConfig } from "./types.js";
 import type { HarnessRunStore } from "./run-store.js";
 import { evaluateCandidate } from "./evaluator.js";
 import { snapshotConfig, resetToDefaults } from "./registry.js";
-import { setActiveCandidate, clearActiveCandidate, flushTracesToCandidate } from "./trace-store.js";
+import { setActiveCandidate, clearActiveCandidate, flushTracesToCandidate, clearTraceBuffer } from "./trace-store.js";
 
 export const ATLAS_SEED_CONFIGS: SeedConfig[] = [
     {
@@ -88,6 +88,7 @@ export async function initializePopulation(
     for (const { manifest, seed, config } of entries) {
         try {
             await onProgress?.(`🌱 Evaluating seed: ${seed.id}…`).catch(() => {});
+            clearTraceBuffer();  // discard any traces from prior steps before this seed
             setActiveCandidate(store.runDir, manifest.candidateId);
             // evaluateCandidate handles applyConfig + resetToDefaults in its own try/finally
             const scores = await evaluateCandidate(llm, manifest.candidateId, config, { fastMode });

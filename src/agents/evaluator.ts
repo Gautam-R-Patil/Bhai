@@ -18,10 +18,7 @@ import { recordEvaluationScore } from "../harness/trace-store.js";
 
 // Per-async-context trace ID — safe across concurrent channel handlers
 const _evalTraceStorage = new AsyncLocalStorage<string | null>();
-export function setActiveEvalTraceId(id: string | null): void {
-    // No-op: traceId is now threaded via runWithEvalTraceId / getActiveEvalTraceId
-    // Kept for backward compat — callers should migrate to runWithEvalTraceId
-}
+
 /** Run fn inside an async context where evaluator.ts sees traceId. */
 export function runWithEvalTraceId<T>(traceId: string | null, fn: () => T): T {
     return _evalTraceStorage.run(traceId, fn);

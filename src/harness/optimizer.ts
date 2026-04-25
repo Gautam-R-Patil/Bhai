@@ -21,7 +21,7 @@ import { proposeNextCandidate } from "./proposer.js";
 import { proposeWithFilesystemAgent, type CodeChange } from "./code-proposer.js";
 import { evaluateCandidate } from "./evaluator.js";
 import { applyConfig, persistActiveConfig } from "./registry.js";
-import { setActiveCandidate, clearActiveCandidate, flushTracesToCandidate, readCandidateTraces } from "./trace-store.js";
+import { setActiveCandidate, clearActiveCandidate, flushTracesToCandidate, readCandidateTraces, clearTraceBuffer } from "./trace-store.js";
 import { recordOutcome } from "../prompts/prompt-evolver.js";
 import { initializePopulation } from "./population.js";
 import { computeParetoFrontier, selectFromFrontier } from "./pareto.js";
@@ -185,11 +185,12 @@ export async function runMetaHarnessOptimization(
             }
         }
 
+        // Clear any proposer/inter-iteration traces so only benchmark traces land in this candidate
+        clearTraceBuffer();
         // Evaluate
         setActiveCandidate(store.runDir, candidate.candidateId);
         let scores;
         try {
-            applyConfig(proposed);
             scores = await evaluateCandidate(llm, candidate.candidateId, proposed, { fastMode: opts.fastMode });
         } catch (err) {
             console.warn(`[META-HARNESS v2] Evaluation crashed: ${(err as Error).message}`);

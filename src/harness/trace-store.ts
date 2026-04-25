@@ -72,6 +72,16 @@ export function clearActiveCandidate(): void {
     _activeCandidateId = null;
 }
 
+/**
+ * Discard all buffered traces without writing them to disk.
+ * Call this before setActiveCandidate for a new evaluation to prevent
+ * proposer self-traces or other non-benchmark activity from being flushed
+ * into the candidate's traces directory.
+ */
+export function clearTraceBuffer(): void {
+    _completedTraces.length = 0;
+}
+
 // ── Per-invocation trace lifecycle ─────────────────────────────────────────
 
 /** Start a trace for an agent invocation. Returns a traceId to pass to other record* calls. */

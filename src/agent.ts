@@ -801,12 +801,16 @@ async function _runAgentBody(
         setActiveChannel(channelContext.channel);
     }
 
+    // Trace ID injected by the outer runAgent wrapper (already started + in ALS context).
+    const _harnessTraceId = _injectedTraceId;
+
     // ── Account Gate ──────────────────────────
     // Check if account is active and has credits before processing
     if (true) {
         const accountStatus = await checkAccountStatus();
         if (!accountStatus.allowed) {
             const errorMsg = `⛔ ${accountStatus.reason || "Your ATLAS account cannot process messages right now."}`;
+            if (_harnessTraceId) finalizeTrace(_harnessTraceId, false);
             return { text: errorMsg, toolCalls: 0 };
         }
     }
@@ -819,9 +823,6 @@ async function _runAgentBody(
     // these to every message, inflating word count and breaking simple-message detection.
     // The full tagged message is still sent to the LLM for context.
     const rawUserMessage = userMessage.replace(/\n*\[SOURCE:.*\]$/s, "").trim();
-
-    // Trace ID injected by the outer runAgent wrapper (already started + in ALS context).
-    const _harnessTraceId = _injectedTraceId;
 
 
     // ── Goal detection: check if user mentioned a goal ──
