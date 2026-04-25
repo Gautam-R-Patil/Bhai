@@ -30,12 +30,19 @@ function getPythonBin(): string {
 }
 
 async function resolveUv(): Promise<string | null> {
-    const candidates = [
-        "uv",
-        path.join(process.env.HOME ?? "", ".cargo", "bin", "uv"),
-        path.join(process.env.HOME ?? "", ".local", "bin", "uv"),
-        path.join(process.env.USERPROFILE ?? "", ".cargo", "bin", "uv.exe"),
-    ];
+    const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
+    const candidates =
+        process.platform === "win32"
+            ? [
+                  "uv",
+                  path.join(home, ".cargo", "bin", "uv.exe"),
+                  path.join(home, "AppData", "Local", "uv", "uv.exe"),
+              ]
+            : [
+                  "uv",
+                  path.join(home, ".cargo", "bin", "uv"),
+                  path.join(home, ".local", "bin", "uv"),
+              ];
     for (const candidate of candidates) {
         try {
             await execFileAsync(candidate, ["--version"], { timeout: 5000 });

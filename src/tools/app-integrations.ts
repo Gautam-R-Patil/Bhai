@@ -13,8 +13,7 @@ import { promises as fs } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { ToolDefinition } from "./get-current-time.js";
-import { IS_MAC, IS_WIN, runPowerShell, runPowerShellInline, nativeOpen } from "./platform.js";
-import { osNav, osClickElement } from "./macos.js";
+import { IS_MAC, IS_WIN, runPowerShellInline } from "./platform.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -76,6 +75,9 @@ export const musicControl: ToolDefinition = {
     },
 
     async handler(input) {
+        if (!IS_MAC) {
+            return JSON.stringify({ success: false, error: "music_control is only available on macOS (Apple Music / iTunes)." });
+        }
         const action = input.action as string;
 
         try {
@@ -193,6 +195,9 @@ export const calendarTool: ToolDefinition = {
     },
 
     async handler(input) {
+        if (!IS_MAC) {
+            return JSON.stringify({ success: false, error: "calendar_tool is only available on macOS (requires the Calendar app)." });
+        }
         const action = input.action as string;
 
         try {
@@ -307,6 +312,9 @@ export const remindersTool: ToolDefinition = {
     },
 
     async handler(input) {
+        if (!IS_MAC) {
+            return JSON.stringify({ success: false, error: "reminders_tool is only available on macOS (requires the Reminders app)." });
+        }
         const action = input.action as string;
 
         try {
@@ -522,6 +530,9 @@ export const messagesTool: ToolDefinition = {
     },
 
     async handler(input) {
+        if (!IS_MAC) {
+            return JSON.stringify({ success: false, error: "messages_tool is only available on macOS (requires the Messages app and iMessage)." });
+        }
         const action = input.action as string;
 
         try {
@@ -606,6 +617,9 @@ export const windowManage: ToolDefinition = {
     },
 
     async handler(input) {
+        if (!IS_MAC) {
+            return JSON.stringify({ success: false, error: "window_manager is only available on macOS. On Windows, use PowerShell with Win32 API or the built-in Snap Layouts (Win+Z)." });
+        }
         const action = input.action as string;
         const app = input.app as string || "";
 
@@ -738,6 +752,9 @@ export const osDrag: ToolDefinition = {
     },
 
     async handler(input) {
+        if (!IS_MAC) {
+            return JSON.stringify({ success: false, error: "os_drag is only available on macOS (uses CoreGraphics)." });
+        }
         const fromX = input.from_x as number;
         const fromY = input.from_y as number;
         const toX = input.to_x as number;
@@ -828,6 +845,40 @@ export const appManager: ToolDefinition = {
         const app = input.app as string;
 
         try {
+            // Windows: use PowerShell for app management
+            if (IS_WIN) {
+                const safeName = app ? app.replace(/"/g, "") : "";
+                switch (action) {
+                    case "list": {
+                        const result = await runPowerShellInline(
+                            `Get-Process | Where-Object { $_.MainWindowTitle -ne '' } | Select-Object ProcessName,Id | ConvertTo-Json -Compress`,
+                            5000
+                        );
+                        const procs = JSON.parse(result.trim() || "[]");
+                        const arr = Array.isArray(procs) ? procs : [procs];
+                        return JSON.stringify({ success: true, count: arr.length, apps: arr.map((p: Record<string, unknown>) => ({ name: p.ProcessName, frontmost: false, visible: true })) });
+                    }
+                    case "quit":
+                        if (!app) return JSON.stringify({ error: "Provide 'app' name to quit." });
+                        await runPowerShellInline(`Stop-Process -Name "${safeName}" -ErrorAction SilentlyContinue`, 5000);
+                        return JSON.stringify({ success: true, action: "quit", app });
+                    case "force_quit":
+                        if (!app) return JSON.stringify({ error: "Provide 'app' name to force quit." });
+                        await runPowerShellInline(`Stop-Process -Name "${safeName}" -Force -ErrorAction SilentlyContinue`, 5000);
+                        return JSON.stringify({ success: true, action: "force_quit", app });
+                    case "hide":
+                    case "unhide":
+                        return JSON.stringify({ success: false, error: `${action} is not supported on Windows.` });
+                    case "activate":
+                        if (!app) return JSON.stringify({ error: "Provide 'app' name to activate." });
+                        await runPowerShellInline(`Start-Process "${safeName}" -ErrorAction SilentlyContinue`, 5000);
+                        return JSON.stringify({ success: true, action: "activate", app });
+                    default:
+                        return JSON.stringify({ error: `Unknown action: ${action}` });
+                }
+            }
+
+            // macOS / Linux
             switch (action) {
                 case "list": {
                     const result = await runJXA(`

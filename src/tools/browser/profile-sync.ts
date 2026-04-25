@@ -40,12 +40,18 @@ export interface BrowserProfile {
 // ── Chrome Profile Path ───────────────────────
 
 function getChromeProfilePath(): string {
-    const home = process.env.HOME || "";
-    const possibilities = [
-        path.join(home, "Library", "Application Support", "Google", "Chrome", "Default"),
-        path.join(home, "Library", "Application Support", "Google", "Chrome", "Profile 1"),
-        path.join(home, ".config", "google-chrome", "Default"),
-    ];
+    const home = process.env.HOME || process.env.USERPROFILE || "";
+    const possibilities =
+        process.platform === "win32"
+            ? [
+                  path.join(home, "AppData", "Local", "Google", "Chrome", "User Data", "Default"),
+                  path.join(home, "AppData", "Local", "Google", "Chrome", "User Data", "Profile 1"),
+              ]
+            : [
+                  path.join(home, "Library", "Application Support", "Google", "Chrome", "Default"),
+                  path.join(home, "Library", "Application Support", "Google", "Chrome", "Profile 1"),
+                  path.join(home, ".config", "google-chrome", "Default"),
+              ];
     return possibilities.find(p => fs.existsSync(p)) || possibilities[0];
 }
 
@@ -68,7 +74,10 @@ export async function extractChromeCookies(): Promise<BrowserProfile["cookies"]>
  * This is the recommended approach: Playwright uses the real profile directly.
  */
 export function getChromeUserDataDir(): string {
-    const home = process.env.HOME || "";
+    const home = process.env.HOME || process.env.USERPROFILE || "";
+    if (process.platform === "win32") {
+        return path.join(home, "AppData", "Local", "Google", "Chrome", "User Data");
+    }
     return path.join(home, "Library", "Application Support", "Google", "Chrome");
 }
 

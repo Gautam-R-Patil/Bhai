@@ -723,11 +723,14 @@ function setupAutoUpdater() {
         // Show notification if enabled
         if (store.get("notifyOnUpdate")) {
             const { Notification } = require("electron");
-            new Notification({
-                title: "A.T.L.A.S Update Available",
-                body: `Version ${info.version} is ready to download`,
-                icon: path.join(__dirname, "logo.png"),
-            }).show();
+            if (Notification.isSupported()) {
+                new Notification({
+                    title: "A.T.L.A.S Update Available",
+                    // Windows silently drops notifications with an empty body
+                    body: `Version ${info.version} is ready to download`,
+                    icon: path.join(__dirname, process.platform === "win32" ? "logo.ico" : "logo.png"),
+                }).show();
+            }
         }
     });
 
@@ -760,11 +763,13 @@ function setupAutoUpdater() {
         // Show notification
         if (store.get("notifyOnUpdate")) {
             const { Notification } = require("electron");
-            new Notification({
-                title: "A.T.L.A.S Update Ready",
-                body: `Version ${info.version} is ready to install. Restart to update.`,
-                icon: path.join(__dirname, "logo.png"),
-            }).show();
+            if (Notification.isSupported()) {
+                new Notification({
+                    title: "A.T.L.A.S Update Ready",
+                    body: `Version ${info.version} is ready to install. Restart to update.`,
+                    icon: path.join(__dirname, process.platform === "win32" ? "logo.ico" : "logo.png"),
+                }).show();
+            }
         }
     });
 
@@ -1472,7 +1477,13 @@ function registerIPC() {
     ipcMain.on("overlay:notify", (_, { title, body }) => {
         const { Notification } = require("electron");
         if (Notification.isSupported()) {
-            new Notification({ title: title || "A.T.L.A.S", body: body || "", icon: path.join(__dirname, "logo.png") }).show();
+            // Windows silently drops notifications with an empty body — always provide one
+            const safeBody = body || "A.T.L.A.S notification";
+            new Notification({
+                title: title || "A.T.L.A.S",
+                body: safeBody,
+                icon: path.join(__dirname, process.platform === "win32" ? "logo.ico" : "logo.png"),
+            }).show();
         }
     });
 
@@ -3629,7 +3640,9 @@ function runCommand(cmd, args, cwd, onOutput) {
 // ── System Tray ───────────────────────────────
 
 function createTray() {
-    const iconPath = path.join(__dirname, "logo.png");
+    // Windows requires .ico for tray icons; macOS/Linux use PNG
+    const iconFile = process.platform === "win32" ? "logo.ico" : "logo.png";
+    const iconPath = path.join(__dirname, iconFile);
     const icon = nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 });
     tray = new Tray(icon);
     tray.setToolTip("A.T.L.A.S — Personal AI Agent");
