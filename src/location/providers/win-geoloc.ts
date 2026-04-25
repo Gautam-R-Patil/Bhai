@@ -12,23 +12,31 @@ const PS_SCRIPT = `
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
 [Windows.Devices.Geolocation.Geolocator, Windows.Devices.Geolocation, ContentType=WindowsRuntime] | Out-Null
 
+# Check access status first
+$accessTask = [Windows.Devices.Geolocation.Geolocator]::RequestAccessAsync()
+$sw = [System.Diagnostics.Stopwatch]::StartNew()
+while ($accessTask.Status -eq 'Started' -and $sw.ElapsedMilliseconds -lt 5000) {
+    Start-Sleep -Milliseconds 100
+}
+$accessStatus = $accessTask.GetResults()
+if ($accessStatus -ne 'Allowed') {
+    Write-Output "error|location_access_denied|Enable Location in Windows Settings > Privacy & Security > Location"
+    exit
+}
+
 $gl = New-Object Windows.Devices.Geolocation.Geolocator
 $gl.DesiredAccuracy = [Windows.Devices.Geolocation.PositionAccuracy]::High
 
 try {
     $task = $gl.GetGeopositionAsync()
-    [Windows.Foundation.IAsyncOperation[Windows.Devices.Geolocation.Geoposition]]$task | Out-Null
-
-    $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    while ($task.Status -eq 'Started' -and $sw.ElapsedMilliseconds -lt 5000) {
+    $sw2 = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($task.Status -eq 'Started' -and $sw2.ElapsedMilliseconds -lt 8000) {
         Start-Sleep -Milliseconds 100
     }
-
     if ($task.Status -ne 'Completed') {
-        Write-Output "error|timeout"
+        Write-Output "error|timeout|Location request timed out"
         exit
     }
-
     $pos = $task.GetResults()
     $coord = $pos.Coordinate
     $lat = $coord.Point.Position.Latitude
@@ -57,7 +65,13 @@ export class WinGeolocationProvider implements LocationProvider {
 
         const result = stdout.trim();
         if (result.startsWith("error|")) {
-            throw new Error(`WinGeoloc: ${result.split("|")[1]}`);
+            const parts = result.split("|");
+            const code = parts[1];
+            const hint = parts[2] || "";
+            if (code === "location_access_denied") {
+                throw new Error(`Windows location access denied. ${hint}`);
+            }
+            throw new Error(`WinGeoloc: ${code}${hint ? ` — ${hint}` : ""}`);
         }
 
         const [latStr, lonStr, altStr, accStr] = result.split("|");
