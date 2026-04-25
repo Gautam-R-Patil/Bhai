@@ -15,6 +15,8 @@ import {
     getLastElementMap,
     buildElementsText,
     CLICK_INDICATOR_JS,
+    SCROLL_INDICATOR_JS,
+    ATLAS_HUD_JS,
     setActivePageIndex,
     getActivePageIndex,
     invalidateCache,
@@ -93,6 +95,12 @@ export const browserClickAt: ToolDefinition = {
             } else {
                 return JSON.stringify({ error: "Provide 'label' (preferred) or 'x' + 'y' coordinates" });
             }
+
+            // HUD: show what element is being clicked
+            const hudLabel = input.label !== undefined
+                ? `🖱 Clicking "${(lastElementMap.find(e => e.label === Number(input.label))?.text || '').substring(0, 30) || `#${input.label}`}"`
+                : `🖱 Clicking (${Math.round(x)}, ${Math.round(y)})`;
+            await page.evaluate(ATLAS_HUD_JS, { label: hudLabel, done: false }).catch(() => {});
 
             const modifiers: string[] = [];
             if (input.ctrl) { await page.keyboard.down("Control"); modifiers.push("Ctrl"); }
@@ -228,6 +236,7 @@ export const browserClickAt: ToolDefinition = {
 
             // Record success for native loop/rate tracker
             recordBrowserAction("click", page.url(), String(input.label ?? `${x},${y}`), true);
+            await page.evaluate(ATLAS_HUD_JS, { label: '', done: true }).catch(() => {});
 
             return JSON.stringify({
                 success: true,
@@ -508,6 +517,10 @@ export const browserScroll: ToolDefinition = {
                 // and fires scroll event handlers that page.evaluate/scrollBy can miss.
                 await page.mouse.move(x, y);
                 await page.mouse.wheel(deltaX, deltaY);
+                // Scroll direction indicator
+                await page.evaluate(SCROLL_INDICATOR_JS, {
+                    direction: input.direction, amount, x, y
+                }).catch(() => {});
             }
 
             await page.waitForTimeout(300);

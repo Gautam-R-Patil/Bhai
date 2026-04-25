@@ -139,6 +139,36 @@ function updateBadge(connected) {
   chrome.action.setBadgeText({ text });
 }
 
+let _badgeActivityTimer = null;
+let _badgeFrameIdx = 0;
+const _badgeFrames = ['⬤', '○'];   // Pulse between filled/hollow
+
+function setBadgeActive(active) {
+  if (active) {
+    if (_badgeActivityTimer) return;
+    chrome.action.setBadgeBackgroundColor({ color: "#3b82f6" });
+    _badgeFrameIdx = 0;
+    _badgeActivityTimer = setInterval(() => {
+      chrome.action.setBadgeText({ text: _badgeFrames[_badgeFrameIdx % 2] });
+      _badgeFrameIdx++;
+    }, 600);
+  } else {
+    if (_badgeActivityTimer) { clearInterval(_badgeActivityTimer); _badgeActivityTimer = null; }
+    updateBadge(authenticated);
+  }
+}
+
+// Track last N actions for the popup activity log
+const _actionLog = [];
+const MAX_ACTION_LOG = 6;
+
+function logAction(type, detail) {
+  const entry = { type, detail: (detail || '').substring(0, 60), ts: Date.now() };
+  _actionLog.unshift(entry);
+  if (_actionLog.length > MAX_ACTION_LOG) _actionLog.pop();
+  chrome.runtime.sendMessage({ type: 'atlas_action', entry }).catch(() => {});
+}
+
 // ── Send Message to ATLAS Overlay ────────────
 // Sends a chat message through the WebSocket to the overlay chat server.
 // Messages include meta.source = "chrome-extension" so the server can
@@ -303,6 +333,22 @@ async function capturePageContext() {
 async function handleCommand(cmd) {
   const { id, type, payload } = cmd;
 
+  // Activate badge + log action
+  setBadgeActive(true);
+  const actionLabels = {
+    click_at: `Clicking (${payload?.x|0},${payload?.y|0})`,
+    type_text: `Typing "${(payload?.text||'').substring(0,25)}"`,
+    scroll: `Scrolling ${payload?.direction||'down'} ${payload?.amount||''}px`,
+    navigate: `→ ${(payload?.url||'').replace(/^https?:\/\/(www\.)?/,'')}`,
+    scan_elements: 'Scanning page elements',
+    hover: `Hovering (${payload?.x|0},${payload?.y|0})`,
+    screenshot: 'Taking screenshot',
+    execute_js: 'Running script',
+    keyboard: `Key: ${payload?.key||payload?.combo||''}`,
+  };
+  const actionDetail = actionLabels[type] || type;
+  logAction(type, actionDetail);
+
   try {
     let result;
 
@@ -320,6 +366,8 @@ async function handleCommand(cmd) {
         break;
 
       case "click_at":
+        // Pass element label text for HUD display if available
+        payload.elementLabel = actionDetail.replace('Clicking ','');
         result = await clickAt(payload);
         break;
 
@@ -376,8 +424,10 @@ async function handleCommand(cmd) {
     }
 
     sendResponse(id, true, result);
+    setBadgeActive(false);
   } catch (err) {
     sendResponse(id, false, null, err.message || String(err));
+    setBadgeActive(false);
   }
 }
 
@@ -726,16 +776,88 @@ function scanPageElements() {
     return merged.slice(0, 150);
 }
 
+// ── Shared visual feedback injected into real tabs ──────────────────────────
+
+function injectAtlasVisuals(tabId) {
+  // Inject keyframes + HUD CSS once per tab
+  chrome.scripting.executeScript({
+    target: { tabId },
+    world: "ISOLATED",
+    func: () => {
+      if (document.getElementById('__atlasKF')) return;
+      const s = document.createElement('style');
+      s.id = '__atlasKF';
+      s.textContent = `
+        @keyframes atlasRipple{0%{transform:scale(.3);opacity:1}100%{transform:scale(2.2);opacity:0}}
+        @keyframes atlasDot{0%{transform:scale(1.8);opacity:1}100%{transform:scale(.6);opacity:0}}
+        @keyframes atlasFade{0%{opacity:.8}100%{opacity:0}}
+        @keyframes atlasPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.8)}}
+        @keyframes atlasScrollFadeDown{0%{opacity:1;transform:translateY(0)}100%{opacity:0;transform:translateY(16px)}}
+        @keyframes atlasScrollFadeUp{0%{opacity:1;transform:translateY(0)}100%{opacity:0;transform:translateY(-16px)}}
+      `;
+      document.head.appendChild(s);
+    }
+  }).catch(() => {});
+}
+
+function showAtlasHUD(tabId, label, done = false) {
+  chrome.scripting.executeScript({
+    target: { tabId },
+    world: "ISOLATED",
+    func: (lbl, isDone) => {
+      const ID = '__atlasHUD';
+      let hud = document.getElementById(ID);
+      if (isDone) {
+        if (hud) { hud.style.opacity = '0'; setTimeout(() => hud?.remove(), 300); }
+        return;
+      }
+      if (!hud) {
+        hud = document.createElement('div');
+        hud.id = ID;
+        hud.innerHTML = '<span style="width:6px;height:6px;border-radius:50%;background:#3b82f6;display:inline-block;animation:atlasPulse 1.2s ease-in-out infinite;flex-shrink:0"></span>' +
+                        '<span id="__atlasHUDtxt" style="margin-left:7px;font-size:11px;font-weight:500;color:#e2e8f0;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px"></span>';
+        hud.style.cssText = 'position:fixed;top:10px;right:10px;display:flex;align-items:center;padding:6px 12px;border-radius:20px;background:rgba(15,23,42,0.92);border:1px solid #1e3a5f;backdrop-filter:blur(8px);pointer-events:none;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;box-shadow:0 4px 20px rgba(0,0,0,.4);transition:opacity .3s ease;opacity:0;';
+        document.body.appendChild(hud);
+        requestAnimationFrame(() => { hud.style.opacity = '1'; });
+      }
+      const txt = document.getElementById('__atlasHUDtxt');
+      if (txt) txt.textContent = lbl;
+    },
+    args: [label, done]
+  }).catch(() => {});
+}
+
 async function clickAt(payload) {
   return withActiveTab(async (tabId) => {
+    injectAtlasVisuals(tabId);
+    const elementLabel = payload.elementLabel || '';
+    if (elementLabel) showAtlasHUD(tabId, `🖱 Clicking "${elementLabel.substring(0, 30)}"`);
+
     const results = await chrome.scripting.executeScript({
       target: { tabId },
       func: (x, y, doubleClick, button, modifiers) => {
-        const circle = document.createElement("div");
-        circle.style.cssText = `position:fixed;left:${x-20}px;top:${y-20}px;width:40px;height:40px;border-radius:50%;background:rgba(59,130,246,0.4);border:2px solid rgba(59,130,246,0.8);pointer-events:none;z-index:999999;transition:all 0.5s ease-out;`;
-        document.body.appendChild(circle);
-        setTimeout(() => { circle.style.transform="scale(2)"; circle.style.opacity="0"; }, 100);
-        setTimeout(() => circle.remove(), 600);
+        // Redesigned click indicator: crosshair + ripple + dot
+        const colors = { left: ['rgba(59,130,246,0.15)','rgba(59,130,246,.9)','#3b82f6'], right: ['rgba(239,68,68,.15)','rgba(239,68,68,.9)','#ef4444'], middle: ['rgba(168,85,247,.15)','rgba(168,85,247,.9)','#a855f7'] };
+        const [, border, solid] = colors[button || 'left'] || colors.left;
+        const ring = document.createElement('div');
+        ring.style.cssText = `position:fixed;left:${x-24}px;top:${y-24}px;width:48px;height:48px;border-radius:50%;border:2px solid ${border};pointer-events:none;z-index:2147483646;animation:atlasRipple .6s cubic-bezier(.4,0,.2,1) forwards;`;
+        const dot = document.createElement('div');
+        dot.style.cssText = `position:fixed;left:${x-4}px;top:${y-4}px;width:8px;height:8px;border-radius:50%;background:${solid};pointer-events:none;z-index:2147483647;animation:atlasDot .4s cubic-bezier(.4,0,.2,1) forwards;`;
+        const mkL = (h) => { const l = document.createElement('div'); l.style.cssText=`position:fixed;${h?`left:${x-12}px;top:${y-1}px;width:24px;height:2px;`:`left:${x-1}px;top:${y-12}px;width:2px;height:24px;`}background:${solid};opacity:.6;pointer-events:none;z-index:2147483647;animation:atlasFade .5s ease-out forwards;`; return l; };
+        [ring, dot, mkL(true), mkL(false)].forEach(e => document.body.appendChild(e));
+        setTimeout(() => [ring, dot].forEach(e => e.remove()), 650);
+        setTimeout(() => document.querySelectorAll('[style*="atlasFade"]').forEach(e => e.remove()), 560);
+
+        const el = document.elementFromPoint(x, y);
+        if (!el) return { success: false, error: "No element at coordinates" };
+
+        const opts = {
+          bubbles: true, cancelable: true, clientX: x, clientY: y,
+          button: button === "right" ? 2 : button === "middle" ? 1 : 0,
+          ctrlKey: (modifiers || []).includes("Control"),
+          shiftKey: (modifiers || []).includes("Shift"),
+          altKey: (modifiers || []).includes("Alt"),
+          metaKey: (modifiers || []).includes("Meta"),
 
         const el = document.elementFromPoint(x, y);
         if (!el) return { success: false, error: "No element at coordinates" };
@@ -824,6 +946,8 @@ async function clickAt(payload) {
       args: [payload.x, payload.y, payload.doubleClick || false, payload.button || "left", payload.modifiers || []],
     });
 
+    // Clear HUD after click
+    if (elementLabel) showAtlasHUD(tabId, '', true);
     return results[0]?.result || { success: true };
   });
 }
@@ -1012,11 +1136,24 @@ async function typeText(payload) {
 
 async function scroll(payload) {
   return withActiveTab(async (tabId) => {
+    injectAtlasVisuals(tabId);
+    showAtlasHUD(tabId, `↕ Scrolling ${payload.direction || 'down'} ${payload.amount || 300}px`);
+
     await chrome.scripting.executeScript({
       target: { tabId },
       func: (direction, amount, selector) => {
         const target = selector ? document.querySelector(selector) : null;
         const px = amount || 300;
+
+        // Scroll indicator pill
+        const arrows = {up:'↑', down:'↓', left:'←', right:'→'};
+        const pill = document.createElement('div');
+        pill.textContent = (arrows[direction] || '↕') + ' ' + px + 'px';
+        const fadeAnim = direction === 'up' ? 'atlasScrollFadeUp' : 'atlasScrollFadeDown';
+        pill.style.cssText = `position:fixed;left:50%;transform:translateX(-50%);bottom:40px;padding:5px 14px;border-radius:20px;font-size:12px;font-weight:600;background:rgba(15,23,42,.88);color:#94a3b8;border:1px solid #334155;pointer-events:none;z-index:2147483647;backdrop-filter:blur(4px);animation:${fadeAnim} .75s ease-out forwards;font-family:-apple-system,sans-serif;`;
+        document.body.appendChild(pill);
+        setTimeout(() => pill.remove(), 780);
+
         if (!target) {
           switch (direction) {
             case "up": window.scrollBy(0, -px); break;
@@ -1036,6 +1173,7 @@ async function scroll(payload) {
       args: [payload.direction, payload.amount || 300, payload.selector || null],
     });
 
+    setTimeout(() => showAtlasHUD(tabId, '', true), 800);
     return { success: true };
   });
 }
@@ -1146,18 +1284,28 @@ async function keyboard(payload) {
 
 async function hover(payload) {
   return withActiveTab(async (tabId) => {
+    injectAtlasVisuals(tabId);
     await chrome.scripting.executeScript({
       target: { tabId },
       func: (x, y) => {
+        // Subtle hover cursor dot
+        const prev = document.getElementById('__atlasHoverDot');
+        if (prev) prev.remove();
+        const dot = document.createElement('div');
+        dot.id = '__atlasHoverDot';
+        dot.style.cssText = `position:fixed;left:${x-5}px;top:${y-5}px;width:10px;height:10px;border-radius:50%;background:rgba(99,102,241,.7);border:2px solid rgba(99,102,241,.9);pointer-events:none;z-index:2147483647;transition:all .15s ease;`;
+        document.body.appendChild(dot);
+        setTimeout(() => dot?.remove(), 1500);
+
+        // Move mouse and fire events
         const el = document.elementFromPoint(x, y);
         if (!el) return;
-        el.dispatchEvent(new MouseEvent("mouseover", { clientX: x, clientY: y, bubbles: true }));
-        el.dispatchEvent(new MouseEvent("mouseenter", { clientX: x, clientY: y, bubbles: true }));
-        el.dispatchEvent(new MouseEvent("mousemove", { clientX: x, clientY: y, bubbles: true }));
+        const events = ['mousemove','mouseover','mouseenter'];
+        const opts = { clientX: x, clientY: y, bubbles: true, cancelable: true };
+        events.forEach(ev => el.dispatchEvent(new MouseEvent(ev, opts)));
       },
       args: [payload.x, payload.y],
     });
-
     return { success: true };
   });
 }
@@ -1371,7 +1519,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       hasToken: !!authToken,
       discoveryAttempts,
       lastResponse: lastAtlasResponse,
+      actionLog: _actionLog,
     });
+    return true;
+  }
+  if (msg.type === "get_action_log") {
+    sendResponse({ log: _actionLog });
     return true;
   }
 

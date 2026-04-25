@@ -236,33 +236,130 @@ export async function getActivePage(): Promise<Page> {
     return pages[idx];
 }
 
-// ── Visual click indicator ────────────────────
+// ── Visual Indicators (Playwright / Headless) ────────────────────────────────
+// Injected into the page on each interaction to give the user clear, polished
+// feedback about what the browser agent is doing.
 
+// Click: crosshair dot + expanding ring + ripple. Color-coded by type.
 export const CLICK_INDICATOR_JS = `
 ({x, y, type}) => {
-    const circle = document.createElement('div');
-    circle.style.cssText = \`
-        position: fixed; left: \${x - 20}px; top: \${y - 20}px;
-        width: 40px; height: 40px; border-radius: 50%;
-        background: rgba(59, 130, 246, 0.4);
-        border: 2px solid rgba(59, 130, 246, 0.8);
-        pointer-events: none; z-index: 999999;
-        transition: all 0.5s ease-out;
+    const colors = {
+        click: ['rgba(59,130,246,0.15)', 'rgba(59,130,246,0.9)', '#3b82f6'],
+        right:  ['rgba(239,68,68,0.15)',  'rgba(239,68,68,0.9)',  '#ef4444'],
+        hold:   ['rgba(34,197,94,0.15)',  'rgba(34,197,94,0.9)',  '#22c55e'],
+        double: ['rgba(168,85,247,0.15)', 'rgba(168,85,247,0.9)', '#a855f7'],
+    };
+    const [bg, border, solid] = colors[type] || colors.click;
+
+    // Outer ripple ring
+    const ring = document.createElement('div');
+    ring.style.cssText = \`position:fixed;left:\${x-24}px;top:\${y-24}px;width:48px;height:48px;
+        border-radius:50%;border:2px solid \${border};pointer-events:none;z-index:2147483646;
+        animation:atlasRipple 0.6s cubic-bezier(.4,0,.2,1) forwards;\`;
+
+    // Center dot
+    const dot = document.createElement('div');
+    dot.style.cssText = \`position:fixed;left:\${x-4}px;top:\${y-4}px;width:8px;height:8px;
+        border-radius:50%;background:\${solid};pointer-events:none;z-index:2147483647;
+        animation:atlasDot 0.4s cubic-bezier(.4,0,.2,1) forwards;\`;
+
+    // Crosshair lines (20px each side)
+    const mkLine = (horiz) => {
+        const l = document.createElement('div');
+        const s = horiz
+            ? \`left:\${x-12}px;top:\${y-1}px;width:24px;height:2px;\`
+            : \`left:\${x-1}px;top:\${y-12}px;width:2px;height:24px;\`;
+        l.style.cssText = \`position:fixed;\${s}background:\${solid};opacity:0.7;pointer-events:none;
+            z-index:2147483647;animation:atlasFade 0.5s ease-out forwards;\`;
+        return l;
+    };
+
+    // Inject keyframes once
+    if (!document.getElementById('__atlasKF')) {
+        const st = document.createElement('style');
+        st.id = '__atlasKF';
+        st.textContent = \`
+            @keyframes atlasRipple{0%{transform:scale(.3);opacity:1}100%{transform:scale(2.2);opacity:0}}
+            @keyframes atlasDot{0%{transform:scale(1.8);opacity:1}100%{transform:scale(.6);opacity:0}}
+            @keyframes atlasFade{0%{opacity:.8}100%{opacity:0}}
+        \`;
+        document.head.appendChild(st);
+    }
+
+    [ring, dot, mkLine(true), mkLine(false)].forEach(el => document.body.appendChild(el));
+    setTimeout(() => [ring, dot].forEach(el => el.remove()), 650);
+    setTimeout(() => document.querySelectorAll('[style*="atlasFade"]').forEach(e => e.remove()), 550);
+};
+`;
+
+// Scroll: directional arrow animation at the scroll position
+export const SCROLL_INDICATOR_JS = `
+({direction, amount, x, y}) => {
+    const arrows = {up:'↑', down:'↓', left:'←', right:'→'};
+    const arrow = arrows[direction] || '↕';
+    const el = document.createElement('div');
+    el.textContent = arrow + ' ' + Math.abs(amount) + 'px';
+    el.style.cssText = \`
+        position:fixed;left:\${Math.min(x||640, window.innerWidth-120)}px;
+        top:\${Math.min(y||400, window.innerHeight-60)}px;
+        padding:4px 10px;border-radius:20px;font-size:12px;font-weight:600;
+        background:rgba(15,23,42,0.85);color:#94a3b8;border:1px solid #334155;
+        pointer-events:none;z-index:2147483647;backdrop-filter:blur(4px);
+        animation:atlasScrollFade 0.7s ease-out forwards;
     \`;
-    if (type === 'right') {
-        circle.style.background = 'rgba(239, 68, 68, 0.4)';
-        circle.style.borderColor = 'rgba(239, 68, 68, 0.8)';
+    if (!document.getElementById('__atlasKF')) {
+        const st = document.createElement('style');
+        st.id = '__atlasKF';
+        st.textContent = '@keyframes atlasRipple{0%{transform:scale(.3);opacity:1}100%{transform:scale(2.2);opacity:0}}@keyframes atlasDot{0%{transform:scale(1.8);opacity:1}100%{transform:scale(.6);opacity:0}}@keyframes atlasFade{0%{opacity:.8}100%{opacity:0}}';
+        document.head.appendChild(st);
     }
-    if (type === 'hold') {
-        circle.style.background = 'rgba(34, 197, 94, 0.4)';
-        circle.style.borderColor = 'rgba(34, 197, 94, 0.8)';
+    const kf = document.getElementById('__atlasKF');
+    if (!kf.textContent.includes('atlasScrollFade')) {
+        kf.textContent += '@keyframes atlasScrollFade{0%{opacity:1;transform:translateY(0)}100%{opacity:0;transform:translateY(' + (direction==='up'?-1:1)*16 + 'px)}}';
     }
-    document.body.appendChild(circle);
-    setTimeout(() => {
-        circle.style.transform = 'scale(2)';
-        circle.style.opacity = '0';
-    }, 100);
-    setTimeout(() => circle.remove(), 600);
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 750);
+};
+`;
+
+// ATLAS action HUD: floating pill at top-right showing current action.
+// Persists while action runs, fades out on completion.
+export const ATLAS_HUD_JS = `
+({label, done}) => {
+    const ID = '__atlasHUD';
+    let hud = document.getElementById(ID);
+    if (done) {
+        if (hud) { hud.style.opacity = '0'; setTimeout(() => hud?.remove(), 300); }
+        return;
+    }
+    if (!hud) {
+        hud = document.createElement('div');
+        hud.id = ID;
+        // Icon + text row
+        hud.innerHTML = '<span id="__atlasHUDdot" style="width:6px;height:6px;border-radius:50%;background:#3b82f6;display:inline-block;animation:atlasPulse 1.2s ease-in-out infinite;flex-shrink:0"></span>' +
+                        '<span id="__atlasHUDtxt" style="margin-left:7px;font-size:11px;font-weight:500;color:#e2e8f0;letter-spacing:0.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px"></span>';
+        hud.style.cssText = \`
+            position:fixed;top:10px;right:10px;display:flex;align-items:center;
+            padding:6px 12px;border-radius:20px;
+            background:rgba(15,23,42,0.9);border:1px solid #1e3a5f;
+            backdrop-filter:blur(8px);pointer-events:none;z-index:2147483647;
+            font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+            box-shadow:0 4px 20px rgba(0,0,0,0.4);
+            transition:opacity 0.3s ease;opacity:0;
+        \`;
+        const kf = document.getElementById('__atlasKF');
+        const pp = '@keyframes atlasPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.8)}}';
+        if (kf) { if(!kf.textContent.includes('atlasPulse')) kf.textContent += pp; }
+        else {
+            const s = document.createElement('style');
+            s.id='__atlasKF'; s.textContent = pp;
+            document.head.appendChild(s);
+        }
+        document.body.appendChild(hud);
+        requestAnimationFrame(() => { hud.style.opacity = '1'; });
+    }
+    const txt = document.getElementById('__atlasHUDtxt');
+    if (txt) txt.textContent = label;
 };
 `;
 

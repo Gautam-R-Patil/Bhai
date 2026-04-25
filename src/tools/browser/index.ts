@@ -41,6 +41,8 @@ export {
     getActivePageIndex,
     invalidateCache,
     CLICK_INDICATOR_JS,
+    SCROLL_INDICATOR_JS,
+    ATLAS_HUD_JS,
     SCAN_FRAME_JS
 } from "./core.js";
 
