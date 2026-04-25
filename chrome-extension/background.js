@@ -1044,11 +1044,18 @@ async function executeJS(payload) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab || !tab.id) throw new Error("No active tab");
 
+  // Run in ISOLATED world — bypasses the page's Content Security Policy.
+  // eval() in the page's MAIN world is blocked by strict CSP (no 'unsafe-eval').
+  // In ISOLATED world, eval runs under the extension's own permissive CSP.
   const results = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
+    world: "ISOLATED",
     func: (code) => {
       try {
-        return eval(code);
+        // Use Function constructor rather than eval for slightly better compatibility.
+        // Both eval and Function() work in ISOLATED world regardless of page CSP.
+        const fn = new Function(code);
+        return fn();
       } catch (e) {
         return { error: e.message };
       }

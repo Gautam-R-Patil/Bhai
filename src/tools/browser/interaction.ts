@@ -16,7 +16,8 @@ import {
     buildElementsText,
     CLICK_INDICATOR_JS,
     setActivePageIndex,
-    getActivePageIndex
+    getActivePageIndex,
+    invalidateCache,
 } from "./core.js";
 import {
     getHoverHint,
@@ -510,6 +511,8 @@ export const browserScroll: ToolDefinition = {
             }
 
             await page.waitForTimeout(300);
+            // Invalidate element cache — positions change after scroll
+            invalidateCache();
 
             return JSON.stringify({ success: true, scrolled: input.direction, pixels: amount, zoom: !!input.zoom });
         } catch (err) {
