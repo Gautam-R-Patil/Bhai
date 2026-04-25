@@ -2145,19 +2145,27 @@ function registerIPC() {
         return runDetection(buildDetectionDeps());
     });
 
-    // Setup: re-read just the macOS permission map (for 1s live polling from the
-    // Permissions step of the wizard and the Ready Hub permissions tile).
-    // Returns all-granted on non-darwin since the OS doesn't gate per-app.
+    // Setup: re-read the permission map for live polling from the Permissions step of the
+    // wizard and the Ready Hub permissions tile. macOS uses systemPreferences API;
+    // Windows uses registry checks; other platforms return all-granted (no per-app gating).
     ipcMain.handle("setup:poll-permissions", () => {
-        if (process.platform !== "darwin") {
-            return { accessibility: "granted", screen: "granted", microphone: "granted", location: "granted" };
+        if (process.platform === "darwin") {
+            try {
+                const { detectMacPermissions } = require("./detection/signals");
+                return detectMacPermissions(systemPreferences);
+            } catch {
+                return { accessibility: "unknown", screen: "unknown", microphone: "unknown", location: "unknown" };
+            }
         }
-        try {
-            const { detectMacPermissions } = require("./detection/signals");
-            return detectMacPermissions(systemPreferences);
-        } catch {
-            return { accessibility: "unknown", screen: "unknown", microphone: "unknown", location: "unknown" };
+        if (process.platform === "win32") {
+            try {
+                const { detectWindowsPermissions } = require("./detection/signals");
+                return detectWindowsPermissions(null);
+            } catch {
+                return { accessibility: "granted", screen: "granted", microphone: "unknown", location: "unknown" };
+            }
         }
+        return { accessibility: "granted", screen: "granted", microphone: "granted", location: "granted" };
     });
 
     // Setup: request an OS permission by opening the correct Preferences pane.
@@ -3967,6 +3975,32 @@ app.whenReady().then(async () => {
     if (process.platform === "win32") {
         app.setAppUserModelId("com.xagilabs.atlas");
         console.log("[INIT] Windows AppUserModelID set: com.xagilabs.atlas");
+
+        // On Windows, set up permission handler for microphone/camera/geolocation access from webContents.
+        // This ensures the OS-level permission prompt appears rather than silently denying WebRTC requests.
+        const { session } = require("electron");
+        session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+            const allowed = ["microphone", "camera", "geolocation", "notifications", "media"].includes(permission);
+            if (allowed) {
+                console.log(`[PERMISSIONS] Windows permission requested: ${permission} — granting`);
+            }
+            callback(allowed);
+        });
+
+        // Check if Windows Location Services are enabled via registry.
+        // HKLM\SYSTEM\CurrentControlSet\Services\lfsvc\Service\Configuration\Status = 1 means enabled.
+        execFile(
+            "reg",
+            ["query", "HKLM\\SYSTEM\\CurrentControlSet\\Services\\lfsvc\\Service\\Configuration", "/v", "Status"],
+            { timeout: 2000 },
+            (err, stdout) => {
+                if (!err && stdout.includes("0x1")) {
+                    console.log("[PERMISSIONS] Windows Location Services: enabled");
+                } else {
+                    console.warn("[PERMISSIONS] Windows Location Services may be disabled. Enable in Settings > Privacy & Security > Location");
+                }
+            },
+        );
     }
 
     initProtection();

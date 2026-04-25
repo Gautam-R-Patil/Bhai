@@ -58,11 +58,18 @@ async function runDetection(deps) {
     const envPresent = safeSync(() => signals.detectEnvPresent(fs, paths.envFile), false);
     const account = safeSync(() => signals.detectOtplessSession(prefs), { signedIn: false });
     const playwright = safeSync(() => signals.detectPlaywrightChromium(fs, paths.botDir), false);
-    const permissions = platform === "darwin"
-        ? safeSync(() => signals.detectMacPermissions(systemPreferences), {
+    let permissions;
+    if (platform === "darwin") {
+        permissions = safeSync(() => signals.detectMacPermissions(systemPreferences), {
             accessibility: "unknown", screen: "unknown", microphone: "unknown", location: "unknown",
-        })
-        : { accessibility: "granted", screen: "granted", microphone: "granted", location: "granted" };
+        });
+    } else if (platform === "win32") {
+        permissions = safeSync(() => signals.detectWindowsPermissions(execFn), {
+            accessibility: "granted", screen: "granted", microphone: "unknown", location: "unknown",
+        });
+    } else {
+        permissions = { accessibility: "granted", screen: "granted", microphone: "granted", location: "granted" };
+    }
     const theme = safeSync(() => signals.detectTheme(nativeTheme), "light");
     const workspace = safeSync(() => signals.detectWorkspace(fs, paths.workspace), {
         path: paths.workspace, exists: false,

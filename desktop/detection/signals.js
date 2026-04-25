@@ -240,6 +240,52 @@ function detectEmail(envObj) {
     return undefined;
 }
 
+// ── Windows permission detection ──────────────────
+/**
+ * Detect Windows permission states via registry CapabilityAccessManager checks.
+ * Returns "granted", "denied", or "unknown" for each permission.
+ * The execFn parameter is accepted for API consistency but unused — we call
+ * execSync directly so this stays synchronous (matching detectMacPermissions).
+ */
+function detectWindowsPermissions(_execFn) {
+    const result = {
+        accessibility: "granted", // Windows does not require explicit accessibility permission
+        screen: "granted",        // Windows does not require screen recording permission
+        microphone: "unknown",
+        location: "unknown",
+    };
+
+    try {
+        // Check microphone privacy setting via CapabilityAccessManager consent store.
+        // Key: HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone
+        // Value "Allow" = granted; "Deny" = denied.
+        const micOut = require("node:child_process").execSync(
+            'reg query "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone" /v Value 2>nul',
+            { timeout: 2000, encoding: "utf8" },
+        );
+        if (micOut.includes("Allow")) result.microphone = "granted";
+        else if (micOut.includes("Deny")) result.microphone = "denied";
+    } catch {
+        result.microphone = "unknown";
+    }
+
+    try {
+        // Check location privacy setting via CapabilityAccessManager consent store.
+        // Key: HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location
+        // Value "Allow" = granted; "Deny" = denied.
+        const locOut = require("node:child_process").execSync(
+            'reg query "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\location" /v Value 2>nul',
+            { timeout: 2000, encoding: "utf8" },
+        );
+        if (locOut.includes("Allow")) result.location = "granted";
+        else if (locOut.includes("Deny")) result.location = "denied";
+    } catch {
+        result.location = "unknown";
+    }
+
+    return result;
+}
+
 // ── Phase E additions ──────────────────────────────
 function detectOsUserName(os) {
     try {
@@ -280,6 +326,7 @@ module.exports = {
     detectPlaywrightChromium,
     detectEmbeddingModel,
     detectMacPermissions,
+    detectWindowsPermissions,
     detectTheme,
     detectWorkspace,
     detectHotkeyConflict,
