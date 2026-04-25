@@ -32,6 +32,7 @@ triggers:
 
 | Situation | Best tool |
 |---|---|
+| **Design tools (Figma, Canva, Miro)** | `browser_scan(visual:true)` → click by (x,y) coordinates |
 | Video player control (YouTube, Vimeo, HTML5) | `browser_video_control` |
 | CAPTCHA blocking the page | `browser_handle_captcha` (call first, then proceed) |
 | Cookie/consent banner blocking | Auto-handled — popup guard fires on every page load |
@@ -40,6 +41,41 @@ triggers:
 | Multi-step workflows (navigate → click → type) | `browser_multi_action` |
 | Direct JS/DOM access or API calls | `browser_run_js` |
 | Known page, re-run previously successful flow | `browser_replay_actions` |
+
+## Figma / Canva / Design Tools
+
+These are **canvas-based apps** with minimal DOM. The accessibility tree is nearly empty. The agent auto-detects them on navigation and switches to visual mode.
+
+**Rules for design tools:**
+1. ALWAYS call `browser_scan(visual:true)` before every action — the screenshot is how you see the canvas
+2. Click by EXACT (x,y) pixel coordinates from the screenshot, NOT by label numbers
+3. Use keyboard shortcuts — they're the primary way to select tools and objects
+4. The model automatically escalates to Opus for design tools (visual reasoning required)
+
+**Figma keyboard shortcuts:**
+- `v` = Select/Move, `r` = Rectangle, `t` = Text, `h` = Hand/Pan
+- `f` = Frame, `l` = Line, `p` = Pen, `i` = Eyedropper
+- `Escape` = Deselect / exit current tool
+- `Cmd+Z` = Undo, `Cmd+S` = Save, `Cmd+D` = Duplicate
+- `Cmd+G` = Group, `Cmd+Shift+G` = Ungroup
+- `Cmd++/-` = Zoom in/out, `Cmd+0` = Fit to page
+- `Space` + drag = Pan canvas
+
+**Canva keyboard shortcuts:**
+- `t` = Text tool, `r` = Rectangle, `l` = Line
+- `Cmd+Z` = Undo, `Cmd+S` = Save/Download
+- `Escape` = Deselect
+
+**Example Figma flow:**
+```
+browser_navigate(url: "https://www.figma.com/file/...")
+→ auto-detects design tool, attaches screenshot
+browser_scan(visual: true)  ← see current canvas state
+browser_click_at(x: 340, y: 420)  ← click exact pixel from screenshot
+browser_keyboard(combo: "r")  ← activate rectangle tool
+```
+
+After every action that changes the canvas, call `browser_scan(visual:true)` to see the updated state.
 
 ## YouTube and Video Player Playbook
 

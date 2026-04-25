@@ -105,11 +105,26 @@ export const browserNavigate: ToolDefinition = {
                 }).join('\n');
             }
 
+            // Design-tool detection (Figma, Canva, Miro, etc.)
+            // These are canvas-based apps where accessibility tree is nearly empty.
+            // Automatically set visual mode hint and coordinate-based click guidance.
+            const DESIGN_TOOL_DOMAINS = /\b(figma\.com|canva\.com|miro\.com|lucid\.app|draw\.io|diagrams\.net|sketch\.com|framer\.com|webflow\.com|airtable\.com|retool\.com|linear\.app)\b/;
+            const isDesignTool = DESIGN_TOOL_DOMAINS.test(url);
+            const hasVeryFewElements = elementMap.length < 5;
+
             const result: Record<string, unknown> = {
                 success: true, title, url, open_tabs: tabCount,
                 interactive_elements_text,
-                tip: "Read interactive_elements_text to find the label ID, then use browser_click_at with the label to click."
+                tip: "Read interactive_elements_text to find the label ID, then use browser_click_at with the label to click.",
             };
+
+            if (isDesignTool || hasVeryFewElements) {
+                result.design_tool_mode = isDesignTool;
+                result.canvas_app = isDesignTool || hasVeryFewElements;
+                result.tip = isDesignTool
+                    ? `🎨 DESIGN TOOL DETECTED (${navDomain}). This is a canvas app with minimal DOM. ALWAYS use browser_scan(visual:true) to see the UI, then click by exact coordinates (x,y) NOT by label. Use browser_scan(visual:true) before every action. Keyboard shortcuts are key: 'v'=select, 'r'=rectangle, 't'=text, 'h'=hand/pan, Escape=deselect, Cmd+Z=undo, Cmd+S=save.`
+                    : "⚠️ Very few interactive elements found. Use browser_scan(visual:true) to see the full page layout, then click by coordinates.";
+            }
 
             if (accessibilityTree) {
                 result.accessibility_tree = accessibilityTree;
@@ -219,6 +234,13 @@ export const browserScan: ToolDefinition = {
                 }).join('\n');
             }
 
+            // Auto-detect design tools — force visual mode + coordinate-click guidance
+            const DESIGN_DOMAINS = /\b(figma\.com|canva\.com|miro\.com|lucid\.app|draw\.io|diagrams\.net|sketch\.com|framer\.com|webflow\.com|retool\.com|linear\.app)\b/;
+            const isDesignApp = DESIGN_DOMAINS.test(url);
+            // Also auto-visual if very few elements found (canvas app, game, etc.)
+            const forceVisual = isDesignApp || elementMap.length < 4;
+            const doVisual = !!(input.visual || forceVisual);
+
             const result: Record<string, unknown> = {
                 success: true,
                 title, url,
@@ -227,26 +249,34 @@ export const browserScan: ToolDefinition = {
                 tip: "Use interactive_elements_text to find the label ID, then click it using browser_click_at."
             };
 
+            if (isDesignApp) {
+                result.design_tool = true;
+                result.tip = `🎨 DESIGN APP (${url.split('/')[2]}). Canvas-based — very few DOM elements. ALWAYS click by exact x,y coordinates from the screenshot, NOT by label. Common shortcuts: v=select, r=rectangle, t=text, h=pan, Escape=deselect. browser_scan(visual:true) before every action.`;
+            }
+
             // Include accessibility tree if available (compact semantic page view)
             if (accessibilityTree) {
                 result.accessibility_tree = accessibilityTree;
-                result.tip = "Read accessibility_tree for a compact semantic view of the page. Use interactive_elements_text labels for clicking.";
+                if (!isDesignApp) result.tip = "Read accessibility_tree for a compact semantic view of the page. Use interactive_elements_text labels for clicking.";
             }
 
-            // Visual mode: attach an optimized screenshot for design tools, maps, etc.
-            // Using JPEG with quality 55 for optimal size/quality balance
-            if (input.visual) {
+            // Visual mode: attach screenshot. Auto-enabled for design tools and sparse DOM pages.
+            if (doVisual) {
                 try {
                     const screenshotBuffer = await page.screenshot({
                         type: 'jpeg',
-                        quality: 55,  // Reduced from 60 for smaller payload
+                        quality: isDesignApp ? 75 : 55,  // Higher quality for design tools (need to read UI)
                         fullPage: !!input.full_page,
-                        scale: 'css'  // Use CSS pixels, not device pixels (smaller on retina)
+                        scale: 'css',
                     });
                     result.screenshot_base64 = screenshotBuffer.toString('base64');
                     result.mime_type = 'image/jpeg';
                     result.screenshot_size_kb = Math.round(screenshotBuffer.length / 1024);
-                    result.tip = "Use the screenshot to understand the visual layout. Use interactive_elements_text labels for clicking.";
+                    if (isDesignApp) {
+                        result.tip = `🎨 DESIGN APP screenshot attached. Click by exact pixel coordinates (x,y) you see in the screenshot. Use keyboard shortcuts for tools. browser_scan(visual:true) to refresh.`;
+                    } else {
+                        result.tip = "Use the screenshot to understand the visual layout. Use interactive_elements_text labels for clicking.";
+                    }
                 } catch { /* screenshot failed, text-only fallback */ }
             }
 

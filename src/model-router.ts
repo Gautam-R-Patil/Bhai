@@ -344,6 +344,17 @@ export function selectForAgent(
         lastToolCalls,
     });
 
+    // ── Browser automation escalation ──
+    // Browser tasks (multi-step form fill, CAPTCHA, design tools like Figma/Canva)
+    // need Pro tier (Sonnet) for spatial reasoning, and Opus when stuck.
+    // Runs BEFORE coding escalation — browser detection is more specific.
+    try {
+        if (process.env.ATLAS_NO_BROWSER_ESCALATION !== "true") {
+            const escalated = maybeEscalateForBrowser(base, message, iteration, errorCount, lastToolCalls);
+            if (escalated) return escalated;
+        }
+    } catch { /* additive — fall through */ }
+
     // ── Complex-coding escalation (additive) ──
     // When the message looks like complex coding work — multi-file refactor,
     // debugging session with repeated errors, or a new-feature request — and
@@ -428,6 +439,22 @@ const CODING_TOOL_NAMES: ReadonlySet<string> = new Set([
     "code_action", "code_execute", "repo_map",
 ]);
 
+// Browser tool names that require real reasoning — visual analysis, form
+// fill, multi-step CAPTCHA, Figma/Canva, complex SPA navigation.
+// When the agent is in a browser loop using these tools, escalate to Pro.
+const BROWSER_TOOL_NAMES: ReadonlySet<string> = new Set([
+    "browser_navigate", "browser_scan", "browser_click_at", "browser_click",
+    "browser_type", "browser_scroll", "browser_hover", "browser_keyboard",
+    "browser_extract", "browser_run_js", "browser_multi_action",
+    "browser_video_control", "browser_handle_captcha", "browser_batch_fetch",
+    "browser_intercept_start", "browser_intercept_read", "browser_extract_article",
+    "browser_auto_scroll",
+]);
+
+// URLs / domains that always require vision + Pro tier
+// (canvas-based design tools, maps, games — accessibility tree is nearly empty)
+const VISION_ONLY_DOMAINS = /\b(figma\.com|canva\.com|miro\.com|lucid\.app|draw\.io|diagrams\.net|sketch\.com|framer\.com|webflow\.com|airtable\.com|notion\.so|retool\.com|linear\.app|maps\.google|earth\.google)\b/;
+
 // Tier numbering in MODEL_REGISTRY is inverted from intuition:
 //   0 = Opus-class (top), 2 = Sonnet, 3 = Gemini Pro, 4 = Nova Pro,
 //   5 = Haiku / Gemini Flash, 6-9 = lighter variants.
@@ -501,6 +528,80 @@ function maybeEscalateForCoding(
         thinkingLevel,
         reason: `${base.reason} → coding escalation (${trigger}${thinkingLevel !== base.thinkingLevel ? `, thinking=${thinkingLevel}` : ""})`,
     };
+}
+
+/**
+ * Browser automation escalation — parallel to maybeEscalateForCoding.
+ *
+ * Escalation logic:
+ *   Light → Pro (Sonnet):   agent is in a browser tool loop (any browser_ tool call)
+ *   Pro → Opus:             agent is stuck (20+ iterations OR 4+ errors in browser loop)
+ *   Always Opus:            design-tool domains (Figma, Canva, Miro, etc.)
+ *
+ * Rationale: browser tasks require spatial reasoning (clicking correct elements),
+ * multi-step planning (form flows, CAPTCHA, infinite scroll), and visual understanding
+ * (Figma/Canva). Haiku routinely fails at these, wasting 30+ iterations before giving up.
+ */
+export function maybeEscalateForBrowser(
+    base: ModelSelection,
+    message: string,
+    iteration: number,
+    errorCount: number,
+    lastToolCalls?: Array<{ function: { name: string } }>,
+): ModelSelection | null {
+    const currentTier = MODEL_REGISTRY[base.modelId]?.tier ?? 99;
+
+    // Already on Opus — nothing to escalate to
+    const isInBrowserLoop = !!lastToolCalls && lastToolCalls.some(t => BROWSER_TOOL_NAMES.has(t.function.name));
+    const isDesignTool = VISION_ONLY_DOMAINS.test(message);
+
+    // Not a browser task at all
+    if (!isInBrowserLoop && !isDesignTool) return null;
+
+    // Find Pro (Sonnet) and Heavy (Opus) models
+    const sonnet = Object.values(MODEL_REGISTRY).find(m => m.tier === 2 && m.supportsTools !== false);
+    const opus   = Object.values(MODEL_REGISTRY).find(m => m.tier === 0 && m.supportsTools !== false);
+
+    // Design tools (Figma, Canva, Miro) → always Opus + vision task type
+    // They have almost no accessibility tree; need visual grounding every step.
+    if (isDesignTool) {
+        const model = opus || sonnet;
+        if (!model || currentTier <= (opus ? 0 : 2)) return null;
+        return {
+            ...base,
+            modelId: model.id,
+            displayName: model.displayName || model.id,
+            taskType: "vision" as TaskType,
+            thinkingLevel: "medium",
+            reason: `${base.reason} → design-tool escalation (visual reasoning required)`,
+        };
+    }
+
+    // Stuck browser loop — many iterations without resolution → Opus
+    const isStuck = iteration >= 20 || errorCount >= 4;
+    if (isStuck && (opus || sonnet)) {
+        const model = (errorCount >= 4 ? opus : sonnet) || opus || sonnet;
+        if (!model || currentTier <= (model.tier ?? 99)) return null;
+        return {
+            ...base,
+            modelId: model.id,
+            displayName: model.displayName || model.id,
+            thinkingLevel: errorCount >= 4 ? "medium" : base.thinkingLevel,
+            reason: `${base.reason} → browser stuck escalation (iter=${iteration}, errors=${errorCount})`,
+        };
+    }
+
+    // Normal browser loop — Light → Pro (Sonnet)
+    if (isInBrowserLoop && currentTier > PRO_TIER_CEILING && sonnet) {
+        return {
+            ...base,
+            modelId: sonnet.id,
+            displayName: sonnet.displayName || sonnet.id,
+            reason: `${base.reason} → browser loop escalation`,
+        };
+    }
+
+    return null;
 }
 
 export function selectForFinalAnswer(taskType?: TaskType): ModelSelection {
