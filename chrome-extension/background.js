@@ -1146,8 +1146,9 @@ async function scroll(payload) {
     await chrome.scripting.executeScript({
       target: { tabId },
       func: (direction, amount, selector) => {
-        const target = selector ? document.querySelector(selector) : null;
         const px = amount || 300;
+        const deltaX = direction === 'left' ? -px : direction === 'right' ? px : 0;
+        const deltaY = direction === 'up' ? -px : direction === 'down' ? px : 0;
 
         // Scroll indicator pill
         const arrows = {up:'↑', down:'↓', left:'←', right:'→'};
@@ -1158,21 +1159,29 @@ async function scroll(payload) {
         document.body.appendChild(pill);
         setTimeout(() => pill.remove(), 780);
 
-        if (!target) {
-          switch (direction) {
-            case "up": window.scrollBy(0, -px); break;
-            case "down": window.scrollBy(0, px); break;
-            case "left": window.scrollBy(-px, 0); break;
-            case "right": window.scrollBy(px, 0); break;
-          }
+        const scrollTarget = selector ? document.querySelector(selector) : null;
+
+        if (scrollTarget) {
+          // Targeted element scroll — set scrollTop/Left directly
+          scrollTarget.scrollTop += deltaY;
+          scrollTarget.scrollLeft += deltaX;
         } else {
-          switch (direction) {
-            case "up": target.scrollTop -= px; break;
-            case "down": target.scrollTop += px; break;
-            case "left": target.scrollLeft -= px; break;
-            case "right": target.scrollLeft += px; break;
-          }
+          // Page-level scroll — dispatch WheelEvent first (triggers virtual scroll
+          // handlers in React/Vue infinite lists), then scrollBy as authoritative move.
+          try {
+            const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
+            const target = document.elementFromPoint(cx, cy) || document.body;
+            target.dispatchEvent(new WheelEvent('wheel', {
+              deltaX, deltaY, deltaMode: 0,
+              bubbles: true, cancelable: true,
+              clientX: cx, clientY: cy,
+            }));
+          } catch(_) {}
+          // scrollBy is the authoritative scroll — WheelEvent alone may not scroll
+          window.scrollBy({ left: deltaX, top: deltaY, behavior: 'smooth' });
         }
+
+        return { success: true, scrolled: direction, px };
       },
       args: [payload.direction, payload.amount || 300, payload.selector || null],
     });

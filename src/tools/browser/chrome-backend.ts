@@ -93,6 +93,13 @@ export class ChromePageProxy {
         dblclick: async (x: number, y: number) => {
             await sendBridgeCommand("click_at", { x, y, doubleClick: true });
         },
+        // wheel() — maps deltaX/deltaY to the Chrome extension's scroll command.
+        // page.mouse.wheel() is a Playwright-only API; ChromePageProxy must implement it.
+        wheel: async (deltaX: number, deltaY: number) => {
+            const direction = deltaY > 0 ? "down" : deltaY < 0 ? "up" : deltaX > 0 ? "right" : "left";
+            const amount = Math.abs(deltaY || deltaX);
+            await sendBridgeCommand("scroll", { direction, amount });
+        },
         move: async (x: number, y: number, opts?: { steps?: number }) => {
             const steps = opts?.steps || 1;
             if (steps <= 1) {
