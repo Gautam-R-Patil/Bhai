@@ -2702,27 +2702,40 @@ export interface PopupRiskScore {
  * Cheap Rust string scan — call with page HTML to decide guard strategy.
  */
 export declare function scorePopupRisk(html: string): PopupRiskScore
-/** A single interactive element for compression input */
+/**
+ * A single interactive element for compression input.
+ * width/height required for bounding-box containment deduplication.
+ */
 export interface ElementForCompression {
   label: number
   tag: string
   text: string
   x: number
   y: number
+  /** Element width in CSS pixels (0 if unknown — skips containment dedup) */
+  width: number
+  /** Element height in CSS pixels (0 if unknown — skips containment dedup) */
+  height: number
   isOcr: boolean
   editorType?: string | undefined | null
 }
 /**
- * Compress an element list for LLM consumption.
+ * Compress an interactive element list for LLM consumption.
  *
- * Reductions applied (in order):
- * 1. Truncate text to max_text_len chars (default 40)
- * 2. Remove empty-text elements that are non-interactive roles
- * 3. De-duplicate elements with identical (tag, text) within 30px radius
- * 4. Group repeated same-text buttons: "[5,6,7] btn 'Load more'" → "[5..7×3] btn 'Load more'"
- * 5. Limit total output to max_elements (default 80)
+ * Adapted from OpenCLI's dom-snapshot.ts multi-stage pruning pipeline.
+ * Reductions (in order):
+ * 1. **99% bounding-box containment dedup** (OpenCLI innovation) — if el A's box ≥99%
+ *    overlaps el B's box, keep the one with richer text (typically the outer wrapper).
+ *    Eliminates `[3]<a> [4]<svg>` noise from icon-buttons.
+ * 2. **Spatial dedup** — same (tag, text) within 30px radius (existing)
+ * 3. **Consecutive group folding** — `[5]<button>Add [6]<button>Add` → `[5..6×2]<button>Add`
+ * 4. **Text truncation + cleanup** — max_text_len chars, strip newlines
+ * 5. **Element cap** — max_elements (default 80)
  *
- * Returns compact single-line-per-element string; ~30–50% fewer tokens than raw list.
+ * **Output format** (OpenCLI `[N]<tag>` convention):
+ * `[42]<button>Submit` — ~15% fewer tokens vs `[42] button "Submit"`
+ * `[10]<select>Red` — selects show current value
+ * `[8]<input[text]>First name placeholder=Jane` — inputs show type + label
  */
 export declare function compressElementsForLlm(elements: Array<ElementForCompression>, maxTextLen?: number | undefined | null, maxElements?: number | undefined | null): string
 /**

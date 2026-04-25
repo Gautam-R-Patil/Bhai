@@ -97,17 +97,20 @@ export function buildElementsText(): string {
                 text: e.text ?? "",
                 x: e.x,
                 y: e.y,
+                width: (e as InteractiveElement & { width?: number }).width ?? 0,
+                height: (e as InteractiveElement & { height?: number }).height ?? 0,
                 isOcr: e.isOCRElement ?? false,
                 editorType: e.editorType ?? null,
             }));
             return _nativeCompressElements(input, 40, 80);
         } catch { /* fall through */ }
     }
-    // JS fallback
+    // JS fallback — use OpenCLI [N]<tag>text format
     return lastElementMap.map(e => {
-        if (e.editorType) return `[${e.label}] CODE_EDITOR:${e.editorType}`;
-        if (e.isOCRElement) return `[${e.label}] ocr:"${e.text}"`;
-        return `[${e.label}] ${e.tag} "${e.text?.substring(0, 40)}"`;
+        if (e.editorType) return `[${e.label}]<code-editor:${e.editorType}>`;
+        if (e.isOCRElement) return `[${e.label}]<ocr>${e.text}`;
+        const t = (e.text ?? "").substring(0, 40);
+        return t ? `[${e.label}]<${e.tag}>${t}` : `[${e.label}]<${e.tag}>`;
     }).join('\n');
 }
 
@@ -479,7 +482,9 @@ export const SCAN_FRAME_JS = () => {
         activeModalRect = activeModal.getBoundingClientRect();
     }
 
-    const candidateMap: Array<{ index: number; x: number; y: number; tag: string; text: string; score: number; editorType?: string }> = [];
+    // fingerprint = stable identity string for 3-tier element resolution (OpenCLI pattern).
+    // Format: "tag|id|role|trimmedText|ariaLabel" — survives SPA re-renders.
+    const candidateMap: Array<{ index: number; x: number; y: number; width: number; height: number; tag: string; text: string; score: number; editorType?: string; fingerprint?: string }> = [];
     const seenCoords = new Set<string>();
 
     for (let i = 0; i < els.length; i++) {
@@ -553,12 +558,84 @@ export const SCAN_FRAME_JS = () => {
         if (seenCoords.has(coordKey)) continue;
         seenCoords.add(coordKey);
 
-        const text = (el as HTMLElement).innerText?.replace(/\n/g, ' ').substring(0, 40)
-            || (el as HTMLInputElement).placeholder
-            || (el as HTMLInputElement).value?.substring(0, 40)
-            || el.getAttribute('aria-label')
-            || el.getAttribute('title')
-            || '';
+        // ── Compound form enrichment (inspired by OpenCLI dom-snapshot.ts) ──
+        // For input/select/textarea, build rich metadata text so the LLM
+        // understands the field type, label, current value, and available options
+        // without needing to inspect the form manually.
+        let text = '';
+
+        if (tag === 'input' || tag === 'textarea' || tag === 'select') {
+            const inputEl = el as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+            const inputType = (inputEl as HTMLInputElement).type || 'text';
+
+            // Resolve the accessible label in priority order:
+            // 1. aria-label / aria-labelledby  2. <label for=id>  3. placeholder  4. name
+            let labelText = el.getAttribute('aria-label') || '';
+            if (!labelText && el.id) {
+                const labelEl = document.querySelector(`label[for="${el.id}"]`);
+                if (labelEl) labelText = (labelEl as HTMLElement).innerText?.trim() || '';
+            }
+            if (!labelText) {
+                // Check if directly wrapped in a <label>
+                const parentLabel = el.closest('label');
+                if (parentLabel) {
+                    labelText = (parentLabel as HTMLElement).innerText?.replace(/\n/g, ' ').trim().substring(0, 30) || '';
+                }
+            }
+            const placeholder = (inputEl as HTMLInputElement).placeholder || '';
+            const currentVal  = (inputEl as HTMLInputElement).value?.substring(0, 30) || '';
+            const ariaLblBy   = el.getAttribute('aria-labelledby');
+            if (!labelText && ariaLblBy) {
+                const lbEl = document.getElementById(ariaLblBy);
+                if (lbEl) labelText = (lbEl as HTMLElement).innerText?.trim() || '';
+            }
+
+            if (tag === 'select') {
+                // OpenCLI: list all options (up to 20) so agent can pick the right one
+                const selectEl = el as HTMLSelectElement;
+                const opts = Array.from(selectEl.options).slice(0, 20).map(o => o.text.trim()).filter(Boolean);
+                const selectedText = selectEl.options[selectEl.selectedIndex]?.text.trim() || '';
+                let t = labelText || placeholder || el.getAttribute('name') || 'select';
+                if (selectedText) t += ` value=${selectedText}`;
+                if (opts.length > 0) t += ` options=[${opts.join(', ')}]`;
+                text = t.substring(0, 80);
+            } else if (inputType === 'date' || inputType === 'datetime-local' || inputType === 'month' || inputType === 'week' || inputType === 'time') {
+                // Date inputs: expose format hint and constraints
+                let t = labelText || placeholder || el.getAttribute('name') || inputType;
+                const min = (el as HTMLInputElement).min;
+                const max = (el as HTMLInputElement).max;
+                const fmt = inputType === 'date' ? 'YYYY-MM-DD' : inputType === 'time' ? 'HH:MM' : inputType;
+                t += ` format=${fmt}`;
+                if (min) t += ` min=${min}`;
+                if (max) t += ` max=${max}`;
+                if (currentVal) t += ` value=${currentVal}`;
+                text = t.substring(0, 80);
+            } else if (inputType === 'checkbox' || inputType === 'radio') {
+                const checked = (el as HTMLInputElement).checked;
+                const lbl = labelText || el.getAttribute('value') || placeholder || el.getAttribute('name') || inputType;
+                text = `${lbl.substring(0, 30)} [${checked ? '✓' : ' '}]`;
+            } else if (inputType === 'file') {
+                const accept = (el as HTMLInputElement).accept || '';
+                const multiple = (el as HTMLInputElement).multiple;
+                text = `${labelText || 'file upload'}${accept ? ` accept=${accept}` : ''}${multiple ? ' multiple' : ''}`.substring(0, 60);
+            } else {
+                // Text, email, tel, number, search, password, url, textarea
+                const displayType = inputType !== 'text' ? `[${inputType}]` : '';
+                let t = `${displayType}${labelText || placeholder || el.getAttribute('name') || ''}`;
+                if (currentVal && inputType !== 'password') t += ` value=${currentVal}`;
+                text = t.substring(0, 60);
+            }
+            // Tag enrichment: input[type] for non-text inputs in the tag field
+            if (tag === 'input' && inputType !== 'text' && inputType !== 'submit' && inputType !== 'button') {
+                // Handled by the text prefix above; tag stays as 'input'
+            }
+        } else {
+            // Non-form elements: use innerText / aria-label as before
+            text = (el as HTMLElement).innerText?.replace(/\n/g, ' ').substring(0, 40)
+                || el.getAttribute('aria-label')
+                || el.getAttribute('title')
+                || '';
+        }
 
         let score = 0;
         if (isNativeInt || isRoleInt) score += 10;
@@ -567,7 +644,17 @@ export const SCAN_FRAME_JS = () => {
         if (hasCursorPointer) score += 3;
         if (hasButtonClass) score += 2;
 
-        candidateMap.push({ index: i, x, y, tag, text: text.trim(), score });
+        // Stable fingerprint for three-tier resolution (OpenCLI innovation)
+        const fp = [
+            tag,
+            el.id || '',
+            role || '',
+            text.trim().substring(0, 30),
+            el.getAttribute('aria-label') || '',
+            el.getAttribute('data-testid') || '',
+        ].join('|');
+
+        candidateMap.push({ index: i, x, y, width: rect.width, height: rect.height, tag, text: text.trim(), score, fingerprint: fp });
     }
 
     // ── Shadow DOM traversal ──
@@ -591,7 +678,7 @@ export const SCAN_FRAME_JS = () => {
             seenCoords.add(sKey);
             const sText = (sel as HTMLElement).innerText?.replace(/\n/g, ' ').substring(0, 40) ||
                           sel.getAttribute?.('aria-label') || '';
-            candidateMap.push({ index: -1, x: sx, y: sy, tag: sTag, text: sText.trim(), score: 10 });
+            candidateMap.push({ index: -1, x: sx, y: sy, width: sRect.width, height: sRect.height, tag: sTag, text: sText.trim(), score: 10 });
         }
     }
 
@@ -605,7 +692,7 @@ export const SCAN_FRAME_JS = () => {
         if (rect.width < 50 || rect.height < 50) return;
         const eid = `atlas-editor-monaco-${edTs}-${i}`;
         el.setAttribute('data-atlas-id', eid);
-        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), tag: 'code-editor', text: 'Code Editor (Monaco)', score: 25, editorType: 'monaco' });
+        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'code-editor', text: 'Code Editor (Monaco)', score: 25, editorType: 'monaco' });
     });
     // CodeMirror 6
     document.querySelectorAll('.cm-editor').forEach((el, i) => {
@@ -613,7 +700,7 @@ export const SCAN_FRAME_JS = () => {
         if (rect.width < 50 || rect.height < 50) return;
         const eid = `atlas-editor-cm6-${edTs}-${i}`;
         el.setAttribute('data-atlas-id', eid);
-        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), tag: 'code-editor', text: 'Code Editor (CodeMirror)', score: 25, editorType: 'codemirror6' });
+        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'code-editor', text: 'Code Editor (CodeMirror)', score: 25, editorType: 'codemirror6' });
     });
     // CodeMirror 5
     document.querySelectorAll('.CodeMirror').forEach((el, i) => {
@@ -622,7 +709,7 @@ export const SCAN_FRAME_JS = () => {
         if (rect.width < 50 || rect.height < 50) return;
         const eid = `atlas-editor-cm5-${edTs}-${i}`;
         el.setAttribute('data-atlas-id', eid);
-        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), tag: 'code-editor', text: 'Code Editor (CodeMirror)', score: 25, editorType: 'codemirror5' });
+        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'code-editor', text: 'Code Editor (CodeMirror)', score: 25, editorType: 'codemirror5' });
     });
     // Ace
     document.querySelectorAll('.ace_editor').forEach((el, i) => {
@@ -630,7 +717,7 @@ export const SCAN_FRAME_JS = () => {
         if (rect.width < 50 || rect.height < 50) return;
         const eid = `atlas-editor-ace-${edTs}-${i}`;
         el.setAttribute('data-atlas-id', eid);
-        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), tag: 'code-editor', text: 'Code Editor (Ace)', score: 25, editorType: 'ace' });
+        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'code-editor', text: 'Code Editor (Ace)', score: 25, editorType: 'ace' });
     });
     // Quill
     document.querySelectorAll('.ql-editor[contenteditable]').forEach((el, i) => {
@@ -638,7 +725,7 @@ export const SCAN_FRAME_JS = () => {
         if (rect.width < 50 || rect.height < 50) return;
         const eid = `atlas-editor-quill-${edTs}-${i}`;
         el.setAttribute('data-atlas-id', eid);
-        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), tag: 'rich-editor', text: 'Rich Text Editor (Quill)', score: 25, editorType: 'quill' });
+        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: 'Rich Text Editor (Quill)', score: 25, editorType: 'quill' });
     });
     // TinyMCE
     document.querySelectorAll('.tox-tinymce').forEach((el, i) => {
@@ -646,7 +733,7 @@ export const SCAN_FRAME_JS = () => {
         if (rect.width < 50 || rect.height < 50) return;
         const eid = `atlas-editor-tinymce-${edTs}-${i}`;
         el.setAttribute('data-atlas-id', eid);
-        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), tag: 'rich-editor', text: 'Rich Text Editor (TinyMCE)', score: 25, editorType: 'tinymce' });
+        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: 'Rich Text Editor (TinyMCE)', score: 25, editorType: 'tinymce' });
     });
     // ProseMirror / Tiptap
     document.querySelectorAll('.ProseMirror[contenteditable]').forEach((el, i) => {
@@ -656,7 +743,7 @@ export const SCAN_FRAME_JS = () => {
         const type = isTiptap ? 'tiptap' : 'prosemirror';
         const eid = `atlas-editor-${type}-${edTs}-${i}`;
         el.setAttribute('data-atlas-id', eid);
-        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), tag: 'rich-editor', text: `Rich Text Editor (${isTiptap ? 'Tiptap' : 'ProseMirror'})`, score: 25, editorType: type });
+        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: `Rich Text Editor (${isTiptap ? 'Tiptap' : 'ProseMirror'})`, score: 25, editorType: type });
     });
     // Slate
     document.querySelectorAll('[data-slate-editor]').forEach((el, i) => {
@@ -664,7 +751,7 @@ export const SCAN_FRAME_JS = () => {
         if (rect.width < 50 || rect.height < 50) return;
         const eid = `atlas-editor-slate-${edTs}-${i}`;
         el.setAttribute('data-atlas-id', eid);
-        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), tag: 'rich-editor', text: 'Rich Text Editor (Slate)', score: 25, editorType: 'slate' });
+        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: 'Rich Text Editor (Slate)', score: 25, editorType: 'slate' });
     });
     // Draft.js
     document.querySelectorAll('.DraftEditor-root').forEach((el, i) => {
@@ -672,7 +759,7 @@ export const SCAN_FRAME_JS = () => {
         if (rect.width < 50 || rect.height < 50) return;
         const eid = `atlas-editor-draftjs-${edTs}-${i}`;
         el.setAttribute('data-atlas-id', eid);
-        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), tag: 'rich-editor', text: 'Rich Text Editor (Draft.js)', score: 25, editorType: 'draftjs' });
+        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: 'Rich Text Editor (Draft.js)', score: 25, editorType: 'draftjs' });
     });
 
     // Merge: editors first, then deduplicate by coords

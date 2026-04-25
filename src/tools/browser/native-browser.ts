@@ -292,18 +292,22 @@ export function getStealthInitScript(seed: number): string | null {
 
 /** Compress element list for LLM — deduplicates, groups repeats, truncates. ~30-50% fewer tokens. */
 export function compressElementsForLlm(
-    elements: Array<{ label: number; tag: string; text: string; x: number; y: number; isOcr?: boolean; editorType?: string | null }>,
+    elements: Array<{ label: number; tag: string; text: string; x: number; y: number; width?: number; height?: number; isOcr?: boolean; editorType?: string | null }>,
     maxTextLen = 40,
     maxElements = 80,
 ): string {
     if (native) {
-        try { return native.compressElementsForLlm(elements, maxTextLen, maxElements); } catch { /* fallback */ }
+        // Ensure width/height have default 0 if not provided
+        const withDims = elements.map(e => ({ ...e, width: e.width ?? 0, height: e.height ?? 0 }));
+        try { return native.compressElementsForLlm(withDims, maxTextLen, maxElements); } catch { /* fallback */ }
     }
-    return elements.slice(0, maxElements).map(e =>
-        e.editorType ? `[${e.label}] CODE_EDITOR:${e.editorType}`
-        : e.isOcr    ? `[${e.label}] ocr:"${e.text?.substring(0, maxTextLen)}"`
-        :               `[${e.label}] ${e.tag} "${e.text?.substring(0, maxTextLen)}"`
-    ).join('\n');
+    // JS fallback uses OpenCLI [N]<tag>text format
+    return elements.slice(0, maxElements).map(e => {
+        const t = (e.text ?? "").substring(0, maxTextLen);
+        if (e.editorType) return `[${e.label}]<code-editor:${e.editorType}>`;
+        if (e.isOcr)      return `[${e.label}]<ocr>${t}`;
+        return t ? `[${e.label}]<${e.tag}>${t}` : `[${e.label}]<${e.tag}>`;
+    }).join('\n');
 }
 
 /** Rust human-like typing delay for a character (WPM-based with punctuation pauses). */

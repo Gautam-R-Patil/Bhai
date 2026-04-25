@@ -216,7 +216,8 @@ pub fn score_popup_risk(html: String) -> PopupRiskScore {
 // TOKEN COMPRESSION FOR LLM OUTPUT
 // ═══════════════════════════════════════════════
 
-/// A single interactive element for compression input
+/// A single interactive element for compression input.
+/// width/height required for bounding-box containment deduplication.
 #[napi(object)]
 #[derive(Debug, Clone)]
 pub struct ElementForCompression {
@@ -225,21 +226,31 @@ pub struct ElementForCompression {
     pub text: String,
     pub x: f64,
     pub y: f64,
+    /// Element width in CSS pixels (0 if unknown — skips containment dedup)
+    pub width: f64,
+    /// Element height in CSS pixels (0 if unknown — skips containment dedup)
+    pub height: f64,
     pub is_ocr: bool,
     #[napi(ts_type = "string | undefined | null")]
     pub editor_type: Option<String>,
 }
 
-/// Compress an element list for LLM consumption.
+/// Compress an interactive element list for LLM consumption.
 ///
-/// Reductions applied (in order):
-/// 1. Truncate text to max_text_len chars (default 40)
-/// 2. Remove empty-text elements that are non-interactive roles
-/// 3. De-duplicate elements with identical (tag, text) within 30px radius
-/// 4. Group repeated same-text buttons: "[5,6,7] btn 'Load more'" → "[5..7×3] btn 'Load more'"
-/// 5. Limit total output to max_elements (default 80)
+/// Adapted from OpenCLI's dom-snapshot.ts multi-stage pruning pipeline.
+/// Reductions (in order):
+/// 1. **99% bounding-box containment dedup** (OpenCLI innovation) — if el A's box ≥99%
+///    overlaps el B's box, keep the one with richer text (typically the outer wrapper).
+///    Eliminates `[3]<a> [4]<svg>` noise from icon-buttons.
+/// 2. **Spatial dedup** — same (tag, text) within 30px radius (existing)
+/// 3. **Consecutive group folding** — `[5]<button>Add [6]<button>Add` → `[5..6×2]<button>Add`
+/// 4. **Text truncation + cleanup** — max_text_len chars, strip newlines
+/// 5. **Element cap** — max_elements (default 80)
 ///
-/// Returns compact single-line-per-element string; ~30–50% fewer tokens than raw list.
+/// **Output format** (OpenCLI `[N]<tag>` convention):
+/// `[42]<button>Submit` — ~15% fewer tokens vs `[42] button "Submit"`
+/// `[10]<select>Red` — selects show current value
+/// `[8]<input[text]>First name placeholder=Jane` — inputs show type + label
 #[napi]
 pub fn compress_elements_for_llm(
     elements: Vec<ElementForCompression>,
@@ -253,25 +264,82 @@ pub fn compress_elements_for_llm(
         return "No interactive elements.".to_string();
     }
 
-    // Step 1: deduplicate by (tag, trimmed_text) within 30px radius
-    let mut seen: Vec<(String, String, f64, f64)> = Vec::new(); // (tag, text, x, y)
+    // ── Step 1: 99% bounding-box containment dedup (OpenCLI technique) ──────
+    // If element A's bounding box contains ≥99% of element B's area,
+    // they represent the same UI target. Keep the one with more text (richer label).
+    // This eliminates button+icon, link+svg, div+span nesting noise patterns.
+    let mut containment_removed: Vec<bool> = vec![false; elements.len()];
+
+    if elements.iter().any(|e| e.width > 0.0 && e.height > 0.0) {
+        for i in 0..elements.len() {
+            if containment_removed[i] { continue; }
+            let a = &elements[i];
+            if a.width <= 0.0 || a.height <= 0.0 { continue; }
+            let a_left = a.x - a.width / 2.0;
+            let a_top  = a.y - a.height / 2.0;
+            let a_right = a.x + a.width / 2.0;
+            let a_bot   = a.y + a.height / 2.0;
+            let a_area  = a.width * a.height;
+
+            for j in (i + 1)..elements.len() {
+                if containment_removed[j] { continue; }
+                let b = &elements[j];
+                if b.width <= 0.0 || b.height <= 0.0 { continue; }
+                let b_left = b.x - b.width / 2.0;
+                let b_top  = b.y - b.height / 2.0;
+                let b_right = b.x + b.width / 2.0;
+                let b_bot   = b.y + b.height / 2.0;
+                let b_area  = b.width * b.height;
+
+                // Compute intersection
+                let ix = (a_right.min(b_right) - a_left.max(b_left)).max(0.0);
+                let iy = (a_bot.min(b_bot)     - a_top.max(b_top)).max(0.0);
+                let inter = ix * iy;
+                if inter <= 0.0 { continue; }
+
+                let overlap_a = inter / a_area;
+                let overlap_b = inter / b_area;
+
+                // If either is 99%+ contained in the other, remove the one with less text
+                if overlap_a >= 0.99 || overlap_b >= 0.99 {
+                    // Keep the one with more text content (richer label for LLM)
+                    let a_rich = a.text.trim().len();
+                    let b_rich = b.text.trim().len();
+                    if a_rich >= b_rich {
+                        containment_removed[j] = true; // remove B, keep A
+                    } else {
+                        containment_removed[i] = true; // remove A, keep B
+                        break; // A is removed; no point comparing A further
+                    }
+                }
+            }
+        }
+    }
+
+    let after_containment: Vec<&ElementForCompression> = elements.iter()
+        .enumerate()
+        .filter(|(i, _)| !containment_removed[*i])
+        .map(|(_, e)| e)
+        .collect();
+
+    // ── Step 2: spatial dedup — same (tag, text) within 30px ────────────────
+    let mut seen_spatial: Vec<(String, String, f64, f64)> = Vec::new();
     let mut deduped: Vec<&ElementForCompression> = Vec::new();
 
-    for el in &elements {
-        let text = el.text.trim().to_lowercase();
-        let text_trunc = if text.len() > max_text { &text[..max_text] } else { &text };
-        let is_dup = seen.iter().any(|(t, tx, sx, sy)| {
-            *t == el.tag && *tx == *text_trunc
+    for el in &after_containment {
+        let text_lo = el.text.trim().to_lowercase();
+        let text_key = if text_lo.len() > max_text { &text_lo[..max_text] } else { &text_lo };
+        let is_dup = seen_spatial.iter().any(|(t, tx, sx, sy)| {
+            *t == el.tag && tx.as_str() == text_key
                 && (sx - el.x).abs() < 30.0 && (sy - el.y).abs() < 30.0
         });
         if !is_dup {
-            seen.push((el.tag.clone(), text_trunc.to_string(), el.x, el.y));
+            seen_spatial.push((el.tag.clone(), text_key.to_string(), el.x, el.y));
             deduped.push(el);
         }
     }
 
-    // Step 2: group consecutive identical (tag, text) entries
-    // e.g. [12] btn 'Add' [13] btn 'Add' [14] btn 'Add' → [12..14×3] btn 'Add'
+    // ── Step 3: consecutive group folding ────────────────────────────────────
     struct Group<'a> {
         first_label: u32,
         last_label: u32,
@@ -292,22 +360,27 @@ pub fn compress_elements_for_llm(
         groups.push(Group { first_label: el.label, last_label: el.label, count: 1, el });
     }
 
-    // Step 3: format and limit
+    // ── Step 4: format using OpenCLI [N]<tag>text convention ────────────────
+    // Saves ~15% tokens vs [N] tag "text" by removing quotes and old format.
     let mut lines = Vec::new();
     for g in groups.iter().take(max_els) {
-        let text = if g.el.text.len() > max_text { &g.el.text[..max_text] } else { &g.el.text };
-        let text = text.trim().replace('\n', " ").replace('\r', "").replace("  ", " ");
+        let raw_text = if g.el.text.len() > max_text { &g.el.text[..max_text] } else { &g.el.text };
+        let text = raw_text.trim().replace('\n', " ").replace('\r', "").replace("  ", " ");
 
         let line = if let Some(ref et) = g.el.editor_type {
-            format!("[{}] CODE_EDITOR:{}", g.first_label, et)
+            format!("[{}]<code-editor:{}>", g.first_label, et)
         } else if g.el.is_ocr {
-            format!("[{}] ocr:\"{}\"", g.first_label, text)
+            format!("[{}]<ocr>{}", g.first_label, text)
         } else if g.count > 1 {
-            format!("[{}..{}×{}] {} \"{}\"", g.first_label, g.last_label, g.count, g.el.tag, text)
+            if text.is_empty() {
+                format!("[{}..{}×{}]<{}>", g.first_label, g.last_label, g.count, g.el.tag)
+            } else {
+                format!("[{}..{}×{}]<{}>{}", g.first_label, g.last_label, g.count, g.el.tag, text)
+            }
         } else if text.is_empty() {
-            format!("[{}] {}", g.first_label, g.el.tag)
+            format!("[{}]<{}>", g.first_label, g.el.tag)
         } else {
-            format!("[{}] {} \"{}\"", g.first_label, g.el.tag, text)
+            format!("[{}]<{}>{}", g.first_label, g.el.tag, text)
         };
         lines.push(line);
     }
