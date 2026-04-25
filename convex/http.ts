@@ -1399,6 +1399,13 @@ http.route({
     const hfToken = process.env.HF_TOKEN;
     if (hfToken) secrets.HF_TOKEN = hfToken;
 
+    // CAPTCHA solving keys — stored in Convex, never in the app bundle
+    const nopechaKey = process.env.NOPECHA_API_KEY;
+    if (nopechaKey) secrets.NOPECHA_API_KEY = nopechaKey;
+
+    const captchaKey = process.env.CAPTCHA_API_KEY || process.env.TWO_CAPTCHA_API_KEY;
+    if (captchaKey) secrets.CAPTCHA_API_KEY = captchaKey;
+
     return new Response(JSON.stringify(secrets), {
       status: 200,
       headers: { "Content-Type": "application/json" },

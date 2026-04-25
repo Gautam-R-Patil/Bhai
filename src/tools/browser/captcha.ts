@@ -10,6 +10,7 @@
 import type { ToolDefinition } from "../get-current-time.js";
 import { getActivePage } from "./core.js";
 import { isNativeBrowserAvailable } from "./native-browser.js";
+import { transcribeBuffer } from "../../voice/transcribe.js";
 
 // Try to use Rust-native CAPTCHA classifier for speed
 let nativeClassifyCaptcha: ((html: string) => { kind: string; confidence: number }) | null = null;
@@ -25,6 +26,37 @@ try {
 } catch { /* native not available */ }
 
 export type CaptchaType = "recaptcha-v2" | "recaptcha-v3" | "hcaptcha" | "turnstile" | "none";
+
+// ─── Convex-backed key loader ─────────────────────────────────────────────
+// CAPTCHA API keys are stored as Convex environment variables (never bundled
+// into the app). Fetched lazily on first use and cached in process.env.
+let _captchaKeysFetched = false;
+
+async function ensureCaptchaKeys(): Promise<void> {
+    if (_captchaKeysFetched) return;
+    if (process.env.NOPECHA_API_KEY && process.env.CAPTCHA_API_KEY) { _captchaKeysFetched = true; return; }
+    try {
+        const { getConvexSiteUrl } = await import("../../config/keys.js");
+        const { getSessionToken } = await import("../../session.js");
+        const convexUrl = getConvexSiteUrl();
+        const sessionToken = await getSessionToken().catch(() => null);
+        if (!convexUrl || !sessionToken) return;
+        const resp = await fetch(`${convexUrl}/api/config/secrets`, {
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+        if (!resp.ok) return;
+        const secrets = await resp.json() as Record<string, string>;
+        if (secrets.NOPECHA_API_KEY && !process.env.NOPECHA_API_KEY) {
+            process.env.NOPECHA_API_KEY = secrets.NOPECHA_API_KEY;
+            console.log("  🔑 CAPTCHA: NOPECHA_API_KEY loaded from Convex");
+        }
+        if (secrets.CAPTCHA_API_KEY && !process.env.CAPTCHA_API_KEY) {
+            process.env.CAPTCHA_API_KEY = secrets.CAPTCHA_API_KEY;
+            console.log("  🔑 CAPTCHA: CAPTCHA_API_KEY loaded from Convex");
+        }
+    } catch { /* non-fatal — keys may still be available via process.env */ }
+    finally { _captchaKeysFetched = true; }
+}
 
 export interface CaptchaInfo {
     type: CaptchaType;
@@ -189,22 +221,223 @@ async function waitForTurnstilePassive(page: any, timeoutMs = 25000): Promise<bo
     }
 }
 
+// ─── Audio CAPTCHA Bypass (free, no API key) ──────────────────────────────
+// Works on reCAPTCHA v2. Clicks the audio challenge, downloads the MP3,
+// transcribes via existing transcribeBuffer() (Whisper or free Gemini),
+// types the answer, and submits. Returns null on any failure so the caller
+// can fall through to the next solver.
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function solveAudioCaptcha(page: any): Promise<string | null> {
+    try {
+        console.log("  🎧 Audio CAPTCHA bypass: attempting...");
+
+        // Find the reCAPTCHA bframe (the interactive challenge iframe)
+        const frames = page.frames ? page.frames() : [];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const rcFrame = frames.find((f: any) =>
+            f.url().includes("google.com/recaptcha") ||
+            f.url().includes("recaptcha.net/recaptcha")
+        );
+        if (!rcFrame) {
+            console.log("  🎧 Audio CAPTCHA: reCAPTCHA frame not found");
+            return null;
+        }
+
+        // Switch to audio challenge if currently on image challenge
+        const audioBtn = rcFrame.locator("#recaptcha-audio-button");
+        const audioBtnVisible = await audioBtn.isVisible({ timeout: 2000 }).catch(() => false);
+        if (audioBtnVisible) {
+            await audioBtn.click();
+            await new Promise(r => setTimeout(r, 1200));
+        }
+
+        // Wait for audio source element to appear
+        const audioSource = rcFrame.locator("#audio-source");
+        const audioVisible = await audioSource.isVisible({ timeout: 4000 }).catch(() => false);
+        if (!audioVisible) {
+            // May already be showing audio challenge — check for the response input
+            const inputVisible = await rcFrame.locator("#audio-response").isVisible({ timeout: 1500 }).catch(() => false);
+            if (!inputVisible) {
+                console.log("  🎧 Audio CAPTCHA: audio source not found (blocked or rate limited)");
+                return null;
+            }
+        }
+
+        // Extract the audio MP3 URL from the iframe
+        const audioUrl: string | null = await rcFrame.evaluate((): string | null => {
+            const src = (document.querySelector("#audio-source") as HTMLSourceElement)?.src;
+            return src || null;
+        });
+        if (!audioUrl) {
+            console.log("  🎧 Audio CAPTCHA: could not extract audio URL");
+            return null;
+        }
+        console.log(`  🎧 Audio CAPTCHA: downloading audio...`);
+
+        // Download the MP3 buffer from within the browser context (avoids CORS)
+        const audioBytes: number[] | null = await page.evaluate(async (url: string): Promise<number[] | null> => {
+            try {
+                const resp = await fetch(url);
+                if (!resp.ok) return null;
+                const ab = await resp.arrayBuffer();
+                return Array.from(new Uint8Array(ab));
+            } catch { return null; }
+        }, audioUrl);
+
+        if (!audioBytes || audioBytes.length === 0) {
+            console.log("  🎧 Audio CAPTCHA: audio download failed");
+            return null;
+        }
+
+        const audioBuffer = Buffer.from(audioBytes);
+        console.log(`  🎧 Audio CAPTCHA: transcribing ${audioBuffer.length} bytes...`);
+
+        // Transcribe — uses Whisper (if OPENAI_API_KEY/GROQ_API_KEY) or free Gemini (existing Convex proxy)
+        const rawTranscript = await transcribeBuffer(audioBuffer, "captcha_audio.mp3").catch(() => "");
+        if (!rawTranscript) {
+            console.log("  🎧 Audio CAPTCHA: transcription returned empty");
+            return null;
+        }
+
+        // Clean: reCAPTCHA audio uses spoken digits/words separated by spaces
+        const answer = rawTranscript.toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
+        if (!answer) {
+            console.log("  🎧 Audio CAPTCHA: cleaned transcript empty");
+            return null;
+        }
+        console.log(`  🎧 Audio CAPTCHA: answer = "${answer}"`);
+
+        // Type answer into the audio response input
+        const responseInput = rcFrame.locator("#audio-response");
+        const inputReady = await responseInput.isVisible({ timeout: 2000 }).catch(() => false);
+        if (!inputReady) {
+            console.log("  🎧 Audio CAPTCHA: response input not visible");
+            return null;
+        }
+        await responseInput.fill(answer);
+        await new Promise(r => setTimeout(r, 300));
+
+        // Submit
+        await rcFrame.locator("#recaptcha-verify-button").click();
+        await new Promise(r => setTimeout(r, 1500));
+
+        // Check success: reCAPTCHA sets #g-recaptcha-response token on success
+        const token: string | null = await page.evaluate((): string | null => {
+            const el = document.querySelector("#g-recaptcha-response") as HTMLTextAreaElement | null;
+            return el?.value || null;
+        });
+
+        if (token) {
+            console.log("  🎧 Audio CAPTCHA: SOLVED via audio bypass ✓");
+            return token;
+        }
+
+        console.log("  🎧 Audio CAPTCHA: verify did not produce token (wrong answer or blocked)");
+        return null;
+    } catch (err) {
+        console.log(`  🎧 Audio CAPTCHA: error — ${(err as Error).message}`);
+        return null;
+    }
+}
+
+// ─── NopeCHA (free tier: 100 solves/day, no signup) ──────────────────────
+// Handles reCAPTCHA v2/v3, hCaptcha, Cloudflare Turnstile.
+// Set NOPECHA_API_KEY env var (get from nopecha.com — free plan available).
+
+const NOPECHA_TYPE_MAP: Partial<Record<CaptchaType, string>> = {
+    "recaptcha-v2": "recaptchav2",
+    "recaptcha-v3": "recaptchav3",
+    "hcaptcha": "hcaptcha",
+    "turnstile": "turnstile",
+};
+
+async function solveViaNopeCHA(
+    type: CaptchaType,
+    siteKey: string,
+    pageUrl: string,
+): Promise<string | null> {
+    const apiKey = process.env.NOPECHA_API_KEY;
+    if (!apiKey) return null;
+
+    const nopechaType = NOPECHA_TYPE_MAP[type];
+    if (!nopechaType) return null;
+
+    try {
+        // Submit task
+        const submitRes = await fetch("https://api.nopecha.com/", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ type: nopechaType, sitekey: siteKey, url: pageUrl, key: apiKey }),
+        });
+        const submitData = await submitRes.json() as { id?: string; error?: number; data?: string };
+        if (submitData.error) {
+            console.warn(`  ⚠️ NopeCHA submit error: ${submitData.error}`);
+            return null;
+        }
+        // NopeCHA may return the token immediately or via poll
+        if (submitData.data && typeof submitData.data === "string") return submitData.data;
+
+        const taskId = submitData.id;
+        if (!taskId) return null;
+
+        // Poll for result (max 60s, 3s intervals)
+        for (let i = 0; i < 20; i++) {
+            await new Promise(r => setTimeout(r, 3000));
+            const pollRes = await fetch(`https://api.nopecha.com/?key=${apiKey}&id=${taskId}`);
+            const pollData = await pollRes.json() as { error?: number; data?: string };
+            if (pollData.error === 10) continue; // not ready yet
+            if (pollData.error) { console.warn(`  ⚠️ NopeCHA poll error: ${pollData.error}`); return null; }
+            if (pollData.data && typeof pollData.data === "string") {
+                console.log(`  🟢 NopeCHA: solved ${type} (${i * 3 + 3}s)`);
+                return pollData.data;
+            }
+        }
+        console.warn("  ⚠️ NopeCHA: timeout waiting for solution");
+        return null;
+    } catch (err) {
+        console.warn(`  ⚠️ NopeCHA error: ${(err as Error).message}`);
+        return null;
+    }
+}
+
 // ─── Main CAPTCHA Handler ─────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function handleCaptchaIfPresent(page: any): Promise<{ handled: boolean; type: CaptchaType; method: string }> {
+    // Ensure CAPTCHA keys are loaded from Convex (if not already in process.env)
+    await ensureCaptchaKeys();
+
     const info = await detectCaptcha(page);
     if (info.type === "none") return { handled: true, type: "none", method: "none" };
 
     console.log(`  🤖 CAPTCHA detected: ${info.type} (sitekey: ${info.siteKey?.substring(0, 20) ?? "unknown"})`);
 
-    // Turnstile: try passive first (stealth setup often auto-passes it)
+    // ── Tier 1: Turnstile passive stealth (often auto-passes with good stealth) ──
     if (info.type === "turnstile") {
         const passed = await waitForTurnstilePassive(page, 20000);
         if (passed) return { handled: true, type: "turnstile", method: "passive_stealth" };
     }
 
-    // Solve via 2captcha if we have a siteKey and API key
+    // ── Tier 2: reCAPTCHA v2 audio bypass (free, no API key needed) ──────────
+    if (info.type === "recaptcha-v2") {
+        const token = await solveAudioCaptcha(page);
+        if (token) {
+            await injectToken(page, "recaptcha-v2", token);
+            return { handled: true, type: "recaptcha-v2", method: "audio_bypass" };
+        }
+    }
+
+    // ── Tier 3: NopeCHA (free 100/day — set NOPECHA_API_KEY) ─────────────────
+    if (info.siteKey && process.env.NOPECHA_API_KEY) {
+        const token = await solveViaNopeCHA(info.type, info.siteKey, page.url());
+        if (token) {
+            await injectToken(page, info.type, token);
+            return { handled: true, type: info.type, method: "nopecha" };
+        }
+    }
+
+    // ── Tier 4: 2captcha (paid fallback — set CAPTCHA_API_KEY) ───────────────
     if (info.siteKey && process.env.CAPTCHA_API_KEY) {
         const token = await solve2captcha(info.type, info.siteKey, page.url());
         if (token) {
@@ -245,7 +478,7 @@ export const browserHandleCaptcha: ToolDefinition = {
                 method: result.method,
                 ...(result.handled
                     ? { message: `CAPTCHA solved via ${result.method}. You may now proceed.` }
-                    : { message: "CAPTCHA detected but could not be solved automatically. Set CAPTCHA_API_KEY env var to enable 2captcha solving, or solve manually." }
+                    : { message: "CAPTCHA detected but could not be solved automatically. reCAPTCHA v2 audio bypass was attempted (free, no key needed). To enable full solving: set NOPECHA_API_KEY (free 100/day, nopecha.com) or CAPTCHA_API_KEY (2captcha, paid). Solve manually if needed." }
                 ),
             });
         } catch (err) {
