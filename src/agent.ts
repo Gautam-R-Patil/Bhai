@@ -81,7 +81,7 @@ import {
 import { autoSaveSession, getBrowserContext, trackBrowserStep } from "./tools/browser-memory.js";
 import { clearCache, executeTool, resetRateLimits } from "./tools/index.js";
 import { startTrace, finalizeTrace, recordToolsSelected, recordContextSources, recordMemoryHit } from "./harness/trace-store.js";
-import { setActiveEvalTraceId } from "./agents/evaluator.js";
+import { runWithEvalTraceId } from "./agents/evaluator.js";
 import { getDimensionValue } from "./harness/registry.js";
 
 // ── Music fast-path helpers ──────────────────────
@@ -754,6 +754,35 @@ export async function runAgent(
     channelContext?: ChannelContext,
 ): Promise<AgentResponse> {
     const isForked = !!historyFork;
+    // Skip tracing for forked calls; enter ALS context for owner calls so evaluate()
+    // reads the right trace ID even when multiple channels run concurrently.
+    if (!isForked) {
+        const _earlyTraceId = startTrace(channelContext?.channel || "default",
+            userMessage.replace(/\n*\[SOURCE:.*\]$/s, "").trim(), 0);
+        return runWithEvalTraceId(_earlyTraceId, () => _runAgentBody(
+            llm, userMessage, onProgress, media, signal, historyFork, modelHint, toolAllowlist, channelContext, _earlyTraceId
+        )).catch((err: unknown) => {
+            // Ensure trace is finalized even on uncaught exceptions
+            if (_earlyTraceId) finalizeTrace(_earlyTraceId, false);
+            throw err;
+        });
+    }
+    return _runAgentBody(llm, userMessage, onProgress, media, signal, historyFork, modelHint, toolAllowlist, channelContext, null);
+}
+
+async function _runAgentBody(
+    llm: LLMClient,
+    userMessage: string,
+    onProgress: ProgressCallback | undefined,
+    media: MediaAttachment[] | undefined,
+    signal: AbortSignal | undefined,
+    historyFork: ChatCompletionMessageParam[] | undefined,
+    modelHint: "simple" | "complex" | undefined,
+    toolAllowlist: string[] | undefined,
+    channelContext: ChannelContext | undefined,
+    _injectedTraceId: string | null,
+): Promise<AgentResponse> {
+    const isForked = !!historyFork;
 
     // True when serving a non-owner contact (e.g. WhatsApp persona).
     // In this mode all owner-personal memory injection is skipped — the
@@ -791,13 +820,9 @@ export async function runAgent(
     // The full tagged message is still sent to the LLM for context.
     const rawUserMessage = userMessage.replace(/\n*\[SOURCE:.*\]$/s, "").trim();
 
-    // ── Harness trace: start per-invocation telemetry ──
-    const _harnessTraceId = startTrace(
-        channelContext?.channel || "default",
-        rawUserMessage,
-        0,
-    );
-    setActiveEvalTraceId(_harnessTraceId);
+    // Trace ID injected by the outer runAgent wrapper (already started + in ALS context).
+    const _harnessTraceId = _injectedTraceId;
+
 
     // ── Goal detection: check if user mentioned a goal ──
     try {
@@ -1051,7 +1076,7 @@ STRATEGY: Execute in as few tool calls as possible.
                         .filter(Boolean);
                     const partialText =
                         partialResponses.length > 0 ? partialResponses[partialResponses.length - 1] : null;
-                    setActiveEvalTraceId(null); finalizeTrace(_harnessTraceId, false);
+                    if (_harnessTraceId) finalizeTrace(_harnessTraceId, false);
                     return {
                         text:
                             partialText ||
@@ -1068,7 +1093,7 @@ STRATEGY: Execute in as few tool calls as possible.
             workingHistory.push({ role: "assistant", content: "Task cancelled by user." });
             // Credit already deducted per-API-call, just return
             const stats = getSessionCreditStats();
-            setActiveEvalTraceId(null); finalizeTrace(_harnessTraceId, false);
+            if (_harnessTraceId) finalizeTrace(_harnessTraceId, false);
             return { text: `✅ Task stopped. (${stats.creditsUsed} credits used)`, toolCalls: totalToolCalls };
         }
 
@@ -1081,7 +1106,7 @@ STRATEGY: Execute in as few tool calls as possible.
                     console.log(`[AccountGuard] Credits exhausted mid-task after ${totalToolCalls} tool calls`);
                     const exhaustedMsg = `⛔ ${midCheck.reason || "Your AI credits have run out."} Task stopped after ${totalToolCalls} steps.`;
                     workingHistory.push({ role: "assistant", content: exhaustedMsg });
-                    setActiveEvalTraceId(null); finalizeTrace(_harnessTraceId, false);
+                    if (_harnessTraceId) finalizeTrace(_harnessTraceId, false);
                     return { text: exhaustedMsg, toolCalls: totalToolCalls };
                 }
             } catch {
@@ -1457,7 +1482,7 @@ STRATEGY: Execute in as few tool calls as possible.
                     // Record memory hits for harness traces
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     const topScore = queriedMems.length > 0 ? (queriedMems[0] as any).score ?? 0 : 0;
-                    recordMemoryHit(_harnessTraceId, uniqueMems.length, topScore);
+                    if (_harnessTraceId) recordMemoryHit(_harnessTraceId, uniqueMems.length, topScore);
                     if (uniqueMems && uniqueMems.length > 0) {
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
                         parts.push(
@@ -1645,7 +1670,7 @@ STRATEGY: Execute in as few tool calls as possible.
             if (parts.length > 0) {
                 // Record context sources for harness traces
                 if (iterations === 1) {
-                    recordContextSources(_harnessTraceId, parts.map(p => p.split("\n")[0].substring(0, 60)));
+                    if (_harnessTraceId) recordContextSources(_harnessTraceId, parts.map(p => p.split("\n")[0].substring(0, 60)));
                 }
 
                 // Cap total injected context — tunable via Meta-Harness registry
@@ -1762,7 +1787,7 @@ STRATEGY: Execute in as few tool calls as possible.
 
         // ── Harness trace: record selected tools ──
         if (iterations === 1 && _harnessTraceId) {
-            recordToolsSelected(_harnessTraceId, tools.map(t => t.function?.name ?? String(t)).filter(Boolean));
+            if (_harnessTraceId) recordToolsSelected(_harnessTraceId, tools.map(t => t.function?.name ?? String(t)).filter(Boolean));
         }
 
         // Phase-2 full fast-path gate (requires classifier output — threaded
@@ -2021,7 +2046,7 @@ PLAN:`,
                         .map((m) => (m as { content: string }).content)
                         .filter(Boolean);
                     const partialText = currentRunResponses.length > 0 ? currentRunResponses.pop() : null;
-                    setActiveEvalTraceId(null); finalizeTrace(_harnessTraceId, false);
+                    if (_harnessTraceId) finalizeTrace(_harnessTraceId, false);
                     return {
                         text: partialText || "I'm having trouble connecting right now. Please try again in a moment.",
                         toolCalls: totalToolCalls,
@@ -2488,7 +2513,7 @@ PLAN:`,
                     maybeReflect();
                     if (usedBrowserTools) autoSaveSession();
                     // Credits deducted per-API-call in llm.ts
-                    setActiveEvalTraceId(null); finalizeTrace(_harnessTraceId, true);
+                    if (_harnessTraceId) finalizeTrace(_harnessTraceId, true);
                     return { text, toolCalls: totalToolCalls };
                 }
             }
@@ -2575,7 +2600,7 @@ PLAN:`,
             }
 
             // Credits deducted per-API-call in llm.ts
-            setActiveEvalTraceId(null); finalizeTrace(_harnessTraceId, true);
+            if (_harnessTraceId) finalizeTrace(_harnessTraceId, true);
             return { text, toolCalls: totalToolCalls };
         }
 
@@ -2721,7 +2746,7 @@ PLAN:`,
                 const delegationText = `I've started working on your task in the background (${phaseCount} phases). Task ID: ${taskId}. I'll keep you updated on progress — you can also ask me to check anytime.`;
                 messages.push({ role: "assistant", content: delegationText });
                 appendTurn("assistant", delegationText);
-                setActiveEvalTraceId(null); finalizeTrace(_harnessTraceId, true);
+                if (_harnessTraceId) finalizeTrace(_harnessTraceId, true);
                 return { text: delegationText, toolCalls: totalToolCalls };
             } catch {
                 /* fall through to normal loop if parse fails */

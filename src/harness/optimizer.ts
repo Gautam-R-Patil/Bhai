@@ -158,7 +158,9 @@ export async function runMetaHarnessOptimization(
             // Mark valid=false so no-change duplicates don't contaminate Pareto frontier or GP surrogate
             candidate.valid = false;
             candidate.objective = parent.objective;
-            candidate.scores = parent.scores;
+            candidate.scores = parent.scores
+                ? { ...parent.scores, candidateId: candidate.candidateId, timestamp: new Date().toISOString() }
+                : null;
             store.writeManifest(candidate);
             lastIterImproved = false;  // treat as regression so next iter generates gradients
             continue;

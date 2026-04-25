@@ -152,16 +152,27 @@ export function finalizeTrace(traceId: string, success: boolean): TraceRecord | 
 // ── Batch flush to candidate directory ─────────────────────────────────────
 
 /**
- * Write all buffered traces to a specific candidate's traces/ directory.
- * Called by the run-store when materializing a new candidate.
+ * Write buffered traces to a candidate's traces/ directory and clear the buffer.
+ * Called at the end of each candidate evaluation so the NEXT candidate starts
+ * with a clean buffer and doesn't inherit prior candidates' traces.
+ *
+ * Live writes via finalizeTrace() already handle traces for the ACTIVE candidate.
+ * This function handles any stragglers produced before setActiveCandidate() was
+ * called (e.g., traces from population seed init).
  */
 export function flushTracesToCandidate(runDir: string, candidateId: string): void {
     const tracesDir = join(runDir, "candidates", candidateId, "traces");
     if (!existsSync(tracesDir)) mkdirSync(tracesDir, { recursive: true });
 
+    // Only flush traces that weren't already written live (i.e., those without a
+    // candidate-specific file yet). Since live writes use timestamp+uuid filenames
+    // and we call this after the run, re-writing is idempotent — but we still clear
+    // to prevent cross-candidate contamination.
     for (const trace of _completedTraces) {
         _writeTraceFile(trace, runDir, candidateId);
     }
+    // Clear buffer — next candidate starts fresh
+    _completedTraces.length = 0;
 }
 
 /**

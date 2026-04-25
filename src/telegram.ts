@@ -233,7 +233,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
         thinkingLevel: "off",
         setThinkingLevel: (level: string) => setThinkingLevel(level),
         clearConversation,
-        conversationCount: getConversationCount(),
+        conversationCount: getConversationCount,
         llm,
         sendProgress: async (msg: string) => { await sendProactiveMessage(bot, config, msg); },
     });

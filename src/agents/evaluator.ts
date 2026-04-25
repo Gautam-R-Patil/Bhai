@@ -7,6 +7,7 @@
 // Uses a cheap, fast model (different from generator) to score
 // synthesis on completeness, accuracy, coherence, and actionability.
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { LLMClient, ChatCompletionMessageParam } from "../llm.js";
 import type { SubAgentResult } from "./sub-agent.js";
 import type { SwarmPlan } from "./swarm.js";
@@ -15,9 +16,19 @@ import { textGradRefine } from "./textgrad-refiner.js";
 import { getDimensionValue } from "../harness/registry.js";
 import { recordEvaluationScore } from "../harness/trace-store.js";
 
-// Module-level trace ID set by the outer agent loop for score capture
-let _activeTraceId: string | null = null;
-export function setActiveEvalTraceId(id: string | null): void { _activeTraceId = id; }
+// Per-async-context trace ID — safe across concurrent channel handlers
+const _evalTraceStorage = new AsyncLocalStorage<string | null>();
+export function setActiveEvalTraceId(id: string | null): void {
+    // No-op: traceId is now threaded via runWithEvalTraceId / getActiveEvalTraceId
+    // Kept for backward compat — callers should migrate to runWithEvalTraceId
+}
+/** Run fn inside an async context where evaluator.ts sees traceId. */
+export function runWithEvalTraceId<T>(traceId: string | null, fn: () => T): T {
+    return _evalTraceStorage.run(traceId, fn);
+}
+function getActiveEvalTraceId(): string | null {
+    return _evalTraceStorage.getStore() ?? null;
+}
 
 // ── Types ────────────────────────────────────
 
@@ -120,9 +131,10 @@ Output ONLY valid JSON:
             : score >= RETRY_THRESHOLD ? "retry"
             : "replan" as const;
 
-        // Record to harness trace store if a trace is active
-        if (_activeTraceId) {
-            try { recordEvaluationScore(_activeTraceId, score); } catch { /* non-fatal */ }
+        // Record to harness trace store — uses per-async-context storage (safe for concurrent channels)
+        const activeTrace = getActiveEvalTraceId();
+        if (activeTrace) {
+            try { recordEvaluationScore(activeTrace, score); } catch { /* non-fatal */ }
         }
 
         return {

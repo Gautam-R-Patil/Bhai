@@ -20,7 +20,7 @@ interface CommandContext {
     config: Config;
     startTime: number;
     sessionTokens: number;
-    conversationCount: number;
+    conversationCount: () => number;  // getter — always reflects current count
     thinkingLevel: string;
     setThinkingLevel: (level: string) => void;
     clearConversation: () => void;
@@ -98,7 +98,7 @@ function cmdStatus(): string {
         `🤖 Engine: A.T.L.A.S AI`,
         `🧠 Thinking: \`${_thinkingLevel}\``,
         `⏱️ Uptime: ${hours}h ${mins}m ${secs}s`,
-        `💬 Conversations: ${_ctx.conversationCount}`,
+        `💬 Conversations: ${_ctx.conversationCount()}`,
         `🏢 Built by: XAGI Labs`,
         `🔒 Allowed users: ${_ctx.config.allowedUserIds.size}`,
     ].join("\n");
@@ -118,7 +118,7 @@ function cmdUsage(): string {
     return [
         "📊 **Session Usage**",
         "",
-        `💬 Messages: ${_ctx?.conversationCount || 0}`,
+        `💬 Messages: ${_ctx?.conversationCount() || 0}`,
         `🧠 Thinking: \`${_thinkingLevel}\``,
         `🤖 Engine: A.T.L.A.S AI`,
     ].join("\n");

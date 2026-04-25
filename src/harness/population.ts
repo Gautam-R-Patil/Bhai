@@ -10,7 +10,7 @@ import type { LLMClient } from "../llm.js";
 import type { CandidateManifest, HarnessConfig, SeedConfig } from "./types.js";
 import type { HarnessRunStore } from "./run-store.js";
 import { evaluateCandidate } from "./evaluator.js";
-import { applyConfig, snapshotConfig, resetToDefaults } from "./registry.js";
+import { snapshotConfig, resetToDefaults } from "./registry.js";
 import { setActiveCandidate, clearActiveCandidate, flushTracesToCandidate } from "./trace-store.js";
 
 export const ATLAS_SEED_CONFIGS: SeedConfig[] = [
@@ -89,11 +89,10 @@ export async function initializePopulation(
         try {
             await onProgress?.(`🌱 Evaluating seed: ${seed.id}…`).catch(() => {});
             setActiveCandidate(store.runDir, manifest.candidateId);
-            applyConfig(config);
+            // evaluateCandidate handles applyConfig + resetToDefaults in its own try/finally
             const scores = await evaluateCandidate(llm, manifest.candidateId, config, { fastMode });
             flushTracesToCandidate(store.runDir, manifest.candidateId);
             clearActiveCandidate();
-            resetToDefaults();
 
             manifest.scores = scores;
             manifest.objective = scores.composite;
