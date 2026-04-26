@@ -1210,6 +1210,21 @@ function createOverlayWindow() {
 
     overlayWindow.loadURL(OVERLAY_URL);
 
+    // Retry loading if the bot server isn't ready yet (race condition on first show)
+    overlayWindow.webContents.on("did-fail-load", (_e, errCode, errDesc, url) => {
+        if (errCode === -102 || errCode === -6 || errDesc === "ERR_CONNECTION_REFUSED") {
+            // Bot server not up yet — retry after short delay
+            console.warn("[OVERLAY] Server not ready, retrying in 1s...");
+            setTimeout(() => {
+                if (overlayWindow && !overlayWindow.isDestroyed()) {
+                    overlayWindow.loadURL(OVERLAY_URL);
+                }
+            }, 1000);
+        } else {
+            console.error(`[OVERLAY] Failed to load: ${errDesc} (${errCode}) — ${url}`);
+        }
+    });
+
     // Escape key → hide overlay
     overlayWindow.webContents.on("before-input-event", (event, input) => {
         if (input.key === "Escape" && input.type === "keyDown") {

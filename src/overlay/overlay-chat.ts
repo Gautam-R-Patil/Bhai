@@ -63,20 +63,34 @@ export function initOverlayChat(llm: LLMClient): void {
         const url = new URL(req.url || "/", `http://127.0.0.1:${OVERLAY_PORT}`);
 
         if (url.pathname === "/" || url.pathname === "/index.html") {
-            try {
-                const html = readFileSync(join(__dirname, "..", "..", "src", "overlay", "overlay.html"), "utf-8");
-                res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-                res.end(html);
-            } catch {
-                // Fallback: try dist path
+            // Resolve overlay.html across all run modes:
+            //   dev (tsx):         __dirname = dist/overlay/  → src/overlay/overlay.html
+            //   prod dist:         __dirname = dist/overlay/  → dist/overlay/overlay.html
+            //   bundled .mjs:      __dirname = dist-bundle/   → paths above both fail
+            //   Electron packaged: process.cwd() = BOT_DIR    → overlay.html next to bundle
+            // We try 4 candidate paths in order of reliability.
+            const cwd = process.cwd();
+            const candidates = [
+                join(__dirname, "..", "..", "src", "overlay", "overlay.html"), // dev tsx
+                join(__dirname, "overlay.html"),                                // dist build
+                join(cwd, "src", "overlay", "overlay.html"),                   // cwd-relative dev
+                join(cwd, "dist", "overlay", "overlay.html"),                  // cwd-relative dist
+                join(cwd, "overlay.html"),                                      // bundled/packaged
+            ];
+            let served = false;
+            for (const p of candidates) {
                 try {
-                    const html = readFileSync(join(__dirname, "overlay.html"), "utf-8");
+                    const html = readFileSync(p, "utf-8");
                     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
                     res.end(html);
-                } catch {
-                    res.writeHead(404);
-                    res.end("Overlay not found");
-                }
+                    served = true;
+                    break;
+                } catch { /* try next */ }
+            }
+            if (!served) {
+                console.error("[OVERLAY] overlay.html not found. Tried:", candidates);
+                res.writeHead(404);
+                res.end("Overlay not found — run `npm run build` to generate dist/overlay/overlay.html");
             }
         } else if (url.pathname === "/health") {
             res.writeHead(200, { "Content-Type": "application/json" });
@@ -1321,8 +1335,13 @@ async function handleLiveVoiceStop(ws: WebSocket): Promise<void> {
 // The Swift app is a thin window shell — all logic stays in this server.
 
 function launchNativeOverlay(): void {
-    // Only supported on macOS
-    if (process.platform !== "darwin") return;
+    // The Swift native overlay is macOS-only.
+    // On Windows and Linux the Electron window in desktop/main.js serves as the overlay —
+    // no native binary is needed; the HTTP + WebSocket server is sufficient.
+    if (process.platform !== "darwin") {
+        console.log("💬 Overlay: using Electron window (macOS native overlay not required on this platform)");
+        return;
+    }
 
     // Locate the binary — check release build first, then debug
     const projectRoot = join(__dirname, "..", "..");

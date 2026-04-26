@@ -871,17 +871,6 @@ async function clickAt(payload) {
           shiftKey: (modifiers || []).includes("Shift"),
           altKey: (modifiers || []).includes("Alt"),
           metaKey: (modifiers || []).includes("Meta"),
-
-        const el = document.elementFromPoint(x, y);
-        if (!el) return { success: false, error: "No element at coordinates" };
-
-        const opts = {
-          bubbles: true, cancelable: true, clientX: x, clientY: y,
-          button: button === "right" ? 2 : button === "middle" ? 1 : 0,
-          ctrlKey: (modifiers || []).includes("Control"),
-          shiftKey: (modifiers || []).includes("Shift"),
-          altKey: (modifiers || []).includes("Alt"),
-          metaKey: (modifiers || []).includes("Meta"),
         };
 
         // ── Pointer Events (modern frameworks) ──
