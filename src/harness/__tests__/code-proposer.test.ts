@@ -152,11 +152,14 @@ describe("proposeWithFilesystemAgent", () => {
         // runAgent(llm, message, onProgress?, media?, signal?, historyFork?, modelHint?, toolAllowlist?, ...)
         const allowlist = call[7] as string[] | undefined;
         expect(allowlist).toBeDefined();
-        expect(allowlist).toContain("read_file");
-        expect(allowlist).toContain("write_file");
-        expect(allowlist).toContain("grep_file");
+        // Correct tool names: read/write/grep/glob (not read_file/write_file/grep_file/glob_files)
+        expect(allowlist).toContain("read");
+        expect(allowlist).toContain("write");
+        expect(allowlist).toContain("grep");
+        expect(allowlist).toContain("glob");
         // shell_exec intentionally removed from proposer allowlist (prompt-injection risk)
         expect(allowlist).not.toContain("shell_exec");
+        expect(allowlist).not.toContain("read_file");
         expect(allowlist).not.toContain("web_search");
         expect(allowlist).not.toContain("browser_navigate");
         expect(allowlist).not.toContain("remember");
@@ -231,7 +234,8 @@ describe("proposeWithFilesystemAgent", () => {
             join(store.runDir, "candidates", candidate.candidateId, ".metaharness", "AGENTS.md"),
             "utf-8",
         );
-        expect(agentsMd).toMatch(/read_file|shell_exec/);
+        // Tool names are read/write/grep/glob (not _file/_files suffix)
+        expect(agentsMd).toMatch(/\bread\b|\bgrep\b|\bglob\b/);
         expect(agentsMd).toMatch(/traces.*\.json|\.json.*traces/i);
         expect(agentsMd).toMatch(/do NOT.*summary|NOT.*summary/i);
     });

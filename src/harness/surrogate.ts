@@ -79,7 +79,8 @@ export class SurrogateModel {
 }
 
 export function buildSurrogate(history: CandidateManifest[]): SurrogateModel | null {
-    const scored = history.filter(c => c.scores !== null);
+    // Exclude no-change and other non-evaluated outcomes to avoid duplicate (x,y) training pairs
+    const scored = history.filter(c => c.scores !== null && c.valid && c.outcome !== "no-change");
     if (scored.length < MIN_OBSERVATIONS) return null;
 
     const numericDims = new Set<string>();

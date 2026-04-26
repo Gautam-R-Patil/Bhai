@@ -61,6 +61,10 @@ export async function initializePopulation(
 ): Promise<CandidateManifest[]> {
     await onProgress?.(`🌱 Population: materializing ${ATLAS_SEED_CONFIGS.length} seed candidates…`).catch(() => {});
 
+    // Reset to hardcoded defaults before snapshotting, so baseline-defaults seed
+    // always reflects the true factory defaults rather than a previous run's persisted config.
+    resetToDefaults();
+
     // Materialize all candidate directories first (sequential, assigns c0000-c0003)
     const entries: Array<{ manifest: CandidateManifest; seed: SeedConfig; config: HarnessConfig }> = [];
     for (const seed of ATLAS_SEED_CONFIGS) {

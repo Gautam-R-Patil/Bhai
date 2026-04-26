@@ -31,13 +31,13 @@ interface ProposeOptions {
 const DEFAULT_TIMEOUT_MS = 600_000; // 10 minutes
 
 // shell_exec intentionally excluded: it allows arbitrary commands and trace files
-// could contain prompt-injected instructions. read_file + grep_file + glob_files
-// are sufficient for all harness-proposer read operations.
+// could contain prompt-injected instructions. read + grep + glob are sufficient
+// for all harness-proposer read operations. write is needed for proposed-config.json.
 const CODE_PROPOSER_ALLOWED_TOOLS = [
-    "read_file",
-    "write_file",
-    "grep_file",
-    "glob_files",
+    "read",
+    "write",
+    "grep",
+    "glob",
 ];
 
 export async function proposeWithFilesystemAgent(
@@ -49,13 +49,13 @@ export async function proposeWithFilesystemAgent(
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
     // The harness always wants worktree isolation regardless of ATLAS_AGENT_WORKTREE env var.
-    // We temporarily force-enable the env flag for this call, then restore it.
-    const prevWorktreeEnv = process.env.ATLAS_AGENT_WORKTREE;
     if (!isGitRepo()) {
         console.warn("[CODE-PROPOSER] Not a git repo — filesystem-agent unavailable, falling back to JSON proposer");
         const config = await proposeNextCandidate(llm, candidate, store);
         return { config, codeChanges: [] };
     }
+    // Temporarily force-enable the worktree flag for this call, then restore
+    const prevWorktreeEnv = process.env.ATLAS_AGENT_WORKTREE;
     process.env.ATLAS_AGENT_WORKTREE = "true";
     const worktree = setupAgentWorktree(`harness-${candidate.candidateId}`);
     if (prevWorktreeEnv === undefined) delete process.env.ATLAS_AGENT_WORKTREE;
@@ -135,18 +135,18 @@ function buildSystemPrompt(
     return `You are optimizing the ATLAS harness configuration.
 
 CRITICAL RULE — READ INDIVIDUAL TRACE FILES:
-The traces/ directory contains one JSON file per agent invocation. Read them individually using read_file.
+The traces/ directory contains one JSON file per agent invocation. Read them individually using the read tool.
 Do NOT rely on summary.json — summaries hide the specific failures you need to diagnose.
 (Paper 2603.28052: summary-only context gives median accuracy 34.9 vs 50.0 for raw trace access.)
 
-Available tools: read_file, write_file, grep_file, glob_files.
-(No shell_exec available — use glob_files to enumerate trace files and read_file to read each.)
+Available tools: read, write, grep, glob.
+(Use glob to enumerate trace files and read to open each one.)
 
 Files to read:
 - ${join(metaDir, "AGENTS.md")} — candidate-specific instructions
 - ${join(metaDir, "registry-dimensions.md")} — tunable parameters with ranges
 - ${join(metaDir, "candidate-history.json")} — all prior candidates
-- Trace files: use glob_files("${tracesDir}/*.json") to list, then read_file on each
+- Trace files: use glob("${tracesDir}/*.json") to list, then read on each
 
 Output:
 - Write ${worktreePath}/proposed-config.json (required)

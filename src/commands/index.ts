@@ -32,6 +32,7 @@ interface CommandContext {
 
 let _thinkingLevel = "low";
 let _ctx: CommandContext | null = null;
+let _optimizationInFlight = false;
 
 
 export function initCommands(ctx: CommandContext): void {
@@ -230,10 +231,14 @@ async function cmdOptimizeHarness(args: string[]): Promise<CommandResult> {
     if (!_ctx?.llm) {
         return { handled: true, response: "⚠️ LLM not available for harness optimization." };
     }
+    if (_optimizationInFlight) {
+        return { handled: true, response: "⚠️ A harness optimization is already running. Use `/harness-status` to check progress." };
+    }
     const budget = parseInt(args[0] ?? "5", 10) || 5;
     const fastMode = args.includes("--fast");
 
     // Fire and forget — optimization runs in background
+    _optimizationInFlight = true;
     setImmediate(async () => {
         try {
             const { runMetaHarnessOptimization } = await import("../harness/optimizer.js");
@@ -241,6 +246,8 @@ async function cmdOptimizeHarness(args: string[]): Promise<CommandResult> {
         } catch (err) {
             console.error("[HARNESS-CMD] Optimization failed:", (err as Error).message);
             _ctx?.sendProgress?.(`❌ Harness optimization failed: ${(err as Error).message}`).catch(() => {});
+        } finally {
+            _optimizationInFlight = false;
         }
     });
 

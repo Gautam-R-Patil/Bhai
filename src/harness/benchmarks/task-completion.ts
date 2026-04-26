@@ -62,11 +62,14 @@ export async function runTaskCompletionBenchmark(llm: LLMClient): Promise<Benchm
                     const result = await runAgent(
                         llm,
                         task.request,
-                        undefined,  // no progress callback
-                        undefined,  // no media
+                        undefined,     // no progress callback
+                        undefined,     // no media
                         controller.signal,
-                        [],         // historyFork: empty array isolates from global conversationHistory
-                        "simple",   // modelHint
+                        [],            // historyFork: empty array isolates from global conversationHistory
+                        "simple",      // modelHint
+                        // Allowlist: exclude all memory-write tools to prevent DB mutation during benchmarks
+                        ["recall", "get_core_memory", "core_memory_read", "web_search", "get_current_time",
+                         "read", "grep", "glob", "list_directory"],
                     );
                     agentResponse = result.text;
                 } finally {

@@ -121,8 +121,11 @@ export class HarnessRunStore {
             });
         }
 
+        // Absolute path for the candidate dir — used by bootstrap + AGENTS.md builders
+        const candidateAbsDir = join(this.candidatesDir, candidate.candidateId);
+
         // Bootstrap summary: ATLAS architecture context
-        const bootstrapSummary = _buildBootstrapSummary(parent, parentTraces.length);
+        const bootstrapSummary = _buildBootstrapSummary(parent, parentTraces.length, candidateAbsDir);
         writeFileSync(join(bootstrapDir, "summary.md"), bootstrapSummary, "utf-8");
 
         // Registry snapshot for proposer
@@ -155,7 +158,6 @@ export class HarnessRunStore {
         }
 
         // AGENTS.md — the main instruction file
-        const candidateAbsDir = join(this.candidatesDir, candidate.candidateId);
         const agentsMd = _buildAgentsMd(objective, parent, candidate, candidateAbsDir);
         const agentsMdPath = join(metaDir, "AGENTS.md");
         writeFileSync(agentsMdPath, agentsMd, "utf-8");
@@ -298,36 +300,30 @@ function _newRunId(): string {
     return `run_${ts}_${randomUUID().substring(0, 6)}`;
 }
 
-function _buildBootstrapSummary(parent: CandidateManifest, traceCount: number): string {
+function _buildBootstrapSummary(
+    parent: CandidateManifest,
+    traceCount: number,
+    candidateAbsDir: string,
+): string {
+    const metaAbs = join(candidateAbsDir, ".metaharness");
     return `# ATLAS Meta-Harness Run Bootstrap
 
 ## What you are optimizing
 ATLAS is a continuously running autonomous personal AI agent (Node.js/TypeScript).
 You are optimizing its "harness" — the configuration parameters that control how ATLAS:
-- Retrieves and weighs memories
-- Selects tools for each task
-- Assembles context for the LLM
-- Evaluates and escalates responses
-- Runs research and multi-agent tasks
+- Retrieves and weighs memories, selects tools, assembles context, evaluates responses
 
 ## Parent candidate: ${parent.candidateId}
-- Objective score: ${parent.objective ?? "not yet scored"}
-- Outcome: ${parent.outcome}
-- Config snapshot: see harness-config.json
-- Execution traces: ${traceCount} traces available in traces/ directory
+- Objective score: ${parent.objective ?? "not yet scored"} | Outcome: ${parent.outcome}
+- ${traceCount} execution traces available (read them individually — do NOT rely on summary)
 
-## How to propose changes
-1. Read \`.metaharness/AGENTS.md\` for full instructions
-2. Read \`.metaharness/registry-dimensions.md\` for all tunable dimensions
-3. Read \`.metaharness/parent-summary.json\` to understand what failed
-4. Read \`.metaharness/experience/parent/traces/summary.json\` for trace data
-5. Write your proposed config to \`proposed-config.json\`
+## How to propose changes (use ABSOLUTE paths)
+1. Read ${join(metaAbs, "AGENTS.md")} for full instructions
+2. Read ${join(metaAbs, "registry-dimensions.md")} for all tunable dimensions
+3. Read ${join(metaAbs, "experience", "parent", "traces")} for individual trace files
+4. Write your proposed config to ${join(candidateAbsDir, "proposed-config.json")}
 
-## Key files
-- \`.metaharness/registry-dimensions.md\` — all tunable parameters with ranges
-- \`.metaharness/candidate-history.json\` — all prior candidates and their scores
-- \`.metaharness/parent-summary.json\` — parent performance summary
-- \`proposed-config.json\` — write your proposed config here (JSON)
+Note: read_file → use tool named \`read\`, glob_files → \`glob\`, grep_file → \`grep\`, write_file → \`write\`
 `;
 }
 
@@ -352,15 +348,15 @@ Improve ATLAS's harness configuration to increase the objective score above the 
 ## CRITICAL — Read individual trace files using ABSOLUTE paths
 Paper 2603.28052 ablation: summary-only context gives median accuracy 34.9
 vs 50.0 for raw trace access. Summaries hide the specific failures you need
-to diagnose. Use read_file with the absolute paths shown below.
+to diagnose. Use the \`read\` tool with the absolute paths shown below.
 
 Do NOT use relative paths like \`.metaharness/...\` — they will fail because
 your working directory may not be the harness data directory.
 
 ### Recommended workflow
-1. \`glob_files\` pattern \`${tracesAbs}/*.json\` to list all trace files
-2. \`read_file\` each individual trace JSON file (absolute path from glob output)
-3. \`grep_file\` for \`"taskSucceeded": false\` to find failing traces quickly
+1. \`glob\` pattern \`${tracesAbs}/*.json\` to list all trace files
+2. \`read\` each individual trace JSON file (absolute path from glob output)
+3. \`grep\` for \`"taskSucceeded": false\` to find failing traces quickly
 4. Map failure patterns to specific dimensions in registry-dimensions.md
 5. Write your proposed config to the absolute path shown in "Output" below
 
@@ -387,10 +383,10 @@ These are prior hypotheses — use them to prioritize trace inspection, but alwa
 against actual trace evidence before proposing changes.
 
 ## Allowed tools
-- \`read_file\` — read any file by absolute path
-- \`glob_files\` — enumerate trace files
-- \`grep_file\` — search inside files
-- \`write_file\` — write proposed-config.json only
+- \`read\` — read any file by absolute path
+- \`glob\` — enumerate trace files (glob pattern)
+- \`grep\` — search inside files
+- \`write\` — write proposed-config.json only
 
 ## Forbidden
 - Do not modify any file other than proposed-config.json

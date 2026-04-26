@@ -83,6 +83,7 @@ export async function runMetaHarnessOptimization(
     let iterationsRun = 0;
     let surrogateSkips = 0;
     let lastIterImproved: boolean | null = null;
+    let lastDiscardedCandidate: CandidateManifest | null = null;
 
     // ── Phase 1: Proposal iterations ──────────────────────────────────────
     for (let iter = 0; iter < opts.budget; iter++) {
@@ -98,11 +99,12 @@ export async function runMetaHarnessOptimization(
         allIds.push(candidate.candidateId);
         store.writeInstructionBundle(candidate, parent, opts.objective);
 
-        // TextGrad hints if previous iter regressed
-        if (opts.useGradients && lastIterImproved === false) {
+        // TextGrad hints if previous iter regressed — use lastDiscarded as the gradient source
+        // so deficit = best.objective - lastDiscarded.composite > 0 (avoids zero-deficit no-op)
+        if (opts.useGradients && lastIterImproved === false && lastDiscardedCandidate) {
             try {
-                const parentTraces = readCandidateTraces(store.runDir, parent.candidateId);
-                const gradients = await generateDimensionGradients(llm, parent, parentTraces, { bestScore: best.objective ?? 0 });
+                const failedTraces = readCandidateTraces(store.runDir, lastDiscardedCandidate.candidateId);
+                const gradients = await generateDimensionGradients(llm, lastDiscardedCandidate, failedTraces, { bestScore: best.objective ?? 0 });
                 if (gradients.length > 0) store.writeGradientHints(candidate.candidateId, gradients);
             } catch (err) {
                 console.warn(`[META-HARNESS v2] Gradient generation failed: ${(err as Error).message}`);
@@ -236,6 +238,7 @@ export async function runMetaHarnessOptimization(
             candidate.outcomeSummary = `Score ${scores.composite} did not improve frontier (best=${best.objective})`;
             if (codeChanges.length > 0) revertCodeChanges(process.cwd());
             applyConfig(best.harnessConfig);
+            lastDiscardedCandidate = candidate;  // for gradient generation next iteration
         }
 
         store.writeScores(candidate.candidateId, scores);
