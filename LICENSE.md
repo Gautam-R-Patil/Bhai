@@ -40,7 +40,7 @@ international treaty provisions.
 
 For licensing inquiries, please contact **XAGI Labs Private Limited**:
 
-- Website: [tryatlasagi.com](https://tryatlasagi.com)
+- Website: [xagilab.com]((http://xagilab.com/))
 - Privacy Policy: [tryatlasagi.com/privacy-policy](https://tryatlasagi.com/privacy-policy)
 - Terms of Service: [tryatlasagi.com/terms](https://tryatlasagi.com/terms)
 
