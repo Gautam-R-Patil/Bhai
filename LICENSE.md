@@ -4,11 +4,11 @@
 
 **Copyright © 2024-2026 XAGI Labs Private Limited. All Rights Reserved.**
 
-Website: [xagilab.com](https://xagilab.com)
+Website: [tryatlasagi.com](https://tryatlasagi.com)
 
 This software and its associated documentation files (the "Software") are the exclusive
-property of **XAGI Labs Private Limited**. The Software is protected by copyright laws and international
-treaty provisions.
+property of **XAGI Labs Private Limited**. The Software is protected by copyright laws and
+international treaty provisions.
 
 ### Terms
 
@@ -24,12 +24,12 @@ treaty provisions.
    distribute the Software or any portion thereof to any third party.
 
 4. **Confidentiality.** The Software contains trade secrets and proprietary information
-   belonging to XAGI Labs Private Limited. You agree to maintain the confidentiality of the Software
-   and not disclose it to any third party.
+   belonging to XAGI Labs Private Limited. You agree to maintain the confidentiality of the
+   Software and not disclose it to any third party.
 
 5. **No Warranty.** THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-   EXPRESS OR IMPLIED. XAGI Labs Private Limited SHALL NOT BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
-   LIABILITY ARISING FROM THE USE OF THE SOFTWARE.
+   EXPRESS OR IMPLIED. XAGI Labs Private Limited SHALL NOT BE LIABLE FOR ANY CLAIM, DAMAGES,
+   OR OTHER LIABILITY ARISING FROM THE USE OF THE SOFTWARE.
 
 6. **Governing Law.** This Agreement shall be governed by and construed in accordance
    with the laws of India. Any disputes arising under or in connection with this License
@@ -38,12 +38,14 @@ treaty provisions.
 
 ### Contact
 
-For licensing inquiries, please contact **XAGI Labs Private Limited** at [xagilab.com](https://xagilab.com).
+For licensing inquiries, please contact **XAGI Labs Private Limited**:
 
-Privacy Policy: [xagilab.com/privacy-policy](https://www.xagilab.com/privacy-policy)
-Terms of Service: [xagilab.com/terms](https://www.xagilab.com/terms)
+- Website: [tryatlasagi.com](https://tryatlasagi.com)
+- Privacy Policy: [tryatlasagi.com/privacy-policy](https://tryatlasagi.com/privacy-policy)
+- Terms of Service: [tryatlasagi.com/terms](https://tryatlasagi.com/terms)
 
 ---
 
 *This project uses open-source libraries listed in [CREDITS.md](./CREDITS.md). Those
-libraries retain their respective licenses. This license applies only to the proprietary source code authored by XAGI Labs Private Limited.*
+libraries retain their respective licenses. This license applies only to the proprietary
+source code authored by XAGI Labs Private Limited.*
