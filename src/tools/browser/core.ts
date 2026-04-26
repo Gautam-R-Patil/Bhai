@@ -229,17 +229,21 @@ export async function getBrowser(): Promise<BrowserContext> {
 // Both support the same API surface used by the tool handlers (goto, evaluate, mouse, keyboard, etc.)
 
 export async function getActivePage(): Promise<Page> {
-    // Chrome extension mode: return a proxy that routes to the real Chrome tab
-    if (getCurrentMode() === "chrome") {
-        const backend = await getActiveBackend() as ChromeExtensionBackend;
-        return await backend.getPageProxy() as unknown as Page;
+    // ALWAYS resolve the backend first — this runs the auto-switch logic in
+    // getActiveBackend() which switches to Chrome extension if connected.
+    // Previously getCurrentMode() was called first, but when activeBackend is
+    // null (after resetBackend() on extension connect), it returned "none" and
+    // fell straight to Playwright, bypassing the Chrome extension entirely.
+    const backend = await getActiveBackend();
+
+    if (backend.mode === "chrome") {
+        return await (backend as ChromeExtensionBackend).getPageProxy() as unknown as Page;
     }
 
-    // Playwright mode (original behavior)
+    // Playwright mode
     const context = await getBrowser();
     const pages = context.pages();
     if (pages.length === 0) return await context.newPage();
-    // Clamp index in case tabs were closed
     const idx = Math.min(activePageIndex, pages.length - 1);
     return pages[idx];
 }

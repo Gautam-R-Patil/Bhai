@@ -582,7 +582,24 @@ async function handleOverlayMessage(ws: WebSocket, userMessage: string): Promise
 
     // Auto-detect screen queries and capture screenshot
     let media: MediaAttachment[] | undefined;
-    let taggedMessage = `${userMessage}\n\n[SOURCE: Desktop overlay chat — respond here, NOT on Telegram. Keep your response SHORT and concise — this is a compact overlay, not a full chat. Use 1-3 sentences when possible.]`;
+
+    // Inject Chrome extension status so the agent knows which browser to use.
+    // "here", "this page", "this email" in overlay messages = the user's real Chrome tab.
+    let chromeCtxNote = "";
+    try {
+        const { isExtensionConnected, getExtensionTabs } = await import("../tools/browser/chrome-bridge.js");
+        if (isExtensionConnected()) {
+            const tabs = await getExtensionTabs().catch(() => [] as Array<{ url: string; title: string; active: boolean }>);
+            const activeTab = tabs.find(t => t.active) || tabs[0];
+            if (activeTab) {
+                chromeCtxNote = `\n[BROWSER CONTEXT: Chrome extension is connected. The user's real Chrome browser is active. Current tab: "${activeTab.title}" at ${activeTab.url} — use browser_scan/browser_navigate/browser_run_js to interact with THIS tab directly. Do NOT open a new headless Playwright browser or navigate to a login page. The user is already logged in on their real Chrome browser.]`;
+            } else {
+                chromeCtxNote = `\n[BROWSER CONTEXT: Chrome extension is connected. Use browser tools to interact with the user's real Chrome browser directly — no headless Playwright needed.]`;
+            }
+        }
+    } catch { /* non-fatal */ }
+
+    let taggedMessage = `${userMessage}\n\n[SOURCE: Desktop overlay chat — respond here, NOT on Telegram. Keep your response SHORT and concise — this is a compact overlay, not a full chat. Use 1-3 sentences when possible.]${chromeCtxNote}`;
 
     if (isScreenQuery(userMessage)) {
         console.log("  📸 [Overlay] Screen query detected — capturing screenshot...");
