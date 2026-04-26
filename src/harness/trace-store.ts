@@ -13,6 +13,7 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { randomUUID } from "crypto";
 import type { TraceRecord } from "./types.js";
+import { createRequire as _nativeRequire } from "node:module";
 
 // Native Rust acceleration for trace aggregation (napi-rs generates camelCase)
 let nativeAggregateTraces: ((traces: Array<{
@@ -29,7 +30,8 @@ let nativeAggregateTraces: ((traces: Array<{
 
 try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const native = await import("../../native/index.js").catch(() => null) as any;
+    let native: any = null;
+    try { native = _nativeRequire(import.meta.url)(process.cwd() + "/native/index.js"); } catch { native = null; }
     if (native?.aggregateTraces) nativeAggregateTraces = native.aggregateTraces;
 } catch { /* fall back to JS */ }
 

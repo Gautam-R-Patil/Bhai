@@ -28,6 +28,7 @@ import { computeParetoFrontier, selectFromFrontier } from "./pareto.js";
 import { buildSurrogate, shouldEvaluate } from "./surrogate.js";
 import { generateDimensionGradients } from "./gradient.js";
 import { validatePatch, applyCodeChange, revertCodeChanges } from "./patch-validator.js";
+import { createRequire as _nativeRequire } from "node:module";
 
 // Native Rust acceleration for comparison and ranking
 let nativeCompare: ((parent: number, challenger: number, threshold?: number) => { challengerWins: boolean; delta: number; significant: boolean }) | null = null;
@@ -35,7 +36,7 @@ let nativeRank: ((candidates: Array<{ candidateId: string; objective: number; ou
 
 try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const native = await import("../../native/index.js").catch(() => null) as any;
+    const native: any = _nativeRequire(import.meta.url)(process.cwd() + "/native/index.js");
     if (native?.compareHarnessCandidates) nativeCompare = native.compareHarnessCandidates;
     if (native?.rankHarnessCandidates) nativeRank = native.rankHarnessCandidates;
 } catch { /* fall back to JS */ }

@@ -19,6 +19,7 @@ import { applyConfig, resetToDefaults } from "./registry.js";
 import { runMemoryRecallBenchmark } from "./benchmarks/memory-recall.js";
 import { runToolSelectionBenchmark } from "./benchmarks/tool-selection.js";
 import { runTaskCompletionBenchmark } from "./benchmarks/task-completion.js";
+import { createRequire as _nativeRequire } from "node:module";
 
 // Native Rust acceleration for score computation (napi-rs generates camelCase)
 let nativeCompute: ((input: {
@@ -31,7 +32,8 @@ let nativeCompute: ((input: {
 
 try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const native = await import("../../native/index.js").catch(() => null) as any;
+    let native: any = null;
+    try { native = _nativeRequire(import.meta.url)(process.cwd() + "/native/index.js"); } catch { native = null; }
     if (native?.computeHarnessComposite) nativeCompute = native.computeHarnessComposite;
 } catch { /* fall back to JS */ }
 

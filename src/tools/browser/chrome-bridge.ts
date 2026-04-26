@@ -13,6 +13,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { homedir } from "node:os";
+import { createRequire as _bridgeCreateRequire } from "node:module";
 import type { ChromeTabInfo, ChromeBridgeCommand, ChromeBridgeResponse, ChromeBridgeEvent } from "./types.js";
 import { resetBackend } from "./browser-backend.js";
 
@@ -31,8 +32,10 @@ let native: {
 } | null = null;
 
 try {
+    // Use createRequire (synchronous) so the bundle has no top-level await
+    const _req = _bridgeCreateRequire(import.meta.url);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const mod = await import("../../../native/index.js") as any;
+    const mod = _req(path.join(process.cwd(), "native", "index.js")) as any;
     if (mod.generateBridgeToken && mod.validateBridgeToken) {
         native = mod;
         console.log("  🦀 Chrome bridge: using native Rust security module");

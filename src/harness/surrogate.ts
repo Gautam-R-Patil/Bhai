@@ -10,6 +10,7 @@
 // clearly below (bestScore - 5). Borderline cases always evaluate.
 
 import type { CandidateManifest, HarnessConfig, GpObservation } from "./types.js";
+import { createRequire as _nativeRequire } from "node:module";
 
 const MIN_OBSERVATIONS = 5;
 const EVAL_MARGIN = 5;
@@ -24,7 +25,8 @@ let nativeGp: ((
 
 try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const native = await import("../../native/index.js").catch(() => null) as any;
+    let native: any = null;
+    try { native = _nativeRequire(import.meta.url)(process.cwd() + "/native/index.js"); } catch { native = null; }
     if (native?.fitAndPredictGp && process.env.ATLAS_HARNESS_NATIVE !== "false") {
         nativeGp = native.fitAndPredictGp;
     }

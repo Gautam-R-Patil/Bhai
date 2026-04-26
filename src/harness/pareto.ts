@@ -11,6 +11,7 @@ import type {
     ObjectiveVector,
     ParetoPoint,
 } from "./types.js";
+import { createRequire as _nativeRequire } from "node:module";
 
 let nativeParetoDominance: ((
     candidates: Array<[string, { task: number; tokenEff: number; memPrec: number; toolAcc: number }]>,
@@ -18,7 +19,8 @@ let nativeParetoDominance: ((
 
 try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const native = await import("../../native/index.js").catch(() => null) as any;
+    let native: any = null;
+    try { native = _nativeRequire(import.meta.url)(process.cwd() + "/native/index.js"); } catch { native = null; }
     if (native?.computeParetoDominance && process.env.ATLAS_HARNESS_NATIVE !== "false") {
         nativeParetoDominance = native.computeParetoDominance;
     }
