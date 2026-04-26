@@ -422,7 +422,7 @@ export const browserVideoControl: ToolDefinition = {
                         const progressSel = '.ytp-progress-bar';
                         const pBox = await page.locator(progressSel).first().boundingBox().catch(() => null);
                         if (pBox) {
-                            const duration = await page.evaluate(`(async()=>{ ${YT_API.get_time} })()`).catch(() => null);
+                            const duration = await page.evaluate(`(async()=>{ ${YT_API.get_duration} })()`).catch(() => null);
                             if (typeof duration === 'number' && duration > 0) {
                                 const pct = seekTo / duration;
                                 await page.mouse.click(pBox.x + pBox.width * Math.min(pct, 1), pBox.y + pBox.height / 2);

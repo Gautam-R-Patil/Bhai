@@ -250,7 +250,7 @@ export const browserScrollToElement: ToolDefinition = {
         try {
             const page = await getActivePage();
             const selector = input.selector as string;
-            const found = await page.evaluate(`(${SCROLL_TO_ELEMENT_JS})("${selector.replace(/"/g, '\\"')}")`);
+            const found = await page.evaluate(`(${SCROLL_TO_ELEMENT_JS})(${JSON.stringify(selector)})`);
             return JSON.stringify({ success: !!found, selector, scrolled: !!found });
         } catch (err) {
             return JSON.stringify({ error: `scroll_to_element failed: ${(err as Error).message}` });
@@ -334,8 +334,8 @@ export const browserInterceptStart: ToolDefinition = {
     async handler(input) {
         try {
             const page = await getActivePage();
-            const pattern = ((input.pattern as string) || "").replace(/"/g, '\\"');
-            const result = await page.evaluate(`(${INTERCEPTOR_JS})("${pattern}")`);
+            const pattern = (input.pattern as string) || "";
+            const result = await page.evaluate(`(${INTERCEPTOR_JS})(${JSON.stringify(pattern)})`);
             return JSON.stringify({ success: true, status: result, pattern: input.pattern || "(all)" });
         } catch (err) {
             return JSON.stringify({ error: `intercept_start failed: ${(err as Error).message}` });

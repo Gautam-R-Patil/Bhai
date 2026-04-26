@@ -139,24 +139,33 @@ export async function dismissOverlayModals(page: Page): Promise<void> {
 
 // ─── Attach to browser context ────────────────────────────────────────────────
 
-export function attachPopupGuard(context: BrowserContext): void {
+function attachGuardToPage(page: Page): void {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (context as any).on("page", (page: Page) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (page as any).on("domcontentloaded", () => {
-            // Run after a short settle — banners animate in
-            setTimeout(async () => {
-                await dismissCookieBanner(page).catch(() => {});
-                await dismissOverlayModals(page).catch(() => {});
-            }, 800);
-        });
-
-        // Handle native JS dialogs (alert/confirm/prompt/beforeunload)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (page as any).on("dialog", async (dialog: { type: () => string; dismiss: () => Promise<void>; accept: () => Promise<void> }) => {
-            const type = dialog.type();
-            if (type === "beforeunload") return; // let navigation proceed
-            await dialog.dismiss().catch(() => {});
-        });
+    (page as any).on("domcontentloaded", () => {
+        // Run after a short settle — banners animate in
+        setTimeout(async () => {
+            await dismissCookieBanner(page).catch(() => {});
+            await dismissOverlayModals(page).catch(() => {});
+        }, 800);
     });
+
+    // Handle native JS dialogs (alert/confirm/prompt/beforeunload)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (page as any).on("dialog", async (dialog: { type: () => string; dismiss: () => Promise<void>; accept: () => Promise<void> }) => {
+        const type = dialog.type();
+        if (type === "beforeunload") return; // let navigation proceed
+        await dialog.dismiss().catch(() => {});
+    });
+}
+
+export function attachPopupGuard(context: BrowserContext): void {
+    // Attach to pages opened AFTER the guard is installed
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (context as any).on("page", (page: Page) => attachGuardToPage(page));
+
+    // Also attach to pages that already exist (the initial blank page at context creation)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const page of (context as any).pages() as Page[]) {
+        attachGuardToPage(page);
+    }
 }

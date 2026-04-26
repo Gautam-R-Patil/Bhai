@@ -270,15 +270,17 @@ export const browserExtract: ToolDefinition = {
     async handler(input) {
         try {
             const page = await getActivePage();
-            const selector = (input.selector as string).replace(/`/g, '\\`').replace(/\\/g, '\\\\');
+            const selector = input.selector as string;
             const attr = (input.attribute as string) || "textContent";
-            // Use evaluate with inline string code to avoid compiled-lambda ReferenceErrors
+            // Pass selector and attr as parameters — never interpolate user input into eval strings
             const elements = await page.evaluate(
-                `Array.from(document.querySelectorAll(\`${selector}\`)).slice(0,50).map(el => ${
-                    attr === "textContent"
-                        ? "el.textContent?.trim()"
-                        : `el.getAttribute("${attr.replace(/"/g, '\\"')}")`
-                })`
+                ({ sel, at }: { sel: string; at: string }) =>
+                    Array.from(document.querySelectorAll(sel)).slice(0, 50).map(el =>
+                        at === "textContent"
+                            ? (el as HTMLElement).textContent?.trim()
+                            : el.getAttribute(at)
+                    ),
+                { sel: selector, at: attr }
             );
             return JSON.stringify({ success: true, elements, count: (elements as unknown[]).length });
         } catch (err) {

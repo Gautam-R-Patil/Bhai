@@ -49,6 +49,11 @@ export function invalidateCache(): void {
     elementCache = null;
 }
 
+/** Reset the browser context after it has been closed, so getBrowser() creates a fresh one. */
+export function resetBrowserContext(): void {
+    browserContext = null;
+}
+
 // ── Active page tracker ───────────────────────
 let activePageIndex = 0;
 
@@ -377,13 +382,13 @@ export const SCROLL_INDICATOR_JS = `
         pointer-events:none;z-index:2147483647;backdrop-filter:blur(4px);
         animation:atlasScrollFade 0.7s ease-out forwards;
     \`;
-    if (!document.getElementById('__atlasKF')) {
-        const st = document.createElement('style');
-        st.id = '__atlasKF';
-        st.textContent = '@keyframes atlasRipple{0%{transform:scale(.3);opacity:1}100%{transform:scale(2.2);opacity:0}}@keyframes atlasDot{0%{transform:scale(1.8);opacity:1}100%{transform:scale(.6);opacity:0}}@keyframes atlasFade{0%{opacity:.8}100%{opacity:0}}';
-        document.head.appendChild(st);
+    let kf = document.getElementById('__atlasKF');
+    if (!kf) {
+        kf = document.createElement('style');
+        kf.id = '__atlasKF';
+        kf.textContent = '@keyframes atlasRipple{0%{transform:scale(.3);opacity:1}100%{transform:scale(2.2);opacity:0}}@keyframes atlasDot{0%{transform:scale(1.8);opacity:1}100%{transform:scale(.6);opacity:0}}@keyframes atlasFade{0%{opacity:.8}100%{opacity:0}}';
+        document.head.appendChild(kf);
     }
-    const kf = document.getElementById('__atlasKF');
     if (!kf.textContent.includes('atlasScrollFade')) {
         kf.textContent += '@keyframes atlasScrollFade{0%{opacity:1;transform:translateY(0)}100%{opacity:0;transform:translateY(' + (direction==='up'?-1:1)*16 + 'px)}}';
     }

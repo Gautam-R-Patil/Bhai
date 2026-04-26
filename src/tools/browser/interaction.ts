@@ -108,6 +108,15 @@ export const browserClickAt: ToolDefinition = {
             if (input.alt) { await page.keyboard.down("Alt"); modifiers.push("Alt"); }
             if (input.meta) { await page.keyboard.down("Meta"); modifiers.push("Meta"); }
 
+            // Ensure modifiers are always released — even when errors are thrown below.
+            // Without this, a click failure leaves modifier keys held for the whole session.
+            const releaseModifiers = async () => {
+                if (input.meta) await page.keyboard.up("Meta").catch(() => {});
+                if (input.alt) await page.keyboard.up("Alt").catch(() => {});
+                if (input.shift) await page.keyboard.up("Shift").catch(() => {});
+                if (input.ctrl) await page.keyboard.up("Control").catch(() => {});
+            };
+
             let executionMethod = "coordinates";
             const initialUrl = page.url();
 
@@ -118,6 +127,7 @@ export const browserClickAt: ToolDefinition = {
                 await page.waitForTimeout(300);
             };
 
+            try {
             if (handle) {
                 try {
                     // Hybrid Action: Try to use the native DOM handle first for maximum stability
@@ -172,10 +182,9 @@ export const browserClickAt: ToolDefinition = {
                 }
             }
 
-            if (input.meta) await page.keyboard.up("Meta");
-            if (input.alt) await page.keyboard.up("Alt");
-            if (input.shift) await page.keyboard.up("Shift");
-            if (input.ctrl) await page.keyboard.up("Control");
+            } finally {
+                await releaseModifiers();
+            }
 
             const waitTime = input.wait_after_ms !== undefined ? (input.wait_after_ms as number) : 300;
             if (waitTime > 0) await page.waitForTimeout(waitTime);

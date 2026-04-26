@@ -56,6 +56,7 @@ import {
     browserWait,
     browserVideoControl,
     browserHandleCaptcha,
+    openCliTools,
 } from "./browser/index.js";
 import { channelSendTool } from "./channel-send.js";
 import { codeActionTool, codeExecuteTool, setCodeActionExecutor, setCodeActionLLM } from "./code-action-tool.js";
@@ -464,6 +465,8 @@ registry.set(browserSetMode.schema.function.name, browserSetMode);
 registry.set(browserChromeStatus.schema.function.name, browserChromeStatus);
 registry.set(browserVideoControl.schema.function.name, browserVideoControl);
 registry.set(browserHandleCaptcha.schema.function.name, browserHandleCaptcha);
+// OpenCLI batch tools
+for (const tool of openCliTools) registry.set(tool.schema.function.name, tool);
 
 // File sending
 registry.set(sendFileTool.schema.function.name, sendFileTool);

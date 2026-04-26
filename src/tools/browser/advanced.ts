@@ -324,14 +324,21 @@ export const browserParallelActions: ToolDefinition = {
                 try {
                     switch (action.type) {
                         case 'extract': {
-                            const _s = (action.selector as string).replace(/`/g, '\\`');
-                            const elements = await page.evaluate(`Array.from(document.querySelectorAll(\`${_s}\`)).slice(0,30).map(e=>({text:e.textContent?.trim().substring(0,200),href:e.getAttribute('href')}))`).catch(() => []);
+                            const sel = action.selector as string;
+                            const elements = await page.evaluate(
+                                ({ s }: { s: string }) => Array.from(document.querySelectorAll(s)).slice(0, 30).map(e => ({ text: (e as HTMLElement).textContent?.trim().substring(0, 200), href: e.getAttribute('href') })),
+                                { s: sel }
+                            ).catch(() => []);
                             return { id, success: true, data: elements };
                         }
 
                         case 'evaluate': {
                             const code = action.code as string;
-                            const wrappedCode = `(async () => { ${code} })()`;
+                            let safeCode: string;
+                            try { safeCode = validateJsCode(code); } catch (e) {
+                                return { id, success: false, error: `ip_guard: ${(e as Error).message}` };
+                            }
+                            const wrappedCode = `(async () => { ${safeCode} })()`;
                             const result = await page.evaluate(wrappedCode);
                             return { id, success: true, data: result };
                         }
@@ -440,8 +447,8 @@ export const browserMultiAction: ToolDefinition = {
     async handler(input) {
         try {
             const context = await getBrowser();
-            const pages = context.pages();
-            let page = pages[pages.length - 1] || await context.newPage();
+            // Always use the active page — not pages[last] which ignores setActivePageIndex()
+            let page = await getActivePage();
 
             // Handle both JSON string and array inputs (LLMs sometimes pass a JSON string)
             let parsedMultiActions = input.actions;
@@ -517,7 +524,7 @@ export const browserMultiAction: ToolDefinition = {
                             }
                         }
                         if (act.text) {
-                            await page.keyboard.press("Meta+a");
+                            await page.keyboard.press("ControlOrMeta+a"); // cross-platform (Ctrl on Win/Linux, Cmd on Mac)
                             await page.waitForTimeout(80);
                             await page.keyboard.type(act.text as string, { delay: 25 });
                             return { success: true };

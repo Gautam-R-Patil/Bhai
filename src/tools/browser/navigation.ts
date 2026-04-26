@@ -18,6 +18,7 @@ import {
     setActivePageIndex,
     getActivePageIndex,
     invalidateCache,
+    resetBrowserContext,
     ATLAS_HUD_JS,
 } from "./core.js";
 import {
@@ -55,6 +56,8 @@ export const browserNavigate: ToolDefinition = {
             let page;
             if (input.new_tab) {
                 page = await context.newPage();
+                // Track the new tab as active so subsequent tools operate on it
+                setActivePageIndex(context.pages().indexOf(page));
             } else {
                 page = await getActivePage();
             }
@@ -519,6 +522,7 @@ export const browserClose: ToolDefinition = {
         try {
             const context = await getBrowser();
             await context.close();
+            resetBrowserContext(); // null out the module-level ref so getBrowser() creates a fresh context
             return JSON.stringify({ success: true, message: "Browser closed. Will restart on next navigation." });
         } catch (err) {
             return JSON.stringify({ error: `Close failed: ${(err as Error).message}` });
