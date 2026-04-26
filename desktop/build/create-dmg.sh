@@ -22,8 +22,11 @@ done
 rm -f "${DMG_PATH}" "${TEMP_DMG}"
 
 APP_SIZE=$(du -sm "${APP_PATH}" | cut -f1)
-DMG_SIZE=$((APP_SIZE + 80))
-echo "   App: ${APP_SIZE}MB"
+# 20% padding for HFS+ overhead, minimum 300MB buffer
+PADDING=$((APP_SIZE / 5))
+[ "$PADDING" -lt 300 ] && PADDING=300
+DMG_SIZE=$((APP_SIZE + PADDING))
+echo "   App: ${APP_SIZE}MB, DMG: ${DMG_SIZE}MB"
 
 hdiutil create -size "${DMG_SIZE}m" -fs HFS+ -volname "${VOL_NAME}" "${TEMP_DMG}" -ov -quiet
 

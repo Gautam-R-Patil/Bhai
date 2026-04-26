@@ -9,7 +9,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { promises as fs } from "node:fs";
 import { existsSync, statSync, readFileSync } from "node:fs";
-import { join, basename, extname, dirname } from "node:path";
+import { join, basename, extname, dirname, resolve } from "node:path";
 import { tmpdir, homedir } from "node:os";
 import type { ToolDefinition } from "./get-current-time.js";
 import { getExportsDir } from "../config/paths.js";
@@ -503,7 +503,7 @@ export const trashManager: ToolDefinition = {
 
                     if (IS_WIN) {
                         // Windows: use Shell.Application COM to recycle
-                        const absPath = require("node:path").resolve(filePath);
+                        const absPath = resolve(filePath);
                         await runPowerShell(`
 $shell = New-Object -ComObject Shell.Application
 $item = $shell.NameSpace(0).ParseName("${absPath.replace(/\\/g, "\\\\")}")

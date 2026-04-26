@@ -54,6 +54,7 @@ import { initCredibilityModel } from "./research/credibility-model.js";
 import { initLocationService, refreshLocation, onLocationChange } from "./location/index.js";
 import { startNetworkWatcher, stopNetworkWatcher } from "./location/network-watcher.js";
 import { getPlatformCapabilities } from "./utils/platform-capabilities.js";
+import { initRegistry } from "./harness/registry.js";
 
 // ── Primary Channel ──────────────────────────
 const PRIMARY_CHANNEL = process.env.PRIMARY_CHANNEL || "telegram";
@@ -117,6 +118,11 @@ async function boot() {
             refreshLocation().catch(() => { /* non-fatal */ });
         }
     });
+
+    // ── Harness Registry ─────
+    // Load active harness config (if any) before tool infrastructure and agent loop.
+    // Falls back to hardcoded defaults gracefully if no active config exists.
+    initRegistry();
 
     // ── Account Guard ────────
     // checkAccountStatus() uses the session token to verify credits via Convex HTTP proxy.

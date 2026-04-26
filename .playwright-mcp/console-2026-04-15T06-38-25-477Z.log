@@ -1,2 +1,0 @@
-[   27033ms] [LOG] recaptchacompat disabled @ https://js.hcaptcha.com/1/api.js?recaptchacompat=off:3
-[   27102ms] [ERROR] Warning: localhost detected. Please use a valid host. @ https://newassets.hcaptcha.com/captcha/v1/9abe19f0c4a8a3dfa7147f989a6f693ecec2228b/static/hcaptcha.html:13

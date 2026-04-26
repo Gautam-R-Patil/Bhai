@@ -10,7 +10,7 @@
 // This lets non-technical Electron-app users get full Spotify control without
 // touching a terminal.
 
-import { createWriteStream, existsSync, mkdirSync, chmodSync, unlinkSync, renameSync, statSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, chmodSync, unlinkSync, renameSync, statSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir, homedir, arch, platform } from "node:os";
 import { execFile, spawn } from "node:child_process";
@@ -148,7 +148,6 @@ async function extractZip(archivePath: string, extractDir: string): Promise<void
 // ── Find the spogo binary inside the extracted dir ──
 
 function findBinaryInDir(dir: string): string | null {
-    const { readdirSync, statSync: stat } = require("node:fs") as typeof import("node:fs");
     const target = IS_WIN ? "spogo.exe" : "spogo";
     const walk = (current: string, depth = 0): string | null => {
         if (depth > 3) return null;

@@ -2,7 +2,7 @@
 
 ## Proprietary Software License
 
-**Copyright © 2026 XAGI Labs Private Limited. All Rights Reserved.**
+**Copyright © 2024-2026 XAGI Labs Private Limited. All Rights Reserved.**
 
 Website: [xagilab.com](https://xagilab.com)
 

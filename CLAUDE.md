@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A.T.L.A.S (v0.2.0) is a continuously running, proactive personal AI agent built with Node.js/TypeScript (~285 .ts files) + a native Rust performance layer (~49 .rs files). It provides autonomous computer use, deep research, and long-running async workflows via Telegram, Discord, Slack, Matrix, WhatsApp, desktop overlay, and email channels.
+A.T.L.A.S (v0.2.0) is a continuously running, proactive personal AI agent built with Node.js/TypeScript (~385 .ts files) + a native Rust performance layer (~49 .rs files). It provides autonomous computer use, deep research, and long-running async workflows via Telegram, Discord, Slack, Matrix, WhatsApp, desktop overlay, and email channels.
 
 ## Build & Run Commands
 
@@ -18,6 +18,8 @@ npm run build:location   # Compile Swift CoreLocation helper (macOS only; runs v
 npm run build:all        # Build native + OCR + location + TypeScript together
 npm run lint             # Biome check (biome check .)
 npm run typecheck        # Type-check without emitting (tsc --noEmit)
+npm test                 # Run test suite (vitest run)
+npm run test:watch       # Watch mode for tests (vitest)
 
 # Convex backend
 npx convex dev           # Start Convex dev server (watches convex/ for changes)
@@ -29,7 +31,7 @@ cd desktop && npm run build:mac   # Build macOS DMG (uses create-dmg.sh)
 cd desktop && npm run build:win   # Build Windows NSIS installer
 ```
 
-Requires Node.js >= 20. No test suite or CI/CD pipeline exists. Linting via Biome (`npm run lint`). The build is just `tsc` + native Rust compilation.
+Requires Node.js >= 20. Testing via Vitest (`npm test`). No CI/CD pipeline. Linting via Biome (`npm run lint`). The build is just `tsc` + native Rust compilation.
 
 ## Architecture
 
@@ -90,19 +92,12 @@ All local SQLite (`data/memories.db`). Key subsystems:
 - `reflection.ts` — Nightly dream replay consolidates learnings; decay runs every 6h
 - `task-learnings.ts` — Persists strategies for recurring task types
 - `identity.ts`, `traits.ts`, `emotional.ts`, `episodic.ts`, `self-state.ts`, `session.ts`, `relationship.ts` — Specialized memory tiers
-- `working-memory.ts`, `hopfield-memory.ts` — Short-term working memory and associative recall
-- `world-model.ts`, `user-model.ts` — Internal models of world state and user behavior
-- `active-inference.ts`, `counterfactual.ts`, `prospective.ts` — Predictive and counterfactual reasoning
-- `sleep-gate.ts`, `surprise-gate.ts` — Gating mechanisms for memory consolidation
-- `reranker.ts`, `strategy-library.ts` — Retrieval reranking and reusable strategy patterns
-- `memory-informed-planning.ts` — Memory-driven plan generation
+- `working-memory.ts`, `hopfield-memory.ts` — Short-term and associative recall
+- `world-model.ts`, `user-model.ts` — World/user state models; `active-inference.ts`, `counterfactual.ts`, `prospective.ts` — Predictive reasoning
+- `sleep-gate.ts`, `surprise-gate.ts` — Consolidation gating; `reranker.ts`, `strategy-library.ts` — Retrieval reranking + strategy patterns
 - `classifier.ts`, `context-pruning.ts` — Query classification and context window management
-- `goals.ts` — Goal tracking and persistence
-- `self-evolving.ts`, `self-model.ts` — Self-evolving memory and agent self-model
-- `consolidation.ts` — Memory consolidation pipeline
-- `multimodal.ts` — Multimodal memory storage
-- `temporal-cache.ts` — Bloom-filter temporal cache for memory queries
-- `embeddings.ts`, `multimodal-embedding.ts` — Embedding generation for text and multimodal inputs
+- `goals.ts`, `self-evolving.ts`, `self-model.ts`, `memory-informed-planning.ts` — Goal tracking, self-model, memory-driven planning
+- `consolidation.ts`, `multimodal.ts`, `temporal-cache.ts`, `embeddings.ts`, `multimodal-embedding.ts` — Consolidation, multimodal storage, bloom-filter cache, embedding generation
 
 ### Channel Flow (Telegram example: `src/telegram.ts`)
 ```
@@ -135,39 +130,84 @@ SIMD-accelerated vector operations (~15-20x speedup) via napi-rs. Built with `op
 - **Specialized scoring/analysis**: `skill_scorer.rs`, `info_gain.rs`, `citation_graph.rs`, `research_engine.rs`
 - **Integration**: `chrome_bridge.rs` (Chrome extension bridge)
 
-### Agent Orchestration (`src/agents/` — 26 files)
+### Agent Orchestration (`src/agents/` — 30 files)
 Four-tier execution model for tasks of increasing complexity, with extensive reliability, optimization, and self-improvement layers:
 
 **Core Execution Tiers:**
-- **Sub-Agent** (`sub-agent.ts`) — Specialized roles (researcher, coder, browser, system, general) with role-specific prompting, scoped tool access, loop detection (#11), error-driven model escalation (#13), smart tool output truncation (#3), dynamic tool expansion via `request_tools` meta-tool (#12), priority-based timeout/model scaling (#4), partial result streaming (#19), and per-iteration cost tracking (#16)
-- **Swarm** (`swarm.ts`) — Decomposes complex tasks into sub-agent steps (max 20), executes via Mesh, synthesizes results with evaluator-optimizer loop (#7), supports replanning (#6), integrates task learnings from past executions (#18). Triggered by `swarm_task` tool
-- **Mesh** (`mesh.ts`) — Parallel DAG execution engine with: critical path scheduling (#4, assigns priority to steps on the longest dependency chain), layered error recovery (#1, retry→rephrase→reroute→skip), structured handoff messages (#2, replaces raw output concatenation), dynamic role assignment (#5, keyword-based role override)
-- **Long-Task** (`long-task.ts`) — Multi-phase executor. 200 iterations/phase, 30 min timeout/phase, max 100 phases. Checkpoints to `data/long-tasks/${taskId}.json` every 60s. Supports inter-phase replanning (#10, max 3 replans per task with early completion detection)
+- **Sub-Agent** (`sub-agent.ts`) — Specialized roles (researcher, coder, browser, system, general); scoped tools, loop detection, error-driven escalation, `request_tools` dynamic expansion, priority-based timeout/model scaling, partial result streaming, per-iteration cost tracking
+- **Swarm** (`swarm.ts`) — Decomposes tasks into sub-agent steps (max 20), executes via Mesh, synthesizes with evaluator-optimizer loop + replanning, integrates task learnings. Triggered by `swarm_task` tool
+- **Mesh** (`mesh.ts`) — Parallel DAG executor: critical path scheduling, layered recovery (retry→rephrase→reroute→skip), structured handoff messages, dynamic role assignment
+- **Long-Task** (`long-task.ts`) — Multi-phase executor: 200 iterations/phase, 30 min timeout, max 100 phases. Checkpoints to `data/long-tasks/${taskId}.json` every 60s; inter-phase replanning (max 3 replans)
 
 **Reliability Layers** (`src/agents/`):
-- `error-recovery.ts` — Multi-level recovery chain: retry (exponential backoff) → rephrase (append error context) → reroute (switch agent role) → skip (propagate failure context)
-- `error-types.ts` — Typed error classification: `ErrorCategory` enum (Transient, Permanent, ResourceLimit, ToolMissing, ParseError, Timeout, UserCaused) with pattern matching
-- `smart-truncate.ts` — Tool-specific output truncation: shell (tail-heavy for errors), JSON (parse+prune values), browser (keep element IDs), files (head+tail)
-- `handoff.ts` — Structured inter-agent context: summary (300 chars), key findings (5 bullets), artifact refs, errors — replaces raw output concatenation
+- `error-recovery.ts` — retry (exponential backoff) → rephrase → reroute (switch role) → skip
+- `error-types.ts` — `ErrorCategory` enum (Transient, Permanent, ResourceLimit, ToolMissing, ParseError, Timeout, UserCaused)
+- `smart-truncate.ts` — Tool-specific truncation: shell (tail-heavy), JSON (parse+prune), browser (keep IDs), files (head+tail)
+- `handoff.ts` — Structured inter-agent context: 300-char summary, 5 key findings, artifact refs, errors
 
 **Optimization Layers** (`src/agents/`):
-- `evaluator.ts` — Quality scoring (completeness/accuracy/coherence/actionability 0-100) with retry-on-low-score loop
-- `replanner.ts` — Analyzes intermediate results, revises remaining plan when failures or new information detected
-- `role-analyzer.ts` — Keyword-based role classifier, overrides LLM-assigned roles when confidence > 0.7
-- `mixture.ts` — Mixture of Agents: parallel synthesis proposals + aggregation for complex tasks (>= 5 steps)
-- `speculative.ts` — Races primary + alternative approaches for uncertain steps, first success wins
-- `decomposition-library.ts` — Saves/reuses successful task decomposition templates (`data/decomposition-templates.json`)
-- `blackboard.ts` — Per-swarm shared mutable context for cross-agent discovery sharing
-- `complexity-classifier.ts` — Analyzes message complexity, injects hints for swarm/long-task usage
+- `evaluator.ts` — Quality scoring (completeness/accuracy/coherence/actionability 0-100) with retry-on-low-score
+- `replanner.ts` — Revises remaining plan when failures or new information detected mid-execution
+- `role-analyzer.ts` — Keyword-based role classifier, overrides LLM roles when confidence > 0.7
+- `mixture.ts` — Mixture of Agents: parallel proposals + aggregation for complex tasks (≥5 steps)
+- `speculative.ts` — Races primary + alternative approaches, first success wins
+- `decomposition-library.ts` — Saves/reuses successful decomposition templates (`data/decomposition-templates.json`)
+- `blackboard.ts` — Per-swarm shared context; `complexity-classifier.ts` — injects swarm/long-task hints
 
 **Self-Improvement & Specialized Agents** (`src/agents/`):
-- `metacognition.ts` — Agent self-monitoring and reasoning-about-reasoning
-- `multi-critic.ts` — Multiple independent critics evaluate agent output
-- `textgrad-refiner.ts` — Gradient-style iterative refinement of text outputs
-- `self-editor.ts` — Agent self-edits its own outputs before delivery
-- `code-action-agent.ts` — Specialized agent for code generation and execution
-- `computer-use-agent.ts` — Specialized agent for GUI/desktop interaction tasks
-- `self-heal.ts` — Self-healing: detects and recovers from agent-level failures
+- `metacognition.ts`, `multi-critic.ts` — Self-monitoring and multi-perspective output evaluation
+- `code-critic.ts` — compile_check + test_runner + lint_style + SAST (Semgrep) + ui_verify, fires in `swarm.ts:~215` for coder steps. Weights 0.4/0.4/0.2/0.15. Budgeted via `ATLAS_POST_SYNTHESIS_BUDGET_MS` (default 90s)
+- `agent-worktree.ts` — Git worktree isolation for parallel coders (opt-in `ATLAS_AGENT_WORKTREE=true`). Allocates `data/agent-worktrees/<id>/` per coder step when ≥2 would race; rewrites file-tool paths into the worktree root
+- `textgrad-refiner.ts`, `self-editor.ts`, `self-heal.ts` — Iterative refinement, self-editing, failure recovery
+- `code-action-agent.ts`, `computer-use-agent.ts` — Specialized code-gen and GUI automation agents
+
+### Coding Agent Pipeline (`src/tools/coding/` — 25+ files)
+ATLAS's coding surface is more than a bag of edit/write tools — there's a staged pipeline with runtime gating. Understand this before touching anything in `src/tools/coding/` or `src/agents/plan-mode.ts`:
+
+**Complexity classification (`src/model-router.ts::classifyCodingComplexity`)**:
+On the first iteration of any coding task, a regex-based classifier returns `"trivial" | "standard" | "complex"` and `src/agent.ts` injects a `<coding_complexity>` system reminder telling the agent which playbook to follow. Trivial (add-log, typo, rename, bump-version) skips Pro tier and the docs ceremony. Standard implements directly on Pro tier. Complex (refactor / new-system / build-verb + high-stakes-domain / >400 chars) fires the full design-docs flow.
+
+**Pro-tier routing (`src/model-router.ts::maybeEscalateForCoding`)**:
+Any non-trivial coding intent forces tier ≤ 4 (Sonnet / Opus / Gemini Pro / Nova Pro). Tier numbers are inverted from intuition: 0=Opus (top), 2=Sonnet, 3=Gemini Pro, 4=Nova Pro, 5=Haiku, 6-9=lighter. `PRO_TIER_CEILING = 4`. `selectForSubAgent(..., role)` pins coder sub-agents to Pro independently. Extended thinking budget (`response.reasoning`) also lifts for complex coding unless `ATLAS_NO_CODING_THINKING=true`.
+
+**Complex-task flow — four phases**:
+1. **Design docs** — `generate_design_docs({ task })` writes PRD.md + TECHNICAL.md + ARCHITECTURE.md under `A.T.L.A.S Files/Documents/design-docs/<slug>/`. Uses an in-tool Sonnet LLM call with `responseFormat: "json_object"` to fill the bodies; falls back to hand-scaffolded templates on LLM failure. **Auto-transitions plan-mode to `awaiting_approval` state on success** — implementation tools are runtime-blocked until the user approves.
+2. **Approval gate** — `awaiting_approval` is a fourth plan-mode state alongside `act`/`plan`/`spec`. Tool allowlist (`AWAITING_APPROVAL_ALLOWED_TOOLS`): reads, `edit`/`write` restricted to the design-docs dir via `checkWritePathInApprovalMode()`, channel senders, `render_md_to_pdf`, `approve_design_docs`, `generate_design_docs` (for regen). `shell_exec`/`test_run`/arbitrary-file `edit` refuse at the tool layer. User approval → agent calls `approve_design_docs({ user_quote: "<user's own words>" })` (quote field is required for audit) → transition to `act` mode.
+3. **Implement** — standard coder loop on Pro tier. Worktree isolation if `ATLAS_AGENT_WORKTREE=true` AND ≥2 parallel coder steps.
+4. **Walkthrough** — `demo_project({ project_dir })` auto-detects stack and launches the runtime. Agent calls `browser_verify` / `os_screenshot` / `screen_record`, then `generate_walkthrough()` reads `git log` + `git diff` to produce WALKTHROUGH.md. Delivery: overlay (inline MD + screenshot), TG/WA (`render_md_to_pdf` + screenshot/MP4), Discord/Slack (attach MD).
+
+**Write-path gating rule** (runtime, not just prompt): `src/tools/coding/edit.ts` and `write.ts` both call `checkWritePathInApprovalMode(filePath)` before writing. In `awaiting_approval`, only paths under the active `designDocsDir` pass.
+
+**Debug logs** — every tool call in a coder sub-agent emits a structured breadcrumb via `src/utils/debug-log.ts::logToolAction({ tool, filePath, line, action, context })`. Format: `🔧 [tool] sub_agent=id role=r | path:line — action`. The outer ATLAS process logger prepends ISO timestamps. Silenced with `ATLAS_TOOL_DEBUG=false`.
+
+### Codebase Comprehension (Phase 4L — `src/memory/codebase-*` + `src/tools/coding/codebase-*`)
+A per-repo SQLite sidecar that understands the working repo's structure. Distinct from `memories.db` — lives under `data/codebase-index/<repo-hash>.db`, auto-built on first coding iteration for the current `process.cwd()`.
+
+- **`src/memory/codebase-sidecar.ts`** — Opens/caches the sidecar (schema `4L.3`). Tables: `files`, `symbols`, `imports`, `calls`, `parse_errors`, `index_meta` + `symbols_fts` FTS5 table for BM25 search.
+- **`src/memory/codebase-merkle.ts`** — SHA-256 hashing + repo-root resolution. Incremental refresh skips unchanged files.
+- **`src/memory/code-parse/`** — Language-dispatching parser. `tree-sitter-extractors.ts` is the default for TypeScript + JavaScript (tree-sitter core 0.22.4 + tree-sitter-typescript 0.23.2); `regex-extractors.ts` is the fallback covering 15 languages. Python / Rust / Go tree-sitter grammars are installed but gated behind `ATLAS_MULTI_TREE_SITTER=true` because the 0.22 native binding has a multi-grammar node-subclass collision bug. Flip the flag when upstream ships a fix. `ATLAS_CODE_PARSER=regex` forces the legacy path globally. Max file size bumped to 500 KB (was 100 KB — agent.ts is 129 KB).
+- **`src/memory/codebase-index.ts`** — `buildIndex` / `refreshIndex` / `getIndexStats` / `wipeIndex`. Depth tier via `pickDepth()`: ≤500 files → `calls` (full graph), ≤5000 → `imports`, else → `symbols`. `ATLAS_INDEX_DEPTH` overrides. `ensureIndexForCoding(root)` is called on first coding iteration; block vs async decided by `pickTiming()` (≤100 files → block). `getArchitectureSnippet(root)` returns a Mermaid + ASCII summary injected into the prompt.
+- **`codebase_query` ops** (`src/tools/coding/codebase-query.ts`): `find_symbol`, `find_usages`, `search` (BM25 FTS5 — e.g. "authenticate user" finds `isEmailAuthenticated`), `ego_graph` (k-hop BFS call-graph from a file:line), `file_neighborhood`, `describe_file`, `architecture_overview`, `dependency_chain`.
+- **`codebase_index` commands**: `build` / `refresh` / `stats` / `wipe`. Runs transactions via the raw better-sqlite3 handle (`getRawSidecar()`), not the wrapped helper — the wrapped one routes to `memories.db`.
+- **`src/memory/self-evolving.ts`** — Nightly synaptic prune explicitly skips `category = 'code'` AND `category NOT LIKE 'code\\_%'` so the coding-strategies written by `reflection.ts::extractCodingStrategies` aren't aged-out. If you add a new coding-memory category, add it here too.
+
+Related read-side tools: `code_change_summary` (read-only git: `recent_commits`/`hot_files`/`diff`/`blame`), `agents_md_scaffold` (generates AGENTS.md + 8 sub-docs with `<!-- @atlas:auto -->` machine-owned markers), `lsp` with `getDiagnostics` operation that consumes `textDocument/publishDiagnostics` notifications — auto-attached to edit tool results as `post_edit_diagnostics` when the file is a code extension, unless `ATLAS_NO_POST_EDIT_DIAGNOSTICS=true`.
+
+Write-side: `git_op` with 4-tier safety model (safe/confirm/destructive/blocked). Protected branches `main`/`master`/`production`/`release/*` + evidence-phrase gate for `push --force` AND `push --force-with-lease`. Ephemeral `checkpoint`/`restore_checkpoint` via `git stash create` (returns SHA without pushing to stash list).
+
+### Workspace & Artifact Outputs (`src/config/paths.ts`)
+All user-facing artifacts land under a single workspace root resolved by `getWorkspaceDir()`:
+- Primary: `$ATLAS_WORKSPACE` (set by the desktop installer)
+- Fallbacks (first existing): `~/Desktop/A.T.L.A.S Files` → `~/Documents/A.T.L.A.S Files` → `~/.atlas/files`
+- Created on demand: `~/A.T.L.A.S Files`
+- Last resort: `os.tmpdir()`
+
+Subdirectory accessors create on-demand:
+- `getCodeDir()` → `<workspace>/Code` — **default for `scaffold_project`** (was `process.cwd()`)
+- `getDocumentsDir()` → `<workspace>/Documents` — `design-docs/<slug>/` + `walkthroughs/<slug>/` live here
+- `getImagesDir()`, `getScreenshotsDir()`, `getDownloadsDir()`, `getTempDir()`
+
+The rule: any tool that writes a user-facing artifact should default to a `getWorkspaceSubdir()` path and accept an explicit override only when the user named one. Anything under `data/` is for ATLAS-internal state (SQLite, checkpoints, browser profile, agent worktrees).
 
 ### Browser Tools (`src/tools/browser/` — 15 files; `src/tools/` has ~45 top-level tool files, ~60 total)
 Dual-backend browser automation. The `BrowserBackend` interface (`browser-backend.ts`) abstracts over two engines:
@@ -185,38 +225,26 @@ Dual-backend browser automation. The `BrowserBackend` interface (`browser-backen
 
 ### Deep Research (`src/research/` — 11 files)
 Background research engine with its own execution loop:
-- `engines.ts` — Search provider abstraction (web search, specialized sources)
-- `executor.ts` — Manages research loop (up to 500 sources)
-- `fetcher.ts` — Content extraction and HTML→text conversion
-- `scoring.ts` — Relevance scoring for retrieved content
-- `persistence.ts` — Saves results to `data/research/` as markdown files
-- `hypothesis-engine.ts` — Generates and tests research hypotheses
-- `credibility-model.ts` — Source credibility assessment
-- `analysis.ts` — Deep analysis of research findings
-- `profiles.ts` — Research profile management
+- `executor.ts` — Research loop (up to 500 sources); `engines.ts` — search provider abstraction; `fetcher.ts` — HTML→text; `scoring.ts` — relevance scoring; `persistence.ts` — saves to `data/research/`
+- `hypothesis-engine.ts` — hypothesis generation + testing; `credibility-model.ts` — source credibility; `analysis.ts` — deep analysis; `profiles.ts` — research profiles
 
 ### Runtime Data (`data/`)
-All runtime artifacts live in the `data/` directory (gitignored):
+All runtime artifacts live in the `data/` directory (gitignored). Distinguish between internal state here and USER-facing outputs under `A.T.L.A.S Files/…` (see Workspace & Artifact Outputs above).
 - `data/memories.db` — SQLite database for all memory subsystems
+- `data/codebase-index/<repo-hash>.db` — Per-repo sidecar indexes (Phase 4L)
+- `data/agent-worktrees/<step-id>/` — Throwaway git worktrees for parallel coders (Phase 4G; only allocated when `ATLAS_AGENT_WORKTREE=true`)
 - `data/long-tasks/` — Checkpoint JSON files for resumable long tasks
 - `data/research/` — Saved research results (markdown)
 - `data/browser-profile/` — Persistent Playwright browser profile (cookies, cache)
 - `data/google-credentials.json` + `data/google-tokens/` — Google API OAuth tokens
+- `data/proactive-config.json` — Per-channel posture (calm/active/ambient), urgentAllowedAfter time, night windows. Reloaded at runtime without restart.
 
 ### Social Cognition (`src/social/` — 4 files)
-Models for understanding and adapting to users socially:
-- `theory-of-mind.ts` — Tracks user's mental state: knowledge, beliefs, goals, expectations. Informs response framing
-- `emotion-detector.ts` — Detects user emotional state from message content
-- `pragmatics.ts` — Pragmatic language understanding (implicature, indirect requests)
-- `persuasion.ts` — Ethical persuasion strategies for recommendations
+- `theory-of-mind.ts` — Tracks user mental state (beliefs, goals) to frame responses; `emotion-detector.ts` — detects emotional state; `pragmatics.ts` — implicature + indirect requests; `persuasion.ts` — ethical persuasion strategies
 
 ### Planning & Execution (`src/planning/` + `src/execution/`)
-Advanced planning beyond simple swarm decomposition:
-- `mcts-planner.ts` — Monte Carlo Tree Search for agent planning (inspired by ReST-MCTS*, ToolTree). UCB1 balances exploration/exploitation, nodes scored by Process Reward Model
-- `hierarchical-planner.ts` — Multi-level plan decomposition
-- `process-reward.ts` — Step-level reward model for plan quality assessment
-- `logic-verifier.ts` — Formal verification of plan logical consistency
-- `pattern-speculator.ts` (`src/execution/`) — Speculative pattern execution
+- `mcts-planner.ts` — Monte Carlo Tree Search (UCB1, scored by Process Reward Model); `hierarchical-planner.ts` — multi-level decomposition
+- `process-reward.ts` — step-level reward model; `logic-verifier.ts` — plan consistency verification; `pattern-speculator.ts` — speculative execution
 
 ### Local Models (`src/models/` — 5 files)
 On-device model integrations (zero API cost):
@@ -231,9 +259,9 @@ On-device model integrations (zero API cost):
 - `watermark.ts` — Response watermarking
 
 ### Alive UX (`src/alive-ux.ts`) + Network Health (`src/network-health.ts`) + Location (`src/location/`)
-- **Alive UX** — Centralized personality/phrasing system. Phrase history prevents repetition; adapts tone to time-of-day, user mood, task type
-- **Network Health** — Monitors connectivity (online/degraded/offline); subsystems check `isOnline()` before network calls. 45s passive checks, faster 15s recovery checks when offline
-- **Location** (`src/location/` — 7 files) — Singleton location service matching the `network-health.ts` pattern. Fail-open GPS → Wi-Fi → IP fallback chain via pluggable providers in `src/location/providers/`. Swift CoreLocation helper is built via `npm run build:location` (`scripts/get_location.swift` → `scripts/get_location_bin`) and invoked by the GPS provider on macOS. `network-watcher.ts` drives refresh on connectivity changes
+- **Alive UX** — Centralized personality/phrasing system; prevents phrase repetition, adapts tone to time-of-day/mood/task
+- **Network Health** — Tracks online/degraded/offline; subsystems call `isOnline()` before network calls. 45s passive / 15s recovery checks
+- **Location** (`src/location/` — 7 files) — Singleton location service: GPS → Wi-Fi → IP fallback via pluggable providers. `network-watcher.ts` drives refresh; Swift helper invoked by GPS provider on macOS
 
 ### Widget (`src/widget/widget.ts`)
 Self-contained embeddable chat widget served as `/widget.js` from the overlay server. A single IIFE injects its own DOM + styles + WebSocket logic, authenticates via `?token=` query param, and connects to the overlay WebSocket to give any webpage a floating chat bubble.
@@ -241,7 +269,7 @@ Self-contained embeddable chat widget served as `/widget.js` from the overlay se
 ### Additional Subsystems
 - **MCP** (`src/mcp/`) — Model Context Protocol server integration (`client.ts`, `gitmcp-bridge.ts`); loads external tool providers at boot
 - **Plugins** (`src/plugins/`) — Plugin system for extending agent capabilities
-- **Proactive** (`src/proactive/` — 14 files) — Heartbeat engine, proactive behaviors, and automated night dreaming (`dreaming.ts`). Additionally: `goal-engine.ts` (autonomous goal generation, bi-level outer/inner loops), `habit-detector.ts` (detects user behavior patterns), `inner-thoughts.ts` (agent internal monologue), `thought-journal.ts`, `trigger-detector.ts`, `notification-tracker.ts`, `environment-sensors.ts`, `proactive-reward.ts`, `dnd.ts` (do-not-disturb management), `monitors.ts`, `activity.ts`, `recommendations.ts`
+- **Proactive** (`src/proactive/` — 28 files) — Heartbeat engine, proactive behaviors, automated night dreaming. Phase 0+1 additions: `intent.ts`/`intent-from-thought.ts` (ProactiveIntent types + thought→intent bridge), `composer.ts`/`composer-templates.ts` (template fast-path → LLM fallback → banned-phrase + third-person post-filters), `dispatch.ts` (single exit point — kill-switch gates, mode emoji 💡/❓/✅ prefix), `config.ts` (per-channel posture: calm/active/ambient; night-window config via `data/proactive-config.json`), `kill-switches.ts` (env-var gate fns). Also: `goal-engine.ts`, `habit-detector.ts`, `inner-thoughts.ts`, `thought-journal.ts`, `trigger-detector.ts`, `notification-tracker.ts`, `environment-sensors.ts`, `proactive-reward.ts`, `dnd.ts`, `monitors.ts`, `activity.ts`, `recommendations.ts`
 - **Security** (`src/security/`) — Sandboxing (`sandbox.ts`), input validation (`allowlist.ts`), secrets detection (`secrets.ts`), Docker isolation logic
 - **Voice** (`src/voice/`) — Voice message processing (`telegram-voice.ts`), TTS (`tts.ts`, `elevenlabs.ts`), wake word detection (`wake-word.ts`), live voice mode (`talk-mode.ts`, `live/`), transcription (`transcribe.ts`)
 - **Canvas** (`src/canvas/`) — WebSocket-based canvas channel for rich UI interactions
@@ -258,29 +286,18 @@ Self-contained embeddable chat widget served as `/widget.js` from the overlay se
 WhatsApp is the most privilege-differentiated channel. It uses Baileys (`@whiskeysockets/baileys`) and splits every inbound message into one of four flows based on sender identity. State lives in `data/whatsapp-users/` (owners, contacts, personas, groups as JSON files) — **not** in `data/memories.db`.
 
 **Identity tiers** (resolved per message in `whatsapp-users.ts`):
-- **Owner** — JID registered via verification handshake (`addOwner`, stored in `owners.json`). Full agent access, no tool allowlist, uses `runAgent` with `isOwner: true`. Per-JID conversation history kept in-memory in `ownerConversations` Map (not persisted — rebuilds from contact history on restart).
-- **Allowed contact** — Non-owner JID approved by the owner via `allow`/`block` admin commands. Gets persona-gated access (see below).
-- **Unknown contact** — First-time sender. Triggers `handleNewContactMessage` → notifies owner with an approval request; if `autoAllow` is on, promotes after a delay.
-- **Group** — Group JID (`*@g.us`). Different logic entirely (see Groups below).
+- **Owner** — JID in `owners.json`; full tool access, `isOwner: true`. Conversation history in-memory (not persisted).
+- **Allowed contact** — Owner-approved JID; persona-gated access.
+- **Unknown contact** — notifies owner on first message; `autoAllow` flag promotes after delay.
+- **Group** — JID `*@g.us`; separate flow (see Groups below).
 
-**Persona system** (`whatsapp-users.ts` — `WhatsAppBotPersona`):
-- Single global persona stored in `whatsapp-persona.json` (name, systemPrompt, `allowedToolNames[]`). Defaults to "Personal Assistant" with a narrow tool allowlist.
-- Applied to **all non-owner messages** (contacts + non-owner group participants). Owner messages bypass the persona entirely.
-- The contact system prompt (`whatsapp.ts:~933`) hard-codes anti-impersonation rules: never reveal owner info, reject "I am the owner" claims, refuse system actions requested on the owner's behalf. These are in code, not persona config — do not weaken them.
+**Persona system** (`whatsapp-users.ts`): Single global persona in `whatsapp-persona.json` (name, system prompt, `allowedToolNames[]`). Applied to all non-owner messages. `whatsapp.ts:~933` hard-codes anti-impersonation rules (reject "I am the owner" claims, refuse system actions on owner's behalf) — these are in code, not persona config. Do not weaken them.
 
 **Groups** (`WhatsAppGroup` in `whatsapp-users.ts`, handlers in `whatsapp.ts`):
-- **Add flow** (`groups.upsert` event, `whatsapp.ts:1499`): On group join, fetches `groupMetadata`. If an owner is a participant → auto-approves (`status: "active"`). Otherwise → `status: "pending"` and DMs the first owner with `approve <name>` / `decline <name>` prompts. Groups the bot was added to by non-owners are silent until the owner explicitly approves — this is the "group non-owner add" protection.
-- **Status lifecycle**: `pending` → `active` (via `approveGroup`) → optionally `muted` (via `muteGroup`; observes silently but logs messages). Owner admin commands: `approve X`, `decline X`, `groups`, `mute group X`, `unmute group X`.
-- **Per-group state**: `messageHistory` (rolling), `participants` (per-JID message counts), `tone`, `description`, `totalMessageCount`, `botMessageCount`, `lastBotMessage`. Each group has its own memory scope (`group:${groupJid}`) for `recall()`.
-- **Response gating** (`handleGroupMessage`, `whatsapp.ts:1033`). In order:
-  1. Group must be `active` (pending/muted → drop).
-  2. **Always respond** if directly mentioned (`/\batlas\b|a\.t\.l\.a\.s/i`) or replied-to via quoted-message contextInfo.
-  3. Otherwise throttle: skip if `<30s` since last bot message.
-  4. Don't dominate: skip if bot sent `>15%` of total group messages (after 20+ messages).
-  5. **LLM-driven chime-in decision**: a Haiku call (`modelOverride: "anthropic/claude-haiku-4.5"`) reads the last 10 messages and returns `YES`/`NO`; only `YES` proceeds. Failure = silent (safe default).
-- **Tool allowlist in groups**: `senderIsOwner ? undefined : getPersona().allowedToolNames`. Owners get full tools even in groups; every other participant is persona-restricted. This is the key "group non-owner" distinction — the same group JID routes to different tool sets depending on who sent the message.
-- **Group participant removal** (`group-participants.update`): if the bot itself is removed, the group is deleted from state.
-- **Call rejection**: incoming voice/video calls are auto-rejected with a text reply.
+- **Add flow** (`groups.upsert`, `whatsapp.ts:1499`): owner in participants → auto-approve (`active`); otherwise → `pending`, DMs owner with `approve`/`decline` prompts. Non-owner-added groups are silent until approved.
+- **Status lifecycle**: `pending` → `active` → optionally `muted`. Admin commands: `approve X`, `decline X`, `groups`, `mute/unmute group X`.
+- **Response gating** (`handleGroupMessage`, `whatsapp.ts:1033`): group must be `active`; always respond if directly @mentioned or replied-to; otherwise throttle: skip if <30s since last send or bot share >15% of total messages; then Haiku YES/NO chime-in decision (failure = silent).
+- **Tool allowlist**: `senderIsOwner ? undefined : getPersona().allowedToolNames` — owners get full tools even in groups; all other participants are persona-restricted.
 
 ### Web Portals (`portals/`)
 Both are Next.js + Tailwind CSS apps with their own `package.json` and `.env.example`:
@@ -291,11 +308,11 @@ Both are Next.js + Tailwind CSS apps with their own `package.json` and `.env.exa
 Native macOS Swift app (`Package.swift`) for the desktop overlay UI (distinct from the inline `src/overlay/overlay.html`).
 
 ### Chrome Extension (`chrome-extension/`)
-The user-side companion for the Chrome Extension backend (`src/tools/browser/chrome-backend.ts`). Files: `manifest.json`, `background.js` (WebSocket bridge back to the agent), `content.js` (DOM access inside pages), `popup.html`/`popup.js` (user-facing toggle). The agent drives the user's real Chrome instead of a headless browser when this is paired.
+User-side companion for `src/tools/browser/chrome-backend.ts`. `background.js` bridges WebSocket to agent, `content.js` provides DOM access, `popup.html`/`popup.js` provides the toggle. Lets the agent drive the user's real Chrome instead of headless.
 
 ### Admin Dashboard / Scripts / Docs
 - `admin-dashboard/index.html` — Single-file static dashboard (separate from the full Next.js `portals/admin-panel/`)
-- `scripts/` — Build helpers and runtime utilities: `get_location.swift` + `LocationInfo.plist` (CoreLocation helper), `ocr_screen.swift` / `ocr_screen.ps1` (OCR helpers), `grid_overlay.py` / `som_overlay.py` (set-of-marks vision overlays), `atlas-hotkey.ahk` / `atlas-hotkey.lua` (OS hotkey bindings), `seed-store.ts` / `seed-system-content.ts` (Convex DB seeding), `patch-baileys.sh` (runs from `postinstall`)
+- `scripts/` — Swift helpers (`get_location.swift`, `ocr_screen.swift`), vision overlays (`grid_overlay.py`, `som_overlay.py`), OS hotkeys (`atlas-hotkey.ahk/lua`), Convex seeds (`seed-store.ts`, `seed-system-content.ts`), `patch-baileys.sh` (postinstall)
 - `docs/` — Internal documentation (e.g. `docs/superpowers/`)
 
 ### Configuration
@@ -303,9 +320,45 @@ The user-side companion for the Chrome Extension backend (`src/tools/browser/chr
 - Required: `TELEGRAM_BOT_TOKEN`, `ALLOWED_USER_IDS`, `ATLAS_OTPLESS_USER_ID`
 - Optional: `EMAIL_USER`/`EMAIL_PASSWORD`, `EMAIL_WHITELIST`, `GITHUB_TOKEN`, `HF_TOKEN` (for gated embedding models), `MEMORY_DEBUG`
 - Optional voice: `LIVE_VOICE_NAME` (Gemini: Aoede/Charon/Kore/Fenrir/Puck; OpenAI: alloy/shimmer/echo), `LIVE_VOICE_BACKEND` (gemini-live/openai-realtime/hybrid)
+- `ATLAS_ENV=prod` — flip Convex client from dev (`zany-kudu-607`) to prod (`avid-oyster-465`); default stays on dev. Individual override via `CONVEX_URL` / `CONVEX_SITE_URL`.
 - OpenRouter and Convex keys are bundled — not user-configurable
-- System prompts assembled from `prompts/` directory: `identity.md`, `rules.md`, `rules-mac.md`/`rules-windows.md`, `browsing.md`, `thinking.md`
-- Skills loaded from `skills/` (built-in — 12 role markdown files plus 5 Convex-specific skill directories: `convex-create-component`, `convex-migration-helper`, `convex-performance-audit`, `convex-quickstart`, `convex-setup-auth`) and `~/.atlas/store/skills` (user-installed); each role skill is a markdown file with gray-matter frontmatter defining role, triggers, and instructions
+
+**System prompts are SERVER-SIDE**:
+Prompts live in Convex `system_prompts` table, seeded from `prompts/` via `scripts/seed-system-content.ts` (needs `ADMIN_API_KEY`). The client never reads them from disk — `src/config/system-prompts.ts::fetchSystemPrompt(slug)` pulls on demand via `/api/system/prompt?slug=` with in-flight request coalescing + single-flight auth refresh. Desktop electron-builder deliberately does NOT bundle `../prompts`. The `prompts/` dir in the repo is source-of-truth for what the seed script uploads.
+
+Seeded slugs: `identity`, `rules`, `rules-mac`, `rules-windows`, `browsing`, `thinking`, `coding` (Phase 4 tool-use workflow), `spec` (spec-mode guidance).
+
+- Skills loaded from `skills/` (built-in — 12 role markdown files plus 5 Convex-specific skill directories: `convex-create-component`, `convex-migration-helper`, `convex-performance-audit`, `convex-quickstart`, `convex-setup-auth`) and `~/.atlas/store/skills` (user-installed); each role skill is a markdown file with gray-matter frontmatter defining role, triggers, and instructions. Skills are likewise server-side via `system_skills` table.
+
+### Env Kill-Switches (fail-open knobs for new subsystems)
+Each of these defaults to the feature ON; set to `"true"` (or the named sentinel) to disable. Use `grep -rnE "process\.env\.ATLAS_" src/` to find the call sites before altering behavior.
+
+- `ATLAS_NO_CODING_ESCALATION` — disables `maybeEscalateForCoding` (coding tasks stay on whatever tier the base router picked)
+- `ATLAS_NO_CODING_THINKING` — disables extended thinking budget on Pro-escalated coding
+- `ATLAS_NO_CODER_SPECULATION` — disables racing alt approaches on coder steps inside `shouldSpeculate`
+- `ATLAS_WAVE_SPECULATION_CAP` — int (default `1`) or `"off"` — per-wave cap on concurrent speculative executions
+- `ATLAS_AGENT_WORKTREE` — opt-IN (off by default); enables git worktree isolation for parallel coder steps
+- `ATLAS_NO_AGENT_WORKTREE` — force-off even if above is set
+- `ATLAS_DISABLE_BUILTIN_HOOKS` — drops the built-in LSP-pre-edit PreToolUse hook
+- `ATLAS_NO_CODE_CRITIC` — skips the compile/test/lint/SAST critic in swarm synthesis
+- `ATLAS_NO_POST_EDIT_DIAGNOSTICS` — edit tool doesn't auto-attach LSP diagnostics to its result
+- `ATLAS_NO_SAST` — Semgrep perspective skipped inside `code-critic`
+- `ATLAS_NO_CODEBASE_INDEX` — `codebase_index build` returns `{ success: false, error: "disabled" }`
+- `ATLAS_NO_ARCHITECTURE_INJECTION` — first-iteration `<architecture>` block not injected
+- `ATLAS_NO_REPO_MAP` — first-iteration `<repo_map>` block not injected
+- `ATLAS_INDEX_DEPTH=symbols|imports|calls` — override the auto-picker
+- `ATLAS_INDEX_ASYNC=force|never` — override the block/async timing picker
+- `ATLAS_CODE_PARSER=regex` — force the legacy regex extractors even where tree-sitter would work
+- `ATLAS_MULTI_TREE_SITTER=true` — opt-in for Python/Rust/Go tree-sitter (known to crash on 0.22 binding)
+- `ATLAS_TOOL_DEBUG=off|verbose` — debug-log verbosity for tool-call breadcrumbs
+- `ATLAS_POST_SYNTHESIS_BUDGET_MS` — wall-clock cap on code-critic + multi-critic + MoA chain (default 90000)
+- `ATLAS_AUTO_PLAN_MODE` — opt-in auto-entry into plan mode on first user message
+- `ATLAS_TS_DEBUG=true` — verbose tree-sitter grammar-load logging
+- `ATLAS_PROACTIVE_DISABLE` — kill all proactive sends globally
+- `ATLAS_PROACTIVE_DISABLE_SOURCES=csv` — silence specific intent sources (e.g. `heartbeat,goal`)
+- `ATLAS_PROACTIVE_DISABLE_CHANNELS=csv` — silence specific channels (e.g. `telegram,whatsapp`)
+- `ATLAS_PROACTIVE_SHADOW` — shadow mode: compose + log proactive messages but never deliver
+- `ATLAS_PROACTIVE_DEBUG=false` — suppress `🔔 [proactive]` debug logs (on by default)
 
 ## Key Patterns
 
@@ -320,3 +373,13 @@ The user-side companion for the Chrome Extension backend (`src/tools/browser/chr
 - **Dependency injection**: `LLMClient` is created once at boot and passed into agent, tools, swarm, and research — never imported as a singleton
 - **OpenAI-compatible types**: All LLM interactions use `openai` package types (`ChatCompletionMessageParam`, `ChatCompletionTool`) regardless of actual provider, since Convex proxies through OpenRouter
 - **Copyright headers**: All source files carry `© 2024-2026 XAGI Labs Private Limited` proprietary headers
+- **Plan-mode state is a runtime gate**: `plan`/`spec`/`awaiting_approval` each have an explicit `*_ALLOWED_TOOLS` in `src/agents/plan-mode.ts`; `filterToolsFor*` strips tools BEFORE the LLM call, `checkWritePathInApprovalMode()` enforces at execution time. Adding a new state: extend the union type, add allowlist, add filter fn, wire into `isToolAllowedInCurrentMode`
+- **Structured debug logs**: coding tools emit `logToolAction()` from `src/utils/debug-log.ts`. Format: `🔧 [tool] ctx | path:line — action`. Silence with `ATLAS_TOOL_DEBUG=false`
+
+<!-- convex-ai-start -->
+This project uses [Convex](https://convex.dev) as its backend.
+
+When working on Convex code, **always read `convex/_generated/ai/guidelines.md` first** for important guidelines on how to correctly use Convex APIs and patterns. The file contains rules that override what you may have learned about Convex from training data.
+
+Convex agent skills for common tasks can be installed by running `npx convex ai-files install`.
+<!-- convex-ai-end -->

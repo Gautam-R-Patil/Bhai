@@ -2789,6 +2789,142 @@ export declare function humanClickDwellMs(elementArea: number, seed: number): nu
  * Real humans: fast movement → slow down near target (Fitts's law).
  */
 export declare function humanMouseParams(startX: number, startY: number, endX: number, endY: number, seed: number): Array<number>
+/**
+ * Weighted composite score from benchmark sub-scores.
+ * Uses SIMD-friendly fixed-point arithmetic for speed.
+ *
+ * Weights (must sum to 1.0):
+ *   task_completion:  0.35
+ *   memory_recall:    0.25
+ *   tool_selection:   0.25
+ *   token_efficiency: 0.15
+ */
+export interface HarnessBenchmarkInput {
+  taskCompletionScore: number
+  memoryRecallScore: number
+  toolSelectionScore: number
+  tokenEfficiency: number
+  tokensUsed: number
+}
+export interface HarnessCompositeScore {
+  composite: number
+  weightedTask: number
+  weightedMemory: number
+  weightedTools: number
+  weightedEfficiency: number
+}
+/**
+ * Compute the composite harness score from sub-benchmark scores.
+ * Uses fixed-weight linear combination with clamping.
+ */
+export declare function computeHarnessComposite(input: HarnessBenchmarkInput): HarnessCompositeScore
+export interface CandidateComparisonResult {
+  challengerWins: boolean
+  delta: number
+  significant: boolean
+  significanceThreshold: number
+}
+/**
+ * Compare two candidate scores and determine if the challenger
+ * meaningfully improves over the parent.
+ * A delta of >=1.5 points is considered significant (not noise).
+ */
+export declare function compareHarnessCandidates(parentScore: number, challengerScore: number, significanceThreshold?: number | undefined | null): CandidateComparisonResult
+export interface DimensionConstraint {
+  id: string
+  minValue: number
+  maxValue: number
+  isInteger: boolean
+}
+export interface ClampedDimensions {
+  dimensions: Array<ClampedDimension>
+  violationsFixed: number
+}
+export interface ClampedDimension {
+  id: string
+  originalValue: number
+  clampedValue: number
+  wasClamped: boolean
+}
+/**
+ * Validate and clamp a set of proposed dimension values against their
+ * constraints. Returns both clamped values and a count of violations fixed.
+ */
+export declare function clampProposedDimensions(proposed: Array<[string, number]>, constraints: Array<DimensionConstraint>): ClampedDimensions
+export interface DimensionDiff {
+  id: string
+  parentValue: number
+  candidateValue: number
+  delta: number
+  deltaPct: number
+}
+/**
+ * Compute the diff between two harness configs (numeric dimensions only).
+ * Returns only dimensions that actually changed.
+ */
+export declare function diffHarnessConfigs(parentDims: Array<[string, number]>, candidateDims: Array<[string, number]>): Array<DimensionDiff>
+export interface TraceInput {
+  taskSucceeded: boolean
+  evaluationScore?: number
+  memoryHitCount: number
+  memoryTopScore: number
+  durationMs: number
+  toolsSelectedCount: number
+}
+export interface TraceAggregate {
+  count: number
+  successRate: number
+  avgEvalScore: number
+  avgMemoryHits: number
+  avgMemoryTopScore: number
+  avgDurationMs: number
+  avgToolsCount: number
+  p50EvalScore: number
+  p10EvalScore: number
+}
+/**
+ * Aggregate trace statistics using numerically stable Welford online algorithm.
+ * Provides mean, success rate, and percentile estimates for eval scores.
+ */
+export declare function aggregateTraces(traces: Array<TraceInput>): TraceAggregate
+export interface CandidateEntry {
+  candidateId: string
+  objective: number
+  outcome: string
+}
+export interface RankedLeaderboard {
+  ranked: Array<CandidateEntry>
+  bestCandidateId: string
+  bestObjective: number
+  improvementOverBaseline: number
+}
+/** Rank candidates by objective score and compute improvement over baseline. */
+export declare function rankHarnessCandidates(candidates: Array<CandidateEntry>): RankedLeaderboard
+export interface ObjectiveVector {
+  task: number
+  tokenEff: number
+  memPrec: number
+  toolAcc: number
+}
+export interface ParetoRankResult {
+  candidateId: string
+  rank: number
+  crowdingDistance: number
+  isDominated: boolean
+}
+export declare function computeParetoDominance(candidates: Array<[string, ObjectiveVector]>): Array<ParetoRankResult>
+export interface GpPrediction {
+  mean: number
+  variance: number
+  expectedImprovement: number
+}
+/**
+ * Fit a GP with RBF kernel and return prediction + EI at query_x.
+ * Length-scale = median pairwise distance across training X.
+ * Noise jitter = 1e-6 * mean(y^2).
+ * EI formula: (mu - best - 0.01)*Phi(z) + sigma*phi(z) where z = (mu-best-0.01)/sigma.
+ */
+export declare function fitAndPredictGp(observationsX: Array<Array<number>>, observationsY: Array<number>, queryX: Array<number>, bestSoFar: number): GpPrediction
 /** Get the native module version */
 export declare function getVersion(): string
 /** Check if SIMD is available on this platform */

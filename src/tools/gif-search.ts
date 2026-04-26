@@ -9,7 +9,7 @@ import type { ToolDefinition } from "./get-current-time.js";
 
 // ── Constants ────────────────────────────────
 
-const TENOR_DEMO_KEY = "REDACTED_TENOR_API_KEY";
+const TENOR_DEMO_KEY = process.env.TENOR_API_KEY ?? "";
 const TENOR_BASE = "https://tenor.googleapis.com/v2";
 const GIPHY_BASE = "https://api.giphy.com/v1/gifs";
 

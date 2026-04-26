@@ -9,7 +9,7 @@
 import { google, type calendar_v3 } from "googleapis";
 import { OAuth2Client } from "google-auth-library";
 import { promises as fs } from "node:fs";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { createServer, type Server } from "node:http";
 import { execFile } from "node:child_process";
@@ -57,7 +57,9 @@ function loadCredentials(): { client_id: string; client_secret: string; redirect
         CREDENTIALS_PATH,
         // Fallback: bundled credentials in app resources (read-only but valid for reading)
         join(process.cwd(), "data", "google-credentials.json"),
-        join(process.env.HOME || "", "Downloads", "client_secret_1066050169128-uuqbnjq9v4n0pfc0q8ienabmoj3cnbhb.apps.googleusercontent.com.json"),
+        // Windows uses USERPROFILE instead of HOME
+        join(process.env.HOME || process.env.USERPROFILE || "", "Downloads", "client_secret_1066050169128-uuqbnjq9v4n0pfc0q8ienabmoj3cnbhb.apps.googleusercontent.com.json"),
+        join(process.env.HOME || process.env.USERPROFILE || "", "Downloads", "google-credentials.json"),
     ];
 
     for (const p of paths) {
@@ -109,7 +111,7 @@ function createOAuth2Client(): OAuth2Client | null {
 export function loadSavedAccounts(): void {
     ensureDataDir();
     try {
-        const files = require("node:fs").readdirSync(DATA_DIR) as string[];
+        const files = readdirSync(DATA_DIR);
         for (const file of files) {
             if (!file.endsWith(".json") || file === "google-credentials.json") continue;
             try {
@@ -430,7 +432,7 @@ export const googleCalendarTool: ToolDefinition = {
                     action: {
                         type: "string",
                         enum: ["today", "list", "create", "upcoming"],
-                        description: "Action: 'today' = today's events, 'list' = events for specific date, 'create' = new event, 'upcoming' = next 5 events",
+                        description: "Action: 'today' = today's events, 'list' = events for specific date (requires date param), 'create' = new event, 'upcoming' = next 5 events. Note: use 'list' not 'list_events'.",
                     },
                     account: {
                         type: "string",
@@ -467,7 +469,14 @@ export const googleCalendarTool: ToolDefinition = {
                 });
             }
 
-            if (action === "today" || action === "list" || action === "upcoming") {
+            // Accept common LLM hallucinations as aliases
+            const normalizedAction = action === "list_events" ? "list"
+                : action === "get_events" ? "list"
+                : action === "check" ? "today"
+                : action;
+
+            if (normalizedAction === "today" || normalizedAction === "list" || normalizedAction === "upcoming") {
+            const action = normalizedAction; // shadow for rest of block
                 let timeMin: string;
                 let timeMax: string;
 

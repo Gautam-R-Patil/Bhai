@@ -117,15 +117,12 @@ const OTP_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const DEFAULT_PERSONA: WhatsAppBotPersona = {
     name: "Personal Assistant",
     systemPrompt:
-        "You are a helpful personal assistant. Be polite, professional, and concise.",
+        "You represent the owner and help people who contact them. You can check the owner's calendar availability and let people know when they're free. You CANNOT share the owner's emails, location, or any private details.",
     allowedToolNames: [
         "get_current_time",
         "web_search",
         "weather",
-        "get_location",
         "google_calendar",
-        "gmail",
-        "memory_search",
     ],
     autoAllow: false,
 };
@@ -244,8 +241,25 @@ export function initWhatsAppUsers(): void {
     const files = fs.readdirSync(CONTACTS_DIR).filter((f) => f.endsWith(".json"));
     for (const file of files) {
         const filePath = path.join(CONTACTS_DIR, file);
-        const profile = loadJson<ContactProfile | null>(filePath, null);
-        if (profile && profile.jid) {
+        const raw = loadJson<Partial<ContactProfile> | null>(filePath, null);
+        if (raw && raw.jid) {
+            // Reconstruct with explicit defaults so array fields added in newer
+            // versions are never undefined on contacts saved by older builds.
+            const profile: ContactProfile = {
+                jid: raw.jid,
+                displayName: raw.displayName ?? jidToPhone(raw.jid),
+                pushName: raw.pushName,
+                phoneNumber: raw.phoneNumber ?? jidToPhone(raw.jid),
+                role: raw.role ?? "contact",
+                notes: raw.notes ?? "",
+                tags: raw.tags ?? [],
+                firstSeen: raw.firstSeen ?? Date.now(),
+                lastActive: raw.lastActive ?? Date.now(),
+                messageCount: raw.messageCount ?? 0,
+                chatHistory: raw.chatHistory ?? [],
+                memories: raw.memories ?? [],
+                context: raw.context ?? {},
+            };
             contacts.set(profile.jid, profile);
         }
     }
@@ -257,8 +271,9 @@ export function initWhatsAppUsers(): void {
         blocklist.add(jid);
     }
 
-    // Load persona
-    persona = loadJson<WhatsAppBotPersona>(PERSONA_PATH, { ...DEFAULT_PERSONA });
+    // Load persona — merge with DEFAULT_PERSONA so fields added in newer versions
+    // (e.g. allowedToolNames) are present even when the saved file pre-dates them.
+    persona = { ...DEFAULT_PERSONA, ...loadJson<Partial<WhatsAppBotPersona>>(PERSONA_PATH, {}) };
 
     // Load groups
     initGroups();

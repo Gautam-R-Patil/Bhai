@@ -8,6 +8,7 @@
 
 import type { LLMClient, ChatCompletionMessageParam } from "../llm.js";
 import { selectForPlanning, selectForSynthesis } from "../model-router.js";
+import { getDimensionValue } from "../harness/registry.js";
 import { executeMesh, type MeshStep } from "./mesh.js";
 import type { AgentRole, SubAgentResult } from "./sub-agent.js";
 import { shouldConsiderReplan, replan } from "./replanner.js";
@@ -262,10 +263,11 @@ export async function runSwarm(
     }
 
     // ── Multi-Critic Debate: identify specific weaknesses if evaluation score is low ──
-    if (evaluationScore < 60 && budgetLeft()) {
+    const multiCriticThreshold = getDimensionValue<number>("swarm.multiCriticThreshold") ?? 60;
+    if (evaluationScore < multiCriticThreshold && budgetLeft()) {
         if (onProgress) await onProgress("🎭 multi-critic…").catch(() => {});
         try {
-            console.log(`[SWARM] 🎭 Evaluation score ${evaluationScore} < 60 — running multi-critic debate...`);
+            console.log(`[SWARM] 🎭 Evaluation score ${evaluationScore} < ${multiCriticThreshold} — running multi-critic debate...`);
             const debate = await runMultiCriticDebate(llm, userRequest, synthesis);
             if (debate.key_issues.length > 0 && budgetLeft()) {
                 console.log(`[SWARM] 🎭 Multi-critic found ${debate.key_issues.length} issues (consensus score: ${debate.overall_score.toFixed(1)})`);
@@ -280,10 +282,11 @@ export async function runSwarm(
     }
 
     // ── MoA fallback: re-synthesize via Mixture of Agents if quality is low ──
-    if (shouldUseMoA(stepsCompleted, stepsFailed) && evaluationScore < 70 && budgetLeft()) {
+    const moaThreshold = getDimensionValue<number>("swarm.moaThreshold") ?? 70;
+    if (shouldUseMoA(stepsCompleted, stepsFailed) && evaluationScore < moaThreshold && budgetLeft()) {
         if (onProgress) await onProgress("🔀 MoA…").catch(() => {});
         try {
-            console.log(`[SWARM] 🔀 Evaluation score ${evaluationScore} < 70 — re-synthesizing via MoA...`);
+            console.log(`[SWARM] 🔀 Evaluation score ${evaluationScore} < ${moaThreshold} — re-synthesizing via MoA...`);
             const moaSynthesis = await synthesizeWithMoA(llm, userRequest, plan, meshResult.results);
             if (moaSynthesis && moaSynthesis.length > 0) {
                 synthesis = moaSynthesis;

@@ -1,6 +1,6 @@
 PROPRIETARY SOFTWARE LICENSE
 
-Copyright (C) 2026 XAGI Labs Private Limited. All Rights Reserved.
+Copyright (C) 2024-2026 XAGI Labs Private Limited. All Rights Reserved.
 
 Website: https://xagilab.com
 

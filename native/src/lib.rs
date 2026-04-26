@@ -57,6 +57,7 @@ mod proactive_monitor;
 mod browser_agent;
 mod ip_guard;
 mod browser_guard;
+mod harness_optimizer;
 
 use napi_derive::napi;
 
@@ -114,6 +115,7 @@ pub use proactive_monitor::*;
 pub use browser_agent::*;
 pub use ip_guard::*;
 pub use browser_guard::*;
+pub use harness_optimizer::*;
 
 /// Get the native module version
 #[napi]

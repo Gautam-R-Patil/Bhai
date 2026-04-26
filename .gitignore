@@ -3,12 +3,25 @@ node_modules/
 
 # Build output
 dist/
+dist-bundle/
+.next/
 
-# Environment secrets
+# Rust build artifacts
+native/target/
+
+# Swift build artifacts
+overlay-app/.build/
+
+# Environment secrets — all variants
 .env
 .env.local
+.env.production
+.env.development
+.env.staging
+.env.test
+.env.*.local
 
-# Data (memory DB, etc.)
+# Data (memory DB, runtime state)
 data/
 
 # OS
@@ -24,6 +37,26 @@ Thumbs.db
 # Python
 __pycache__/
 *.pyc
+.venv/
 
 # Auto-generated test fixtures
 src/video-studio/__fixtures__/2s.mp4
+
+# Superpowers brainstorming scratch
+.superpowers/
+
+# Session memory logs
+.remember/
+
+# Build artifacts
+chrome-extension.zip
+
+# Local Claude Code settings (contain tokens/keys in allow-rules)
+**/.claude/settings.json
+**/.claude/settings.local.json
+
+# AI tool working directories
+.playwright-mcp/
+.kiro/
+.claire/
+.claude/worktrees/

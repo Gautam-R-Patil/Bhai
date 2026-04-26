@@ -33,13 +33,16 @@ const RETRIEVAL_PATTERNS = [
 // Action verbs that indicate a task, not a greeting — used as negative lookahead
 const ACTION_VERB_RE = /\b(search|find|fix|create|open|run|download|send|set|build|write|read|check|show|delete|update|install|deploy|edit|make|start|help me|can you|could you|please)\b/i;
 
-// Simple greetings / commands that don't need any memory injection
+// Simple greetings / commands that don't need any memory injection.
+// Tail word count is capped at {0,2} so that action queries starting with a
+// greeting word ("yo what's the weather", "okay play closer song") are NOT
+// caught here — they'll get proper tool selection via llm_with_traits.
 const LLM_ONLY_PATTERNS = [
-    /^(hi|hello|hey|yo|sup|good (morning|afternoon|evening)|gm)\b[\s!?.,]*(\S+[\s!?.,]*){0,4}$/i,
-    /^(thanks|thank you|thx|ty)\b[\s!?.,]*(\S+[\s!?.,]*){0,4}$/i,
-    /^(ok|okay|sure|got it|cool|nice|great|alright|no worries|np)\b[\s!?.,]*(\S+[\s!?.,]*){0,3}$/i,
+    /^(hi|hello|hey|yo|sup|good (morning|afternoon|evening)|gm)\b[\s!?.,]*(\S+[\s!?.,]*){0,2}$/i,
+    /^(thanks|thank you|thx|ty)\b[\s!?.,]*(\S+[\s!?.,]*){0,2}$/i,
+    /^(ok|okay|sure|got it|cool|nice|great|alright|no worries|np)\b[\s!?.,]*(\S+[\s!?.,]*){0,2}$/i,
     /^(how are you|how's it going|how have you been|what's up|wassup|whats up|how do you do)[\s!?.]*$/i,
-    /^(good night|gn|bye|goodbye|see you|later|cya|ttyl|brb|gtg)[\s!?.,]*(\S+[\s!?.,]*){0,3}$/i,
+    /^(good night|gn|bye|goodbye|see you|later|cya|ttyl|brb|gtg)[\s!?.,]*(\S+[\s!?.,]*){0,2}$/i,
     /^\/\w+/,  // Slash commands
     /^(stop|cancel)$/i,
     // Instant functional queries (Time, Date, Day) that don't need tools
