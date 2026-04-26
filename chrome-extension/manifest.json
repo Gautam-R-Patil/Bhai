@@ -10,7 +10,8 @@
     "scripting",
     "storage",
     "contextMenus",
-    "nativeMessaging"
+    "nativeMessaging",
+    "debugger"
   ],
   "host_permissions": [
     "<all_urls>",

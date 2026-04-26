@@ -28,7 +28,7 @@ const MAX_DISCOVERY_INTERVAL = 60000;
 // Pin the active tab at the start of a command to prevent race conditions
 // when the user manually switches tabs during command execution
 async function withActiveTab(fn) {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!tab || !tab.id) throw new Error("No active tab");
   return fn(tab.id);
 }
@@ -311,7 +311,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
 async function capturePageContext() {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
     if (!tab || !tab.id) return null;
 
     // Skip restricted URLs
@@ -324,7 +324,7 @@ async function capturePageContext() {
   } catch (err) {
     // Content script not loaded — fall back to tab info
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
       return {
         url: tab?.url || "",
         title: tab?.title || "",
@@ -455,7 +455,7 @@ function sendResponse(id, success, data, error) {
 // ── Command Implementations ──────────────────
 
 async function getActiveTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!tab) return null;
   return {
     id: tab.id,
@@ -480,7 +480,9 @@ async function getAllTabs() {
 }
 
 async function scanElements(payload) {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  // Use lastFocusedWindow (not currentWindow) so we get the browser window,
+  // not the DevTools or extension popup which may be focused instead.
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!tab || !tab.id) throw new Error("No active tab");
 
   const results = await chrome.scripting.executeScript({
@@ -1190,29 +1192,39 @@ async function scroll(payload) {
 }
 
 async function executeJS(payload) {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!tab || !tab.id) throw new Error("No active tab");
 
-  // Run in ISOLATED world — bypasses the page's Content Security Policy.
-  // eval() in the page's MAIN world is blocked by strict CSP (no 'unsafe-eval').
-  // In ISOLATED world, eval runs under the extension's own permissive CSP.
-  const results = await chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    world: "ISOLATED",
-    func: (code) => {
-      try {
-        // Use Function constructor rather than eval for slightly better compatibility.
-        // Both eval and Function() work in ISOLATED world regardless of page CSP.
-        const fn = new Function(code);
-        return fn();
-      } catch (e) {
-        return { error: e.message };
-      }
-    },
-    args: [payload.code],
-  });
+  // Use CDP Runtime.evaluate — this runs in the page context and bypasses
+  // ALL CSP restrictions (both page CSP and extension CSP).
+  // ISOLATED world + new Function() fails on strict CSP pages (e.g. Gmail)
+  // because `new Function()` is equivalent to `eval()` which requires unsafe-eval.
+  try {
+    await chrome.debugger.attach({ tabId: tab.id }, "1.3").catch(() => {});
+    const result = await chrome.debugger.sendCommand(
+      { tabId: tab.id },
+      "Runtime.evaluate",
+      { expression: payload.code, returnByValue: true, awaitPromise: true }
+    );
+    chrome.debugger.detach({ tabId: tab.id }).catch(() => {});
 
-  return results[0]?.result;
+    if (result.exceptionDetails) {
+      return { error: result.exceptionDetails.exception?.description || result.exceptionDetails.text };
+    }
+    return result.result?.value;
+  } catch (cdpErr) {
+    // CDP fallback failed — try ISOLATED world as last resort
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      world: "ISOLATED",
+      func: (code) => {
+        try { const fn = new Function(code); return fn(); }
+        catch (e) { return { error: e.message }; }
+      },
+      args: [payload.code],
+    });
+    return results[0]?.result;
+  }
 }
 
 // Raw CDP passthrough for nativeType, setFileInput, and other CDP methods.
@@ -1228,7 +1240,7 @@ async function rawCDP(payload) {
   if (!CDP_ALLOWED_METHODS.has(payload.method)) {
     throw new Error(`CDP method not allowed: ${payload.method}`);
   }
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!tab || !tab.id) throw new Error("No active tab");
   const result = await chrome.debugger.sendCommand({ tabId: tab.id }, payload.method, payload.params || {});
   return result || { success: true };
@@ -1238,7 +1250,7 @@ async function navigate(payload) {
   if (payload.newTab) {
     await chrome.tabs.create({ url: payload.url, active: true });
   } else {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
     if (!tab || !tab.id) throw new Error("No active tab");
     await chrome.tabs.update(tab.id, { url: payload.url });
   }
@@ -1246,7 +1258,7 @@ async function navigate(payload) {
 }
 
 async function goBack() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!tab || !tab.id) throw new Error("No active tab");
   await chrome.tabs.goBack(tab.id);
   return { success: true };
@@ -1273,7 +1285,7 @@ async function closeTab(payload) {
   if (payload.tabId) {
     await chrome.tabs.remove(payload.tabId);
   } else {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
     if (tab && tab.id) {
       await chrome.tabs.remove(tab.id);
     }
@@ -1341,7 +1353,7 @@ async function hover(payload) {
 }
 
 async function selectOption(payload) {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!tab || !tab.id) throw new Error("No active tab");
 
   await chrome.scripting.executeScript({
@@ -1362,7 +1374,7 @@ async function selectOption(payload) {
 }
 
 async function waitFor(payload) {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!tab || !tab.id) throw new Error("No active tab");
 
   const timeout = payload.timeout || 10000;

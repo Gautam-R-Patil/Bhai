@@ -152,58 +152,58 @@ export function scoreElementCandidates(
     viewportWidth?: number,
     viewportHeight?: number,
 ): ScoredElement[] {
-    if (native) return native.scoreElementCandidates(description, candidates, viewportWidth ?? null, viewportHeight ?? null);
+    if (native) return (native as any)['scoreElementCandidates'](description, candidates, viewportWidth ?? null, viewportHeight ?? null);
     return fallbackScoreElementCandidates(description, candidates);
 }
 
 /** Cache video player state after an action to avoid redundant page.evaluate() calls. */
 export function setVideoPlayerState(url: string, stateJson: string): void {
-    native?.setVideoPlayerState(url, stateJson);
+    (native as any)?.['setVideoPlayerState'](url, stateJson);
 }
 
 /** Get cached player state. Returns null if not cached or stale (>10s). */
 export function getVideoPlayerState(url: string): string | null {
-    return native?.getVideoPlayerState(url) ?? null;
+    return (native as any)?.['getVideoPlayerState'](url) ?? null;
 }
 
 /** Invalidate video state cache for a URL (call on navigation). */
 export function invalidateVideoState(url: string): void {
-    native?.invalidateVideoState(url);
+    (native as any)?.['invalidateVideoState'](url);
 }
 
 /** Check rate limit for a browser action on a URL. Returns false if throttled. */
 export function checkBrowserRateLimit(actionType: string, url: string): boolean {
-    return native?.checkBrowserActionRateLimit(actionType, url) ?? true; // fallback: allow
+    return (native as any)?.['checkBrowserActionRateLimit'](actionType, url) ?? true; // fallback: allow
 }
 
 /** Record a browser action outcome for loop detection and stats. */
 export function recordBrowserAction(actionType: string, url: string, selector: string, success: boolean): void {
-    native?.recordBrowserAction(actionType, url, selector, success);
+    (native as any)?.['recordBrowserAction'](actionType, url, selector, success);
 }
 
 /** Detect if the agent is looping on the same failed action. Returns true = loop. */
 export function detectActionLoop(actionType: string, selector: string, url: string): boolean {
-    return native?.detectActionLoop(actionType, selector, url) ?? false;
+    return (native as any)?.['detectActionLoop'](actionType, selector, url) ?? false;
 }
 
 /** Reset loop counter after the agent intentionally changes strategy. */
 export function resetActionLoop(actionType: string, selector: string, url: string): void {
-    native?.resetActionLoop(actionType, selector, url);
+    (native as any)?.['resetActionLoop'](actionType, selector, url);
 }
 
 /** Get cached hover coordinates for a (url, selector) pair. Returns null if unknown. */
 export function getHoverHint(url: string, selector: string): HoverHint | null {
-    return native?.getHoverHint(url, selector) ?? null;
+    return (native as any)?.['getHoverHint'](url, selector) ?? null;
 }
 
 /** Record a successful hover at these coordinates. Updates EMA cache. */
 export function recordHoverSuccess(url: string, selector: string, x: number, y: number): void {
-    native?.recordHoverSuccess(url, selector, x, y);
+    (native as any)?.['recordHoverSuccess'](url, selector, x, y);
 }
 
 /** Record a failed hover attempt. Lowers confidence for this selector. */
 export function recordHoverFailure(url: string, selector: string): void {
-    native?.recordHoverFailure(url, selector);
+    (native as any)?.['recordHoverFailure'](url, selector);
 }
 
 /**
@@ -212,7 +212,7 @@ export function recordHoverFailure(url: string, selector: string): void {
  * Throws if blocked, returns original code if clean.
  */
 export function validateJsCode(code: string): string {
-    if (native) return native.validateJsCode(code);
+    if (native) return (native as any)['validateJsCode'](code);
     return fallbackValidateJsCode(code);
 }
 
@@ -221,7 +221,7 @@ export function validateJsCode(code: string): string {
  * Prevents reverse-engineering of our MutationObserver injection patterns.
  */
 export function obfuscateInjectedVariable(name: string): string {
-    if (native) return native.obfuscateInjectedVariable(name);
+    if (native) return (native as any)['obfuscateInjectedVariable'](name);
     return fallbackObfuscate(name);
 }
 
@@ -230,7 +230,7 @@ export function obfuscateInjectedVariable(name: string): string {
  * to their obfuscated session-scoped equivalents.
  */
 export function rewriteInternalVars(code: string): string {
-    if (native) return native.rewriteInternalVars(code);
+    if (native) return (native as any)['rewriteInternalVars'](code);
     return fallbackRewriteVars(code);
 }
 
@@ -239,32 +239,32 @@ export function rewriteInternalVars(code: string): string {
  * Returns hex HMAC-SHA256.
  */
 export function signBrowserAction(toolName: string, paramsJson: string): string {
-    return native?.signBrowserAction(toolName, paramsJson) ?? "";
+    return (native as any)?.['signBrowserAction'](toolName, paramsJson) ?? "";
 }
 
 /** Verify a previously-issued action signature. */
 export function verifyBrowserAction(toolName: string, paramsJson: string, signature: string): boolean {
-    return native?.verifyBrowserAction(toolName, paramsJson, signature) ?? false;
+    return (native as any)?.['verifyBrowserAction'](toolName, paramsJson, signature) ?? false;
 }
 
 /** Get last N entries of the tamper-evident action audit log as JSON. */
 export function getActionAuditTail(n: number): string {
-    return native?.getActionAuditTail(n) ?? "[]";
+    return (native as any)?.['getActionAuditTail'](n) ?? "[]";
 }
 
 /** Get the compile-time module integrity fingerprint for boot-time tamper detection. */
 export function getModuleFingerprint(): string {
-    return native?.getModuleFingerprint() ?? "unavailable";
+    return (native as any)?.['getModuleFingerprint']() ?? "unavailable";
 }
 
 /** Encrypt sensitive data with the session AES-256-GCM key. */
 export function encryptSensitive(plaintext: string): string | null {
-    try { return native?.encryptSensitive(plaintext) ?? null; } catch { return null; }
+    try { return (native as any)?.['encryptSensitive'](plaintext) ?? null; } catch { return null; }
 }
 
 /** Decrypt data encrypted with encryptSensitive(). */
 export function decryptSensitive(encrypted: string): string | null {
-    try { return native?.decryptSensitive(encrypted) ?? null; } catch { return null; }
+    try { return (native as any)?.['decryptSensitive'](encrypted) ?? null; } catch { return null; }
 }
 
 /** Whether the native module is loaded and active. */
@@ -276,17 +276,17 @@ export function isNativeBrowserAvailable(): boolean {
 
 /** Classify CAPTCHA type from page HTML. Rust pattern matching — zero JS eval overhead. */
 export function classifyCaptchaFromHtml(html: string): { kind: string; confidence: number; signals: string[] } {
-    return native?.classifyCaptcha(html) ?? { kind: "none", confidence: 0, signals: [] };
+    return (native as any)?.['classifyCaptcha'](html) ?? { kind: "none", confidence: 0, signals: [] };
 }
 
 /** Score popup/overlay risk from page HTML. Returns probabilities for cookie banner and modals. */
 export function scorePopupRisk(html: string): { cookieBannerProb: number; modalProb: number; runGuardEagerly: boolean } {
-    return native?.scorePopupRisk(html) ?? { cookieBannerProb: 0, modalProb: 0, runGuardEagerly: false };
+    return (native as any)?.['scorePopupRisk'](html) ?? { cookieBannerProb: 0, modalProb: 0, runGuardEagerly: false };
 }
 
 /** Get Rust-generated stealth init script to inject via addInitScript(). Varies by session seed. */
 export function getStealthInitScript(seed: number): string | null {
-    return native?.getStealthInitScript(seed) ?? null;
+    return (native as any)?.['getStealthInitScript'](seed) ?? null;
 }
 
 /** Compress element list for LLM — deduplicates, groups repeats, truncates. ~30-50% fewer tokens. */
@@ -298,7 +298,7 @@ export function compressElementsForLlm(
     if (native) {
         // Ensure width/height have default 0 if not provided
         const withDims = elements.map(e => ({ ...e, width: e.width ?? 0, height: e.height ?? 0 }));
-        try { return native.compressElementsForLlm(withDims, maxTextLen, maxElements); } catch { /* fallback */ }
+        try { return (native as any)['compressElementsForLlm'](withDims, maxTextLen, maxElements); } catch { /* fallback */ }
     }
     // JS fallback uses OpenCLI [N]<tag>text format
     return elements.slice(0, maxElements).map(e => {
@@ -311,11 +311,11 @@ export function compressElementsForLlm(
 
 /** Rust human-like typing delay for a character (WPM-based with punctuation pauses). */
 export function humanTypingDelayMs(charCode: number, wpm = 65): number {
-    return native?.humanTypingDelayMs(charCode, wpm) ?? 35;
+    return (native as any)?.['humanTypingDelayMs'](charCode, wpm) ?? 35;
 }
 
 /** Rust Fitts's-law mouse movement: returns [steps, pre_pause_ms]. */
 export function humanMouseParams(sx: number, sy: number, ex: number, ey: number, seed: number): [number, number] {
-    const r = native?.humanMouseParams(sx, sy, ex, ey, seed);
+    const r = (native as any)?.['humanMouseParams'](sx, sy, ex, ey, seed);
     return r ? [r[0], r[1]] : [8, 120];
 }
