@@ -99,8 +99,9 @@ ${traceSummary}
 
 ## Task
 Identify the 3-5 dimensions most likely responsible for the score deficit.
-Return ONLY a JSON array (no markdown, no prose) like:
-[{"dimensionId":"exact.id","currentValue":<current>,"critique":"one sentence with evidence","proposedDirection":"increase"|"decrease"|"rewrite","severity":"critical"|"moderate"|"minor"}]`;
+Return a JSON object with a "gradients" key containing an array of gradient objects:
+{"gradients":[{"dimensionId":"exact.id","currentValue":<current>,"critique":"one sentence with evidence","proposedDirection":"increase"|"decrease"|"rewrite","severity":"critical"|"moderate"|"minor"}]}
+Return ONLY valid JSON. No markdown, no prose, no code fences.`;
 }
 
 function extractBestScore(benchmarkDetails: Record<string, unknown>, fallback: number): number {
@@ -132,10 +133,22 @@ function parseGradients(raw: string): DimensionGradient[] {
     if (Array.isArray(parsed)) {
         candidates = parsed;
     } else if (parsed && typeof parsed === "object") {
-        // Some models wrap the array in {"gradients": [...]}
-        const vals = Object.values(parsed as Record<string, unknown>);
-        const arr = vals.find(v => Array.isArray(v));
-        if (arr) candidates = arr as unknown[];
+        const obj = parsed as Record<string, unknown>;
+        // Handle {"gradients": [...]} — the expected format with responseFormat:json_object
+        const arr = Object.values(obj).find(v => Array.isArray(v));
+        if (arr) {
+            candidates = arr as unknown[];
+        } else {
+            // Handle object-as-array with numeric keys {"0":{...},"1":{...}}
+            const keys = Object.keys(obj);
+            if (keys.length > 0 && keys.every(k => /^\d+$/.test(k))) {
+                candidates = keys.sort((a, b) => Number(a) - Number(b)).map(k => obj[k]);
+            }
+        }
+    }
+
+    if (candidates.length === 0 && raw) {
+        console.warn("[HARNESS-GRAD] Could not parse gradient response (returning []):", raw.substring(0, 200));
     }
 
     const out: DimensionGradient[] = [];

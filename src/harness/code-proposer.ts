@@ -13,7 +13,7 @@
 import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { runAgent } from "../agent.js";
-import { setupAgentWorktree } from "../agents/agent-worktree.js";
+import { setupAgentWorktree, isGitRepo } from "../agents/agent-worktree.js";
 import type { LLMClient } from "../llm.js";
 import type { CandidateManifest, HarnessConfig } from "./types.js";
 import type { HarnessRunStore } from "./run-store.js";
@@ -30,9 +30,11 @@ interface ProposeOptions {
 
 const DEFAULT_TIMEOUT_MS = 600_000; // 10 minutes
 
+// shell_exec intentionally excluded: it allows arbitrary commands and trace files
+// could contain prompt-injected instructions. read_file + grep_file + glob_files
+// are sufficient for all harness-proposer read operations.
 const CODE_PROPOSER_ALLOWED_TOOLS = [
     "read_file",
-    "shell_exec",
     "write_file",
     "grep_file",
     "glob_files",
@@ -46,9 +48,21 @@ export async function proposeWithFilesystemAgent(
 ): Promise<{ config: HarnessConfig; codeChanges: CodeChange[] }> {
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
-    const worktree = setupAgentWorktree(candidate.candidateId);
+    // The harness always wants worktree isolation regardless of ATLAS_AGENT_WORKTREE env var.
+    // We temporarily force-enable the env flag for this call, then restore it.
+    const prevWorktreeEnv = process.env.ATLAS_AGENT_WORKTREE;
+    if (!isGitRepo()) {
+        console.warn("[CODE-PROPOSER] Not a git repo — filesystem-agent unavailable, falling back to JSON proposer");
+        const config = await proposeNextCandidate(llm, candidate, store);
+        return { config, codeChanges: [] };
+    }
+    process.env.ATLAS_AGENT_WORKTREE = "true";
+    const worktree = setupAgentWorktree(`harness-${candidate.candidateId}`);
+    if (prevWorktreeEnv === undefined) delete process.env.ATLAS_AGENT_WORKTREE;
+    else process.env.ATLAS_AGENT_WORKTREE = prevWorktreeEnv;
+
     if (worktree === null) {
-        console.log("[CODE-PROPOSER] No git repo — falling back to proposeNextCandidate");
+        console.warn("[CODE-PROPOSER] git worktree creation failed — falling back to JSON proposer");
         const config = await proposeNextCandidate(llm, candidate, store);
         return { config, codeChanges: [] };
     }
@@ -121,15 +135,18 @@ function buildSystemPrompt(
     return `You are optimizing the ATLAS harness configuration.
 
 CRITICAL RULE — READ INDIVIDUAL TRACE FILES:
-The traces/ directory contains one JSON file per agent invocation. Read them individually using read_file or shell_exec (grep/cat/ls/find).
+The traces/ directory contains one JSON file per agent invocation. Read them individually using read_file.
 Do NOT rely on summary.json — summaries hide the specific failures you need to diagnose.
 (Paper 2603.28052: summary-only context gives median accuracy 34.9 vs 50.0 for raw trace access.)
 
+Available tools: read_file, write_file, grep_file, glob_files.
+(No shell_exec available — use glob_files to enumerate trace files and read_file to read each.)
+
 Files to read:
-- ${join(metaDir, "AGENTS.md")} — instructions
+- ${join(metaDir, "AGENTS.md")} — candidate-specific instructions
 - ${join(metaDir, "registry-dimensions.md")} — tunable parameters with ranges
 - ${join(metaDir, "candidate-history.json")} — all prior candidates
-- ${tracesDir}/ — individual trace files (use shell_exec ls to list, then read_file per trace)
+- Trace files: use glob_files("${tracesDir}/*.json") to list, then read_file on each
 
 Output:
 - Write ${worktreePath}/proposed-config.json (required)

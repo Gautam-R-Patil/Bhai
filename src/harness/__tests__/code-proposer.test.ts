@@ -13,6 +13,7 @@ import type { CandidateManifest, HarnessConfig } from "../types.js";
 
 vi.mock("../../agents/agent-worktree.js", () => ({
     setupAgentWorktree: vi.fn(),
+    isGitRepo: vi.fn().mockReturnValue(true),  // tests assume git repo available
 }));
 
 vi.mock("../../agent.js", () => ({
@@ -48,12 +49,15 @@ describe("proposeWithFilesystemAgent", () => {
     let runDir: string;
     let store: HarnessRunStore;
 
-    beforeEach(() => {
+    beforeEach(async () => {
         const tmp = mkdtempSync(join(tmpdir(), "atlas-code-proposer-"));
         process.env.ATLAS_DATA_DIR = tmp;
         runDir = tmp;
         store = new HarnessRunStore();
         store.initializeRun({ budget: 5, fastMode: true, searchMode: "hill-climb", proposalBatchSize: 1, objective: "test" });
+        // Default: assume git repo is available for all tests (override in specific tests)
+        const wt = await import("../../agents/agent-worktree.js");
+        vi.mocked(wt.isGitRepo).mockReturnValue(true);
     });
 
     afterEach(() => {
@@ -64,6 +68,7 @@ describe("proposeWithFilesystemAgent", () => {
 
     it("falls back to proposeNextCandidate when not a git repo", async () => {
         const wt = await import("../../agents/agent-worktree.js");
+        vi.mocked(wt.isGitRepo).mockReturnValue(false);
         vi.mocked(wt.setupAgentWorktree).mockReturnValue(null);
 
         const candidate = store.materializeBaseline();
@@ -148,8 +153,10 @@ describe("proposeWithFilesystemAgent", () => {
         const allowlist = call[7] as string[] | undefined;
         expect(allowlist).toBeDefined();
         expect(allowlist).toContain("read_file");
-        expect(allowlist).toContain("shell_exec");
         expect(allowlist).toContain("write_file");
+        expect(allowlist).toContain("grep_file");
+        // shell_exec intentionally removed from proposer allowlist (prompt-injection risk)
+        expect(allowlist).not.toContain("shell_exec");
         expect(allowlist).not.toContain("web_search");
         expect(allowlist).not.toContain("browser_navigate");
         expect(allowlist).not.toContain("remember");

@@ -155,7 +155,8 @@ export class HarnessRunStore {
         }
 
         // AGENTS.md — the main instruction file
-        const agentsMd = _buildAgentsMd(objective, parent, candidate);
+        const candidateAbsDir = join(this.candidatesDir, candidate.candidateId);
+        const agentsMd = _buildAgentsMd(objective, parent, candidate, candidateAbsDir);
         const agentsMdPath = join(metaDir, "AGENTS.md");
         writeFileSync(agentsMdPath, agentsMd, "utf-8");
 
@@ -334,7 +335,12 @@ function _buildAgentsMd(
     objective: string,
     parent: CandidateManifest,
     candidate: CandidateManifest,
+    candidateAbsDir: string,   // absolute path to candidates/<id>/ directory
 ): string {
+    const metaAbs = join(candidateAbsDir, ".metaharness");
+    const tracesAbs = join(metaAbs, "experience", "parent", "traces");
+    const proposedConfigAbs = join(candidateAbsDir, "proposed-config.json");
+
     return `# MetaHarness Candidate Instructions
 
 ## Objective
@@ -343,62 +349,59 @@ ${objective}
 ## Your task
 Improve ATLAS's harness configuration to increase the objective score above the parent candidate (${parent.candidateId}, score: ${parent.objective ?? "n/a"}).
 
-## CRITICAL — Read individual trace files, NOT aggregate summaries
+## CRITICAL — Read individual trace files using ABSOLUTE paths
 Paper 2603.28052 ablation: summary-only context gives median accuracy 34.9
 vs 50.0 for raw trace access. Summaries hide the specific failures you need
-to diagnose. Every agent invocation in the parent candidate has its own JSON
-trace file under \`.metaharness/experience/parent/traces/\` named like
-\`<timestamp>_<uuid>.json\` (or similar) — read each one with \`read_file\`,
-or use \`shell_exec\` with \`ls\`/\`cat\`/\`grep\`/\`find\` to enumerate and
-inspect them.
+to diagnose. Use read_file with the absolute paths shown below.
 
-Do NOT rely on \`summary.json\` or \`parent-summary.json\` aggregates — they
-are intentionally thin pointers, not substitutes for the raw trace evidence.
+Do NOT use relative paths like \`.metaharness/...\` — they will fail because
+your working directory may not be the harness data directory.
 
 ### Recommended workflow
-1. \`shell_exec\` \`ls .metaharness/experience/parent/traces/*.json\` to list traces
-2. \`read_file\` each individual \`<timestamp>_<uuid>.json\` trace file
-3. \`grep\` for \`"taskSucceeded": false\` or low \`evaluationScore\` values
-4. Map failure patterns to specific dimensions in \`registry-dimensions.md\`
-5. Write \`proposed-config.json\` with a targeted change that cites the trace
+1. \`glob_files\` pattern \`${tracesAbs}/*.json\` to list all trace files
+2. \`read_file\` each individual trace JSON file (absolute path from glob output)
+3. \`grep_file\` for \`"taskSucceeded": false\` to find failing traces quickly
+4. Map failure patterns to specific dimensions in registry-dimensions.md
+5. Write your proposed config to the absolute path shown in "Output" below
 
 ## Constraints
-- Only modify \`proposed-config.json\` in this candidate directory
-- Only change dimensions listed in \`.metaharness/registry-dimensions.md\`
+- Only modify \`proposed-config.json\` (absolute path below)
+- Only change dimensions listed in registry-dimensions.md
 - All numeric values must stay within the [min, max] ranges shown
-- Do not change more than 4 dimensions at once per proposal
+- Do not change more than 4 dimensions at once
 - Every change must cite a specific trace file as evidence
 
-## Workspace layout
-- \`.metaharness/AGENTS.md\` — this file
-- \`.metaharness/registry-dimensions.md\` — all tunable parameters
-- \`.metaharness/parent-summary.json\` — thin pointer to traces (do NOT use the summary aggregates; use the individual trace files)
-- \`.metaharness/candidate-history.json\` — full history of all candidates
-- \`.metaharness/experience/parent/manifest.json\` — parent manifest
-- \`.metaharness/experience/parent/scores.json\` — parent evaluation scores
-- \`.metaharness/experience/parent/traces/<timestamp>_<uuid>.json\` — individual execution trace files (one per agent invocation; read these directly)
-- \`proposed-config.json\` — write your proposed config here
+## Workspace layout (use these ABSOLUTE paths)
+- ${join(metaAbs, "AGENTS.md")} — this file
+- ${join(metaAbs, "registry-dimensions.md")} — all tunable parameters
+- ${join(metaAbs, "parent-summary.json")} — parent scores and trace count
+- ${join(metaAbs, "candidate-history.json")} — full history of all candidates
+- ${join(metaAbs, "experience", "parent", "manifest.json")} — parent manifest
+- ${join(metaAbs, "experience", "parent", "scores.json")} — parent evaluation scores
+- ${tracesAbs}/<timestamp>_<uuid>.json — individual execution traces (read these directly)
+- ${join(metaAbs, "gradient-hints.md")} — dimension critiques (if present; advisory, verify with traces)
 
-## Allowed actions
-- \`read_file\` any file in this candidate directory
-- \`read_file\` \`.metaharness/\` files for context
-- \`shell_exec\` for \`ls\`, \`cat\`, \`grep\`, \`find\` to enumerate + inspect trace files
-- \`write_file\` \`proposed-config.json\` with your proposed dimension values
+## TextGrad Critiques (if gradient-hints.md exists)
+${join(metaAbs, "gradient-hints.md")} may contain dimension-level critiques with severity ratings.
+These are prior hypotheses — use them to prioritize trace inspection, but always verify
+against actual trace evidence before proposing changes.
 
-## Forbidden actions
-- Do not modify any other files
+## Allowed tools
+- \`read_file\` — read any file by absolute path
+- \`glob_files\` — enumerate trace files
+- \`grep_file\` — search inside files
+- \`write_file\` — write proposed-config.json only
+
+## Forbidden
+- Do not modify any file other than proposed-config.json
 - Do not fabricate scores — the external evaluator decides outcomes
-- Do not write more dimensions than exist in registry-dimensions.md
-- Do NOT rely on the \`summary.json\` aggregates — read the individual trace files
+- Do NOT use summary.json as a substitute for individual trace files
 
-## Evaluation contract
-Your proposal will be evaluated by running ATLAS's benchmark suite with your proposed config applied. The composite score (0-100) determines if this candidate is accepted. Improve over the parent to be marked "keep".
+## Output
+Write a valid JSON file to this exact path:
+${proposedConfigAbs}
 
-## Current candidate: ${candidate.candidateId}
-Parent: ${parent.candidateId} (score: ${parent.objective ?? "n/a"})
-
-## Output format
-Write a valid JSON file to \`proposed-config.json\` in this format:
+Format:
 \`\`\`json
 {
   "candidateId": "${candidate.candidateId}",
