@@ -82,8 +82,9 @@ function connect() {
     }
   };
 
-  ws.onerror = (err) => {
-    console.error("[ATLAS Bridge] WebSocket error:", err);
+  ws.onerror = () => {
+    // The WS onerror event has no useful message; the real reason appears in onclose
+    console.warn("[ATLAS Bridge] WebSocket error (ATLAS may not be running yet)");
   };
 }
 
@@ -207,6 +208,14 @@ function handleServerMessage(msg) {
   if (msg.type === "auth_failed") {
     console.error("[ATLAS Bridge] Authentication failed:", msg.error);
     authenticated = false;
+    authToken = "";
+    // Clear the stale cached token so the next boot doesn't reuse it
+    chrome.storage.local.remove(["authToken", "discoveredAt"]);
+    // Immediately re-discover to fetch the current session token
+    ws.close(1000, "re-auth");
+    setTimeout(() => {
+      autoDiscover().then((found) => { if (!found) startDiscovery(); });
+    }, 500);
     return;
   }
 
@@ -1638,7 +1647,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // ── Boot ─────────────────────────────────────
 
 chrome.storage.local.get(["serverUrl", "authToken", "discoveredAt"], async (data) => {
-  if (data.authToken && data.discoveredAt && (Date.now() - data.discoveredAt < 24 * 60 * 60 * 1000)) {
+  if (data.authToken && data.discoveredAt && (Date.now() - data.discoveredAt < 60 * 60 * 1000)) {
     authToken = data.authToken;
     serverUrl = data.serverUrl || serverUrl;
     connect();

@@ -135,10 +135,10 @@ function renderTabs(tabs) {
   tabsList.querySelectorAll('.tab-item').forEach(el => {
     el.addEventListener('click', () => {
       const idx = parseInt(el.dataset.idx);
-      chrome.runtime.sendMessage({
-        type: 'send_message',
-        text: `switch to tab ${idx + 1}`
-      });
+      chrome.runtime.sendMessage(
+        { type: 'send_message', text: `switch to tab ${idx + 1}` },
+        () => { void chrome.runtime.lastError; } // suppress unchecked lastError
+      );
     });
   });
 }
@@ -214,7 +214,10 @@ btnSel.addEventListener('click', () => {
 });
 
 btnStop.addEventListener('click', () => {
-  chrome.runtime.sendMessage({ type: 'send_message', text: 'stop' });
+  chrome.runtime.sendMessage(
+    { type: 'send_message', text: 'stop' },
+    () => { void chrome.runtime.lastError; }
+  );
   setAgentBusy(false);
 });
 
@@ -249,6 +252,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === 'atlas_action') {
     // Real-time action entry pushed from background
     chrome.runtime.sendMessage({ type: 'get_status' }, (resp) => {
+      if (chrome.runtime.lastError) return; // popup may be closing, ignore
       if (resp?.actionLog) renderActionLog(resp.actionLog);
     });
     setAgentBusy(true, msg.entry?.detail || 'Working…');
