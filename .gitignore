@@ -59,4 +59,11 @@ chrome-extension.zip
 .playwright-mcp/
 .kiro/
 .claire/
-.claude/worktrees/
+.claude/
+.agents/
+
+# Internal tooling / CI
+.github/
+docs/superpowers/
+desktop/test/
+desktop/hostinger-upload/
