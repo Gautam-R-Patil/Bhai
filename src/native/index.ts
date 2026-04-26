@@ -3,6 +3,7 @@
 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 
 // ── Types ────────────────────────────────────────
 
@@ -36,8 +37,7 @@ try {
     // process.cwd() = project root in dev, BOT_DIR in production build/bundle.
     const nativePath = path.join(process.cwd(), "native", "index.js");
 
-    // Dynamic import of CommonJS module
-    const { createRequire } = await import("node:module");
+    // Use synchronous createRequire (static import) — avoids top-level await in bundle
     const require = createRequire(import.meta.url);
     nativeModule = require(nativePath) as NativeModule;
     useNative = nativeModule?.isNativeAvailable ?? false;

@@ -12,15 +12,14 @@ import { getActivePage } from "./core.js";
 import { isNativeBrowserAvailable } from "./native-browser.js";
 import { transcribeBuffer } from "../../voice/transcribe.js";
 import { getCurrentMode } from "./browser-backend.js";
+import { createRequire } from "node:module";
+import { join } from "node:path";
 
 // Try to use Rust-native CAPTCHA classifier for speed
 let nativeClassifyCaptcha: ((html: string) => { kind: string; confidence: number }) | null = null;
 try {
-    const { createRequire } = await import("node:module");
-    const { fileURLToPath } = await import("node:url");
-    const path = await import("node:path");
-    const require = createRequire(import.meta.url);
-    const mod = require(path.default.join(process.cwd(), "native", "index.js")) as Record<string, unknown>;
+    const _req = createRequire(import.meta.url);
+    const mod = _req(join(process.cwd(), "native", "index.js")) as Record<string, unknown>;
     if (typeof mod.classifyCaptcha === "function") {
         nativeClassifyCaptcha = mod.classifyCaptcha as (html: string) => { kind: string; confidence: number };
     }

@@ -59,6 +59,7 @@ export interface CascadeResult {
 // ── Load Native Module ──────────────────────────
 
 import path from "node:path";
+import { createRequire as _modelCreateRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 interface NativeModelRouter {
@@ -112,8 +113,7 @@ try {
     // process.cwd() = project root in dev, BOT_DIR in production Electron build.
     // This works whether the code runs as individual dist/ files or as a single bundle.
     const nativePath = path.join(process.cwd(), "native", "index.js");
-    const { createRequire } = await import("node:module");
-    const require = createRequire(import.meta.url);
+    const require = _modelCreateRequire(import.meta.url);
     const mod = require(nativePath);
     if (mod?.selectModel) {
         native = mod;

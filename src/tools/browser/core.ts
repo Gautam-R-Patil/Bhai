@@ -8,6 +8,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
+import { createRequire as _createRequire } from "node:module";
 import type {
     PlaywrightModule,
     BrowserContext,
@@ -80,8 +81,7 @@ export function setLastElementMap(elements: InteractiveElement[]): void {
 let _nativeCompressElements: ((els: unknown[], maxText?: number | null, maxEls?: number | null) => string) | null = null;
 let _nativeGetStealthScript: ((seed: number) => string) | null = null;
 try {
-    const { createRequire } = await import("node:module");
-    const _req = createRequire(import.meta.url);
+    const _req = _createRequire(import.meta.url);
     const _nm = _req(path.resolve("native", "index.js")) as Record<string, unknown>;
     if (typeof _nm.compressElementsForLlm === "function") {
         _nativeCompressElements = _nm.compressElementsForLlm as ((els: unknown[], maxText?: number | null, maxEls?: number | null) => string);
