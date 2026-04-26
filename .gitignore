@@ -66,4 +66,12 @@ chrome-extension.zip
 .github/
 docs/superpowers/
 desktop/test/
+desktop/tests/
 desktop/hostinger-upload/
+
+# Test files
+**/__tests__/
+**/*.test.ts
+**/*.test.js
+**/*.spec.ts
+**/*.spec.js
