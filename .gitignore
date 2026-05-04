@@ -102,3 +102,4 @@ desktop/hostinger-upload/
 !src/utils/system-resources.test.ts
 !src/utils/win-shell.test.ts
 !src/utils/platform-capabilities.test.ts
+!src/commands/index.test.ts

@@ -17,6 +17,7 @@ export default defineConfig({
             "src/security/**/*.test.ts",
             "src/utils/**/*.test.ts",
             "src/config/**/*.test.ts",
+            "src/commands/**/*.test.ts",
             "convex/**/*.test.ts",
         ],
         environment: "node",
