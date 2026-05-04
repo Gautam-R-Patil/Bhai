@@ -98,3 +98,7 @@ desktop/hostinger-upload/
 !src/memory/temporal-cache.test.ts
 !src/config/paths.test.ts
 !src/language.test.ts
+!src/utils/uuid.test.ts
+!src/utils/system-resources.test.ts
+!src/utils/win-shell.test.ts
+!src/utils/platform-capabilities.test.ts
