@@ -6,6 +6,7 @@
 import { getConvexSiteUrl } from "./config/keys.js";
 import { hostname } from "node:os";
 import { generateKeyPair, deriveSharedKey, clearCryptoState } from "./crypto-transport.js";
+import { KDF_VERSION_LATEST, isSupportedKdfVersion } from "./crypto-kdf.js";
 
 // ── State ─────────────────────────────────────
 let _sessionToken: string | null = null;
@@ -139,6 +140,12 @@ async function createSession(otplessUserId: string): Promise<void> {
             otplessUserId,
             deviceFingerprint: getDeviceFingerprint(),
             clientPublicKey,
+            // Tell the server which KDF version the client is prepared
+            // to use. Server echoes back the version it actually used
+            // (older servers ignore this field and default to v1; the
+            // client respects whatever the server echoes). See
+            // crypto-kdf.ts for the version ↔ algorithm mapping.
+            kdfVersion: KDF_VERSION_LATEST,
         }),
     });
 
@@ -147,14 +154,26 @@ async function createSession(otplessUserId: string): Promise<void> {
         throw new Error(`Session creation failed (${response.status}): ${(error as any).error}`);
     }
 
-    const data = await response.json() as { token: string; expiresAt: number; serverPublicKey?: string };
+    const data = (await response.json()) as {
+        token: string;
+        expiresAt: number;
+        serverPublicKey?: string;
+        kdfVersion?: number;
+    };
     _sessionToken = data.token;
     _sessionExpiry = data.expiresAt;
 
-    // Derive shared AES-256 key from server's public key
+    // Derive shared AES-256 key from server's public key. Use the
+    // version the SERVER picked (it's the authority on what KDF the
+    // derived shared key was generated with). Fall back to the legacy
+    // v1 KDF if the server didn't echo a version — that keeps
+    // compatibility with servers deployed before the HKDF rollout.
     if (data.serverPublicKey) {
-        deriveSharedKey(data.serverPublicKey);
-        console.log("[Session] E2E encryption established (ECDH + AES-256-GCM)");
+        const serverVersion = isSupportedKdfVersion(data.kdfVersion) ? data.kdfVersion : 1;
+        deriveSharedKey(data.serverPublicKey, serverVersion);
+        console.log(
+            `[Session] E2E encryption established (ECDH + AES-256-GCM, KDF v${serverVersion})`,
+        );
     }
 }
 

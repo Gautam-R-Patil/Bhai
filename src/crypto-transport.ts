@@ -4,6 +4,7 @@
 // Provides forward secrecy and MITM protection on top of HTTPS.
 
 import crypto from "node:crypto";
+import { deriveE2EKey, KDF_VERSION_LATEST, type KdfVersion } from "./crypto-kdf.js";
 
 // ── State ─────────────────────────────────────
 let _ecdh: crypto.ECDH | null = null;
@@ -25,20 +26,27 @@ export function generateKeyPair(): string {
 
 /**
  * Derive the shared AES-256 key from the server's public key.
- * Uses ECDH + HKDF for proper key derivation.
+ *
+ * `version` selects the KDF: pass the same `kdfVersion` the server
+ * echoed in the `/api/auth/session` response so both sides agree
+ * byte-for-byte on the derived key. Defaults to KDF_VERSION_LATEST
+ * (HKDF-SHA256) for new sessions — existing v1 sessions pass 1.
+ *
+ * Must stay in lockstep with server-side derivation in
+ * `convex/crypto.ts::deriveSharedKey`.
  */
-export function deriveSharedKey(serverPublicKeyBase64: string): void {
+export function deriveSharedKey(
+    serverPublicKeyBase64: string,
+    version: KdfVersion = KDF_VERSION_LATEST,
+): void {
     if (!_ecdh) throw new Error("Key pair not generated yet");
 
     const serverPubKey = Buffer.from(serverPublicKeyBase64, "base64");
     const sharedSecret = _ecdh.computeSecret(serverPubKey);
 
-    // Derive AES-256 key: SHA-256(shared_secret + salt + info)
-    // Must match server-side derivation in convex/crypto.ts
     const salt = Buffer.from("atlas-e2e-salt");
     const info = Buffer.from("atlas-e2e-aes256-key");
-    const combined = Buffer.concat([sharedSecret, salt, info]);
-    _sharedKey = crypto.createHash("sha256").update(combined).digest();
+    _sharedKey = deriveE2EKey(sharedSecret, salt, info, version);
 }
 
 /**

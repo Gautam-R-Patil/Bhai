@@ -38,12 +38,27 @@ export async function generateServerKeyPair(): Promise<{
 }
 
 /**
+ * Supported KDF versions (mirror of src/crypto-kdf.ts — keep in sync).
+ *   v1: SHA256(shared ‖ salt ‖ info)       — legacy, kept for existing sessions
+ *   v2: HKDF-SHA256(shared, salt, info, 32) — new sessions, RFC 5869
+ */
+export const KDF_VERSION_LEGACY = 1;
+export const KDF_VERSION_HKDF = 2;
+export const KDF_VERSION_LATEST = KDF_VERSION_HKDF;
+export const SUPPORTED_KDF_VERSIONS = [KDF_VERSION_LEGACY, KDF_VERSION_HKDF] as const;
+
+/**
  * Derive AES-256 shared key from server private key + client public key.
- * Uses ECDH + HKDF (same params as client side).
+ *
+ * `version` selects the KDF. The caller (the /api/auth/session HTTP
+ * action) reads the client's requested kdfVersion from the request
+ * body, validates it, and echoes it back in the session response so
+ * the client knows which KDF the stored shared key was made with.
  */
 export async function deriveSharedKey(
   serverPrivateKeyJwk: string,
-  clientPublicKeyBase64: string
+  clientPublicKeyBase64: string,
+  version: number = KDF_VERSION_LATEST
 ): Promise<string> {
   // Import server private key
   const privKey = await crypto.subtle.importKey(
@@ -71,17 +86,42 @@ export async function deriveSharedKey(
     256
   );
 
-  // Use SHA-256 hash of (shared_secret + salt + info) as the AES key
-  // This is a simpler alternative to HKDF that Convex runtime supports
   const salt = new TextEncoder().encode("atlas-e2e-salt");
   const info = new TextEncoder().encode("atlas-e2e-aes256-key");
-  const combined = new Uint8Array(sharedBits.byteLength + salt.byteLength + info.byteLength);
-  combined.set(new Uint8Array(sharedBits), 0);
-  combined.set(salt, sharedBits.byteLength);
-  combined.set(info, sharedBits.byteLength + salt.byteLength);
 
-  const hashBuf = await crypto.subtle.digest("SHA-256", combined);
-  return bufToBase64(hashBuf);
+  if (version === KDF_VERSION_LEGACY) {
+    // Legacy: SHA-256(shared_secret + salt + info) — the original
+    // kept for sessions created before the HKDF rollout.
+    const combined = new Uint8Array(
+      sharedBits.byteLength + salt.byteLength + info.byteLength
+    );
+    combined.set(new Uint8Array(sharedBits), 0);
+    combined.set(salt, sharedBits.byteLength);
+    combined.set(info, sharedBits.byteLength + salt.byteLength);
+    const hashBuf = await crypto.subtle.digest("SHA-256", combined);
+    return bufToBase64(hashBuf);
+  }
+
+  if (version === KDF_VERSION_HKDF) {
+    // HKDF-SHA256 via Web Crypto's native implementation — RFC 5869.
+    // Import the shared-secret bytes as a raw key material first
+    // (Web Crypto requires an HKDF key before deriving from it).
+    const hkdfKey = await crypto.subtle.importKey(
+      "raw",
+      sharedBits,
+      { name: "HKDF" },
+      false,
+      ["deriveBits"]
+    );
+    const okm = await crypto.subtle.deriveBits(
+      { name: "HKDF", hash: "SHA-256", salt, info },
+      hkdfKey,
+      256 // 32 bytes × 8 bits = AES-256
+    );
+    return bufToBase64(okm);
+  }
+
+  throw new Error(`Unsupported KDF version: ${version}`);
 }
 
 // ── Encrypt / Decrypt ─────────────────────────

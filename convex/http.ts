@@ -11,6 +11,8 @@ import {
   encryptResponse,
   decryptRequest,
   validateTimestamp,
+  KDF_VERSION_LEGACY,
+  SUPPORTED_KDF_VERSIONS,
   type EncryptedEnvelope,
 } from "./crypto.js";
 
@@ -477,10 +479,18 @@ http.route({
       let serverPublicKey: string | undefined;
       let sharedKey: string | undefined;
 
+      // Select KDF version. Accept the client's requested version if
+      // it's one the server supports; otherwise fall back to v1 so
+      // pre-rollout clients (no kdfVersion field) keep working.
+      const requestedKdf = typeof body.kdfVersion === "number" ? body.kdfVersion : KDF_VERSION_LEGACY;
+      const kdfVersion = (SUPPORTED_KDF_VERSIONS as readonly number[]).includes(requestedKdf)
+        ? requestedKdf
+        : KDF_VERSION_LEGACY;
+
       if (clientPublicKey && typeof clientPublicKey === "string") {
         const serverKP = await generateServerKeyPair();
         serverPublicKey = serverKP.publicKey;
-        sharedKey = await deriveSharedKey(serverKP.privateKey, clientPublicKey);
+        sharedKey = await deriveSharedKey(serverKP.privateKey, clientPublicKey, kdfVersion);
         // privateKey is NOT stored — only the derived sharedKey
       }
 
@@ -492,10 +502,19 @@ http.route({
         sharedKey,
       });
 
-      return new Response(JSON.stringify(result), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      // Echo the KDF version the server actually used so the client
+      // derives with the matching algorithm. Omitted when no client
+      // public key was sent (no E2E → no shared key → nothing to match).
+      return new Response(
+        JSON.stringify({
+          ...result,
+          ...(sharedKey !== undefined ? { kdfVersion } : {}),
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
     } catch (err: any) {
       const status = err.message?.includes("not found") ? 404 : 403;
       return new Response(
