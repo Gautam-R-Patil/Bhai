@@ -19,6 +19,7 @@
     "lint": "biome check .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:hermetic": "bash scripts/run-tests.sh",
     "test:watch": "vitest",
     "smoke:video": "tsx scripts/video-studio-smoke.ts",
     "postinstall": "node scripts/patch-baileys.mjs || true && npx tsx scripts/postinstall-video.ts 2>/dev/null || true"
