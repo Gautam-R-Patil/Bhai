@@ -76,3 +76,13 @@ desktop/hostinger-upload/
 **/*.test.js
 **/*.spec.ts
 **/*.spec.js
+
+# ── Tracked test files (carve-outs) ──────────────────────────────
+# The wholesale pattern above is the project default (see 7581704).
+# Individual test files that should ship with the repo go here so
+# they survive the broad ignore. Add a new entry when you commit a
+# test you want to keep.
+!src/memory/embedding-cache.test.ts
+!src/memory/resolve-embedding.test.ts
+!src/whatsapp-sweep.test.ts
+!convex/credit-cost.test.ts
