@@ -106,3 +106,5 @@ desktop/hostinger-upload/
 !src/agents/plan-mode.test.ts
 !src/agents/smart-truncate.test.ts
 !src/agents/error-types.test.ts
+!src/agents/role-analyzer.test.ts
+!src/agents/handoff.test.ts
