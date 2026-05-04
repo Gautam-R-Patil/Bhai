@@ -24,22 +24,15 @@ export class HybridPipelineBackend extends LiveVoiceBackend {
         this.vad = new EnergyVAD({ threshold: 0.015, silenceFrames: 6, speechFrames: 2 });
     }
 
-    async connect(config: LiveSessionConfig): Promise<void> {
-        this.systemPrompt = config.systemPrompt;
-        this._connected = true;
-
-        // Wire VAD events
-        this.vad.on("speech_start", () => {
-            this.emit("user_speech_started");
-        });
-
-        this.vad.on("speech_end", () => {
-            this.emit("user_speech_ended");
-            this.processAccumulatedAudio();
-        });
-
-        this.emit("connected");
-        console.log("[HYBRID] Pipeline connected (Whisper STT + LLM + TTS)");
+    async connect(_config: LiveSessionConfig): Promise<void> {
+        // The hybrid backend is not currently wired to an LLM client — see the
+        // placeholder in processAccumulatedAudio. Selecting it would silently
+        // echo the user's transcript back as TTS, which is confusing UX.
+        // Fail loudly instead until a full integration lands.
+        throw new Error(
+            "HybridPipelineBackend (Whisper STT + LLM + TTS) is not implemented yet. " +
+                "Set LIVE_VOICE_BACKEND=gemini-live or openai-realtime, or configure direct API keys.",
+        );
     }
 
     async disconnect(): Promise<void> {

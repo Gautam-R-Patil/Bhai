@@ -234,6 +234,22 @@ http.route({
 
     const model = body.model || "anthropic/claude-sonnet-4.6";
 
+    // 3b. Precise credit pre-check — reject before calling the LLM if the
+    //     account can't afford the selected model. The earlier `<= 0` gate
+    //     is a cheap fast-path; this catches e.g. a 0.5-credit account
+    //     trying to invoke a 3-credit model.
+    const cost = getCreditCost(model);
+    if (account.ai_credits < cost) {
+      return new Response(
+        JSON.stringify({
+          error: "Insufficient credits",
+          required: cost,
+          available: account.ai_credits,
+        }),
+        { status: 402, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
     // 4. Get OpenRouter API key from Convex env (NEVER leaves server)
     const openrouterKey = process.env.OPENROUTER_API_KEY;
     if (!openrouterKey) {
@@ -408,19 +424,31 @@ http.route({
         });
       }
 
-      // 9. Deduct credits atomically (server-side, non-blocking)
-      const cost = getCreditCost(model);
+      // 9. Deduct credits atomically (server-side).
+      //    Pre-checked at step 3b, so under normal conditions this succeeds.
+      //    If it still fails (e.g. extreme concurrency race across parallel
+      //    tool calls) the provider tokens have already been burned — log
+      //    loudly for manual reconciliation, but return the response anyway
+      //    since the user got value.
       try {
         const deductResult = await ctx.runMutation(internal.accounts.deductCreditsInternal, {
           otplessUserId: account.otplessUserId,
           amount: cost,
         });
         if (deductResult && !deductResult.success) {
-          console.warn(`[HTTP Proxy] Credit deduction rejected: ${deductResult.error} (remaining: ${deductResult.remaining})`);
+          console.error(
+            `[HTTP Proxy] POST-LLM credit deduction REJECTED for user=${account.otplessUserId} ` +
+              `model=${model} cost=${cost} remaining=${deductResult.remaining}: ${deductResult.error}. ` +
+              `Tokens already consumed on provider — manual reconciliation may be required.`,
+          );
         }
       } catch (err) {
-        // Log but don't fail the request — the LLM response is already generated
-        console.error("[HTTP Proxy] Credit deduction failed:", err);
+        console.error(
+          `[HTTP Proxy] POST-LLM credit deduction THREW for user=${account.otplessUserId} ` +
+            `model=${model} cost=${cost}. Tokens already consumed on provider — manual reconciliation may be required. ` +
+            `Error:`,
+          err,
+        );
       }
 
       // 10. Return the OpenRouter response (encrypted if client uses E2E)

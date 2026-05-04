@@ -27,8 +27,12 @@ export default function SubmissionsPage() {
   useEffect(() => {
     const loadSubmissions = async () => {
       try {
+        const meRes = await fetch("/api/developer/me");
+        if (!meRes.ok) throw new Error("Not authenticated");
+        const { developerId } = (await meRes.json()) as { developerId: string };
+
         const subs = await convexQuery<Submission[]>("store/submissions:listByDeveloper", {
-          developerId: "current",
+          developerId,
           limit: 50,
         });
         setSubmissions(subs);

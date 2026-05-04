@@ -19,28 +19,13 @@ export async function transcribeAudio(audioPath: string): Promise<TranscriptionR
     const start = Date.now();
     if (!fs.existsSync(audioPath)) return { text: "", language: "en", confidence: 0, durationMs: 0, source: "fallback" };
 
-    // Try Ollama whisper
-    try {
-        const audioData = fs.readFileSync(audioPath).toString("base64");
-        const resp = await fetch("http://localhost:11434/api/generate", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ model: "whisper", prompt: "Transcribe this audio.", images: [audioData], stream: false }),
-            signal: AbortSignal.timeout(30000),
-        });
-        if (resp.ok) {
-            const data = await resp.json() as { response: string };
-            if (data.response) return { text: data.response, language: "en", confidence: 0.9, durationMs: Date.now() - start, source: "whisper" };
-        }
-    } catch { /* */ }
-
-    // Fallback: macOS built-in speech recognition
-    try {
-        const { stdout } = await execFileAsync("osascript", ["-e",
-            `do shell script "say -v '?' 2>/dev/null; echo 'macOS speech available'"`
-        ], { timeout: 5000 });
-        return { text: "[macOS ASR not directly available — use voice message processing pipeline]", language: "en", confidence: 0.3, durationMs: Date.now() - start, source: "macos" };
-    } catch { /* */ }
-
+    // Local ASR via Ollama and macOS `osascript` are not currently implemented.
+    // The previous Ollama path passed audio as `images: [...]` to `/api/generate`
+    // which only accepts that field for vision models — it always failed
+    // silently. The macOS path returned a placeholder string. Both removed.
+    //
+    // Use the cloud transcription pipeline in src/voice/transcribe.ts (Whisper
+    // via OpenAI-compatible API) or the Telegram voice message handler
+    // (src/voice/telegram-voice.ts) for actual transcription.
     return { text: "", language: "en", confidence: 0, durationMs: Date.now() - start, source: "fallback" };
 }
