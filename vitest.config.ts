@@ -15,6 +15,7 @@ export default defineConfig({
             "src/memory/**/*.test.ts",
             "src/harness/**/*.test.ts",
             "src/security/**/*.test.ts",
+            "src/utils/**/*.test.ts",
             "convex/**/*.test.ts",
         ],
         environment: "node",
