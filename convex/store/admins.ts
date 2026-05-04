@@ -377,7 +377,7 @@ export const getActivityLogs = query({
   handler: async (ctx, args) => {
     const limit = args.limit ?? 100;
 
-    let query = ctx.db
+    const query = ctx.db
       .query("store_activity_log")
       .withIndex("by_timestamp")
       .order("desc");

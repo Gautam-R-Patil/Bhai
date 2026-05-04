@@ -1,11 +1,18 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
-// Local ASR — Moonshine (27M) or Whisper via Ollama/local inference.
-// 48% lower error than Whisper Tiny. Runs on CPU.
+// Local ASR stub.
+//
+// Historical: this module tried Ollama Whisper and a macOS osascript
+// fallback. Both paths were broken (Ollama was called with audio as
+// `images: [...]`, which is vision-only; the macOS path returned a
+// placeholder string) and always fell through.
+//
+// For real transcription use src/voice/transcribe.ts (cloud Whisper
+// via OpenAI-compatible API) or src/voice/telegram-voice.ts. This
+// stub is kept so existing callers still link; it returns an empty
+// result with source:"fallback" so they treat it as "no transcription
+// available" rather than crashing.
 
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import fs from "node:fs";
-const execFileAsync = promisify(execFile);
 
 export interface TranscriptionResult {
     text: string;

@@ -215,7 +215,16 @@ export const getFeatured = query({
 });
 
 /**
- * Get trending items (most installs this week)
+ * Get trending items (most installs this week).
+ *
+ * KNOWN LIMITATION: with .take(10000) + in-memory sort, once `store_items`
+ * grows past 10k active rows this returns the wrong top-N — the scan cap
+ * cuts off BEFORE the sort, so high-install items can be missed.
+ *
+ * Proper fix: add a compound index `["status", "weeklyInstalls"]` on
+ * `store_items` and replace the scan+sort with an indexed descending
+ * range query. Until then the catalog size is well under the cap and
+ * the current behavior is correct. Low-ROI to prioritize now.
  */
 export const getTrending = query({
   args: { limit: v.optional(v.number()) },

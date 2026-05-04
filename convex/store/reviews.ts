@@ -110,7 +110,11 @@ export const getSummary = query({
 });
 
 /**
- * Get all reviews by a user
+ * Get all reviews by a user.
+ *
+ * Cap at 500 — a user with >500 reviews is unusual but possible for
+ * long-tenured accounts. Raise further if that's expected; beyond ~5k
+ * this should paginate.
  */
 export const getByUser = query({
   args: { userId: v.string() },
@@ -119,7 +123,7 @@ export const getByUser = query({
       .query("store_reviews")
       .filter((q) => q.eq(q.field("userId"), args.userId))
       .order("desc")
-      .take(50);
+      .take(500);
 
     // Enrich with item info
     const enriched = await Promise.all(

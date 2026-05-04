@@ -236,8 +236,14 @@ export async function getBrowser(): Promise<BrowserContext> {
     try {
         return await _browserInitPromise;
     } catch (err) {
-        // Release the lock so a subsequent call can retry the init.
+        // Release the lock so a subsequent call can retry the init from
+        // scratch. Also null out browserContext — launchPersistentContext
+        // may have succeeded and assigned before a later step in the IIFE
+        // (addInitScript, route setup, popup guard) threw. Without this
+        // the next caller's `if (browserContext) return browserContext;`
+        // fast-path would hand back a partially-initialized context.
         _browserInitPromise = null;
+        browserContext = null;
         throw err;
     }
 }
