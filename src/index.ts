@@ -29,7 +29,6 @@ import { loadJobs } from "./cron/store.js";
 import { runAgent } from "./agent.js";
 import { setTaskTriggerHandler } from "./tools/scheduled.js";
 import { initSandbox } from "./security/sandbox.js";
-import { loadPluginConfig } from "./plugins/registry.js";
 import { closeBrowser, initChromeBridge, closeChromeBridge, registerPlaywrightBackend, registerChromeBackend, initActionCache } from "./tools/browser/index.js";
 import { initBrowserMemory } from "./tools/browser-memory.js";
 import { initTaskLearnings } from "./memory/task-learnings.js";
@@ -260,8 +259,6 @@ async function boot() {
         initMCPServers().catch(e => console.warn("[BOOT] MCP:", (e as Error).message)),
         // Skills (fetch metadata from server — instructions stay server-side)
         initSkillMetadata().catch(e => console.warn("[BOOT] Skills:", (e as Error).message)),
-        // Plugins
-        loadPluginConfig().catch(e => console.warn("[BOOT] Plugins:", (e as Error).message)),
         // Load persisted dynamic tools (created by create_tool with persistent=true)
         loadDynamicTools().catch(e => console.warn("[BOOT] Dynamic tools:", (e as Error).message)),
         // Hooks (user + project ~/.atlas/hooks.json and .atlas/hooks.json)
