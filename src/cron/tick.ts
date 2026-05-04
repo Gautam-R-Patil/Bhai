@@ -18,8 +18,12 @@ export type RunPromptFn = (
     ctx: CronJobContext,
 ) => Promise<string>;
 
-/** Channel-agnostic delivery — ATLAS wires this to the per-platform sender. */
-export type DeliverFn = (job: CronJob, response: string) => Promise<void>;
+/** Channel-agnostic delivery — ATLAS wires this to the per-platform sender.
+ * Return `false` on a definite failure (e.g. unknown channel / missing
+ * adapter) so the tick engine can mark the run as `error` rather than
+ * silently leaving `success` in the store. Throwing is also acceptable
+ * and treated the same; returning `void`/`true` means delivered-or-routed. */
+export type DeliverFn = (job: CronJob, response: string) => Promise<boolean | void>;
 
 export interface CronTickOptions {
     runPrompt: RunPromptFn;
@@ -45,14 +49,27 @@ export async function runCronTick(opts: CronTickOptions): Promise<number> {
         };
         try {
             const response = await opts.runPrompt(job.prompt, ctx);
-            await markRun(job.id, "success");
+            let delivered: boolean | void = undefined;
+            let deliverErrMsg: string | null = null;
             try {
-                await opts.deliver(job, response);
+                delivered = await opts.deliver(job, response);
             } catch (deliverErr) {
+                deliverErrMsg = (deliverErr as Error).message;
                 console.warn(
                     `[CRON] Delivery failed for ${job.id}:`,
-                    (deliverErr as Error).message,
+                    deliverErrMsg,
                 );
+            }
+            if (deliverErrMsg !== null || delivered === false) {
+                // Honest: runPrompt succeeded but the result never reached
+                // the user. Mark the run as error so /cron status surfaces it.
+                await markRun(
+                    job.id,
+                    "error",
+                    deliverErrMsg ?? `misroute: deliverTo="${job.deliverTo ?? "(unset)"}"`,
+                );
+            } else {
+                await markRun(job.id, "success");
             }
         } catch (runErr) {
             const msg = (runErr as Error).message ?? String(runErr);

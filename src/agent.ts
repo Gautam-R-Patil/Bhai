@@ -754,20 +754,35 @@ export async function runAgent(
     channelContext?: ChannelContext,
 ): Promise<AgentResponse> {
     const isForked = !!historyFork;
-    // Skip tracing for forked calls; enter ALS context for owner calls so evaluate()
-    // reads the right trace ID even when multiple channels run concurrently.
+    // Caller-context ALS wrapper — privilege-sensitive tools (cron, etc.)
+    // read isOwner from this scope, not from a module-level slot, so
+    // interleaved telegram-owner + whatsapp-contact turns don't swap
+    // privileges when they interleave LLM awaits. Absent channelContext
+    // defaults to non-owner (harness/research/voice paths).
+    const callerIsOwner = channelContext?.isOwner === true;
+    const runWithCaller = async (
+        fn: () => Promise<AgentResponse>,
+    ): Promise<AgentResponse> => {
+        // Lazy import to avoid circular dep at module-load time.
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const mod = require("./tools/cron-tool.js") as typeof import("./tools/cron-tool.js");
+        return await mod.runWithCallerContext({ isOwner: callerIsOwner }, fn);
+    };
     if (!isForked) {
         const _earlyTraceId = startTrace(channelContext?.channel || "default",
             userMessage.replace(/\n*\[SOURCE:.*\]$/s, "").trim(), 0);
-        return runWithEvalTraceId(_earlyTraceId, () => _runAgentBody(
-            llm, userMessage, onProgress, media, signal, historyFork, modelHint, toolAllowlist, channelContext, _earlyTraceId
-        )).catch((err: unknown) => {
-            // Ensure trace is finalized even on uncaught exceptions
+        return runWithCaller(() =>
+            runWithEvalTraceId(_earlyTraceId, () => _runAgentBody(
+                llm, userMessage, onProgress, media, signal, historyFork, modelHint, toolAllowlist, channelContext, _earlyTraceId
+            )),
+        ).catch((err: unknown) => {
             if (_earlyTraceId) finalizeTrace(_earlyTraceId, false);
             throw err;
         });
     }
-    return _runAgentBody(llm, userMessage, onProgress, media, signal, historyFork, modelHint, toolAllowlist, channelContext, null);
+    return runWithCaller(() =>
+        _runAgentBody(llm, userMessage, onProgress, media, signal, historyFork, modelHint, toolAllowlist, channelContext, null),
+    );
 }
 
 async function _runAgentBody(
@@ -799,13 +814,6 @@ async function _runAgentBody(
     if (channelContext?.channel) {
         const { setActiveChannel } = await import("./tools/channel-send.js");
         setActiveChannel(channelContext.channel);
-    }
-
-    // Inject caller owner-status for tools that make privilege-sensitive
-    // decisions (cron scheduling etc.). Must happen before any tool call.
-    if (channelContext) {
-        const { setCronCallerContext } = await import("./tools/cron-tool.js");
-        setCronCallerContext({ isOwner: channelContext.isOwner === true });
     }
 
     // Trace ID injected by the outer runAgent wrapper (already started + in ALS context).

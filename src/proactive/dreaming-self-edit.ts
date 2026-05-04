@@ -25,12 +25,13 @@ export function _selfEditIsUserFacing(
     return true;
 }
 
-// Per-field cap chosen so the full line stays under PIPE_BUF on both
-// Linux (4096) and macOS (512). 4 fields × 400 chars + overhead ≈ 1.8 KB.
-// macOS's 512-byte guarantee is stricter than the line we emit — callers
-// that demand hard atomicity on macOS must use a lock file. We trade the
-// macOS strict guarantee for readable audit rows + reliable POSIX append.
-const AUDIT_FIELD_CAP = 400;
+// macOS PIPE_BUF=512 is the tight bound. Budget:
+//   24 (ISO ts) + 43 (key prefixes) + 5 (bool) = 72 bytes fixed overhead.
+//   Remaining 440 bytes across 4 fields × worst-case 2× escape expansion
+//   (e.g. each `\r` becomes the 2-byte `\r`) = 55 pre-escape chars per
+//   field. Round down to 50 for margin, then append a 13-byte truncation
+//   marker (which itself doesn't expand).
+const AUDIT_FIELD_CAP = 50;
 const TRUNC_MARKER = "…[truncated]";
 
 function truncateField(s: string, cap: number = AUDIT_FIELD_CAP): string {

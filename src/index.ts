@@ -785,7 +785,6 @@ async function boot() {
     // ── Cron Scheduler ────────────────────────
     try {
         await loadJobs();
-        const bot = createTelegramBot;
         startCronTicker({
             runPrompt: async (prompt, ctx) => {
                 const channel = (ctx.deliverTo || "cron") as string;
@@ -808,42 +807,39 @@ async function boot() {
             },
             deliver: async (job, response) => {
                 const channel = job.deliverTo;
-                if (!channel || !response) return;
-                try {
+                if (!channel || !response) return true;
+                if (channel === "telegram") {
                     const { getTelegramBot, getTelegramConfig, sendProactiveMessage: sendTg } = await import("./telegram.js");
-                    if (channel === "telegram") {
-                        const tb = getTelegramBot();
-                        const cfg = getTelegramConfig();
-                        if (tb && cfg) await sendTg(tb, cfg, response);
-                        return;
-                    }
-                    if (channel === "slack") {
-                        const { sendSlackProactiveMessage } = await import("./slack.js");
-                        await sendSlackProactiveMessage(response);
-                        return;
-                    }
-                    if (channel === "discord") {
-                        const { sendDiscordProactiveMessage } = await import("./discord.js");
-                        await sendDiscordProactiveMessage(response);
-                        return;
-                    }
-                    if (channel === "matrix") {
-                        const { sendMatrixProactiveMessage } = await import("./matrix.js");
-                        await sendMatrixProactiveMessage(response);
-                        return;
-                    }
-                    if (channel === "overlay") {
-                        const { sendOverlayNotification } = await import("./overlay/overlay-chat.js");
-                        sendOverlayNotification(response);
-                        return;
-                    }
-                    console.error(
-                        `[CRON] MISROUTED — job ${job.id} had deliverTo="${channel}" which has no handler. Response (${response.length} chars) was dropped.`,
-                    );
-                } catch (err) {
-                    console.warn(`[CRON] Delivery error for ${job.id}:`, (err as Error).message);
+                    const tb = getTelegramBot();
+                    const cfg = getTelegramConfig();
+                    if (!tb || !cfg) return false;
+                    await sendTg(tb, cfg, response);
+                    return true;
                 }
-                void bot; // reserved for future use
+                if (channel === "slack") {
+                    const { sendSlackProactiveMessage } = await import("./slack.js");
+                    await sendSlackProactiveMessage(response);
+                    return true;
+                }
+                if (channel === "discord") {
+                    const { sendDiscordProactiveMessage } = await import("./discord.js");
+                    await sendDiscordProactiveMessage(response);
+                    return true;
+                }
+                if (channel === "matrix") {
+                    const { sendMatrixProactiveMessage } = await import("./matrix.js");
+                    await sendMatrixProactiveMessage(response);
+                    return true;
+                }
+                if (channel === "overlay") {
+                    const { sendOverlayNotification } = await import("./overlay/overlay-chat.js");
+                    sendOverlayNotification(response);
+                    return true;
+                }
+                console.error(
+                    `[CRON] MISROUTED — job ${job.id} had deliverTo="${channel}" which has no handler. Response (${response.length} chars) was dropped.`,
+                );
+                return false;
             },
         });
         console.log(`   Cron    : ticker started (60s interval)`);

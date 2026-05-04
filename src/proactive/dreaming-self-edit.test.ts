@@ -73,20 +73,20 @@ describe("self-edit actuation", () => {
         expect(line).toContain("\\\\n\\nafter");
     });
 
-    it("_formatSelfEditForAudit — caps each field at 400 chars so appendFile atomicity (PIPE_BUF=512 on macOS) holds", () => {
-        const huge = "x".repeat(10_000);
+    it("_formatSelfEditForAudit — stays under PIPE_BUF=512 (macOS) even on pathological inputs", () => {
+        // Worst case for the escape expansion: a field full of `\r` chars
+        // (1 byte → 2 bytes after escape) or `\\` (1 byte → 2 bytes for
+        // the backslash-double, ×2 again if it contains another escape).
+        const pathological = "\r".repeat(10_000);
         const line = _formatSelfEditForAudit({
-            targetFile: huge,
-            originalSnippet: huge,
-            editedSnippet: huge,
-            reason: huge,
+            targetFile: pathological,
+            originalSnippet: pathological,
+            editedSnippet: pathological,
+            reason: pathological,
             applied: false,
         });
-        // Whole line must fit under PIPE_BUF=512 on macOS — we aim for 2KB
-        // budget on Linux (4096 PIPE_BUF) but with macOS safety for a
-        // 500-byte ceiling per field-truncated row. Test the invariant:
-        // line stays bounded and all fields get truncated with a marker.
-        expect(line.length).toBeLessThan(2500);
+        // macOS guarantees atomicity up to PIPE_BUF=512.
+        expect(line.length).toBeLessThan(512);
         expect(line).toContain("…[truncated]");
     });
 

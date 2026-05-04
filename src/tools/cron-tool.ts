@@ -2,25 +2,35 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { ToolDefinition } from "./get-current-time.js";
 import { toolError, toolSuccess } from "./tool-result.js";
 import { addJob, cancelJob, getJobs } from "../cron/store.js";
 
 type Op = "schedule" | "list" | "cancel" | "trigger";
 
-// Injection pattern (mirrors src/tools/ask-owner.ts): channel entry points
-// (telegram/whatsapp/discord/slack/matrix/overlay) set the caller's owner
-// status on their thread of execution around each runAgent call. The tool
-// handler reads from this module-level slot instead of trusting the LLM.
-// Node's single-threaded event loop + sequential message processing in
-// channel handlers makes this safe.
+// AsyncLocalStorage-scoped caller context. Two concurrent runAgent calls
+// (e.g. telegram-owner + whatsapp-contact) each run inside their own ALS
+// frame, so a contact-agent never sees the owner's isOwner:true even when
+// both turns are interleaving LLM awaits on the same event loop.
 interface CronCallerContext {
     isOwner: boolean;
 }
-let _currentCaller: CronCallerContext | null = null;
+const _callerStorage = new AsyncLocalStorage<CronCallerContext>();
 
-export function setCronCallerContext(ctx: CronCallerContext | null): void {
-    _currentCaller = ctx;
+/** Run `fn` with `ctx` as the ambient caller context for cron-scheduling. */
+export function runWithCallerContext<T>(
+    ctx: CronCallerContext,
+    fn: () => Promise<T> | T,
+): Promise<T> | T {
+    return _callerStorage.run(ctx, fn);
+}
+
+/** Legacy setter preserved for callers that can't wrap — always overwrites
+ * nothing (ALS-scoped reads ignore it). Kept as a no-op so existing call
+ * sites don't break while we roll the ALS wrapper out. */
+export function setCronCallerContext(_ctx: CronCallerContext | null): void {
+    // Intentionally empty: reads go through ALS now.
 }
 
 function getStringParam(
@@ -92,8 +102,9 @@ export const cronTool: ToolDefinition = {
                     schedule,
                     deliverTo: getStringParam(input, "deliverTo") ?? undefined,
                     userId: getStringParam(input, "userId") ?? undefined,
-                    // isOwner comes from injected caller context — never the LLM.
-                    isOwner: _currentCaller?.isOwner === true,
+                    // isOwner comes from ALS-scoped caller context — never
+                    // the LLM args. Absent wrapper → non-owner default.
+                    isOwner: _callerStorage.getStore()?.isOwner === true,
                 });
                 return toolSuccess({
                     success: true,
