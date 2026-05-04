@@ -189,7 +189,7 @@ function isLikelyMusicCommand(userMessage: string): boolean {
 
 // ── Constants ─────────────────────────────────
 
-/** Hermes Agent periodic nudge interval: every N iterations, prompt the agent to persist valuable information. */
+/** Periodic nudge interval: every N iterations, prompt the agent to persist valuable information. */
 const MEMORY_NUDGE_INTERVAL = 5;
 
 // ── Browser tool names ────────────────────────
@@ -1117,7 +1117,7 @@ STRATEGY: Execute in as few tool calls as possible.
 
         iterations++;
 
-        // ── Hermes Agent Periodic Memory Nudge ──
+        // ── Periodic Memory Nudge ──
         // Every N iterations, nudge the agent to self-evaluate what's worth remembering.
         // This ensures important facts/decisions/preferences are persisted during long
         // conversations, not just at session end.
@@ -1717,7 +1717,7 @@ STRATEGY: Execute in as few tool calls as possible.
                     console.log(`  ⚡ Music fast-path phase-1 (heuristic) — skipping memory briefing`);
                 }
 
-                // ── LLM Memory Briefing (Hermes pattern) ──
+                // ── LLM Memory Briefing ──
                 // When enabled, synthesize raw memory fragments into a cohesive briefing
                 // via a cheap Haiku call. Falls back to raw injection on failure.
                 if (USE_MEMORY_BRIEFING && queryMode !== "llm_only" && !musicFastPathPhase1) {

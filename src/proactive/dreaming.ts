@@ -15,6 +15,7 @@ import type { LLMClient, ChatCompletionMessageParam } from "../llm.js";
 import { selectForPlanning } from "../model-router.js";
 import { extractJSON } from "../utils/json-extract.js";
 import { getTimezone } from "../location/index.js";
+import { _selfEditIsUserFacing } from "./dreaming-self-edit.js";
 
 // ── Configuration ────────────────────────────
 
@@ -297,17 +298,27 @@ async function runDreaming(llm: LLMClient, recentContext: string): Promise<void>
                         rulesPath,
                     );
                     if (edit) {
-                        console.log(`[DREAMING] 📝 Self-edit proposal: ${edit.reason}`);
-                        console.log(`[DREAMING]   Target: ${edit.targetFile}`);
-                        console.log(`[DREAMING]   Original: ${edit.originalSnippet.substring(0, 80)}...`);
-                        console.log(`[DREAMING]   Edited: ${edit.editedSnippet.substring(0, 80)}...`);
-                        // Log the proposal but don't auto-apply
-                        dreamResults.push({
-                            task: "Self-improvement proposal",
-                            result: `Suggested instruction edit: ${edit.reason}\nFile: ${edit.targetFile}\nOriginal: ${edit.originalSnippet}\nProposed: ${edit.editedSnippet}`,
-                            success: true,
-                            durationMs: 0,
-                        });
+                        const { appendSelfEditAudit, _recordSelfEditActuation } =
+                            await import("./dreaming-self-edit.js");
+                        const { remember } = await import("../memory/sqlite.js");
+                        await appendSelfEditAudit(edit);
+                        try {
+                            remember(
+                                _recordSelfEditActuation(edit),
+                                "self-lesson",
+                                "self-edit,dreaming",
+                                8,
+                                "reflection",
+                            );
+                            console.log(
+                                `[DREAMING] 🧠 Self-lesson stored: ${edit.reason.slice(0, 80)}`,
+                            );
+                        } catch (memErr) {
+                            console.warn(
+                                "[DREAMING] Self-lesson memory write failed:",
+                                (memErr as Error).message,
+                            );
+                        }
                     }
                 }
             }
@@ -369,10 +380,12 @@ export function getDreamResultsForDelivery(): DreamResult[] | null {
  * Format dream results into a user-friendly message.
  */
 export function formatDreamResults(results: DreamResult[]): string {
+    const visible = results.filter((r) => _selfEditIsUserFacing(r.task, r.result));
+    if (visible.length === 0) return "";
     const lines: string[] = [];
     lines.push("🌙 **While you were sleeping, I worked on a few things:**\n");
 
-    for (const r of results) {
+    for (const r of visible) {
         const icon = r.success ? "✅" : "⚠️";
         const duration = r.durationMs > 0 ? ` (${(r.durationMs / 1000).toFixed(0)}s)` : "";
         lines.push(`${icon} **${r.task}**${duration}`);

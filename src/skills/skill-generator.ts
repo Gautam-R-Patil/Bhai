@@ -4,12 +4,10 @@
 
 /**
  * ── Skill Auto-Generator ─────────────────────────
- * Inspired by Hermes Agent (NousResearch) and SAGE (Dec 2025).
- * After successful multi-step task completions, automatically extract
- * them as reusable skill markdown files with frontmatter, triggers,
- * and step-by-step instructions.
- *
- * Generated skills are saved to `skills/auto/` and loaded by skills/loader.ts.
+ * SAGE-style (Dec 2025) skill extractor. After successful multi-step task
+ * completions, automatically emit them as reusable skill markdown files
+ * with frontmatter, triggers, and step-by-step instructions. Generated
+ * skills are saved to `skills/auto/` and loaded by skills/loader.ts.
  */
 
 import type { LLMClient, ChatCompletionMessageParam } from "../llm.js";

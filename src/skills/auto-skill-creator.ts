@@ -3,10 +3,10 @@
 // See LICENSE.md for details.
 
 // ── Autonomous Skill Creator ────────────────────
-// Inspired by Hermes Agent (NousResearch) — automatically generates
-// reusable skill files after complex task completions (5+ tool calls,
-// swarm/long-task). Analyzes tool call sequences, extracts procedures,
-// detects pitfalls, and writes gray-matter markdown skills to skills/auto/.
+// Automatically generates reusable skill files after complex task
+// completions (5+ tool calls, swarm/long-task). Analyzes tool call
+// sequences, extracts procedures, detects pitfalls, and writes
+// gray-matter markdown skills to skills/auto/.
 
 import type { LLMClient, ChatCompletionMessageParam } from "../llm.js";
 import fs from "node:fs";
