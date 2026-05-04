@@ -6,6 +6,7 @@
 // Minimal blocking — only truly system-destructive commands are blocked.
 // The agent uses its own judgment to ask the user when appropriate.
 
+import fs from "node:fs";
 import path from "node:path";
 
 // ── Codebase Self-Protection ──────────────────
@@ -16,14 +17,64 @@ const PROTECTED_PATHS: string[] = [
 ];
 
 /**
+ * Resolve a path to its real (symlink-followed) absolute form.
+ *
+ * path.resolve alone normalizes "/." and "/.." and makes the path
+ * absolute, but it does NOT follow symlinks — meaning a symlink in
+ * an unprotected dir pointing INTO a protected one would bypass the
+ * downstream protected-path check. fs.realpathSync resolves every
+ * symlink in the chain, closing that TOCTOU gap.
+ *
+ * realpathSync throws ENOENT when the target doesn't exist yet — a
+ * common case for write operations (we're about to CREATE the file).
+ * In that case we fall back to realpath-ing the deepest existing
+ * ancestor and appending the missing tail, so a brand-new file
+ * inside a symlinked directory is still correctly classified.
+ */
+function realResolve(inputPath: string): string {
+    const abs = path.resolve(inputPath);
+    try {
+        return fs.realpathSync(abs);
+    } catch {
+        // Target missing. Walk up the tree to find the nearest real
+        // ancestor and reattach the trailing (non-existent) segments
+        // so a future-file inside a symlinked parent is still
+        // resolved through the symlink.
+        const parts = abs.split(path.sep);
+        const trailing: string[] = [];
+        while (parts.length > 1) {
+            const leaf = parts.pop();
+            if (leaf) trailing.unshift(leaf);
+            const candidate = parts.join(path.sep) || path.sep;
+            try {
+                const real = fs.realpathSync(candidate);
+                return trailing.length
+                    ? path.join(real, ...trailing)
+                    : real;
+            } catch {
+                // Keep walking up.
+            }
+        }
+        // Nothing resolved (e.g. / doesn't exist, which shouldn't
+        // happen). Fall back to the plain absolute form.
+        return abs;
+    }
+}
+
+/**
  * Returns true when the given path lives inside the protected codebase.
  * Write and delete tools should refuse to act on protected paths.
+ *
+ * Uses realResolve under the hood so a symlink pointing into the
+ * protected tree is correctly classified. The sibling-prefix guard
+ * (`startsWith(rp + sep)`) prevents "/path/ATLAS-sibling" from
+ * matching "/path/ATLAS".
  */
 export function isProtectedPath(filePath: string): boolean {
-    const resolved = path.resolve(filePath);
+    const resolved = realResolve(filePath);
     const sep = path.sep;
     return PROTECTED_PATHS.some((p) => {
-        const rp = path.resolve(p);
+        const rp = realResolve(p);
         return resolved === rp || resolved.startsWith(rp + sep);
     });
 }
@@ -37,10 +88,10 @@ export function shellArgsTargetProtectedPath(args: string[]): string | null {
         // Skip flags
         if (arg.startsWith("-")) continue;
         try {
-            const resolved = path.resolve(arg);
+            const resolved = realResolve(arg);
             const sep = path.sep;
             if (PROTECTED_PATHS.some((p) => {
-                const rp = path.resolve(p);
+                const rp = realResolve(p);
                 return resolved === rp || resolved.startsWith(rp + sep);
             })) {
                 return resolved;
@@ -159,12 +210,15 @@ const CRITICAL_SYSTEM_PATHS: string[] = [
 /**
  * Returns true when the given path is inside one of the critical OS paths.
  * Used as a safety net to prevent accidental modification of core system files.
+ *
+ * Symlink-aware via realResolve — a symlink pointing at /etc/passwd
+ * is treated as /etc/passwd for the purposes of this check.
  */
 export function isCriticalSystemPath(filePath: string): boolean {
-    const resolved = path.resolve(filePath).toLowerCase();
+    const resolved = realResolve(filePath).toLowerCase();
     const sep = path.sep;
     return CRITICAL_SYSTEM_PATHS.some((p) => {
-        const rp = path.resolve(p).toLowerCase();
+        const rp = realResolve(p).toLowerCase();
         return resolved === rp || resolved.startsWith(rp + sep);
     });
 }
@@ -193,7 +247,7 @@ export function isPathAllowed(filePath: string): boolean {
  */
 export function getPathBlockedReason(filePath: string): string | null {
     if (isCriticalSystemPath(filePath)) {
-        const resolved = path.resolve(filePath);
+        const resolved = realResolve(filePath);
         return `Path "${resolved}" is a critical operating-system path and cannot be modified. ` +
             `This safety guardrail prevents accidental damage to the OS. ` +
             `If you truly need to change this file, use a shell command with appropriate privileges.`;

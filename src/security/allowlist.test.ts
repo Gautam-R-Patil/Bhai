@@ -3,6 +3,9 @@
 // See LICENSE.md for details.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
     isProtectedPath,
     shellArgsTargetProtectedPath,
@@ -64,6 +67,76 @@ describe("allowlist — codebase self-protection", () => {
         it("handles trailing slashes idempotently", () => {
             expect(isProtectedPath(`${REPO}/`)).toBe(true);
             expect(isProtectedPath(`${REPO}/src/`)).toBe(true);
+        });
+
+        it("follows symlinks that point INTO the protected tree (TOCTOU fix)", () => {
+            // Skip on Windows — symlink semantics differ and require admin.
+            if (process.platform === "win32") return;
+
+            // Create a symlink in an unprotected temp dir that points at
+            // a real file inside the protected repo. Pre-fix, the bot
+            // could have written "through" this symlink without the gate
+            // firing. Post-fix, realResolve dereferences the link and
+            // the protected-path check correctly rejects.
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-allowlist-"));
+            const linkPath = path.join(tmpDir, "decoy");
+            try {
+                fs.symlinkSync(`${REPO}/src/agent.ts`, linkPath);
+                expect(isProtectedPath(linkPath)).toBe(true);
+            } finally {
+                // Best-effort cleanup; never let teardown failures mask
+                // the actual test result.
+                try {
+                    fs.unlinkSync(linkPath);
+                } catch {}
+                try {
+                    fs.rmdirSync(tmpDir);
+                } catch {}
+            }
+        });
+
+        it("follows symlinks to protected directories too", () => {
+            if (process.platform === "win32") return;
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-allowlist-"));
+            const linkPath = path.join(tmpDir, "dir-decoy");
+            try {
+                fs.symlinkSync(`${REPO}/src`, linkPath);
+                // A file UNDER the symlinked dir should also be caught.
+                expect(isProtectedPath(path.join(linkPath, "agent.ts"))).toBe(true);
+                // Even one that doesn't exist yet — the realpath walk-up
+                // must resolve the parent symlink.
+                expect(isProtectedPath(path.join(linkPath, "new-file.ts"))).toBe(true);
+            } finally {
+                try {
+                    fs.unlinkSync(linkPath);
+                } catch {}
+                try {
+                    fs.rmdirSync(tmpDir);
+                } catch {}
+            }
+        });
+
+        it("does NOT flag symlinks that point OUTSIDE the protected tree", () => {
+            if (process.platform === "win32") return;
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-allowlist-"));
+            const linkPath = path.join(tmpDir, "outside");
+            const targetFile = path.join(tmpDir, "target.txt");
+            try {
+                fs.writeFileSync(targetFile, "hello");
+                fs.symlinkSync(targetFile, linkPath);
+                // Sanity: symlink target is in /tmp, not protected.
+                expect(isProtectedPath(linkPath)).toBe(false);
+            } finally {
+                try {
+                    fs.unlinkSync(linkPath);
+                } catch {}
+                try {
+                    fs.unlinkSync(targetFile);
+                } catch {}
+                try {
+                    fs.rmdirSync(tmpDir);
+                } catch {}
+            }
         });
     });
 
@@ -350,16 +423,28 @@ describe("allowlist — critical system path protection", () => {
             expect(isCriticalSystemPath("/tmp")).toBe(false);
             expect(isCriticalSystemPath("/tmp/junk.txt")).toBe(false);
             expect(isCriticalSystemPath("/Users/me")).toBe(false);
-            expect(isCriticalSystemPath("/etc/myapp.conf")).toBe(false); // not in list
             expect(isCriticalSystemPath("/var/log/app.log")).toBe(false);
+            expect(isCriticalSystemPath("/opt/app/data")).toBe(false);
         });
 
-        it("does NOT match sibling paths via prefix (no separator)", () => {
-            // /etc/passwd2 mustn't match /etc/passwd — it's a different file.
-            // The check uses === or startsWith(rp + sep), so a suffix char
-            // without sep doesn't match.
-            expect(isCriticalSystemPath("/etc/passwd2")).toBe(false);
-            expect(isCriticalSystemPath("/boot-backup")).toBe(false);
+        it("on macOS, /etc symlink IS followed to /private/etc (TOCTOU fix)", () => {
+            // /etc is a symlink to private/etc on macOS. Post-fix, realResolve
+            // follows it, and CRITICAL_SYSTEM_PATHS lists /private/etc
+            // wholesale, so /etc/myapp.conf is correctly classified as
+            // inside a critical tree (before this was a blindspot).
+            if (process.platform === "darwin") {
+                expect(isCriticalSystemPath("/etc/myapp.conf")).toBe(true);
+                expect(isCriticalSystemPath("/etc/passwd2")).toBe(true);
+            }
+        });
+
+        it("does NOT match sibling paths via prefix (no separator) on non-symlinked trees", () => {
+            // Use a critical root that isn't a macOS symlink target.
+            // /usr/bin is literal /usr/bin on both mac and linux; /usr/binutils
+            // must NOT match.
+            expect(isCriticalSystemPath("/usr/binutils")).toBe(false);
+            // /bin vs /bin-backup — /bin is literal on all unixes.
+            expect(isCriticalSystemPath("/bin-backup")).toBe(false);
         });
     });
 
