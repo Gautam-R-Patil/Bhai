@@ -93,3 +93,4 @@ desktop/hostinger-upload/
 !src/security/secrets.test.ts
 !src/security/audit-log.test.ts
 !src/security/skill-scanner.test.ts
+!src/tools/tool-intelligence.test.ts
