@@ -109,6 +109,11 @@ let currentQR: string | null = null;
 // Per-JID owner conversation histories (full ChatCompletionMessageParam for agent historyFork)
 const ownerConversations = new Map<string, ChatCompletionMessageParam[]>();
 
+// lastConvoActivity tracks when ownerConversations[jid] was last touched.
+// Parallel Map so we don't have to change the value type — used by the
+// periodic TTL sweep below to evict inactive JIDs.
+const lastConvoActivity = new Map<string, number>();
+
 // Rate limiter state
 const messageCounts = new Map<string, { count: number; windowStart: number }>();
 let lastMessageTime = 0;
@@ -123,6 +128,61 @@ interface ActiveTask {
 const activeTasks = new Map<string, ActiveTask[]>();
 const MAX_CONCURRENT_TASKS = 3;
 let taskIdCounter = 0;
+
+// ── Per-JID state TTL sweep ──
+// Prevents unbounded growth of the three per-JID maps over long-running
+// sessions (months of uptime × many distinct JIDs = meaningful memory).
+// Each map has its own expiry:
+//   - messageCounts: 1h (== the rate-limit window itself)
+//   - ownerConversations: 7d since last turn (a user returning within a
+//     week keeps their context; a one-off contact is released)
+//   - activeTasks: if every task for a JID has been running >1h it's
+//     treated as abandoned — the normal lifecycle already deletes tasks
+//     on completion, this catches leaks.
+const RATE_LIMIT_WINDOW_MS = 3600_000;
+const OWNER_CONVO_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const ACTIVE_TASK_ABANDONED_MS = 1 * 60 * 60 * 1000;
+const STATE_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
+
+let _stateSweepTimer: NodeJS.Timeout | null = null;
+
+function _sweepStaleWhatsAppState(): void {
+    const now = Date.now();
+
+    for (const [jid, entry] of messageCounts) {
+        if (now - entry.windowStart > RATE_LIMIT_WINDOW_MS) messageCounts.delete(jid);
+    }
+
+    for (const [jid, lastActivity] of lastConvoActivity) {
+        if (now - lastActivity > OWNER_CONVO_TTL_MS) {
+            ownerConversations.delete(jid);
+            lastConvoActivity.delete(jid);
+        }
+    }
+
+    for (const [jid, tasks] of activeTasks) {
+        const stillAlive = tasks.filter((t) => now - t.startedAt < ACTIVE_TASK_ABANDONED_MS);
+        if (stillAlive.length === 0) activeTasks.delete(jid);
+        else if (stillAlive.length !== tasks.length) activeTasks.set(jid, stillAlive);
+    }
+}
+
+function startStateSweep(): void {
+    if (_stateSweepTimer) return;
+    _stateSweepTimer = setInterval(_sweepStaleWhatsAppState, STATE_SWEEP_INTERVAL_MS);
+    // Don't let the sweeper keep the process alive on its own.
+    _stateSweepTimer.unref?.();
+}
+
+function stopStateSweep(): void {
+    if (_stateSweepTimer) {
+        clearInterval(_stateSweepTimer);
+        _stateSweepTimer = null;
+    }
+}
+
+// Kick off the sweep at module load; unref'd so it never blocks process exit.
+startStateSweep();
 
 // ── Strip internal debug blocks before sending ──
 
@@ -1250,6 +1310,7 @@ async function handleOwnerMessage(
         // Cap at 200 messages
         while (history.length > 200) history.shift();
         ownerConversations.set(jid, history);
+        lastConvoActivity.set(jid, Date.now());
 
         const responseText = result.text;
         console.log(`[WA] Response: ${responseText.substring(0, 200)}...`);
@@ -2090,6 +2151,7 @@ export async function sendWhatsAppProactiveMessage(message: string, filePath?: s
  * Gracefully close the WhatsApp connection.
  */
 export async function closeWhatsApp(): Promise<void> {
+    stopStateSweep();
     if (socket) {
         try {
             // Abort all active tasks
