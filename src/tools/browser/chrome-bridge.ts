@@ -509,12 +509,16 @@ export async function sendBridgeCommand(
     return new Promise((resolve, reject) => {
         // Backpressure: if the extension has stalled and we have too many
         // orphan in-flight commands, refuse the new one rather than let
-        // the map grow until process memory is exhausted.
+        // the map grow until process memory is exhausted. Include a
+        // retry hint so callers don't tight-loop — the queue drains as
+        // pending commands time out (see OPERATION_TIMEOUTS above;
+        // most are 2-30 s).
         if (pendingRequests.size >= MAX_PENDING_REQUESTS) {
             if (native) native.recordBridgeError();
             reject(new Error(
                 `Chrome bridge pending-request queue full (${pendingRequests.size} / ${MAX_PENDING_REQUESTS}) — ` +
-                    `extension may be unresponsive. Reconnect or restart the extension.`,
+                    `extension is unresponsive or very busy. Retry after 5-10 seconds once pending commands ` +
+                    `time out; if this persists, reconnect or restart the extension.`,
             ));
             return;
         }
