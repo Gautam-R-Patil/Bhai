@@ -94,6 +94,9 @@ export const MODEL_DISPLAY: Record<string, string> = {
 
 import { IS_MAC, IS_WIN } from "./tools/platform.js";
 import { createDefaultPipeline, type ChatParams } from "./llm-middleware.js";
+import { sanitizeToolSchemas } from "./tools/schema-sanitizer.js";
+import { sanitizeContextEchoes } from "./context-scrubber.js";
+import { tryParseOssToolCalls } from "./llm-parser-fallback.js";
 
 // Platform identifier sent to server for platform-specific prompt assembly
 const PLATFORM = IS_MAC ? "mac" : IS_WIN ? "win" : "linux";
@@ -199,7 +202,12 @@ export function createLLMClient(config: Config): LLMClient {
                     model,
                     max_tokens: maxTokens,
                     messages: allMessages,
-                    tools: params.tools && params.tools.length > 0 ? params.tools : undefined,
+                    tools:
+                        params.tools && params.tools.length > 0
+                            ? (sanitizeToolSchemas(
+                                  params.tools as unknown as Array<Record<string, unknown>>,
+                              ) as unknown as typeof params.tools)
+                            : undefined,
                     platform: PLATFORM,
                     skillSlugs: params.skillSlugs || [],
                     systemPromptOverride: params.systemPrompt || undefined,
@@ -343,6 +351,11 @@ export function createLLMClient(config: Config): LLMClient {
                     if (isFallback) {
                         console.log(`  ✅ Fallback to ${MODEL_DISPLAY[currentModel] || currentModel} succeeded`);
                     }
+
+                    // OSS tool-call parser fallback: when the server returns
+                    // content with embedded <tool_call>… / <|python_tag|> / other
+                    // native markup but tool_calls is empty, parse and fill it in.
+                    tryParseOssToolCalls(responseData);
 
                     // Response caching is now handled by the cache middleware in the pipeline
 
