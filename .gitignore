@@ -104,3 +104,4 @@ desktop/hostinger-upload/
 !src/utils/platform-capabilities.test.ts
 !src/commands/index.test.ts
 !src/agents/plan-mode.test.ts
+!src/agents/smart-truncate.test.ts
