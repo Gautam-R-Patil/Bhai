@@ -10,6 +10,7 @@
 
 import type * as accounts from "../accounts.js";
 import type * as appRuntime from "../appRuntime.js";
+import type * as credit_cost from "../credit_cost.js";
 import type * as crypto from "../crypto.js";
 import type * as http from "../http.js";
 import type * as observability from "../observability.js";
@@ -32,6 +33,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   accounts: typeof accounts;
   appRuntime: typeof appRuntime;
+  credit_cost: typeof credit_cost;
   crypto: typeof crypto;
   http: typeof http;
   observability: typeof observability;

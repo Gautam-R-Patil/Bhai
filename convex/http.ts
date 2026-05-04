@@ -83,7 +83,7 @@ async function buildResponse(
 
 // Credit cost table + lookup live in ./credit-cost.ts so the tier
 // mapping is unit-testable without a Convex harness.
-import { getCreditCost } from "./credit-cost.js";
+import { getCreditCost } from "./credit_cost.js";
 
 // ── Helper: extract + validate session token ──
 async function validateRequest(
@@ -1554,6 +1554,52 @@ http.route({
     );
 
     return new Response(JSON.stringify({ key: runtimeKey }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// OpenRouter availability probe (admin-only, server-side)
+// Hits OpenRouter /v1/models + /v1/credits with the server-held key and
+// returns the raw data so a local audit script can diff it against the
+// model IDs ATLAS references. Never exposes the key to the client.
+// ══════════════════════════════════════════════════════════════════════════
+
+http.route({
+  path: "/api/llm/audit",
+  method: "GET",
+  handler: httpAction(async (_ctx, request) => {
+    const adminError = await validateAdminRequest(request);
+    if (adminError) return adminError;
+
+    const key = process.env.OPENROUTER_API_KEY;
+    if (!key) {
+      return new Response(
+        JSON.stringify({ error: "OPENROUTER_API_KEY not set in Convex env" }),
+        { status: 500, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    const fetchOr = async (path: string) => {
+      const r = await fetch(`https://openrouter.ai/api/v1${path}`, {
+        headers: { Authorization: `Bearer ${key}` },
+      });
+      const text = await r.text();
+      let data: unknown = null;
+      try { data = JSON.parse(text); } catch { data = { raw: text }; }
+      return { status: r.status, ok: r.ok, data };
+    };
+
+    const [models, credits] = await Promise.all([
+      fetchOr("/models"),
+      fetchOr("/credits").catch((e) => ({
+        status: 0, ok: false, data: { error: (e as Error).message },
+      })),
+    ]);
+
+    return new Response(JSON.stringify({ models, credits }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });

@@ -1,11 +1,15 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
-// Usage:  OPENROUTER_API_KEY=sk-or-... tsx scripts/audit-openrouter.ts
+// Usage:  ADMIN_API_KEY=... npx tsx scripts/audit-openrouter.ts
+// Optional:  ATLAS_ENV=prod            # probe the prod Convex deployment
+//            CONVEX_SITE_URL=https://...  # override the endpoint URL
 //
-// Probes OpenRouter's /v1/models + /v1/credits with the supplied key and
-// diffs the returned model list against the IDs referenced from src/llm.ts.
-// Output: gap table + credit/plan summary + suggested substitutes.
+// Calls the admin-gated /api/llm/audit Convex route; the server holds the
+// OpenRouter key and returns /v1/models + /v1/credits. This script diffs
+// the catalog against the model IDs ATLAS references in src/llm.ts and
+// reports gaps + same-provider alternates.
 
-import { MODELS, MODEL_DISPLAY } from "../src/llm.js";
+import { MODELS } from "../src/llm.js";
+import { getConvexSiteUrl } from "../src/config/keys.js";
 
 interface ORModel {
     id: string;
@@ -13,62 +17,64 @@ interface ORModel {
     context_length?: number;
 }
 
-interface ORCredits {
-    data?: { total_credits?: number; total_usage?: number };
+interface ProbeResponse {
+    models: { ok: boolean; status: number; data: { data?: ORModel[]; error?: unknown } };
+    credits: { ok: boolean; status: number; data: { data?: { total_credits?: number; total_usage?: number }; error?: unknown } };
 }
 
-async function fetchJson<T>(url: string, key: string): Promise<T> {
-    const r = await fetch(url, { headers: { Authorization: `Bearer ${key}` } });
-    if (!r.ok) throw new Error(`${url} → HTTP ${r.status} ${await r.text()}`);
-    return (await r.json()) as T;
-}
-
-function fmtUSD(n: number | undefined): string {
-    return n == null ? "—" : `$${n.toFixed(4)}`;
+function fmtUSDPerMTok(rate: number | undefined): string {
+    if (rate == null || Number.isNaN(rate)) return "—";
+    return `$${(rate * 1_000_000).toFixed(2)}/M`;
 }
 
 async function main() {
-    const key = process.env.OPENROUTER_API_KEY;
-    if (!key) {
-        console.error("✗ OPENROUTER_API_KEY not set. Run:");
-        console.error("    OPENROUTER_API_KEY=sk-or-... npx tsx scripts/audit-openrouter.ts");
+    const adminKey = process.env.ADMIN_API_KEY;
+    if (!adminKey) {
+        console.error("✗ ADMIN_API_KEY not set. Run:");
+        console.error("    ADMIN_API_KEY=... npx tsx scripts/audit-openrouter.ts");
         process.exit(2);
     }
 
-    console.log("— OpenRouter availability audit —\n");
+    const url = `${getConvexSiteUrl()}/api/llm/audit`;
+    console.log(`— OpenRouter availability audit via ${url} —\n`);
 
-    try {
-        const credits = await fetchJson<ORCredits>(
-            "https://openrouter.ai/api/v1/credits",
-            key,
-        );
-        const total = credits.data?.total_credits ?? 0;
-        const used = credits.data?.total_usage ?? 0;
+    const r = await fetch(url, { headers: { Authorization: `Bearer ${adminKey}` } });
+    if (!r.ok) {
+        const body = await r.text();
+        console.error(`✗ ${r.status} ${r.statusText}\n${body}`);
+        process.exit(1);
+    }
+    const probe = (await r.json()) as ProbeResponse;
+
+    if (probe.credits.ok && probe.credits.data.data) {
+        const total = probe.credits.data.data.total_credits ?? 0;
+        const used = probe.credits.data.data.total_usage ?? 0;
         console.log(`Credits: $${total.toFixed(2)} total, $${used.toFixed(2)} used, $${(total - used).toFixed(2)} remaining\n`);
-    } catch (err) {
-        console.warn(`⚠ /v1/credits failed: ${(err as Error).message}\n`);
+    } else {
+        console.warn(`⚠ /v1/credits: status=${probe.credits.status} ${JSON.stringify(probe.credits.data)}\n`);
     }
 
-    const { data: models } = await fetchJson<{ data: ORModel[] }>(
-        "https://openrouter.ai/api/v1/models",
-        key,
-    );
+    if (!probe.models.ok || !probe.models.data.data) {
+        console.error(`✗ /v1/models: status=${probe.models.status} ${JSON.stringify(probe.models.data)}`);
+        process.exit(1);
+    }
+    const models = probe.models.data.data;
     const availableIds = new Set(models.map((m) => m.id));
     console.log(`Provider exposes ${models.length} models.\n`);
 
     console.log("— ATLAS referenced models —");
-    const referenced = Object.entries(MODELS) as Array<[keyof typeof MODELS, string]>;
+    const referenced = Object.entries(MODELS) as Array<[string, string]>;
     const missing: Array<{ slot: string; id: string }> = [];
     for (const [slot, id] of referenced) {
         const ok = availableIds.has(id);
         const m = ok ? models.find((x) => x.id === id) : undefined;
         const mark = ok ? "✓" : "✗";
         const ctx = m?.context_length ? `ctx=${(m.context_length / 1000).toFixed(0)}k` : "";
-        const price = m?.pricing?.prompt
-            ? `in=${fmtUSD(Number(m.pricing.prompt) * 1000)}/1k out=${fmtUSD(Number(m.pricing.completion) * 1000)}/1k`
-            : "";
-        console.log(`  ${mark} ${String(slot).padEnd(20)} ${id.padEnd(48)} ${ctx.padEnd(10)} ${price}`);
-        if (!ok) missing.push({ slot: String(slot), id });
+        const pIn = m?.pricing?.prompt ? Number(m.pricing.prompt) : undefined;
+        const pOut = m?.pricing?.completion ? Number(m.pricing.completion) : undefined;
+        const price = pIn != null ? `in=${fmtUSDPerMTok(pIn)} out=${fmtUSDPerMTok(pOut)}` : "";
+        console.log(`  ${mark} ${slot.padEnd(22)} ${id.padEnd(54)} ${ctx.padEnd(10)} ${price}`);
+        if (!ok) missing.push({ slot, id });
     }
 
     if (missing.length === 0) {
@@ -76,7 +82,7 @@ async function main() {
         return;
     }
 
-    console.log(`\n⚠ ${missing.length} model(s) NOT available — fallback will kick in on these:`);
+    console.log(`\n⚠ ${missing.length} model(s) NOT available — horizontal-failover kicks in on these:`);
     for (const r of missing) {
         const [provider] = r.id.split("/");
         const family = models
@@ -85,7 +91,8 @@ async function main() {
             .sort();
         console.log(`\n  ✗ ${r.id}  (slot ${r.slot})`);
         if (family.length > 0) {
-            console.log(`     try: ${family.slice(0, 5).join(", ")}${family.length > 5 ? ", …" : ""}`);
+            const suggest = family.slice(0, 6).join(", ");
+            console.log(`     same-provider options: ${suggest}${family.length > 6 ? ", …" : ""}`);
         } else {
             console.log(`     no models from provider "${provider}" on this key`);
         }

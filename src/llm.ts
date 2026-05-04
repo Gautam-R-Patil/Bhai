@@ -357,6 +357,15 @@ export function createLLMClient(config: Config): LLMClient {
                     // native markup but tool_calls is empty, parse and fill it in.
                     tryParseOssToolCalls(responseData);
 
+                    // Strip any leaked <memory-context> fence echoes from the
+                    // final assistant content before it reaches channels.
+                    const msg = responseData.choices?.[0]?.message as
+                        | { content?: string | null }
+                        | undefined;
+                    if (msg && typeof msg.content === "string" && msg.content) {
+                        msg.content = sanitizeContextEchoes(msg.content);
+                    }
+
                     // Response caching is now handled by the cache middleware in the pipeline
 
                     return responseData;

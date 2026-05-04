@@ -106,6 +106,7 @@ import { compressFiles, fileMetadata, openInApp, runShortcut, screenRecord, tras
 import { deleteFile, listDirectory } from "./files.js";
 import { generateImage } from "./generate-image.js";
 import { getCurrentTime, type ToolDefinition } from "./get-current-time.js";
+import { cronTool } from "./cron-tool.js";
 import { gifSearch } from "./gif-search.js";
 import { githubTool } from "./github-api.js";
 import { gmailTool, googleAccounts, googleCalendarTool } from "./google-api.js";
@@ -265,6 +266,7 @@ setRegistryRef(registry);
 
 // Core tools
 registry.set(getCurrentTime.schema.function.name, getCurrentTime);
+registry.set(cronTool.schema.function.name, cronTool);
 
 // Memory tools
 registry.set(memoryStore.schema.function.name, memoryStore);

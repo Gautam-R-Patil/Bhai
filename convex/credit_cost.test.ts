@@ -3,9 +3,9 @@
 // See LICENSE.md for details.
 
 import { describe, it, expect } from "vitest";
-import { CREDIT_COSTS, getCreditCost } from "./credit-cost.js";
+import { CREDIT_COSTS, getCreditCost } from "./credit_cost.js";
 
-describe("credit-cost", () => {
+describe("credit_cost", () => {
     describe("getCreditCost", () => {
         it("returns 0.25 for light-tier Haiku", () => {
             expect(getCreditCost("anthropic/claude-haiku-4.5")).toEqual(0.25);

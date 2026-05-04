@@ -24,6 +24,9 @@ import { initToolRouter, setToolRouterLLM } from "./tool-router.js";
 import { initSkillMetadata } from "./skills/loader.js";
 import { setupTelegramVoice } from "./voice/telegram-voice.js";
 import { startHeartbeat, stopHeartbeat } from "./proactive/heartbeat.js";
+import { startCronTicker, stopCronTicker } from "./cron/tick.js";
+import { loadJobs } from "./cron/store.js";
+import { runAgent } from "./agent.js";
 import { setTaskTriggerHandler } from "./tools/scheduled.js";
 import { initSandbox } from "./security/sandbox.js";
 import { loadPluginConfig } from "./plugins/registry.js";
@@ -778,6 +781,73 @@ async function boot() {
         console.log(`   Replay  : dream replay scheduled nightly`);
     };
     scheduleDecayAndReplay();
+
+    // ── Cron Scheduler ────────────────────────
+    try {
+        await loadJobs();
+        const bot = createTelegramBot;
+        startCronTicker({
+            runPrompt: async (prompt, ctx) => {
+                const channel = (ctx.deliverTo || "cron") as string;
+                const response = await runAgent(
+                    llm,
+                    prompt,
+                    undefined,
+                    undefined,
+                    undefined,
+                    undefined,
+                    undefined,
+                    undefined,
+                    {
+                        channel,
+                        userId: ctx.userId || "cron",
+                        isOwner: true,
+                    },
+                );
+                return response.text;
+            },
+            deliver: async (job, response) => {
+                const channel = job.deliverTo;
+                if (!channel || !response) return;
+                try {
+                    const { getTelegramBot, getTelegramConfig, sendProactiveMessage: sendTg } = await import("./telegram.js");
+                    if (channel === "telegram") {
+                        const tb = getTelegramBot();
+                        const cfg = getTelegramConfig();
+                        if (tb && cfg) await sendTg(tb, cfg, response);
+                        return;
+                    }
+                    if (channel === "slack") {
+                        const { sendSlackProactiveMessage } = await import("./slack.js");
+                        await sendSlackProactiveMessage(response);
+                        return;
+                    }
+                    if (channel === "discord") {
+                        const { sendDiscordProactiveMessage } = await import("./discord.js");
+                        await sendDiscordProactiveMessage(response);
+                        return;
+                    }
+                    if (channel === "matrix") {
+                        const { sendMatrixProactiveMessage } = await import("./matrix.js");
+                        await sendMatrixProactiveMessage(response);
+                        return;
+                    }
+                    if (channel === "overlay") {
+                        const { sendOverlayNotification } = await import("./overlay/overlay-chat.js");
+                        sendOverlayNotification(response);
+                        return;
+                    }
+                    console.warn(`[CRON] Unknown deliverTo "${channel}" for ${job.id}; response was: ${response.slice(0, 120)}`);
+                } catch (err) {
+                    console.warn(`[CRON] Delivery error for ${job.id}:`, (err as Error).message);
+                }
+                void bot; // reserved for future use
+            },
+        });
+        console.log(`   Cron    : ticker started (60s interval)`);
+    } catch (cronErr) {
+        console.warn("[CRON] Ticker failed to start (non-fatal):", (cronErr as Error).message);
+    }
 
     // ── Start Bot ─────────────────────────────
     bot.start({
