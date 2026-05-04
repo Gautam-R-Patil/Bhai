@@ -22,6 +22,7 @@ export default defineConfig({
             "src/llm-parsers/**/*.test.ts",
             "src/cron/**/*.test.ts",
             "src/prompts/**/*.test.ts",
+            "src/skills/**/*.test.ts",
             "convex/**/*.test.ts",
         ],
         environment: "node",

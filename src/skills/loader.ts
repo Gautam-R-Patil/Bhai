@@ -18,7 +18,7 @@ export interface SkillMetadata {
     name: string;
     description: string;
     categories: string[];
-    source: "system" | "store";
+    source: "system" | "store" | "auto";
     permissions?: string[]; // e.g. ["filesystem", "network", "shell"]
     riskLevel?: "low" | "medium" | "high" | "critical";
 }
@@ -66,8 +66,17 @@ export async function initSkillMetadata(): Promise<void> {
         }
 
         const data = await response.json() as { skills: SkillMetadata[] };
-        cachedMetadata = data.skills || [];
-        console.log(`📚 ${cachedMetadata.length} skill(s) available (${cachedMetadata.filter(s => s.source === "store").length} from store)`);
+        const serverSkills = data.skills || [];
+        // Merge in auto-generated skills written to skills/auto/ by the
+        // auto-skill-creator after complex tasks. Without this, the tool
+        // router never sees agent-authored procedures.
+        const { mergeAutoSkills } = await import("./auto-skill-ingest.js");
+        cachedMetadata = mergeAutoSkills(serverSkills);
+        const autoCount = cachedMetadata.filter((s) => s.source === "auto").length;
+        const storeCount = cachedMetadata.filter((s) => s.source === "store").length;
+        console.log(
+            `📚 ${cachedMetadata.length} skill(s) available (${storeCount} store, ${autoCount} auto)`,
+        );
     } catch (err) {
         console.warn("⚠️  Skill metadata fetch failed (non-fatal):", (err as Error).message);
     }
