@@ -22,6 +22,7 @@ import pino from "pino";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { LLMClient } from "./llm.js";
 import { runAgent, type MediaAttachment, type ChannelContext } from "./agent.js";
+import { sweepStaleWhatsAppMaps } from "./whatsapp-sweep.js";
 import {
     smartChunkMessage,
     categorizeError,
@@ -146,25 +147,23 @@ const STATE_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
 
 let _stateSweepTimer: NodeJS.Timeout | null = null;
 
+// The per-map TTL logic itself lives in ./whatsapp-sweep.ts so it can
+// be unit tested with synthetic maps + a fake clock instead of booting
+// the full Baileys + agent stack. This module just wires the module-
+// level maps into that pure helper on each tick.
 function _sweepStaleWhatsAppState(): void {
-    const now = Date.now();
-
-    for (const [jid, entry] of messageCounts) {
-        if (now - entry.windowStart > RATE_LIMIT_WINDOW_MS) messageCounts.delete(jid);
-    }
-
-    for (const [jid, lastActivity] of lastConvoActivity) {
-        if (now - lastActivity > OWNER_CONVO_TTL_MS) {
-            ownerConversations.delete(jid);
-            lastConvoActivity.delete(jid);
-        }
-    }
-
-    for (const [jid, tasks] of activeTasks) {
-        const stillAlive = tasks.filter((t) => now - t.startedAt < ACTIVE_TASK_ABANDONED_MS);
-        if (stillAlive.length === 0) activeTasks.delete(jid);
-        else if (stillAlive.length !== tasks.length) activeTasks.set(jid, stillAlive);
-    }
+    sweepStaleWhatsAppMaps(
+        Date.now(),
+        {
+            rateLimitWindowMs: RATE_LIMIT_WINDOW_MS,
+            ownerConvoTtlMs: OWNER_CONVO_TTL_MS,
+            activeTaskAbandonedMs: ACTIVE_TASK_ABANDONED_MS,
+        },
+        messageCounts,
+        ownerConversations,
+        lastConvoActivity,
+        activeTasks,
+    );
 }
 
 function startStateSweep(): void {
