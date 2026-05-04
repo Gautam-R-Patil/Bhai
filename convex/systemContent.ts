@@ -11,10 +11,13 @@ import { internalQuery, internalMutation } from "./_generated/server";
 // ══════════════════════════════════════════════════════════════════════════
 
 // ── Get all system prompts ───────────────────────
+// Bounded: system_prompts currently has ~7 seeded slugs (identity, rules,
+// rules-mac, rules-windows, browsing, coding, spec). Cap at 100 so a
+// misconfigured table never OOMs the admin panel.
 export const getAllPrompts = internalQuery({
   args: {},
   handler: async (ctx) => {
-    return await ctx.db.query("system_prompts").collect();
+    return await ctx.db.query("system_prompts").take(100);
   },
 });
 
@@ -30,13 +33,16 @@ export const getPromptBySlug = internalQuery({
 });
 
 // ── Get all active system skills ─────────────────
+// Bounded: active skills is the curated built-in set (currently ~12
+// per CLAUDE.md). Cap at 200 — well above current use, well below
+// memory-bounded disasters.
 export const getAllActiveSkills = internalQuery({
   args: {},
   handler: async (ctx) => {
     return await ctx.db
       .query("system_skills")
       .withIndex("by_active", (q) => q.eq("isActive", true))
-      .collect();
+      .take(200);
   },
 });
 
@@ -68,7 +74,7 @@ export const getSkillMetadata = internalQuery({
     const builtInSkills = await ctx.db
       .query("system_skills")
       .withIndex("by_active", (q) => q.eq("isActive", true))
-      .collect();
+      .take(200);
 
     const metadata: Array<{
       slug: string;
@@ -84,12 +90,14 @@ export const getSkillMetadata = internalQuery({
       source: "system" as const,
     }));
 
-    // 2. If userId provided, also include user's installed store skills
+    // 2. If userId provided, also include user's installed store skills.
+    //    500 cap: no realistic user installs hundreds of skills, but defend
+    //    against an abusive install loop.
     if (userId) {
       const installs = await ctx.db
         .query("store_installs")
         .withIndex("by_user", (q) => q.eq("userId", userId))
-        .collect();
+        .take(500);
 
       for (const install of installs) {
         if (install.itemType !== "skill") continue;
@@ -120,8 +128,13 @@ export const assembleSystemPrompt = internalQuery({
     inSpecMode: v.optional(v.boolean()), // Client-side plan-mode state flag for spec prompt inclusion
   },
   handler: async (ctx, { platform, skillSlugs, userId, inSpecMode }) => {
-    // 1. Fetch all system prompts
-    const allPrompts = await ctx.db.query("system_prompts").collect();
+    // 1. Fetch all system prompts.
+    //    THIS RUNS ON EVERY LLM REQUEST — it's the hottest Convex path in
+    //    the proxy. The 100-row cap is safe given the known seeded set of
+    //    ~7 slugs. TODO: convert to per-slug index lookups for the ~5-6
+    //    slugs actually read below to avoid the full-table scan entirely;
+    //    would cut proxy latency by 5-20% depending on table size.
+    const allPrompts = await ctx.db.query("system_prompts").take(100);
     const promptMap: Record<string, string> = {};
     for (const p of allPrompts) {
       promptMap[p.slug] = p.content;
@@ -177,12 +190,13 @@ export const assembleSystemPrompt = internalQuery({
       }
     }
 
-    // 4. Fetch user's installed store skills
+    // 4. Fetch user's installed store skills (capped at 500 — see
+    //    getSkillMetadata for rationale).
     if (userId) {
       const installs = await ctx.db
         .query("store_installs")
         .withIndex("by_user", (q) => q.eq("userId", userId))
-        .collect();
+        .take(500);
 
       for (const install of installs) {
         if (install.itemType !== "skill") continue;

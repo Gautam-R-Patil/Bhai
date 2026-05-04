@@ -41,7 +41,11 @@ export const getObservabilityData = query({
         const oneMonthAgo = now - 30 * 24 * 60 * 60 * 1000;
 
         // ── Fetch all accounts for credit overview ──
-        const accounts = await ctx.db.query("accounts").collect();
+        // Hard cap at 10k rows. Once the user base grows past this, the
+        // admin panel should switch to a denormalized aggregate document
+        // maintained by mutations (totalAccounts, creditsByPlan, etc.)
+        // instead of summing over every account on every dashboard load.
+        const accounts = await ctx.db.query("accounts").take(10000);
 
         const totalCreditsRemaining = accounts.reduce((s, a) => s + (a.ai_credits || 0), 0);
         const activeAccounts = accounts.filter(a => a.status === "active").length;
@@ -56,7 +60,9 @@ export const getObservabilityData = query({
         }
 
         // ── Session activity (proxy for LLM request volume) ──
-        const sessions = await ctx.db.query("sessions").collect();
+        // 10k cap. Sessions accumulate quickly — Phase 3 session TTL
+        // sweeping (convex/sessions.ts:cleanup) keeps this honest.
+        const sessions = await ctx.db.query("sessions").take(10000);
         const activeSessions = sessions.filter(s => s.expiresAt > now).length;
         const todaySessions = sessions.filter(s => s.createdAt > oneDayAgo).length;
         const weekSessions = sessions.filter(s => s.createdAt > oneWeekAgo).length;
@@ -169,7 +175,10 @@ export const getObservabilityData = query({
 export const getCreditUsagePerUser = query({
     args: {},
     handler: async (ctx) => {
-        const accounts = await ctx.db.query("accounts").collect();
+        // See getObservabilityData for the 10k cap rationale. TODO:
+        // expose a paginated variant with cursor support for the admin
+        // UI so the full list is reachable without a single 10k-row load.
+        const accounts = await ctx.db.query("accounts").take(10000);
 
         return accounts
             .map(a => ({

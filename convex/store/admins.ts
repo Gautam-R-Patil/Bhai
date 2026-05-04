@@ -67,10 +67,12 @@ export const getById = query({
  */
 export const listAll = query({
   handler: async (ctx) => {
+    // admins is a tiny, hand-curated table. 200 is orders of magnitude
+    // above realistic use and protects the query from unbounded growth.
     return await ctx.db
       .query("admins")
       .order("desc")
-      .collect();
+      .take(200);
   },
 });
 
@@ -98,23 +100,30 @@ export const hasPermission = query({
  */
 export const getDashboardStats = query({
   handler: async (ctx) => {
+    // TODO: every .take() here is a rough cap because the current stats
+    // shape requires summing/filtering on the whole table. Once any of
+    // these tables grow past the cap this dashboard will undercount.
+    // The proper fix is per-table denormalized counters maintained by
+    // each insert/update/delete mutation — then these become O(1) doc
+    // reads instead of O(N) scans.
+
     // Users
-    const accounts = await ctx.db.query("accounts").collect();
+    const accounts = await ctx.db.query("accounts").take(10000);
     const totalUsers = accounts.length;
 
     // Developers
-    const developers = await ctx.db.query("developers").collect();
+    const developers = await ctx.db.query("developers").take(5000);
     const totalDevelopers = developers.length;
     const pendingDevelopers = developers.filter((d) => d.status === "pending").length;
 
     // Store items
-    const items = await ctx.db.query("store_items").collect();
+    const items = await ctx.db.query("store_items").take(5000);
     const totalItems = items.length;
     const activeItems = items.filter((i) => i.status === "active").length;
     const totalInstalls = items.reduce((sum, i) => sum + i.installCount, 0);
 
     // Submissions
-    const submissions = await ctx.db.query("submissions").collect();
+    const submissions = await ctx.db.query("submissions").take(5000);
     const pendingSubmissions = submissions.filter((s) => s.status === "pending").length;
 
     // Recent activity
@@ -244,10 +253,12 @@ export const remove = mutation({
 
     // Cannot delete super_admin if it's the last one
     if (admin.role === ROLES.SUPER_ADMIN) {
+      // Only called on delete; .take(10) is enough to prove "more than
+      // one super admin exists" without loading a full-table result.
       const superAdmins = await ctx.db
         .query("admins")
         .filter((q) => q.eq(q.field("role"), ROLES.SUPER_ADMIN))
-        .collect();
+        .take(10);
 
       if (superAdmins.length <= 1) {
         throw new Error("Cannot delete the last super admin");
@@ -325,7 +336,7 @@ export const list = query({
     return await ctx.db
       .query("admins")
       .order("desc")
-      .collect();
+      .take(200);
   },
 });
 
@@ -339,10 +350,12 @@ export const deleteAdmin = mutation({
     if (!admin) throw new Error("Admin not found");
 
     if (admin.role === ROLES.SUPER_ADMIN) {
+      // Only called on delete; .take(10) is enough to prove "more than
+      // one super admin exists" without loading a full-table result.
       const superAdmins = await ctx.db
         .query("admins")
         .filter((q) => q.eq(q.field("role"), ROLES.SUPER_ADMIN))
-        .collect();
+        .take(10);
 
       if (superAdmins.length <= 1) {
         throw new Error("Cannot delete the last super admin");
