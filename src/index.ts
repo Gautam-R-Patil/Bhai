@@ -235,8 +235,12 @@ async function boot() {
 
         // Notification Tracker — tracks proactive messages and measures user engagement
         try {
-            const { initNotificationTracker } = await import("./proactive/notification-tracker.js");
+            const { initNotificationTracker, isFatigued } = await import("./proactive/notification-tracker.js");
             initNotificationTracker(memDb);
+            // Wire the fatigue gate into proactive dispatch so we stop
+            // sending when the user isn't engaging recently.
+            const { registerFatigueCheck } = await import("./proactive/dispatch.js");
+            registerFatigueCheck(isFatigued);
         } catch (ntErr) {
             console.warn("[BOOT] Notification tracker init failed (non-fatal):", (ntErr as Error).message);
         }

@@ -6,6 +6,20 @@ import type { Channel, ProactiveMode } from "./intent.js";
 import { getChannelSender } from "../tools/channel-send.js";
 import { isProactiveDisabled, isChannelDisabled, isShadowMode, debugProactive } from "./kill-switches.js";
 
+// Fatigue-check hook. Returns true when the user shows signs of
+// notification fatigue (e.g. low engagement rate over recent sends).
+// Default = null (no check), set by notification-tracker at boot.
+type FatigueCheck = () => boolean;
+let _fatigueCheck: FatigueCheck | null = null;
+
+export function registerFatigueCheck(fn: FatigueCheck): void {
+    _fatigueCheck = fn;
+}
+
+export function _setFatigueCheckForTests(fn: FatigueCheck | null): void {
+    _fatigueCheck = fn;
+}
+
 const EMOJI: Record<ProactiveMode, string> = {
     fyi: "💡",
     question: "❓",
@@ -36,6 +50,16 @@ export async function dispatchProactiveMessage(
     if (isChannelDisabled(channel)) {
         debugProactive("suppressed_channel", { channel, mode });
         return;
+    }
+    if (_fatigueCheck !== null) {
+        try {
+            if (_fatigueCheck()) {
+                debugProactive("suppressed_fatigue", { channel, mode });
+                return;
+            }
+        } catch {
+            // Fail open — a broken fatigue check should never block sends.
+        }
     }
     const sender = getChannelSender(channel);
     if (!sender) {
