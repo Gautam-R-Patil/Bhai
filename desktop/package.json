@@ -12,6 +12,7 @@
         "prebuild": "echo 'Source protection will run after pack...'",
         "build:win": "node build/patch-nsis.js && electron-builder --win --x64",
         "build:mac": "electron-builder --mac --dir && bash build/create-dmg.sh",
+        "build:mac:release": "electron-builder --mac dmg",
         "build:mac:protected": "npm run prebuild && electron-builder --mac",
         "build:win:protected": "node build/patch-nsis.js && npm run prebuild && electron-builder --win --x64",
         "postinstall": "electron-builder install-app-deps",
@@ -198,8 +199,9 @@
         "dmg": {
             "title": "A.T.L.A.S Setup",
             "icon": "logo.png",
+            "background": "build/dmg-background@2x.png",
             "sign": false,
-            "writeUpdateInfo": false,
+            "writeUpdateInfo": true,
             "window": {
                 "width": 540,
                 "height": 380
