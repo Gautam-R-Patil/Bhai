@@ -111,3 +111,4 @@ desktop/hostinger-upload/
 !src/agents/circuit-breaker.test.ts
 !src/agents/complexity-classifier.test.ts
 !src/agents/blackboard.test.ts
+!src/llm-parsers/*.test.ts
