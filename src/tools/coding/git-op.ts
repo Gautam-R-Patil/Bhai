@@ -14,6 +14,7 @@ import path from "node:path";
 import { gitAvailable, resolveRepoRoot } from "../../memory/codebase-merkle.js";
 import { auditLog } from "../../security/audit-log.js";
 import type { ToolDefinition } from "../get-current-time.js";
+import { checkEvidencePhrase } from "./evidence-phrase.js";
 
 type Tier = "safe" | "confirm" | "destructive" | "blocked";
 
@@ -77,10 +78,8 @@ function stripBanned(args: string[]): string[] {
 }
 
 function requirePhrase(input: Record<string, unknown>, needle: string): string | null {
-    const phrase = typeof input.evidence_phrase === "string" ? input.evidence_phrase.trim().toLowerCase() : "";
-    if (!phrase) return `evidence_phrase required (must include substring: "${needle}")`;
-    if (!phrase.includes(needle)) return `evidence_phrase must contain the substring "${needle}"`;
-    return null;
+    const raw = typeof input.evidence_phrase === "string" ? input.evidence_phrase : undefined;
+    return checkEvidencePhrase(raw, needle);
 }
 
 export const gitOpTool: ToolDefinition = {
