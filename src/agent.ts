@@ -1607,6 +1607,28 @@ STRATEGY: Execute in as few tool calls as possible.
                 /* goals not ready */
             }
 
+            // ── Counterfactual regret context ──
+            // Surfaces "last time we tried X it went worse than plan Y" so the
+            // agent can avoid known bad patterns on the current task.
+            try {
+                const { getCounterfactualContext } = await import("./memory/counterfactual.js");
+                const cfSnippet = getCounterfactualContext(userMessage, 3);
+                if (cfSnippet) parts.push(cfSnippet);
+            } catch {
+                /* counterfactual not ready */
+            }
+
+            // ── Prospective triggers ──
+            // Surfaces user-set reminders / triggers that might fire on this
+            // turn (e.g. "when I mention the deploy, show me the runbook").
+            try {
+                const { getProspectiveSnippet } = await import("./memory/prospective.js");
+                const proSnippet = getProspectiveSnippet();
+                if (proSnippet) parts.push(proSnippet);
+            } catch {
+                /* prospective not ready */
+            }
+
             // ── Credit awareness context ──
             // Let the LLM know remaining credits so it can optimize its approach.
             // Does NOT mean reject tasks — only prefer efficient strategies when low.
