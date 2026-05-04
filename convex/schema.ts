@@ -138,6 +138,11 @@ export default defineSchema({
     .index("by_status_type", ["status", "type"])
     .index("by_featured", ["featuredRank"])
     .index("by_installs", ["installCount"])
+    // Used by store/items.ts::getTrending for ORDER BY weeklyInstalls DESC
+    // WHERE status='active'. Without this compound index the query would
+    // have to scan every active row and sort in memory, which breaks once
+    // the catalog exceeds the scan cap.
+    .index("by_status_weekly", ["status", "weeklyInstalls"])
     .searchIndex("search_items", {
       searchField: "name",
       filterFields: ["type", "category", "status"],
