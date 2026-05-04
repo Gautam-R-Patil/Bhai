@@ -534,12 +534,42 @@ struct ModelStats {
     tool_calls_succeeded: u64,
     // Circuit breaker state
     consecutive_failures: u32,
+    // Split consecutive-failure tracking so transient upstream errors
+    // (408 / 429 / 5xx) can be distinguished from permanent-looking
+    // ones (400 / 401 / 403 / bad models). Transient-only trips get a
+    // much shorter cooldown so a brief rate-limit hit doesn't lock a
+    // model out for 1-2 minutes. See is_circuit_open + IsTransientStatus.
+    consecutive_transient_failures: u32,
+    consecutive_permanent_failures: u32,
     circuit_open_since: Option<u64>,  // epoch ms when breaker tripped, None = closed
+    /** Set at trip time iff every failure contributing to the trip was a transient upstream error. */
+    last_trip_was_transient_only: bool,
     // Per-task-type tracking (Phase 3)
     per_task: HashMap<String, TaskTypeStats>,
     // Typed failure tracking (Phase 7)
     failures: FailureStats,
 }
+
+/// Classify an HTTP status as a "transient upstream" error (generally
+/// recoverable on retry within seconds) vs a permanent-looking one.
+/// Transient: 408 timeout, 429 rate limit, 5xx server errors.
+/// Permanent: 400 bad request, 401 / 403 auth, 404 / 410 missing,
+/// 413 context overflow, 451 content filter, unknown.
+fn is_transient_status(http_status: Option<i32>) -> bool {
+    matches!(
+        http_status,
+        Some(408) | Some(429) | Some(500) | Some(502) | Some(503) | Some(504)
+    )
+}
+
+/// Threshold for TRANSIENT-only failures is higher than the default.
+/// A brief rate-limit burst takes 3-5 retries to surface naturally;
+/// we don't want to trip the breaker on the burst itself.
+const CIRCUIT_BREAKER_TRANSIENT_MULTIPLIER: u32 = 2;
+/// Transient-only trips use this fraction of the base provider cooldown.
+/// 1/4 means ~15s for Anthropic (60s / 4), ~22s Google, ~30s default,
+/// which matches the natural recovery time of most rate-limit bursts.
+const TRANSIENT_COOLDOWN_DIVISOR: u64 = 4;
 
 lazy_static! {
     static ref MODEL_STATS: Mutex<HashMap<String, ModelStats>> = Mutex::new(HashMap::new());
@@ -561,7 +591,6 @@ pub fn update_model_stats(
     stats.total_latency_ms += latency_ms as u64;
     if !success {
         stats.error_count += 1;
-        stats.consecutive_failures += 1;
         // Classify failure type (Phase 7)
         match http_status {
             Some(429) => { stats.rate_limit_count += 1; stats.failures.rate_limits += 1; }
@@ -571,24 +600,53 @@ pub fn update_model_stats(
             Some(s) if s >= 500 => { stats.failures.server_errors += 1; }
             _ => {}
         }
-        // Trip circuit breaker after threshold consecutive failures
-        if stats.consecutive_failures >= CIRCUIT_BREAKER_THRESHOLD && stats.circuit_open_since.is_none() {
+        // Split consecutive-failure bookkeeping by transient/permanent
+        // so transient-only bursts (rate limits, brief 5xx) can trip
+        // the breaker at a higher threshold and recover faster. See
+        // is_transient_status and is_circuit_open for the cooldown side.
+        let transient = is_transient_status(http_status);
+        if transient {
+            stats.consecutive_transient_failures += 1;
+        } else {
+            stats.consecutive_permanent_failures += 1;
+        }
+        stats.consecutive_failures =
+            stats.consecutive_transient_failures + stats.consecutive_permanent_failures;
+
+        // Trip threshold depends on whether any PERMANENT failure has
+        // contributed to the burst. All-transient bursts get 2×
+        // leniency before tripping (3×2=6 in-a-row), on the theory
+        // that upstream rate limits usually clear within a few retries.
+        let threshold = if stats.consecutive_permanent_failures == 0 {
+            CIRCUIT_BREAKER_THRESHOLD * CIRCUIT_BREAKER_TRANSIENT_MULTIPLIER
+        } else {
+            CIRCUIT_BREAKER_THRESHOLD
+        };
+
+        if stats.consecutive_failures >= threshold && stats.circuit_open_since.is_none() {
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64;
             stats.circuit_open_since = Some(now_ms);
-            let cooldown_ms = get_circuit_breaker_cooldown(&model_id);
+            stats.last_trip_was_transient_only = stats.consecutive_permanent_failures == 0;
+            let cooldown_ms = get_effective_cooldown_ms(&model_id, stats);
             let display = MODEL_REGISTRY.get(&model_id)
                 .map(|m| m.display_name.clone())
                 .unwrap_or_else(|| model_id.clone());
-            eprintln!("  ⚡ Circuit breaker OPEN for {} — skipping for {}s after {} consecutive failures",
-                display, cooldown_ms / 1000, stats.consecutive_failures);
+            let kind = if stats.last_trip_was_transient_only { "transient-only" } else { "mixed/permanent" };
+            eprintln!(
+                "  ⚡ Circuit breaker OPEN for {} — skipping for {}s after {} consecutive failures ({})",
+                display, cooldown_ms / 1000, stats.consecutive_failures, kind
+            );
         }
     } else {
         // Success resets consecutive failures and closes circuit breaker
         stats.consecutive_failures = 0;
+        stats.consecutive_transient_failures = 0;
+        stats.consecutive_permanent_failures = 0;
         stats.circuit_open_since = None;
+        stats.last_trip_was_transient_only = false;
     }
 
     if let Some(model) = MODEL_REGISTRY.get(&model_id) {
@@ -602,6 +660,19 @@ pub fn update_model_stats(
     }
 }
 
+/// Returns the cooldown that should actually be applied for this
+/// model right now. For trips caused entirely by transient upstream
+/// errors we use a fraction of the base cooldown so brief rate-limit
+/// bursts don't lock the model out for 1-2 minutes.
+fn get_effective_cooldown_ms(model_id: &str, stats: &ModelStats) -> u64 {
+    let base = get_circuit_breaker_cooldown(model_id);
+    if stats.last_trip_was_transient_only {
+        base / TRANSIENT_COOLDOWN_DIVISOR
+    } else {
+        base
+    }
+}
+
 fn is_circuit_open(model_id: &str) -> bool {
     let mut stats_map = MODEL_STATS.lock();
     if let Some(stats) = stats_map.get_mut(model_id) {
@@ -610,11 +681,14 @@ fn is_circuit_open(model_id: &str) -> bool {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64;
-            let cooldown_ms = get_circuit_breaker_cooldown(model_id);
+            let cooldown_ms = get_effective_cooldown_ms(model_id, stats);
             if now_ms - tripped_at >= cooldown_ms {
                 // Cooldown elapsed — half-open: reset and allow retry
                 stats.consecutive_failures = 0;
+                stats.consecutive_transient_failures = 0;
+                stats.consecutive_permanent_failures = 0;
                 stats.circuit_open_since = None;
+                stats.last_trip_was_transient_only = false;
                 return false;
             }
             return true;
@@ -2344,4 +2418,184 @@ pub fn select_for_research() -> ModelSelection {
         task_type: Some(TaskType::Research),
         ..Default::default()
     })
+}
+
+// ══════════════════════════════════════════════════
+// TESTS — Circuit breaker transient/permanent split
+// ══════════════════════════════════════════════════
+//
+// These tests touch the MODEL_STATS global static, so they must run
+// serialized (cargo test --test-threads=1). The suite does its own
+// cleanup via a unique-per-test model_id prefix to avoid interference.
+
+#[cfg(test)]
+mod circuit_breaker_tests {
+    use super::*;
+
+    /// Remove all stats entries for a given model so each test starts
+    /// with a fresh state.
+    fn reset(model_id: &str) {
+        MODEL_STATS.lock().remove(model_id);
+    }
+
+    #[test]
+    fn is_transient_status_recognizes_upstream_errors() {
+        assert!(is_transient_status(Some(408)));
+        assert!(is_transient_status(Some(429)));
+        assert!(is_transient_status(Some(500)));
+        assert!(is_transient_status(Some(502)));
+        assert!(is_transient_status(Some(503)));
+        assert!(is_transient_status(Some(504)));
+    }
+
+    #[test]
+    fn is_transient_status_rejects_permanent_errors() {
+        assert!(!is_transient_status(None));
+        assert!(!is_transient_status(Some(200)));
+        assert!(!is_transient_status(Some(400)));
+        assert!(!is_transient_status(Some(401)));
+        assert!(!is_transient_status(Some(403)));
+        assert!(!is_transient_status(Some(404)));
+        assert!(!is_transient_status(Some(413)));
+        assert!(!is_transient_status(Some(451)));
+    }
+
+    #[test]
+    fn permanent_failures_trip_breaker_at_base_threshold() {
+        let model = "test/permanent-trip";
+        reset(model);
+        // 3 consecutive permanent failures (HTTP 400) should trip.
+        for _ in 0..CIRCUIT_BREAKER_THRESHOLD {
+            update_model_stats(model.to_string(), 10.0, false, 0.0, 0.0, Some(400));
+        }
+        assert!(is_circuit_open(model), "breaker should be open after {} permanent failures", CIRCUIT_BREAKER_THRESHOLD);
+        let stats = MODEL_STATS.lock().get(model).cloned().unwrap();
+        assert!(!stats.last_trip_was_transient_only, "permanent trip should NOT be marked transient-only");
+        reset(model);
+    }
+
+    #[test]
+    fn transient_failures_do_not_trip_at_base_threshold() {
+        let model = "test/transient-stretch";
+        reset(model);
+        // 3 consecutive 429s — below the transient threshold (3×2=6)
+        for _ in 0..CIRCUIT_BREAKER_THRESHOLD {
+            update_model_stats(model.to_string(), 10.0, false, 0.0, 0.0, Some(429));
+        }
+        assert!(
+            !is_circuit_open(model),
+            "breaker should NOT open on only {} transient failures (needs {})",
+            CIRCUIT_BREAKER_THRESHOLD,
+            CIRCUIT_BREAKER_THRESHOLD * CIRCUIT_BREAKER_TRANSIENT_MULTIPLIER
+        );
+        reset(model);
+    }
+
+    #[test]
+    fn transient_failures_trip_breaker_at_doubled_threshold() {
+        let model = "test/transient-trip";
+        reset(model);
+        // 6 consecutive transient failures (429) — should trip.
+        for _ in 0..CIRCUIT_BREAKER_THRESHOLD * CIRCUIT_BREAKER_TRANSIENT_MULTIPLIER {
+            update_model_stats(model.to_string(), 10.0, false, 0.0, 0.0, Some(429));
+        }
+        assert!(is_circuit_open(model));
+        let stats = MODEL_STATS.lock().get(model).cloned().unwrap();
+        assert!(stats.last_trip_was_transient_only, "all-transient trip should set the flag");
+        reset(model);
+    }
+
+    #[test]
+    fn mixed_failures_trip_at_base_threshold_and_not_marked_transient() {
+        let model = "test/mixed-trip";
+        reset(model);
+        // 1 transient, 1 permanent, 1 transient → 3 consecutive total → trips.
+        update_model_stats(model.to_string(), 10.0, false, 0.0, 0.0, Some(429));
+        update_model_stats(model.to_string(), 10.0, false, 0.0, 0.0, Some(400));
+        update_model_stats(model.to_string(), 10.0, false, 0.0, 0.0, Some(503));
+        assert!(is_circuit_open(model));
+        let stats = MODEL_STATS.lock().get(model).cloned().unwrap();
+        assert!(
+            !stats.last_trip_was_transient_only,
+            "ANY permanent failure in the burst should disqualify the transient-only flag"
+        );
+        reset(model);
+    }
+
+    #[test]
+    fn transient_only_trip_has_shorter_effective_cooldown() {
+        let model = "anthropic/test-transient-cooldown";
+        reset(model);
+        for _ in 0..CIRCUIT_BREAKER_THRESHOLD * CIRCUIT_BREAKER_TRANSIENT_MULTIPLIER {
+            update_model_stats(model.to_string(), 10.0, false, 0.0, 0.0, Some(429));
+        }
+        let stats = MODEL_STATS.lock().get(model).cloned().unwrap();
+        let base = get_circuit_breaker_cooldown(model);
+        let effective = get_effective_cooldown_ms(model, &stats);
+        assert_eq!(effective, base / TRANSIENT_COOLDOWN_DIVISOR);
+        assert!(effective < base);
+        reset(model);
+    }
+
+    #[test]
+    fn permanent_trip_uses_full_cooldown() {
+        let model = "anthropic/test-permanent-cooldown";
+        reset(model);
+        for _ in 0..CIRCUIT_BREAKER_THRESHOLD {
+            update_model_stats(model.to_string(), 10.0, false, 0.0, 0.0, Some(400));
+        }
+        let stats = MODEL_STATS.lock().get(model).cloned().unwrap();
+        let base = get_circuit_breaker_cooldown(model);
+        let effective = get_effective_cooldown_ms(model, &stats);
+        assert_eq!(effective, base);
+        reset(model);
+    }
+
+    #[test]
+    fn success_resets_both_failure_counters() {
+        let model = "test/success-reset";
+        reset(model);
+        update_model_stats(model.to_string(), 10.0, false, 0.0, 0.0, Some(429));
+        update_model_stats(model.to_string(), 10.0, false, 0.0, 0.0, Some(400));
+        {
+            let stats = MODEL_STATS.lock().get(model).cloned().unwrap();
+            assert_eq!(stats.consecutive_transient_failures, 1);
+            assert_eq!(stats.consecutive_permanent_failures, 1);
+        }
+        update_model_stats(model.to_string(), 10.0, true, 0.0, 0.0, None);
+        let stats = MODEL_STATS.lock().get(model).cloned().unwrap();
+        assert_eq!(stats.consecutive_transient_failures, 0);
+        assert_eq!(stats.consecutive_permanent_failures, 0);
+        assert_eq!(stats.consecutive_failures, 0);
+        assert!(stats.circuit_open_since.is_none());
+        reset(model);
+    }
+
+    #[test]
+    fn success_after_trip_closes_breaker() {
+        let model = "test/post-trip-success";
+        reset(model);
+        for _ in 0..CIRCUIT_BREAKER_THRESHOLD {
+            update_model_stats(model.to_string(), 10.0, false, 0.0, 0.0, Some(400));
+        }
+        assert!(is_circuit_open(model));
+        update_model_stats(model.to_string(), 10.0, true, 0.0, 0.0, None);
+        assert!(!is_circuit_open(model));
+        reset(model);
+    }
+
+    #[test]
+    fn constants_are_sane() {
+        // Transient multiplier > 1 means transient-only gets more
+        // leniency before tripping.
+        assert!(CIRCUIT_BREAKER_TRANSIENT_MULTIPLIER > 1);
+        // Cooldown divisor > 1 means transient-only trips recover
+        // faster than full cooldown.
+        assert!(TRANSIENT_COOLDOWN_DIVISOR > 1);
+        // Sanity: transient threshold is strictly greater than base.
+        assert!(
+            CIRCUIT_BREAKER_THRESHOLD * CIRCUIT_BREAKER_TRANSIENT_MULTIPLIER
+                > CIRCUIT_BREAKER_THRESHOLD
+        );
+    }
 }
