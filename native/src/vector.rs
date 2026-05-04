@@ -3,6 +3,7 @@
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
+use simsimd::SpatialSimilarity;
 
 /// Compute cosine similarity between two f32 vectors using SIMD
 /// Returns a value between -1.0 and 1.0
@@ -75,95 +76,38 @@ pub fn magnitude(vec: Float32Array) -> f64 {
 // Internal SIMD implementations
 // ═══════════════════════════════════════════════
 
-/// SIMD-accelerated cosine similarity
-/// Processes 8 elements at a time on x86_64 with AVX2
+/// SIMD-accelerated cosine similarity.
+/// Uses three simsimd dot products (a·b, a·a, b·b) rather than simsimd's
+/// `cos` helper because the latter can return values outside the expected
+/// [0, 2] distance range for non-unit-length vectors (e.g. perfectly
+/// opposite vectors did not round-trip to -1 on every backend). The
+/// 3-dot-product formulation is still fully SIMD-accelerated and returns
+/// a mathematically exact similarity in [-1, 1] assuming non-NaN inputs.
 #[inline]
 fn cosine_similarity_simd(a: &[f32], b: &[f32]) -> f64 {
-    let mut dot = 0.0f64;
-    let mut norm_a = 0.0f64;
-    let mut norm_b = 0.0f64;
-
-    // Process in chunks of 8 for better SIMD utilization
-    let chunks = a.len() / 8;
-    let remainder = a.len() % 8;
-
-    for i in 0..chunks {
-        let base = i * 8;
-
-        // Unroll 8 elements - compiler will vectorize this
-        for j in 0..8 {
-            let av = a[base + j] as f64;
-            let bv = b[base + j] as f64;
-            dot += av * bv;
-            norm_a += av * av;
-            norm_b += bv * bv;
-        }
-    }
-
-    // Handle remainder
-    let base = chunks * 8;
-    for i in 0..remainder {
-        let av = a[base + i] as f64;
-        let bv = b[base + i] as f64;
-        dot += av * bv;
-        norm_a += av * av;
-        norm_b += bv * bv;
-    }
-
-    let denom = (norm_a * norm_b).sqrt();
-    if denom == 0.0 {
+    let dot = f32::dot(a, b).unwrap_or(0.0);
+    let norm_a_sq = f32::dot(a, a).unwrap_or(0.0);
+    let norm_b_sq = f32::dot(b, b).unwrap_or(0.0);
+    let denom = (norm_a_sq * norm_b_sq).sqrt();
+    if denom == 0.0 || denom.is_nan() {
         0.0
     } else {
         dot / denom
     }
 }
 
-/// SIMD-accelerated dot product
+/// SIMD-accelerated dot product.
 #[inline]
 fn dot_product_simd(a: &[f32], b: &[f32]) -> f64 {
-    let mut sum = 0.0f64;
-
-    let chunks = a.len() / 8;
-    let remainder = a.len() % 8;
-
-    for i in 0..chunks {
-        let base = i * 8;
-        for j in 0..8 {
-            sum += (a[base + j] as f64) * (b[base + j] as f64);
-        }
-    }
-
-    let base = chunks * 8;
-    for i in 0..remainder {
-        sum += (a[base + i] as f64) * (b[base + i] as f64);
-    }
-
-    sum
+    f32::dot(a, b).filter(|d| !d.is_nan()).unwrap_or(0.0)
 }
 
-/// SIMD-accelerated Euclidean distance
+/// SIMD-accelerated Euclidean distance.
+/// simsimd exposes `sqeuclidean` (squared Euclidean); sqrt to get plain L2.
 #[inline]
 fn euclidean_distance_simd(a: &[f32], b: &[f32]) -> f64 {
-    let mut sum = 0.0f64;
-
-    let chunks = a.len() / 8;
-    let remainder = a.len() % 8;
-
-    for i in 0..chunks {
-        let base = i * 8;
-        for j in 0..8 {
-            let diff = (a[base + j] as f64) - (b[base + j] as f64);
-            sum += diff * diff;
-        }
-    }
-
-    let base = chunks * 8;
-    for i in 0..remainder {
-        let diff = (a[base + i] as f64) - (b[base + i] as f64);
-        sum += diff * diff;
-    }
-
-    sum.sqrt()
+    let sq = f32::sqeuclidean(a, b).filter(|d| !d.is_nan()).unwrap_or(0.0);
+    sq.sqrt()
 }
 
 /// SIMD-accelerated magnitude calculation

@@ -3,7 +3,7 @@
 
 use napi_derive::napi;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 // ── Constants ──────────────────────────────────────
 
@@ -82,7 +82,7 @@ pub fn spread_activation_bfs(
         serde_json::from_str(&adjacency_json).unwrap_or_default();
 
     let mut activated: HashMap<i64, ActivatedNode> = HashMap::new();
-    let mut queue: Vec<ActivatedNode> = Vec::new();
+    let mut queue: VecDeque<ActivatedNode> = VecDeque::new();
     let mut total_activated: usize = 0;
 
     // Initialize with seeds
@@ -93,7 +93,7 @@ pub fn spread_activation_bfs(
             hops: 0,
             via: se.via.clone(),
         };
-        queue.push(ActivatedNode {
+        queue.push_back(ActivatedNode {
             entity_id: se.entity_id,
             energy: se.energy,
             hops: 0,
@@ -104,8 +104,10 @@ pub fn spread_activation_bfs(
     }
 
     // BFS with bounded branching
-    while !queue.is_empty() && total_activated < MAX_ACTIVATED_NODES {
-        let current = queue.remove(0);
+    while let Some(current) = queue.pop_front() {
+        if total_activated >= MAX_ACTIVATED_NODES {
+            break;
+        }
         if current.hops >= MAX_HOPS {
             continue;
         }
@@ -144,7 +146,7 @@ pub fn spread_activation_bfs(
                 hops: current.hops + 1,
                 via: rel.entity_name.clone(),
             };
-            queue.push(ActivatedNode {
+            queue.push_back(ActivatedNode {
                 entity_id: rel.entity_id,
                 energy: neighbor_energy,
                 hops: current.hops + 1,
