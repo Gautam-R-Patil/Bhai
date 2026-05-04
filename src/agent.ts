@@ -1460,8 +1460,28 @@ STRATEGY: Execute in as few tool calls as possible.
                     const enrichedQuery =
                         recentUserMsgs.length > 1 ? `${recentUserMsgs.join(" ")} ${userMessage}` : userMessage;
 
+                    // Pre-start the query embedding in parallel with the SQL-only
+                    // recalls below. recall() awaits this promise internally only
+                    // at the HNSW search step, so the embedding (potentially a
+                    // ~100 ms transformer pipeline on cold cache) now overlaps
+                    // with the conversation + task-learnings SQL work instead of
+                    // running strictly before it.
+                    let embeddingPromise: Promise<Float32Array | null> = Promise.resolve(null);
+                    try {
+                        const embedMod = await import("./memory/embeddings.js");
+                        if (embedMod.isReady()) {
+                            embeddingPromise = embedMod
+                                .embedText(enrichedQuery, "query")
+                                .catch(() => null);
+                        }
+                    } catch {
+                        /* recall() will fall back to computing embedding internally */
+                    }
+
                     const [queriedMems, pastConvos, learningsCtx] = await Promise.all([
-                        recall(enrichedQuery, recallK, llm, queryMode).catch(() => []),
+                        recall(enrichedQuery, recallK, llm, queryMode, undefined, embeddingPromise).catch(
+                            () => [],
+                        ),
                         Promise.resolve().then(() => {
                             try {
                                 return recallConversation(userMessage, convRecallK);

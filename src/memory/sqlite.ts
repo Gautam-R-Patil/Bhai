@@ -1090,6 +1090,12 @@ export async function recall(
     llm?: import("../llm.js").LLMClient,
     queryMode?: string,
     scopes?: string[],
+    // Optional precomputed / in-flight embedding of `query`. When the caller
+    // is about to run recall alongside other queries, it can kick off
+    // embedText() early (or pass a cached Float32Array) and hand the
+    // resulting promise here so the embedding happens in parallel with
+    // those queries instead of sequentially inside recall.
+    queryEmbedding?: Float32Array | Promise<Float32Array | null> | null,
 ): Promise<MemoryRecord[]> {
     if (!db) throw new Error("Memory DB not initialized");
 
@@ -1196,12 +1202,25 @@ export async function recall(
 
     if (isEmbeddingReady()) {
         try {
-            const queryEmbedding = await embedText(query);
+            // Resolve the embedding. If the caller supplied a precomputed
+            // or in-flight embedding we use that (may already be done by
+            // the time we get here, overlapping with FTS + KG work above).
+            // Otherwise fall back to computing it ourselves.
+            let resolvedQueryEmbedding: Float32Array | null = null;
+            if (queryEmbedding instanceof Float32Array) {
+                resolvedQueryEmbedding = queryEmbedding;
+            } else if (queryEmbedding) {
+                resolvedQueryEmbedding = await queryEmbedding;
+            }
+            if (!resolvedQueryEmbedding) {
+                resolvedQueryEmbedding = await embedText(query);
+            }
+            const hnswEmbedding = resolvedQueryEmbedding;
             const hnswIndex = getHNSWIndex();
 
             if (hnswIndex.size > 0) {
                 // HNSW search — O(log n), returns top candidates
-                const hnswResults = hnswIndex.search(queryEmbedding, effectiveLimit * 3);
+                const hnswResults = hnswIndex.search(hnswEmbedding, effectiveLimit * 3);
 
                 // Filter by distance threshold first (distance < 0.75 means similarity > 0.25)
                 const validHits = hnswResults.filter((hit) => hit.distance < 0.75);
@@ -1277,7 +1296,7 @@ export async function recall(
                                 created_at: row.created_at,
                                 access_count: row.access_count,
                             },
-                            similarity: cosineSimilarity(queryEmbedding, embedding),
+                            similarity: cosineSimilarity(hnswEmbedding, embedding),
                         };
                     })
                     .filter((r) => r.similarity > 0.25)
