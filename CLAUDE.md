@@ -45,7 +45,7 @@ All LLM calls are proxied through the Convex backend — the client never holds 
 Models are defined in `MODELS` constant (Opus, Sonnet, Haiku, GPT-5.x, Gemini). The `LLMClient` interface is injected into the agent, tools, swarm, and research subsystems.
 
 Additional client-side layers injected in `.chat()`:
-- **Semantic response cache** (`llm-cache.ts`) — Embedding-based similarity cache (cosine > 0.95 for hit, 10min TTL, 200 entries LRU). Only caches simple queries without tool calls or thinking mode.
+- **Semantic response cache** (`llm-cache.ts`) — Embedding-based similarity cache (cosine ≥ 0.88 for hit, 10min TTL, 200 entries LRU). Threshold was lowered from 0.95 to reduce false negatives on follow-ups; tune with care since tool-state is not part of the cache key yet. Only caches simple queries without tool calls or thinking mode.
 - **Adaptive language matching** (`language.ts`) — Detects user language via Unicode script analysis + keyword heuristics, injects "Respond in {language}" instruction. Supports Devanagari, CJK, Cyrillic, Arabic, Hangul, Thai, and Latin-script languages (Spanish, French, German, etc.) including Romanized Hindi/Hinglish.
 
 ### Boot Sequence (`src/index.ts`)
@@ -61,7 +61,7 @@ Initialization is ordered and partially parallelized:
 The core execution engine. Flow per invocation:
 1. Account gate check (credits)
 2. Message preprocessing + context pruning
-3. **First iteration only**: 12 memory retrieval systems fire in parallel (identity, traits, session summary, self-state, emotional context, episodic milestones, relationship tone, anticipation signals, core memory, query-specific recall, task learnings, knowledge graph entities) — each has a token budget (~2-3K tokens total injection)
+3. **First iteration only**: Up to ~12 memory retrieval systems fire on iteration 1 (identity, traits, session summary, self-state, emotional context, episodic milestones, relationship tone, anticipation signals, core memory, query-specific recall, task learnings, knowledge graph entities). The three primary queries — semantic recall, conversation recall, task learnings — run in one `Promise.all`; others execute sequentially in and around it. Overall token budget ~2-3K tokens total injection.
 4. **Each iteration**: `chooseModel()` via native Rust router → semantic tool selection → LLM call → tool execution → check for completion
 5. **Tool execution**: Browser tools run sequentially (shared page state); all other tools run in parallel
 6. **Cascade escalation**: If errors accumulate, auto-escalates model tier (Haiku → Sonnet → Opus)
@@ -85,7 +85,7 @@ Semantic tool selection using MiniLM embeddings (384-dim), not keyword matching:
 - **Analytics** (`tool-router-analytics.ts`): Tracks tool usage patterns, selection accuracy, category hit rates
 
 ### Memory System (`src/memory/` — 39 files)
-All local SQLite (`data/memories.db`). Key subsystems:
+All local SQLite (`data/memory.db`). Key subsystems:
 - `sqlite.ts` — Primary store: `remember()`, `recall()`, `getCoreMemory()`
 - `knowledge-graph.ts` — Entity-relationship graph (people, tools, preferences)
 - `vector-index.ts` — HNSW approximate nearest neighbor for semantic recall
