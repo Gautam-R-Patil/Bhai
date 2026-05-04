@@ -91,3 +91,5 @@ desktop/hostinger-upload/
 !src/tools/coding/evidence-phrase.test.ts
 !src/security/allowlist.test.ts
 !src/security/secrets.test.ts
+!src/security/audit-log.test.ts
+!src/security/skill-scanner.test.ts
