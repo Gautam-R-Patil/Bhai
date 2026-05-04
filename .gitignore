@@ -105,3 +105,4 @@ desktop/hostinger-upload/
 !src/commands/index.test.ts
 !src/agents/plan-mode.test.ts
 !src/agents/smart-truncate.test.ts
+!src/agents/error-types.test.ts
