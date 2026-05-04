@@ -21,7 +21,35 @@ const DATA_DIR = process.env.ATLAS_DATA_DIR || path.resolve("data");
 const SIDECAR_DIR = path.join(DATA_DIR, "codebase-index");
 
 // Module-level handle cache keyed by repo hash.
+// Bounded with LRU eviction (insertion-order = access-order) so agents
+// that touch many repos across a long session don't accumulate open
+// SQLite handles forever.
+const MAX_CACHED_SIDECARS = 16;
 const cache = new Map<string, { db: Database; raw: BetterSqlite3.Database; root: string }>();
+
+function _touchCache(hash: string): void {
+    const entry = cache.get(hash);
+    if (!entry) return;
+    // Move-to-end so eviction targets the truly-oldest access.
+    cache.delete(hash);
+    cache.set(hash, entry);
+}
+
+function _evictOldestIfOverCap(): void {
+    while (cache.size > MAX_CACHED_SIDECARS) {
+        const oldest = cache.keys().next().value;
+        if (oldest === undefined) break;
+        const entry = cache.get(oldest);
+        cache.delete(oldest);
+        if (entry) {
+            try {
+                entry.raw.close();
+            } catch {
+                /* best-effort */
+            }
+        }
+    }
+}
 
 /** Absolute path to the sidecar DB file for a repo root. */
 export function sidecarPathFor(repoRoot: string): string {
@@ -168,7 +196,10 @@ function wipeFile(p: string): void {
 export function openSidecar(repoRoot: string): Database {
     const hash = repoHash(repoRoot);
     const cached = cache.get(hash);
-    if (cached) return cached.db;
+    if (cached) {
+        _touchCache(hash);
+        return cached.db;
+    }
 
     ensureDir();
     const p = sidecarPathFor(repoRoot);
@@ -207,6 +238,7 @@ export function openSidecar(repoRoot: string): Database {
 
     const db = wrapDatabase(raw);
     cache.set(hash, { db, raw, root: repoRoot });
+    _evictOldestIfOverCap();
     return db;
 }
 
