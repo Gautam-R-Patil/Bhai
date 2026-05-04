@@ -79,35 +79,9 @@ async function buildResponse(
   });
 }
 
-// ── Credit costs by model (server-side, never exposed to client) ──
-const CREDIT_COSTS: Record<string, number> = {
-  // Light tier (0.25 credits)
-  "amazon/nova-micro-v1": 0.25,
-  "amazon/nova-lite-v1": 0.25,
-  "google/gemini-2.5-flash-lite": 0.25,
-  "google/gemini-2.0-flash-001": 0.25,
-  "google/gemini-3-flash-preview": 0.25,
-  "google/gemini-3.1-flash-lite-preview": 0.25,
-  "anthropic/claude-haiku-4.5": 0.25,
-  "gpt-4o-mini": 0.25,
-  "google/gemini-2.0-flash-exp": 0.25,
-  // Mid tier (0.5 credits)
-  "amazon/nova-pro-v1": 0.5,
-  "google/gemini-2.5-flash": 0.5,
-  // Pro tier (1 credit)
-  "anthropic/claude-sonnet-4.5": 1,
-  "anthropic/claude-sonnet-4.6": 1,
-  "google/gemini-3.1-pro-preview-customtools": 1,
-  "gpt-4o": 1,
-  // Heavy tier (3 credits)
-  "anthropic/claude-opus-4.6": 3,
-  "openai/gpt-5-image": 3,
-  default: 1,
-};
-
-function getCreditCost(modelId: string): number {
-  return CREDIT_COSTS[modelId] ?? CREDIT_COSTS.default;
-}
+// Credit cost table + lookup live in ./credit-cost.ts so the tier
+// mapping is unit-testable without a Convex harness.
+import { getCreditCost } from "./credit-cost.js";
 
 // ── Helper: extract + validate session token ──
 async function validateRequest(
