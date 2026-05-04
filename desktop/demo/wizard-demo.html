@@ -1,0 +1,122 @@
+<!-- Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved. -->
+<!-- Browser demo of wizard.html. Loads the real assets; mocks window.atlas. -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>A.T.L.A.S Wizard — Demo</title>
+<link rel="stylesheet" href="../styles.css"/>
+<link rel="stylesheet" href="../components/components.css"/>
+<style>
+    /* Demo-only controls — floating pill row to jump between steps. */
+    .demo-controls {
+        position: fixed;
+        left: 50%;
+        bottom: 16px;
+        transform: translateX(-50%);
+        display: flex;
+        gap: 6px;
+        padding: 8px 10px;
+        border-radius: 999px;
+        background: rgba(20, 20, 22, 0.72);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
+        z-index: 1000;
+        font-family: 'Inter', -apple-system, sans-serif;
+    }
+    .demo-controls a {
+        padding: 6px 12px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 500;
+        color: rgba(255, 255, 255, 0.75);
+        text-decoration: none;
+        transition: background 150ms ease, color 150ms ease;
+    }
+    .demo-controls a:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }
+    .demo-controls a.active {
+        background: linear-gradient(135deg, #c471ed, #ff758c);
+        color: #fff;
+    }
+    .demo-controls .label {
+        padding: 6px 10px;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.45);
+    }
+</style>
+</head>
+<body>
+<div class="bg-canvas">
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+    <div class="orb orb-3"></div>
+    <div class="orb orb-4"></div>
+</div>
+
+<div class="title-bar">
+    <span class="title-bar-text">A.T.L.A.S Setup</span>
+    <div class="title-bar-buttons">
+        <button class="title-btn" onclick="atlas.minimize()">─</button>
+        <button class="title-btn close" onclick="atlas.close()">✕</button>
+    </div>
+</div>
+
+<div class="wizard-container">
+    <header class="wizard-head">
+        <h1 id="wizard-header">Welcome</h1>
+        <div id="step-dots" class="step-dots" role="tablist" aria-label="Setup progress"></div>
+    </header>
+    <div id="already-set-strip" class="chip-strip" aria-label="Already configured"></div>
+    <div class="wizard-content">
+        <main id="current-step" class="step-container" aria-live="polite"></main>
+    </div>
+</div>
+
+<!-- Demo jump-between-steps controls -->
+<nav class="demo-controls" aria-label="Demo step picker">
+    <span class="label">Demo</span>
+    <a href="?step=welcome">Welcome</a>
+    <a href="?step=signin">Sign in</a>
+    <a href="?step=profile">Profile</a>
+    <a href="?step=personalize">Personalize</a>
+    <a href="?step=permissions">Permissions</a>
+    <a href="?step=install">Install</a>
+    <a href="../demo/ready-hub-demo.html">Ready Hub →</a>
+</nav>
+
+<!-- Mock MUST load before any real wizard script. -->
+<script src="mock-atlas.js"></script>
+
+<!-- The same script chain as the production wizard.html. -->
+<script src="../wizard/router.js"></script>
+<script src="../components/status-tile.js"></script>
+<script src="../components/permissions-grid.js"></script>
+<script src="../components/hotkey-picker.js"></script>
+<script src="../components/channel-card.js"></script>
+<script src="../components/voice-picker.js"></script>
+<script src="../components/theme-switch.js"></script>
+<script src="../components/install-log.js"></script>
+<script src="../wizard/chips.js"></script>
+<script src="../wizard/steps/welcome.js"></script>
+<script src="../wizard/steps/signin.js"></script>
+<script src="../wizard/steps/profile.js"></script>
+<script src="../wizard/steps/personalize.js"></script>
+<script src="../wizard/steps/permissions.js"></script>
+<script src="../wizard/steps/install.js"></script>
+<script src="../wizard/boot.js"></script>
+
+<script>
+    // Highlight the active pill based on the current ?step= param.
+    (function () {
+        const step = new URL(location.href).searchParams.get("step") || "welcome";
+        const active = document.querySelector('.demo-controls a[href="?step=' + step + '"]');
+        if (active) active.classList.add("active");
+    })();
+</script>
+</body>
+</html>
