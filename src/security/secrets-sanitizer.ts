@@ -96,6 +96,62 @@ const PATTERNS: Pattern[] = [
         // xoxa-, xoxb-, xoxp-, xoxr-, xoxs-
         regex: /\bxox[abprs]-[A-Za-z0-9-]{10,}\b/g,
     },
+    {
+        name: "SLACK_WEBHOOK_URL",
+        // Webhook URLs — distinct from xox tokens above
+        regex: /\bhttps:\/\/hooks\.slack\.com\/services\/T[A-Z0-9]{8,}\/B[A-Z0-9]{8,}\/[A-Za-z0-9]{20,}\b/g,
+    },
+    {
+        name: "DISCORD_BOT_TOKEN",
+        // 3-part base64 format: ID.timestamp.hmac, the first 2 segments
+        // are long base64url so the whole thing is very distinctive.
+        regex: /\b[MNO][A-Za-z0-9_-]{23,27}\.[A-Za-z0-9_-]{6,7}\.[A-Za-z0-9_-]{27,}\b/g,
+    },
+    {
+        name: "DISCORD_WEBHOOK_URL",
+        // webhook/<id>/<token>
+        regex: /\bhttps:\/\/discord(?:app)?\.com\/api\/webhooks\/\d{17,20}\/[A-Za-z0-9_-]{60,}\b/g,
+    },
+    {
+        name: "TWILIO_ACCOUNT_SID",
+        // AC + 32 hex chars
+        regex: /\bAC[a-f0-9]{32}\b/g,
+    },
+    {
+        name: "TWILIO_AUTH_TOKEN",
+        // SK + 32 hex chars (API key SID format)
+        regex: /\bSK[a-f0-9]{32}\b/g,
+    },
+    {
+        name: "SENDGRID_API_KEY",
+        // SG. + 22 base64url . 43 base64url
+        regex: /\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}\b/g,
+    },
+    {
+        name: "MAPBOX_TOKEN",
+        // pk.eyJ... or sk.eyJ... — JWT-like payload, prefixed distinctly
+        regex: /\b(?:pk|sk)\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g,
+    },
+    {
+        name: "NPM_TOKEN",
+        // npm_<36 chars>
+        regex: /\bnpm_[A-Za-z0-9]{36}\b/g,
+    },
+    {
+        name: "NOTION_SECRET",
+        // Old: secret_<43 chars>. New: ntn_<45 chars>.
+        regex: /\b(?:secret_[A-Za-z0-9]{43}|ntn_[A-Za-z0-9]{45,})\b/g,
+    },
+    {
+        name: "SQUARE_ACCESS_TOKEN",
+        // EAAA + 60 base64url chars
+        regex: /\bEAAA[A-Za-z0-9_-]{60,}\b/g,
+    },
+    // Note on Cloudflare API tokens: they're 40 chars from a specific
+    // alphabet but lack a distinctive prefix, so a standalone pattern
+    // produces too many false positives. The BEARER_TOKEN and
+    // ENV_VAR_SECRET patterns already catch them in the two real-world
+    // shapes (Authorization: Bearer header, CF_API_TOKEN= env var).
 
     // ── Standard structured tokens ─────────────────────────────
     {

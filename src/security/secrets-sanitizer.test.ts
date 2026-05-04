@@ -134,6 +134,125 @@ describe("sanitizeSecrets", () => {
             const { redactionsByType } = sanitizeSecrets(input);
             expect(redactionsByType.SLACK_TOKEN).toEqual(1);
         });
+
+        it("redacts Slack webhook URLs", () => {
+            const input =
+                "hook: https://hooks.slack.com/services/T12345678/B98765432/abcdefghijklmnopqrstuvwx";
+            const { sanitized, redactionsByType } = sanitizeSecrets(input);
+            expect(redactionsByType.SLACK_WEBHOOK_URL).toEqual(1);
+            expect(sanitized).toContain("[REDACTED:SLACK_WEBHOOK_URL]");
+        });
+    });
+
+    describe("Discord tokens", () => {
+        it("redacts Discord bot tokens (3-part format)", () => {
+            // Mx{23-27}.y{6-7}.z{27+}
+            const token =
+                "MTE1NjU3MTIxMjEyMTIxMjEyMQ.Gabcde.0123456789abcdefghijklmnopqrstuvwxyz1";
+            const { redactionsByType } = sanitizeSecrets(`bot: ${token}`);
+            expect(redactionsByType.DISCORD_BOT_TOKEN).toEqual(1);
+        });
+
+        it("redacts Discord webhook URLs", () => {
+            const input =
+                "webhook: https://discord.com/api/webhooks/12345678901234567890/" +
+                "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyzabcdefg";
+            const { redactionsByType } = sanitizeSecrets(input);
+            expect(redactionsByType.DISCORD_WEBHOOK_URL).toEqual(1);
+        });
+
+        it("redacts Discord webhook URLs on discordapp.com domain too", () => {
+            const input =
+                "https://discordapp.com/api/webhooks/12345678901234567890/" +
+                "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyzabcdefg";
+            const { redactionsByType } = sanitizeSecrets(input);
+            expect(redactionsByType.DISCORD_WEBHOOK_URL).toEqual(1);
+        });
+    });
+
+    describe("Twilio credentials", () => {
+        it("redacts Twilio Account SID (AC + 32 hex)", () => {
+            const input = "sid: AC" + "a".repeat(32);
+            const { redactionsByType } = sanitizeSecrets(input);
+            expect(redactionsByType.TWILIO_ACCOUNT_SID).toEqual(1);
+        });
+
+        it("redacts Twilio API key SID (SK + 32 hex)", () => {
+            const input = "key: SK" + "b".repeat(32);
+            const { redactionsByType } = sanitizeSecrets(input);
+            expect(redactionsByType.TWILIO_AUTH_TOKEN).toEqual(1);
+        });
+
+        it("does NOT match AC followed by non-hex", () => {
+            // Hex is [a-f0-9]; uppercase G-Z excluded.
+            expect(sanitizeSecrets("ACGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG").totalRedactions).toEqual(
+                0,
+            );
+        });
+    });
+
+    describe("SendGrid API keys", () => {
+        it("redacts SG.<22>.<43> format", () => {
+            const input =
+                "sg: SG." + "a".repeat(22) + "." + "b".repeat(43);
+            const { redactionsByType } = sanitizeSecrets(input);
+            expect(redactionsByType.SENDGRID_API_KEY).toEqual(1);
+        });
+    });
+
+    describe("Mapbox tokens", () => {
+        it("redacts pk.eyJ... public tokens", () => {
+            const input = "pk.eyJabcdefg.signaturepart";
+            const { redactionsByType } = sanitizeSecrets(input);
+            expect(redactionsByType.MAPBOX_TOKEN).toEqual(1);
+        });
+
+        it("redacts sk.eyJ... secret tokens", () => {
+            const input = "sk.eyJpayload.signature";
+            const { redactionsByType } = sanitizeSecrets(input);
+            expect(redactionsByType.MAPBOX_TOKEN).toEqual(1);
+        });
+
+        it("does NOT confuse a JWT (3 segments) with a Mapbox token (2 segments)", () => {
+            // JWT has 3 base64url segments starting with eyJ.
+            // Mapbox has pk./sk. + 2 segments.
+            // The Mapbox pattern only fires on 2-segment pk./sk. inputs.
+            const jwt =
+                "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxw";
+            const { redactionsByType } = sanitizeSecrets(jwt);
+            expect(redactionsByType.JWT).toEqual(1);
+            expect(redactionsByType.MAPBOX_TOKEN).toBeUndefined();
+        });
+    });
+
+    describe("NPM tokens", () => {
+        it("redacts npm_ prefixed tokens", () => {
+            const input = "token: npm_" + "A".repeat(36);
+            const { redactionsByType } = sanitizeSecrets(input);
+            expect(redactionsByType.NPM_TOKEN).toEqual(1);
+        });
+    });
+
+    describe("Notion secrets", () => {
+        it("redacts old-style secret_ prefix", () => {
+            const input = "key: secret_" + "a".repeat(43);
+            const { redactionsByType } = sanitizeSecrets(input);
+            expect(redactionsByType.NOTION_SECRET).toEqual(1);
+        });
+
+        it("redacts new-style ntn_ prefix", () => {
+            const input = "key: ntn_" + "a".repeat(45);
+            const { redactionsByType } = sanitizeSecrets(input);
+            expect(redactionsByType.NOTION_SECRET).toEqual(1);
+        });
+    });
+
+    describe("Square access tokens", () => {
+        it("redacts EAAA... tokens", () => {
+            const input = "EAAA" + "a".repeat(60);
+            const { redactionsByType } = sanitizeSecrets(input);
+            expect(redactionsByType.SQUARE_ACCESS_TOKEN).toEqual(1);
+        });
     });
 
     describe("Bearer tokens", () => {
