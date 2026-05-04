@@ -94,7 +94,7 @@ export const MODEL_DISPLAY: Record<string, string> = {
 
 import { IS_MAC, IS_WIN } from "./tools/platform.js";
 import { createDefaultPipeline, type ChatParams } from "./llm-middleware.js";
-import { sanitizeToolSchemas } from "./tools/schema-sanitizer.js";
+import { sanitizeToolSchemas, type ToolSchemaShape } from "./tools/schema-sanitizer.js";
 import { sanitizeContextEchoes } from "./context-scrubber.js";
 import { tryParseOssToolCalls } from "./llm-parser-fallback.js";
 
@@ -205,7 +205,7 @@ export function createLLMClient(config: Config): LLMClient {
                     tools:
                         params.tools && params.tools.length > 0
                             ? (sanitizeToolSchemas(
-                                  params.tools as unknown as Parameters<typeof sanitizeToolSchemas>[0],
+                                  params.tools as unknown as ToolSchemaShape[],
                               ) as typeof params.tools)
                             : undefined,
                     platform: PLATFORM,

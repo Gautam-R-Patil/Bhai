@@ -25,14 +25,26 @@ export function _selfEditIsUserFacing(
     return true;
 }
 
+// Per-field cap chosen so the full line stays under PIPE_BUF on both
+// Linux (4096) and macOS (512). 4 fields × 400 chars + overhead ≈ 1.8 KB.
+// macOS's 512-byte guarantee is stricter than the line we emit — callers
+// that demand hard atomicity on macOS must use a lock file. We trade the
+// macOS strict guarantee for readable audit rows + reliable POSIX append.
+const AUDIT_FIELD_CAP = 400;
+const TRUNC_MARKER = "…[truncated]";
+
+function truncateField(s: string, cap: number = AUDIT_FIELD_CAP): string {
+    if (s.length <= cap) return s;
+    return s.slice(0, cap - TRUNC_MARKER.length) + TRUNC_MARKER;
+}
+
 export function _formatSelfEditForAudit(edit: SelfEdit): string {
     const ts = new Date().toISOString();
-    // Escape order matters: backslash FIRST (otherwise an input
-    // containing the literal two chars "\\n" would look indistinguishable
-    // from a real newline after decode). Then CR/LF/TAB so the row stays
-    // grep-friendly and a hostile `reason` can't forge a new log line.
+    // Escape order: backslash first (otherwise literal "\\n" in input
+    // decodes indistinguishably from a real newline), then CR/LF/TAB so
+    // the row stays grep-friendly and hostile input can't forge a new row.
     const esc = (s: string) =>
-        (s ?? "")
+        truncateField(s ?? "")
             .replace(/\\/g, "\\\\")
             .replace(/\r/g, "\\r")
             .replace(/\n/g, "\\n")

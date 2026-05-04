@@ -837,7 +837,9 @@ async function boot() {
                         sendOverlayNotification(response);
                         return;
                     }
-                    console.warn(`[CRON] Unknown deliverTo "${channel}" for ${job.id}; response was: ${response.slice(0, 120)}`);
+                    console.error(
+                        `[CRON] MISROUTED — job ${job.id} had deliverTo="${channel}" which has no handler. Response (${response.length} chars) was dropped.`,
+                    );
                 } catch (err) {
                     console.warn(`[CRON] Delivery error for ${job.id}:`, (err as Error).message);
                 }

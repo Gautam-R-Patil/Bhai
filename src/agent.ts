@@ -801,6 +801,13 @@ async function _runAgentBody(
         setActiveChannel(channelContext.channel);
     }
 
+    // Inject caller owner-status for tools that make privilege-sensitive
+    // decisions (cron scheduling etc.). Must happen before any tool call.
+    if (channelContext) {
+        const { setCronCallerContext } = await import("./tools/cron-tool.js");
+        setCronCallerContext({ isOwner: channelContext.isOwner === true });
+    }
+
     // Trace ID injected by the outer runAgent wrapper (already started + in ALS context).
     const _harnessTraceId = _injectedTraceId;
 

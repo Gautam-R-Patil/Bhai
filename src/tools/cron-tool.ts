@@ -8,6 +8,21 @@ import { addJob, cancelJob, getJobs } from "../cron/store.js";
 
 type Op = "schedule" | "list" | "cancel" | "trigger";
 
+// Injection pattern (mirrors src/tools/ask-owner.ts): channel entry points
+// (telegram/whatsapp/discord/slack/matrix/overlay) set the caller's owner
+// status on their thread of execution around each runAgent call. The tool
+// handler reads from this module-level slot instead of trusting the LLM.
+// Node's single-threaded event loop + sequential message processing in
+// channel handlers makes this safe.
+interface CronCallerContext {
+    isOwner: boolean;
+}
+let _currentCaller: CronCallerContext | null = null;
+
+export function setCronCallerContext(ctx: CronCallerContext | null): void {
+    _currentCaller = ctx;
+}
+
 function getStringParam(
     input: Record<string, unknown>,
     key: string,
@@ -52,11 +67,6 @@ export const cronTool: ToolDefinition = {
                         description:
                             "(schedule only, optional) User id / chat id for routing delivery.",
                     },
-                    isOwner: {
-                        type: "boolean",
-                        description:
-                            "(schedule only, internal) Marks the job as owner-scheduled so the scheduler runs it with owner privileges. Defaults to false.",
-                    },
                     id: {
                         type: "string",
                         description: "(cancel only) The job id to cancel.",
@@ -82,7 +92,8 @@ export const cronTool: ToolDefinition = {
                     schedule,
                     deliverTo: getStringParam(input, "deliverTo") ?? undefined,
                     userId: getStringParam(input, "userId") ?? undefined,
-                    isOwner: input.isOwner === true,
+                    // isOwner comes from injected caller context — never the LLM.
+                    isOwner: _currentCaller?.isOwner === true,
                 });
                 return toolSuccess({
                     success: true,
