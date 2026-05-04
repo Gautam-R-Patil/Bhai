@@ -7,9 +7,9 @@
 // this module uses a cheap model (Haiku) to synthesize a cohesive,
 // actionable briefing relevant to the current user message.
 //
-// The Hermes "briefing" pattern: raw memory fragments from 12+
-// parallel retrieval systems are fused into one paragraph by an LLM,
-// producing higher relevance and lower token waste.
+// The briefing pattern: raw memory fragments from 12+ parallel retrieval
+// systems are fused into one paragraph by an LLM, producing higher
+// relevance and lower token waste.
 
 import type { LLMClient } from "../llm.js";
 

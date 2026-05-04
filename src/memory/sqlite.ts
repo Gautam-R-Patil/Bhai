@@ -23,6 +23,7 @@ import { computeRPE, surpriseDecayMultiplier, surpriseImportanceBoost } from "./
 import { getTemporalCache } from "./temporal-cache.js";
 // ── Brain-Inspired Module Imports ─────────────
 import { buildIndexFromDB, getHNSWIndex } from "./vector-index.js";
+import { buildTrigramQuery, containsCjk, sanitizeFts5Query } from "./fts5-query.js";
 
 // ── Constants ─────────────────────────────────
 
@@ -450,10 +451,25 @@ export async function initMemoryDB(): Promise<CompatDatabase> {
         )
       `);
 
-        // Triggers keep FTS5 in sync automatically for non-remember() inserts
+        // Trigram FTS5 table for CJK + arbitrary-substring search.
+        // unicode61 splits CJK into single-character tokens (so a query like
+        // "大别山项目" degenerates to 5 individual tokens chained by AND and
+        // misses phrase matches). The trigram tokenizer emits overlapping
+        // 3-byte windows so multi-character CJK phrases and mid-word matches
+        // ("config" in "config.yaml") both work.
+        db.run(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts_trigram USING fts5(
+          content, category, tags,
+          tokenize='trigram'
+        )
+      `);
+
+        // Triggers keep BOTH FTS5 tables in sync automatically.
         db.run(`
         CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
           INSERT OR REPLACE INTO memories_fts(rowid, content, category, tags)
+          VALUES (new.id, new.content, new.category, new.tags);
+          INSERT OR REPLACE INTO memories_fts_trigram(rowid, content, category, tags)
           VALUES (new.id, new.content, new.category, new.tags);
         END
       `);
@@ -461,6 +477,8 @@ export async function initMemoryDB(): Promise<CompatDatabase> {
         db.run(`
         CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
           INSERT INTO memories_fts(memories_fts, rowid, content, category, tags)
+          VALUES ('delete', old.id, old.content, old.category, old.tags);
+          INSERT INTO memories_fts_trigram(memories_fts_trigram, rowid, content, category, tags)
           VALUES ('delete', old.id, old.content, old.category, old.tags);
         END
       `);
@@ -471,13 +489,19 @@ export async function initMemoryDB(): Promise<CompatDatabase> {
           VALUES ('delete', old.id, old.content, old.category, old.tags);
           INSERT OR REPLACE INTO memories_fts(rowid, content, category, tags)
           VALUES (new.id, new.content, new.category, new.tags);
+          INSERT INTO memories_fts_trigram(memories_fts_trigram, rowid, content, category, tags)
+          VALUES ('delete', old.id, old.content, old.category, old.tags);
+          INSERT OR REPLACE INTO memories_fts_trigram(rowid, content, category, tags)
+          VALUES (new.id, new.content, new.category, new.tags);
         END
       `);
 
-        // Backfill FTS5 from existing memories (idempotent — skips already-indexed rows)
+        // Backfill both FTS5 tables from existing memories (idempotent).
         backfillFTS5();
 
-        console.log("🧠 Memory database initialized (WAL + FTS5/porter + Living Continuity)");
+        console.log(
+            "🧠 Memory database initialized (WAL + FTS5 porter+trigram + Living Continuity)",
+        );
     } catch (err) {
         console.log("🧠 Memory database initialized (WAL + Living Continuity, FTS5 setup failed)");
         console.error("  FTS5 error:", (err as Error).message);
@@ -584,30 +608,59 @@ export function backfillFTS5(): void {
     if (!rawDb) return;
 
     try {
-        // Count existing FTS rows to decide if backfill is needed
+        // Count existing rows across the unicode61 and trigram FTS tables.
         const ftsCount = rawDb.prepare("SELECT COUNT(*) as c FROM memories_fts").get() as { c: number } | undefined;
+        let trigramExists = true;
+        let trigramN = 0;
+        try {
+            const trigramCount = rawDb
+                .prepare("SELECT COUNT(*) as c FROM memories_fts_trigram")
+                .get() as { c: number } | undefined;
+            trigramN = trigramCount?.c ?? 0;
+        } catch {
+            trigramExists = false;
+        }
 
         const memCount = rawDb.prepare("SELECT COUNT(*) as c FROM memories").get() as { c: number } | undefined;
 
         const ftsN = ftsCount?.c ?? 0;
         const memN = memCount?.c ?? 0;
 
-        if (ftsN >= memN && memN > 0) {
-            console.log(`  [FTS5] Index already synced (${ftsN} rows)`);
+        const unicodeSynced = ftsN >= memN && memN > 0;
+        const trigramSynced = !trigramExists || (trigramN >= memN && memN > 0);
+
+        if (unicodeSynced && trigramSynced) {
+            console.log(
+                `  [FTS5] Indexes already synced (unicode61=${ftsN}, trigram=${trigramN}, memories=${memN})`,
+            );
             return;
         }
 
-        // Backfill: insert all memories not yet in FTS5.
-        // For standalone FTS5 tables, rowid is the linking key.
-        // We delete and re-insert to handle any stale/corrupt state.
-        rawDb.exec("DELETE FROM memories_fts");
-        rawDb.exec(
-            "INSERT INTO memories_fts(rowid, content, category, tags) SELECT id, content, category, tags FROM memories",
+        if (!unicodeSynced) {
+            rawDb.exec("DELETE FROM memories_fts");
+            rawDb.exec(
+                "INSERT INTO memories_fts(rowid, content, category, tags) SELECT id, content, category, tags FROM memories",
+            );
+        }
+        if (trigramExists && !trigramSynced) {
+            rawDb.exec("DELETE FROM memories_fts_trigram");
+            rawDb.exec(
+                "INSERT INTO memories_fts_trigram(rowid, content, category, tags) SELECT id, content, category, tags FROM memories",
+            );
+        }
+
+        const finalUni = rawDb
+            .prepare("SELECT COUNT(*) as c FROM memories_fts")
+            .get() as { c: number } | undefined;
+        const finalTri = trigramExists
+            ? ((rawDb.prepare("SELECT COUNT(*) as c FROM memories_fts_trigram").get() as
+                  | { c: number }
+                  | undefined)?.c ?? 0)
+            : 0;
+
+        console.log(
+            `  [FTS5] Backfilled unicode61=${finalUni?.c ?? 0}, trigram=${finalTri} (porter unicode61 + trigram)`,
         );
-
-        const finalCount = rawDb.prepare("SELECT COUNT(*) as c FROM memories_fts").get() as { c: number } | undefined;
-
-        console.log(`  [FTS5] Backfilled ${finalCount?.c ?? 0} memories into FTS5 index (porter unicode61)`);
     } catch (err) {
         console.warn("[FTS5] Backfill failed (non-fatal):", (err as Error).message);
     }
@@ -978,52 +1031,56 @@ export function keywordSearch(
     if (!db) return [];
 
     try {
-        // Sanitize query for FTS5: remove special FTS operators that could cause parse errors
-        const sanitized = query.replace(/[*"():^{}[\]~<>]/g, " ").trim();
-        if (!sanitized || sanitized.length < 2) return [];
+        const rawQuery = (query ?? "").trim();
+        if (!rawQuery || rawQuery.length < 2) return [];
 
-        // Build an OR query from individual terms for broader recall with porter stemming
-        const stopWords = new Set([
-            "a",
-            "an",
-            "the",
-            "is",
-            "are",
-            "do",
-            "you",
-            "know",
-            "who",
-            "what",
-            "where",
-            "when",
-            "why",
-            "how",
-            "i",
-            "am",
-            "my",
-            "me",
-            "to",
-            "for",
-            "in",
-            "on",
-            "of",
-            "and",
-            "or",
-            "with",
-        ]);
-        const terms = sanitized
-            .toLowerCase()
-            .split(/\s+/)
-            .filter((w) => w.length > 2 && !stopWords.has(w));
-        if (terms.length === 0) return [];
+        // Route CJK queries (≥2 CJK chars) to the trigram FTS5 table: the
+        // unicode61 tokenizer splits CJK into single-character tokens and
+        // misses multi-character phrase matches. The trigram table indexes
+        // overlapping 3-byte windows and handles CJK + arbitrary substring.
+        const cjk = containsCjk(rawQuery);
+        let ftsQuery: string;
+        let ftsTable: "memories_fts" | "memories_fts_trigram";
 
-        const ftsQuery = terms.join(" OR ");
+        if (cjk) {
+            ftsQuery = buildTrigramQuery(rawQuery);
+            ftsTable = "memories_fts_trigram";
+            if (!ftsQuery) return [];
+        } else {
+            // ASCII / Latin path: use the porter+unicode61 table. Sanitize
+            // aggressively, then split into OR-joined stemmed terms for
+            // broad recall.
+            const sanitized = sanitizeFts5Query(rawQuery);
+            if (!sanitized) return [];
+
+            const stopWords = new Set([
+                "a", "an", "the", "is", "are", "do", "you", "know",
+                "who", "what", "where", "when", "why", "how",
+                "i", "am", "my", "me", "to", "for", "in", "on",
+                "of", "and", "or", "with",
+            ]);
+            // Split only on whitespace that's NOT inside a quoted phrase.
+            // Simpler heuristic: keep quoted phrases as single tokens.
+            const tokens: string[] = [];
+            const phraseRe = /"[^"]+"|\S+/g;
+            for (const m of sanitized.matchAll(phraseRe)) tokens.push(m[0]);
+
+            const terms = tokens.filter((w) => {
+                if (w.startsWith('"')) return true; // phrases always kept
+                const lc = w.toLowerCase();
+                return lc.length > 2 && !stopWords.has(lc);
+            });
+            if (terms.length === 0) return [];
+
+            ftsQuery = terms.join(" OR ");
+            ftsTable = "memories_fts";
+        }
 
         const results = db.exec(
             `SELECT m.id, m.content, m.category, m.tags, m.importance, m.created_at, m.access_count, rank
-       FROM memories_fts fts
+       FROM ${ftsTable} fts
        JOIN memories m ON m.id = fts.rowid
-       WHERE memories_fts MATCH ?
+       WHERE ${ftsTable} MATCH ?
        AND m.consolidated_into IS NULL
        AND m.decay_score > 0.2
        ORDER BY rank

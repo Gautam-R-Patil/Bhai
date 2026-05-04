@@ -115,3 +115,4 @@ desktop/hostinger-upload/
 !src/tools/schema-sanitizer.test.ts
 !src/tools/tool-result.test.ts
 !src/utils/atomic-io.test.ts
+!src/memory/fts5-query.test.ts
