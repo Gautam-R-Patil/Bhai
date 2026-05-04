@@ -6,6 +6,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { isShellBypass, isSystemDestructive, shellArgsTargetProtectedPath } from "../security/allowlist.js";
 import { auditLog } from "../security/audit-log.js";
+import { sanitizeSecrets } from "../security/secrets-sanitizer.js";
 import { resolveWindowsShell, wrapForShell } from "../utils/win-shell.js";
 import type { ToolDefinition } from "./get-current-time.js";
 import { IS_WIN } from "./platform.js";
@@ -108,14 +109,35 @@ export const shellExec: ToolDefinition = {
         try {
             const { stdout, stderr } = await execCommand(command, args, { cwd, timeout });
 
-            const output = (stdout || "").substring(0, MAX_OUTPUT);
-            const errors = (stderr || "").substring(0, MAX_OUTPUT);
+            // Truncate first so we only scan what actually ships to the
+            // agent (scanning a 10 MB buffer would be wasteful).
+            const rawOut = (stdout || "").substring(0, MAX_OUTPUT);
+            const rawErr = (stderr || "").substring(0, MAX_OUTPUT);
+
+            // Redact well-known secret formats before the output reaches
+            // the agent context. Prevents scripts like `echo $AWS_KEY`
+            // or `env | grep TOKEN` from leaking credentials into LLM
+            // memory + cloud logs.
+            const outScan = sanitizeSecrets(rawOut);
+            const errScan = sanitizeSecrets(rawErr);
+            if (outScan.totalRedactions + errScan.totalRedactions > 0) {
+                console.warn(
+                    `[SHELL] redacted ${outScan.totalRedactions + errScan.totalRedactions} secret(s) ` +
+                        `from command="${command}": ${JSON.stringify({
+                            ...outScan.redactionsByType,
+                            ...errScan.redactionsByType,
+                        })}`,
+                );
+            }
 
             return JSON.stringify({
                 success: true,
-                stdout: output,
-                stderr: errors,
+                stdout: outScan.sanitized,
+                stderr: errScan.sanitized,
                 truncated: (stdout || "").length > MAX_OUTPUT,
+                ...(outScan.totalRedactions + errScan.totalRedactions > 0
+                    ? { redacted: outScan.totalRedactions + errScan.totalRedactions }
+                    : {}),
             });
         } catch (err) {
             const error = err as { message?: string; code?: number; killed?: boolean };
@@ -130,11 +152,16 @@ export const shellExec: ToolDefinition = {
                         console.log(`  🔧 Shell self-healed (${heal.action}) — retrying: ${command}`);
                         try {
                             const { stdout, stderr } = await execCommand(command, args, { cwd, timeout });
+                            const outScan = sanitizeSecrets((stdout || "").substring(0, MAX_OUTPUT));
+                            const errScan = sanitizeSecrets((stderr || "").substring(0, MAX_OUTPUT));
                             return JSON.stringify({
                                 success: true,
-                                stdout: (stdout || "").substring(0, MAX_OUTPUT),
-                                stderr: (stderr || "").substring(0, MAX_OUTPUT),
+                                stdout: outScan.sanitized,
+                                stderr: errScan.sanitized,
                                 note: `Auto-installed missing dependency (${heal.action}) before retry`,
+                                ...(outScan.totalRedactions + errScan.totalRedactions > 0
+                                    ? { redacted: outScan.totalRedactions + errScan.totalRedactions }
+                                    : {}),
                             });
                         } catch (retryErr) {
                             const re = retryErr as { message?: string; code?: number; killed?: boolean };
