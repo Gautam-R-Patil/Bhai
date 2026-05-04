@@ -9,7 +9,7 @@
   "scripts": {
     "predev": "npm run build:location 2>/dev/null || true",
     "dev": "tsx --watch src/index.ts",
-    "build": "node node_modules/typescript/bin/tsc",
+    "build": "node node_modules/typescript/bin/tsc -p tsconfig.prod.json",
     "postbuild": "node scripts/postbuild-copy-assets.mjs",
     "start": "node dist/index.js",
     "build:native": "cd native && npm install && npm run build",

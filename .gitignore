@@ -5,6 +5,7 @@ node_modules/
 dist/
 dist-bundle/
 .next/
+*.tsbuildinfo
 
 # Rust build artifacts
 native/target/
