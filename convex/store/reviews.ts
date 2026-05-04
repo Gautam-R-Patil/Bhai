@@ -77,10 +77,13 @@ export const getUserReview = query({
 export const getSummary = query({
   args: { itemId: v.id("store_items") },
   handler: async (ctx, args) => {
+    // getSummary reads every review per item to compute the rating
+    // distribution. 10k cap handles all realistic items; beyond that
+    // this should be a denormalized summary doc on store_items itself.
     const reviews = await ctx.db
       .query("store_reviews")
       .withIndex("by_item", (q) => q.eq("itemId", args.itemId))
-      .collect();
+      .take(10000);
 
     if (reviews.length === 0) {
       return {

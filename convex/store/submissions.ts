@@ -87,10 +87,13 @@ export const listByStatus = query({
  */
 export const getPendingCount = query({
   handler: async (ctx) => {
+    // 5k cap; see denormalization TODO in store/admins.ts. If pending
+    // submissions grow past this the badge will undercount — swap to a
+    // counter maintained by the submit/approve/reject mutations.
     const pending = await ctx.db
       .query("submissions")
       .withIndex("by_status", (q) => q.eq("status", "pending"))
-      .collect();
+      .take(5000);
 
     return pending.length;
   },

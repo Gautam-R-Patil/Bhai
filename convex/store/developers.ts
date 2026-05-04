@@ -84,13 +84,13 @@ export const getStats = query({
     const items = await ctx.db
       .query("store_items")
       .withIndex("by_developer", (q) => q.eq("developerId", args.developerId))
-      .collect();
+      .take(5000);
 
     // Get pending submissions count
     const submissions = await ctx.db
       .query("submissions")
       .withIndex("by_developer", (q) => q.eq("developerId", args.developerId))
-      .collect();
+      .take(5000);
     const pendingSubmissions = submissions.filter(
       (s) => s.status === "pending" || s.status === "in_review"
     ).length;
@@ -298,7 +298,7 @@ export const suspend = mutation({
     const items = await ctx.db
       .query("store_items")
       .withIndex("by_developer", (q) => q.eq("developerId", args.developerId))
-      .collect();
+      .take(5000);
 
     for (const item of items) {
       if (item.status === "active") {
@@ -343,7 +343,7 @@ export const ban = mutation({
     const items = await ctx.db
       .query("store_items")
       .withIndex("by_developer", (q) => q.eq("developerId", args.developerId))
-      .collect();
+      .take(5000);
 
     for (const item of items) {
       await ctx.db.patch(item._id, {

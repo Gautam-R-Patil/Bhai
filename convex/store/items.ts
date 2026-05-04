@@ -161,7 +161,7 @@ export const getByDeveloper = query({
     return await ctx.db
       .query("store_items")
       .withIndex("by_developer", (q) => q.eq("developerId", args.developerId))
-      .collect();
+      .take(5000);
   },
 });
 
@@ -225,7 +225,7 @@ export const getTrending = query({
     const items = await ctx.db
       .query("store_items")
       .filter((q) => q.eq(q.field("status"), "active"))
-      .collect();
+      .take(10000);
 
     // Sort by weekly installs
     return items
@@ -242,7 +242,7 @@ export const getCategories = query({
     const items = await ctx.db
       .query("store_items")
       .filter((q) => q.eq(q.field("status"), "active"))
-      .collect();
+      .take(10000);
 
     const counts: Record<string, number> = {};
     for (const item of items) {
@@ -429,7 +429,10 @@ export const update = mutation({
  */
 export const resetWeeklyInstalls = mutation({
   handler: async (ctx) => {
-    const items = await ctx.db.query("store_items").collect();
+    // Weekly install reset; 10k cap to avoid a single mutation exceeding
+    // Convex write limits. Catalogs larger than this should switch to a
+    // paginated cron using ctx.scheduler.runAfter + a cursor.
+    const items = await ctx.db.query("store_items").take(10000);
 
     for (const item of items) {
       await ctx.db.patch(item._id, { weeklyInstalls: 0 });

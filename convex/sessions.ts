@@ -32,7 +32,7 @@ export const createSession = internalMutation({
     const userSessions = await ctx.db
       .query("sessions")
       .withIndex("by_user", (q) => q.eq("otplessUserId", otplessUserId))
-      .collect();
+      .take(1000);
 
     const now = Date.now();
     for (const s of userSessions) {
@@ -155,7 +155,7 @@ export const revokeAllSessions = internalMutation({
     const sessions = await ctx.db
       .query("sessions")
       .withIndex("by_user", (q) => q.eq("otplessUserId", otplessUserId))
-      .collect();
+      .take(1000);
 
     for (const s of sessions) {
       await ctx.db.delete(s._id);
@@ -213,7 +213,7 @@ export const createSessionInternal = internalMutation({
     const userSessions = await ctx.db
       .query("sessions")
       .withIndex("by_user", (q) => q.eq("otplessUserId", otplessUserId))
-      .collect();
+      .take(1000);
 
     const now = Date.now();
     for (const s of userSessions) {

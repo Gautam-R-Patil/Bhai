@@ -181,10 +181,11 @@ export const deductCreditsInternal = internalMutation({
 // ══════════════════════════════════════════════════
 
 // ── List all accounts ─────────────────────────────
+// 10k cap; switch to paginated version if user base grows past this.
 export const listAll = internalQuery({
   args: {},
   handler: async (ctx) => {
-    return await ctx.db.query("accounts").collect();
+    return await ctx.db.query("accounts").take(10000);
   },
 });
 
@@ -230,10 +231,12 @@ export const addCredits = internalMutation({
 });
 
 // ── Aggregate stats ───────────────────────────────
+// TODO: denormalize to a single counters doc updated by each
+// mutation so this is O(1) instead of O(N) scan at 10k cap.
 export const getStats = internalQuery({
   args: {},
   handler: async (ctx) => {
-    const accounts = await ctx.db.query("accounts").collect();
+    const accounts = await ctx.db.query("accounts").take(10000);
     const total = accounts.length;
     const active = accounts.filter((a) => a.status === "active").length;
     const suspended = accounts.filter((a) => a.status === "suspended").length;
@@ -315,14 +318,14 @@ export const upsertAccountInternal = internalMutation({
 export const listAllInternal = internalQuery({
   args: {},
   handler: async (ctx) => {
-    return await ctx.db.query("accounts").collect();
+    return await ctx.db.query("accounts").take(10000);
   },
 });
 
 export const getStatsInternal = internalQuery({
   args: {},
   handler: async (ctx) => {
-    const accounts = await ctx.db.query("accounts").collect();
+    const accounts = await ctx.db.query("accounts").take(10000);
     const total = accounts.length;
     const active = accounts.filter((a) => a.status === "active").length;
     const suspended = accounts.filter((a) => a.status === "suspended").length;

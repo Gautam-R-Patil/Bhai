@@ -15,7 +15,7 @@ export const getByUser = query({
     const installs = await ctx.db
       .query("store_installs")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
-      .collect();
+      .take(5000);
 
     // Enrich with item details
     const enriched = await Promise.all(
@@ -88,7 +88,7 @@ export const checkUpdates = query({
       .query("store_installs")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
       .filter((q) => q.eq(q.field("autoUpdate"), true))
-      .collect();
+      .take(5000);
 
     const updates: Array<{
       installId: typeof installs[0]["_id"];
@@ -124,10 +124,13 @@ export const checkUpdates = query({
 export const getInstallCount = query({
   args: { itemId: v.id("store_items") },
   handler: async (ctx, args) => {
+    // getInstallCount: 10k cap. Beyond that, this should be a
+    // denormalized counter on store_items.installCount (which already
+    // exists and is maintained by startInstall/confirmInstall).
     const installs = await ctx.db
       .query("store_installs")
       .withIndex("by_item", (q) => q.eq("itemId", args.itemId))
-      .collect();
+      .take(10000);
 
     return installs.length;
   },
