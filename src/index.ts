@@ -199,6 +199,14 @@ async function boot() {
             console.warn("[BOOT] Goals init failed (non-fatal):", (gErr as Error).message);
         }
 
+        // Prompt Evolver — records per-turn outcomes so /optimize-harness can A/B prompts.
+        try {
+            const { initPromptEvolver } = await import("./prompts/prompt-evolver.js");
+            initPromptEvolver(memDb);
+        } catch (peErr) {
+            console.warn("[BOOT] Prompt evolver init failed (non-fatal):", (peErr as Error).message);
+        }
+
         // Working Memory — bounded attention-weighted buffer for active context
         try {
             initWorkingMemory();

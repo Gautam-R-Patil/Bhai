@@ -37,6 +37,10 @@ let db: Database | null = null;
 
 // ── Init ──────────────────────────────────────
 
+export function _resetPromptEvolverForTests(): void {
+    db = null;
+}
+
 export function initPromptEvolver(database: Database): void {
     db = database;
 
@@ -212,7 +216,8 @@ export function getActivePrompt(segmentName: string): string | null {
         [segmentName]
     );
 
-    return results[0]?.values[0]?.[0] as string | null;
+    const content = results[0]?.values[0]?.[0];
+    return typeof content === "string" ? content : null;
 }
 
 /**
