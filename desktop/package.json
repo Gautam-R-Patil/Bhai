@@ -143,7 +143,9 @@
                     "!**/.github/**",
                     "!**/examples/**",
                     "!**/example/**",
-                    "!**/docs/**"
+                    "!**/docs/**",
+                    "!ffprobe-static/bin/**",
+                    "!onnxruntime-node/bin/**"
                 ]
             }
         ],
@@ -158,7 +160,17 @@
             ],
             "icon": "logo.ico",
             "legalTrademarks": "© 2024-2026 XAGI Labs Private Limited. All rights reserved.",
-            "requestedExecutionLevel": "asInvoker"
+            "requestedExecutionLevel": "asInvoker",
+            "extraResources": [
+                {
+                    "from": "../node_modules/ffprobe-static/bin/win32",
+                    "to": "bot/node_modules/ffprobe-static/bin/win32"
+                },
+                {
+                    "from": "../node_modules/onnxruntime-node/bin/napi-v3/win32",
+                    "to": "bot/node_modules/onnxruntime-node/bin/napi-v3/win32"
+                }
+            ]
         },
         "mac": {
             "target": [
@@ -171,7 +183,17 @@
                 "NSMicrophoneUsageDescription": "A.T.L.A.S needs microphone access for voice messages and live voice conversations.",
                 "NSScreenCaptureUsageDescription": "A.T.L.A.S needs screen recording access to take screenshots and help you with screen-based tasks.",
                 "NSAppleEventsUsageDescription": "A.T.L.A.S uses Apple Events to automate actions on your Mac."
-            }
+            },
+            "extraResources": [
+                {
+                    "from": "../node_modules/ffprobe-static/bin/darwin",
+                    "to": "bot/node_modules/ffprobe-static/bin/darwin"
+                },
+                {
+                    "from": "../node_modules/onnxruntime-node/bin/napi-v3/darwin",
+                    "to": "bot/node_modules/onnxruntime-node/bin/napi-v3/darwin"
+                }
+            ]
         },
         "dmg": {
             "title": "A.T.L.A.S Setup",
