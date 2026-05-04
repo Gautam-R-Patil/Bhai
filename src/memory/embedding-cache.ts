@@ -18,6 +18,14 @@ export const EMBED_CACHE_MAX = 500;
 
 const _cache = new Map<string, Float32Array>();
 
+// In-flight fetches — indexed by cache key. When two callers race
+// for the same key on a cold cache, the second caller finds the
+// first one's pending promise here and awaits it instead of starting
+// its own transformer pipeline run. Without this, concurrent
+// cache-miss hits for identical text run the model twice (wasted
+// CPU) and then both write to the cache (harmless, just redundant).
+const _inflight = new Map<string, Promise<Float32Array>>();
+
 /**
  * Build a collision-resistant cache key from (type, text).
  * Uses a null-byte separator so inputs like (type="query", text=":foo")
@@ -56,6 +64,41 @@ export function putCached(key: string, value: Float32Array): void {
     }
 }
 
+/**
+ * Cache-with-inflight-dedup wrapper. On a miss, check for an existing
+ * pending fetch under the same key before starting a new one so
+ * concurrent callers share one pipeline run.
+ *
+ * The returned Float32Array is always a fresh copy of what lives in
+ * the cache — callers are free to mutate their result without
+ * corrupting the cached entry or other callers' copies.
+ */
+export async function getOrFetchCached(
+    key: string,
+    fetch: () => Promise<Float32Array>,
+): Promise<Float32Array> {
+    const cached = getCached(key);
+    if (cached) return cached;
+
+    const existing = _inflight.get(key);
+    if (existing) {
+        // Another caller is already running the pipeline for this key.
+        // Share their promise; return a defensive copy of their result.
+        const shared = await existing;
+        return new Float32Array(shared);
+    }
+
+    const promise = fetch();
+    _inflight.set(key, promise);
+    try {
+        const result = await promise;
+        putCached(key, result);
+        return new Float32Array(result);
+    } finally {
+        _inflight.delete(key);
+    }
+}
+
 // ── Test-only helpers ──────────────────────────────────────────
 // Exported so the vitest suite can reset state between tests and
 // assert on internal size without reaching into module state.
@@ -63,9 +106,15 @@ export function putCached(key: string, value: Float32Array): void {
 /** @internal — for tests only */
 export function _clearCacheForTests(): void {
     _cache.clear();
+    _inflight.clear();
 }
 
 /** @internal — for tests only */
 export function _cacheSizeForTests(): number {
     return _cache.size;
+}
+
+/** @internal — for tests only */
+export function _inflightSizeForTests(): number {
+    return _inflight.size;
 }

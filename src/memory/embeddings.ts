@@ -22,7 +22,7 @@
 
 import { join, sep } from "node:path";
 import { existsSync } from "node:fs";
-import { makeCacheKey, getCached, putCached } from "./embedding-cache.js";
+import { makeCacheKey, getOrFetchCached } from "./embedding-cache.js";
 
 // ── Embedding Model Configuration ───────────────
 // Configurable model registry — switch models via ATLAS_EMBEDDING_MODEL env var.
@@ -381,11 +381,11 @@ export async function embedText(text: string, type: "query" | "document" = "quer
     const maxLen = activeModel.maxInputChars ?? (_activeDim === EMBEDDING_DIM ? 8000 : 2000);
     const truncated = text.length > maxLen ? text.substring(0, maxLen) : text;
 
-    // Cache lookup on the post-truncation text so different-length inputs
-    // sharing a prefix don't collide.
+    // Cache + inflight dedup keyed on the post-truncation text. The
+    // pipeline + Matryoshka step run inside getOrFetchCached's fetch
+    // callback so concurrent callers for the same (type, text) share
+    // a single run instead of racing to compute the same embedding.
     const cacheKey = makeCacheKey(truncated, type);
-    const cached = getCached(cacheKey);
-    if (cached) return cached;
 
     // Models with task-specific prefixes (e.g. Nomic) — not applicable to fallback models
     const useTaskPrefix = activeModel.usesTaskPrefix && _activeDim === EMBEDDING_DIM;
@@ -393,21 +393,20 @@ export async function embedText(text: string, type: "query" | "document" = "quer
         ? (type === "query" ? `search_query: ${truncated}` : `search_document: ${truncated}`)
         : truncated;
 
-    const output = await extractor(prefixed, {
-        pooling: "mean",
-        normalize: true,
+    return getOrFetchCached(cacheKey, async () => {
+        const output = await extractor(prefixed, {
+            pooling: "mean",
+            normalize: true,
+        });
+        let embedding: Float32Array = new Float32Array(output.data);
+        // ── Matryoshka truncation ──
+        // Models trained with Matryoshka Representation Learning (MRL)
+        // encode the most important information in the first N dims.
+        // Truncating + re-normalizing gives a smaller vector with
+        // minimal quality loss.
+        embedding = applyMatryoshkaTruncation(embedding);
+        return embedding;
     });
-
-    let embedding: Float32Array = new Float32Array(output.data);
-
-    // ── Matryoshka truncation ──
-    // Models trained with Matryoshka Representation Learning (MRL) encode the most
-    // important information in the first N dimensions. Truncating + re-normalizing
-    // gives a smaller vector with minimal quality loss.
-    embedding = applyMatryoshkaTruncation(embedding);
-
-    putCached(cacheKey, embedding);
-    return embedding;
 }
 
 /**
