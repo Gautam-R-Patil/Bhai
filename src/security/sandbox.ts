@@ -62,18 +62,36 @@ export async function runInSandbox(
             });
         }
 
-        // Create and run container
+        // Create and run container with a hardened HostConfig. Notes:
+        //   - User "node" (UID 1000) is bundled in node:20-alpine; running as
+        //     non-root is the single biggest container-escape mitigation.
+        //   - ReadonlyRootfs prevents write to /etc, /usr, etc. /tmp is
+        //     restored as a tmpfs so scripts that write temp files still work.
+        //   - CapDrop: ["ALL"] revokes every Linux capability (including
+        //     CAP_NET_RAW, CAP_CHOWN). SecurityOpt adds PR_SET_NO_NEW_PRIVS
+        //     so child processes cannot re-acquire caps via setuid binaries.
+        //   - PidsLimit caps fork bombs. NetworkMode: "none" remains — no
+        //     network at all is stricter than CapDrop.
         const container = await docker.createContainer({
             Image: image,
             Cmd: ["sh", "-c", fullCommand],
             WorkingDir: options.cwd || "/workspace",
+            User: "node",
             HostConfig: {
                 Binds: mounts,
-                NetworkMode: "none", // No network access
+                NetworkMode: "none",
                 Memory: 256 * 1024 * 1024, // 256MB limit
                 CpuPeriod: 100000,
                 CpuQuota: 50000, // 50% CPU
                 AutoRemove: true,
+                ReadonlyRootfs: true,
+                Tmpfs: {
+                    "/tmp": "rw,noexec,nosuid,size=64m",
+                },
+                CapDrop: ["ALL"],
+                CapAdd: [],
+                SecurityOpt: ["no-new-privileges:true"],
+                PidsLimit: 100,
             },
         });
 
