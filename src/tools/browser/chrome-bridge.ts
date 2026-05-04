@@ -76,7 +76,11 @@ let bridgeToken: string = "";
 let authenticated = false;
 let heartbeatTimer: NodeJS.Timeout | null = null;
 
-// Pending requests waiting for extension responses
+// Pending requests waiting for extension responses.
+// Bounded to protect against an extension that acks out of order, crashes
+// mid-transaction, or silently drops responses — without a cap the map
+// could grow unbounded with orphan entries until process memory was gone.
+const MAX_PENDING_REQUESTS = 100;
 const pendingRequests = new Map<string, {
     resolve: (data: unknown) => void;
     reject: (err: Error) => void;
@@ -503,6 +507,18 @@ export async function sendBridgeCommand(
     }
 
     return new Promise((resolve, reject) => {
+        // Backpressure: if the extension has stalled and we have too many
+        // orphan in-flight commands, refuse the new one rather than let
+        // the map grow until process memory is exhausted.
+        if (pendingRequests.size >= MAX_PENDING_REQUESTS) {
+            if (native) native.recordBridgeError();
+            reject(new Error(
+                `Chrome bridge pending-request queue full (${pendingRequests.size} / ${MAX_PENDING_REQUESTS}) — ` +
+                    `extension may be unresponsive. Reconnect or restart the extension.`,
+            ));
+            return;
+        }
+
         const timeout = setTimeout(() => {
             pendingRequests.delete(id);
             if (native) native.recordBridgeError();

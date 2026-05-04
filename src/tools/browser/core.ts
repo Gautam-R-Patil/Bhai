@@ -121,6 +121,12 @@ export function buildElementsText(): string {
 
 // ── Browser Initialization ────────────────────
 
+// Init lock — serializes concurrent first calls to getBrowser() so we only
+// ever launch one persistent context. Without it, two callers racing before
+// browserContext is assigned could each `await launchPersistentContext` and
+// end up with duplicate browser processes.
+let _browserInitPromise: Promise<BrowserContext> | null = null;
+
 export async function getBrowser(): Promise<BrowserContext> {
     // In Chrome extension mode, there's no Playwright context to return.
     // Tools that call getBrowser() for context.pages() will get null back.
@@ -130,7 +136,10 @@ export async function getBrowser(): Promise<BrowserContext> {
         return { pages: () => [], newPage: async () => await getActivePage() } as unknown as BrowserContext;
     }
 
-    if (!browserContext) {
+    if (browserContext) return browserContext;
+    if (_browserInitPromise) return _browserInitPromise;
+
+    _browserInitPromise = (async (): Promise<BrowserContext> => {
         if (!pw) {
             pw = await import("playwright");
         }
@@ -220,8 +229,17 @@ export async function getBrowser(): Promise<BrowserContext> {
             attachPopupGuard(browserContext);
             console.log("  🛡️  Popup guard: cookie banners + modal auto-dismiss enabled");
         } catch { /* non-fatal */ }
+
+        return browserContext!;
+    })();
+
+    try {
+        return await _browserInitPromise;
+    } catch (err) {
+        // Release the lock so a subsequent call can retry the init.
+        _browserInitPromise = null;
+        throw err;
     }
-    return browserContext;
 }
 
 // ── Get active page ───────────────────────────
