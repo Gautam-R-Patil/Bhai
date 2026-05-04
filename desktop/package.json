@@ -54,7 +54,15 @@
         ],
         "files": [
             "**/*",
-            "!build/**"
+            "!build/**",
+            "!tests/**",
+            "!demo/**",
+            "!**/*.test.js",
+            "!**/*.spec.js",
+            "!**/*.test.ts",
+            "!**/*.spec.ts",
+            "!vitest.config.js",
+            "!vitest.config.ts"
         ],
         "extraResources": [
             {
@@ -111,7 +119,31 @@
                 "from": "../node_modules",
                 "to": "bot/node_modules",
                 "filter": [
-                    "**/*"
+                    "**/*",
+                    "!@biomejs/**",
+                    "!@types/**",
+                    "!@vitest/**",
+                    "!archiver/**",
+                    "!biome/**",
+                    "!jsdoc-to-markdown/**",
+                    "!jsdom/**",
+                    "!tsx/**",
+                    "!typescript/**",
+                    "!vitest/**",
+                    "!**/*.d.ts.map",
+                    "!**/*.md",
+                    "!**/*.markdown",
+                    "!**/CHANGELOG*",
+                    "!**/CONTRIBUTING*",
+                    "!**/test/**",
+                    "!**/tests/**",
+                    "!**/__tests__/**",
+                    "!**/*.test.js",
+                    "!**/*.spec.js",
+                    "!**/.github/**",
+                    "!**/examples/**",
+                    "!**/example/**",
+                    "!**/docs/**"
                 ]
             }
         ],
