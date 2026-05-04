@@ -91,18 +91,20 @@ function cronFieldMatches(value: number, field: string): boolean {
     return Number.isFinite(n) && n === value;
 }
 
+// Cron fields are evaluated in the server's LOCAL timezone, matching
+// user intuition: "0 9 * * *" means "9 AM local", not "9 AM UTC".
+// node-cron uses local time too. ISO timestamps ("at" kind) remain absolute.
 function cronMatches(cronExpr: string, d: Date): boolean {
     const parts = cronExpr.trim().split(/\s+/);
-    // Normalize to 5-field [min, hour, dom, month, dow] — drop leading seconds if 6-field
     const fields = parts.length === 6 ? parts.slice(1) : parts;
     if (fields.length !== 5) return false;
     const [minF, hourF, domF, monthF, dowF] = fields;
     return (
-        cronFieldMatches(d.getUTCMinutes(), minF) &&
-        cronFieldMatches(d.getUTCHours(), hourF) &&
-        cronFieldMatches(d.getUTCDate(), domF) &&
-        cronFieldMatches(d.getUTCMonth() + 1, monthF) &&
-        cronFieldMatches(d.getUTCDay(), dowF)
+        cronFieldMatches(d.getMinutes(), minF) &&
+        cronFieldMatches(d.getHours(), hourF) &&
+        cronFieldMatches(d.getDate(), domF) &&
+        cronFieldMatches(d.getMonth() + 1, monthF) &&
+        cronFieldMatches(d.getDay(), dowF)
     );
 }
 

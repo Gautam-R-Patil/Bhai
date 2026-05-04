@@ -52,6 +52,11 @@ export const cronTool: ToolDefinition = {
                         description:
                             "(schedule only, optional) User id / chat id for routing delivery.",
                     },
+                    isOwner: {
+                        type: "boolean",
+                        description:
+                            "(schedule only, internal) Marks the job as owner-scheduled so the scheduler runs it with owner privileges. Defaults to false.",
+                    },
                     id: {
                         type: "string",
                         description: "(cancel only) The job id to cancel.",
@@ -77,6 +82,7 @@ export const cronTool: ToolDefinition = {
                     schedule,
                     deliverTo: getStringParam(input, "deliverTo") ?? undefined,
                     userId: getStringParam(input, "userId") ?? undefined,
+                    isOwner: input.isOwner === true,
                 });
                 return toolSuccess({
                     success: true,

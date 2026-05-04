@@ -46,6 +46,33 @@ describe("self-edit actuation", () => {
         expect(line).toContain("applied=false");
     });
 
+    it("_formatSelfEditForAudit — escapes CR so attacker can't forge a new log row with \\r", () => {
+        const line = _formatSelfEditForAudit({
+            targetFile: "x\rinjected=true",
+            originalSnippet: "a",
+            editedSnippet: "b",
+            reason: "r",
+            applied: false,
+        });
+        expect(line).not.toContain("\r");
+        expect(line).toContain("\\r");
+    });
+
+    it("_formatSelfEditForAudit — escapes backslash BEFORE other chars so \\n in input stays \\\\n", () => {
+        const line = _formatSelfEditForAudit({
+            targetFile: "x",
+            originalSnippet: "a",
+            editedSnippet: "b",
+            reason: "raw backslash-n then newline: \\n\nafter",
+            applied: false,
+        });
+        // The literal backslash in input must NOT be merged with the
+        // subsequent escape of the newline into a single "\n" substring
+        // that decodes back to a newline on read.
+        // Expect the literal '\' to become '\\' and then the real \n → '\n'.
+        expect(line).toContain("\\\\n\\nafter");
+    });
+
     it("_formatSelfEditForAudit — single-line (no embedded newlines) so the log is grep-friendly", () => {
         const line = _formatSelfEditForAudit({
             targetFile: "x",

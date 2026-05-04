@@ -2,22 +2,6 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-// ── Context-fence scrubber ─────────────────────
-// ATLAS injects memory / user-model / traits / emotional-state context into
-// every agent turn. If the model ever quotes that context back verbatim in
-// its reply, the private context leaks to channels (Telegram, Discord, logs).
-//
-// This module provides:
-//  1. `fenceMemoryContext(body)` — wrap context in an explicit tag + banner
-//     so the model has a strong signal that the text is reference material,
-//     not something to echo.
-//  2. `sanitizeContextEchoes(text)` — one-shot strip of the fence + banner
-//     in case the model echoed it back. For post-stream cleanup or tool
-//     output that accumulates a full response in memory.
-//  3. `StreamingContextScrubber` — stateful FSM that strips across SSE
-//     chunk boundaries. Buffers up to `OPEN_TAG.length - 1` tail chars so
-//     a partial open-tag doesn't leak while we wait for the next delta.
-
 export const MEMORY_CONTEXT_OPEN = "<memory-context>";
 export const MEMORY_CONTEXT_CLOSE = "</memory-context>";
 

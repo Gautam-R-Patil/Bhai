@@ -2,18 +2,6 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-// ── JSON-Schema sanitizer for LLM tool calls ───
-// Normalizes tool-schema shapes that OpenAI/Anthropic silently accept but
-// llama.cpp's json-schema-to-grammar converter rejects with HTTP 400.
-//
-// Failure modes this fixes:
-//  1. `{type: "object"}` without `properties` — grammar can't constrain
-//  2. Bare-string schema values (`{properties: {raw: "string"}}` from malformed MCP)
-//  3. `type: ["string", "null"]` arrays — many converters want singular type
-//  4. Nullable anyOf/oneOf unions that only exist to permit null
-//  5. `required: ["ghost"]` pointing at undefined properties
-//  6. Sibling-keyword isolation — never recurse into `required`/`enum`/`examples`
-
 type JsonValue =
     | null
     | boolean

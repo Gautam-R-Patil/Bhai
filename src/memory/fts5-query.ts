@@ -2,21 +2,8 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-// ── FTS5 query sanitization ────────────────────
-// ATLAS's prior FTS5 sanitizer stripped
-// `-` and `.`, which means searches for literal filenames (`sqlite.ts`) or
-// dash-delimited tokens (`my-app`) get tokenized into parts and miss the
-// author's intent. This helper:
-//
-//  1. Preserves balanced quoted phrases verbatim (via placeholder swap).
-//  2. Strips unbalanced quote + unsafe FTS5 operator characters.
-//  3. Auto-quotes hyphenated/dotted tokens so the tokenizer (unicode61 or
-//     trigram) doesn't split them. E.g. `my-app.config.ts` → `"my-app.config.ts"`.
-//
-// Also provides CJK detection and a trigram tokenizer helper for the trigram
-// FTS5 table (added alongside the existing `memories_fts` unicode61 table).
-
-// ── Quoted-phrase placeholder protection ───────
+// Auto-quotes hyphenated/dotted tokens so FTS5's unicode61 and trigram
+// tokenizers don't split them into un-searchable parts.
 
 const PHRASE_PLACEHOLDER = "\x00Q";
 

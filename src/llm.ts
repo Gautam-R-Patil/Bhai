@@ -205,8 +205,8 @@ export function createLLMClient(config: Config): LLMClient {
                     tools:
                         params.tools && params.tools.length > 0
                             ? (sanitizeToolSchemas(
-                                  params.tools as unknown as Array<Record<string, unknown>>,
-                              ) as unknown as typeof params.tools)
+                                  params.tools as unknown as Parameters<typeof sanitizeToolSchemas>[0],
+                              ) as typeof params.tools)
                             : undefined,
                     platform: PLATFORM,
                     skillSlugs: params.skillSlugs || [],

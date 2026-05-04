@@ -2,13 +2,6 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-// ── Atomic I/O + URL/env helpers ───────────────
-//  - atomicReplace preserves symlinks (no silent detachment from dotfile links)
-//  - atomicTextWrite / atomicJsonWrite use temp file + fsync + rename
-//  - baseUrlHostMatches kills substring false-positives on host matching
-//  - normalizeProxyUrl upgrades socks:// → socks5:// for aiohttp-compat clients
-//  - isTruthy / envInt / envBool / safeJsonParse consolidate duplicated sites
-
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";

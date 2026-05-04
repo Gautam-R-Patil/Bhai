@@ -8,6 +8,8 @@ export interface CronJobContext {
     deliverTo?: string;
     userId?: string;
     jobId: string;
+    /** Owner privilege flag persisted from when the job was scheduled. */
+    isOwner: boolean;
 }
 
 /** Async prompt runner injected by the caller — ATLAS passes runAgent(). */
@@ -24,20 +26,22 @@ export interface CronTickOptions {
     deliver: DeliverFn;
 }
 
-/**
- * Fire every due cron job once. Returns the number of jobs attempted.
- * Isolated failures: prompt errors are caught + recorded; delivery errors
- * don't mask the run status.
- */
+// Module-level in-flight set: a job whose runPrompt is still awaited must
+// not be re-invoked by a later tick before markRun has run. setInterval does
+// not await, so a long-running agent call + 60s cadence will overlap.
+const inFlight = new Set<string>();
+
 export async function runCronTick(opts: CronTickOptions): Promise<number> {
-    const due = getDueJobs(Date.now());
+    const due = getDueJobs(Date.now()).filter((j) => !inFlight.has(j.id));
     if (due.length === 0) return 0;
 
     for (const job of due) {
+        inFlight.add(job.id);
         const ctx: CronJobContext = {
             deliverTo: job.deliverTo,
             userId: job.userId,
             jobId: job.id,
+            isOwner: job.isOwner,
         };
         try {
             const response = await opts.runPrompt(job.prompt, ctx);
@@ -58,6 +62,8 @@ export async function runCronTick(opts: CronTickOptions): Promise<number> {
             } catch {
                 /* persistence failure — log via console and move on */
             }
+        } finally {
+            inFlight.delete(job.id);
         }
     }
 

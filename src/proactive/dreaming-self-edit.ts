@@ -8,7 +8,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { SelfEdit } from "../agents/self-editor.js";
-import { atomicTextWrite } from "../utils/atomic-io.js";
 
 const DATA_DIR = process.env.ATLAS_DATA_DIR || path.resolve("data");
 const AUDIT_LOG_PATH = path.join(DATA_DIR, "self-edits-audit.log");
@@ -28,7 +27,16 @@ export function _selfEditIsUserFacing(
 
 export function _formatSelfEditForAudit(edit: SelfEdit): string {
     const ts = new Date().toISOString();
-    const esc = (s: string) => (s ?? "").replace(/\n/g, "\\n").replace(/\t/g, " ");
+    // Escape order matters: backslash FIRST (otherwise an input
+    // containing the literal two chars "\\n" would look indistinguishable
+    // from a real newline after decode). Then CR/LF/TAB so the row stays
+    // grep-friendly and a hostile `reason` can't forge a new log line.
+    const esc = (s: string) =>
+        (s ?? "")
+            .replace(/\\/g, "\\\\")
+            .replace(/\r/g, "\\r")
+            .replace(/\n/g, "\\n")
+            .replace(/\t/g, " ");
     return `${ts}\ttarget=${esc(edit.targetFile)}\treason=${esc(edit.reason)}\toriginal=${esc(edit.originalSnippet)}\tedited=${esc(edit.editedSnippet)}\tapplied=${edit.applied}`;
 }
 
@@ -45,13 +53,14 @@ export function _recordSelfEditActuation(edit: SelfEdit): string {
 export async function appendSelfEditAudit(edit: SelfEdit): Promise<void> {
     try {
         await fs.promises.mkdir(path.dirname(AUDIT_LOG_PATH), { recursive: true });
-        const line = _formatSelfEditForAudit(edit);
-        let prior = "";
-        try {
-            prior = await fs.promises.readFile(AUDIT_LOG_PATH, "utf8");
-        } catch { /* first run */ }
-        const next = prior.endsWith("\n") || prior === "" ? prior : `${prior}\n`;
-        await atomicTextWrite(AUDIT_LOG_PATH, `${next}${line}\n`);
+        // appendFile with O_APPEND is atomic per POSIX for single writes
+        // below PIPE_BUF — the whole line either lands or doesn't, even
+        // under concurrent nightly dreaming + manual actuation.
+        await fs.promises.appendFile(
+            AUDIT_LOG_PATH,
+            `${_formatSelfEditForAudit(edit)}\n`,
+            "utf8",
+        );
     } catch (err) {
         console.warn("[self-edit] audit log write failed:", (err as Error).message);
     }

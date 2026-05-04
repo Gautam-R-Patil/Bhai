@@ -801,7 +801,7 @@ async function boot() {
                     {
                         channel,
                         userId: ctx.userId || "cron",
-                        isOwner: true,
+                        isOwner: ctx.isOwner,
                     },
                 );
                 return response.text;

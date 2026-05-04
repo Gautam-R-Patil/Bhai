@@ -28,6 +28,8 @@ export interface CronJob {
     deliverTo?: string;
     /** User id / chat id for routing on delivery. */
     userId?: string;
+    /** Whether the scheduler runs the prompt with owner privileges. Defaults to false. */
+    isOwner: boolean;
 }
 
 interface StoreFile {
@@ -78,6 +80,8 @@ export interface AddJobInput {
     schedule: string;
     deliverTo?: string;
     userId?: string;
+    /** Set true only when the caller scheduling the job is the owner. */
+    isOwner?: boolean;
 }
 
 export async function addJob(input: AddJobInput): Promise<CronJob> {
@@ -97,6 +101,7 @@ export async function addJob(input: AddJobInput): Promise<CronJob> {
         lastError: null,
         deliverTo: input.deliverTo,
         userId: input.userId,
+        isOwner: input.isOwner === true,
     };
     jobs.push(job);
     await persist();
