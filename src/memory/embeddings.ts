@@ -22,7 +22,7 @@
 
 import { join, sep } from "node:path";
 import { existsSync } from "node:fs";
-import { createHash } from "node:crypto";
+import { makeCacheKey, getCached, putCached } from "./embedding-cache.js";
 
 // ── Embedding Model Configuration ───────────────
 // Configurable model registry — switch models via ATLAS_EMBEDDING_MODEL env var.
@@ -97,35 +97,9 @@ let _legacyInitPromise: Promise<void> | null = null;
 let _activeDim = EMBEDDING_DIM; // Tracks which model actually loaded
 let _envConfigured = false;
 
-// ── Content-hash LRU cache for single embeddings ─────────
-// Repeat queries (boot-time category embeddings, tool descriptions,
-// repeated user turns) are common. Caching by sha256(type + ":" + text)
-// avoids re-running the transformer pipeline for identical inputs.
-// Bounded to prevent unbounded growth; insertion-order = eviction order.
-const EMBED_CACHE_MAX = 500;
-const _embedCache = new Map<string, Float32Array>();
-
-function _embedCacheKey(text: string, type: string): string {
-    return createHash("sha256").update(type).update(":").update(text).digest("hex");
-}
-
-function _embedCacheGet(key: string): Float32Array | undefined {
-    const hit = _embedCache.get(key);
-    if (!hit) return undefined;
-    // LRU bump: move to end of insertion order
-    _embedCache.delete(key);
-    _embedCache.set(key, hit);
-    // Return a copy so callers mutating the result don't corrupt the cache
-    return new Float32Array(hit);
-}
-
-function _embedCachePut(key: string, value: Float32Array): void {
-    _embedCache.set(key, value);
-    if (_embedCache.size > EMBED_CACHE_MAX) {
-        const firstKey = _embedCache.keys().next().value;
-        if (firstKey !== undefined) _embedCache.delete(firstKey);
-    }
-}
+// Cache logic lives in ./embedding-cache.ts so it can be unit-tested
+// without pulling in the transformer pipeline. embedText() uses
+// makeCacheKey + getCached + putCached directly.
 
 /**
  * Configure @xenova/transformers env before any pipeline calls.
@@ -409,8 +383,8 @@ export async function embedText(text: string, type: "query" | "document" = "quer
 
     // Cache lookup on the post-truncation text so different-length inputs
     // sharing a prefix don't collide.
-    const cacheKey = _embedCacheKey(truncated, type);
-    const cached = _embedCacheGet(cacheKey);
+    const cacheKey = makeCacheKey(truncated, type);
+    const cached = getCached(cacheKey);
     if (cached) return cached;
 
     // Models with task-specific prefixes (e.g. Nomic) — not applicable to fallback models
@@ -432,7 +406,7 @@ export async function embedText(text: string, type: "query" | "document" = "quer
     // gives a smaller vector with minimal quality loss.
     embedding = applyMatryoshkaTruncation(embedding);
 
-    _embedCachePut(cacheKey, embedding);
+    putCached(cacheKey, embedding);
     return embedding;
 }
 
