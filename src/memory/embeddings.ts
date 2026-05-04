@@ -22,6 +22,7 @@
 
 import { join, sep } from "node:path";
 import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 
 // ── Embedding Model Configuration ───────────────
 // Configurable model registry — switch models via ATLAS_EMBEDDING_MODEL env var.
@@ -95,6 +96,36 @@ let _initPromise: Promise<void> | null = null;
 let _legacyInitPromise: Promise<void> | null = null;
 let _activeDim = EMBEDDING_DIM; // Tracks which model actually loaded
 let _envConfigured = false;
+
+// ── Content-hash LRU cache for single embeddings ─────────
+// Repeat queries (boot-time category embeddings, tool descriptions,
+// repeated user turns) are common. Caching by sha256(type + ":" + text)
+// avoids re-running the transformer pipeline for identical inputs.
+// Bounded to prevent unbounded growth; insertion-order = eviction order.
+const EMBED_CACHE_MAX = 500;
+const _embedCache = new Map<string, Float32Array>();
+
+function _embedCacheKey(text: string, type: string): string {
+    return createHash("sha256").update(type).update(":").update(text).digest("hex");
+}
+
+function _embedCacheGet(key: string): Float32Array | undefined {
+    const hit = _embedCache.get(key);
+    if (!hit) return undefined;
+    // LRU bump: move to end of insertion order
+    _embedCache.delete(key);
+    _embedCache.set(key, hit);
+    // Return a copy so callers mutating the result don't corrupt the cache
+    return new Float32Array(hit);
+}
+
+function _embedCachePut(key: string, value: Float32Array): void {
+    _embedCache.set(key, value);
+    if (_embedCache.size > EMBED_CACHE_MAX) {
+        const firstKey = _embedCache.keys().next().value;
+        if (firstKey !== undefined) _embedCache.delete(firstKey);
+    }
+}
 
 /**
  * Configure @xenova/transformers env before any pipeline calls.
@@ -376,6 +407,12 @@ export async function embedText(text: string, type: "query" | "document" = "quer
     const maxLen = activeModel.maxInputChars ?? (_activeDim === EMBEDDING_DIM ? 8000 : 2000);
     const truncated = text.length > maxLen ? text.substring(0, maxLen) : text;
 
+    // Cache lookup on the post-truncation text so different-length inputs
+    // sharing a prefix don't collide.
+    const cacheKey = _embedCacheKey(truncated, type);
+    const cached = _embedCacheGet(cacheKey);
+    if (cached) return cached;
+
     // Models with task-specific prefixes (e.g. Nomic) — not applicable to fallback models
     const useTaskPrefix = activeModel.usesTaskPrefix && _activeDim === EMBEDDING_DIM;
     const prefixed = useTaskPrefix
@@ -395,6 +432,7 @@ export async function embedText(text: string, type: "query" | "document" = "quer
     // gives a smaller vector with minimal quality loss.
     embedding = applyMatryoshkaTruncation(embedding);
 
+    _embedCachePut(cacheKey, embedding);
     return embedding;
 }
 
