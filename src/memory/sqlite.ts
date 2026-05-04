@@ -1203,19 +1203,12 @@ export async function recall(
     if (isEmbeddingReady()) {
         try {
             // Resolve the embedding. If the caller supplied a precomputed
-            // or in-flight embedding we use that (may already be done by
-            // the time we get here, overlapping with FTS + KG work above).
-            // Otherwise fall back to computing it ourselves.
-            let resolvedQueryEmbedding: Float32Array | null = null;
-            if (queryEmbedding instanceof Float32Array) {
-                resolvedQueryEmbedding = queryEmbedding;
-            } else if (queryEmbedding) {
-                resolvedQueryEmbedding = await queryEmbedding;
-            }
-            if (!resolvedQueryEmbedding) {
-                resolvedQueryEmbedding = await embedText(query);
-            }
-            const hnswEmbedding = resolvedQueryEmbedding;
+            // or in-flight embedding we use that (it may already be done
+            // by the time we get here, overlapping with FTS work above);
+            // otherwise compute it ourselves. See resolve-embedding.ts
+            // for the full resolution matrix + unit tests.
+            const { resolveQueryEmbedding } = await import("./resolve-embedding.js");
+            const hnswEmbedding = await resolveQueryEmbedding(queryEmbedding, () => embedText(query));
             const hnswIndex = getHNSWIndex();
 
             if (hnswIndex.size > 0) {
