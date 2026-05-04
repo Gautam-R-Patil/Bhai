@@ -108,3 +108,6 @@ desktop/hostinger-upload/
 !src/agents/error-types.test.ts
 !src/agents/role-analyzer.test.ts
 !src/agents/handoff.test.ts
+!src/agents/circuit-breaker.test.ts
+!src/agents/complexity-classifier.test.ts
+!src/agents/blackboard.test.ts

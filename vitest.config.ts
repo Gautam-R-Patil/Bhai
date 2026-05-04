@@ -19,6 +19,7 @@ export default defineConfig({
             "src/config/**/*.test.ts",
             "src/commands/**/*.test.ts",
             "src/agents/**/*.test.ts",
+            "src/llm-parsers/**/*.test.ts",
             "convex/**/*.test.ts",
         ],
         environment: "node",
