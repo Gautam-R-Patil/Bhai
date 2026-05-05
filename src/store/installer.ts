@@ -7,7 +7,8 @@ import { existsSync, createWriteStream } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { spawn } from "child_process";
-import { pipeline } from "stream/promises";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { createGunzip } from "zlib";
 import { extract as tarExtract } from "tar";
 
@@ -121,8 +122,12 @@ async function downloadFile(url: string, destPath: string): Promise<void> {
     },
   });
 
-  // Use pipeline with proper conversion
-  const nodeStream = require("stream").Readable.fromWeb(stream);
+  // Readable.fromWeb is the ESM-safe equivalent of the old
+  // require("stream").Readable.fromWeb — the project is `"type": "module"`
+  // so require is not defined at runtime.
+  const nodeStream = Readable.fromWeb(
+    stream as unknown as import("node:stream/web").ReadableStream<Uint8Array>,
+  );
   await pipeline(nodeStream, fileStream);
 }
 

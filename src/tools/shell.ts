@@ -3,6 +3,7 @@
 // See LICENSE.md for details.
 
 import { execFile } from "node:child_process";
+import { basename } from "node:path";
 import { promisify } from "node:util";
 import { isShellBypass, isSystemDestructive, shellArgsTargetProtectedPath } from "../security/allowlist.js";
 import { auditLog } from "../security/audit-log.js";
@@ -95,7 +96,11 @@ export const shellExec: ToolDefinition = {
 
         // Codebase self-protection: block destructive shell commands targeting the atlas folder
         const DESTRUCTIVE_CMDS = new Set(["rm", "mv", "cp", "rsync", "dd"]);
-        const baseCmd = command.split("/").at(-1) ?? command;
+        // basename covers both separators so a Windows command path like
+        // "C:\\Windows\\System32\\rm.exe" still resolves to "rm.exe" and
+        // hits the DESTRUCTIVE_CMDS check (after trimming .exe below).
+        const baseCmdRaw = basename(command);
+        const baseCmd = baseCmdRaw.replace(/\.exe$/i, "");
         if (DESTRUCTIVE_CMDS.has(baseCmd)) {
             const allTokens = [command, ...args];
             const hit = shellArgsTargetProtectedPath(allTokens);

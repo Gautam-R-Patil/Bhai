@@ -3,7 +3,7 @@
 // See LICENSE.md for details.
 
 import { execFile } from "node:child_process";
-import { promises as fs } from "node:fs";
+import { promises as fs, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -98,10 +98,27 @@ function truncate(s: string, max: number): string {
 
 function validateFfmpegArgs(args: string[]): { ok: boolean; reason?: string } {
     const dataVideoProjects = `${path.resolve(getDataDir(), "video-projects")}${path.sep}`;
-    // Resolve the actual OS temp dir (varies by platform — /tmp, /var/folders,
-    // or C:\Users\…\AppData\Local\Temp). Ending with path.sep ensures the
-    // prefix test below rejects siblings like "/tmp-evil" that share the stem.
-    const tmpPrefix = `${path.resolve(tmpdir())}${path.sep}`;
+    // Build the set of accepted tmp-dir prefixes. macOS makes this tricky:
+    // /tmp → /private/tmp and /var → /private/var are both symlinks, and
+    // os.tmpdir() can return either side depending on env. Accept the raw
+    // resolved form and the realpath-resolved form so a match on either
+    // side of the symlink is enough.
+    const resolvedTmp = path.resolve(tmpdir());
+    const realTmp = (() => {
+        try {
+            return realpathSync(resolvedTmp);
+        } catch {
+            return resolvedTmp;
+        }
+    })();
+    const tmpPrefix = `${resolvedTmp}${path.sep}`;
+    const tmpPrefixes = new Set<string>([tmpPrefix]);
+    if (realTmp !== resolvedTmp) tmpPrefixes.add(`${realTmp}${path.sep}`);
+    // macOS: /tmp itself is a universal alias many tools use.
+    if (process.platform === "darwin") {
+        tmpPrefixes.add(`/tmp${path.sep}`);
+        tmpPrefixes.add(`/private/tmp${path.sep}`);
+    }
 
     // Generic URL-scheme regex (RFC 3986 style), case-insensitive.
     // Any arg that looks like "<scheme>://..." OR ffmpeg's "concat:..." pseudo-scheme is rejected
@@ -132,14 +149,23 @@ function validateFfmpegArgs(args: string[]): { ok: boolean; reason?: string } {
         }
 
         // 4. Must be inside the OS temp dir or <dataDir>/video-projects/.
-        // Prefix-test with the resolved, separator-terminated tmpPrefix so
-        // both POSIX "/tmp/…" and Windows "C:\Users\…\Temp\…" paths are
-        // accepted on their native OS.
-        const resolved = path.resolve(p);
-        const cmpResolved = process.platform === "win32" ? resolved.toLowerCase() : resolved;
-        const cmpTmp = process.platform === "win32" ? tmpPrefix.toLowerCase() : tmpPrefix;
-        const cmpData = process.platform === "win32" ? dataVideoProjects.toLowerCase() : dataVideoProjects;
-        if (!cmpResolved.startsWith(cmpTmp) && !cmpResolved.startsWith(cmpData)) {
+        // Try both the raw absolute form and the realpath-resolved form so
+        // a symlinked output dir like /tmp → /private/tmp matches on either
+        // side of the link. realpathSync throws for non-existent paths
+        // (common for output files) — fall back to resolve in that case.
+        const candidates = new Set<string>([path.resolve(p)]);
+        try {
+            candidates.add(realpathSync(path.resolve(p)));
+        } catch {
+            /* path may not exist yet — resolved form is enough */
+        }
+        const isWin = process.platform === "win32";
+        const norm = (s: string) => (isWin ? s.toLowerCase() : s);
+        const allowed = [...tmpPrefixes, dataVideoProjects].map(norm);
+        const matched = [...candidates].some((c) =>
+            allowed.some((prefix) => norm(c).startsWith(prefix)),
+        );
+        if (!matched) {
             return {
                 ok: false,
                 reason: `unsafe: ${role} "${p}" is outside ${tmpPrefix} and ${dataVideoProjects}`,
