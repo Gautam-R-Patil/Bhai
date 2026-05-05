@@ -103,22 +103,15 @@ export async function deriveSharedKey(
   }
 
   if (version === KDF_VERSION_HKDF) {
-    // HKDF-SHA256 via Web Crypto's native implementation — RFC 5869.
-    // Import the shared-secret bytes as a raw key material first
-    // (Web Crypto requires an HKDF key before deriving from it).
-    const hkdfKey = await crypto.subtle.importKey(
-      "raw",
-      sharedBits,
-      { name: "HKDF" },
-      false,
-      ["deriveBits"]
-    );
-    const okm = await crypto.subtle.deriveBits(
-      { name: "HKDF", hash: "SHA-256", salt, info },
-      hkdfKey,
-      256 // 32 bytes × 8 bits = AES-256
-    );
-    return bufToBase64(okm);
+    // HKDF-SHA256 (RFC 5869) via HMAC primitives — the V8-isolate runtime
+    // that httpActions/mutations/queries run in does not implement
+    // crypto.subtle.importKey({name:"HKDF"}), but it DOES implement
+    // importKey+sign for {name:"HMAC"}, which is all HKDF needs.
+    //
+    // Must byte-match Node's hkdfSync("sha256", ikm, salt, info, 32) on the
+    // client side (see src/crypto-kdf.ts v2 path).
+    const okm = await hkdfSha256(new Uint8Array(sharedBits), salt, info);
+    return bufToBase64(okm.buffer.slice(okm.byteOffset, okm.byteOffset + okm.byteLength) as ArrayBuffer);
   }
 
   throw new Error(`Unsupported KDF version: ${version}`);
@@ -209,6 +202,40 @@ const MAX_REQUEST_AGE_MS = 90_000; // 90 seconds (increased from 30s to accommod
 export function validateTimestamp(ts: number): boolean {
   const age = Date.now() - ts;
   return age >= 0 && age <= MAX_REQUEST_AGE_MS;
+}
+
+// ── HMAC-based HKDF (works inside Convex's V8-isolate runtime) ─
+
+async function hmacSha256(key: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
+  const cryptoKey = await crypto.subtle.importKey(
+    "raw",
+    key.buffer.slice(key.byteOffset, key.byteOffset + key.byteLength) as ArrayBuffer,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign(
+    "HMAC",
+    cryptoKey,
+    data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer,
+  );
+  return new Uint8Array(sig);
+}
+
+// HKDF-SHA256 (RFC 5869). Only one Expand iteration because we need just
+// 32 bytes out — that's one T(1) block. Matches Node's hkdfSync.
+async function hkdfSha256(
+  ikm: Uint8Array,
+  salt: Uint8Array,
+  info: Uint8Array,
+): Promise<Uint8Array> {
+  // Empty salt → zero-filled salt of HashLen per RFC 5869 §2.2.
+  const extractSalt = salt.byteLength > 0 ? salt : new Uint8Array(32);
+  const prk = await hmacSha256(extractSalt, ikm);
+  const expandInput = new Uint8Array(info.byteLength + 1);
+  expandInput.set(info, 0);
+  expandInput[info.byteLength] = 0x01;
+  return await hmacSha256(prk, expandInput);
 }
 
 // ── Helpers ───────────────────────────────────
