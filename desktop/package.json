@@ -121,6 +121,7 @@
                 "to": "bot/node_modules",
                 "filter": [
                     "**/*",
+                    "!.bin/**",
                     "!@biomejs/**",
                     "!@types/**",
                     "!@vitest/**",
