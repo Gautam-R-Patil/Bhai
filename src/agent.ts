@@ -63,6 +63,7 @@ import {
     updateToolStats,
 } from "./model-router.js";
 import { detectTaskType } from "./prompts/dynamic-assembler.js";
+import { buildDynamicContextReminder } from "./prompts/dynamic-context.js";
 import {
     clearToolRouterState,
     getLastIntent,
@@ -1627,6 +1628,15 @@ STRATEGY: Execute in as few tool calls as possible.
                 if (proSnippet) parts.push(proSnippet);
             } catch {
                 /* prospective not ready */
+            }
+
+            try {
+                const dynCtx = buildDynamicContextReminder(rawUserMessage, {
+                    hour: localHour,
+                });
+                if (dynCtx) parts.push(dynCtx);
+            } catch {
+                /* dynamic context is a nicety — never block the turn */
             }
 
             // ── Credit awareness context ──

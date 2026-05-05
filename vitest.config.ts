@@ -23,6 +23,7 @@ export default defineConfig({
             "src/cron/**/*.test.ts",
             "src/prompts/**/*.test.ts",
             "src/skills/**/*.test.ts",
+            "src/voice/**/*.test.ts",
             "convex/**/*.test.ts",
         ],
         environment: "node",
