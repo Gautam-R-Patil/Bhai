@@ -109,6 +109,7 @@ import { getCurrentTime, type ToolDefinition } from "./get-current-time.js";
 import { cronTool } from "./cron-tool.js";
 import { gifSearch } from "./gif-search.js";
 import { githubTool } from "./github-api.js";
+import { gitmcpDocs } from "./gitmcp.js";
 import { gmailTool, googleAccounts, googleCalendarTool } from "./google-api.js";
 import {
     linuxOsClick,
@@ -381,6 +382,7 @@ registry.set(gmailTool.schema.function.name, gmailTool);
 
 // GitHub tools
 registry.set(githubTool.schema.function.name, githubTool);
+registry.set(gitmcpDocs.schema.function.name, gitmcpDocs);
 
 // Email tools
 registry.set(emailSend.schema.function.name, emailSend);
