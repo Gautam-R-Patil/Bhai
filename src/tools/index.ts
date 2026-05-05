@@ -110,6 +110,7 @@ import { cronTool } from "./cron-tool.js";
 import { gifSearch } from "./gif-search.js";
 import { githubTool } from "./github-api.js";
 import { gitmcpDocs } from "./gitmcp.js";
+import { storeBrowse } from "./store-browse.js";
 import { gmailTool, googleAccounts, googleCalendarTool } from "./google-api.js";
 import {
     linuxOsClick,
@@ -367,6 +368,7 @@ registry.set(gifSearch.schema.function.name, gifSearch);
 registry.set(sonosControl.schema.function.name, sonosControl);
 registry.set(audioVisualize.schema.function.name, audioVisualize);
 registry.set(sideloadSkillTool.schema.function.name, sideloadSkillTool);
+registry.set(storeBrowse.schema.function.name, storeBrowse);
 
 // File & utility tools
 registry.set(screenRecord.schema.function.name, screenRecord);
