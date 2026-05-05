@@ -4,6 +4,7 @@
 
 import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { getDataDir } from "../config/paths.js";
@@ -97,7 +98,10 @@ function truncate(s: string, max: number): string {
 
 function validateFfmpegArgs(args: string[]): { ok: boolean; reason?: string } {
     const dataVideoProjects = `${path.resolve(getDataDir(), "video-projects")}${path.sep}`;
-    const tmpPrefix = "/tmp/";
+    // Resolve the actual OS temp dir (varies by platform — /tmp, /var/folders,
+    // or C:\Users\…\AppData\Local\Temp). Ending with path.sep ensures the
+    // prefix test below rejects siblings like "/tmp-evil" that share the stem.
+    const tmpPrefix = `${path.resolve(tmpdir())}${path.sep}`;
 
     // Generic URL-scheme regex (RFC 3986 style), case-insensitive.
     // Any arg that looks like "<scheme>://..." OR ffmpeg's "concat:..." pseudo-scheme is rejected
@@ -123,13 +127,23 @@ function validateFfmpegArgs(args: string[]): { ok: boolean; reason?: string } {
         if (!path.isAbsolute(p)) {
             return {
                 ok: false,
-                reason: `unsafe: relative ${role} path "${p}" — use an absolute path inside /tmp/ or ${dataVideoProjects}`,
+                reason: `unsafe: relative ${role} path "${p}" — use an absolute path inside ${tmpPrefix} or ${dataVideoProjects}`,
             };
         }
 
-        // 4. Must be inside /tmp/ or <dataDir>/video-projects/
-        if (!lower.startsWith(tmpPrefix) && !p.startsWith(dataVideoProjects)) {
-            return { ok: false, reason: `unsafe: ${role} "${p}" is outside /tmp/ and ${dataVideoProjects}` };
+        // 4. Must be inside the OS temp dir or <dataDir>/video-projects/.
+        // Prefix-test with the resolved, separator-terminated tmpPrefix so
+        // both POSIX "/tmp/…" and Windows "C:\Users\…\Temp\…" paths are
+        // accepted on their native OS.
+        const resolved = path.resolve(p);
+        const cmpResolved = process.platform === "win32" ? resolved.toLowerCase() : resolved;
+        const cmpTmp = process.platform === "win32" ? tmpPrefix.toLowerCase() : tmpPrefix;
+        const cmpData = process.platform === "win32" ? dataVideoProjects.toLowerCase() : dataVideoProjects;
+        if (!cmpResolved.startsWith(cmpTmp) && !cmpResolved.startsWith(cmpData)) {
+            return {
+                ok: false,
+                reason: `unsafe: ${role} "${p}" is outside ${tmpPrefix} and ${dataVideoProjects}`,
+            };
         }
 
         return { ok: true };

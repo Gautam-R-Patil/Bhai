@@ -395,6 +395,11 @@ export const systemInfo: ToolDefinition = {
             return JSON.stringify(info);
         }
 
+        if (!IS_MAC) {
+            return JSON.stringify({
+                error: `system_info unsupported on platform ${process.platform}`,
+            });
+        }
         // macOS: Run all queries in parallel for speed
         const [batteryResult, memResult, cpuResult, diskResult, wifiResult, uptimeResult] = await Promise.allSettled([
             // Battery
@@ -1149,14 +1154,37 @@ Start-Sleep -Milliseconds 50
                 }
             }
 
-            // macOS
-            if (action === "sleep") {
-                await execFileAsync("pmset", ["displaysleepnow"], { timeout: 3000 });
-                return JSON.stringify({ success: true, action: "sleep", note: "💤 Display sleeping." });
-            } else {
-                await execFileAsync("caffeinate", ["-u", "-t", "1"], { timeout: 3000 });
-                return JSON.stringify({ success: true, action: "wake", note: "☀️ Display woken." });
+            // macOS — guard because pmset / caffeinate are Darwin-only.
+            if (IS_MAC) {
+                if (action === "sleep") {
+                    await execFileAsync("pmset", ["displaysleepnow"], { timeout: 3000 });
+                    return JSON.stringify({ success: true, action: "sleep", note: "💤 Display sleeping." });
+                } else {
+                    await execFileAsync("caffeinate", ["-u", "-t", "1"], { timeout: 3000 });
+                    return JSON.stringify({ success: true, action: "wake", note: "☀️ Display woken." });
+                }
             }
+            // Linux — best-effort DPMS via xset (X11). Wayland and headless
+            // environments land here too; the command simply fails, which we
+            // surface as a skipped action.
+            if (IS_LINUX) {
+                const arg = action === "sleep" ? "off" : "on";
+                try {
+                    await execFileAsync("xset", ["dpms", "force", arg], { timeout: 3000 });
+                    return JSON.stringify({
+                        success: true,
+                        action,
+                        note: `🖥️ Display ${action} via xset dpms.`,
+                    });
+                } catch (err) {
+                    return JSON.stringify({
+                        success: false,
+                        action,
+                        error: `display-sleep unsupported on this Linux env: ${(err as Error).message}`,
+                    });
+                }
+            }
+            return JSON.stringify({ success: false, error: `Unsupported platform: ${process.platform}` });
         } catch (err) {
             return JSON.stringify({ success: false, error: (err as Error).message });
         }

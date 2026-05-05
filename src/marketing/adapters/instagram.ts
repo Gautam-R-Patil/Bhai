@@ -29,6 +29,15 @@ function checkRateLimit(brandId: string): void {
 }
 
 async function uploadToTempUrl(filePath: string): Promise<string> {
+  // Stub that assumes a Unix-shell backgrounding operator (`&`). The whole
+  // uploadToTempUrl flow is a non-production placeholder anyway (localhost
+  // is unreachable from Meta). Fail loudly on Windows instead of letting
+  // the shell lookup fail deep in execSync.
+  if (process.platform === "win32") {
+    throw new Error(
+      "Instagram adapter uploadToTempUrl is not supported on Windows — it relies on a POSIX background shell. Configure a real CDN.",
+    );
+  }
   const dir = path.dirname(filePath);
   const file = path.basename(filePath);
   const port = 40000 + Math.floor(Math.random() * 10000);

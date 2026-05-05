@@ -2,7 +2,7 @@
 // One-click installer for store items.
 // Downloads content, extracts, installs dependencies, and hot-reloads.
 
-import { mkdir, writeFile, rm, readFile } from "fs/promises";
+import { mkdir, writeFile, rm, readFile, cp } from "fs/promises";
 import { existsSync, createWriteStream } from "fs";
 import { join } from "path";
 import { homedir } from "os";
@@ -144,7 +144,24 @@ async function extractArchive(archivePath: string, destPath: string): Promise<vo
 
   // Check for ZIP magic bytes (50 4b 03 04)
   if (content[0] === 0x50 && content[1] === 0x4b) {
-    // ZIP - use unzip command (available on macOS/Linux)
+    // macOS/Linux: /usr/bin/unzip
+    // Windows: PowerShell Expand-Archive (no unzip in PATH by default)
+    if (process.platform === "win32") {
+      const psScript = `Expand-Archive -LiteralPath '${archivePath.replace(/'/g, "''")}' -DestinationPath '${destPath.replace(/'/g, "''")}' -Force`;
+      await new Promise<void>((resolve, reject) => {
+        const proc = spawn(
+          "powershell.exe",
+          ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", psScript],
+          { stdio: "pipe" },
+        );
+        proc.on("close", (code) => {
+          if (code === 0) resolve();
+          else reject(new Error(`Expand-Archive exited with code ${code}`));
+        });
+        proc.on("error", reject);
+      });
+      return;
+    }
     await new Promise<void>((resolve, reject) => {
       const proc = spawn("unzip", ["-o", archivePath, "-d", destPath], {
         stdio: "pipe",
@@ -383,15 +400,8 @@ export async function updateItem(
 
   if (existsSync(itemPath)) {
     await rm(backupPath, { recursive: true, force: true });
-    // Copy instead of move so we can restore if install fails
-    await mkdir(backupPath, { recursive: true });
-
-    // Use cp -r for backup
-    await new Promise<void>((resolve, reject) => {
-      const proc = spawn("cp", ["-r", itemPath, backupPath], { stdio: "pipe" });
-      proc.on("close", (code) => (code === 0 ? resolve() : reject(new Error("Backup failed"))));
-      proc.on("error", reject);
-    });
+    // fs.cp (Node 16.7+) replaces the Unix-only `cp -r` spawn.
+    await cp(itemPath, backupPath, { recursive: true, force: true });
   }
 
   try {
@@ -411,14 +421,10 @@ export async function updateItem(
     notify("done", 100, "Updated!");
     console.log(`🏪 Store: Updated ${item.name} to v${item.version}`);
   } catch (err) {
-    // Restore from backup
+    // Restore from backup — fs.cp works on all platforms.
     if (existsSync(backupPath)) {
       await rm(itemPath, { recursive: true, force: true });
-      await new Promise<void>((resolve, reject) => {
-        const proc = spawn("cp", ["-r", backupPath, itemPath], { stdio: "pipe" });
-        proc.on("close", (code) => (code === 0 ? resolve() : reject()));
-        proc.on("error", reject);
-      });
+      await cp(backupPath, itemPath, { recursive: true, force: true });
       await rm(backupPath, { recursive: true, force: true });
     }
 

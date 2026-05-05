@@ -27,7 +27,7 @@ import {
     mkdirSync, writeFileSync, readFileSync, existsSync,
     readdirSync, copyFileSync, statSync,
 } from "fs";
-import { join, dirname } from "path";
+import { basename, dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { randomUUID } from "crypto";
 import type { CandidateManifest, DimensionGradient, HarnessConfig, HarnessScore } from "./types.js";
@@ -47,7 +47,8 @@ export class HarnessRunStore {
     private readonly indexesDir: string;
 
     constructor(runDir?: string) {
-        this.runId = runDir ? dirname(runDir).split("/").pop() ?? randomUUID().substring(0, 8) : _newRunId();
+        // basename() instead of split("/") so Windows paths parse correctly too.
+        this.runId = runDir ? basename(dirname(runDir)) || randomUUID().substring(0, 8) : _newRunId();
         this.runDir = runDir ?? join(RUNS_BASE_DIR, this.runId);
         this.candidatesDir = join(this.runDir, "candidates");
         this.indexesDir = join(this.runDir, "indexes");

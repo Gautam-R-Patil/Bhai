@@ -2258,7 +2258,10 @@ export const whatsappSendTool: ToolDefinition = {
         try {
             if (filePath) {
                 const ext = (filePath.split(".").pop() || "").toLowerCase();
-                const fileName = filePath.split("/").pop() || filePath.split("\\").pop() || "file";
+                // path.basename handles both / and \ separators portably;
+                // the split-based fallback misorders on Windows paths.
+                const { basename: _waBasename } = await import("node:path");
+                const fileName = _waBasename(filePath) || "file";
 
                 // MIME type detection
                 const MIME_MAP: Record<string, string> = {

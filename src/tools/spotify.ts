@@ -60,12 +60,14 @@ async function findSpogo(): Promise<string | null> {
     // over any stale system installs the user might have.
     const candidates: string[] = [spogoBinaryPath(), "spogo"];
     // Common install locations
+    const home = process.env.HOME || "";
     if (IS_MAC) {
-        candidates.push("/opt/homebrew/bin/spogo", "/usr/local/bin/spogo", `${process.env.HOME}/go/bin/spogo`);
+        candidates.push("/opt/homebrew/bin/spogo", "/usr/local/bin/spogo", `${home}/go/bin/spogo`);
     } else if (IS_LINUX) {
-        candidates.push("/usr/local/bin/spogo", "/usr/bin/spogo", `${process.env.HOME}/go/bin/spogo`);
+        candidates.push("/usr/local/bin/spogo", "/usr/bin/spogo", `${home}/go/bin/spogo`);
     } else if (IS_WIN) {
-        candidates.push(`${process.env.USERPROFILE}\\go\\bin\\spogo.exe`, "spogo.exe");
+        const userProfile = process.env.USERPROFILE || "";
+        candidates.push(`${userProfile}\\go\\bin\\spogo.exe`, "spogo.exe");
     }
 
     for (const cand of candidates) {

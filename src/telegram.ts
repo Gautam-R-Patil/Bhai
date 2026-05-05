@@ -12,7 +12,7 @@ import { classifyQuery } from "./memory/classifier.js";
 import { setTelegramContext } from "./tools/send-file.js";
 import { setSwarmProgress, clearSwarmProgress, setDeepResearchProgress, clearDeepResearchProgress, setLongTaskProgress, clearLongTaskProgress } from "./tools/index.js";
 import { promises as fs } from "node:fs";
-import { join } from "node:path";
+import { basename as nodeBasename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { getSessionToken } from "./session.js";
 import { getConvexSiteUrl } from "./config/keys.js";
@@ -1695,16 +1695,16 @@ function humanizeProgress(msg: string): string | null {
 
     // File read
     if (lower.includes("read") && lower.includes("file") || lower.includes("📖")) {
-        const path = extractTarget(msg, [/[Rr]eading[:\s]*(.+)/i, /📖\s*(?:Reading[:\s]*)?(.+)/]);
-        const basename = path ? path.split("/").pop() || path : undefined;
-        return getProgressMessage("read", basename);
+        const filePath = extractTarget(msg, [/[Rr]eading[:\s]*(.+)/i, /📖\s*(?:Reading[:\s]*)?(.+)/]);
+        const base = filePath ? (nodeBasename(filePath) || filePath) : undefined;
+        return getProgressMessage("read", base);
     }
 
     // File write
     if (lower.includes("writ") && lower.includes("file") || lower.includes("📝")) {
-        const path = extractTarget(msg, [/[Ww]riting (?:file[:\s]*)?(.+)/i, /📝\s*(?:Writing (?:file[:\s]*)?)?(.+)/]);
-        const basename = path ? path.split("/").pop() || path : undefined;
-        return getProgressMessage("write", basename);
+        const filePath = extractTarget(msg, [/[Ww]riting (?:file[:\s]*)?(.+)/i, /📝\s*(?:Writing (?:file[:\s]*)?)?(.+)/]);
+        const base = filePath ? (nodeBasename(filePath) || filePath) : undefined;
+        return getProgressMessage("write", base);
     }
 
     // Memory
