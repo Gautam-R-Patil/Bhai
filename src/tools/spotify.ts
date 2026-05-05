@@ -118,7 +118,7 @@ async function runSpogo(args: string[], opts: { timeout?: number; withJson?: boo
         };
     }
 
-    const timeout = opts.timeout ?? 20_000;
+    const timeout = opts.timeout ?? 8_000;
     const finalArgs = opts.withJson === false ? args : [...args, "--json"];
 
     try {
@@ -208,17 +208,38 @@ async function spogoAuthStatus(): Promise<{ authed: boolean; detail?: unknown }>
     return { authed: false };
 }
 
+// Session-scoped auth cache. Short TTL because cookie expiry can happen silently;
+// we re-verify after the TTL or on a forced failure.
+let _authOkAt = 0;
+const AUTH_CACHE_TTL_MS = 10 * 60 * 1000;
+
+function invalidateAuthCache(): void {
+    _authOkAt = 0;
+}
+
 /**
  * Ensure spogo is authed. On first missing-auth, attempt `auth import`. If that
  * fails, return a clear message the caller can surface to the user.
+ * Cached for 10 minutes on success so "play X"/"play Y" calls in the same
+ * session skip the ~5s auth-status subprocess.
  */
 async function ensureAuth(): Promise<{ ok: boolean; error?: string; hint?: string }> {
+    if (_authOkAt && Date.now() - _authOkAt < AUTH_CACHE_TTL_MS) {
+        return { ok: true };
+    }
+
     const status = await spogoAuthStatus();
-    if (status.authed) return { ok: true };
+    if (status.authed) {
+        _authOkAt = Date.now();
+        return { ok: true };
+    }
 
     // Try to import cookies automatically
     const imported = await spogoAuthImport();
-    if (imported.ok) return { ok: true };
+    if (imported.ok) {
+        _authOkAt = Date.now();
+        return { ok: true };
+    }
 
     return {
         ok: false,
@@ -226,6 +247,48 @@ async function ensureAuth(): Promise<{ ok: boolean; error?: string; hint?: strin
         hint: `Please log into Spotify at https://open.spotify.com in your browser (${imported.browser}), then try again. If that still fails, run manually: spogo auth import --browser ${imported.browser}. Supported browsers: chrome, brave, edge, firefox, safari.`,
     };
 }
+
+// Session-scoped "last played" fast-path. Repeats of the same query within
+// the session skip the search roundtrip entirely.
+interface LastPlayed { query: string; uri: string; label: string; at: number; }
+let _lastPlayed: LastPlayed | null = null;
+const LAST_PLAYED_TTL_MS = 30 * 60 * 1000;
+
+function matchesLastPlayed(query: string): LastPlayed | null {
+    if (!_lastPlayed) return null;
+    if (Date.now() - _lastPlayed.at > LAST_PLAYED_TTL_MS) return null;
+    if (query.trim().toLowerCase() === _lastPlayed.query) return _lastPlayed;
+    return null;
+}
+
+function rememberLastPlayed(query: string, uri: string, label: string): void {
+    _lastPlayed = { query: query.trim().toLowerCase(), uri, label, at: Date.now() };
+}
+
+function forgetLastPlayed(): void {
+    _lastPlayed = null;
+}
+
+/**
+ * Reset Spotify session state (auth cache + last-played). Called when the
+ * live voice session ends so a fresh session starts with a clean slate.
+ */
+export function resetSpotifySession(): void {
+    _authOkAt = 0;
+    _lastPlayed = null;
+}
+
+// Test-only accessors. Do NOT use these in production code paths.
+export const _forTests = {
+    matchesLastPlayed,
+    rememberLastPlayed,
+    forgetLastPlayed,
+    invalidateAuthCache,
+    getAuthOkAt: () => _authOkAt,
+    setAuthOkAt: (t: number) => { _authOkAt = t; },
+    getLastPlayed: () => _lastPlayed,
+    authCacheTtlMs: () => AUTH_CACHE_TTL_MS,
+};
 
 // ── Invocation wrapper that maps exit codes to responses ──
 
@@ -280,7 +343,8 @@ async function call(
     }
 
     if (res.exitCode === 3) {
-        // Auth missing — try to fix once and retry
+        // Auth missing — try to fix once and retry. Clear any stale cache first.
+        invalidateAuthCache();
         const authed = await ensureAuth();
         if (!authed.ok) return { ok: false, error: authed.error || "auth failed", exitCode: 3, hint: authed.hint };
         const retry = await runSpogo(args, opts);
@@ -385,6 +449,16 @@ async function doPlay(input: Record<string, unknown>): Promise<string> {
     // Resolve URI if only a query was given
     let targetUri = rawUri;
     let label = "";
+
+    // Fast path: repeat of a query we played recently in this session skips search.
+    if (!targetUri && query) {
+        const hit = matchesLastPlayed(query);
+        if (hit) {
+            targetUri = hit.uri;
+            label = hit.label;
+        }
+    }
+
     if (!targetUri && query) {
         // Heuristic: infer type from wording
         const lower = query.toLowerCase();
@@ -423,6 +497,7 @@ async function doPlay(input: Record<string, unknown>): Promise<string> {
     if (shuffle) playArgs.push("--shuffle");
     const r = await call(playArgs);
     if (r.ok) {
+        if (query) rememberLastPlayed(query, targetUri, label);
         return ok({ action: "play", mode: "spogo", uri: targetUri, label: label || undefined });
     }
 
@@ -438,6 +513,7 @@ async function doPlay(input: Record<string, unknown>): Promise<string> {
             : isNotInstalled
               ? `spogo not installed; used OS URI launch. ${spogoInstallHelp()}`
               : `spogo error (${r.error}); used OS URI launch.`;
+        if (query) rememberLastPlayed(query, targetUri, label);
         return ok({
             action: "play",
             mode: "os_launch_uri",
@@ -465,6 +541,11 @@ async function doSimple(
     kind: "pause" | "resume" | "next" | "previous" | "seek" | "volume" | "shuffle" | "repeat",
     input: Record<string, unknown>,
 ): Promise<string> {
+    // Transport changes invalidate the "last played" shortcut — the user's
+    // intent is no longer bound to that specific track.
+    if (kind === "pause" || kind === "next" || kind === "previous") {
+        forgetLastPlayed();
+    }
     let args: string[];
     switch (kind) {
         case "pause":

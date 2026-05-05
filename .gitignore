@@ -118,6 +118,10 @@ desktop/hostinger-upload/
 !src/memory/fts5-query.test.ts
 !src/proactive/dreaming-self-edit.test.ts
 !src/context-scrubber.test.ts
+!src/voice/live/types.test.ts
+!src/voice/live/tool-bridge.test.ts
+!src/voice/live/backends/gemini-live.test.ts
+!src/tools/spotify-cache.test.ts
 
 # Compiled Swift helpers (built by npm run build:location / build:ocr)
 scripts/get_location_bin

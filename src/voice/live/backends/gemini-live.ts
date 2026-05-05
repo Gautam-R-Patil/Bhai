@@ -280,8 +280,14 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
 
         // ── Input transcription ──
         if (data.serverContent?.inputTranscription?.text) {
-            // User's speech transcribed — useful for logging
-            console.log(`[GEMINI-LIVE] User said: "${data.serverContent.inputTranscription.text}"`);
+            const raw = String(data.serverContent.inputTranscription.text);
+            const filtered = filterNoiseTranscript(raw);
+            if (filtered) {
+                console.log(`[GEMINI-LIVE] User said: "${filtered}"`);
+                this.emit("user_transcript", filtered);
+            } else {
+                console.log(`[GEMINI-LIVE] Dropped noise transcript: "${raw}"`);
+            }
         }
 
         // ── Output transcription ──
@@ -311,7 +317,51 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
 
         // ── Tool call cancellation ──
         if (data.toolCallCancellation) {
-            console.log("[GEMINI-LIVE] Tool call cancelled by server (user interrupted)");
+            const ids: string[] = Array.isArray(data.toolCallCancellation.ids)
+                ? data.toolCallCancellation.ids.map((x: unknown) => String(x))
+                : [];
+            console.log(`[GEMINI-LIVE] Tool call cancelled by server (user interrupted) ids=${ids.join(",") || "unknown"}`);
+            this.emit("tool_cancelled", ids);
         }
     }
+}
+
+// ── Noise-guard for input transcripts ────────────
+// Gemini Live occasionally transcribes background noise / keyboard clicks
+// as short strings in random scripts (Korean/Japanese/German). We drop
+// obviously-non-speech outputs before they leak into the model turn.
+
+// Specific no-space noise patterns Gemini Live has produced against ATLAS.
+// Kept conservative — only strings that are clearly transcription hallucinations
+// in the logs, NOT everyday single words. (We deliberately do NOT include
+// "はい" / "너도" here because they are legitimate Japanese "yes" / Korean
+// "you too" that real users say.)
+const KNOWN_NOISE_EXACT = new Set<string>([
+    "늘어났구나.", "늘어났구나",
+    "ey.", "eh.", "uh.", "ah.", "mm.", "hm.", "um.",
+    "Sagen, ey.", "sagen, ey.", "Sagen ey.",
+]);
+
+export function filterNoiseTranscript(text: string): string | null {
+    const t = text.trim();
+    if (t.length < 2) return null;
+
+    // Pure punctuation / whitespace junk
+    if (!/[\p{L}\p{N}]/u.test(t)) return null;
+
+    // Treat letters + digits + combining marks as meaningful content (so
+    // Devanagari with nasalization like "हाँ" isn't under-counted).
+    const content = t.replace(/[^\p{L}\p{N}\p{M}]/gu, "");
+    if (content.length < 2) return null;
+
+    // Direct-match known noise exemplars (ASR hallucinations seen in logs).
+    if (KNOWN_NOISE_EXACT.has(t)) return null;
+
+    // Very short Latin bursts that are ONLY filler tokens ("uh", "uh hm",
+    // "Sagen, ey."). Anchored so mid-sentence "ah I see" passes through.
+    if (/^[\s.,?!]*(?:sagen|ey|eh|uh|ah|mm|hm|um)(?:[\s.,?!]+(?:sagen|ey|eh|uh|ah|mm|hm|um))*[\s.,?!]*$/i.test(t)) {
+        return null;
+    }
+
+    return t;
 }

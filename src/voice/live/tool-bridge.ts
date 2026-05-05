@@ -7,7 +7,11 @@
 import type { ChatCompletionTool } from "openai/resources/chat/completions.js";
 import { getToolSchemasByNames, executeTool } from "../../tools/index.js";
 import type { GeminiFunctionDeclaration, LiveToolCall, LiveToolResult } from "./types.js";
-import { VOICE_TOOL_NAMES } from "./types.js";
+import { getVoiceToolNames } from "./types.js";
+
+// Per-tool hard timeout. Beyond this we return an error to the model so one
+// hung tool doesn't stall the Promise.all and freeze the voice session.
+export const VOICE_TOOL_TIMEOUT_MS = 8000;
 
 // ── Schema Translation ───────────────────────────
 
@@ -36,7 +40,7 @@ function openAIToGemini(tool: ChatCompletionTool): GeminiFunctionDeclaration {
  * Only includes fast, voice-suitable tools (no browser automation, deep research, etc.)
  */
 export function getVoiceToolDeclarations(): GeminiFunctionDeclaration[] {
-    const schemas = getToolSchemasByNames([...VOICE_TOOL_NAMES]);
+    const schemas = getToolSchemasByNames(getVoiceToolNames());
     return schemas.map(openAIToGemini);
 }
 
@@ -45,7 +49,28 @@ export function getVoiceToolDeclarations(): GeminiFunctionDeclaration[] {
  * Used by the OpenAI Realtime backend (already in correct format).
  */
 export function getVoiceToolSchemas(): ChatCompletionTool[] {
-    return getToolSchemasByNames([...VOICE_TOOL_NAMES]);
+    return getToolSchemasByNames(getVoiceToolNames());
+}
+
+// Truncate tool args for log readability. Keeps diagnostics tight in a
+// voice session where many turns fire.
+function summarizeArgs(args: Record<string, unknown>): string {
+    try {
+        const s = JSON.stringify(args);
+        return s.length > 120 ? s.slice(0, 117) + "…" : s;
+    } catch {
+        return "[unserializable]";
+    }
+}
+
+function runWithTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+        promise.then(
+            (v) => { clearTimeout(t); resolve(v); },
+            (e) => { clearTimeout(t); reject(e); },
+        );
+    });
 }
 
 // ── Tool Execution ───────────────────────────────
@@ -59,13 +84,18 @@ export async function executeVoiceToolCalls(calls: LiveToolCall[]): Promise<Live
     const results = await Promise.all(
         calls.map(async (call): Promise<LiveToolResult> => {
             const start = Date.now();
+            console.log(`  [LIVE] Tool ${call.name} → ${summarizeArgs(call.args)}`);
             try {
-                const result = await executeTool(call.name, call.args);
+                const result = await runWithTimeout(
+                    executeTool(call.name, call.args),
+                    VOICE_TOOL_TIMEOUT_MS,
+                    `tool ${call.name}`,
+                );
                 console.log(`  [LIVE] Tool ${call.name} completed in ${Date.now() - start}ms`);
                 return { id: call.id, name: call.name, result };
             } catch (err) {
                 const message = err instanceof Error ? err.message : String(err);
-                console.error(`  [LIVE] Tool ${call.name} failed: ${message}`);
+                console.error(`  [LIVE] Tool ${call.name} failed in ${Date.now() - start}ms: ${message}`);
                 return { id: call.id, name: call.name, result: { error: message } };
             }
         })

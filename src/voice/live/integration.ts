@@ -93,8 +93,15 @@ export async function initLiveVoice(llm: LLMClient): Promise<void> {
 
 /**
  * Start a live voice session. Only one can be active at a time.
+ *
+ * Callers who need to receive `session_started` / early events MUST pass a
+ * `subscribe` callback — it runs BEFORE `session.start()` so listeners are
+ * attached in time to catch synchronous emissions like `session_started`.
  */
-export async function startLiveVoice(llm: LLMClient): Promise<LiveVoiceSession> {
+export async function startLiveVoice(
+    llm: LLMClient,
+    subscribe?: (session: LiveVoiceSession) => void,
+): Promise<LiveVoiceSession> {
     if (activeSession?.isActive) {
         throw new Error("A live voice session is already active");
     }
@@ -120,15 +127,19 @@ export async function startLiveVoice(llm: LLMClient): Promise<LiveVoiceSession> 
         }
     });
 
-    await session.start();
-    activeSession = session;
-
-    // Auto-cleanup on session end
+    // Auto-cleanup on session end — attached BEFORE start so a same-tick end fires it.
     session.on("session_ended", () => {
         if (activeSession === session) {
             activeSession = null;
         }
     });
+
+    // Let the caller wire up their own listeners before start() runs, so they
+    // can receive `session_started` (emitted synchronously at the end of start()).
+    if (subscribe) subscribe(session);
+
+    await session.start();
+    activeSession = session;
 
     return session;
 }

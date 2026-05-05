@@ -1652,12 +1652,281 @@
       outline: 2px solid rgba(168, 85, 247, 0.7);
       outline-offset: 2px;
     }
+
+    /* ── Live Voice Panel ──────────────────────── */
+    #live-voice-panel {
+      position: relative;
+      margin: 8px 0 10px 0;
+      padding: 12px 14px 10px 14px;
+      background: rgba(20, 20, 24, 0.82);
+      backdrop-filter: blur(80px) saturate(180%);
+      -webkit-backdrop-filter: blur(80px) saturate(180%);
+      border: 1px solid rgba(147, 51, 234, 0.22);
+      border-radius: 14px;
+      color: rgba(255, 255, 255, 0.92);
+      font-size: 12.5px;
+      animation: fadeSlideIn 0.28s ease;
+      overflow: hidden;
+    }
+    #live-voice-panel.hidden { display: none; }
+
+    #live-voice-panel .lv-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    #live-voice-panel .lv-state {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      font-weight: 500;
+      font-size: 11.5px;
+      letter-spacing: 0.2px;
+    }
+    #live-voice-panel .lv-state .lv-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: rgba(168, 85, 247, 0.8);
+      box-shadow: 0 0 8px rgba(168, 85, 247, 0.55);
+    }
+    #live-voice-panel.state-listening .lv-dot {
+      background: rgba(52, 211, 153, 0.95);
+      box-shadow: 0 0 10px rgba(52, 211, 153, 0.7);
+      animation: lvBreath 1.6s ease-in-out infinite;
+    }
+    #live-voice-panel.state-speaking .lv-dot {
+      background: rgba(147, 197, 253, 0.95);
+      box-shadow: 0 0 10px rgba(147, 197, 253, 0.7);
+      animation: lvBreath 1.1s ease-in-out infinite;
+    }
+    #live-voice-panel.state-thinking .lv-dot {
+      background: rgba(255, 194, 102, 0.9);
+      box-shadow: 0 0 10px rgba(255, 194, 102, 0.6);
+      animation: lvShimmer 1.4s linear infinite;
+    }
+    #live-voice-panel.state-connecting .lv-dot,
+    #live-voice-panel.state-reconnecting .lv-dot {
+      background: rgba(255, 255, 255, 0.55);
+      animation: lvShimmer 1.2s linear infinite;
+    }
+    #live-voice-panel.state-interrupted .lv-dot {
+      animation: lvFlash 0.4s ease-in-out 2;
+    }
+    #live-voice-panel.state-error .lv-dot {
+      background: rgba(248, 113, 113, 0.95);
+      box-shadow: 0 0 10px rgba(248, 113, 113, 0.65);
+    }
+
+    #live-voice-panel .lv-timer {
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.55);
+      font-variant-numeric: tabular-nums;
+    }
+
+    #live-voice-panel .lv-amp {
+      height: 3px;
+      border-radius: 2px;
+      background: rgba(255, 255, 255, 0.05);
+      overflow: hidden;
+      margin-bottom: 10px;
+    }
+    #live-voice-panel .lv-amp > span {
+      display: block;
+      height: 100%;
+      width: 100%;
+      transform-origin: center;
+      transform: scaleX(var(--amp, 0));
+      transition: transform 80ms ease-out;
+      background: linear-gradient(90deg,
+        rgba(147, 51, 234, 0.7) 0%,
+        rgba(168, 85, 247, 0.9) 50%,
+        rgba(147, 51, 234, 0.7) 100%);
+    }
+
+    #live-voice-panel .lv-transcript {
+      max-height: 180px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 8px;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(147, 51, 234, 0.25) transparent;
+    }
+    #live-voice-panel .lv-transcript::-webkit-scrollbar { width: 4px; }
+    #live-voice-panel .lv-transcript::-webkit-scrollbar-thumb {
+      background: rgba(147, 51, 234, 0.3);
+      border-radius: 2px;
+    }
+    #live-voice-panel .lv-turn {
+      padding: 6px 10px;
+      border-radius: 8px;
+      line-height: 1.45;
+      font-size: 12px;
+      max-width: 95%;
+      word-break: break-word;
+    }
+    #live-voice-panel .lv-turn.turn-user {
+      align-self: flex-end;
+      background: rgba(147, 51, 234, 0.14);
+      border: 1px solid rgba(147, 51, 234, 0.25);
+      color: rgba(255, 255, 255, 0.94);
+    }
+    #live-voice-panel .lv-turn.turn-ai {
+      align-self: flex-start;
+      background: rgba(255, 255, 255, 0.04);
+      color: rgba(255, 255, 255, 0.88);
+    }
+    #live-voice-panel .lv-turn.streaming::after {
+      content: "▍";
+      color: rgba(168, 85, 247, 0.7);
+      animation: lvCaret 0.8s steps(2, end) infinite;
+      margin-left: 2px;
+    }
+
+    #live-voice-panel .lv-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-bottom: 8px;
+      min-height: 0;
+    }
+    #live-voice-panel .lv-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 9px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.72);
+    }
+    #live-voice-panel .lv-chip::before {
+      content: "";
+      width: 6px; height: 6px; border-radius: 50%;
+      background: rgba(255, 194, 102, 0.9);
+      animation: lvBreath 1.1s ease-in-out infinite;
+    }
+    #live-voice-panel .lv-chip.done {
+      background: rgba(52, 211, 153, 0.08);
+      border-color: rgba(52, 211, 153, 0.25);
+      color: rgba(167, 243, 208, 0.92);
+    }
+    #live-voice-panel .lv-chip.done::before {
+      background: rgba(52, 211, 153, 0.95);
+      animation: none;
+    }
+    #live-voice-panel .lv-chip.failed {
+      background: rgba(248, 113, 113, 0.09);
+      border-color: rgba(248, 113, 113, 0.3);
+      color: rgba(254, 202, 202, 0.95);
+    }
+    #live-voice-panel .lv-chip.failed::before {
+      background: rgba(248, 113, 113, 0.95);
+      animation: none;
+    }
+
+    #live-voice-panel .lv-controls {
+      display: flex;
+      justify-content: flex-end;
+      gap: 6px;
+    }
+    #live-voice-panel .lv-btn {
+      padding: 4px 10px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      color: rgba(255, 255, 255, 0.78);
+      font-size: 11px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 120ms ease, color 120ms ease;
+    }
+    #live-voice-panel .lv-btn:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: rgba(255, 255, 255, 0.92);
+    }
+    #live-voice-panel .lv-btn[aria-pressed="true"] {
+      background: rgba(147, 51, 234, 0.2);
+      border-color: rgba(168, 85, 247, 0.4);
+      color: rgba(233, 213, 255, 0.95);
+    }
+    #live-voice-panel .lv-btn.end {
+      background: rgba(248, 113, 113, 0.1);
+      border-color: rgba(248, 113, 113, 0.25);
+      color: rgba(254, 202, 202, 0.92);
+    }
+    #live-voice-panel .lv-btn.end:hover {
+      background: rgba(248, 113, 113, 0.2);
+    }
+
+    /* Small Live pill that sits next to the mic button */
+    #live-btn {
+      padding: 0 8px;
+      height: 22px;
+      line-height: 22px;
+      margin-left: 4px;
+      border-radius: 999px;
+      border: 1px solid rgba(168, 85, 247, 0.35);
+      background: rgba(147, 51, 234, 0.08);
+      color: rgba(233, 213, 255, 0.92);
+      font-size: 10.5px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+      cursor: pointer;
+      transition: background 120ms ease, border-color 120ms ease;
+    }
+    #live-btn:hover {
+      background: rgba(147, 51, 234, 0.18);
+      border-color: rgba(168, 85, 247, 0.6);
+    }
+    #live-btn.active {
+      background: rgba(52, 211, 153, 0.18);
+      border-color: rgba(52, 211, 153, 0.5);
+      color: rgba(167, 243, 208, 0.95);
+    }
+
+    @keyframes lvBreath {
+      0%, 100% { opacity: 0.55; transform: scale(1); }
+      50%      { opacity: 1;    transform: scale(1.15); }
+    }
+    @keyframes lvShimmer {
+      0%   { opacity: 0.3; }
+      50%  { opacity: 1; }
+      100% { opacity: 0.3; }
+    }
+    @keyframes lvFlash {
+      0%, 100% { transform: scale(1);   opacity: 1;   }
+      50%      { transform: scale(1.6); opacity: 0.5; }
+    }
+    @keyframes lvCaret {
+      0%, 50%  { opacity: 1; }
+      51%, 100%{ opacity: 0; }
+    }
   </style>
 </head>
 
 <body>
   <!-- Screen reader live region for status announcements -->
   <div id="sr-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+
+  <!-- Live Voice Panel (shown only during an active live voice session) -->
+  <div id="live-voice-panel" class="hidden" role="region" aria-label="Live voice session">
+    <div class="lv-header">
+      <span class="lv-state" id="lv-state"><span class="lv-dot" aria-hidden="true"></span><span id="lv-state-text">Connecting…</span></span>
+      <span class="lv-timer" id="lv-timer" aria-label="Session duration">0:00</span>
+    </div>
+    <div class="lv-amp" id="lv-amp" aria-hidden="true"><span></span></div>
+    <div class="lv-transcript" id="lv-transcript" aria-live="polite" aria-atomic="false"></div>
+    <div class="lv-chips" id="lv-chips" aria-live="polite"></div>
+    <div class="lv-controls">
+      <button class="lv-btn" id="lv-mute" aria-pressed="false" title="Mute microphone" tabindex="0">Mute</button>
+      <button class="lv-btn end" id="lv-end" title="End live voice session" tabindex="0">End</button>
+    </div>
+  </div>
 
   <div id="container" role="main" aria-label="A.T.L.A.S overlay">
     <!-- Task Drawer -->
@@ -1689,7 +1958,7 @@
         <input type="text" id="input" placeholder="Ask A.T.L.A.S. (type @ to mention)" autocomplete="off" autofocus
           spellcheck="false" aria-label="Message input" role="combobox" aria-expanded="false" aria-controls="mention-picker" aria-haspopup="listbox" />
       </div>
-        <button id="mic-btn" title="Voice input" aria-label="Voice input" tabindex="0">
+        <button id="mic-btn" title="Voice input (single utterance)" aria-label="Voice input" tabindex="0">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
@@ -1698,6 +1967,7 @@
             <line x1="8" y1="23" x2="16" y2="23" />
           </svg>
         </button>
+        <button id="live-btn" title="Start live voice conversation" aria-label="Start live voice conversation" aria-pressed="false" tabindex="0">LIVE</button>
       </div>
       <!-- @ Mention Picker extracted from input-box so it's not clipped by overflow:hidden -->
       <div id="mention-picker" role="listbox" aria-label="Mention picker">
@@ -2180,39 +2450,13 @@
         }
         // ── Live Voice Mode status ──
         else if (msg.type === 'voice_live_status') {
-          const s = msg.status;
-          if (s === 'connecting') {
-            input.placeholder = 'Connecting live voice…';
-            icon.classList.add('thinking');
-            blobs.forEach(b => b.style.boxShadow = '0 0 20px 8px rgba(0,255,150,0.5)');
-          } else if (s === 'active') {
-            const stopKey = navigator.platform.includes('Mac') ? '⌘⇧L' : 'Alt+Shift+L';
-            input.placeholder = 'Live voice active — speak freely (' + stopKey + ' to stop)';
-            icon.classList.remove('thinking');
-            blobs.forEach(b => b.style.boxShadow = '0 0 25px 10px rgba(0,255,150,0.7)');
-          } else if (s === 'interrupted') {
-            input.placeholder = 'Listening…';
-          } else if (s === 'ended') {
-            input.placeholder = 'Ask A.T.L.A.S…';
-            icon.classList.remove('thinking');
-            blobs.forEach(b => b.style.boxShadow = '');
-          } else if (s === 'error' || s === 'unavailable') {
-            input.placeholder = msg.error || 'Live voice unavailable';
-            icon.classList.remove('thinking');
-            blobs.forEach(b => b.style.boxShadow = '');
-            setTimeout(() => { input.placeholder = 'Ask A.T.L.A.S…'; }, 3000);
-          }
+          handleLiveVoiceStatus(msg);
         }
         else if (msg.type === 'voice_live_transcript') {
-          // Show what the AI is saying in the reply box
-          replyBox.classList.add('visible');
-          replyText.innerHTML = msg.text || '';
+          handleLiveVoiceTranscript(msg);
         }
         else if (msg.type === 'voice_live_tool') {
-          // Show tool execution feedback
-          progressBox.classList.add('visible');
-          progressBox.innerHTML = '⚡ ' + (msg.tools || []).join(', ');
-          setTimeout(() => { progressBox.classList.remove('visible'); progressBox.innerHTML = ''; }, 2000);
+          handleLiveVoiceTool(msg);
         }
       }
 
@@ -2431,6 +2675,271 @@
           input.value = '';
           input.placeholder = 'Listening…';
         }
+      });
+
+      // ── Live Voice (continuous bidirectional) ──
+      const lvPanel = document.getElementById('live-voice-panel');
+      const lvStateEl = document.getElementById('lv-state');
+      const lvStateText = document.getElementById('lv-state-text');
+      const lvTimerEl = document.getElementById('lv-timer');
+      const lvTranscript = document.getElementById('lv-transcript');
+      const lvChips = document.getElementById('lv-chips');
+      const lvAmpBar = document.getElementById('lv-amp').firstElementChild;
+      const lvMuteBtn = document.getElementById('lv-mute');
+      const lvEndBtn = document.getElementById('lv-end');
+      const liveBtn = document.getElementById('live-btn');
+
+      let lvStartTs = 0;
+      let lvTimerHandle = null;
+      let lvActive = false;
+      let lvAmpStream = null;        // MediaStream for mic amplitude
+      let lvAmpCtx = null;            // AudioContext
+      let lvAmpRaf = 0;               // RAF handle
+      let lvStreamingAiTurn = null;  // the currently-streaming AI turn element
+      const lvChipMap = new Map();    // id → chip element
+
+      function lvFormatTime(ms) {
+        const s = Math.floor(ms / 1000);
+        return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+      }
+
+      function lvSetState(status, label) {
+        const states = ['connecting', 'active', 'listening', 'speaking', 'thinking', 'interrupted', 'reconnecting', 'error', 'ended'];
+        states.forEach(s => lvPanel.classList.remove('state-' + s));
+        if (status) lvPanel.classList.add('state-' + status);
+        if (label && lvStateText) lvStateText.textContent = label;
+        announceToSR('Live voice: ' + (label || status));
+      }
+
+      function lvOpenPanel() {
+        lvPanel.classList.remove('hidden');
+        liveBtn.classList.add('active');
+        liveBtn.setAttribute('aria-pressed', 'true');
+        lvStartTs = Date.now();
+        if (lvTimerHandle) clearInterval(lvTimerHandle);
+        lvTimerHandle = setInterval(() => {
+          lvTimerEl.textContent = lvFormatTime(Date.now() - lvStartTs);
+        }, 1000);
+        lvTimerEl.textContent = '0:00';
+        lvActive = true;
+        lvStartAmpMonitor();
+      }
+
+      function lvClosePanel() {
+        lvPanel.classList.add('hidden');
+        liveBtn.classList.remove('active');
+        liveBtn.setAttribute('aria-pressed', 'false');
+        if (lvTimerHandle) { clearInterval(lvTimerHandle); lvTimerHandle = null; }
+        lvActive = false;
+        lvStreamingAiTurn = null;
+        lvTranscript.innerHTML = '';
+        lvChips.innerHTML = '';
+        lvChipMap.clear();
+        lvMuteBtn.setAttribute('aria-pressed', 'false');
+        lvMuteBtn.textContent = 'Mute';
+        lvStopAmpMonitor();
+      }
+
+      // Assistant-streaming text from Gemini Live arrives as small DELTAS (per-chunk)
+      // via `outputTranscription`. Append them instead of replacing the element body.
+      function lvAppendAssistantDelta(delta) {
+        if (!lvStreamingAiTurn) {
+          const el = document.createElement('div');
+          el.className = 'lv-turn turn-ai streaming';
+          el.textContent = delta || '';
+          lvTranscript.appendChild(el);
+          lvStreamingAiTurn = el;
+        } else {
+          lvStreamingAiTurn.textContent += (delta || '');
+        }
+        lvTranscript.scrollTop = lvTranscript.scrollHeight;
+      }
+
+      function lvAppendUserTurn(text) {
+        const el = document.createElement('div');
+        el.className = 'lv-turn turn-user';
+        el.textContent = text || '';
+        lvTranscript.appendChild(el);
+        lvTranscript.scrollTop = lvTranscript.scrollHeight;
+      }
+
+      function lvFinalizeAiTurn() {
+        if (lvStreamingAiTurn) {
+          lvStreamingAiTurn.classList.remove('streaming');
+          lvStreamingAiTurn = null;
+        }
+      }
+
+      function lvUpsertChip(id, name, state) {
+        const key = id || name;
+        let chip = lvChipMap.get(key);
+        if (!chip) {
+          chip = document.createElement('span');
+          chip.className = 'lv-chip';
+          chip.textContent = name;
+          lvChips.appendChild(chip);
+          lvChipMap.set(key, chip);
+        }
+        chip.className = 'lv-chip ' + (state || '');
+        // Auto-prune resolved chips so a long session doesn't accumulate them.
+        if (state === 'done' || state === 'failed') {
+          setTimeout(() => {
+            if (chip.parentNode === lvChips) lvChips.removeChild(chip);
+            lvChipMap.delete(key);
+          }, 8000);
+        }
+      }
+
+      let lvAmpStarting = false;
+      async function lvStartAmpMonitor() {
+        if (lvAmpStream || lvAmpStarting) return;
+        lvAmpStarting = true;
+        let stream = null, ctx = null;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          // If the panel was closed while the permission prompt was up, abort.
+          if (!lvActive) {
+            stream.getTracks().forEach(t => t.stop());
+            return;
+          }
+          ctx = new (window.AudioContext || window.webkitAudioContext)();
+          lvAmpStream = stream;
+          lvAmpCtx = ctx;
+          const source = ctx.createMediaStreamSource(stream);
+          const analyser = ctx.createAnalyser();
+          analyser.fftSize = 512;
+          source.connect(analyser);
+          const data = new Uint8Array(analyser.fftSize);
+          const tick = () => {
+            if (!lvActive) return;
+            analyser.getByteTimeDomainData(data);
+            let sum = 0;
+            for (let i = 0; i < data.length; i++) {
+              const v = (data[i] - 128) / 128;
+              sum += v * v;
+            }
+            const rms = Math.sqrt(sum / data.length);
+            const amp = Math.min(1, rms * 3.2);
+            lvAmpBar.style.setProperty('--amp', amp.toFixed(3));
+            lvAmpRaf = requestAnimationFrame(tick);
+          };
+          tick();
+        } catch (err) {
+          // User denied mic permission or browser can't tap the stream — degrade silently.
+          console.warn('Live voice amp monitor unavailable:', err && err.message);
+          if (stream) stream.getTracks().forEach(t => t.stop());
+          if (ctx && ctx.state !== 'closed') ctx.close().catch(() => {});
+          // Clear the globals too — otherwise the in-flight guard
+          // blocks future restarts for the remainder of the session.
+          lvAmpStream = null;
+          lvAmpCtx = null;
+        } finally {
+          lvAmpStarting = false;
+        }
+      }
+
+      function lvStopAmpMonitor() {
+        if (lvAmpRaf) cancelAnimationFrame(lvAmpRaf);
+        lvAmpRaf = 0;
+        if (lvAmpStream) { lvAmpStream.getTracks().forEach(t => t.stop()); lvAmpStream = null; }
+        if (lvAmpCtx && lvAmpCtx.state !== 'closed') { lvAmpCtx.close().catch(() => {}); }
+        lvAmpCtx = null;
+        lvAmpBar.style.setProperty('--amp', '0');
+      }
+
+      function handleLiveVoiceStatus(msg) {
+        const s = msg.status;
+        if (s === 'connecting') {
+          lvOpenPanel();
+          lvSetState('connecting', 'Connecting…');
+        } else if (s === 'active') {
+          // Turn completed naturally (not interrupted) — finalize any
+          // streaming AI bubble so subsequent response_transcript events
+          // start a new bubble instead of compounding onto this one.
+          lvFinalizeAiTurn();
+          lvSetState('listening', 'Listening');
+        } else if (s === 'user_speaking') {
+          // New user turn beginning — finalize any leftover AI bubble too.
+          lvFinalizeAiTurn();
+          lvSetState('listening', 'You’re talking');
+        } else if (s === 'processing' || s === 'thinking') {
+          lvSetState('thinking', 'Thinking');
+        } else if (s === 'speaking') {
+          lvSetState('speaking', 'Speaking');
+        } else if (s === 'interrupted') {
+          lvSetState('interrupted', 'Interrupted');
+          lvFinalizeAiTurn();
+          setTimeout(() => { if (lvActive) lvSetState('listening', 'Listening'); }, 400);
+        } else if (s === 'reconnecting') {
+          lvSetState('reconnecting', 'Reconnecting…');
+        } else if (s === 'muted') {
+          lvMuteBtn.setAttribute('aria-pressed', 'true');
+          lvMuteBtn.textContent = 'Unmute';
+          lvSetState('listening', 'Muted');
+        } else if (s === 'unmuted') {
+          lvMuteBtn.setAttribute('aria-pressed', 'false');
+          lvMuteBtn.textContent = 'Mute';
+          lvSetState('listening', 'Listening');
+        } else if (s === 'ended') {
+          lvFinalizeAiTurn();
+          lvSetState('ended', 'Ended');
+          setTimeout(() => lvClosePanel(), 600);
+        } else if (s === 'already_active') {
+          // Just make sure the panel is open
+          if (!lvActive) { lvOpenPanel(); lvSetState('listening', 'Listening'); }
+        } else if (s === 'error' || s === 'unavailable') {
+          lvSetState('error', msg.error || 'Live voice unavailable');
+          setTimeout(() => lvClosePanel(), 1800);
+        }
+      }
+
+      function handleLiveVoiceTranscript(msg) {
+        const role = msg.role === 'user' ? 'user' : 'assistant';
+        const text = typeof msg.text === 'string' ? msg.text : '';
+        if (!text) return;
+        if (role === 'user') {
+          lvAppendUserTurn(text);
+          return;
+        }
+        // Assistant: final==false means this is a streaming delta; otherwise a
+        // completed utterance (append as its own final turn).
+        if (msg.final === false) {
+          lvAppendAssistantDelta(text);
+        } else {
+          lvAppendAssistantDelta(text);
+          lvFinalizeAiTurn();
+        }
+      }
+
+      function handleLiveVoiceTool(msg) {
+        if (!msg.id && !msg.name) return;
+        if (!msg.id) return;
+        const existing = lvChipMap.get(msg.id);
+        // Fall back to "tool" rather than an empty label so an orphan
+        // cancellation for a chip we never rendered is still intelligible.
+        const label = msg.name || (existing ? existing.textContent : 'tool');
+        lvUpsertChip(msg.id, label, msg.state || 'pending');
+      }
+
+      liveBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!ws || ws.readyState !== 1) return;
+        if (lvActive) {
+          ws.send(JSON.stringify({ type: 'voice_live_stop' }));
+        } else {
+          ws.send(JSON.stringify({ type: 'voice_live_start' }));
+        }
+      });
+
+      lvMuteBtn.addEventListener('click', () => {
+        if (!ws || ws.readyState !== 1 || !lvActive) return;
+        const pressed = lvMuteBtn.getAttribute('aria-pressed') === 'true';
+        ws.send(JSON.stringify({ type: pressed ? 'voice_live_unmute' : 'voice_live_mute' }));
+      });
+
+      lvEndBtn.addEventListener('click', () => {
+        if (!ws || ws.readyState !== 1) return;
+        ws.send(JSON.stringify({ type: 'voice_live_stop' }));
       });
 
       // ── @ Mention Picker ──

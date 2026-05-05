@@ -40,6 +40,8 @@ export class LiveVoiceSession extends EventEmitter {
     private turnCount = 0;
     private sessionTimer: NodeJS.Timeout | null = null;
     private startTime = 0;
+    private micMuted = false;
+    private inflightToolIds = new Set<string>();
 
     constructor(config: Partial<LiveVoiceConfig> & Pick<LiveVoiceConfig, "keys">, llm: LLMClient) {
         super();
@@ -159,12 +161,21 @@ export class LiveVoiceSession extends EventEmitter {
         }
 
         const duration = this.duration;
+        const turns = this.turnCount;
         this.state = "idle";
         this.startTime = 0;
         this.turnCount = 0;
+        this.micMuted = false;
+        this.inflightToolIds.clear();
+
+        // Reset session-scoped caches in downstream tools.
+        try {
+            const spotify = await import("../../tools/spotify.js");
+            spotify.resetSpotifySession?.();
+        } catch { /* optional */ }
 
         this.emitEvent("session_ended");
-        console.log(`[LIVE-SESSION] Session ended (${(duration / 1000).toFixed(0)}s, ${this.turnCount} turns)`);
+        console.log(`[LIVE-SESSION] Session ended (${(duration / 1000).toFixed(0)}s, ${turns} turns)`);
     }
 
     // ── Backend Selection ─────────────────────────
@@ -197,9 +208,12 @@ export class LiveVoiceSession extends EventEmitter {
     private wireEvents(): void {
         if (!this.backend || !this.mic || !this.player) return;
 
-        // Mic → Backend (send audio chunks to the model)
+        // Mic → Backend (send audio chunks to the model; respect mute)
         this.mic.on("data", (pcm) => {
-            this.backend!.sendAudio(pcm);
+            if (this.micMuted) return;
+            // Guard against a buffered mic event landing after stop() nulled the backend.
+            if (!this.backend) return;
+            this.backend.sendAudio(pcm);
         });
 
         this.mic.on("error", (err) => {
@@ -213,14 +227,27 @@ export class LiveVoiceSession extends EventEmitter {
             this.emitEvent("response_audio", chunk);
         });
 
-        // Backend → Text response
-        this.backend.on("text", (text) => {
-            this.emitEvent("response_text", text);
-        });
-
-        // Backend → Output transcript
+        // Backend → Output transcript (model → speech).
+        // Gemini Live is AUDIO-only (see gemini-live.ts Modality config),
+        // so the assistant-side text stream flows only via outputTranscription.
+        // We deliberately do NOT wire `backend.on("text")` → response_text:
+        // re-enabling text modality later would otherwise double-emit.
         this.backend.on("transcript", (transcript) => {
             this.emitEvent("response_transcript", transcript);
+        });
+
+        // Backend → Input transcript (user → speech)
+        this.backend.on("user_transcript", (text: string) => {
+            this.emitEvent("user_transcript", text);
+        });
+
+        // Backend → Tool call cancelled by server (user interrupted mid-call).
+        // Gemini Live's toolCallCancellation.ids is optional per SDK docs — when
+        // absent, cancel ALL in-flight tools so UI chips don't stick in pending.
+        this.backend.on("tool_cancelled", (ids: string[]) => {
+            const toCancel = ids.length > 0 ? ids : [...this.inflightToolIds];
+            for (const id of toCancel) this.inflightToolIds.delete(id);
+            this.emitEvent("tool_cancelled", toCancel);
         });
 
         // Backend → Tool calls (execute in parallel, don't block audio)
@@ -275,6 +302,7 @@ export class LiveVoiceSession extends EventEmitter {
     // ── Tool Call Handler ─────────────────────────
 
     private handleToolCalls(calls: LiveToolCall[]): void {
+        for (const c of calls) this.inflightToolIds.add(c.id);
         this.emitEvent("tool_call", calls);
 
         // Execute tools in parallel — do NOT await (audio keeps playing)
@@ -288,7 +316,12 @@ export class LiveVoiceSession extends EventEmitter {
                     console.warn("[LIVE-SESSION] Backend disconnected — cannot send tool results");
                 }
                 for (const r of results) {
-                    this.emitEvent("tool_result", r);
+                    // If the id was already removed by a tool_cancelled event,
+                    // skip the tool_result emit — otherwise the UI chip would
+                    // flip from `failed` (set on cancel) back to `done`.
+                    const wasCancelled = !this.inflightToolIds.has(r.id);
+                    this.inflightToolIds.delete(r.id);
+                    if (!wasCancelled) this.emitEvent("tool_result", r);
                 }
             })
             .catch((err) => {
@@ -328,5 +361,23 @@ export class LiveVoiceSession extends EventEmitter {
     sendTextInput(text: string): void {
         if (!this.backend?.isConnected()) return;
         this.backend.sendText(text);
+    }
+
+    // ── Mic mute control (client-side pause — model keeps speaking) ──
+
+    mute(): void {
+        if (this.micMuted) return;
+        this.micMuted = true;
+        this.emitEvent("muted");
+    }
+
+    unmute(): void {
+        if (!this.micMuted) return;
+        this.micMuted = false;
+        this.emitEvent("unmuted");
+    }
+
+    get isMuted(): boolean {
+        return this.micMuted;
     }
 }

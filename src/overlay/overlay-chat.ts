@@ -416,6 +416,10 @@ export function initOverlayChat(llm: LLMClient): void {
                     await handleLiveVoiceStart(ws);
                 } else if (msg.type === "voice_live_stop") {
                     await handleLiveVoiceStop(ws);
+                } else if (msg.type === "voice_live_mute") {
+                    await handleLiveVoiceMute(ws, true);
+                } else if (msg.type === "voice_live_unmute") {
+                    await handleLiveVoiceMute(ws, false);
                 }
             } catch (err) {
                 console.error("[OVERLAY] Message parse error:", err);
@@ -1287,6 +1291,15 @@ Be thorough — your analysis directly determines whether the user gets a correc
 // ── Live Voice Mode (Gemini Live / OpenAI Realtime) ──
 
 async function handleLiveVoiceStart(ws: WebSocket): Promise<void> {
+    // Track last-sent status here so BOTH the per-event listener and the
+    // outer catch-fallback share a dedup guard.
+    let lastSentStatus = "";
+    const sendStatus = (status: string, extra: Record<string, unknown> = {}) => {
+        if (status === lastSentStatus && Object.keys(extra).length === 0) return;
+        lastSentStatus = status;
+        sendToClient(ws, { type: "voice_live_status", status, ...extra });
+    };
+
     try {
         const { startLiveVoice, getActiveLiveSession, isLiveVoiceAvailable } = await import("../voice/live/integration.js");
 
@@ -1300,48 +1313,97 @@ async function handleLiveVoiceStart(ws: WebSocket): Promise<void> {
             return;
         }
 
-        sendToClient(ws, { type: "voice_live_status", status: "connecting" });
+        sendStatus("connecting");
 
-        const session = await startLiveVoice(llmClient!);
+        await startLiveVoice(llmClient!, (session) => {
+            // Attach listeners BEFORE session.start() so `session_started` (emitted
+            // synchronously by start()) isn't dropped on the floor.
+            session.on("session_started", () => { sendStatus("active"); });
+            session.on("user_speaking",   () => { sendStatus("user_speaking"); });
+            session.on("processing",      () => { sendStatus("thinking"); });
+            session.on("response_audio",  () => { sendStatus("speaking"); });
+            session.on("turn_complete",   () => { sendStatus("active"); });
 
-        // Forward session events to overlay client
-        session.on("session_started", () => {
-            sendToClient(ws, { type: "voice_live_status", status: "active" });
-        });
+            session.on("user_transcript", (text: string) => {
+                sendToClient(ws, { type: "voice_live_transcript", text, role: "user", final: true });
+            });
 
-        session.on("response_transcript", (transcript: string) => {
-            sendToClient(ws, { type: "voice_live_transcript", text: transcript, role: "assistant" });
-        });
+            // Gemini Live is configured for AUDIO-only modality; the
+            // assistant-side text stream flows through outputTranscription
+            // (→ response_transcript). We intentionally do NOT forward
+            // response_text — if text modality ever gets enabled both paths
+            // would fire per chunk, duplicating text in the UI.
+            session.on("response_transcript", (transcript: string) => {
+                sendToClient(ws, { type: "voice_live_transcript", text: transcript, role: "assistant", final: false });
+            });
 
-        session.on("interrupted", () => {
-            sendToClient(ws, { type: "voice_live_status", status: "interrupted" });
-        });
+            session.on("interrupted", () => { sendStatus("interrupted"); });
 
-        session.on("tool_call", (calls: any[]) => {
-            sendToClient(ws, { type: "voice_live_tool", tools: calls.map((c: any) => c.name) });
-        });
+            session.on("tool_call", (calls: any[]) => {
+                for (const c of calls) {
+                    sendToClient(ws, { type: "voice_live_tool", id: c.id, name: c.name, state: "pending" });
+                }
+            });
 
-        session.on("error", (err: Error) => {
-            sendToClient(ws, { type: "voice_live_status", status: "error", error: err.message });
-        });
+            session.on("tool_result", (result: any) => {
+                const isFailed = result?.result && typeof result.result === "object" && "error" in result.result;
+                sendToClient(ws, {
+                    type: "voice_live_tool",
+                    id: result.id,
+                    name: result.name,
+                    state: isFailed ? "failed" : "done",
+                });
+            });
 
-        session.on("session_ended", () => {
-            sendToClient(ws, { type: "voice_live_status", status: "ended" });
+            session.on("tool_cancelled", (ids: string[]) => {
+                for (const id of ids) {
+                    sendToClient(ws, { type: "voice_live_tool", id, name: "", state: "failed" });
+                }
+            });
+
+            session.on("muted",        () => { sendStatus("muted"); });
+            session.on("unmuted",      () => { sendStatus("unmuted"); });
+            session.on("reconnecting", () => { sendStatus("reconnecting"); });
+
+            session.on("error", (err: Error) => {
+                sendStatus("error", { error: err.message });
+            });
+
+            session.on("session_ended", () => {
+                sendStatus("ended");
+            });
         });
 
     } catch (err) {
         console.error("[OVERLAY] Live voice start failed:", err);
-        sendToClient(ws, { type: "voice_live_status", status: "error", error: (err as Error).message });
+        sendStatus("error", { error: (err as Error).message });
     }
 }
 
 async function handleLiveVoiceStop(ws: WebSocket): Promise<void> {
     try {
         const { stopLiveVoice } = await import("../voice/live/integration.js");
+        // session.stop() already emits `session_ended`, which the listener
+        // in handleLiveVoiceStart forwards as `ended`. No need to send a
+        // second `ended` here — that would bypass the dedupe and double
+        // the client's close-panel timer.
         await stopLiveVoice();
-        sendToClient(ws, { type: "voice_live_status", status: "ended" });
     } catch (err) {
         console.error("[OVERLAY] Live voice stop failed:", err);
+    }
+}
+
+async function handleLiveVoiceMute(ws: WebSocket, muted: boolean): Promise<void> {
+    try {
+        const { getActiveLiveSession } = await import("../voice/live/integration.js");
+        const session = getActiveLiveSession();
+        if (!session?.isActive) {
+            sendToClient(ws, { type: "voice_live_status", status: "error", error: "No active live session" });
+            return;
+        }
+        if (muted) session.mute(); else session.unmute();
+    } catch (err) {
+        console.error("[OVERLAY] Live voice mute failed:", err);
     }
 }
 
