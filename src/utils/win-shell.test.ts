@@ -14,20 +14,25 @@ describe("wrapForShell — gitbash branch", () => {
         path: "C:\\Program Files\\Git\\bin\\bash.exe",
     };
 
-    it("wraps a simple command+args into bash -c 'cmd \"arg1\" \"arg2\"'", () => {
+    it("single-quotes command + args so shell metacharacters stay inert", () => {
         const { command, args } = wrapForShell(gitBash, "ls", ["-la", "/tmp"]);
         expect(command).toEqual(gitBash.path);
-        expect(args).toEqual(["-c", 'ls "-la" "/tmp"']);
+        expect(args).toEqual(["-c", "'ls' '-la' '/tmp'"]);
     });
 
-    it("handles args containing double-quotes (escapes them)", () => {
-        const { args } = wrapForShell(gitBash, "echo", ['he said "hi"']);
-        expect(args[1]).toEqual('echo "he said \\"hi\\""');
+    it("escapes embedded single quotes using the POSIX '\\'' dance", () => {
+        const { args } = wrapForShell(gitBash, "echo", ["it's fine"]);
+        expect(args[1]).toEqual("'echo' 'it'\\''s fine'");
     });
 
-    it("bare command with no args gets no quoting wrapper", () => {
+    it("neutralises shell metacharacters inside args", () => {
+        const { args } = wrapForShell(gitBash, "echo", ["; rm -rf ~"]);
+        expect(args[1]).toEqual("'echo' '; rm -rf ~'");
+    });
+
+    it("bare command with no args is still single-quoted", () => {
         const { args } = wrapForShell(gitBash, "pwd", []);
-        expect(args).toEqual(["-c", "pwd"]);
+        expect(args).toEqual(["-c", "'pwd'"]);
     });
 });
 
@@ -58,12 +63,23 @@ describe("wrapForShell — powershell branches", () => {
         const { args } = wrapForShell(ps7, "ls", []);
         const script = args[5];
         expect(script.startsWith("function ls { Get-ChildItem @args }")).toBe(true);
-        expect(script.endsWith("\nls")).toBe(true);
+        // `& 'ls'` is the PowerShell call operator invoking the quoted path.
+        expect(script.endsWith("\n& 'ls'")).toBe(true);
     });
 
-    it("joins args with spaces (no quoting in powershell branch)", () => {
+    it("quotes each arg with single quotes and uses the `&` call operator", () => {
         const { args } = wrapForShell(ps7, "Get-Item", ["foo.txt", "bar.txt"]);
-        expect(args[5].endsWith("\nGet-Item foo.txt bar.txt")).toBe(true);
+        expect(args[5].endsWith("\n& 'Get-Item' 'foo.txt' 'bar.txt'")).toBe(true);
+    });
+
+    it("doubles a literal single quote inside an arg (PowerShell escape)", () => {
+        const { args } = wrapForShell(ps7, "echo", ["it's"]);
+        expect(args[5].endsWith("\n& 'echo' 'it''s'")).toBe(true);
+    });
+
+    it("neutralises PowerShell statement separators inside args", () => {
+        const { args } = wrapForShell(ps7, "echo", ["; Invoke-Expression rm"]);
+        expect(args[5].endsWith("\n& 'echo' '; Invoke-Expression rm'")).toBe(true);
     });
 
     it("works identically for powershell5 (same code path)", () => {
@@ -77,13 +93,13 @@ describe("wrapForShell — powershell branches", () => {
         ]);
     });
 
-    it("no shimBlock → script is just the raw command (no leading shim + newline)", () => {
+    it("no shimBlock → script is just the quoted call with no shim prefix", () => {
         const noShim: ResolvedShell = {
             type: "powershell7",
             path: "pwsh.exe",
         };
         const { args } = wrapForShell(noShim, "Get-Date", []);
-        expect(args[5]).toEqual("Get-Date");
+        expect(args[5]).toEqual("& 'Get-Date'");
     });
 });
 

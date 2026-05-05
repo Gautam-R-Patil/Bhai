@@ -53,7 +53,7 @@ Initialization is ordered and partially parallelized:
 1. **Session + Auth**: `initSession()` creates Convex auth token, then `initAccountGuard()` verifies credits
 2. **Memory**: SQLite databases, knowledge graph, traits, emotional state, episodic memory, self-state
 3. **Async warmup (non-blocking)**: Embedding model warmup (`warmupEmbeddings()`), memory semantic migration (`embedExistingMemories()`) — failures are logged but non-fatal
-4. **Tool infrastructure**: MCP servers, skills loader, browser memory, Docker sandbox, plugin system, tool router (pre-computes category embeddings)
+4. **Tool infrastructure**: MCP servers, skills loader, browser memory, Docker sandbox, tool router (pre-computes category embeddings)
 5. **Channels**: Canvas WebSocket, Google APIs, overlay chat, email (IMAP/SMTP), Telegram bot
 6. **Scheduled tasks**: Heartbeat, memory decay (every 6h), dream replay (nightly at 3am)
 
@@ -218,10 +218,9 @@ Dual-backend browser automation. The `BrowserBackend` interface (`browser-backen
 - `profile-sync.ts` — Browser profile synchronization
 - 25+ browser actions exposed: navigate, click, type, scroll, extract, parallel tabs/actions, upload, JS execution, strategy save/recall
 
-### Tool Intelligence (`src/tools/tool-intelligence.ts` + `tool-fabricator.ts` + `create-tool.ts`)
+### Tool Intelligence (`src/tools/tool-intelligence.ts` + `create-tool.ts`)
 - **Tool intelligence** — Per-tool caching (TTL-based: web_search 2min, read_file 1min, system_info 5min), rate limiting, audit logging, confirmation gates
-- **Tool fabricator** — Autonomous tool creation when no existing tool matches a task: searches for APIs/docs → generates implementation → sandbox tests → persists
-- **Dynamic tools** (`create-tool.ts`) — User-created tools that persist to `~/.atlas/store/tools` and hot-reload at runtime
+- **Dynamic tools** (`create-tool.ts`) — Agent-created tools that persist to `~/.atlas/store/tools` and hot-reload at runtime. Generated handlers run inside a `vm.createContext` sandbox with a restricted require shim.
 
 ### Deep Research (`src/research/` — 11 files)
 Background research engine with its own execution loop:
@@ -239,8 +238,8 @@ All runtime artifacts live in the `data/` directory (gitignored). Distinguish be
 - `data/google-credentials.json` + `data/google-tokens/` — Google API OAuth tokens
 - `data/proactive-config.json` — Per-channel posture (calm/active/ambient), urgentAllowedAfter time, night windows. Reloaded at runtime without restart.
 
-### Social Cognition (`src/social/` — 4 files)
-- `theory-of-mind.ts` — Tracks user mental state (beliefs, goals) to frame responses; `emotion-detector.ts` — detects emotional state; `pragmatics.ts` — implicature + indirect requests; `persuasion.ts` — ethical persuasion strategies
+### Social Cognition (`src/social/` — 1 file)
+- `emotion-detector.ts` — zero-cost heuristic (lexicon + punctuation) returning `{ primary, valence, arousal, signals }`. `src/prompts/dynamic-context.ts::buildDynamicContextReminder` bridges this into `assembleDynamicPrompt`'s `userEmotionalState` slot, and `src/agent.ts` injects the assembled block on the first iteration. Removed stubs (`theory-of-mind`, `pragmatics`, `persuasion`) lived in this directory historically but were LLM-heavy or speculative; the LLM handles their concerns natively now.
 
 ### Planning & Execution (`src/planning/` + `src/execution/`)
 - `mcts-planner.ts` — Monte Carlo Tree Search (UCB1, scored by Process Reward Model); `hierarchical-planner.ts` — multi-level decomposition
@@ -267,17 +266,16 @@ On-device model integrations (zero API cost):
 Self-contained embeddable chat widget served as `/widget.js` from the overlay server. A single IIFE injects its own DOM + styles + WebSocket logic, authenticates via `?token=` query param, and connects to the overlay WebSocket to give any webpage a floating chat bubble.
 
 ### Additional Subsystems
-- **MCP** (`src/mcp/`) — Model Context Protocol server integration (`client.ts`, `gitmcp-bridge.ts`); loads external tool providers at boot
-- **Plugins** (`src/plugins/`) — Plugin system for extending agent capabilities
+- **MCP** (`src/mcp/`) — Model Context Protocol server integration (`client.ts`, `gitmcp-bridge.ts` exposed as the `gitmcp_docs` tool via `src/tools/gitmcp.ts`); loads external tool providers at boot
 - **Proactive** (`src/proactive/` — 28 files) — Heartbeat engine, proactive behaviors, automated night dreaming. Phase 0+1 additions: `intent.ts`/`intent-from-thought.ts` (ProactiveIntent types + thought→intent bridge), `composer.ts`/`composer-templates.ts` (template fast-path → LLM fallback → banned-phrase + third-person post-filters), `dispatch.ts` (single exit point — kill-switch gates, mode emoji 💡/❓/✅ prefix), `config.ts` (per-channel posture: calm/active/ambient; night-window config via `data/proactive-config.json`), `kill-switches.ts` (env-var gate fns). Also: `goal-engine.ts`, `habit-detector.ts`, `inner-thoughts.ts`, `thought-journal.ts`, `trigger-detector.ts`, `notification-tracker.ts`, `environment-sensors.ts`, `proactive-reward.ts`, `dnd.ts`, `monitors.ts`, `activity.ts`, `recommendations.ts`
-- **Security** (`src/security/`) — Sandboxing (`sandbox.ts`), input validation (`allowlist.ts`), secrets detection (`secrets.ts`), Docker isolation logic
-- **Voice** (`src/voice/`) — Voice message processing (`telegram-voice.ts`), TTS (`tts.ts`, `elevenlabs.ts`), wake word detection (`wake-word.ts`), live voice mode (`talk-mode.ts`, `live/`), transcription (`transcribe.ts`)
+- **Security** (`src/security/`) — Sandboxing (`sandbox.ts`), input validation (`allowlist.ts`), outbound secrets scrubber (`secrets-sanitizer.ts` — scans tool results for API keys before returning them to the LLM), audit log (`audit-log.ts`), Docker isolation logic
+- **Voice** (`src/voice/`) — Voice message processing (`telegram-voice.ts`), transcription (`transcribe.ts`), TTS via `tts.ts` (provider selection: `ATLAS_TTS_PROVIDER` → `ELEVENLABS_API_KEY` → `OPENAI_API_KEY`), continuous live voice mode (`live/`)
 - **Canvas** (`src/canvas/`) — WebSocket-based canvas channel for rich UI interactions
 - **Commands** (`src/commands/`) — Slash-command parsing for Telegram/overlay input
 - **Skills Loader** (`src/skills/`) — Loads skill files (gray-matter frontmatter markdown from `skills/` and `~/.atlas/store/skills`) into agent context based on task type
-- **Store** (`src/store/`) — Skill marketplace / store functionality with hot-reload (`hot-reload.ts`), sideloading (`sideload.ts`)
+- **Store** (`src/store/`) — Marketplace functionality: `client.ts` (Convex-auth'd proxy), `installer.ts` (download + extract + hot-reload, cross-platform archive handling via `Expand-Archive` on Windows + `tar` elsewhere), `sideload.ts` (agent-facing `sideload_skill` tool for local files), `hot-reload.ts`. Read-only agent access via `store_browse` tool (`src/tools/store-browse.ts`) with ops: search, list, info, featured, trending, categories, installed. Install/uninstall stay in the desktop UI (need a consent gate).
 - **Additional Channels** — Discord (`src/discord.ts`), Slack (`src/slack.ts`), Matrix (`src/matrix.ts`)
-- **Config** (`src/config/`) — Centralized config: API keys (`keys.ts`), filesystem paths (`paths.ts`), protected config loading (`protected-loader.ts`)
+- **Config** (`src/config/`) — Centralized config: API keys (`keys.ts`), filesystem paths (`paths.ts`)
 - **Notifications** (`src/notifications/`) — Push notification delivery (`push.ts`)
 - **LLM Middleware** (`src/llm-middleware.ts`) — Middleware layer between LLM client and agent
 - **Types / Utils** (`src/types/`, `src/utils/`) — Ambient type declarations (`qrcode-terminal.d.ts`, `sql.js.d.ts`) and shared utilities (`json-extract.ts` for robust LLM JSON parsing, `system-resources.ts`, `uuid.ts`)

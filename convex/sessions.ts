@@ -148,22 +148,6 @@ export const revokeSession = internalMutation({
   },
 });
 
-// ── Revoke all sessions for a user ───────────────
-export const revokeAllSessions = internalMutation({
-  args: { otplessUserId: v.string() },
-  handler: async (ctx, { otplessUserId }) => {
-    const sessions = await ctx.db
-      .query("sessions")
-      .withIndex("by_user", (q) => q.eq("otplessUserId", otplessUserId))
-      .take(1000);
-
-    for (const s of sessions) {
-      await ctx.db.delete(s._id);
-    }
-    return { deleted: sessions.length };
-  },
-});
-
 // ── Refresh a session (extend TTL) ───────────────
 export const refreshSession = internalMutation({
   args: { token: v.string() },

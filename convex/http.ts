@@ -242,14 +242,33 @@ http.route({
     const messages = Array.isArray(body.messages) ? [...body.messages] : [];
 
     if (body.systemPromptOverride && typeof body.systemPromptOverride === "string") {
-      // Client-specified override: use as-is (sub-agents, JSON planners, classifiers)
+      // Client-specified override: sub-agents, JSON planners, and classifiers
+      // still want the narrow task-specific prompt — but we always prepend the
+      // server-side `rules` slug so core safety rails are non-overridable even
+      // by an authenticated client. If the rules slug is missing (fresh seed
+      // state) we fall through without it rather than blocking the call.
+      let safetyRules = "";
+      try {
+        const rulesPrompt = await ctx.runQuery(
+          internal.systemContent.getPromptBySlug,
+          { slug: "rules" },
+        );
+        if (rulesPrompt && typeof rulesPrompt.content === "string") {
+          safetyRules = rulesPrompt.content;
+        }
+      } catch { /* missing rules slug — proceed without */ }
+
+      const composed = safetyRules
+        ? `${safetyRules}\n\n${body.systemPromptOverride}`
+        : body.systemPromptOverride;
+
       if (messages.length > 0 && messages[0].role === "system") {
         messages[0] = {
           ...messages[0],
-          content: body.systemPromptOverride + "\n\n" + (messages[0].content || ""),
+          content: composed + "\n\n" + (messages[0].content || ""),
         };
       } else {
-        messages.unshift({ role: "system", content: body.systemPromptOverride });
+        messages.unshift({ role: "system", content: composed });
       }
     } else {
       // Normal path: assemble system prompt from server DB

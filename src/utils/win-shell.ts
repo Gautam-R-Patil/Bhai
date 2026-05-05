@@ -101,6 +101,20 @@ async function findPowerShell(): Promise<string> {
     return "powershell.exe";
 }
 
+// Git Bash / POSIX single-quote escaping: close the quote, emit an escaped
+// quote, reopen — handles arbitrary content including newlines without
+// letting shell metacharacters interpret.
+function posixQuote(s: string): string {
+    return `'${s.replace(/'/g, "'\\''")}'`;
+}
+
+// PowerShell single-quoted literal escaping: doubling the quote character is
+// the documented PS escape inside a single-quoted string. Nothing else (back-
+// ticks, $var, ;, etc.) is interpreted inside single quotes.
+function pwshQuote(s: string): string {
+    return `'${s.replace(/'/g, "''")}'`;
+}
+
 /** Wrap a command+args for the resolved shell. Returns { command, args } ready for execFileAsync. */
 export function wrapForShell(
     shell: ResolvedShell,
@@ -109,12 +123,22 @@ export function wrapForShell(
 ): { command: string; args: string[] } {
     if (shell.type === "gitbash") {
         const fullCmd =
-            args.length > 0 ? `${command} ${args.map((a) => `"${a.replace(/"/g, '\\"')}"`).join(" ")}` : command;
+            args.length > 0
+                ? `${posixQuote(command)} ${args.map(posixQuote).join(" ")}`
+                : posixQuote(command);
         return { command: shell.path, args: ["-c", fullCmd] };
     }
     if (shell.type === "powershell7" || shell.type === "powershell5") {
+        // `&` is the PowerShell call operator — it invokes the quoted command
+        // path and forwards the quoted args without re-interpreting any of
+        // their contents. That keeps metacharacters in LLM-controlled args
+        // from turning into PowerShell statements.
         const shim = shell.shimBlock ?? "";
-        const fullCmd = args.length > 0 ? `${command} ${args.join(" ")}` : command;
+        const quotedArgs = args.map(pwshQuote).join(" ");
+        const fullCmd =
+            args.length > 0
+                ? `& ${pwshQuote(command)} ${quotedArgs}`
+                : `& ${pwshQuote(command)}`;
         const script = shim ? `${shim}\n${fullCmd}` : fullCmd;
         return {
             command: shell.path,

