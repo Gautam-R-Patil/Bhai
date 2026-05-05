@@ -382,10 +382,36 @@ function languageIdFor(language: Language): string {
     return language; // LSP language IDs happen to match our enum values
 }
 
+// Cap per session. Above this, the LSP server holds full text for every
+// opened file in memory, which matters for long-running coder sessions across
+// large repos. Evicting the LRU entry keeps the working set bounded.
+const MAX_OPEN_DOCS_PER_SESSION = 500;
+
+function closeOldestDocIfFull(session: Session): void {
+    if (session.openDocs.size < MAX_OPEN_DOCS_PER_SESSION) return;
+    const oldestUri = session.openDocs.keys().next().value;
+    if (oldestUri === undefined) return;
+    try {
+        sendNotification(session, "textDocument/didClose", {
+            textDocument: { uri: oldestUri },
+        });
+    } catch {
+        /* best-effort notify */
+    }
+    session.openDocs.delete(oldestUri);
+}
+
 async function ensureDocumentOpen(session: Session, filePath: string): Promise<string> {
     const abs = path.resolve(filePath);
     const uri = pathToFileURL(abs).toString();
-    if (session.openDocs.has(uri)) return uri;
+    if (session.openDocs.has(uri)) {
+        // Refresh LRU order — re-insert to push this entry to the back of
+        // the insertion-ordered Map so it's not the first eviction target.
+        const v = session.openDocs.get(uri)!;
+        session.openDocs.delete(uri);
+        session.openDocs.set(uri, v);
+        return uri;
+    }
 
     let text: string;
     try {
@@ -393,6 +419,7 @@ async function ensureDocumentOpen(session: Session, filePath: string): Promise<s
     } catch (err) {
         throw new Error(`Failed to read ${abs}: ${(err as Error).message}`);
     }
+    closeOldestDocIfFull(session);
     sendNotification(session, "textDocument/didOpen", {
         textDocument: {
             uri,

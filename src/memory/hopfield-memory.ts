@@ -25,14 +25,45 @@ export interface AssociativeResult {
 const storedPatterns: Map<number, Float32Array> = new Map();
 const storedContent: Map<number, string> = new Map();
 
+// Each pattern is a 384-dim Float32Array ≈ 1.5 KB plus the string content.
+// Without a cap, the store grows monotonically over the process lifetime
+// (nightly reflection + user writes never trigger eviction). Cap at 5000 —
+// associative recall with more than that starts to drown signal anyway.
+// Override with ATLAS_HOPFIELD_MAX_PATTERNS for harness/bench experiments.
+const MAX_HOPFIELD_PATTERNS = (() => {
+    const raw = process.env.ATLAS_HOPFIELD_MAX_PATTERNS;
+    const parsed = raw ? parseInt(raw, 10) : NaN;
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 5000;
+})();
+
+// Evict the oldest entry when the cap is hit. Map preserves insertion order
+// so `keys().next()` returns the oldest pattern first.
+function evictOldestIfFull(): void {
+    while (storedPatterns.size >= MAX_HOPFIELD_PATTERNS) {
+        const oldest = storedPatterns.keys().next().value;
+        if (oldest === undefined) break;
+        storedPatterns.delete(oldest);
+        storedContent.delete(oldest);
+    }
+}
+
 // ── Operations ────────────────────────────────
 
 /**
  * Add a memory pattern to the Hopfield store.
  */
 export function addPattern(id: number, embedding: Float32Array, content: string): void {
+    if (!storedPatterns.has(id)) evictOldestIfFull();
     storedPatterns.set(id, embedding);
     storedContent.set(id, content);
+}
+
+// Remove a pattern when its backing memory row is deleted — keeps the store
+// coherent with sqlite after user "forget this" operations. Silent no-op when
+// the id was never stored.
+export function removePattern(id: number): void {
+    storedPatterns.delete(id);
+    storedContent.delete(id);
 }
 
 /**
@@ -104,11 +135,18 @@ export async function associativeRecall(
  * Load patterns from the HNSW index (at boot).
  */
 export function loadFromHNSW(entries: Array<{ id: number; embedding: Float32Array; content: string }>): void {
-    for (const entry of entries) {
+    // Cap-aware load: if the boot set exceeds the retention cap, keep only
+    // the most recent MAX_HOPFIELD_PATTERNS entries (assumes entries arrive
+    // roughly ordered by memory id / recency).
+    const retained =
+        entries.length > MAX_HOPFIELD_PATTERNS
+            ? entries.slice(-MAX_HOPFIELD_PATTERNS)
+            : entries;
+    for (const entry of retained) {
         storedPatterns.set(entry.id, entry.embedding);
         storedContent.set(entry.id, entry.content);
     }
-    console.log(`[HOPFIELD] Loaded ${entries.length} patterns for associative memory`);
+    console.log(`[HOPFIELD] Loaded ${retained.length} patterns for associative memory (cap ${MAX_HOPFIELD_PATTERNS})`);
 }
 
 export function getPatternCount(): number {

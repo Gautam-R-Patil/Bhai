@@ -77,3 +77,36 @@ export async function convexAction<T>(
 
   return data.value as T;
 }
+
+// Admin API base URL — the site URL (not the Convex cloud URL) is where
+// httpAction routes live. Configure with NEXT_PUBLIC_ATLAS_ADMIN_API_BASE;
+// falls back to deriving from CONVEX_URL when absent.
+function adminBaseUrl(): string {
+  const explicit = process.env.NEXT_PUBLIC_ATLAS_ADMIN_API_BASE;
+  if (explicit) return explicit.replace(/\/+$/, "");
+  // Convex conventionally exposes httpActions on the *.convex.site domain
+  // that matches the *.convex.cloud API domain. Fallback handles local dev.
+  return CONVEX_URL.replace(".convex.cloud", ".convex.site");
+}
+
+function adminKey(): string {
+  const key = process.env.NEXT_PUBLIC_ATLAS_ADMIN_KEY;
+  if (!key) throw new Error("ATLAS admin key missing (NEXT_PUBLIC_ATLAS_ADMIN_KEY).");
+  return key;
+}
+
+// Admin-gated HTTP GET for endpoints defined with validateAdminRequest().
+// Use this for routes like /api/admin/observability/overview that require
+// a Bearer-authenticated request instead of Convex's public /api/query.
+export async function adminHttpGet<T>(path: string): Promise<T> {
+  const url = `${adminBaseUrl()}${path.startsWith("/") ? path : `/${path}`}`;
+  const resp = await fetch(url, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${adminKey()}` },
+  });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(`Admin GET ${path} failed: ${resp.status} ${text.slice(0, 200)}`);
+  }
+  return (await resp.json()) as T;
+}

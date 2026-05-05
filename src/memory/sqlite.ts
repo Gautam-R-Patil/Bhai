@@ -57,26 +57,34 @@ export interface CompatDatabase {
 export function wrapDatabase(raw: BetterSqlite3.Database): CompatDatabase {
     return {
         exec(sql: string, params: unknown[] = []): ExecResult[] {
+            const isRead =
+                sql.trim().toUpperCase().startsWith("SELECT") ||
+                sql.trim().toUpperCase().startsWith("WITH") ||
+                sql.includes("last_insert_rowid") ||
+                sql.includes("changes()");
             try {
                 const stmt = raw.prepare(sql);
-                if (
-                    sql.trim().toUpperCase().startsWith("SELECT") ||
-                    sql.trim().toUpperCase().startsWith("WITH") ||
-                    sql.includes("last_insert_rowid") ||
-                    sql.includes("changes()")
-                ) {
+                if (isRead) {
                     const rows = params.length > 0 ? stmt.all(...params) : stmt.all();
                     if (rows.length === 0) return [];
                     const columns = Object.keys(rows[0] as Record<string, unknown>);
                     const values = rows.map((r) => columns.map((c) => (r as Record<string, unknown>)[c]));
                     return [{ columns, values }];
-                } else {
-                    if (params.length > 0) stmt.run(...params);
-                    else stmt.run();
+                }
+                if (params.length > 0) stmt.run(...params);
+                else stmt.run();
+                return [];
+            } catch (err) {
+                // Reads can return an empty set on failure — the caller checks
+                // row length either way. WRITES cannot fail silently: user data
+                // would be lost. Mirror run()'s semantics: swallow "already
+                // exists" schema errors only, rethrow everything else.
+                if (isRead) return [];
+                const msg = (err as Error).message || "";
+                if (msg.includes("already exists") || msg.includes("duplicate column")) {
                     return [];
                 }
-            } catch {
-                return [];
+                throw err;
             }
         },
         run(sql: string, params: unknown[] = []): void {

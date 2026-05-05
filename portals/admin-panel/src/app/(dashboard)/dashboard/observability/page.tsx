@@ -1,4 +1,4 @@
-import { convexQuery } from "@/lib/convex";
+import { adminHttpGet } from "@/lib/convex";
 import {
   Activity,
   Cpu,
@@ -67,7 +67,10 @@ interface CreditUser {
 
 async function getObservabilityData(): Promise<ObservabilityData | null> {
   try {
-    return await convexQuery<ObservabilityData>("observability:getObservabilityData", {});
+    const { data } = await adminHttpGet<{ data: ObservabilityData }>(
+      "/api/admin/observability/overview",
+    );
+    return data;
   } catch {
     return null;
   }
@@ -75,7 +78,10 @@ async function getObservabilityData(): Promise<ObservabilityData | null> {
 
 async function getCreditUsers(): Promise<CreditUser[]> {
   try {
-    return await convexQuery<CreditUser[]>("observability:getCreditUsagePerUser", {});
+    const { users } = await adminHttpGet<{ users: CreditUser[] }>(
+      "/api/admin/observability/credit-users",
+    );
+    return users ?? [];
   } catch {
     return [];
   }

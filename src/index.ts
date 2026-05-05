@@ -10,7 +10,7 @@ import { getToolNames, setSwarmLLM, setDeepResearchLLM, setLongTaskLLM, setDeepR
 import { initMemoryDB, embedExistingMemories, setMemoryLLM } from "./memory/sqlite.js";
 import { initKnowledgeGraph } from "./memory/knowledge-graph.js";
 import { initSupabase } from "./memory/supabase.js";
-import { initIdentityDB } from "./memory/identity.js";
+import { getIdentityProfile, initIdentityDB, updateIdentityProfile } from "./memory/identity.js";
 import { initTraitsDB, setMemoryDebug } from "./memory/traits.js";
 import { seedProfileIfPresent } from "./setup/wizard-seed.js";
 import { runDailyDecay, runDreamReplay } from "./memory/reflection.js";
@@ -307,10 +307,11 @@ async function boot() {
     // Location: start SSID watcher + hook into network recovery
     startNetworkWatcher();
 
-    // Auto-update identity profile when location changes
+    // Auto-update identity profile when location changes. Identity is hoisted
+    // to a top-level import because the prior `require()` call threw a silent
+    // ReferenceError in ESM, so location was never written to the profile.
     onLocationChange((data) => {
         try {
-            const { getIdentityProfile, updateIdentityProfile } = require("./memory/identity.js");
             const locationStr = [data.city, data.region, data.countryName || data.country].filter(Boolean).join(", ");
             const currentProfile = getIdentityProfile();
             if (currentProfile.location !== locationStr && locationStr) {

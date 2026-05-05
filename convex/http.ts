@@ -959,6 +959,41 @@ http.route({
 // Authenticated via ADMIN_API_KEY environment variable.
 // ══════════════════════════════════════════════════════════════════════════
 
+// ── GET /api/admin/observability/overview — Admin observability panel ──
+// These queries expose aggregate account + credit + activity data. Previously
+// declared as public `query()` in convex/observability.ts — anyone with the
+// Convex URL could `fetch("/api/query", { path: "observability:getObservabilityData" })`
+// and read the whole admin dashboard. Now internalQuery + admin-key gated.
+http.route({
+  path: "/api/admin/observability/overview",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authErr = await validateAdminRequest(request);
+    if (authErr) return authErr;
+
+    const data = await ctx.runQuery(internal.observability.getObservabilityData, {});
+    return new Response(JSON.stringify({ data }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
+
+http.route({
+  path: "/api/admin/observability/credit-users",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authErr = await validateAdminRequest(request);
+    if (authErr) return authErr;
+
+    const users = await ctx.runQuery(internal.observability.getCreditUsagePerUser, {});
+    return new Response(JSON.stringify({ users }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
+
 // ── GET /api/admin/prompts — List all system prompts ──────────────────
 http.route({
   path: "/api/admin/prompts",

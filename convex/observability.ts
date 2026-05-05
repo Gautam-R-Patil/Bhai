@@ -3,7 +3,7 @@
 // Aggregates data from accounts, sessions, and activity logs.
 
 import { v } from "convex/values";
-import { query } from "./_generated/server";
+import { internalQuery } from "./_generated/server";
 
 // ── Credit cost tiers (mirrors http.ts for estimation) ─────────────
 
@@ -32,7 +32,7 @@ const MODEL_COSTS: Record<string, { credits: number; costPer1kInput: number; cos
 
 // ── Get observability overview ──────────────────────
 
-export const getObservabilityData = query({
+export const getObservabilityData = internalQuery({
     args: {},
     handler: async (ctx) => {
         const now = Date.now();
@@ -172,7 +172,7 @@ export const getObservabilityData = query({
 
 // ── Get credit usage per user ───────────────────────
 
-export const getCreditUsagePerUser = query({
+export const getCreditUsagePerUser = internalQuery({
     args: {},
     handler: async (ctx) => {
         // See getObservabilityData for the 10k cap rationale. TODO:

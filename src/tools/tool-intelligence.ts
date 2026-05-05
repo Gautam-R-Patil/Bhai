@@ -20,6 +20,14 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 
+// Map grows by one entry per distinct (toolName, args) combination. Without a
+// background sweep, entries whose key is never queried again stay forever. A
+// long-running agent accumulates thousands of unique `read` / `grep` / `glob`
+// argument sets over days. Cap + periodic eviction bound the footprint.
+const MAX_CACHE_ENTRIES = 10000;
+const CACHE_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
+let _cacheSweepTimer: NodeJS.Timeout | null = null;
+
 // Tools whose results are safe to cache (read-only, no side effects)
 const CACHEABLE_TOOLS = new Set([
     "system_info",
@@ -134,6 +142,11 @@ export function getCached(toolName: string, args: Record<string, unknown>): stri
  */
 export function setCache(toolName: string, args: Record<string, unknown>, result: string): void {
     const key = getCacheKey(toolName, args);
+    if (cache.size >= MAX_CACHE_ENTRIES && !cache.has(key)) {
+        // Evict the oldest — Map preserves insertion order so the first key is oldest.
+        const oldest = cache.keys().next().value;
+        if (oldest !== undefined) cache.delete(oldest);
+    }
     cache.set(key, { result, timestamp: Date.now() });
 }
 
@@ -143,6 +156,43 @@ export function setCache(toolName: string, args: Record<string, unknown>, result
 export function clearCache(): void {
     cache.clear();
 }
+
+// Sweep expired entries so keys that never get re-read still fall out of the
+// map. Without this, cache entries whose TTL passed but whose getCached call
+// never happens again accumulate indefinitely.
+function sweepCache(): void {
+    const now = Date.now();
+    for (const [key, entry] of cache) {
+        const toolName = key.split(":")[0];
+        const ttl = TOOL_TTL_MS[toolName] ?? DEFAULT_TTL_MS;
+        if (now - entry.timestamp > ttl) cache.delete(key);
+    }
+}
+
+export function startCacheSweep(): void {
+    if (_cacheSweepTimer) return;
+    _cacheSweepTimer = setInterval(sweepCache, CACHE_SWEEP_INTERVAL_MS);
+    _cacheSweepTimer.unref?.();
+}
+
+export function stopCacheSweep(): void {
+    if (_cacheSweepTimer) {
+        clearInterval(_cacheSweepTimer);
+        _cacheSweepTimer = null;
+    }
+}
+
+export function _getCacheSizeForTests(): number {
+    return cache.size;
+}
+
+export function _sweepCacheForTests(): void {
+    sweepCache();
+}
+
+// Auto-arm on module load so callers don't need to wire it explicitly. The
+// unref() above keeps the timer from holding the process open at shutdown.
+startCacheSweep();
 
 // ═══════════════════════════════════════════════
 // 2. AUDIT LOG
