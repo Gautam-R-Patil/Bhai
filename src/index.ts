@@ -202,6 +202,18 @@ async function boot() {
         try {
             const { initPromptEvolver } = await import("./prompts/prompt-evolver.js");
             initPromptEvolver(memDb);
+            // PASTE pattern speculator records tool sequences so future turns
+            // can predict the next likely tool. Observation-only for now —
+            // speculative pre-execution stays unwired until the latency/cost
+            // tradeoff is validated. Kill with ATLAS_NO_PATTERN_SPECULATOR=true.
+            if (process.env.ATLAS_NO_PATTERN_SPECULATOR !== "true") {
+                try {
+                    const { initPatternSpeculator } = await import("./execution/pattern-speculator.js");
+                    initPatternSpeculator(memDb);
+                } catch (err) {
+                    console.warn("[PASTE] init failed (non-fatal):", (err as Error).message);
+                }
+            }
         } catch (peErr) {
             console.warn("[BOOT] Prompt evolver init failed (non-fatal):", (peErr as Error).message);
         }

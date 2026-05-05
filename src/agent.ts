@@ -577,6 +577,16 @@ async function executeAndProcessToolCall(
     const result = truncateToolResult(fnName, workingResult);
     console.log(`  ✅ Tool result: ${result.substring(0, 500)}`);
 
+    // Feed the PASTE pattern speculator so it can learn recurring tool
+    // sequences. Cheap (rolling list push + native batch); if the module
+    // isn't initialized the call is a no-op.
+    try {
+        const { recordToolExecution } = await import("./execution/pattern-speculator.js");
+        recordToolExecution(fnName, !isError);
+    } catch {
+        /* pattern speculator not wired in this build */
+    }
+
     const isBrowser = BROWSER_TOOLS.has(fnName);
 
     // Treat screenshot payload as native image block
