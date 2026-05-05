@@ -145,7 +145,6 @@
                     "!**/.github/**",
                     "!**/examples/**",
                     "!**/example/**",
-                    "!**/docs/**",
                     "!ffprobe-static/bin/**",
                     "!onnxruntime-node/bin/**"
                 ]
