@@ -1360,11 +1360,20 @@ function launchNativeOverlay(): void {
         return;
     }
 
-    // Locate the binary — check release build first, then debug
+    // Locate the binary across dev + packaged layouts. In dev the source
+    // tree lives at `<repo>/overlay-app/.build/...`; in the packaged Electron
+    // bundle the binary is next to the mjs bundle under `overlay-app/...`
+    // (see desktop/package.json extraResources).
+    const cwd = process.cwd();
     const projectRoot = join(__dirname, "..", "..");
-    const releaseBin = join(projectRoot, "overlay-app", ".build", "release", "ATLASOverlay");
-    const debugBin = join(projectRoot, "overlay-app", ".build", "debug", "ATLASOverlay");
-    const binary = existsSync(releaseBin) ? releaseBin : existsSync(debugBin) ? debugBin : null;
+    const candidateBins = [
+        join(projectRoot, "overlay-app", ".build", "release", "ATLASOverlay"),
+        join(projectRoot, "overlay-app", ".build", "debug", "ATLASOverlay"),
+        join(__dirname, "overlay-app", ".build", "release", "ATLASOverlay"),
+        join(cwd, "overlay-app", ".build", "release", "ATLASOverlay"),
+        join(cwd, "overlay-app", ".build", "debug", "ATLASOverlay"),
+    ];
+    const binary = candidateBins.find(existsSync) ?? null;
 
     if (!binary) {
         console.log("💬 Native overlay not built — run: cd overlay-app && ./build.sh");

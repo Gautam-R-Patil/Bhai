@@ -13,10 +13,18 @@ import type { LocationData, LocationProvider } from "../index.js";
 
 const execFileAsync = promisify(execFile);
 
-// Resolve path to the compiled Swift helper binary
-function getHelperPath(): string {
-	const scriptDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "scripts");
-	return join(scriptDir, "get_location_bin");
+// Resolve path to the compiled Swift helper across dev + packaged layouts.
+// Dev (tsx or compiled dist): scripts/ sits three levels above this file
+// after bundling into desktop/ it lands at Contents/Resources/bot/scripts/.
+function getHelperPath(): string | null {
+	const here = dirname(fileURLToPath(import.meta.url));
+	const cwd = process.cwd();
+	const candidates = [
+		join(here, "..", "..", "..", "scripts", "get_location_bin"), // src/location/providers → repo root
+		join(here, "scripts", "get_location_bin"),                    // bundled next to mjs
+		join(cwd, "scripts", "get_location_bin"),                     // cwd-relative (Electron bot/)
+	];
+	return candidates.find(existsSync) ?? null;
 }
 
 export class CoreLocationProvider implements LocationProvider {
@@ -24,9 +32,8 @@ export class CoreLocationProvider implements LocationProvider {
 
 	async isAvailable(): Promise<boolean> {
 		if (process.platform !== "darwin") return false;
-		// Check if the compiled Swift helper exists
 		const helperPath = getHelperPath();
-		if (!existsSync(helperPath)) {
+		if (helperPath === null) {
 			console.warn("[LOCATION] CoreLocation helper not found — run 'npm run build:location' to compile it");
 			return false;
 		}
@@ -35,6 +42,9 @@ export class CoreLocationProvider implements LocationProvider {
 
 	async getLocation(): Promise<LocationData> {
 		const helperPath = getHelperPath();
+		if (helperPath === null) {
+			throw new Error("CoreLocation helper missing");
+		}
 		const { stdout } = await execFileAsync(helperPath, [], {
 			timeout: 12000,
 		});
