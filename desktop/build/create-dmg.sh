@@ -4,7 +4,10 @@ set -e
 
 APP_NAME="A.T.L.A.S"
 APP_PATH="dist/mac-arm64/${APP_NAME}.app"
-DMG_NAME="${APP_NAME}-1.0.0-arm64.dmg"
+# Derive the version from package.json so bumping the `version` field is
+# the single place that moves. Fallback if jq-free / malformed.
+APP_VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "0.0.0")
+DMG_NAME="${APP_NAME}-${APP_VERSION}-arm64.dmg"
 DMG_PATH="dist/${DMG_NAME}"
 VOL_NAME="A.T.L.A.S Installer"
 TEMP_DMG="dist/.temp-dmg.dmg"
