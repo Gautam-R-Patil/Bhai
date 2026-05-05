@@ -15,7 +15,7 @@ import makeWASocket, {
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import qrcode from "qrcode-terminal";
-import { join } from "node:path";
+import { basename as pathBasename, join } from "node:path";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import pino from "pino";
@@ -2260,8 +2260,7 @@ export const whatsappSendTool: ToolDefinition = {
                 const ext = (filePath.split(".").pop() || "").toLowerCase();
                 // path.basename handles both / and \ separators portably;
                 // the split-based fallback misorders on Windows paths.
-                const { basename: _waBasename } = await import("node:path");
-                const fileName = _waBasename(filePath) || "file";
+                const fileName = pathBasename(filePath) || "file";
 
                 // MIME type detection
                 const MIME_MAP: Record<string, string> = {
