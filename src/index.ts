@@ -856,6 +856,25 @@ async function boot() {
         console.warn("[CRON] Ticker failed to start (non-fatal):", (cronErr as Error).message);
     }
 
+    // ── Webhook Server (opt-in via ATLAS_WEBHOOK_PORT=<n>) ──────
+    // register_webhook / list_webhooks tools hand out URLs referring to this
+    // HTTP endpoint; if the server isn't running the URLs 404. Opt-in because
+    // binding a port at boot is usually unwanted — users who need inbound
+    // webhooks can set ATLAS_WEBHOOK_PORT (e.g. 18790) to activate.
+    const webhookPort = Number(process.env.ATLAS_WEBHOOK_PORT);
+    if (Number.isFinite(webhookPort) && webhookPort > 0 && webhookPort < 65536) {
+        try {
+            const { initWebhookServer, setWebhookHandler } = await import("./tools/webhook.js");
+            initWebhookServer(webhookPort);
+            setWebhookHandler(async (endpointId, payload) => {
+                console.log(`[WEBHOOK] ${endpointId} received`, payload);
+            });
+            console.log(`   Webhook : listening on 127.0.0.1:${webhookPort}`);
+        } catch (err) {
+            console.warn("[WEBHOOK] init failed (non-fatal):", (err as Error).message);
+        }
+    }
+
     // ── Start Bot ─────────────────────────────
     bot.start({
         onStart: (botInfo) => {
@@ -873,6 +892,11 @@ async function boot() {
         stopHeartbeat();
         stopNetworkMonitor();
         stopNetworkWatcher();
+        stopCronTicker();
+        try {
+            const { stopWebhookServer } = await import("./tools/webhook.js");
+            stopWebhookServer();
+        } catch { /* never loaded */ }
         await closeMCPServers();
         await closeBrowser();
         closeChromeBridge();

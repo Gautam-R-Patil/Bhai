@@ -1885,8 +1885,15 @@ STRATEGY: Execute in as few tool calls as possible.
         // Skill slugs are sent to the server for server-side injection
         const iterSkillSlugs = iterations === 1 ? toolSelection.skillSlugs : [];
 
-        let iterationMessages = activeInjection
-            ? [{ role: "system" as const, content: activeInjection }, ...messages]
+        // Fence the memory/context block with <memory-context>…</memory-context>
+        // markers so the LLM treats it as recalled context, not new user input.
+        // The output-side sanitizeContextEchoes (already wired in llm.ts) strips
+        // any verbatim echoes of these fences from responses.
+        const fencedInjection = activeInjection
+            ? (await import("./context-scrubber.js")).fenceMemoryContext(activeInjection)
+            : "";
+        let iterationMessages = fencedInjection
+            ? [{ role: "system" as const, content: fencedInjection }, ...messages]
             : [...messages];
 
         // ── Channel Context Injection ──
