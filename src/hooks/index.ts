@@ -62,7 +62,11 @@ async function runHook(def: HookDefinition, payload: unknown): Promise<HookOutpu
 
     return new Promise((resolve) => {
         const timeoutMs = Math.max(100, def.timeout ?? DEFAULT_TIMEOUT_MS);
-        const child = spawn("sh", ["-c", def.command as string], {
+        // Pick the platform's default command shell so hook authors can use
+        // POSIX quoting on Unix and batch/PowerShell syntax on Windows.
+        const [shellBin, shellArg] =
+            process.platform === "win32" ? ["cmd.exe", "/c"] : ["sh", "-c"];
+        const child = spawn(shellBin, [shellArg, def.command as string], {
             stdio: ["pipe", "pipe", "pipe"],
         });
 

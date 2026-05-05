@@ -22,6 +22,7 @@ import type { Readable, Writable } from "node:stream";
 import { pathToFileURL } from "node:url";
 import type { ToolDefinition } from "../get-current-time.js";
 import { getPathBlockedReason, isPathAllowed } from "../../security/allowlist.js";
+import { binaryExists as probeBinary } from "./binary-exists.js";
 
 // ── Types ─────────────────────────────────────
 
@@ -137,12 +138,10 @@ function sessionKey(rootPath: string, language: Language): string {
 // ── Binary detection ──────────────────────────
 
 async function binaryExists(binary: string): Promise<boolean> {
-    return new Promise((resolve) => {
-        // Use `command -v`; fall back to false on any failure.
-        const child = spawn("sh", ["-c", `command -v ${binary}`], { stdio: "ignore" });
-        child.on("close", (code) => resolve(code === 0));
-        child.on("error", () => resolve(false));
-    });
+    // Delegates to the shared helper, which runs `where` on Windows and
+    // `which` elsewhere, rejects shell metacharacters, and never spawns a
+    // shell. Keeps lsp.ts's surface unchanged while fixing cross-platform.
+    return probeBinary(binary);
 }
 
 // ── Language + root detection ─────────────────
