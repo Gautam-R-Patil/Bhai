@@ -261,6 +261,10 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
                     response: typeof r.result === "string"
                         ? { output: r.result }
                         : (r.result && typeof r.result === "object" ? r.result as Record<string, unknown> : { output: String(r.result) }),
+                    // Without `scheduling`, Gemini Live defaults to SILENT — the
+                    // model adds the tool result to context but never speaks.
+                    // INTERRUPT forces the model to produce an audio turn now.
+                    scheduling: "INTERRUPT",
                 })),
             });
         } catch (err) {
