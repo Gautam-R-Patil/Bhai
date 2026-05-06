@@ -3,26 +3,7 @@
 // See LICENSE.md for details.
 
 import { describe, it, expect } from "vitest";
-import { filterNoiseTranscript, pickSchedulingForTool } from "./gemini-live.js";
-
-describe("pickSchedulingForTool — Gemini Live tool response scheduling", () => {
-    it("returns INTERRUPT for every tool so the model actually speaks after tool calls", () => {
-        // Without INTERRUPT, Gemini Live's default SILENT policy means the model
-        // processes the result but never emits audio. We learned this the hard way:
-        // putting get_current_time / memory_search / system_info in a SILENT
-        // allowlist made "what time is it?" → silence (user question, tool runs,
-        // no spoken answer). Defaulting to INTERRUPT for every tool is the
-        // user-expected behavior.
-        for (const name of [
-            "get_current_time", "memory_search", "memory_store",
-            "system_info", "os_screenshot", "check_long_task",
-            "spotify", "browser_navigate", "swarm_task",
-            "create_presentation", "apple_script", "brand_new_tool",
-        ]) {
-            expect(pickSchedulingForTool(name)).toBe("INTERRUPT");
-        }
-    });
-});
+import { filterNoiseTranscript } from "./gemini-live.js";
 
 describe("filterNoiseTranscript — drop obvious noise transcriptions", () => {
     it("drops empty / whitespace-only", () => {

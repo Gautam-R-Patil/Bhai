@@ -4,7 +4,7 @@
 
 // ── Gemini Live Backend — WebSocket real-time voice via @google/genai ──
 
-import { GoogleGenAI, Modality } from "@google/genai";
+import { GoogleGenAI, Modality, FunctionResponseScheduling } from "@google/genai";
 import { LiveVoiceBackend } from "./base.js";
 import type { LiveSessionConfig, LiveToolCall, LiveToolResult } from "../types.js";
 
@@ -110,7 +110,16 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
                 outputAudioTranscription: {},
                 // Server-side VAD for input — user's speech auto-detected + transcribed.
                 inputAudioTranscription: {},
+                // Tighten generation so voice responses stay snappy. Long, rambling
+                // TTS responses are the #1 voice-AI UX complaint.
+                temperature: 0.85,
+                // Keep responses short — voice mode should feel conversational,
+                // not essay-like. Roughly 30-60 spoken seconds max per turn.
+                maxOutputTokens: 600,
             };
+            // NOTE: enableAffectiveDialog is Vertex-only per the SDK docs.
+            // The Gemini Developer API path (which we use) silently drops or
+            // rejects it. Emotion mirroring is handled in the prompt instead.
             // Honor the user's voice preference. Gemini Live defaults to Puck;
             // valid names include Aoede / Charon / Kore / Fenrir / Puck.
             if (voiceName) {
@@ -123,7 +132,13 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
                 config.tools = toolConfig;
             }
 
-            this.ai!.live.connect({
+            if (!this.ai) {
+                clearTimeout(timeout);
+                reject(new Error("GoogleGenAI client not initialized"));
+                return;
+            }
+
+            this.ai.live.connect({
                 model,
                 config,
                 callbacks: {
@@ -282,11 +297,12 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
                     response: typeof r.result === "string"
                         ? { output: r.result }
                         : (r.result && typeof r.result === "object" ? r.result as Record<string, unknown> : { output: String(r.result) }),
-                    // Without `scheduling`, Gemini Live defaults to SILENT — the
-                    // model adds the tool result to context but never speaks.
-                    // Pick per-tool: silent for internal state, interrupt for
-                    // anything the user is waiting on an audible answer for.
-                    scheduling: pickSchedulingForTool(r.name),
+                    // `scheduling` only applies to NON_BLOCKING function calls;
+                    // our tools are all blocking (the default), so the server
+                    // ignores this field. We still set it using the SDK enum
+                    // as forward-compat in case we ever flag a tool as
+                    // non-blocking — the wire value will be correct.
+                    scheduling: FunctionResponseScheduling.INTERRUPT,
                 })),
             });
         } catch (err) {
@@ -337,6 +353,16 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
     private handleMessage(event: any): void {
         const data = event?.data || event;
         if (!data) return;
+
+        // DIAGNOSTIC: log EVERY server message type so we can see exactly what
+        // Gemini sends back after a tool result. If there's no modelTurn or
+        // turnComplete after a tool, we know the server isn't generating a
+        // response at all (as opposed to us not handling it correctly).
+        if (process.env.ATLAS_LIVE_DEBUG === "true") {
+            const keys = Object.keys(data || {});
+            const sc = data.serverContent ? Object.keys(data.serverContent) : [];
+            console.log(`[GEMINI-LIVE][DEBUG] msg keys=${keys.join(",")} serverContent.keys=${sc.join(",")}`);
+        }
 
         // ── Audio response chunks ──
         if (data.serverContent?.modelTurn?.parts) {
@@ -414,23 +440,6 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
 // Gemini Live occasionally transcribes background noise / keyboard clicks
 // as short strings in random scripts (Korean/Japanese/German). We drop
 // obviously-non-speech outputs before they leak into the model turn.
-
-// We always want the model to speak after a tool call in live voice —
-// otherwise "what time is it?" → get_current_time → silence (the exact
-// bug the user hit). The earlier SILENT allowlist was miscategorized:
-// tools like get_current_time / memory_search / system_info are MORE
-// often triggered by a direct user question than by internal model
-// bookkeeping, so SILENT makes the assistant feel broken.
-//
-// The prompt already tells Gemini to respond tersely; trust it and keep
-// this simple. If we ever find a tool that genuinely shouldn't trigger
-// speech (e.g. a per-turn auto-audit that runs on every turn), add it
-// here — but err on the side of INTERRUPT.
-const SILENT_TOOLS = new Set<string>();
-
-export function pickSchedulingForTool(name: string): "INTERRUPT" | "SILENT" {
-    return SILENT_TOOLS.has(name) ? "SILENT" : "INTERRUPT";
-}
 
 // Specific no-space noise patterns Gemini Live has produced against ATLAS.
 // Kept conservative — only strings that are clearly transcription hallucinations

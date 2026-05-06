@@ -45,10 +45,9 @@ describe("getVoiceToolNames — platform-gated voice tool list", () => {
     it("keeps the media + core tool set intact", () => {
         const names = getVoiceToolNames();
         for (const expected of [
-            "spotify", "music_control", "set_volume",
+            "spotify", "set_volume",
             "web_search", "get_current_time",
             "memory_store", "memory_search",
-            "read", "write",
         ]) {
             expect(names).toContain(expected);
         }
@@ -56,9 +55,11 @@ describe("getVoiceToolNames — platform-gated voice tool list", () => {
 
     it("exposes delegation surfaces so Gemini can hand complex work to the agent swarm", () => {
         const names = getVoiceToolNames();
+        // The core delegation pattern — "swarm_task" for multi-step work,
+        // "start_long_task" for background, "deep_research" for research.
         for (const expected of [
             "swarm_task",
-            "start_long_task", "check_long_task", "cancel_long_task",
+            "start_long_task", "check_long_task",
             "deep_research", "check_deep_research",
         ]) {
             expect(names).toContain(expected);
@@ -68,22 +69,29 @@ describe("getVoiceToolNames — platform-gated voice tool list", () => {
     it("exposes OS-control so 'click that', 'open Bluetooth settings' work with screen share", () => {
         const names = getVoiceToolNames();
         for (const expected of [
-            "os_screenshot", "os_click_element", "os_type",
-            "os_scan", "os_multi_action", "os_accessibility_tree",
+            "os_click_element", "os_type",
+            "os_multi_action",
+            "bluetooth_control", "wifi_control",
         ]) {
             expect(names).toContain(expected);
         }
     });
 
-    it("exposes productivity tools so 'make a PPT', 'email X', 'remind me' all work", () => {
+    it("exposes productivity tools so 'email X', 'remind me', 'message Y' all work", () => {
         const names = getVoiceToolNames();
         for (const expected of [
-            "create_presentation", "modify_presentation",
-            "create_document", "gmail", "email_send",
-            "calendar_tool", "reminders_tool",
-            "whatsapp_send",
+            "gmail", "calendar_tool", "reminders_tool",
+            "whatsapp_send", "contact_lookup",
+            "set_reminder",
         ]) {
             expect(names).toContain(expected);
         }
+    });
+
+    it("keeps the tool count tight for Gemini Live latency", () => {
+        // If this grows past ~40 we'll regress response audio generation
+        // (we learned this the hard way at 113 tools).
+        const names = getVoiceToolNames();
+        expect(names.length).toBeLessThan(45);
     });
 });

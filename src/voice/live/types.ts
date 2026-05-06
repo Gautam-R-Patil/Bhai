@@ -4,8 +4,6 @@
 
 // ── Live Voice Mode — Shared Types ───────────────
 
-import type { EventEmitter } from "node:events";
-
 // ── Backend Types ────────────────────────────────
 
 export type LiveVoiceBackendType = "gemini-live" | "openai-realtime" | "hybrid";
@@ -140,86 +138,59 @@ export interface LiveBackendEvents {
 }
 
 // ── Voice-Appropriate Tool Names ─────────────────
-// Full-agent parity: live voice gets the same surfaces as text mode, with
-// platform gating for OS-native surfaces. Gemini Live handles ~100 tool
-// declarations without issue; keep this list in sync with what the agent
-// itself uses so "make a PPT", "send an email", "run a deep research on X"
-// all work whether the user types or speaks.
+// Tight curated list (~30 tools) optimized for Gemini Live's latency budget.
+// Larger lists (~100+) regressed audio response — model would run one tool
+// and go silent, possibly because of token budget or internal tool-routing
+// overhead on the model side.
+//
+// Rule: include tools the user commonly invokes BY VOICE directly. Complex
+// tools (video editing, presentation authoring, deep research) are reached
+// via swarm_task / start_long_task delegation — the model speaks an ack
+// ("on it") and the background agent does the heavy work.
 
 export function getVoiceToolNames(): string[] {
     const names = [
-        // Core
-        "get_current_time",
+        // Core identity & time
+        "get_current_time", "weather", "get_location",
 
-        // Memory
-        "memory_store", "memory_search", "memory_list", "memory_delete",
-        "core_memory_read", "core_memory_append", "core_memory_replace",
+        // Memory (session-persistent knowledge)
+        "memory_store", "memory_search",
+        "core_memory_read", "core_memory_append",
 
-        // Media
-        "spotify", "music_control", "set_volume", "sonos_control",
+        // Media (highest-used voice intent)
+        "spotify", "set_volume",
 
-        // Browser / web
-        "browser_navigate", "browser_click", "browser_type", "browser_scan",
-        "browser_extract", "browser_scroll", "browser_back", "browser_analyze",
-        "browser_wait", "browser_select", "browser_hover", "browser_keyboard",
-        "browser_switch_tab", "browser_close", "browser_multi_action",
-        "browser_network_requests", "browser_extract_article",
+        // Browser (screen-aware with screen-share active)
+        "browser_navigate", "browser_click", "browser_type",
         "web_search",
 
-        // App launch / focus (cross-platform)
-        "open_in_app", "app_manager", "window_manage",
+        // App launch (cross-platform)
+        "open_in_app", "app_manager",
 
-        // OS control (Gemini can see the screen now — these let it act)
-        "os_screenshot", "os_click", "os_click_element", "os_type",
-        "os_scan", "os_accessibility_tree", "os_multi_action", "os_nav",
-        "os_ocr_click", "os_visual_verify", "os_keyboard_shortcuts",
-        "clipboard", "system_info", "platform_info",
-        "wifi_control", "bluetooth_control", "set_do_not_disturb",
-        "dark_mode", "set_brightness", "lock_screen",
+        // OS control (Gemini sees the screen → can act on it)
+        "os_click_element", "os_type", "os_multi_action",
+        "clipboard",
+        "wifi_control", "bluetooth_control",
+        "dark_mode", "set_brightness",
 
-        // Shell (fallback for things without a dedicated tool)
-        "shell_exec",
+        // Productivity (most common voice requests)
+        "gmail", "calendar_tool", "reminders_tool",
+        "whatsapp_send", "contact_lookup",
+        "set_reminder", "schedule_task",
 
-        // Files
-        "read", "write", "edit", "append_file",
-        "grep", "glob", "list_directory", "file_metadata",
+        // Creative / quick wins
+        "generate_image",
 
-        // Productivity / presentations / documents
-        "create_presentation", "modify_presentation", "list_presentations", "export_presentation",
-        "create_document", "update_document", "append_resume_work", "list_documents",
-        "load_document", "delete_document", "export_document", "list_templates",
-
-        // Calendars / reminders / notes / messaging
-        "calendar_tool", "reminders_tool", "messages_tool", "apple_notes",
-        "google_calendar", "gmail", "email_send",
-        "whatsapp_send", "whatsapp_group_info", "contact_lookup",
-        "send_message_on_channel", "ask_owner",
-
-        // Scheduling
-        "schedule_task", "set_reminder", "list_scheduled_tasks", "cancel_task",
-        "task_queue", "cron",
-
-        // Research (delegated — short ack + result comes back via channel)
-        "deep_research", "check_deep_research", "cancel_deep_research",
-
-        // Orchestration (delegate complex work to the full agent swarm)
+        // Delegation — EVERYTHING complex routes through these.
+        // The system prompt tells Gemini to speak a short ack and use
+        // swarm_task for multi-step work rather than trying to drive it
+        // tool-by-tool in a voice loop.
         "swarm_task",
-        "start_long_task", "check_long_task", "cancel_long_task", "resume_long_task",
-
-        // Creative
-        "generate_image", "gif_search", "stock_image_search", "icon_search",
-
-        // Weather / location
-        "weather", "get_location",
-
-        // Communication deliverables
-        "send_file", "send_screenshot", "screen_record",
-
-        // Code-action (for "run this command" / "check the repo")
-        "code_action", "code_execute",
+        "start_long_task", "check_long_task",
+        "deep_research", "check_deep_research",
     ];
     if (process.platform === "darwin") {
-        names.push("apple_script", "run_shortcut");
+        names.push("apple_script");
     }
     return names;
 }
