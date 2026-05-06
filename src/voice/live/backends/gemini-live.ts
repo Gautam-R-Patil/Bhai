@@ -23,7 +23,14 @@ interface GeminiLiveSession {
         audioStreamEnd?: boolean;
     }): void;
     sendClientContent(params: { turns: Array<{ role: string; parts: Array<{ text: string }> }> }): void;
-    sendToolResponse(params: { functionResponses: Array<{ id: string; name: string; response: unknown }> }): void;
+    sendToolResponse(params: {
+        functionResponses: Array<{
+            id: string;
+            name: string;
+            response: unknown;
+            scheduling?: "INTERRUPT" | "WHEN_IDLE" | "SILENT";
+        }>;
+    }): void;
     close(): void;
 }
 
@@ -63,7 +70,13 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
         for (const model of LIVE_MODELS) {
             console.log(`[GEMINI-LIVE] Trying model: ${model}...`);
             try {
-                const session = await this.connectToModel(model, config.systemPrompt, responseModalities, toolConfig);
+                const session = await this.connectToModel(
+                    model,
+                    config.systemPrompt,
+                    responseModalities,
+                    toolConfig,
+                    config.voiceName,
+                );
                 this.session = session;
                 console.log(`[GEMINI-LIVE] Connected successfully to ${model}`);
                 return;
@@ -81,6 +94,7 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
         systemPrompt: string,
         responseModalities: any[],
         toolConfig: any[] | undefined,
+        voiceName: string | undefined,
     ): Promise<GeminiLiveSession> {
         return new Promise<GeminiLiveSession>((resolve, reject) => {
             const timeout = setTimeout(() => reject(new Error("Connection timeout (10s)")), 10000);
@@ -97,6 +111,13 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
                 // Server-side VAD for input — user's speech auto-detected + transcribed.
                 inputAudioTranscription: {},
             };
+            // Honor the user's voice preference. Gemini Live defaults to Puck;
+            // valid names include Aoede / Charon / Kore / Fenrir / Puck.
+            if (voiceName) {
+                config.speechConfig = {
+                    voiceConfig: { prebuiltVoiceConfig: { voiceName } },
+                };
+            }
             // Only add tools if we have them (empty array can cause errors)
             if (toolConfig && toolConfig.length > 0) {
                 config.tools = toolConfig;
@@ -263,8 +284,9 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
                         : (r.result && typeof r.result === "object" ? r.result as Record<string, unknown> : { output: String(r.result) }),
                     // Without `scheduling`, Gemini Live defaults to SILENT — the
                     // model adds the tool result to context but never speaks.
-                    // INTERRUPT forces the model to produce an audio turn now.
-                    scheduling: "INTERRUPT",
+                    // Pick per-tool: silent for internal state, interrupt for
+                    // anything the user is waiting on an audible answer for.
+                    scheduling: pickSchedulingForTool(r.name),
                 })),
             });
         } catch (err) {
@@ -272,12 +294,42 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
         }
     }
 
+    /**
+     * Mid-session text nudge (memory updates, long-task completion, etc.).
+     *
+     * Per the @google/genai docs for the 3.x Live models:
+     *   "send_client_content is ONLY supported for seeding INITIAL context
+     *    history... After the first model turn, use send_realtime_input with
+     *    the text field instead."
+     *
+     * Using sendClientContent after the first turn is silently rejected by
+     * the newer models — the context never reaches the session and the model
+     * appears to ignore the memory injection or background notification.
+     * Route all mid-session text through sendRealtimeInput.
+     */
     sendText(text: string): void {
-        if (!this.session || !this._connected) return;
+        if (!this.session || !this._connected || !this.setupComplete) return;
+        try {
+            this.session.sendRealtimeInput({ text });
+        } catch (err) {
+            console.warn("[GEMINI-LIVE] sendText (realtime) failed:", (err as Error).message);
+        }
+    }
 
-        this.session.sendClientContent({
-            turns: [{ role: "user", parts: [{ text }] }],
-        });
+    /**
+     * Seed the conversation with an initial user turn. Only safe BEFORE the
+     * first model turn — matches the sendClientContent contract for 3.x Live.
+     * Not currently used but exposed for callers that need initial history.
+     */
+    seedInitialHistory(text: string): void {
+        if (!this.session || !this._connected) return;
+        try {
+            this.session.sendClientContent({
+                turns: [{ role: "user", parts: [{ text }] }],
+            });
+        } catch (err) {
+            console.warn("[GEMINI-LIVE] seedInitialHistory failed:", (err as Error).message);
+        }
     }
 
     // ── Message Handler ──────────────────────────
@@ -362,6 +414,23 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
 // Gemini Live occasionally transcribes background noise / keyboard clicks
 // as short strings in random scripts (Korean/Japanese/German). We drop
 // obviously-non-speech outputs before they leak into the model turn.
+
+// Tools whose results are internal/silent — the user doesn't need to hear
+// "memory saved" or "fetched 3 entries". Using SILENT lets the model absorb
+// the context without breaking into speech.
+const SILENT_TOOLS = new Set<string>([
+    "memory_store", "memory_search", "memory_list", "memory_delete",
+    "core_memory_read", "core_memory_append", "core_memory_replace",
+    "check_long_task", "check_deep_research",
+    "system_info", "platform_info", "get_current_time",
+    "clipboard", "os_scan", "os_accessibility_tree", "os_screenshot",
+    "file_metadata", "list_directory", "glob", "grep",
+    "browser_scan", "browser_network_requests",
+]);
+
+export function pickSchedulingForTool(name: string): "INTERRUPT" | "SILENT" {
+    return SILENT_TOOLS.has(name) ? "SILENT" : "INTERRUPT";
+}
 
 // Specific no-space noise patterns Gemini Live has produced against ATLAS.
 // Kept conservative — only strings that are clearly transcription hallucinations

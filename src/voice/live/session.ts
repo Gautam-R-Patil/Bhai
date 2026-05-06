@@ -24,6 +24,10 @@ import { getVoiceToolDeclarations, executeVoiceToolCalls } from "./tool-bridge.j
 import { buildVoiceSystemPrompt } from "./prompt-builder.js";
 import { getLightMemoryRefresh } from "./memory-bridge.js";
 import { startScreenShare, stopScreenShare } from "./screen-share.js";
+// Static imports for the hot turn-recall path so the first user transcript
+// doesn't pay ESM parse cost (~100-500ms measured on cold import).
+import { recall as memoryRecall } from "../../memory/sqlite.js";
+import { findEntities, getKnowledgeGraphDB } from "../../memory/knowledge-graph.js";
 
 // ── Session State ────────────────────────────────
 
@@ -380,11 +384,7 @@ export class LiveVoiceSession extends EventEmitter {
         if (!this.backend?.isConnected()) return;
         try {
             const parts: string[] = [];
-            const [{ recall }, { getKnowledgeGraphDB, findEntities }] = await Promise.all([
-                import("../../memory/sqlite.js"),
-                import("../../memory/knowledge-graph.js"),
-            ]);
-            const mems = await recall(userQuery, 5);
+            const mems = await memoryRecall(userQuery, 5);
             if (mems && mems.length > 0) {
                 parts.push(
                     "Relevant memories for this turn:\n" +
