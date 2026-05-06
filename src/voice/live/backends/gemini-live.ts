@@ -51,11 +51,18 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
 
         this.ai = new GoogleGenAI({ apiKey: this.apiKey });
 
-        // Try models in order — availability changes across API versions
-        // Native audio Live API models — only support AUDIO response modality
+        // Try models in order — availability changes across API versions.
+        // IMPORTANT: gemini-3.1-flash-live-preview is currently broken — it
+        // connects fine and receives our tool responses but generates ZERO
+        // output (no audio, no text, no toolCall, no turnComplete). Verified
+        // via scripts/test-gemini-live.ts: 2.5-native-audio streams back
+        // hundreds of messages for the exact same request the 3.1 preview
+        // silently drops. Keep 3.1 last as an opt-in fallback.
         const LIVE_MODELS = [
+            "gemini-2.5-flash-native-audio-latest",
+            "gemini-2.5-flash-native-audio-preview-12-2025",
+            "gemini-2.5-flash-native-audio-preview-09-2025",
             "gemini-3.1-flash-live-preview",
-            "gemini-2.5-flash-live-preview",
         ];
 
         // Build tool declarations for the session

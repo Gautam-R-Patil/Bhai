@@ -852,7 +852,7 @@ Candidates that fail safety gates are marked `scope-violation` and discarded wit
 
 | Backend | Protocol | Notes |
 |---------|----------|-------|
-| `gemini-live.ts` | `@google/genai` SDK, `Modality.AUDIO` | Model chain: gemini-3.1-flash-live-preview → gemini-2.5-flash-live-preview |
+| `gemini-live.ts` | `@google/genai` SDK, `Modality.AUDIO` | Model chain: gemini-2.5-flash-native-audio-latest → preview-12-2025 → preview-09-2025 → 3.1-flash-live-preview (last; currently broken per scripts/test-gemini-live.ts). |
 | `openai-realtime.ts` | WebSocket `wss://api.openai.com/v1/realtime` | Model: gpt-4o-realtime-preview |
 | `hybrid-pipeline.ts` | STT → agent → TTS pipeline | Fallback when streaming backends unavailable |
 
