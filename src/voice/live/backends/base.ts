@@ -28,6 +28,15 @@ export abstract class LiveVoiceBackend extends EventEmitter {
     /** Send a text message (for hybrid backend or text injection) */
     abstract sendText(text: string): void;
 
+    /**
+     * Send a single JPEG/PNG video frame (base64-encoded) so the model can
+     * see the user's screen while listening. Backends that don't support
+     * vision should keep the default no-op implementation.
+     */
+    sendVideo(_dataB64: string, _mimeType: string = "image/jpeg"): void {
+        /* no-op by default */
+    }
+
     /** Check connection status */
     isConnected(): boolean {
         return this._connected;

@@ -14,6 +14,7 @@ import { getSessionToken } from "../../session.js";
 
 let activeSession: LiveVoiceSession | null = null;
 let cachedKeys: LiveVoiceConfig["keys"] | null = null;
+let longTaskUnsub: (() => void) | null = null;
 
 // ── Fetch API Keys from Convex ───────────────────
 
@@ -132,6 +133,7 @@ export async function startLiveVoice(
         if (activeSession === session) {
             activeSession = null;
         }
+        if (longTaskUnsub) { longTaskUnsub(); longTaskUnsub = null; }
     });
 
     // Let the caller wire up their own listeners before start() runs, so they
@@ -140,6 +142,21 @@ export async function startLiveVoice(
 
     await session.start();
     activeSession = session;
+
+    // While this session is active, route long-task completions back into
+    // the live voice so the model speaks the result aloud.
+    try {
+        const [{ globalLongTaskBus }, { notifyLiveVoiceIfActive }] = await Promise.all([
+            import("../../proactive/long-task-events.js"),
+            import("./notify-bus.js"),
+        ]);
+        longTaskUnsub?.();
+        longTaskUnsub = globalLongTaskBus.subscribe((evt) => {
+            notifyLiveVoiceIfActive(
+                `Background task just finished (${evt.durationSec}s). Task: ${evt.task}. Result: ${evt.summary.slice(0, 400)}`,
+            );
+        });
+    } catch { /* proactive module optional */ }
 
     return session;
 }

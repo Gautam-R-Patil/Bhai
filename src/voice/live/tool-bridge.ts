@@ -11,7 +11,18 @@ import { getVoiceToolNames } from "./types.js";
 
 // Per-tool hard timeout. Beyond this we return an error to the model so one
 // hung tool doesn't stall the Promise.all and freeze the voice session.
+// Default is tight so the session stays snappy. Media/browser tools that
+// legitimately cold-start slowly (Spotify app wake, spogo, browser nav) get
+// extra headroom via PER_TOOL_TIMEOUT.
 export const VOICE_TOOL_TIMEOUT_MS = 8000;
+const PER_TOOL_TIMEOUT: Record<string, number> = {
+    spotify: 18000,
+    music_control: 15000,
+    browser_navigate: 15000,
+};
+function timeoutFor(name: string): number {
+    return PER_TOOL_TIMEOUT[name] ?? VOICE_TOOL_TIMEOUT_MS;
+}
 
 // ── Schema Translation ───────────────────────────
 
@@ -88,7 +99,7 @@ export async function executeVoiceToolCalls(calls: LiveToolCall[]): Promise<Live
             try {
                 const result = await runWithTimeout(
                     executeTool(call.name, call.args),
-                    VOICE_TOOL_TIMEOUT_MS,
+                    timeoutFor(call.name),
                     `tool ${call.name}`,
                 );
                 console.log(`  [LIVE] Tool ${call.name} completed in ${Date.now() - start}ms`);

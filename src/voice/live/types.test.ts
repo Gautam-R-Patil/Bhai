@@ -53,4 +53,37 @@ describe("getVoiceToolNames — platform-gated voice tool list", () => {
             expect(names).toContain(expected);
         }
     });
+
+    it("exposes delegation surfaces so Gemini can hand complex work to the agent swarm", () => {
+        const names = getVoiceToolNames();
+        for (const expected of [
+            "swarm_task",
+            "start_long_task", "check_long_task", "cancel_long_task",
+            "deep_research", "check_deep_research",
+        ]) {
+            expect(names).toContain(expected);
+        }
+    });
+
+    it("exposes OS-control so 'click that', 'open Bluetooth settings' work with screen share", () => {
+        const names = getVoiceToolNames();
+        for (const expected of [
+            "os_screenshot", "os_click_element", "os_type",
+            "os_scan", "os_multi_action", "os_accessibility_tree",
+        ]) {
+            expect(names).toContain(expected);
+        }
+    });
+
+    it("exposes productivity tools so 'make a PPT', 'email X', 'remind me' all work", () => {
+        const names = getVoiceToolNames();
+        for (const expected of [
+            "create_presentation", "modify_presentation",
+            "create_document", "gmail", "email_send",
+            "calendar_tool", "reminders_tool",
+            "whatsapp_send",
+        ]) {
+            expect(names).toContain(expected);
+        }
+    });
 });

@@ -139,6 +139,32 @@ export async function getFullMemoryContext(userHint?: string): Promise<string> {
         if (wmSnippet) parts.push(wmSnippet);
     } catch { /* */ }
 
+    // ── Active goals (matches agent.ts iteration-1 injection) ──
+    try {
+        const { getGoalsSnippet } = await import("../../memory/goals.js");
+        const goals = getGoalsSnippet();
+        if (goals) parts.push(goals);
+    } catch { /* goals module optional */ }
+
+    // ── Task learnings — proven strategies for the kinds of work the
+    // user tends to ask for. Generic key gives us the top global patterns. ──
+    try {
+        const { getTaskLearningsContext } = await import("../../memory/task-learnings.js");
+        const learnings = getTaskLearningsContext(userHint || "voice conversation");
+        if (learnings) parts.push(learnings);
+    } catch { /* task-learnings optional */ }
+
+    // ── Recent memories — last few high-score entries, regardless of topic. ──
+    try {
+        const recent = await recall("", 5);
+        if (recent && recent.length > 0) {
+            parts.push(
+                "RECENT MEMORIES:\n" +
+                recent.map((m: any) => `- (${m.category}) ${m.content}`).join("\n"),
+            );
+        }
+    } catch { /* */ }
+
     return parts.join("\n\n");
 }
 

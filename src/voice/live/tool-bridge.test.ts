@@ -61,6 +61,16 @@ describe("executeVoiceToolCalls — per-tool timeout", () => {
         expect(results[0].result).toEqual({ ok: true, data: 42 });
     });
 
+    it("gives media tools (spotify) longer than the default 8s timeout", async () => {
+        // Spotify resolves in 10s — would be cut off at 8s default, should survive with the override.
+        hoisted.executeTool.mockImplementation(() =>
+            new Promise((resolve) => setTimeout(() => resolve({ ok: true }), 10000)),
+        );
+        const results = await executeVoiceToolCalls([{ id: "fc4", name: "spotify", args: { action: "resume" } }]);
+        expect(results).toHaveLength(1);
+        expect(results[0].result).toEqual({ ok: true });
+    }, 20_000);
+
     it("wraps a thrown error into the result payload rather than rejecting the batch", async () => {
         hoisted.executeTool.mockRejectedValue(new Error("boom"));
 

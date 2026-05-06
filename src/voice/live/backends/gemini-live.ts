@@ -15,6 +15,7 @@ import type { LiveSessionConfig, LiveToolCall, LiveToolResult } from "../types.j
 interface GeminiLiveSession {
     sendRealtimeInput(params: {
         audio?: { data: string; mimeType: string };
+        video?: { data: string; mimeType: string };
         media?: unknown;
         text?: string;
         activityStart?: unknown;
@@ -89,6 +90,12 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
             const config: Record<string, any> = {
                 responseModalities,
                 systemInstruction: systemPrompt,
+                // Request text transcripts of model audio responses so the UI can
+                // display what the assistant is saying (without this, the overlay
+                // never receives response_transcript events — silent UI).
+                outputAudioTranscription: {},
+                // Server-side VAD for input — user's speech auto-detected + transcribed.
+                inputAudioTranscription: {},
             };
             // Only add tools if we have them (empty array can cause errors)
             if (toolConfig && toolConfig.length > 0) {
@@ -176,10 +183,12 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
         this.setupComplete = false;
         this.pendingAudio = [];
         this.audioChunksSent = 0;
+        this.audioChunksReceived = 0;
         this.ai = null;
     }
 
     private audioChunksSent = 0;
+    private audioChunksReceived = 0;
 
     sendAudio(pcm: Buffer): void {
         if (!this.session || !this._connected) return;
@@ -224,6 +233,21 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
         // Optionally send an activity signal.
     }
 
+    /**
+     * Send one screen frame (JPEG recommended) to the model. Gemini Live
+     * caps at 1 frame/second — callers should throttle. Skips silently
+     * if we're not connected yet so the screen-capture loop can keep
+     * running across reconnects without crashing.
+     */
+    override sendVideo(dataB64: string, mimeType: string = "image/jpeg"): void {
+        if (!this.session || !this._connected || !this.setupComplete) return;
+        try {
+            this.session.sendRealtimeInput({ video: { data: dataB64, mimeType } });
+        } catch (err) {
+            console.warn("[GEMINI-LIVE] sendVideo failed:", (err as Error).message);
+        }
+    }
+
     sendToolResponse(results: LiveToolResult[]): void {
         if (!this.session || !this._connected) return;
 
@@ -264,6 +288,10 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
                 // Audio output
                 if (part.inlineData?.data && part.inlineData?.mimeType?.startsWith("audio/")) {
                     const pcmBuffer = Buffer.from(part.inlineData.data, "base64");
+                    this.audioChunksReceived++;
+                    if (this.audioChunksReceived === 1 || this.audioChunksReceived % 50 === 0) {
+                        console.log(`[GEMINI-LIVE] Received model audio chunk #${this.audioChunksReceived} (${pcmBuffer.length}B)`);
+                    }
                     this.emit("audio", {
                         pcm: pcmBuffer,
                         sampleRate: 24000, // Gemini outputs 24kHz

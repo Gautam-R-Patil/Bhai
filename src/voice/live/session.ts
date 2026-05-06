@@ -23,6 +23,7 @@ import { AudioPlayer } from "./audio/audio-player.js";
 import { getVoiceToolDeclarations, executeVoiceToolCalls } from "./tool-bridge.js";
 import { buildVoiceSystemPrompt } from "./prompt-builder.js";
 import { getLightMemoryRefresh } from "./memory-bridge.js";
+import { startScreenShare, stopScreenShare } from "./screen-share.js";
 
 // ── Session State ────────────────────────────────
 
@@ -42,6 +43,7 @@ export class LiveVoiceSession extends EventEmitter {
     private startTime = 0;
     private micMuted = false;
     private inflightToolIds = new Set<string>();
+    private screenShare: import("./screen-share.js").ScreenShareHandle | null = null;
 
     constructor(config: Partial<LiveVoiceConfig> & Pick<LiveVoiceConfig, "keys">, llm: LLMClient) {
         super();
@@ -116,6 +118,20 @@ export class LiveVoiceSession extends EventEmitter {
             this.emitEvent("session_started");
             console.log("[LIVE-SESSION] Live voice session ACTIVE");
 
+            // 9. Start screen sharing — gives the model eyes so "click that",
+            // "make a PPT", "open Bluetooth settings" work against the real UI.
+            // Paused while the mic is muted (privacy).
+            if (process.env.ATLAS_LIVE_SCREEN_SHARE !== "false") {
+                try {
+                    this.screenShare = startScreenShare(
+                        (b64, mime) => this.backend?.sendVideo(b64, mime),
+                        () => this.micMuted || this.state !== "active",
+                    );
+                } catch (err) {
+                    console.warn("[LIVE-SESSION] Screen share failed to start:", (err as Error).message);
+                }
+            }
+
         } catch (err) {
             this.state = "idle";
             const message = err instanceof Error ? err.message : String(err);
@@ -137,6 +153,12 @@ export class LiveVoiceSession extends EventEmitter {
         if (this.sessionTimer) {
             clearTimeout(this.sessionTimer);
             this.sessionTimer = null;
+        }
+
+        // Stop screen share
+        if (this.screenShare) {
+            stopScreenShare(this.screenShare);
+            this.screenShare = null;
         }
 
         // Stop mic
@@ -236,9 +258,14 @@ export class LiveVoiceSession extends EventEmitter {
             this.emitEvent("response_transcript", transcript);
         });
 
-        // Backend → Input transcript (user → speech)
+        // Backend → Input transcript (user → speech).
+        // On every user turn, kick off a query-specific memory recall in the
+        // background and push the results back as a system context message.
+        // This gives live voice the same query-targeted memory the text agent
+        // gets on iteration 1, but per-turn.
         this.backend.on("user_transcript", (text: string) => {
             this.emitEvent("user_transcript", text);
+            this.injectQuerySpecificMemory(text).catch(() => { /* non-fatal */ });
         });
 
         // Backend → Tool call cancelled by server (user interrupted mid-call).
@@ -341,6 +368,45 @@ export class LiveVoiceSession extends EventEmitter {
             }
         } catch (err) {
             console.warn("[LIVE-SESSION] Memory refresh failed:", (err as Error).message);
+        }
+    }
+
+    // Per-turn query-specific recall. Fires on each user_transcript, looks
+    // up relevant memories + knowledge-graph entities for the query, and
+    // pushes them back as a side-channel system message so Gemini can use
+    // them in its response. This mirrors the agent's iteration-1 recall.
+    private async injectQuerySpecificMemory(userQuery: string): Promise<void> {
+        if (!userQuery || userQuery.length < 4) return;
+        if (!this.backend?.isConnected()) return;
+        try {
+            const parts: string[] = [];
+            const [{ recall }, { getKnowledgeGraphDB, findEntities }] = await Promise.all([
+                import("../../memory/sqlite.js"),
+                import("../../memory/knowledge-graph.js"),
+            ]);
+            const mems = await recall(userQuery, 5);
+            if (mems && mems.length > 0) {
+                parts.push(
+                    "Relevant memories for this turn:\n" +
+                    mems.map((m: any) => `- (${m.category}) ${m.content}`).join("\n"),
+                );
+            }
+            const kg = getKnowledgeGraphDB();
+            if (kg) {
+                const entities = findEntities(kg, userQuery);
+                if (entities.length > 0) {
+                    parts.push(
+                        "Related entities:\n" +
+                        entities.slice(0, 5).map((e: any) => `- [${e.type}] ${e.name}`).join("\n"),
+                    );
+                }
+            }
+            if (parts.length > 0 && this.backend?.isConnected()) {
+                this.backend.sendText(`[ATLAS memory for this turn]\n${parts.join("\n\n")}`);
+            }
+        } catch (err) {
+            // Non-fatal — query recall is best-effort enrichment.
+            console.warn("[LIVE-SESSION] Query-specific memory failed:", (err as Error).message);
         }
     }
 
