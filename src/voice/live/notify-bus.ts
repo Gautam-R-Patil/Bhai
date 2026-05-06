@@ -27,6 +27,14 @@ export function notifyLiveVoiceIfActive(text: string): boolean {
     if (!text || !text.trim()) return false;
     const session = getActiveLiveSession();
     if (!session?.isActive) return false;
+    // Don't inject while a tool is in-flight — Gemini Live treats realtime
+    // text as user speech and may cancel the pending tool call. Wait one
+    // tick; if the call finishes, the session prompt already instructs
+    // Gemini to surface async updates, so a few ms of delay is safe.
+    if (session.hasToolsInFlight) {
+        setTimeout(() => notifyLiveVoiceIfActive(text), 400);
+        return false;
+    }
     try {
         // Prefix makes the provenance obvious to the model so it speaks
         // the result casually instead of reading the raw payload verbatim.

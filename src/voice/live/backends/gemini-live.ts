@@ -415,18 +415,18 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
 // as short strings in random scripts (Korean/Japanese/German). We drop
 // obviously-non-speech outputs before they leak into the model turn.
 
-// Tools whose results are internal/silent — the user doesn't need to hear
-// "memory saved" or "fetched 3 entries". Using SILENT lets the model absorb
-// the context without breaking into speech.
-const SILENT_TOOLS = new Set<string>([
-    "memory_store", "memory_search", "memory_list", "memory_delete",
-    "core_memory_read", "core_memory_append", "core_memory_replace",
-    "check_long_task", "check_deep_research",
-    "system_info", "platform_info", "get_current_time",
-    "clipboard", "os_scan", "os_accessibility_tree", "os_screenshot",
-    "file_metadata", "list_directory", "glob", "grep",
-    "browser_scan", "browser_network_requests",
-]);
+// We always want the model to speak after a tool call in live voice —
+// otherwise "what time is it?" → get_current_time → silence (the exact
+// bug the user hit). The earlier SILENT allowlist was miscategorized:
+// tools like get_current_time / memory_search / system_info are MORE
+// often triggered by a direct user question than by internal model
+// bookkeeping, so SILENT makes the assistant feel broken.
+//
+// The prompt already tells Gemini to respond tersely; trust it and keep
+// this simple. If we ever find a tool that genuinely shouldn't trigger
+// speech (e.g. a per-turn auto-audit that runs on every turn), add it
+// here — but err on the side of INTERRUPT.
+const SILENT_TOOLS = new Set<string>();
 
 export function pickSchedulingForTool(name: string): "INTERRUPT" | "SILENT" {
     return SILENT_TOOLS.has(name) ? "SILENT" : "INTERRUPT";

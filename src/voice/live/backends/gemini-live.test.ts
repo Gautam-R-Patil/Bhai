@@ -6,28 +6,21 @@ import { describe, it, expect } from "vitest";
 import { filterNoiseTranscript, pickSchedulingForTool } from "./gemini-live.js";
 
 describe("pickSchedulingForTool — Gemini Live tool response scheduling", () => {
-    it("defaults to INTERRUPT so the model actually speaks after tool calls", () => {
+    it("returns INTERRUPT for every tool so the model actually speaks after tool calls", () => {
         // Without INTERRUPT, Gemini Live's default SILENT policy means the model
-        // processes the result but never emits audio — the bug the user hit.
-        expect(pickSchedulingForTool("spotify")).toBe("INTERRUPT");
-        expect(pickSchedulingForTool("browser_navigate")).toBe("INTERRUPT");
-        expect(pickSchedulingForTool("swarm_task")).toBe("INTERRUPT");
-        expect(pickSchedulingForTool("create_presentation")).toBe("INTERRUPT");
-        expect(pickSchedulingForTool("apple_script")).toBe("INTERRUPT");
-    });
-
-    it("uses SILENT for internal/observational tools so the model doesn't narrate them", () => {
-        // "I looked up a memory entry" is not worth breaking the conversation flow for.
-        expect(pickSchedulingForTool("memory_store")).toBe("SILENT");
-        expect(pickSchedulingForTool("memory_search")).toBe("SILENT");
-        expect(pickSchedulingForTool("core_memory_read")).toBe("SILENT");
-        expect(pickSchedulingForTool("check_long_task")).toBe("SILENT");
-        expect(pickSchedulingForTool("os_scan")).toBe("SILENT");
-        expect(pickSchedulingForTool("get_current_time")).toBe("SILENT");
-    });
-
-    it("unknown tools fall back to INTERRUPT (speak by default)", () => {
-        expect(pickSchedulingForTool("brand_new_tool")).toBe("INTERRUPT");
+        // processes the result but never emits audio. We learned this the hard way:
+        // putting get_current_time / memory_search / system_info in a SILENT
+        // allowlist made "what time is it?" → silence (user question, tool runs,
+        // no spoken answer). Defaulting to INTERRUPT for every tool is the
+        // user-expected behavior.
+        for (const name of [
+            "get_current_time", "memory_search", "memory_store",
+            "system_info", "os_screenshot", "check_long_task",
+            "spotify", "browser_navigate", "swarm_task",
+            "create_presentation", "apple_script", "brand_new_tool",
+        ]) {
+            expect(pickSchedulingForTool(name)).toBe("INTERRUPT");
+        }
     });
 });
 

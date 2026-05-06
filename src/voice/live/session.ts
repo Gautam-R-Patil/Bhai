@@ -24,10 +24,6 @@ import { getVoiceToolDeclarations, executeVoiceToolCalls } from "./tool-bridge.j
 import { buildVoiceSystemPrompt } from "./prompt-builder.js";
 import { getLightMemoryRefresh } from "./memory-bridge.js";
 import { startScreenShare, stopScreenShare } from "./screen-share.js";
-// Static imports for the hot turn-recall path so the first user transcript
-// doesn't pay ESM parse cost (~100-500ms measured on cold import).
-import { recall as memoryRecall } from "../../memory/sqlite.js";
-import { findEntities, getKnowledgeGraphDB } from "../../memory/knowledge-graph.js";
 
 // ── Session State ────────────────────────────────
 
@@ -65,6 +61,11 @@ export class LiveVoiceSession extends EventEmitter {
 
     get duration(): number {
         return this.startTime > 0 ? Date.now() - this.startTime : 0;
+    }
+
+    /** True while the session has ≥1 tool call still executing. */
+    get hasToolsInFlight(): boolean {
+        return this.inflightToolIds.size > 0;
     }
 
     // ── Start Session ────────────────────────────
@@ -263,13 +264,15 @@ export class LiveVoiceSession extends EventEmitter {
         });
 
         // Backend → Input transcript (user → speech).
-        // On every user turn, kick off a query-specific memory recall in the
-        // background and push the results back as a system context message.
-        // This gives live voice the same query-targeted memory the text agent
-        // gets on iteration 1, but per-turn.
+        // NB: do NOT push memory context back via sendRealtimeInput on every
+        // transcript. Gemini Live treats realtime-input text as a user utterance,
+        // which can race against a pending tool_call and cause Gemini to
+        // CANCEL the tool call (the exact pattern we saw in logs: tool result
+        // sent at T, server-side cancellation 60ms later). The session-start
+        // full memory dump in buildVoiceSystemPrompt already gives the model
+        // every memory system it needs.
         this.backend.on("user_transcript", (text: string) => {
             this.emitEvent("user_transcript", text);
-            this.injectQuerySpecificMemory(text).catch(() => { /* non-fatal */ });
         });
 
         // Backend → Tool call cancelled by server (user interrupted mid-call).
@@ -363,50 +366,19 @@ export class LiveVoiceSession extends EventEmitter {
     // ── Memory Refresh ───────────────────────────
 
     private refreshMemory(): void {
+        // Only refresh when there is no tool call mid-flight. Gemini Live
+        // treats sendRealtimeInput text as user speech, so injecting context
+        // while a tool is pending can cause the server to cancel the tool
+        // call (we've seen this in logs).
+        if (this.inflightToolIds.size > 0) return;
         try {
             const refresh = getLightMemoryRefresh();
             if (refresh && this.backend?.isConnected()) {
-                // Send updated context as a system-level message
                 this.backend.sendText(`[Memory context update]\n${refresh}`);
                 console.log(`[LIVE-SESSION] Memory refreshed at turn ${this.turnCount}`);
             }
         } catch (err) {
             console.warn("[LIVE-SESSION] Memory refresh failed:", (err as Error).message);
-        }
-    }
-
-    // Per-turn query-specific recall. Fires on each user_transcript, looks
-    // up relevant memories + knowledge-graph entities for the query, and
-    // pushes them back as a side-channel system message so Gemini can use
-    // them in its response. This mirrors the agent's iteration-1 recall.
-    private async injectQuerySpecificMemory(userQuery: string): Promise<void> {
-        if (!userQuery || userQuery.length < 4) return;
-        if (!this.backend?.isConnected()) return;
-        try {
-            const parts: string[] = [];
-            const mems = await memoryRecall(userQuery, 5);
-            if (mems && mems.length > 0) {
-                parts.push(
-                    "Relevant memories for this turn:\n" +
-                    mems.map((m: any) => `- (${m.category}) ${m.content}`).join("\n"),
-                );
-            }
-            const kg = getKnowledgeGraphDB();
-            if (kg) {
-                const entities = findEntities(kg, userQuery);
-                if (entities.length > 0) {
-                    parts.push(
-                        "Related entities:\n" +
-                        entities.slice(0, 5).map((e: any) => `- [${e.type}] ${e.name}`).join("\n"),
-                    );
-                }
-            }
-            if (parts.length > 0 && this.backend?.isConnected()) {
-                this.backend.sendText(`[ATLAS memory for this turn]\n${parts.join("\n\n")}`);
-            }
-        } catch (err) {
-            // Non-fatal — query recall is best-effort enrichment.
-            console.warn("[LIVE-SESSION] Query-specific memory failed:", (err as Error).message);
         }
     }
 
