@@ -6,7 +6,72 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>A.T.L.A.S</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap');
+
+    /* ──────────────────────────────────────────────
+       Design tokens — mirror desktop/styles.css exactly so the overlay
+       matches the dashboard chrome. Light is default (dashboard default);
+       `body.theme-dark` overrides for the dark palette. Initial class is
+       set from IPC or `prefers-color-scheme` before first paint.
+       ────────────────────────────────────────────── */
+    :root {
+      /* LIGHT (matches desktop/styles.css root) */
+      --bg-window:      #fefefe;
+      --bg-panel:       rgba(255, 255, 255, 0.72);
+      --bg-card:        rgba(255, 255, 255, 0.65);
+      --bg-card-hover:  rgba(255, 255, 255, 0.85);
+      --bg-input:       rgba(255, 255, 255, 0.5);
+      --bg-input-focus: rgba(255, 255, 255, 0.9);
+      --border:         rgba(0, 0, 0, 0.08);
+      --border-strong:  rgba(0, 0, 0, 0.15);
+      --text-primary:   #1d1d1f;
+      --text-secondary: #515154;
+      --text-muted:     #86868b;
+      --accent:         #0066cc;
+      --accent-hover:   #0055b3;
+      --accent-soft:    rgba(0, 102, 204, 0.10);
+      --accent-strong:  rgba(0, 102, 204, 0.22);
+      --accent-glow:    rgba(0, 102, 204, 0.22);
+      --success:        #34c759;
+      --success-bg:     rgba(52, 199, 89, 0.12);
+      --warning:        #ff9500;
+      --warning-bg:     rgba(255, 149, 0, 0.12);
+      --danger:         #ff3b30;
+      --danger-bg:      rgba(255, 59, 48, 0.12);
+      --info:           #0a84ff;
+      --info-bg:        rgba(10, 132, 255, 0.12);
+      --radius-sm: 10px;
+      --radius-md: 14px;
+      --radius-lg: 18px;
+      --radius-xl: 22px;
+      --ease: cubic-bezier(0.22, 1, 0.36, 1);
+      --shadow-card:  0 8px 32px rgba(0, 0, 0, 0.10), 0 1px 2px rgba(0, 0, 0, 0.04), inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+      --shadow-float: 0 20px 60px rgba(0, 0, 0, 0.16);
+      color-scheme: light;
+    }
+
+    body.theme-dark {
+      /* DARK (matches desktop/styles.css body.theme-dark) */
+      --bg-window:      #1a1a1e;
+      --bg-panel:       rgba(22, 22, 28, 0.78);
+      --bg-card:        rgba(255, 255, 255, 0.05);
+      --bg-card-hover:  rgba(255, 255, 255, 0.09);
+      --bg-input:       rgba(255, 255, 255, 0.06);
+      --bg-input-focus: rgba(255, 255, 255, 0.09);
+      --border:         rgba(255, 255, 255, 0.10);
+      --border-strong:  rgba(255, 255, 255, 0.18);
+      --text-primary:   #f5f5f7;
+      --text-secondary: rgba(245, 245, 247, 0.72);
+      --text-muted:     rgba(245, 245, 247, 0.45);
+      --accent:         #2997ff;
+      --accent-hover:   #55adff;
+      --accent-soft:    rgba(41, 151, 255, 0.14);
+      --accent-strong:  rgba(41, 151, 255, 0.28);
+      --accent-glow:    rgba(41, 151, 255, 0.30);
+      --shadow-card:  0 16px 40px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      --shadow-float: 0 20px 60px rgba(0, 0, 0, 0.6);
+      color-scheme: dark;
+    }
 
     * {
       margin: 0;
@@ -19,11 +84,20 @@
       width: 100%;
       height: 100%;
       background: transparent;
-      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Inter', system-ui, sans-serif;
-      color: #F5F5F7;
-      /* Apple's signature off-white */
+      font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif;
+      color: var(--text-primary);
       overflow: hidden;
       -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      font-feature-settings: "cv11", "ss01", "ss03";
+      text-rendering: optimizeLegibility;
+    }
+
+    /* Global focus ring for keyboard a11y */
+    :focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+      border-radius: 4px;
     }
 
     #container {
@@ -39,21 +113,24 @@
       align-items: center;
       padding: 12px 14px;
       gap: 12px;
-      /* Apple Vision Pro/macOS style translucency + vibrancy */
-      background: rgba(28, 28, 30, 0.82);
-      backdrop-filter: blur(80px) saturate(220%) brightness(1.1);
-      -webkit-backdrop-filter: blur(80px) saturate(220%) brightness(1.1);
-      /* Hairline border + delicate inner highlight */
-      border: 1px solid rgba(255, 255, 255, 0.18);
-      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.12), inset 0 0 0 0.5px rgba(255, 255, 255, 0.06);
-      border-radius: 20px;
-      /* Slightly rounder, more iOS-like */
+      background:
+        radial-gradient(ellipse 80% 60% at 20% 30%, rgba(99, 102, 241, 0.06) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 80% at 80% 70%, rgba(129, 140, 248, 0.04) 0%, transparent 60%),
+        var(--bg-panel);
+      backdrop-filter: blur(80px) saturate(180%);
+      -webkit-backdrop-filter: blur(80px) saturate(180%);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow-card);
+      border-radius: var(--radius-xl);
       position: relative;
       overflow: hidden;
       flex-shrink: 0;
-
-      /* Spring-damped open animation */
+      transition: border-color 180ms var(--ease), box-shadow 180ms var(--ease);
       animation: springIn 0.45s cubic-bezier(0.175, 0.885, 0.32, 1.1);
+    }
+    #input-box:focus-within {
+      border-color: var(--accent);
+      box-shadow: var(--shadow-card), 0 0 0 3px var(--accent-soft);
     }
 
     /* Apple spring-in: fast deceleration with tiny overshoot */
@@ -108,31 +185,29 @@
       /* Brighter ambient glow */
     }
 
-    /* Blob 1: Vibrant Cyan/Blue */
+    /* Indigo-family blobs — monochrome ambient glow, not a rainbow */
     .b1 {
       width: 140px;
       height: 140px;
-      background: radial-gradient(circle at center, rgba(6, 182, 212, 0.5) 0%, rgba(59, 130, 246, 0.2) 50%, transparent 80%);
+      background: radial-gradient(circle at center, rgba(99, 102, 241, 0.45) 0%, rgba(99, 102, 241, 0.14) 50%, transparent 80%);
       top: -40px;
       left: -30px;
       animation: liq1 14s cubic-bezier(0.4, 0, 0.2, 1) infinite alternate;
     }
 
-    /* Blob 2: Deep Violet */
     .b2 {
       width: 130px;
       height: 130px;
-      background: radial-gradient(circle at center, rgba(124, 58, 237, 0.5) 0%, rgba(139, 92, 246, 0.2) 50%, transparent 80%);
+      background: radial-gradient(circle at center, rgba(129, 140, 248, 0.35) 0%, rgba(99, 102, 241, 0.12) 50%, transparent 80%);
       top: -10px;
       right: -20px;
       animation: liq2 18s cubic-bezier(0.4, 0, 0.2, 1) infinite alternate-reverse;
     }
 
-    /* Blob 3: Fuchsia/Pink core */
     .b3 {
       width: 110px;
       height: 110px;
-      background: radial-gradient(circle at center, rgba(217, 70, 239, 0.45) 0%, rgba(236, 72, 153, 0.15) 50%, transparent 80%);
+      background: radial-gradient(circle at center, rgba(59, 130, 246, 0.30) 0%, rgba(99, 102, 241, 0.10) 50%, transparent 80%);
       bottom: -40px;
       left: 30%;
       animation: liq3 15s cubic-bezier(0.4, 0, 0.2, 1) infinite alternate;
@@ -193,44 +268,49 @@
       }
     }
 
-    /* ── Icon (Sparkle) ── */
+    /* ── Icon (Sparkle) — single-hue indigo sphere, no rainbow ── */
     .icon {
       width: 30px;
       height: 30px;
       border-radius: 50%;
-      /* Richer gradient for the icon */
-      background: linear-gradient(135deg, #06b6d4 0%, #8b5cf6 50%, #d946ef 100%);
-      background-size: 200% 200%;
+      background: radial-gradient(circle at 30% 28%,
+        rgba(241, 243, 255, 0.9) 0%,
+        rgba(165, 180, 252, 0.78) 26%,
+        var(--accent) 62%,
+        var(--accent-hover) 100%);
       display: flex;
       align-items: center;
       justify-content: center;
       font-size: 14px;
       flex-shrink: 0;
-      /* Intense, tight glow + sharp inner ring */
-      box-shadow: 0 4px 16px rgba(139, 92, 246, 0.5), inset 0 2px 4px rgba(255, 255, 255, 0.4), inset 0 -2px 4px rgba(0, 0, 0, 0.2);
-      animation: shimmer 4s linear infinite;
-      transition: box-shadow 0.5s cubic-bezier(0.25, 0.1, 0.25, 1),
-        transform 0.5s cubic-bezier(0.25, 0.1, 0.25, 1);
+      box-shadow:
+        0 4px 16px var(--accent-glow),
+        0 0 36px rgba(99, 102, 241, 0.15),
+        inset 0 2px 4px rgba(255, 255, 255, 0.28),
+        inset 0 -2px 4px rgba(55, 48, 163, 0.35);
+      transition: box-shadow 0.4s var(--ease), transform 0.4s var(--ease), background 0.4s var(--ease);
       position: relative;
       z-index: 1;
     }
 
-    @keyframes shimmer {
-
-      0%,
-      100% {
-        background-position: 0% 50%;
-      }
-
-      50% {
-        background-position: 100% 50%;
-      }
+    .icon.thinking {
+      transform: scale(1.08);
+      box-shadow:
+        0 4px 24px rgba(245, 158, 11, 0.4),
+        0 0 36px rgba(245, 158, 11, 0.15),
+        inset 0 2px 4px rgba(255, 255, 255, 0.3),
+        inset 0 -2px 4px rgba(120, 53, 15, 0.35);
+      background: radial-gradient(circle at 30% 28%,
+        rgba(255, 251, 235, 0.9) 0%,
+        rgba(253, 224, 71, 0.78) 26%,
+        var(--warning) 62%,
+        #92400e 100%);
+      animation: iconBreath 1.1s ease-in-out infinite;
     }
 
-    .icon.thinking {
-      animation: shimmer 1s linear infinite;
-      box-shadow: 0 4px 24px rgba(217, 70, 239, 0.6), inset 0 2px 4px rgba(255, 255, 255, 0.5);
-      transform: scale(1.08);
+    @keyframes iconBreath {
+      0%, 100% { transform: scale(1.08); }
+      50%      { transform: scale(1.15); }
     }
 
     /* ── Input ── */
@@ -239,19 +319,19 @@
       background: none;
       border: none;
       outline: none;
-      color: #FFF;
+      color: var(--text-primary);
       font-family: inherit;
-      font-size: 15px;
+      font-size: 14.5px;
       font-weight: 400;
-      caret-color: #a855f7;
+      caret-color: var(--accent);
       letter-spacing: -0.01em;
-      transition: opacity 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+      transition: opacity 0.3s var(--ease);
       position: relative;
       z-index: 1;
     }
 
     #input::placeholder {
-      color: rgba(255, 255, 255, 0.45);
+      color: var(--text-muted);
       font-weight: 400;
     }
 
@@ -262,17 +342,20 @@
 
     /* ── Reply Bubble ── */
     #reply-box {
-      background: rgba(28, 28, 30, 0.85);
-      backdrop-filter: blur(80px) saturate(220%) brightness(1.1);
-      -webkit-backdrop-filter: blur(80px) saturate(220%) brightness(1.1);
-      border: 1px solid rgba(255, 255, 255, 0.18);
-      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.12), inset 0 0 0 0.5px rgba(255, 255, 255, 0.06);
-      border-radius: 20px;
+      background:
+        radial-gradient(ellipse 80% 60% at 20% 30%, rgba(99, 102, 241, 0.06) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 80% at 80% 70%, rgba(59, 130, 246, 0.04) 0%, transparent 60%),
+        var(--bg-panel);
+      backdrop-filter: blur(80px) saturate(180%);
+      -webkit-backdrop-filter: blur(80px) saturate(180%);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow-card);
+      border-radius: var(--radius-xl);
       padding: 16px 18px;
-      font-size: 14px;
-      line-height: 1.5;
-      letter-spacing: -0.01em;
-      color: #F5F5F7;
+      font-size: 13.5px;
+      line-height: 1.55;
+      letter-spacing: -0.005em;
+      color: var(--text-primary);
       position: relative;
       overflow: hidden;
       display: none;
@@ -342,7 +425,7 @@
       pointer-events: none;
       width: 100px;
       height: 100px;
-      background: radial-gradient(circle at center, rgba(6, 182, 212, 0.25) 0%, rgba(139, 92, 246, 0.1) 50%, transparent 80%);
+      background: radial-gradient(circle at center, rgba(59, 130, 246, 0.25) 0%, rgba(129, 140, 248, 0.1) 50%, transparent 80%);
       bottom: -30px;
       right: -20px;
       animation: liq2 15s cubic-bezier(0.4, 0, 0.2, 1) infinite alternate;
@@ -352,44 +435,41 @@
     #reply-text {
       position: relative;
       z-index: 1;
-      color: #F5F5F7;
-      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+      color: var(--text-primary);
+      text-wrap: pretty;
+      font-variant-numeric: tabular-nums;
     }
 
     #reply-text code {
-      background: rgba(139, 92, 246, 0.15);
-      /* Light violet hint */
-      color: #e0d4ff;
-      padding: 2px 5px;
+      background: var(--accent-soft);
+      color: #c7d2fe;
+      padding: 2px 6px;
       border-radius: 4px;
-      font-family: 'SF Mono', ui-monospace, monospace;
+      font-family: 'Geist Mono', 'SF Mono', ui-monospace, monospace;
       font-size: 12.5px;
     }
 
     #reply-text pre {
-      background: rgba(0, 0, 0, 0.35);
-      /* Darker contrast */
+      background: rgba(10, 10, 26, 0.6);
       padding: 12px 14px;
       border-radius: 10px;
       overflow-x: auto;
       margin: 8px 0;
-      font-family: 'SF Mono', ui-monospace, monospace;
+      font-family: 'Geist Mono', 'SF Mono', ui-monospace, monospace;
       font-size: 12.5px;
-      line-height: 1.5;
-      border: 1px solid rgba(255, 255, 255, 0.05);
-      /* Subtler border */
+      line-height: 1.55;
+      border: 1px solid var(--border);
     }
 
     #reply-text pre code {
       background: none;
-      color: rgba(255, 255, 255, 0.9);
+      color: rgba(255, 255, 255, 0.92);
       padding: 0;
     }
 
     #reply-text strong {
-      color: #a855f7;
-      /* Brighter purple for emphasis */
-      font-weight: 500;
+      color: var(--accent-hover);
+      font-weight: 600;
     }
 
     #reply-text img {
@@ -433,18 +513,17 @@
     /* ── Notification Banner ── */
     #notification-box {
       display: none;
-      background: rgba(28, 28, 30, 0.85);
-      backdrop-filter: blur(80px) saturate(220%) brightness(1.1);
-      -webkit-backdrop-filter: blur(80px) saturate(220%) brightness(1.1);
-      border: 1px solid rgba(255, 255, 255, 0.18);
-      border-left: 3px solid #a855f7;
-      /* Brighter purple */
-      border-radius: 16px;
-      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.12), inset 0 0 0 0.5px rgba(255, 255, 255, 0.06);
+      background: var(--bg-panel);
+      backdrop-filter: blur(80px) saturate(180%);
+      -webkit-backdrop-filter: blur(80px) saturate(180%);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-card);
       padding: 14px 18px;
-      font-size: 14px;
-      line-height: 1.5;
-      letter-spacing: -0.01em;
+      font-size: 13.5px;
+      line-height: 1.55;
+      letter-spacing: -0.005em;
       position: relative;
       overflow: hidden;
       flex-shrink: 0;
@@ -494,7 +573,7 @@
       font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.05em;
-      color: #8b5cf6;
+      color: #818cf8;
       margin-bottom: 6px;
     }
 
@@ -537,18 +616,20 @@
       color: rgba(255, 255, 255, 0.9);
     }
 
-    /* ── Mic Button (Siri-style minimal) ── */
+    /* ── Mic Button ── */
     #mic-btn {
       appearance: none;
       border: none;
       background: transparent;
-      color: rgba(255, 255, 255, 0.2);
+      color: var(--text-muted);
       cursor: pointer;
-      padding: 0;
+      padding: 4px;
       margin-right: -2px;
-      transition: color 0.3s ease, opacity 0.3s ease;
+      border-radius: 8px;
+      transition: color 180ms var(--ease),
+                  background 180ms var(--ease),
+                  transform 180ms var(--ease);
       flex-shrink: 0;
-      opacity: 0.6;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -557,17 +638,18 @@
     }
 
     #mic-btn:hover {
-      color: rgba(255, 255, 255, 0.5);
-      opacity: 1;
+      color: var(--text-primary);
+      background: var(--bg-card);
     }
+    #mic-btn:active { transform: scale(0.94); }
 
     #mic-btn.listening {
-      color: #a855f7;
-      opacity: 1;
+      color: var(--accent);
+      background: var(--accent-soft);
     }
 
     #mic-btn.listening svg {
-      filter: drop-shadow(0 0 8px rgba(168, 85, 247, 0.6));
+      filter: drop-shadow(0 0 8px rgba(99, 102, 241, 0.6));
     }
 
     #mic-btn svg {
@@ -924,8 +1006,8 @@
     /* ── Live Thinking Block ── */
     .thinking-block {
       padding: 10px 14px;
-      background: rgba(147, 51, 234, 0.08);
-      border-left: 2px solid rgba(147, 51, 234, 0.4);
+      background: rgba(99, 102, 241, 0.08);
+      border-left: 2px solid rgba(99, 102, 241, 0.4);
       border-radius: 8px;
       font-size: 11.5px;
       color: rgba(255, 255, 255, 0.55);
@@ -935,15 +1017,15 @@
       overflow-y: auto;
       animation: fadeSlideIn 0.3s ease;
       scrollbar-width: thin;
-      scrollbar-color: rgba(147, 51, 234, 0.3) transparent;
+      scrollbar-color: rgba(99, 102, 241, 0.3) transparent;
     }
     .thinking-block::-webkit-scrollbar { width: 4px; }
-    .thinking-block::-webkit-scrollbar-thumb { background: rgba(147, 51, 234, 0.3); border-radius: 2px; }
+    .thinking-block::-webkit-scrollbar-thumb { background: rgba(99, 102, 241, 0.3); border-radius: 2px; }
     .thinking-label {
       font-size: 10px;
       text-transform: uppercase;
       letter-spacing: 1px;
-      color: rgba(147, 51, 234, 0.6);
+      color: rgba(99, 102, 241, 0.6);
       margin-bottom: 4px;
       font-style: normal;
     }
@@ -1016,7 +1098,7 @@
       background: rgba(10, 10, 14, 0.72);
       backdrop-filter: blur(24px) saturate(180%);
       -webkit-backdrop-filter: blur(24px) saturate(180%);
-      border: 2px dashed rgba(168, 85, 247, 0.5);
+      border: 2px dashed rgba(99, 102, 241, 0.5);
       border-radius: 20px;
       opacity: 0;
       pointer-events: none;
@@ -1033,20 +1115,20 @@
 
       0%,
       100% {
-        border-color: rgba(168, 85, 247, 0.4);
-        box-shadow: 0 0 0 0 rgba(168, 85, 247, 0);
+        border-color: rgba(99, 102, 241, 0.4);
+        box-shadow: 0 0 0 0 rgba(99, 102, 241, 0);
       }
 
       50% {
-        border-color: rgba(168, 85, 247, 0.9);
-        box-shadow: 0 0 24px 4px rgba(168, 85, 247, 0.15);
+        border-color: rgba(99, 102, 241, 0.9);
+        box-shadow: 0 0 24px 4px rgba(99, 102, 241, 0.15);
       }
     }
 
     .drop-icon {
       font-size: 42px;
       animation: dropIconFloat 2s ease-in-out infinite;
-      filter: drop-shadow(0 0 16px rgba(168, 85, 247, 0.5));
+      filter: drop-shadow(0 0 16px rgba(99, 102, 241, 0.5));
     }
 
     @keyframes dropIconFloat {
@@ -1085,7 +1167,7 @@
       -webkit-backdrop-filter: blur(40px) saturate(200%);
       border: 1px solid rgba(255, 255, 255, 0.1);
       border-radius: 16px;
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(168, 85, 247, 0.15);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(99, 102, 241, 0.15);
       overflow: hidden;
       opacity: 0;
       transform: translateY(-6px) scale(0.97);
@@ -1125,8 +1207,8 @@
     }
 
     .picker-tab.active {
-      color: #a855f7;
-      background: rgba(168, 85, 247, 0.08);
+      color: #6366f1;
+      background: rgba(99, 102, 241, 0.08);
     }
 
     .picker-tab:hover:not(.active) {
@@ -1153,7 +1235,7 @@
     }
 
     #picker-search:focus {
-      border-color: rgba(168, 85, 247, 0.5);
+      border-color: rgba(99, 102, 241, 0.5);
     }
 
     #picker-search::placeholder {
@@ -1181,12 +1263,12 @@
 
     .picker-item:hover,
     .picker-item.selected {
-      background: rgba(168, 85, 247, 0.12);
+      background: rgba(99, 102, 241, 0.12);
       color: #FFF;
     }
 
     .picker-item.selected {
-      background: rgba(168, 85, 247, 0.18);
+      background: rgba(99, 102, 241, 0.18);
     }
 
     .picker-item-icon {
@@ -1261,8 +1343,8 @@
       display: inline-flex;
       align-items: center;
       gap: 4px;
-      background: rgba(168, 85, 247, 0.18);
-      border: 1px solid rgba(168, 85, 247, 0.35);
+      background: rgba(99, 102, 241, 0.18);
+      border: 1px solid rgba(99, 102, 241, 0.35);
       color: rgba(200, 160, 255, 1);
       border-radius: 6px;
       padding: 2px 8px 2px 6px;
@@ -1364,7 +1446,7 @@
     }
 
     #task-drawer-toggle .task-count-badge {
-      background: rgba(168, 85, 247, 0.6);
+      background: rgba(99, 102, 241, 0.6);
       color: #FFF;
       font-size: 9px;
       font-weight: 600;
@@ -1456,7 +1538,7 @@
 
     .task-progress-fill {
       height: 100%;
-      background: linear-gradient(90deg, #8b5cf6, #a855f7);
+      background: linear-gradient(90deg, #818cf8, #6366f1);
       border-radius: 2px;
       transition: width 0.5s cubic-bezier(0.32, 0.72, 0, 1);
     }
@@ -1636,7 +1718,7 @@
     }
 
     .inbox-edit-input:focus {
-      border-color: rgba(168, 85, 247, 0.6);
+      border-color: rgba(99, 102, 241, 0.6);
     }
 
     /* ── Focus Styles for Keyboard Nav ── */
@@ -1649,277 +1731,465 @@
     #task-drawer-toggle:focus-visible,
     .task-cancel-btn:focus-visible,
     .inbox-action-btn:focus-visible {
-      outline: 2px solid rgba(168, 85, 247, 0.7);
+      outline: 2px solid rgba(99, 102, 241, 0.7);
       outline-offset: 2px;
     }
 
-    /* ── Live Voice Panel ──────────────────────── */
+    /* ──────────────────────────────────────────────
+       Live Voice — FLOATING OVERLAY, not a page section.
+       Matches the input-bar's look exactly so the overlay reads as a single
+       coherent HUD floating above any app (dark or bright).
+       ────────────────────────────────────────────── */
     #live-voice-panel {
       position: relative;
-      margin: 8px 0 10px 0;
-      padding: 12px 14px 10px 14px;
-      background: rgba(20, 20, 24, 0.82);
+      margin: 0 0 8px 0;
+      padding: 14px 14px 12px 14px;
+      width: 320px;
+      max-width: 100%;
+      /* Identical glass recipe to #input-box — indigo radial on bg-secondary */
+      background:
+        radial-gradient(ellipse 80% 60% at 20% 30%, rgba(99, 102, 241, 0.06) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 80% at 80% 70%, rgba(129, 140, 248, 0.04) 0%, transparent 60%),
+        var(--bg-panel);
       backdrop-filter: blur(80px) saturate(180%);
       -webkit-backdrop-filter: blur(80px) saturate(180%);
-      border: 1px solid rgba(147, 51, 234, 0.22);
-      border-radius: 14px;
-      color: rgba(255, 255, 255, 0.92);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-xl);
+      color: var(--text-primary);
       font-size: 12.5px;
-      animation: fadeSlideIn 0.28s ease;
+      box-shadow: var(--shadow-card);
       overflow: hidden;
+      animation: lvPanelEnter 0.4s var(--ease);
+      isolation: isolate;
     }
     #live-voice-panel.hidden { display: none; }
 
-    #live-voice-panel .lv-header {
+    /* Hero — compact orb + state */
+    #live-voice-panel .lv-hero {
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      margin-bottom: 8px;
-    }
-    #live-voice-panel .lv-state {
-      display: inline-flex;
-      align-items: center;
-      gap: 7px;
-      font-weight: 500;
-      font-size: 11.5px;
-      letter-spacing: 0.2px;
-    }
-    #live-voice-panel .lv-state .lv-dot {
-      width: 8px; height: 8px; border-radius: 50%;
-      background: rgba(168, 85, 247, 0.8);
-      box-shadow: 0 0 8px rgba(168, 85, 247, 0.55);
-    }
-    #live-voice-panel.state-listening .lv-dot {
-      background: rgba(52, 211, 153, 0.95);
-      box-shadow: 0 0 10px rgba(52, 211, 153, 0.7);
-      animation: lvBreath 1.6s ease-in-out infinite;
-    }
-    #live-voice-panel.state-speaking .lv-dot {
-      background: rgba(147, 197, 253, 0.95);
-      box-shadow: 0 0 10px rgba(147, 197, 253, 0.7);
-      animation: lvBreath 1.1s ease-in-out infinite;
-    }
-    #live-voice-panel.state-thinking .lv-dot {
-      background: rgba(255, 194, 102, 0.9);
-      box-shadow: 0 0 10px rgba(255, 194, 102, 0.6);
-      animation: lvShimmer 1.4s linear infinite;
-    }
-    #live-voice-panel.state-connecting .lv-dot,
-    #live-voice-panel.state-reconnecting .lv-dot {
-      background: rgba(255, 255, 255, 0.55);
-      animation: lvShimmer 1.2s linear infinite;
-    }
-    #live-voice-panel.state-interrupted .lv-dot {
-      animation: lvFlash 0.4s ease-in-out 2;
-    }
-    #live-voice-panel.state-error .lv-dot {
-      background: rgba(248, 113, 113, 0.95);
-      box-shadow: 0 0 10px rgba(248, 113, 113, 0.65);
-    }
-
-    #live-voice-panel .lv-timer {
-      font-family: ui-monospace, "SF Mono", Menlo, monospace;
-      font-size: 11px;
-      color: rgba(255, 255, 255, 0.55);
-      font-variant-numeric: tabular-nums;
-    }
-
-    #live-voice-panel .lv-amp {
-      height: 3px;
-      border-radius: 2px;
-      background: rgba(255, 255, 255, 0.05);
-      overflow: hidden;
+      gap: 12px;
       margin-bottom: 10px;
     }
-    #live-voice-panel .lv-amp > span {
-      display: block;
-      height: 100%;
-      width: 100%;
-      transform-origin: center;
-      transform: scaleX(var(--amp, 0));
-      transition: transform 80ms ease-out;
-      background: linear-gradient(90deg,
-        rgba(147, 51, 234, 0.7) 0%,
-        rgba(168, 85, 247, 0.9) 50%,
-        rgba(147, 51, 234, 0.7) 100%);
+
+    #live-voice-panel .lv-orb-stage {
+      position: relative;
+      width: 48px;
+      height: 48px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
 
+    /* Two concentric indigo rings (HUD should be quiet) */
+    #live-voice-panel .lv-ring {
+      position: absolute;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: 1px solid var(--accent);
+      opacity: 0;
+      animation: lvRingPulse 2.4s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+      pointer-events: none;
+    }
+    #live-voice-panel .lv-ring:nth-child(1) { animation-delay: 0s;   }
+    #live-voice-panel .lv-ring:nth-child(2) { animation-delay: 0.8s; }
+    #live-voice-panel .lv-ring:nth-child(3) { display: none; }
+
+    /* The orb — 28px, matches the .icon in the input bar */
+    #live-voice-panel .lv-orb {
+      position: relative;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 30% 28%,
+        rgba(241, 243, 255, 0.9) 0%,
+        rgba(165, 180, 252, 0.78) 26%,
+        var(--accent) 62%,
+        var(--accent-hover) 100%);
+      box-shadow:
+        0 0 16px var(--accent-glow),
+        0 0 32px rgba(99, 102, 241, 0.10),
+        inset 0 -2px 5px rgba(55, 48, 163, 0.35),
+        inset 0 2px 5px rgba(255, 255, 255, 0.2);
+      transform: scale(calc(1 + var(--lv-amp, 0) * 0.3));
+      transition: transform 90ms ease-out, box-shadow 400ms ease, background 400ms ease;
+    }
+    /* Highlight glint */
+    #live-voice-panel .lv-orb::after {
+      content: "";
+      position: absolute;
+      top: 18%; left: 22%;
+      width: 26%; height: 18%;
+      border-radius: 50%;
+      background: radial-gradient(ellipse, rgba(255, 255, 255, 0.6) 0%, transparent 70%);
+      filter: blur(1px);
+      pointer-events: none;
+    }
+
+    /* State-driven orb (uses dashboard state tokens) */
+    #live-voice-panel.state-listening .lv-orb {
+      /* default — indigo */
+    }
+    #live-voice-panel.state-listening .lv-ring { border-color: var(--accent); }
+
+    #live-voice-panel.state-speaking .lv-orb {
+      background: radial-gradient(circle at 32% 28%,
+        rgba(241, 243, 255, 0.92) 0%,
+        rgba(147, 197, 253, 0.78) 25%,
+        var(--info) 60%,
+        #1e40af 100%);
+      box-shadow:
+        0 0 28px rgba(59, 130, 246, 0.35),
+        0 0 56px rgba(59, 130, 246, 0.14),
+        inset 0 -3px 8px rgba(30, 64, 175, 0.4),
+        inset 0 3px 8px rgba(255, 255, 255, 0.22);
+      animation: lvOrbBreath 1.05s ease-in-out infinite;
+    }
+    #live-voice-panel.state-speaking .lv-ring { border-color: var(--info); }
+
+    #live-voice-panel.state-thinking .lv-orb {
+      background: radial-gradient(circle at 32% 28%,
+        rgba(255, 251, 235, 0.92) 0%,
+        rgba(253, 224, 71, 0.75) 25%,
+        var(--warning) 60%,
+        #92400e 100%);
+      box-shadow:
+        0 0 24px rgba(245, 158, 11, 0.35),
+        0 0 48px rgba(245, 158, 11, 0.14),
+        inset 0 -3px 8px rgba(146, 64, 14, 0.4),
+        inset 0 3px 8px rgba(255, 255, 255, 0.22);
+      animation: lvOrbSpin 2.4s linear infinite;
+    }
+    #live-voice-panel.state-thinking .lv-ring { border-color: var(--warning); }
+
+    #live-voice-panel.state-connecting .lv-orb,
+    #live-voice-panel.state-reconnecting .lv-orb {
+      background: radial-gradient(circle at 32% 28%,
+        rgba(255, 255, 255, 0.85) 0%,
+        rgba(203, 213, 225, 0.7) 40%,
+        rgba(71, 85, 105, 0.85) 100%);
+      animation: lvOrbBreath 1.6s ease-in-out infinite;
+    }
+    #live-voice-panel.state-connecting .lv-ring,
+    #live-voice-panel.state-reconnecting .lv-ring { border-color: rgba(148, 163, 184, 0.6); }
+
+    #live-voice-panel.state-interrupted .lv-orb {
+      animation: lvOrbFlash 0.4s ease-in-out 2;
+    }
+
+    #live-voice-panel.state-error .lv-orb {
+      background: radial-gradient(circle at 32% 28%,
+        rgba(254, 242, 242, 0.9) 0%,
+        rgba(252, 165, 165, 0.75) 25%,
+        var(--danger) 60%,
+        #7f1d1d 100%);
+      box-shadow:
+        0 0 24px rgba(239, 68, 68, 0.4),
+        inset 0 0 12px rgba(127, 29, 29, 0.45);
+    }
+    #live-voice-panel.state-error .lv-ring { border-color: var(--danger); }
+
+    /* Hero text column */
+    #live-voice-panel .lv-hero-meta {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0;
+    }
+    #live-voice-panel .lv-state-text {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: -0.005em;
+      color: var(--text-primary);
+    }
+    #live-voice-panel .lv-timer {
+      font-family: 'Geist Mono', 'SF Mono', ui-monospace, monospace;
+      font-size: 10.5px;
+      color: var(--text-secondary);
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.4px;
+    }
+
+    /* Transcript — compact chat cards */
     #live-voice-panel .lv-transcript {
-      max-height: 180px;
+      max-height: 150px;
       overflow-y: auto;
       display: flex;
       flex-direction: column;
       gap: 6px;
       margin-bottom: 8px;
+      padding: 2px 1px;
       scrollbar-width: thin;
-      scrollbar-color: rgba(147, 51, 234, 0.25) transparent;
+      scrollbar-color: rgba(99, 102, 241, 0.3) transparent;
     }
+    #live-voice-panel .lv-transcript:empty { display: none; }
     #live-voice-panel .lv-transcript::-webkit-scrollbar { width: 4px; }
     #live-voice-panel .lv-transcript::-webkit-scrollbar-thumb {
-      background: rgba(147, 51, 234, 0.3);
+      background: rgba(99, 102, 241, 0.3);
       border-radius: 2px;
     }
     #live-voice-panel .lv-turn {
-      padding: 6px 10px;
-      border-radius: 8px;
+      padding: 7px 11px;
+      border-radius: 10px;
       line-height: 1.45;
       font-size: 12px;
-      max-width: 95%;
+      max-width: 88%;
       word-break: break-word;
+      animation: lvBubbleIn 0.3s cubic-bezier(0.22, 1, 0.36, 1);
     }
     #live-voice-panel .lv-turn.turn-user {
       align-self: flex-end;
-      background: rgba(147, 51, 234, 0.14);
-      border: 1px solid rgba(147, 51, 234, 0.25);
-      color: rgba(255, 255, 255, 0.94);
+      background: var(--accent-soft);
+      border: 1px solid rgba(99, 102, 241, 0.25);
+      color: var(--text-primary);
+      border-bottom-right-radius: 4px;
     }
     #live-voice-panel .lv-turn.turn-ai {
       align-self: flex-start;
-      background: rgba(255, 255, 255, 0.04);
-      color: rgba(255, 255, 255, 0.88);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      color: var(--text-primary);
+      border-bottom-left-radius: 4px;
     }
     #live-voice-panel .lv-turn.streaming::after {
       content: "▍";
-      color: rgba(168, 85, 247, 0.7);
-      animation: lvCaret 0.8s steps(2, end) infinite;
-      margin-left: 2px;
+      display: inline-block;
+      margin-left: 3px;
+      color: var(--accent);
+      animation: lvCaret 0.7s steps(2, end) infinite;
     }
 
+    /* Chips — compact pills */
     #live-voice-panel .lv-chips {
       display: flex;
       flex-wrap: wrap;
       gap: 5px;
       margin-bottom: 8px;
-      min-height: 0;
     }
+    #live-voice-panel .lv-chips:empty { display: none; }
     #live-voice-panel .lv-chip {
       display: inline-flex;
       align-items: center;
       gap: 5px;
-      padding: 3px 9px;
+      padding: 2px 9px;
       border-radius: 999px;
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      font-size: 11px;
-      color: rgba(255, 255, 255, 0.72);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      font-size: 10.5px;
+      color: var(--text-secondary);
+      animation: lvBubbleIn 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+      transition: opacity 200ms ease, transform 200ms ease;
     }
     #live-voice-panel .lv-chip::before {
       content: "";
-      width: 6px; height: 6px; border-radius: 50%;
-      background: rgba(255, 194, 102, 0.9);
-      animation: lvBreath 1.1s ease-in-out infinite;
+      width: 5px; height: 5px; border-radius: 50%;
+      background: var(--warning);
+      animation: lvDotBreath 1.1s ease-in-out infinite;
     }
     #live-voice-panel .lv-chip.done {
-      background: rgba(52, 211, 153, 0.08);
-      border-color: rgba(52, 211, 153, 0.25);
-      color: rgba(167, 243, 208, 0.92);
+      background: rgba(34, 197, 94, 0.10);
+      border-color: rgba(34, 197, 94, 0.28);
+      color: #86efac;
     }
     #live-voice-panel .lv-chip.done::before {
-      background: rgba(52, 211, 153, 0.95);
+      background: var(--success);
       animation: none;
     }
     #live-voice-panel .lv-chip.failed {
-      background: rgba(248, 113, 113, 0.09);
-      border-color: rgba(248, 113, 113, 0.3);
-      color: rgba(254, 202, 202, 0.95);
+      background: rgba(239, 68, 68, 0.10);
+      border-color: rgba(239, 68, 68, 0.28);
+      color: #fca5a5;
     }
     #live-voice-panel .lv-chip.failed::before {
-      background: rgba(248, 113, 113, 0.95);
+      background: var(--danger);
       animation: none;
     }
 
+    /* Controls */
     #live-voice-panel .lv-controls {
       display: flex;
       justify-content: flex-end;
-      gap: 6px;
+      gap: 8px;
     }
     #live-voice-panel .lv-btn {
-      padding: 4px 10px;
+      padding: 5px 12px;
       border-radius: 8px;
-      background: rgba(255, 255, 255, 0.04);
-      border: 1px solid rgba(255, 255, 255, 0.09);
-      color: rgba(255, 255, 255, 0.78);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      color: var(--text-primary);
+      font-family: inherit;
       font-size: 11px;
       font-weight: 500;
+      letter-spacing: 0.1px;
       cursor: pointer;
-      transition: background 120ms ease, color 120ms ease;
+      transition: background 180ms var(--ease),
+                  border-color 180ms var(--ease),
+                  transform 180ms var(--ease);
     }
     #live-voice-panel .lv-btn:hover {
-      background: rgba(255, 255, 255, 0.08);
-      color: rgba(255, 255, 255, 0.92);
+      background: var(--bg-card-hover);
+      border-color: var(--border-strong);
     }
+    #live-voice-panel .lv-btn:active { transform: scale(0.96); }
     #live-voice-panel .lv-btn[aria-pressed="true"] {
-      background: rgba(147, 51, 234, 0.2);
-      border-color: rgba(168, 85, 247, 0.4);
-      color: rgba(233, 213, 255, 0.95);
+      background: rgba(99, 102, 241, 0.18);
+      border-color: rgba(99, 102, 241, 0.45);
+      color: #c7d2fe;
     }
     #live-voice-panel .lv-btn.end {
-      background: rgba(248, 113, 113, 0.1);
-      border-color: rgba(248, 113, 113, 0.25);
-      color: rgba(254, 202, 202, 0.92);
+      background: rgba(239, 68, 68, 0.12);
+      border-color: rgba(239, 68, 68, 0.32);
+      color: #fca5a5;
     }
     #live-voice-panel .lv-btn.end:hover {
-      background: rgba(248, 113, 113, 0.2);
+      background: rgba(239, 68, 68, 0.2);
+      border-color: rgba(239, 68, 68, 0.5);
     }
 
-    /* Small Live pill that sits next to the mic button */
+    /* Live entry pill (next to mic button) */
     #live-btn {
-      padding: 0 8px;
-      height: 22px;
-      line-height: 22px;
+      padding: 0 11px;
+      height: 24px;
+      line-height: 24px;
       margin-left: 4px;
       border-radius: 999px;
-      border: 1px solid rgba(168, 85, 247, 0.35);
-      background: rgba(147, 51, 234, 0.08);
-      color: rgba(233, 213, 255, 0.92);
-      font-size: 10.5px;
+      border: 1px solid rgba(99, 102, 241, 0.4);
+      background: var(--accent-soft);
+      color: #c7d2fe;
+      font-family: inherit;
+      font-size: 10px;
       font-weight: 600;
-      letter-spacing: 0.3px;
+      letter-spacing: 0.8px;
       cursor: pointer;
-      transition: background 120ms ease, border-color 120ms ease;
+      transition: background 180ms var(--ease),
+                  border-color 180ms var(--ease),
+                  transform 180ms var(--ease),
+                  box-shadow 180ms var(--ease);
     }
     #live-btn:hover {
-      background: rgba(147, 51, 234, 0.18);
-      border-color: rgba(168, 85, 247, 0.6);
+      background: var(--accent-strong);
+      border-color: rgba(99, 102, 241, 0.7);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 14px var(--accent-glow);
     }
+    #live-btn:active { transform: scale(0.96); }
     #live-btn.active {
-      background: rgba(52, 211, 153, 0.18);
-      border-color: rgba(52, 211, 153, 0.5);
-      color: rgba(167, 243, 208, 0.95);
+      background: var(--success-bg);
+      border-color: rgba(34, 197, 94, 0.55);
+      color: #86efac;
+      box-shadow: 0 0 12px rgba(34, 197, 94, 0.3);
+    }
+    #live-btn.active::before {
+      content: "●";
+      margin-right: 5px;
+      animation: liveDotBlink 1.2s ease-in-out infinite;
+    }
+    @keyframes liveDotBlink {
+      0%, 100% { opacity: 1;    }
+      50%      { opacity: 0.35; }
     }
 
-    @keyframes lvBreath {
-      0%, 100% { opacity: 0.55; transform: scale(1); }
-      50%      { opacity: 1;    transform: scale(1.15); }
+    /* ── Animations ── */
+    @keyframes lvPanelEnter {
+      0%   { opacity: 0; transform: translateY(-8px) scale(0.98); }
+      100% { opacity: 1; transform: translateY(0)    scale(1);    }
     }
-    @keyframes lvShimmer {
-      0%   { opacity: 0.3; }
-      50%  { opacity: 1; }
-      100% { opacity: 0.3; }
+    @keyframes lvBubbleIn {
+      0%   { opacity: 0; transform: translateY(6px) scale(0.97); }
+      100% { opacity: 1; transform: translateY(0)   scale(1);    }
     }
-    @keyframes lvFlash {
-      0%, 100% { transform: scale(1);   opacity: 1;   }
-      50%      { transform: scale(1.6); opacity: 0.5; }
+    @keyframes lvDotBreath {
+      0%, 100% { opacity: 0.55; transform: scale(1);   }
+      50%      { opacity: 1;    transform: scale(1.2); }
+    }
+    @keyframes lvRingPulse {
+      0%   { transform: scale(0.85); opacity: 0.6; }
+      100% { transform: scale(2.2);  opacity: 0;   }
+    }
+    @keyframes lvOrbBreath {
+      0%, 100% { transform: scale(calc(1   + var(--lv-amp, 0) * 0.35)); }
+      50%      { transform: scale(calc(1.1 + var(--lv-amp, 0) * 0.35)); }
+    }
+    @keyframes lvOrbSpin {
+      0%   { filter: hue-rotate(0deg)   brightness(1);   }
+      50%  { filter: hue-rotate(15deg)  brightness(1.08); }
+      100% { filter: hue-rotate(360deg) brightness(1);   }
+    }
+    @keyframes lvOrbFlash {
+      0%, 100% { filter: brightness(1)   saturate(1);   }
+      50%      { filter: brightness(1.5) saturate(1.6); }
     }
     @keyframes lvCaret {
-      0%, 50%  { opacity: 1; }
-      51%, 100%{ opacity: 0; }
+      0%, 50%   { opacity: 1; }
+      51%, 100% { opacity: 0; }
     }
   </style>
 </head>
 
 <body>
+  <script>
+    // ── Theme bootstrap ────────────────────────────────────────
+    // The overlay mirrors the dashboard's light/dark choice. Sources, in order:
+    //   1. `atlasOverlay.getTheme()` — user's persisted choice from electron-store
+    //   2. `prefers-color-scheme` — OS-level preference
+    // The chosen palette is applied BEFORE first paint so there's no flash.
+    (function bootstrapTheme() {
+      const applyResolved = (pref) => {
+        const wantDark = pref === 'dark' ||
+          (pref === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches) ||
+          (pref !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        document.body.classList.toggle('theme-dark', wantDark);
+        document.body.classList.toggle('theme-light', !wantDark);
+      };
+
+      // Paint-first guess from OS media query (no flash while IPC resolves)
+      applyResolved('system');
+
+      // Resolve the authoritative choice via IPC if available
+      if (window.atlasOverlay?.getTheme) {
+        window.atlasOverlay.getTheme()
+          .then(applyResolved)
+          .catch(() => { /* fall back to prefers-color-scheme guess */ });
+      }
+
+      // Live-update when the user toggles the menu item
+      if (window.atlasOverlay?.onThemeChanged) {
+        window.atlasOverlay.onThemeChanged(applyResolved);
+      }
+
+      // If they're on "system" and the OS toggles during a session, follow along
+      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+        if (window.atlasOverlay?.getTheme) {
+          window.atlasOverlay.getTheme().then((pref) => {
+            if (pref === 'system') applyResolved('system');
+          });
+        } else {
+          applyResolved('system');
+        }
+      });
+    })();
+  </script>
+
   <!-- Screen reader live region for status announcements -->
   <div id="sr-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
 
   <!-- Live Voice Panel (shown only during an active live voice session) -->
   <div id="live-voice-panel" class="hidden" role="region" aria-label="Live voice session">
-    <div class="lv-header">
-      <span class="lv-state" id="lv-state"><span class="lv-dot" aria-hidden="true"></span><span id="lv-state-text">Connecting…</span></span>
-      <span class="lv-timer" id="lv-timer" aria-label="Session duration">0:00</span>
+    <div class="lv-hero">
+      <div class="lv-orb-stage" aria-hidden="true">
+        <span class="lv-ring"></span>
+        <span class="lv-ring"></span>
+        <span class="lv-ring"></span>
+        <span class="lv-orb" id="lv-orb"></span>
+      </div>
+      <div class="lv-hero-meta">
+        <div class="lv-state-text" id="lv-state-text">Connecting…</div>
+        <div class="lv-timer" id="lv-timer" aria-label="Session duration">0:00</div>
+      </div>
     </div>
-    <div class="lv-amp" id="lv-amp" aria-hidden="true"><span></span></div>
     <div class="lv-transcript" id="lv-transcript" aria-live="polite" aria-atomic="false"></div>
     <div class="lv-chips" id="lv-chips" aria-live="polite"></div>
     <div class="lv-controls">
@@ -2605,7 +2875,7 @@
         h = h.replace(/`([^`\n]+)`/g, '<code>$1</code>');
         h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
         h = h.replace(/(?<!\w)\*([^*\n]+?)\*(?!\w)/g, '<em>$1</em>');
-        h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" style="color:#7c6aff">$1</a>');
+        h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" style="color:#818cf8">$1</a>');
         h = h.replace(/^[\s]*[*\-]\s+/gm, '• ');
         h = h.replace(/\n/g, '<br>');
         return h;
@@ -2679,12 +2949,11 @@
 
       // ── Live Voice (continuous bidirectional) ──
       const lvPanel = document.getElementById('live-voice-panel');
-      const lvStateEl = document.getElementById('lv-state');
       const lvStateText = document.getElementById('lv-state-text');
       const lvTimerEl = document.getElementById('lv-timer');
       const lvTranscript = document.getElementById('lv-transcript');
       const lvChips = document.getElementById('lv-chips');
-      const lvAmpBar = document.getElementById('lv-amp').firstElementChild;
+      const lvOrb = document.getElementById('lv-orb');
       const lvMuteBtn = document.getElementById('lv-mute');
       const lvEndBtn = document.getElementById('lv-end');
       const liveBtn = document.getElementById('live-btn');
@@ -2810,6 +3079,8 @@
           analyser.fftSize = 512;
           source.connect(analyser);
           const data = new Uint8Array(analyser.fftSize);
+          // Simple envelope follower so the orb doesn't jitter between samples.
+          let smoothed = 0;
           const tick = () => {
             if (!lvActive) return;
             analyser.getByteTimeDomainData(data);
@@ -2819,8 +3090,10 @@
               sum += v * v;
             }
             const rms = Math.sqrt(sum / data.length);
-            const amp = Math.min(1, rms * 3.2);
-            lvAmpBar.style.setProperty('--amp', amp.toFixed(3));
+            const target = Math.min(1, rms * 3.6);
+            // Attack fast, release slow — gives the orb a lively-but-not-twitchy pulse.
+            smoothed += (target > smoothed ? 0.4 : 0.1) * (target - smoothed);
+            lvPanel.style.setProperty('--lv-amp', smoothed.toFixed(3));
             lvAmpRaf = requestAnimationFrame(tick);
           };
           tick();
@@ -2844,7 +3117,7 @@
         if (lvAmpStream) { lvAmpStream.getTracks().forEach(t => t.stop()); lvAmpStream = null; }
         if (lvAmpCtx && lvAmpCtx.state !== 'closed') { lvAmpCtx.close().catch(() => {}); }
         lvAmpCtx = null;
-        lvAmpBar.style.setProperty('--amp', '0');
+        lvPanel.style.setProperty('--lv-amp', '0');
       }
 
       function handleLiveVoiceStatus(msg) {

@@ -633,6 +633,17 @@ let botMessageCount = 0;
 let botToolCount = 0;
 const channelStatuses = {};
 
+// Broadcast a theme change to every window that cares about it. The overlay
+// is a separate BrowserWindow from the main one, so both need to be notified.
+function broadcastThemeChange(theme) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("theme-changed", theme);
+    }
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+        overlayWindow.webContents.send("theme-changed", theme);
+    }
+}
+
 // ── User Preferences Store ───────────────────
 const Store = require("electron-store");
 const store = new Store({
@@ -1485,6 +1496,8 @@ function registerIPC() {
     ipcMain.on("overlay:show", () => {
         showOverlay();
     });
+    // Lets the overlay sync its theme on load with the user's stored choice.
+    ipcMain.handle("overlay:getTheme", () => store.get("theme") || "system");
     // Ready Hub "Talk" button — trigger live voice session from renderer.
     // Mirrors what the global live-voice hotkey does when pressed.
     ipcMain.handle("live-voice:trigger", () => {
@@ -3769,9 +3782,7 @@ function createTray() {
                             checked: store.get("theme") === "light",
                             click: () => {
                                 store.set("theme", "light");
-                                if (mainWindow && !mainWindow.isDestroyed()) {
-                                    mainWindow.webContents.send("theme-changed", "light");
-                                }
+                                broadcastThemeChange("light");
                             },
                         },
                         {
@@ -3780,9 +3791,7 @@ function createTray() {
                             checked: store.get("theme") === "dark",
                             click: () => {
                                 store.set("theme", "dark");
-                                if (mainWindow && !mainWindow.isDestroyed()) {
-                                    mainWindow.webContents.send("theme-changed", "dark");
-                                }
+                                broadcastThemeChange("dark");
                             },
                         },
                         {
@@ -3791,9 +3800,7 @@ function createTray() {
                             checked: store.get("theme") === "system",
                             click: () => {
                                 store.set("theme", "system");
-                                if (mainWindow && !mainWindow.isDestroyed()) {
-                                    mainWindow.webContents.send("theme-changed", "system");
-                                }
+                                broadcastThemeChange("system");
                             },
                         },
                     ],
@@ -3924,9 +3931,7 @@ function updateTrayMenu() {
                             checked: store.get("theme") === "light",
                             click: () => {
                                 store.set("theme", "light");
-                                if (mainWindow && !mainWindow.isDestroyed()) {
-                                    mainWindow.webContents.send("theme-changed", "light");
-                                }
+                                broadcastThemeChange("light");
                             },
                         },
                         {
@@ -3935,9 +3940,7 @@ function updateTrayMenu() {
                             checked: store.get("theme") === "dark",
                             click: () => {
                                 store.set("theme", "dark");
-                                if (mainWindow && !mainWindow.isDestroyed()) {
-                                    mainWindow.webContents.send("theme-changed", "dark");
-                                }
+                                broadcastThemeChange("dark");
                             },
                         },
                         {
@@ -3946,9 +3949,7 @@ function updateTrayMenu() {
                             checked: store.get("theme") === "system",
                             click: () => {
                                 store.set("theme", "system");
-                                if (mainWindow && !mainWindow.isDestroyed()) {
-                                    mainWindow.webContents.send("theme-changed", "system");
-                                }
+                                broadcastThemeChange("system");
                             },
                         },
                     ],
