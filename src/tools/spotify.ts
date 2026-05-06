@@ -409,8 +409,9 @@ async function searchTop(
 
     // Fallback: spogo search (~15s). NOTE: spogo v0.2.0 has a bug where
     // `--limit 1` returns the wrong top result for many queries; `--limit 10`
-    // returns the correctly-ranked list.
-    const r = await call(["search", type, query, "--limit", "10"]);
+    // returns the correctly-ranked list. Override the default 8s timeout so
+    // cold non-track searches aren't truncated.
+    const r = await call(["search", type, query, "--limit", "10"], { timeout: 15_000 });
     if (!r.ok || !r.data) return null;
     const d = r.data as Record<string, unknown>;
     const arr =
@@ -634,7 +635,11 @@ async function doSearch(input: Record<string, unknown>): Promise<string> {
 
     const out: Record<string, unknown> = { query };
     for (const type of types) {
-        const r = await call(["search", type, query, "--limit", String(limit)]);
+        // Spogo search has no fast-path for album/artist/playlist/show/episode
+        // and can legitimately run ~12-15s. Use a wider timeout than the
+        // default 8s so real searches aren't cut short. (Track searches hit
+        // the Web-API fast-path in searchTop() so they don't pay this cost.)
+        const r = await call(["search", type, query, "--limit", String(limit)], { timeout: 15_000 });
         if (r.ok && r.data) {
             // pass through whatever spogo returned (may be {tracks:[...]} etc)
             Object.assign(out, r.data as Record<string, unknown>);
