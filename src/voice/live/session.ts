@@ -233,6 +233,7 @@ export class LiveVoiceSession extends EventEmitter {
         }
 
         // Kill any in-flight on-device TTS
+        console.log("[LIVE-SESSION] stop() → cancelling speaker");
         this.speaker.cancel();
 
         // Stop mic
@@ -386,14 +387,19 @@ export class LiveVoiceSession extends EventEmitter {
             // and would either trigger a spurious "echo turn" after speech or
             // fill pendingUserText with our own words. Real barge-in loses out
             // in this trade-off; handled via mute for now.
-            if (this.speaker.isSpeaking()) return;
+            if (this.speaker.isSpeaking()) {
+                console.log(`[HYBRID] dropped raw chunk while speaker busy: "${rawChunk.slice(0, 40)}"`);
+                return;
+            }
             this.pendingUserText += rawChunk;
+            console.log(`[HYBRID] raw chunk accepted: "${rawChunk.slice(0, 40)}" pendingLen=${this.pendingUserText.length}`);
             if (this.pendingUserTimer) clearTimeout(this.pendingUserTimer);
             this.pendingUserTimer = setTimeout(() => {
                 const finalText = this.pendingUserText.replace(/\s+/g, " ").trim();
                 this.pendingUserText = "";
                 this.pendingUserTimer = null;
                 if (!finalText) return;
+                console.log(`[HYBRID] end-of-speech fired, dispatching: "${finalText}"`);
                 // Emit the clean final transcript for UI display.
                 this.emitEvent("user_transcript", finalText);
                 this.runHybridTurn(finalText).catch((err) => {
@@ -583,8 +589,10 @@ export class LiveVoiceSession extends EventEmitter {
     private async runHybridTurn(userText: string): Promise<void> {
         if (!userText.trim()) return;
         const turnId = ++this.hybridTurn;
+        console.log(`[HYBRID] runHybridTurn START turnId=${turnId} userText="${userText.slice(0, 80)}" speakerBusy=${this.speaker.isSpeaking()}`);
 
         // Cancel any in-flight Kokoro audio from the previous turn.
+        console.log(`[HYBRID] about to cancel prior speaker (turnId=${turnId})`);
         this.speaker.cancel();
 
         // Lazy-init system prompt on first turn. Built once per session.
@@ -685,6 +693,7 @@ export class LiveVoiceSession extends EventEmitter {
 
             // No tool calls — this is the final spoken reply.
             if (text.trim()) {
+                console.log(`[HYBRID] final reply turnId=${turnId} step=${step} textLen=${text.length} text="${text.slice(0, 100)}"`);
                 this.hybridHistory.push({ role: "assistant", content: text });
                 this.trimHybridHistory();
                 this.emitEvent("response_transcript", text);
@@ -698,13 +707,18 @@ export class LiveVoiceSession extends EventEmitter {
                 // Hold turn_complete until Kokoro has actually finished speaking
                 // the whole utterance. Otherwise the UI flips to "Listening"
                 // mid-sentence and the user thinks it's their turn.
+                console.log(`[HYBRID] awaiting speaker idle turnId=${turnId}`);
                 await this.waitForSpeakerIdle(turnId);
+                console.log(`[HYBRID] speaker idle done turnId=${turnId} currentTurn=${this.hybridTurn}`);
                 // If the user barged in while we were waiting, the new turn
                 // owns the UI state — don't stomp it with a stale turn_complete.
                 if (turnId !== this.hybridTurn) return;
+            } else {
+                console.log(`[HYBRID] WARN turnId=${turnId} step=${step} — no text AND no tool calls`);
             }
             this.turnCount++;
             this.emitEvent("turn_complete");
+            console.log(`[HYBRID] runHybridTurn END turnId=${turnId}`);
             return;
         }
         console.warn("[LIVE-SESSION] Hybrid turn exceeded 6 tool-call steps");

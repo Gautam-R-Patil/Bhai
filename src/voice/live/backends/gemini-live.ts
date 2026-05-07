@@ -431,11 +431,13 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
 
         // ── Turn complete ──
         if (data.serverContent?.turnComplete) {
+            console.log("[GEMINI-LIVE] serverContent.turnComplete");
             this.emit("turn_complete");
         }
 
         // ── Interrupted (user spoke while model was responding) ──
         if (data.serverContent?.interrupted) {
+            console.log("[GEMINI-LIVE] serverContent.interrupted");
             this.emit("interrupted");
         }
 

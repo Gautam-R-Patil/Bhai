@@ -304,8 +304,9 @@ export class TranscriptSpeaker {
      * the split path as "audio cuts / stops / missing words".
      */
     speak(fullText: string): void {
-        if (!this.enabled || this.disabled) return;
         const t = fullText.trim();
+        console.log(`[SPEAKER] speak() called: enabled=${this.enabled} disabled=${this.disabled} len=${t.length} preview="${t.slice(0, 60)}"`);
+        if (!this.enabled || this.disabled) return;
         if (t) this.enqueue(t);
     }
 
@@ -316,6 +317,7 @@ export class TranscriptSpeaker {
      */
     suppressForTurn(): void {
         if (!this.enabled || this.disabled) return;
+        console.log("[SPEAKER] suppressForTurn() — disabling until next turn");
         this.disabled = true;
         this.buffer = "";
         this.queue = [];
@@ -332,6 +334,7 @@ export class TranscriptSpeaker {
      */
     onNewTurn(): void {
         if (!this.enabled) return;
+        console.log(`[SPEAKER] onNewTurn() — re-enabling, was disabled=${this.disabled}`);
         this.disabled = false;
         this.buffer = "";
     }
@@ -343,6 +346,14 @@ export class TranscriptSpeaker {
      * onNewTurn() instead.
      */
     cancel(): void {
+        const hadRunning = this.running !== null;
+        const qLen = this.queue.length;
+        const wasSynth = this.synthesizing;
+        // Capture the stack trace so we can see WHERE cancel came from —
+        // the truncation bug we chased for days turns out to be someone
+        // calling cancel() mid-playback, and stack is the only way to tell.
+        const caller = new Error().stack?.split("\n")[2]?.trim() ?? "?";
+        console.log(`[SPEAKER] cancel() — hadRunning=${hadRunning} queueLen=${qLen} wasSynth=${wasSynth} gen=${this.generation}→${this.generation + 1} from=${caller}`);
         this.queue = [];
         this.quietUntil = 0;
         this.generation++;          // signals any in-flight Kokoro synth to drop
@@ -368,6 +379,7 @@ export class TranscriptSpeaker {
 
     private enqueue(sentence: string): void {
         this.queue.push(sentence);
+        console.log(`[SPEAKER] enqueue len=${sentence.length} queueNow=${this.queue.length} running=${this.running !== null} synth=${this.synthesizing}`);
         // Also gate on `synthesizing`: Kokoro's async start means `next()` returns
         // without setting `running`, so two overlapping sentences could otherwise
         // launch two concurrent syntheses whose audio would play simultaneously.
@@ -377,6 +389,7 @@ export class TranscriptSpeaker {
     private next(): void {
         const sentence = this.queue.shift();
         if (!sentence) {
+            console.log("[SPEAKER] next() — queue empty, idle");
             this.running = null;
             return;
         }
@@ -386,24 +399,36 @@ export class TranscriptSpeaker {
         // immediately.
         const myGen = this.generation;
         if (!hasKokoroFailed() && isKokoroReady()) {
+            console.log(`[SPEAKER] next() → Kokoro synth start gen=${myGen} len=${sentence.length}`);
             this.synthesizing = true;
+            const t0 = Date.now();
             kokoroSynthesize(sentence)
                 .then(pcm => {
+                    const ms = Date.now() - t0;
                     // Stale-path check MUST come before touching synthesizing.
                     // Otherwise the old .then clobbers a newer synth's flag and
                     // opens the mic gate while Kokoro is still producing audio.
-                    if (myGen !== this.generation) return;
+                    if (myGen !== this.generation) {
+                        console.log(`[SPEAKER] next() synth resolved STALE (gen ${myGen} vs ${this.generation}) — dropping ${pcm.length} bytes after ${ms}ms`);
+                        return;
+                    }
+                    console.log(`[SPEAKER] next() synth resolved gen=${myGen} pcmBytes=${pcm.length} durMs=${ms} → playPcm`);
                     this.synthesizing = false;
                     this.playPcm(pcm);
                 })
                 .catch(err => {
-                    if (myGen !== this.generation) return;
+                    const ms = Date.now() - t0;
+                    if (myGen !== this.generation) {
+                        console.log(`[SPEAKER] next() synth REJECTED stale gen=${myGen}: ${(err as Error).message}`);
+                        return;
+                    }
                     this.synthesizing = false;
-                    console.warn("[TRANSCRIPT-SPEAKER] Kokoro synth failed, falling back to OS TTS:", (err as Error).message);
+                    console.warn(`[SPEAKER] next() Kokoro synth FAILED after ${ms}ms, falling back to OS TTS: ${(err as Error).message}`);
                     this.speakViaSystemTts(sentence);
                 });
             return;
         }
+        console.log(`[SPEAKER] next() → OS TTS (kokoroReady=${isKokoroReady()} kokoroFailed=${hasKokoroFailed()})`);
         this.speakViaSystemTts(sentence);
     }
 
@@ -411,7 +436,11 @@ export class TranscriptSpeaker {
         // Wrap PCM in a WAV container on disk, then spawn the platform-picked
         // player (afplay / PowerShell SoundPlayer / paplay|aplay|ffplay).
         // See buildWavHeader() above for why stdin piping was unreliable.
+        const samples = pcm.length / 2;
+        const expectedSec = samples / KOKORO_SAMPLE_RATE;
+        console.log(`[SPEAKER] playPcm pcmBytes=${pcm.length} samples=${samples} expected=${expectedSec.toFixed(2)}s`);
         if (!PLAYBACK_COMMAND) {
+            console.warn("[SPEAKER] playPcm — no PLAYBACK_COMMAND, falling through");
             // No player on this box — fall through to OS TTS (or drop).
             this.speakViaSystemTts("");  // no text means: just advance queue
             return;
@@ -420,13 +449,14 @@ export class TranscriptSpeaker {
         try {
             writeFileSync(wavPath, Buffer.concat([buildWavHeader(pcm.length), pcm]));
         } catch (err) {
-            console.warn("[TRANSCRIPT-SPEAKER] WAV temp-file write failed:", (err as Error).message);
+            console.warn("[SPEAKER] WAV temp-file write failed:", (err as Error).message);
             this.running = null;
             this.next();
             return;
         }
         const { cmd, buildArgs, spawnOpts } = PLAYBACK_COMMAND;
         let child: ChildProcess;
+        const tSpawn = Date.now();
         try {
             child = spawn(cmd, buildArgs(wavPath), {
                 stdio: ["ignore", "ignore", "ignore"],
@@ -435,16 +465,20 @@ export class TranscriptSpeaker {
         } catch (err) {
             // Rare path: spawn() can throw synchronously on EINVAL / resource
             // limits. Without this catch the temp WAV would leak into tmpdir.
-            console.warn(`[TRANSCRIPT-SPEAKER] spawn(${cmd}) failed synchronously:`, (err as Error).message);
+            console.warn(`[SPEAKER] spawn(${cmd}) failed synchronously:`, (err as Error).message);
             try { unlinkSync(wavPath); } catch { /* already gone */ }
             this.running = null;
             this.next();
             return;
         }
+        console.log(`[SPEAKER] playPcm spawned ${cmd} pid=${child.pid} wav=${wavPath} expected=${expectedSec.toFixed(2)}s`);
         this.running = child;
         // Remember the temp file so attachChildHandlers can delete it once
         // playback exits. Any-cast because ChildProcess has no user slot.
-        (child as unknown as { __atlasTempFile?: string }).__atlasTempFile = wavPath;
+        (child as unknown as { __atlasTempFile?: string; __atlasSpawnTs?: number; __atlasExpectedMs?: number })
+            .__atlasTempFile = wavPath;
+        (child as unknown as { __atlasSpawnTs?: number }).__atlasSpawnTs = tSpawn;
+        (child as unknown as { __atlasExpectedMs?: number }).__atlasExpectedMs = Math.round(expectedSec * 1000);
         this.attachChildHandlers(child);
     }
 
@@ -502,20 +536,26 @@ export class TranscriptSpeaker {
     // would drain the queue by 2 per failure and we'd spawn overlapping audio.
     private attachChildHandlers(child: ChildProcess): void {
         let fired = false;
-        const onExit = () => {
+        const onExit = (reason: "close" | "error", code?: number | null, signal?: NodeJS.Signals | null) => {
             if (fired) return;
             fired = true;
-            const path = (child as unknown as { __atlasTempFile?: string }).__atlasTempFile;
+            const meta = child as unknown as { __atlasTempFile?: string; __atlasSpawnTs?: number; __atlasExpectedMs?: number };
+            const actualMs = meta.__atlasSpawnTs ? Date.now() - meta.__atlasSpawnTs : -1;
+            const expectedMs = meta.__atlasExpectedMs ?? -1;
+            const stillActive = this.running === child;
+            const short = expectedMs > 0 && actualMs > 0 && actualMs < expectedMs * 0.9;
+            console.log(`[SPEAKER] child ${reason} pid=${child.pid} code=${code} signal=${signal} actualMs=${actualMs} expectedMs=${expectedMs} short=${short} stillActive=${stillActive} qLen=${this.queue.length}`);
+            const path = meta.__atlasTempFile;
             if (path) {
                 try { unlinkSync(path); } catch { /* already gone */ }
             }
-            if (this.running === child) {
+            if (stillActive) {
                 this.running = null;
                 this.quietUntil = Date.now() + POST_SPEAK_QUIET_MS;
             }
             this.next();
         };
-        child.on("error", onExit);
-        child.on("close", onExit);
+        child.on("error", () => onExit("error", null, null));
+        child.on("close", (code, signal) => onExit("close", code, signal));
     }
 }

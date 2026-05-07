@@ -136,6 +136,8 @@ scripts/compare-tts.ts
 scripts/test-gemini-text.ts
 scripts/test-llm-latency.ts
 scripts/list-gemini-live.ts
+scripts/test-kokoro-afplay.ts
+scripts/test-speaker-multiturn.ts
 
 # Bundled Kokoro ONNX model — staged locally, copied into DMG, never committed
 models/
