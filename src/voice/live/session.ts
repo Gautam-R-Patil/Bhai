@@ -381,6 +381,12 @@ export class LiveVoiceSession extends EventEmitter {
         // survive concat — otherwise "How are you" becomes "Hoareyou".
         this.backend.on("user_transcript_raw", (rawChunk: string) => {
             if (!this.hybridMode) return;
+            // Drop transcripts while Kokoro is speaking. They're almost always
+            // echo of our own output (mic picks up speaker → Gemini transcribes)
+            // and would either trigger a spurious "echo turn" after speech or
+            // fill pendingUserText with our own words. Real barge-in loses out
+            // in this trade-off; handled via mute for now.
+            if (this.speaker.isSpeaking()) return;
             this.pendingUserText += rawChunk;
             if (this.pendingUserTimer) clearTimeout(this.pendingUserTimer);
             this.pendingUserTimer = setTimeout(() => {
@@ -404,24 +410,23 @@ export class LiveVoiceSession extends EventEmitter {
             this.emitEvent("tool_cancelled", toCancel);
         });
 
-        // Backend → Interrupted (user spoke while model was responding).
-        // In hybrid mode this is our barge-in signal: cancel the in-flight
-        // llm.chat turn and silence Kokoro.
+        // Backend → Interrupted (Gemini's server-side VAD thinks user spoke).
+        // In HYBRID mode we can't trust this signal: Gemini doesn't get to
+        // hear Kokoro (we don't route our audio output through it), so when
+        // speaker echo bleeds into the mic it gets transcribed as "user
+        // speech" and fires interrupted spuriously — killing Kokoro mid-word.
+        // User-perceived behavior: response starts playing, cuts after 2-5
+        // words, silence. We ignore it in hybrid mode; real barge-in is
+        // handled via the mute button (and will return with mic-side
+        // RMS-based detection in a follow-up).
         this.backend.on("interrupted", () => {
+            if (this.hybridMode) {
+                console.log("[LIVE-SESSION] Gemini interrupted (hybrid — ignoring)");
+                this.emitEvent("interrupted");
+                return;
+            }
             this.player!.flush();
             this.speaker.cancel();
-            if (this.hybridMode) {
-                // Invalidate any in-flight hybrid turn — its response drops.
-                this.hybridTurn++;
-                // Clear any partial user text the debouncer was accumulating.
-                // Otherwise echo-derived fragments would concat onto the
-                // user's real barge-in utterance.
-                this.pendingUserText = "";
-                if (this.pendingUserTimer) {
-                    clearTimeout(this.pendingUserTimer);
-                    this.pendingUserTimer = null;
-                }
-            }
             this.emitEvent("interrupted");
         });
 
