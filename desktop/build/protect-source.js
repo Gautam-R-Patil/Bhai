@@ -40,27 +40,31 @@ const OBFUSCATION_OPTIONS = {
     compact: true,
     simplify: true,
 
-    // Control flow obfuscation - maximum
+    // Control flow obfuscation — backed off from 100% to 0.75. At threshold=1 on
+    // a 3.2 MB bundle the obfuscator occasionally emits invalid JS that parses on
+    // the build box but SyntaxErrors on user machines. 0.75 keeps ~75% of functions
+    // flattened with far lower risk of malformed output.
     controlFlowFlattening: true,
-    controlFlowFlatteningThreshold: 1, // 100% of functions
+    controlFlowFlatteningThreshold: 0.75,
 
-    // Dead code injection - maximum
+    // Dead code injection — backed off similarly. 0.3 still injects enough to
+    // make the bundle unreadable without being a flakiness landmine.
     deadCodeInjection: true,
-    deadCodeInjectionThreshold: 0.5, // 50% dead code
+    deadCodeInjectionThreshold: 0.3,
 
-    // String protection - maximum
+    // String protection
     stringArray: true,
     stringArrayRotate: true,
     stringArrayShuffle: true,
-    stringArrayThreshold: 1, // 100% of strings
+    stringArrayThreshold: 0.8,
     stringArrayIndexShift: true,
-    stringArrayWrappersCount: 5, // Multiple wrapper layers
+    stringArrayWrappersCount: 2,
     stringArrayWrappersChainedCalls: true,
-    stringArrayWrappersParametersMaxCount: 5,
+    stringArrayWrappersParametersMaxCount: 4,
     stringArrayWrappersType: "function",
-    stringArrayEncoding: ["rc4"], // RC4 encryption for strings
+    stringArrayEncoding: ["rc4"],
     splitStrings: true,
-    splitStringsChunkLength: 5, // Split into tiny chunks
+    splitStringsChunkLength: 10,
 
     // Identifier obfuscation
     identifierNamesGenerator: "mangled-shuffled",
@@ -141,21 +145,38 @@ function obfuscateFile(filePath) {
         const code = fs.readFileSync(filePath, "utf8");
         if (code.length < 100 || code.includes("_0x")) return false;
 
-        // First pass: JavaScript Obfuscator
-        const obfuscated = JavaScriptObfuscator.obfuscate(code, OBFUSCATION_OPTIONS);
-        let protectedCode = obfuscated.getObfuscatedCode();
-
-        // Second pass: Additional scrambling
-        protectedCode = additionalScramble(protectedCode);
-
-        // Add misleading header
-        const header = `// ${crypto.randomBytes(8).toString('hex')} © ${crypto.randomBytes(4).toString('hex')}\n`;
-
-        fs.writeFileSync(filePath, header + protectedCode);
-        return true;
+        // Try up to 3 times — the obfuscator with controlFlowFlattening
+        // occasionally produces invalid JS. Parse-check via `node --check`
+        // (which handles ESM import/export unlike vm.Script) before writing,
+        // so a bad roll doesn't ship.
+        const { spawnSync } = require("node:child_process");
+        const tmpDir = require("node:os").tmpdir();
+        let lastErr = null;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            const obfuscated = JavaScriptObfuscator.obfuscate(code, OBFUSCATION_OPTIONS);
+            let protectedCode = obfuscated.getObfuscatedCode();
+            protectedCode = additionalScramble(protectedCode);
+            const header = `// ${crypto.randomBytes(8).toString('hex')} © ${crypto.randomBytes(4).toString('hex')}\n`;
+            const finalCode = header + protectedCode;
+            // Write to a tmp .mjs so Node treats it as ESM for the parse check.
+            const probe = path.join(tmpDir, `atlas-obf-check-${process.pid}-${attempt}.mjs`);
+            fs.writeFileSync(probe, finalCode);
+            const r = spawnSync(process.execPath, ["--check", probe], { encoding: "utf8" });
+            fs.unlinkSync(probe);
+            if (r.status !== 0) {
+                lastErr = new Error(r.stderr.split("\n")[0] || "node --check failed");
+                console.warn(`[PROTECT] ✗ Attempt ${attempt}: obfuscator emitted unparseable JS (${lastErr.message.slice(0, 100)}) — retrying`);
+                continue;
+            }
+            fs.writeFileSync(filePath, finalCode);
+            if (attempt > 1) console.log(`[PROTECT] ✓ Succeeded on attempt ${attempt}`);
+            return true;
+        }
+        console.error(`[PROTECT] ✗ ${path.basename(filePath)} obfuscation failed after 3 attempts. Last error: ${lastErr?.message}`);
+        throw new Error(`Obfuscation of ${path.basename(filePath)} failed parse-check 3x — aborting build (was shipping broken bundle before this guard).`);
     } catch (err) {
         console.log(`[PROTECT] Obfuscation failed for ${path.basename(filePath)}: ${err.message}`);
-        return false;
+        throw err;  // Propagate — do NOT ship an un-obfuscated or broken bundle.
     }
 }
 
