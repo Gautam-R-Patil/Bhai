@@ -51,16 +51,14 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
 
         this.ai = new GoogleGenAI({ apiKey: this.apiKey });
 
-        // Model IDs that actually resolve on v1beta bidiGenerateContent (per
-        // Google's migration notes + the Live API docs):
-        //   - gemini-live-2.5-flash-native-audio   : migration-target stable ID
-        //   - gemini-2.5-flash-native-audio-preview-12-2025 : latest dated preview
-        //   - gemini-2.5-flash-native-audio-latest : alias that currently points here
-        //   - gemini-2.5-flash-native-audio-preview-09-2025 : prior preview
-        //   - gemini-2.0-flash-live-preview-04-09  : older half-cascade, OLDER but
-        //     doesn't share the silent-after-tool-call regression of native-audio
+        // Primary: gemini-3.1-flash-live-preview (half-cascade — separate
+        // STT+LLM+TTS stages, lowest end-to-end latency of the Live models).
+        // Earlier silent-after-tool-call issues we saw on 3.1 were with
+        // thinkingConfig attached; current config only attaches thinkingConfig
+        // to native-audio models, so 3.1 half-cascade should behave now.
+        // Fallbacks stay on native-audio 12-2025 preview + 2.0 half-cascade.
         const LIVE_MODELS = [
-            "gemini-live-2.5-flash-native-audio",
+            "gemini-3.1-flash-live-preview",
             "gemini-2.5-flash-native-audio-preview-12-2025",
             "gemini-2.5-flash-native-audio-latest",
             "gemini-2.5-flash-native-audio-preview-09-2025",

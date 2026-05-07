@@ -234,12 +234,15 @@ export class TranscriptSpeaker {
             "-c", "1", "-r", "24000", "-",
         ], { stdio: ["pipe", "ignore", "ignore"] });
         this.running = child;
+        // Silence EPIPE on stdin — `play` may exit before draining our buffer,
+        // and an unhandled 'error' event on stdin would crash the bot.
+        child.stdin?.on("error", () => { /* handled via attachChildHandlers */ });
         this.attachChildHandlers(child);
         try {
             child.stdin?.write(pcm);
             child.stdin?.end();
         } catch {
-            // stdin already closed — the error handler below will tidy up.
+            // stdin already closed — error listener + close handler tidy up.
         }
     }
 

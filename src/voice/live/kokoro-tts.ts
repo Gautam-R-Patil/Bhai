@@ -152,6 +152,16 @@ export async function initKokoro(): Promise<boolean> {
                 },
             });
             worker.stderr?.on("data", (c) => process.stderr.write(c));
+            // CRITICAL: attach 'error' handlers on stdin and stdout. If the
+            // worker exits mid-synth, a subsequent write to its stdin emits
+            // 'error' on the pipe; without a listener that error is unhandled
+            // and crashes the whole bot process with EPIPE.
+            worker.stdin?.on("error", (err) => {
+                console.warn(`[KOKORO] Worker stdin error: ${err.message}`);
+            });
+            worker.stdout?.on("error", (err) => {
+                console.warn(`[KOKORO] Worker stdout error: ${err.message}`);
+            });
             worker.on("exit", (code) => {
                 console.warn(`[KOKORO] Worker exited (code=${code}), falling back to say`);
                 loadFailed = true;
@@ -186,7 +196,12 @@ export function synthesize(text: string, voice: string = VOICE): Promise<Buffer>
     const promise = new Promise<Buffer>((resolve, reject) => {
         pending.set(id, { resolve, reject });
     });
-    worker.stdin.write(JSON.stringify({ id, text, voice }) + "\n");
+    try {
+        worker.stdin.write(JSON.stringify({ id, text, voice }) + "\n");
+    } catch (err) {
+        pending.delete(id);
+        return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+    }
     return promise;
 }
 

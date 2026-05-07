@@ -62,6 +62,14 @@ export class AudioPlayer extends EventEmitter {
             }
         });
 
+        // CRITICAL: if `play` exits mid-stream, a later stdin.write emits
+        // 'error' on the stdin socket. Without this listener the error is
+        // unhandled and crashes the entire bot process with EPIPE.
+        this.process.stdin?.on("error", (err: Error) => {
+            console.warn(`[PLAYER] stdin error: ${err.message}`);
+            this._playing = false;
+        });
+
         this.process.on("error", async (err) => {
             this._playing = false;
             console.warn("[PLAYER] play command failed, attempting self-heal...");
@@ -88,7 +96,15 @@ export class AudioPlayer extends EventEmitter {
     write(pcm: Buffer): void {
         this.ensureProcess();
         if (this.process?.stdin?.writable) {
-            this.process.stdin.write(pcm);
+            try {
+                this.process.stdin.write(pcm);
+            } catch (err) {
+                // Subprocess died between the writable check and the write —
+                // race is rare but EPIPE here must not propagate or Node
+                // tears down the whole bot process.
+                console.warn(`[PLAYER] write failed: ${(err as Error).message}`);
+                this._playing = false;
+            }
         }
     }
 
