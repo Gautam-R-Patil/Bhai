@@ -51,18 +51,24 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
 
         this.ai = new GoogleGenAI({ apiKey: this.apiKey });
 
-        // Primary: gemini-3.1-flash-live-preview (half-cascade — separate
-        // STT+LLM+TTS stages, lowest end-to-end latency of the Live models).
-        // Earlier silent-after-tool-call issues we saw on 3.1 were with
-        // thinkingConfig attached; current config only attaches thinkingConfig
-        // to native-audio models, so 3.1 half-cascade should behave now.
-        // Fallbacks stay on native-audio 12-2025 preview + 2.0 half-cascade.
+        // Primary: gemini-2.5-flash-native-audio-preview-12-2025 — the latest
+        // dated preview, cheapest at $10/M out, verified to actually respond
+        // via scripts/test-gemini-live.ts (70 messages on a plain "time now?"
+        // turn, including audio chunks + gen_complete + turn_complete).
+        //
+        // IMPORTANT: do NOT put gemini-3.1-flash-live-preview ahead of this.
+        // That model connects + consumes audio + fires tool calls BUT never
+        // emits audio or text back — a black hole against v1beta. Direct
+        // verification: harness run 2026-05-07 showed 1 message (setup) over
+        // 40s vs 70 messages from 2.5-native-audio for the same request. It
+        // stays in the chain only so if Google ever flips a feature flag,
+        // auto-reconnect will pick it up.
         const LIVE_MODELS = [
-            "gemini-3.1-flash-live-preview",
             "gemini-2.5-flash-native-audio-preview-12-2025",
             "gemini-2.5-flash-native-audio-latest",
             "gemini-2.5-flash-native-audio-preview-09-2025",
             "gemini-2.0-flash-live-preview-04-09",
+            "gemini-3.1-flash-live-preview",
         ];
 
         // Build tool declarations for the session
