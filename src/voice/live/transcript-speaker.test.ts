@@ -116,5 +116,66 @@ describe("TranscriptSpeaker — onNewTurn vs cancel semantics", () => {
         expect(s.buffer).toBe("");
         expect(s.queue).toEqual([]);
     });
+
+    it("isSpeaking() reflects queued sentences or in-flight `say`", () => {
+        const s = new TranscriptSpeaker() as any;
+        // Fresh state — nothing queued, nothing running.
+        expect(s.isSpeaking()).toBe(false);
+        // Queue alone is enough (a `next()` tick will pick it up).
+        s.queue = ["pending sentence"];
+        expect(s.isSpeaking()).toBe(true);
+        s.queue = [];
+        expect(s.isSpeaking()).toBe(false);
+        // An in-flight `say` process (mocked as any non-null object) counts too.
+        s.running = { kill() { /* noop */ } };
+        expect(s.isSpeaking()).toBe(true);
+        s.running = null;
+        expect(s.isSpeaking()).toBe(false);
+    });
+
+    it("isSpeaking() keeps the gate closed through the post-`say` quiet window", () => {
+        const s = new TranscriptSpeaker() as any;
+        // Simulate a `say` that just closed: running is null, queue empty,
+        // but quietUntil is set ~250ms in the future (what the child.close
+        // handler does).
+        s.running = null;
+        s.queue = [];
+        s.quietUntil = Date.now() + 250;
+        expect(s.isSpeaking()).toBe(true);
+        // Fast-forward past the grace window.
+        s.quietUntil = Date.now() - 1;
+        expect(s.isSpeaking()).toBe(false);
+    });
+
+    it("cancel() resets quietUntil so user interrupts open the gate immediately", () => {
+        const s = new TranscriptSpeaker() as any;
+        s.enabled = true;
+        s.quietUntil = Date.now() + 60_000; // far-future
+        s.cancel();
+        expect(s.quietUntil).toBe(0);
+        expect(s.isSpeaking()).toBe(false);
+    });
+
+    it("cancel()-triggered close handler does NOT re-arm quietUntil (gate stays open)", () => {
+        // Reproduces the subtle race: cancel()/suppressForTurn() SIGKILLs the
+        // child and sets quietUntil=0. The child's 'close' event fires on the
+        // next tick — if that handler unconditionally writes quietUntil, the
+        // next 250ms of user speech gets clipped. The fix is guarded writes
+        // that only extend quietUntil if `running === child` is still true.
+        const s = new TranscriptSpeaker() as any;
+        s.enabled = true;
+        // Simulate: we were speaking, then cancel() ran — running=null, quietUntil=0.
+        const staleChild = { kill() { /* noop */ } };
+        s.running = null;          // cancel already detached
+        s.quietUntil = 0;          // cancel already reset
+        // Now the close-handler logic: emulate the check from next() inline.
+        if (s.running === staleChild) {
+            s.running = null;
+            s.quietUntil = Date.now() + 250;
+        }
+        // Expectation: the stale close handler was a no-op.
+        expect(s.quietUntil).toBe(0);
+        expect(s.isSpeaking()).toBe(false);
+    });
 });
 

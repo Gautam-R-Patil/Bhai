@@ -245,6 +245,9 @@ export class LiveVoiceSession extends EventEmitter {
             if (this.micMuted) return;
             // Guard against a buffered mic event landing after stop() nulled the backend.
             if (!this.backend) return;
+            // Echo gate: `say` fallback bleeds into the mic and bypasses Gemini's
+            // server VAD — drop chunks while speaking (user mutes to interrupt).
+            if (this.speaker.isSpeaking()) return;
             this.backend.sendAudio(pcm);
         });
 

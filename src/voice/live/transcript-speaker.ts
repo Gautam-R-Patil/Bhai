@@ -28,6 +28,13 @@ const SAY_RATE = (() => {
 // into "3." "14" and gives breath-sized sentences instead of staccato.
 const MIN_SENTENCE_CHARS = 12;
 
+// Grace period after `say` exits before we re-open the mic gate. The
+// subprocess close fires when synthesis ends, but the tail of the last
+// sentence still lives in the OS audio buffer + room acoustics for
+// ~100-300ms — long enough to leak back through the mic and re-ignite
+// the feedback loop.
+const POST_SPEAK_QUIET_MS = 250;
+
 /**
  * Try to extract one sentence from the front of `buf`. Scans every
  * terminator position and accepts the FIRST one that passes sanity
@@ -78,6 +85,7 @@ export class TranscriptSpeaker {
     private running: ChildProcess | null = null;
     private disabled = false;
     private readonly enabled: boolean;
+    private quietUntil = 0;
 
     constructor() {
         // Only macOS has `say` built-in. On other platforms the fallback is
@@ -145,10 +153,19 @@ export class TranscriptSpeaker {
      */
     cancel(): void {
         this.queue = [];
+        this.quietUntil = 0;
         if (this.running) {
             try { this.running.kill("SIGKILL"); } catch { /* already dead */ }
             this.running = null;
         }
+    }
+
+    // Used by LiveVoiceSession to gate the mic→backend path. Includes a
+    // short post-close quiet window so the audio tail doesn't leak back
+    // through the mic and re-ignite the feedback loop.
+    isSpeaking(): boolean {
+        if (this.running !== null || this.queue.length > 0) return true;
+        return Date.now() < this.quietUntil;
     }
 
     private enqueue(sentence: string): void {
@@ -166,9 +183,22 @@ export class TranscriptSpeaker {
             stdio: ["ignore", "ignore", "ignore"],
         });
         this.running = child;
-        child.on("error", () => { this.running = null; this.next(); });
+        // cancel() detaches by nulling `running`; only the handler whose child
+        // is still the active one should extend the quiet window. Otherwise a
+        // cancel()-triggered SIGKILL close handler would clobber `quietUntil=0`
+        // and clip the next 250ms of user mic input.
+        child.on("error", () => {
+            if (this.running === child) {
+                this.running = null;
+                this.quietUntil = Date.now() + POST_SPEAK_QUIET_MS;
+            }
+            this.next();
+        });
         child.on("close", () => {
-            if (this.running === child) this.running = null;
+            if (this.running === child) {
+                this.running = null;
+                this.quietUntil = Date.now() + POST_SPEAK_QUIET_MS;
+            }
             this.next();
         });
     }
