@@ -250,6 +250,12 @@ export class TranscriptSpeaker {
     // Rate-limit the "no fallback TTS" warning so a long session without
     // espeak doesn't spam the console once per utterance.
     private warnedNoFallback = false;
+    // Pipelined next-sentence synth. While playPcm is playing sentence N, we
+    // eagerly kick off synth for sentence N+1 so by the time afplay closes,
+    // the PCM for N+1 is (usually) already waiting. Keeps multi-sentence
+    // playback seamless instead of gapping 1-2 s between sentences.
+    private prefetchedPcm: Promise<Buffer> | null = null;
+    private prefetchedGen = -1;
 
     constructor() {
         // Enabled as long as we have SOMETHING to play audio on this OS. The
@@ -296,18 +302,37 @@ export class TranscriptSpeaker {
     }
 
     /**
-     * Speak a complete utterance in a single Kokoro call — no sentence
-     * splitting. Use this when you already have the full response text
-     * (e.g. from a non-streaming llm.chat). Avoids the ~1s inter-sentence
-     * synthesis gap that the streaming append() path produces, and the
-     * 250ms echo-gate quiet window between each sentence. Users perceive
-     * the split path as "audio cuts / stops / missing words".
+     * Speak a complete utterance. Splits into sentences so the first sentence
+     * starts playing as soon as Kokoro finishes synthing it (~1 s for a short
+     * sentence, vs ~6 s if we synth the whole utterance first). Subsequent
+     * sentences are pre-synthed while the current one plays, so there's no
+     * gap between them — they flow back-to-back like natural speech.
      */
     speak(fullText: string): void {
         const t = fullText.trim();
         console.log(`[SPEAKER] speak() called: enabled=${this.enabled} disabled=${this.disabled} len=${t.length} preview="${t.slice(0, 60)}"`);
         if (!this.enabled || this.disabled) return;
-        if (t) this.enqueue(t);
+        if (!t) return;
+        // Sentence-split into the queue. Each extracted sentence becomes its
+        // own Kokoro synth + afplay child — but we pipeline the synth work
+        // (see prefetchNext in playPcm) so playback feels continuous.
+        let remaining = t;
+        let sentenceCount = 0;
+        while (true) {
+            const next = extractSentence(remaining);
+            if (!next) break;
+            if (next.sentence) {
+                this.enqueue(next.sentence);
+                sentenceCount++;
+            }
+            remaining = next.rest;
+        }
+        const tail = remaining.trim();
+        if (tail) {
+            this.enqueue(tail);
+            sentenceCount++;
+        }
+        console.log(`[SPEAKER] speak() split into ${sentenceCount} sentences`);
     }
 
     /**
@@ -349,15 +374,21 @@ export class TranscriptSpeaker {
         const hadRunning = this.running !== null;
         const qLen = this.queue.length;
         const wasSynth = this.synthesizing;
+        const hadPrefetch = this.prefetchedPcm !== null;
         // Capture the stack trace so we can see WHERE cancel came from —
         // the truncation bug we chased for days turns out to be someone
         // calling cancel() mid-playback, and stack is the only way to tell.
         const caller = new Error().stack?.split("\n")[2]?.trim() ?? "?";
-        console.log(`[SPEAKER] cancel() — hadRunning=${hadRunning} queueLen=${qLen} wasSynth=${wasSynth} gen=${this.generation}→${this.generation + 1} from=${caller}`);
+        console.log(`[SPEAKER] cancel() — hadRunning=${hadRunning} queueLen=${qLen} wasSynth=${wasSynth} hadPrefetch=${hadPrefetch} gen=${this.generation}→${this.generation + 1} from=${caller}`);
         this.queue = [];
         this.quietUntil = 0;
         this.generation++;          // signals any in-flight Kokoro synth to drop
         this.synthesizing = false;
+        // Drop the prefetched synth — its .then() will early-return via the
+        // generation check. We don't need to cancel the Kokoro worker: it
+        // will finish synthing and the PCM will just be discarded.
+        this.prefetchedPcm = null;
+        this.prefetchedGen = -1;
         if (this.running) {
             // SIGTERM lets the player subprocess exit cleanly (within ~10 ms)
             // so its close handler fires and we clean up any temp WAV file.
@@ -387,6 +418,34 @@ export class TranscriptSpeaker {
     }
 
     private next(): void {
+        // Fast path: a prefetched synth from the previous playPcm is already
+        // in flight (or done). Consume it — its sentence has already been
+        // shifted from the queue, so we don't shift again.
+        if (this.prefetchedPcm && this.prefetchedGen === this.generation) {
+            const p = this.prefetchedPcm;
+            this.prefetchedPcm = null;
+            this.prefetchedGen = -1;
+            const myGen = this.generation;
+            this.synthesizing = true;
+            const t0 = Date.now();
+            p.then(pcm => {
+                const ms = Date.now() - t0;
+                if (myGen !== this.generation) {
+                    console.log(`[SPEAKER] next() prefetch STALE gen=${myGen} — dropping ${pcm.length} bytes`);
+                    return;
+                }
+                console.log(`[SPEAKER] next() prefetch resolved gen=${myGen} pcmBytes=${pcm.length} waitMs=${ms} → playPcm`);
+                this.synthesizing = false;
+                this.playPcm(pcm);
+            }).catch(err => {
+                if (myGen !== this.generation) return;
+                this.synthesizing = false;
+                console.warn(`[SPEAKER] next() prefetch FAILED: ${(err as Error).message}`);
+                this.next();  // try the regular path on whatever is next
+            });
+            return;
+        }
+
         const sentence = this.queue.shift();
         if (!sentence) {
             console.log("[SPEAKER] next() — queue empty, idle");
@@ -430,6 +489,23 @@ export class TranscriptSpeaker {
         }
         console.log(`[SPEAKER] next() → OS TTS (kokoroReady=${isKokoroReady()} kokoroFailed=${hasKokoroFailed()})`);
         this.speakViaSystemTts(sentence);
+    }
+
+    /**
+     * While the current sentence's afplay plays, eagerly start synthesizing
+     * the next queued sentence. Result is stashed in `prefetchedPcm` and
+     * consumed by the next `next()` call — so sentences flow back-to-back
+     * with no audible synth gap between them.
+     */
+    private prefetchNext(): void {
+        if (this.prefetchedPcm) return;           // already prefetching
+        if (this.queue.length === 0) return;      // nothing to prefetch
+        if (hasKokoroFailed() || !isKokoroReady()) return;  // Kokoro unusable
+        const sentence = this.queue.shift()!;
+        const myGen = this.generation;
+        console.log(`[SPEAKER] prefetchNext gen=${myGen} len=${sentence.length} qRemaining=${this.queue.length}`);
+        this.prefetchedGen = myGen;
+        this.prefetchedPcm = kokoroSynthesize(sentence);
     }
 
     private playPcm(pcm: Buffer): void {
@@ -480,6 +556,11 @@ export class TranscriptSpeaker {
         (child as unknown as { __atlasSpawnTs?: number }).__atlasSpawnTs = tSpawn;
         (child as unknown as { __atlasExpectedMs?: number }).__atlasExpectedMs = Math.round(expectedSec * 1000);
         this.attachChildHandlers(child);
+        // Pipeline: kick off synth of the NEXT queued sentence RIGHT NOW so
+        // by the time afplay closes, its PCM is already (or nearly) ready.
+        // Turns multi-sentence playback from chunky "synth 1 s, play 2 s,
+        // synth 1 s, play 2 s" → seamless "play 2 s, play 2 s" flow.
+        this.prefetchNext();
     }
 
     private speakViaSystemTts(sentence: string): void {

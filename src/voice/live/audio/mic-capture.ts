@@ -20,6 +20,13 @@ export class MicCapture extends EventEmitter {
     private _active = false;
     private sampleRate: number;
     private chunkSize: number;
+    // True between start() and stop() — distinguishes "intentional shutdown"
+    // from "sox crashed mid-session". When sox dies while sessionActive is
+    // true, we auto-restart instead of leaving the session deaf.
+    private sessionActive = false;
+    // Rate-limit restart attempts so a genuinely broken mic doesn't burn CPU
+    // in an infinite respawn loop. At most 3 restarts in 30 s.
+    private restartTimestamps: number[] = [];
 
     /**
      * @param sampleRate - Sample rate in Hz (default 16000 for Gemini/OpenAI)
@@ -37,11 +44,28 @@ export class MicCapture extends EventEmitter {
     }
 
     /**
+     * Auto-restart helper. Sox crashing mid-session (CoreAudio errors, device
+     * unplugged, system audio routing change) would otherwise leave the
+     * session with a dead mic until the user manually restarted. User saw
+     * this as: "the orange dot goes away in the middle of a call."
+     * Returns false when the restart budget is exhausted — caller should
+     * emit a hard error so the session tears down cleanly.
+     */
+    private shouldRestart(): boolean {
+        const now = Date.now();
+        this.restartTimestamps = this.restartTimestamps.filter(t => now - t < 30_000);
+        if (this.restartTimestamps.length >= 3) return false;
+        this.restartTimestamps.push(now);
+        return true;
+    }
+
+    /**
      * Start capturing audio from the default microphone.
      * Auto-installs sox if missing, then uses `rec` → raw PCM to stdout.
      */
     async start(): Promise<void> {
         if (this._active) return;
+        this.sessionActive = true;
 
         // Auto-install sox if not present
         const hasSox = await ensureSox();
@@ -54,8 +78,16 @@ export class MicCapture extends EventEmitter {
         // then resamples to the target rate via the `rate` effect in the output pipe.
         // We do NOT set -r on rec (that just sets the output label, not actual resampling).
         // Instead: rec at native rate → pipe through sox to resample → raw PCM output.
+        //
+        // --buffer 131072 gives sox a 128 KB internal buffer (≈4 s at 16 kHz mono
+        // 16-bit). Default is 8 KB (250 ms) — too tight when Node's event loop
+        // stalls during LLM response processing or tool execution. Stalls shorter
+        // than 4 s are now absorbed instead of dropping mic data with "unhandled
+        // buffer overrun" warnings (user-visible symptom: Gemini misses parts of
+        // what you said).
         this.process = spawn("sox", [
             "-q",                    // quiet
+            "--buffer", "131072",    // 128 KB processing buffer (see above)
             "-d",                    // default audio device (input)
             "-t", "raw",             // output format: raw PCM
             "-b", "16",              // 16-bit
@@ -107,12 +139,36 @@ export class MicCapture extends EventEmitter {
             }
         });
 
-        this.process.on("close", (code) => {
+        this.process.on("close", (code, signal) => {
+            const wasActiveSession = this.sessionActive;
             this._active = false;
+            this.process = null;
             // Flush remaining buffer
             if (buffer.length > 0) {
                 this.emit("data", buffer);
                 buffer = Buffer.alloc(0);
+            }
+            console.log(`[MIC] sox closed: code=${code} signal=${signal} sessionActive=${wasActiveSession}`);
+            // If we're mid-session (not a deliberate stop()), sox crashed on
+            // its own — CoreAudio error, device unplugged, system audio
+            // routing change, etc. Auto-restart so the user doesn't lose the
+            // mic for the rest of the turn. User saw this as: "orange dot
+            // goes away, I have to restart the call."
+            if (wasActiveSession && signal !== "SIGTERM" && signal !== "SIGKILL") {
+                if (this.shouldRestart()) {
+                    console.warn(`[MIC] sox exited unexpectedly (code=${code}, signal=${signal}) — auto-restarting`);
+                    // Short defer so the current event loop tick settles.
+                    setTimeout(() => {
+                        if (!this.sessionActive) return;       // stop() raced
+                        this.start().catch((err) => {
+                            console.error("[MIC] auto-restart failed:", (err as Error).message);
+                            this.emit("error", err instanceof Error ? err : new Error(String(err)));
+                        });
+                    }, 150);
+                    return;
+                }
+                console.error("[MIC] sox crashed 3+ times in 30 s — giving up");
+                this.emit("error", new Error(`Microphone repeatedly crashed (last exit: code=${code} signal=${signal})`));
             }
             this.emit("stopped");
         });
@@ -123,6 +179,10 @@ export class MicCapture extends EventEmitter {
 
     /** Stop capturing */
     stop(): void {
+        // Clear sessionActive FIRST so the close handler knows this was an
+        // intentional shutdown and doesn't trigger auto-restart.
+        this.sessionActive = false;
+        this.restartTimestamps = [];
         if (!this._active || !this.process) return;
         this._active = false;
 

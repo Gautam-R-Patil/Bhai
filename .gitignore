@@ -141,3 +141,4 @@ scripts/test-speaker-multiturn.ts
 
 # Bundled Kokoro ONNX model — staged locally, copied into DMG, never committed
 models/
+scripts/test-speaker-streaming.ts
