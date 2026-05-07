@@ -533,6 +533,35 @@ async function executeAndProcessToolCall(
     }
 
     console.log(`  🔧 Tool call: ${fnName}`, JSON.stringify(fnArgs));
+
+    // ── Pre-flight: catch obvious precondition failures before wasting
+    // an actual tool round-trip. Fails open on any error; only short-circuits
+    // when we have HIGH confidence the call would fail anyway (file-missing,
+    // relative-path-where-absolute-required, malformed URL, etc).
+    try {
+        const { preflight } = await import("./tools/preflight.js");
+        const hint = preflight(fnName, fnArgs);
+        if (hint) {
+            // Preflight's hint is already LLM-actionable ("file missing",
+            // "use absolute path"). Return early with isError=true and
+            // preflight=true marker; downstream self-heal honors this flag
+            // by NOT trying a generic dependency fix (nothing to fix here).
+            const suggested = hint.suggest ? ` Suggestion: ${hint.suggest}` : "";
+            const errJson = JSON.stringify({ error: hint.reason + suggested, preflight: true });
+            console.log(`  ⚠️  Preflight blocked: ${hint.reason}`);
+            const result = truncateToolResult(fnName, errJson);
+            return {
+                toolCallId: toolCall.id,
+                fnName,
+                fnArgs,
+                result,
+                finalContent: result,
+                isBrowser: false,
+                isError: true,
+            };
+        }
+    } catch { /* preflight module failure is non-fatal — fall through */ }
+
     let rawResult = await executeTool(fnName, fnArgs);
 
     // ── Self-heal: if tool failed with a dependency error, auto-fix and retry ──
@@ -1749,6 +1778,19 @@ STRATEGY: Execute in as few tool calls as possible.
                 // Record context sources for harness traces
                 if (iterations === 1) {
                     if (_harnessTraceId) recordContextSources(_harnessTraceId, parts.map(p => p.split("\n")[0].substring(0, 60)));
+                    // Telemetry: log the shape of iteration-1 memory injection
+                    // so we can see which subsystems are pulling weight vs
+                    // returning empty. Enabled by default (low log volume,
+                    // fires once per first-iteration turn); silence via
+                    // ATLAS_MEMORY_TELEMETRY=false.
+                    if (process.env.ATLAS_MEMORY_TELEMETRY !== "false") {
+                        const shapes = parts.map((p) => {
+                            const header = (p.match(/^[^\n]+/)?.[0] ?? "").slice(0, 40).replace(/\s+/g, " ");
+                            return `${header}=${p.length}c`;
+                        });
+                        const totalChars = parts.reduce((s, p) => s + p.length, 0);
+                        console.log(`[MEMORY-INJECT] iter=1 sources=${parts.length} total=${totalChars}c → ${shapes.join(" | ")}`);
+                    }
                 }
 
                 // Cap total injected context — tunable via Meta-Harness registry

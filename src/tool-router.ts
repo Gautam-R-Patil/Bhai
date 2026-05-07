@@ -1105,13 +1105,63 @@ async function classifyToolNeeds(
 // ── Structural fallback classifier ────────────
 // Used when embeddings aren't ready yet (e.g., during boot before model loads)
 
+// Tokenize + lowercase + strip common stopwords. Not a linguistic tokenizer,
+// just a fast split for bag-of-words overlap scoring.
+const FALLBACK_STOPWORDS = new Set<string>([
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+    "do", "does", "did", "have", "has", "had", "can", "could", "should",
+    "would", "will", "shall", "may", "might", "must",
+    "i", "me", "my", "we", "our", "you", "your", "he", "she", "it", "they",
+    "this", "that", "these", "those",
+    "and", "or", "but", "if", "then", "than", "as", "at", "by", "for", "from",
+    "in", "into", "of", "on", "to", "with", "about", "just",
+    "what", "which", "who", "whom", "when", "where", "why", "how",
+    "please", "also", "some", "any", "all", "not", "no", "yes",
+    "thing", "things", "stuff",
+]);
+
+function tokenize(s: string): string[] {
+    return s.toLowerCase().match(/[a-z][a-z0-9_]{1,}/g)?.filter(t => !FALLBACK_STOPWORDS.has(t)) ?? [];
+}
+
 function structuralClassify(message: string): { category: string; score: number }[] {
-    // Structural classification handled by native module.
-    // Return the always-included minimum so the agent can use request_tools to ask for more.
-    return [
-        { category: "core",   score: 0.9 },
-        { category: "memory", score: 0.4 },
-    ];
+    // Lightweight keyword-overlap fallback for when embeddings aren't ready
+    // (boot, cold download, or model-load failure). We score every category
+    // by bag-of-words overlap between the user message and the category
+    // description + tool names, then return the top-5 plus alwaysInclude
+    // mandatories. Old stub returned just {core, memory}, which forced the
+    // agent to fire `request_tools` every time — wasted LLM round-trip.
+    const msgTokens = new Set(tokenize(message));
+    const scores: Array<{ category: string; score: number }> = [];
+    for (const [name, cat] of Object.entries(CATEGORIES)) {
+        let hits = 0;
+        const descTokens = tokenize(cat.description);
+        for (const t of descTokens) if (msgTokens.has(t)) hits++;
+        // Tool names are high-signal ("browser_click" tokens as "browser click").
+        // Dedupe at the category level so a category full of `get_*` tools doesn't
+        // score 20 on a query that just mentions "get" — dominates the real
+        // category that has one well-matched tool.
+        const toolTokens = new Set<string>();
+        for (const tool of cat.tools) {
+            for (const p of tool.split(/[_\-]/)) {
+                if (p) toolTokens.add(p.toLowerCase());
+            }
+        }
+        for (const t of toolTokens) if (msgTokens.has(t)) hits++;
+        // Normalize to a soft [0, 1] score so downstream thresholds work.
+        const score = hits === 0 ? 0 : Math.min(1, 0.2 + hits * 0.15);
+        if (score > 0) scores.push({ category: name, score });
+        if (cat.alwaysInclude && score === 0) scores.push({ category: name, score: 0.3 });
+    }
+    scores.sort((a, b) => b.score - a.score);
+    // Top-5 plus alwaysInclude. If nothing scored, return alwaysInclude only.
+    const kept = scores.slice(0, 5);
+    for (const [name, cat] of Object.entries(CATEGORIES)) {
+        if (cat.alwaysInclude && !kept.some((s) => s.category === name)) {
+            kept.push({ category: name, score: 0.3 });
+        }
+    }
+    return kept;
 }
 
 // ── Determine which categories were recently used ──

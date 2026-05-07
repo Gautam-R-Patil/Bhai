@@ -374,20 +374,66 @@ export function selectForAgent(
 
 // ── Coding Escalation Helper ──────────────────
 
-const CODING_MULTIFILE_PATTERNS: RegExp[] = [];
+// Multi-file / refactor / architectural changes always deserve Pro-tier.
+// These patterns catch explicit mentions of scope beyond one-liner work.
+const CODING_MULTIFILE_PATTERNS: RegExp[] = [
+    /\brefactor(?:ing|ed|s)?\b/i,
+    /\bmigrate\s+(?:all|the|my)\b/i,
+    /\b(?:update|change|replace)\s+(?:all|every|across|throughout)\b/i,
+    /\bacross\s+(?:all|multiple)\s+files?\b/i,
+    /\bmulti[- ]?file\b/i,
+    /\brename\s+.*\b(?:across|globally|everywhere|throughout)\b/i,
+    /\bextract\s+(?:to|into)\s+.*(?:module|file|class|package)\b/i,
+    /\bsplit\s+.*\s+into\s+.*(?:modules?|files?|classes?|packages?)\b/i,
+    /\bmerge\s+.*\s+(?:module|file|class)s?\b/i,
+    /\bmove\s+.*\s+(?:to|into|from)\s+.*(?:file|module|directory|folder|package)\b/i,
+    /\bwhole\s+(?:project|codebase|repo)\b/i,
+];
 
 // Non-trivial coding intent — anything beyond a one-liner tweak. If the
 // message shows any of these signals, default is Pro tier (Sonnet/Opus/
 // Gemini-Pro). Expanded beyond the multi-file list because "fix this
 // race condition in auth.ts" is single-file but definitely not a
 // one-liner — it still needs real reasoning.
-const CODING_INTENT_PATTERNS: RegExp[] = [];
+const CODING_INTENT_PATTERNS: RegExp[] = [
+    // Debugging / fixing
+    /\b(?:debug|diagnose|fix|solve|resolve|troubleshoot|investigate)\s+(?:this|the|a|an|my)?\s*(?:bug|issue|error|problem|crash|failure|race|deadlock|leak)\b/i,
+    /\bwhy\s+(?:is|isn'?t|does(?:n'?t)?|won'?t|can'?t)\b/i,
+    /\bnot\s+working\b/i,
+    // Building
+    /\b(?:implement|build|create|add|write|design|architect)\s+(?:a|an|the|new)?\s*(?:feature|system|service|endpoint|api|function|class|module|component|page|hook|cli|daemon|worker|middleware|pipeline|handler|resolver)\b/i,
+    // Tests
+    /\b(?:write|add)\s+(?:a\s+)?tests?\s+for\b/i,
+    /\bunit\s+tests?\b/i,
+    // Performance
+    /\b(?:optimize|improve)\s+(?:the|this|my)?\s*(?:performance|latency|speed|memory|throughput)\b/i,
+    // Integration
+    /\bintegrate\s+(?:with|into)\b/i,
+    /\b(?:hook|wire)\s+(?:up|into)\b/i,
+    // Review / audit
+    /\b(?:review|audit|explain)\s+(?:this|the|my)\s+code\b/i,
+    // Generic but coding-specific
+    /\bmake\s+.*\s+(?:work|pass|compile|run)\b/i,
+];
 
 // Trivially-simple coding: one-off small edits that legitimately do not
 // need Pro reasoning. Matches act as a DOWNGRADE permission even when
 // the taskType is coding — callers that ask for "add a console.log",
 // "rename foo to bar", "fix this typo" shouldn't burn Opus.
-const CODING_TRIVIAL_PATTERNS: RegExp[] = [];
+const CODING_TRIVIAL_PATTERNS: RegExp[] = [
+    /\badd\s+(?:a\s+)?console\.log\b/i,
+    /\badd\s+(?:a\s+)?print\s+statement\b/i,
+    /\badd\s+(?:a\s+)?debug\s+log\b/i,
+    /\bfix\s+(?:a\s+|the\s+|this\s+)?typo\b/i,
+    // `rename x to y` is trivial ONLY when no cross-file scope follows.
+    // "rename foo to bar across all files" → fall through to intent pattern.
+    /\brename\s+\w+\s+to\s+\w+\b(?!.*\b(?:across|globally|everywhere|throughout|all\s+(?:files|callers|usages|references)))/i,
+    /\b(?:change|update|bump)\s+(?:the\s+)?version\b/i,
+    /\bcomment\s+out\b/i,
+    /\bremove\s+(?:the\s+|this\s+)?(?:console\.log|print|debug|comment)\b/i,
+    /\badd\s+(?:a\s+)?(?:todo|fixme|note)\b/i,
+    /\bformat\s+(?:this|the)\s+(?:file|code)\b/i,
+];
 
 function isTriviallySimpleCoding(message: string): boolean {
     if (!message) return false;
@@ -410,13 +456,42 @@ function hasCodingIntent(message: string): boolean {
 // debug / investigate something that already exists. Used as an anchor
 // for high-stakes-domain patterns (auth, payments, schema, etc.) so
 // "debug auth middleware" classifies as standard instead of complex.
-const CODING_BUILD_VERB = /(?:)/; // stub — classification handled by native module
+// Action verbs that indicate BUILD intent (not debug). Anchor for the
+// high-stakes-domain gate: "implement auth" → complex (full design-docs),
+// "debug auth" → standard (no PRD, just fix it).
+const CODING_BUILD_VERB = /\b(?:implement|build|create|design|architect|write|develop|construct|scaffold|set\s+up|stand\s+up|spin\s+up)\b/i;
 
-const CODING_COMPLEX_PATTERNS: RegExp[] = [];
+const CODING_COMPLEX_PATTERNS: RegExp[] = [
+    // Multi-file / full-system indicators
+    /\b(?:new|entire|whole|full)\s+(?:system|service|platform|pipeline|framework|backend|frontend|application|app)\b/i,
+    /\b(?:refactor|migrate|rewrite)\s+(?:the|my|our)?\s*(?:entire|whole|full|major|large)\b/i,
+    /\bfrom\s+scratch\b/i,
+    /\bgreenfield\b/i,
+    // Architecture-level
+    /\b(?:design|architect|redesign)\s+(?:the|a|an|new)?\s*(?:system|service|architecture|schema|database|api)\b/i,
+    /\bmicroservices?\b/i,
+    /\bevent[- ]driven\b/i,
+    // Heavy scope markers
+    /\bproduction[- ]ready\b/i,
+    /\bend[- ]to[- ]end\b/i,
+    // User explicitly asking for the ceremony
+    /\b(?:prd|spec|design\s+doc|design\s+document|technical\s+doc|architecture\s+doc)\b/i,
+];
 
 // High-stakes domains — only complex when combined with a build verb.
 // "debug auth middleware" stays standard; "implement auth" goes complex.
-const CODING_HIGH_STAKES_DOMAINS: RegExp[] = [];
+const CODING_HIGH_STAKES_DOMAINS: RegExp[] = [
+    /\b(?:auth|authn|authz|authentication|authorization|login|oauth|jwt|session|rbac|iam)\b/i,
+    /\b(?:payment|billing|checkout|stripe|subscription|invoice|tax)\b/i,
+    /\b(?:schema|migration|database|postgres|mysql|sqlite|dynamodb|mongodb)\b/i,
+    /\b(?:encryption|crypto|kdf|tls|ssl|hash(?:ing)?|hmac)\b/i,
+    /\b(?:security|pentest|vulnerabilit(?:y|ies)|exploit|injection|xss|csrf|ssrf)\b/i,
+    /\bdata\s+privacy\b/i,
+    /\bpii\b/i,
+    /\bgdpr\b/i,
+    /\b(?:kubernetes|k8s|helm|terraform|deployment|infra(?:structure)?|ci\s*\/?\s*cd)\b/i,
+    /\bobservability\b/i,
+];
 
 export type CodingComplexity = "trivial" | "standard" | "complex";
 
@@ -430,8 +505,18 @@ export type CodingComplexity = "trivial" | "standard" | "complex";
  * default, not a verdict.
  */
 export function classifyCodingComplexity(message: string): CodingComplexity {
-    // Complexity classification handled by the native Rust module.
-    // This stub returns "standard" (Pro-tier routing) as a safe default.
+    if (!message) return "standard";
+    // 1. Trivial — short, clearly one-liner edits. Skip design-docs ceremony.
+    if (isTriviallySimpleCoding(message)) return "trivial";
+    // 2. Complex — matches a scope/architecture pattern, OR a BUILD verb +
+    //    high-stakes domain + long message (>400 chars = user giving real
+    //    context). "debug auth" (no build verb) stays standard.
+    if (CODING_COMPLEX_PATTERNS.some((p) => p.test(message))) return "complex";
+    if (message.length > 400 && CODING_BUILD_VERB.test(message) &&
+        CODING_HIGH_STAKES_DOMAINS.some((p) => p.test(message))) {
+        return "complex";
+    }
+    // 3. Default: standard — Pro tier, no PRD ceremony.
     return "standard";
 }
 

@@ -79,6 +79,10 @@ export function createCacheMiddleware(): LLMMiddleware {
         }
 
         let queryEmbedding: Float32Array | null = null;
+        // toolSignature is "" here because of the hasTools short-circuit, but
+        // we still pass it through so the cache module's signature-aware
+        // lookup path stays correct if the gate ever relaxes.
+        const toolSignature = "";
 
         try {
             const { getCachedResponse, embedQuery } = await import("./llm-cache.js");
@@ -87,7 +91,7 @@ export function createCacheMiddleware(): LLMMiddleware {
 
             if (queryText) {
                 const model = params._resolvedModel || params.modelOverride || "default";
-                const cached = await getCachedResponse(queryText, model);
+                const cached = await getCachedResponse(queryText, model, toolSignature);
                 if (cached) return cached;
                 queryEmbedding = await embedQuery(queryText);
             }
@@ -107,7 +111,7 @@ export function createCacheMiddleware(): LLMMiddleware {
                 const lastUserMsg = [...params.messages].reverse().find(m => m.role === "user");
                 const queryText = typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
                 const model = params._resolvedModel || params.modelOverride || "default";
-                cacheResponse(queryText, queryEmbedding, model, response);
+                cacheResponse(queryText, queryEmbedding, model, response, toolSignature);
             } catch { /* cache module not available */ }
         }
 

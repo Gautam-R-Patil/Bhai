@@ -122,6 +122,10 @@ desktop/hostinger-upload/
 !src/voice/live/tool-bridge.test.ts
 !src/voice/live/transcript-speaker.test.ts
 !src/voice/live/memory-bridge.test.ts
+!src/tools/preflight.test.ts
+!src/tools/swarm-gate.test.ts
+!src/model-router.coding.test.ts
+!src/llm-cache.toolsig.test.ts
 !src/voice/live/backends/gemini-live.test.ts
 !src/tools/spotify-cache.test.ts
 

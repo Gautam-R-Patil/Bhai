@@ -9,6 +9,7 @@
 import type { ToolDefinition } from "./get-current-time.js";
 import type { LLMClient } from "../llm.js";
 import { runSwarm } from "../agents/swarm.js";
+import { isTriviallyDirectExecutable } from "./swarm-gate.js";
 
 // ── LLM Client Injection ──────────────────────
 // The tool needs the LLM client but tools are pure handlers.
@@ -61,6 +62,15 @@ Do NOT use for simple, single-focus tasks — just handle those directly.`,
         const task = input.task as string;
         if (!task) {
             return JSON.stringify({ error: "Missing 'task' parameter" });
+        }
+
+        // Direct-execute gate — see isTriviallyDirectExecutable() above.
+        if (isTriviallyDirectExecutable(task)) {
+            return JSON.stringify({
+                status: "rejected",
+                reason: "Task is too simple to benefit from swarm decomposition",
+                message: "Handle this directly with a single tool call or short reasoning loop. Swarm decomposition adds 6-10 s of orchestration overhead without parallelism benefit for single-verb tasks.",
+            });
         }
 
         try {

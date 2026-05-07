@@ -15,8 +15,14 @@ import type { ChatCompletion } from "openai/resources/chat/completions.js";
 // ── Configuration ────────────────────────────
 
 const MAX_CACHE_SIZE = 200;        // Maximum cached entries (LRU eviction)
-const CACHE_TTL_MS = 3 * 60_000;   // 3 minutes TTL (shorter to avoid stale intent classifications)
-const SIMILARITY_THRESHOLD = 0.88; // Cosine similarity threshold for cache hit (lowered from 0.95 to reduce false positives on follow-up messages)
+const CACHE_TTL_MS = 10 * 60_000;  // 10 minutes TTL — long enough for coherent multi-turn sessions; short enough to avoid stale facts.
+// Cosine similarity threshold for cache hit. Research (arXiv 2504.02268, 2411.05276)
+// shows a bimodal distribution on semantic caches: genuine duplicates cluster ≥0.95,
+// unrelated ≤0.85, danger zone is 0.88-0.94. Previous 0.88 sat in the danger zone
+// and caused "looks similar but different answer needed" false positives. 0.92 is
+// the production default for factual workloads; follow-ups ("and the next one?")
+// DON'T cluster above 0.92 because they share fewer distinctive tokens.
+const SIMILARITY_THRESHOLD = Number(process.env.ATLAS_LLM_CACHE_THRESHOLD) || 0.92;
 const MIN_QUERY_LENGTH = 10;       // Don't cache very short queries
 const MAX_QUERY_LENGTH = 500;      // Don't cache very long queries (too contextual)
 
@@ -27,8 +33,25 @@ interface CacheEntry {
     queryEmbedding: Float32Array;
     response: ChatCompletion;
     model: string;
+    // Sorted+joined names of the tools available for the request. Two
+    // requests with different tool lists MUST NOT share a cache hit — a
+    // response shaped for {memory, web_search} can leak into a prompt
+    // that only has {memory} and vice versa.
+    toolSignature: string;
     createdAt: number;
     hitCount: number;
+}
+
+/** Build a stable signature for a tool set (sorted, comma-joined names). */
+export function buildToolSignature(tools?: Array<{ function?: { name?: string } } | { name?: string }>): string {
+    if (!tools || tools.length === 0) return "";
+    const names: string[] = [];
+    for (const t of tools) {
+        const n = (t as { function?: { name?: string } }).function?.name ?? (t as { name?: string }).name;
+        if (n) names.push(n);
+    }
+    names.sort();
+    return names.join(",");
 }
 
 // ── Cache State ──────────────────────────────
@@ -67,6 +90,7 @@ async function getEmbedModule() {
 export async function getCachedResponse(
     queryText: string,
     model: string,
+    toolSignature: string = "",
 ): Promise<ChatCompletion | null> {
     // Skip caching for very short or very long queries
     if (queryText.length < MIN_QUERY_LENGTH || queryText.length > MAX_QUERY_LENGTH) {
@@ -100,6 +124,10 @@ export async function getCachedResponse(
     for (const entry of cache) {
         // Must be same model
         if (entry.model !== model) continue;
+        // Must share tool signature. Different tool sets produce different
+        // response shapes — a tool-call-absent answer from 2 tools ago is
+        // unsafe to return if this request has 50 tools available.
+        if (entry.toolSignature !== toolSignature) continue;
 
         const similarity = embed.cosineSimilarity(queryEmbedding, entry.queryEmbedding);
         if (similarity > bestSimilarity && similarity >= SIMILARITY_THRESHOLD) {
@@ -128,6 +156,7 @@ export function cacheResponse(
     queryEmbedding: Float32Array | null,
     model: string,
     response: ChatCompletion,
+    toolSignature: string = "",
 ): void {
     // Don't cache responses with tool calls
     const choice = response.choices?.[0];
@@ -167,6 +196,7 @@ export function cacheResponse(
         queryEmbedding,
         response,
         model,
+        toolSignature,
         createdAt: Date.now(),
         hitCount: 0,
     });
