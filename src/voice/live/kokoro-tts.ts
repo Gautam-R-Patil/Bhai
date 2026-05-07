@@ -5,10 +5,19 @@
 // Local Kokoro 82M ONNX TTS. First `initKokoro()` call downloads ~96 MB into
 // ATLAS_KOKORO_CACHE_DIR; subsequent calls load from disk. Output is 24 kHz
 // 16-bit mono PCM — same format as Gemini Live, so it drops into AudioPlayer.
+//
+// Gated OFF by default in production. Loading Kokoro under Electron
+// co-loads libonnxruntime.1.21 alongside the 1.14 already loaded by
+// @xenova/transformers (used for embeddings). Those two dylibs export
+// overlapping symbols, so one ends up calling into the other's code and
+// SIGBUSes inside InferenceSession::Run. Until we isolate Kokoro in a
+// subprocess (or unify the ONNX versions), ATLAS_KOKORO_ENABLE must be
+// set to "true" to opt in. Default falls through to `say`.
 
 import { join } from "node:path";
 import { homedir } from "node:os";
 
+const ENABLED = process.env.ATLAS_KOKORO_ENABLE === "true";
 const VOICE = process.env.ATLAS_KOKORO_VOICE || "af_heart";
 const MODEL_ID = process.env.ATLAS_KOKORO_MODEL || "onnx-community/Kokoro-82M-v1.0-ONNX";
 // q8 is the sweet spot: ~96 MB, CPU-fast, near-indistinguishable from fp32.
@@ -33,6 +42,7 @@ export function hasKokoroFailed(): boolean {
 // callers share the same in-flight promise. Permanently latches `loadFailed`
 // on any error so we don't retry a broken install in a hot loop.
 export async function initKokoro(): Promise<KokoroInstance | null> {
+    if (!ENABLED) { loadFailed = true; return null; }
     if (instance) return instance;
     if (loadFailed) return null;
     if (loading) return loading;
