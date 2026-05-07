@@ -127,6 +127,35 @@ export async function osLaunchUri(uri: string): Promise<void> {
     throw new Error("Unsupported platform for Spotify URI launch");
 }
 
+// On macOS, `open spotify:track:<id>` only reliably switches tracks when the
+// Spotify app is cold-starting. Once the app is already running and playing,
+// `open` silently no-ops — the app raises to foreground but playback doesn't
+// change. AppleScript `play track` is the only reliable track-switch path
+// on mac. Windows/Linux URI handlers do forward to the running instance, so
+// `start`/`xdg-open` work there.
+export async function osPlayTrackByUri(uri: string): Promise<void> {
+    if (!uri.startsWith("spotify:") && !uri.startsWith("https://open.spotify.com/")) {
+        throw new Error(`Invalid Spotify URI: ${uri}`);
+    }
+    if (IS_MAC) {
+        const escaped = uri.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+        await runAS(`tell application "Spotify" to play track "${escaped}"`);
+        return;
+    }
+    if (IS_WIN) {
+        await execFileAsync("cmd.exe", ["/c", "start", "", uri], { timeout: 5000 });
+        return;
+    }
+    if (IS_LINUX) {
+        await execFileAsync("xdg-open", [uri], { timeout: 5000 });
+        if (await hasPlayerctl()) {
+            await execFileAsync("playerctl", ["-p", "spotify", "play"], { timeout: 3000 }).catch(() => {});
+        }
+        return;
+    }
+    throw new Error("Unsupported platform for Spotify track play");
+}
+
 // ── Play / pause (toggle) ─────────────────────
 
 export async function osPlayPause(): Promise<void> {

@@ -32,6 +32,7 @@ import {
     osNowPlayingLocal,
     osPause,
     osPlay,
+    osPlayTrackByUri,
     osPrev,
     osVolume,
 } from "./spotify-os.js";
@@ -437,6 +438,40 @@ async function searchTop(
 
 // ── Action handlers ───────────────────────────
 
+function normalizeSpotifyUri(u: string): string {
+    const m = u.match(/^https:\/\/open\.spotify\.com\/([a-z]+)\/([^?/]+)/i);
+    if (m) return `spotify:${m[1].toLowerCase()}:${m[2]}`;
+    return u.split("?")[0];
+}
+
+async function readCurrentUri(): Promise<string> {
+    const local = await osNowPlayingLocal();
+    if (local.track_uri) return local.track_uri;
+    const r = await runSpogo(["status"], { timeout: 3000 });
+    if (r.exitCode === 0 && r.json && typeof r.json === "object") {
+        const item = (r.json as Record<string, unknown>).item as Record<string, unknown> | undefined;
+        if (item && typeof item.uri === "string") return item.uri;
+    }
+    return "";
+}
+
+// spogo's Connect engine sometimes returns {"status":"ok"} for `play <uri>`
+// without actually switching the active device's track (the HTTP request
+// succeeds, the local Spotify app ignores it). Poll playback state to confirm
+// the switch actually happened. Resolves as soon as URIs match.
+async function verifyPlayback(targetUri: string, timeoutMs = 2500): Promise<boolean> {
+    const target = normalizeSpotifyUri(targetUri);
+    const deadline = Date.now() + timeoutMs;
+    await new Promise((r) => setTimeout(r, 200));
+    while (Date.now() < deadline) {
+        const cur = await readCurrentUri();
+        if (cur && normalizeSpotifyUri(cur) === target) return true;
+        if (Date.now() >= deadline) break;
+        await new Promise((r) => setTimeout(r, 300));
+    }
+    return false;
+}
+
 async function doPlay(input: Record<string, unknown>): Promise<string> {
     const rawUri = (input.uri as string) || (input.context_uri as string) || "";
     const query = (input.query as string) || "";
@@ -498,8 +533,32 @@ async function doPlay(input: Record<string, unknown>): Promise<string> {
     if (shuffle) playArgs.push("--shuffle");
     const r = await call(playArgs);
     if (r.ok) {
-        if (query) rememberLastPlayed(query, targetUri, label);
-        return ok({ action: "play", mode: "spogo", uri: targetUri, label: label || undefined });
+        if (await verifyPlayback(targetUri)) {
+            if (query) rememberLastPlayed(query, targetUri, label);
+            return ok({ action: "play", mode: "spogo", uri: targetUri, label: label || undefined });
+        }
+        try {
+            await ensureSpotifyAppRunning();
+            await osPlayTrackByUri(targetUri);
+            if (query) rememberLastPlayed(query, targetUri, label);
+            const reVerified = await verifyPlayback(targetUri);
+            return ok({
+                action: "play",
+                mode: reVerified ? "os_fixup" : "os_fixup_unverified",
+                uri: targetUri,
+                label: label || undefined,
+                note: reVerified
+                    ? "spogo reported success but playback didn't switch; corrected via local app control."
+                    : "spogo reported success but playback didn't switch; dispatched local play command — verification timed out.",
+            });
+        } catch (osErr) {
+            return fail(
+                `spogo accepted the play command but playback didn't switch, and local fixup failed: ${
+                    (osErr as Error).message
+                }`,
+                { uri: targetUri, label: label || undefined },
+            );
+        }
     }
 
     // Fall back to OS URI launch (works on Free + Premium; the desktop app handles licensing,
