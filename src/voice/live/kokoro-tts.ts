@@ -24,7 +24,11 @@ import { existsSync } from "node:fs";
 // Enabled by default now that Kokoro runs in an isolated subprocess. Opt-out
 // via ATLAS_KOKORO_ENABLE=false for debugging the ONNX runtime conflict.
 const ENABLED = process.env.ATLAS_KOKORO_ENABLE !== "false";
-const VOICE = process.env.ATLAS_KOKORO_VOICE || "af_heart";
+// Default voice: af_bella — rated 8/10 on the Kokoro voice chart, warmer and
+// more expressive than the previous default (af_heart). Override per-user via
+// ATLAS_KOKORO_VOICE. Other warm options to try: af_nicole (ASMR intimacy),
+// af_sky (neutral/flat), am_michael (warm male).
+const VOICE = process.env.ATLAS_KOKORO_VOICE || "af_bella";
 const MODEL_ID = process.env.ATLAS_KOKORO_MODEL || "onnx-community/Kokoro-82M-v1.0-ONNX";
 const DTYPE = process.env.ATLAS_KOKORO_DTYPE || "q8";
 
@@ -52,6 +56,10 @@ let ready = false;
 let loadFailed = false;
 let loadingPromise: Promise<boolean> | null = null;
 let exitHookInstalled = false;
+// First-synth warmup pays the ONNX JIT / phoneme model cold-start cost once.
+// The NEXT real synthesize() call awaits this promise so the user-facing
+// first utterance doesn't re-pay the cold start. Cleared once resolved.
+let warmupPromise: Promise<unknown> | null = null;
 
 type Pending = { resolve: (pcm: Buffer) => void; reject: (err: Error) => void; };
 const pending = new Map<number, Pending>();
@@ -167,6 +175,10 @@ export async function initKokoro(): Promise<boolean> {
                 loadFailed = true;
                 ready = false;
                 worker = null;
+                // Clear warmupPromise so a subsequent re-init re-sets it;
+                // otherwise a stale null-state reference could confuse real
+                // synth calls waiting on it.
+                warmupPromise = null;
                 // Reject all pending — caller will fall back to say.
                 for (const p of pending.values()) p.reject(new Error("Kokoro worker exited"));
                 pending.clear();
@@ -178,6 +190,17 @@ export async function initKokoro(): Promise<boolean> {
             await readyLineWatcher();
             ready = true;
             console.log("[KOKORO] Worker ready");
+            // Warmup: pre-synth a tiny utterance so the first REAL request
+            // doesn't pay JIT cache / ONNX inference cold-start cost.
+            // Measured: cold first-synth adds ~500-1000 ms; warmed ~200 ms.
+            // Don't await here — let it run in the background while the user
+            // connects the mic / establishes the Gemini WebSocket. Real
+            // synth calls await warmupPromise internally so they don't
+            // interleave with this cold-start request on the worker stdin.
+            warmupPromise = synthesize(".", VOICE, /*isWarmup=*/true).then(
+                (pcm) => { warmupPromise = null; console.log(`[KOKORO] warmup done (${pcm.length} bytes)`); return pcm; },
+                (err) => { warmupPromise = null; console.warn(`[KOKORO] warmup failed: ${(err as Error).message}`); },
+            );
             return true;
         } catch (err) {
             loadFailed = true;
@@ -190,8 +213,14 @@ export async function initKokoro(): Promise<boolean> {
     return loadingPromise;
 }
 
-export function synthesize(text: string, voice: string = VOICE): Promise<Buffer> {
-    if (!ready || !worker?.stdin) return Promise.reject(new Error("Kokoro worker not ready"));
+export async function synthesize(text: string, voice: string = VOICE, isWarmup = false): Promise<Buffer> {
+    if (!ready || !worker?.stdin) throw new Error("Kokoro worker not ready");
+    // Real synth calls wait for the one-shot warmup to complete so the first
+    // user-facing utterance doesn't re-pay the cold start cost. Warmup
+    // itself bypasses this check (otherwise it'd deadlock on its own promise).
+    if (!isWarmup && warmupPromise) {
+        try { await warmupPromise; } catch { /* warmup error already logged */ }
+    }
     const id = nextReqId++;
     const promise = new Promise<Buffer>((resolve, reject) => {
         pending.set(id, { resolve, reject });
@@ -200,7 +229,7 @@ export function synthesize(text: string, voice: string = VOICE): Promise<Buffer>
         worker.stdin.write(JSON.stringify({ id, text, voice }) + "\n");
     } catch (err) {
         pending.delete(id);
-        return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+        throw err instanceof Error ? err : new Error(String(err));
     }
     return promise;
 }

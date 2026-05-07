@@ -23,9 +23,10 @@ import { AudioPlayer } from "./audio/audio-player.js";
 import { getVoiceToolDeclarations, getVoiceToolSchemas, executeVoiceToolCalls } from "./tool-bridge.js";
 import { MODELS } from "../../llm.js";
 import { buildVoiceSystemPrompt } from "./prompt-builder.js";
-import { getLightMemoryRefresh } from "./memory-bridge.js";
+import { getLightMemoryRefresh, detectMemoryVerb } from "./memory-bridge.js";
 import { startScreenShare, stopScreenShare } from "./screen-share.js";
 import { TranscriptSpeaker } from "./transcript-speaker.js";
+import { getAck, startAckBankWarmup, isAckBankReady } from "./ack-bank.js";
 
 // ── Session State ────────────────────────────────
 
@@ -104,6 +105,13 @@ export class LiveVoiceSession extends EventEmitter {
     // mid-utterance pauses > this fire a premature turn; tune up for users
     // who speak slowly or tune down for snappier dispatch.
     private static readonly END_OF_SPEECH_MS = Number(process.env.ATLAS_END_OF_SPEECH_MS) || 700;
+    // Minimum transcript-chunk length (trimmed chars) to trigger barge-in
+    // while Kokoro is playing. Under this we assume it's a Gemini hallucination
+    // on speaker echo (common: one-letter or two-letter fake words) and drop
+    // it. Loud, substantive user speech transcribes as longer chunks and
+    // DOES cross this bar. Tuned to 5 so short interjections like "Wait",
+    // "Stop", "Hey?" trigger — at 8 we'd lose those single-word barge-ins.
+    private static readonly BARGE_IN_MIN_CHARS = Number(process.env.ATLAS_BARGE_IN_MIN_CHARS) || 5;
 
     constructor(config: Partial<LiveVoiceConfig> & Pick<LiveVoiceConfig, "keys">, llm: LLMClient) {
         super();
@@ -188,6 +196,21 @@ export class LiveVoiceSession extends EventEmitter {
             this.startTime = Date.now();
             this.emitEvent("session_started");
             console.log("[LIVE-SESSION] Live voice session ACTIVE");
+
+            // Warm up the ack bank in the background. Poll until Kokoro is
+            // ready (up to 60 s) — the model can take 25-60 s on cold load
+            // the first time, so a fixed setTimeout would miss. Once warm,
+            // the bank has 6-12 "got it" PCM buffers ready to fire in <50 ms
+            // when a tool call starts. A fresh install skips this on the
+            // first session since Kokoro is still downloading — acceptable.
+            (async () => {
+                for (let i = 0; i < 60; i++) {
+                    if (this.state !== "active") return;
+                    try { startAckBankWarmup(); } catch { /* */ }
+                    if (isAckBankReady()) return;
+                    await new Promise(r => setTimeout(r, 1000));
+                }
+            })();
 
             // 9. Start screen sharing — gives the model eyes so "click that",
             // "make a PPT", "open Bluetooth settings" work against the real UI.
@@ -382,14 +405,27 @@ export class LiveVoiceSession extends EventEmitter {
         // survive concat — otherwise "How are you" becomes "Hoareyou".
         this.backend.on("user_transcript_raw", (rawChunk: string) => {
             if (!this.hybridMode) return;
-            // Drop transcripts while Kokoro is speaking. They're almost always
-            // echo of our own output (mic picks up speaker → Gemini transcribes)
-            // and would either trigger a spurious "echo turn" after speech or
-            // fill pendingUserText with our own words. Real barge-in loses out
-            // in this trade-off; handled via mute for now.
+            // Barge-in policy while Kokoro is speaking:
+            //   - Short echo-likely chunks (< BARGE_IN_MIN_CHARS) → drop. The
+            //     mic RMS gate only forwards loud audio to Gemini, but one-word
+            //     transcripts can still slip through from brief louder peaks.
+            //   - Substantive chunks OR chunks that extend an already-accepted
+            //     barge-in → accept, cancel the speaker, treat as user turn.
+            //     This is what makes interrupting ATLAS actually work.
             if (this.speaker.isSpeaking()) {
-                console.log(`[HYBRID] dropped raw chunk while speaker busy: "${rawChunk.slice(0, 40)}"`);
-                return;
+                const shortEchoLikely = rawChunk.trim().length < LiveVoiceSession.BARGE_IN_MIN_CHARS;
+                const alreadyBargeIn = this.pendingUserText.length > 0;
+                if (shortEchoLikely && !alreadyBargeIn) {
+                    console.log(`[HYBRID] dropped short chunk during playback (echo-likely): "${rawChunk.slice(0, 40)}"`);
+                    return;
+                }
+                // Only cancel speaker on the FIRST chunk of a barge-in. Gemini
+                // emits raw chunks every ~100 ms; re-entering cancel() per
+                // chunk floods logs with redundant SIGTERM + stack traces.
+                if (!alreadyBargeIn) {
+                    console.log(`[HYBRID] BARGE-IN during playback — cancelling speaker, accepting: "${rawChunk.slice(0, 40)}"`);
+                    this.speaker.cancel();
+                }
             }
             this.pendingUserText += rawChunk;
             console.log(`[HYBRID] raw chunk accepted: "${rawChunk.slice(0, 40)}" pendingLen=${this.pendingUserText.length}`);
@@ -402,6 +438,28 @@ export class LiveVoiceSession extends EventEmitter {
                 console.log(`[HYBRID] end-of-speech fired, dispatching: "${finalText}"`);
                 // Emit the clean final transcript for UI display.
                 this.emitEvent("user_transcript", finalText);
+                // Memory-verb shortcut: "remember that X" / "note that Y" /
+                // "don't forget Z" saves to sqlite BEFORE llm.chat so the
+                // model doesn't waste a turn on memory_store and the fact
+                // lands immediately. Fire-and-forget — worst case the user
+                // repeats it.
+                try {
+                    const memMatch = detectMemoryVerb(finalText);
+                    if (memMatch) {
+                        import("../../memory/sqlite.js").then(({ remember }) => {
+                            try {
+                                // Importance 5 (not 7): casual "remember milk"
+                                // shouldn't compete with real identity facts
+                                // in core-memory rails (importance>=7 is the
+                                // core-memory promotion threshold).
+                                const id = remember(memMatch.content, "voice", "voice-capture", 5, "user");
+                                console.log(`[HYBRID] memory-verb saved id=${id} content="${memMatch.content.slice(0, 60)}"`);
+                            } catch (err) {
+                                console.warn("[HYBRID] memory-verb save failed:", (err as Error).message);
+                            }
+                        }).catch(() => { /* optional */ });
+                    }
+                } catch { /* detector should never throw, belt+braces */ }
                 this.runHybridTurn(finalText).catch((err) => {
                     console.error("[LIVE-SESSION] Hybrid turn errored:", err);
                     this.emitEvent("error", err);
@@ -665,6 +723,19 @@ export class LiveVoiceSession extends EventEmitter {
 
                 for (const c of liveCalls) this.inflightToolIds.add(c.id);
                 this.emitEvent("tool_call", liveCalls);
+
+                // INSTANT ACK: if the model didn't emit any ack text AND the
+                // ack bank is ready, play a pre-synthesized "one sec" / topical
+                // ack RIGHT NOW so the user hears feedback within ~50 ms of
+                // their utterance ending, instead of 500-2000 ms of dead air
+                // while the tool + 2nd LLM call runs.
+                if (!text.trim() && isAckBankReady() && liveCalls.length > 0) {
+                    const ack = getAck(liveCalls[0].name);
+                    if (ack) {
+                        console.log(`[HYBRID] instant ack (tool=${liveCalls[0].name}) phrase="${ack.phrase}"`);
+                        this.speaker.playRawPcm(ack.pcm);
+                    }
+                }
 
                 const results = await executeVoiceToolCalls(liveCalls);
 

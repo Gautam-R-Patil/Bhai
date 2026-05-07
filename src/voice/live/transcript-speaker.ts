@@ -191,13 +191,28 @@ const MIN_SENTENCE_CHARS = 12;
 // enough to leak back through the mic and re-ignite the feedback loop.
 const POST_SPEAK_QUIET_MS = 250;
 
+// Common English abbreviations that end in `.` and are followed by a capital
+// word — "I spoke to Dr. Smith about…" must NOT split at "Dr.". Checked against
+// the end of a candidate sentence; case-insensitive.
+//
+// Selection rule: only abbreviations that (a) genuinely occur mid-sentence
+// followed by a capital name, and (b) are NOT also common whole English words.
+// Rejected candidates like "ed", "co", "pp", "gen", "col", "rep", "sen",
+// "gov", "hon", "pres" would over-preserve — they're frequent sentence-ending
+// words ("…in general.", "…company rep.") and the \b boundary doesn't save
+// us because those words ARE the ending token.
+const ABBR_AT_END =
+    /\b(Mr|Mrs|Ms|Dr|Sr|Jr|St|Prof|Rev|Sgt|Capt|Lt|Fr|e\.g|i\.e|vs|etc|Inc|Ltd|Corp|U\.S|U\.K|U\.N|p\.m|a\.m|No|Vol|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.["')\]]?$/i;
+
 /**
  * Try to extract one sentence from the front of `buf`. Scans every
  * terminator position and accepts the FIRST one that passes sanity
  * checks: next non-space char is an uppercase letter / any non-Latin
- * letter / end of buffer, AND the candidate sentence is ≥ MIN_SENTENCE_CHARS.
+ * letter / end of buffer, AND the candidate sentence is ≥ MIN_SENTENCE_CHARS,
+ * AND the candidate doesn't end in a known abbreviation.
  *
- * Rejects: "Mr. Smith", "3.14", "e.g.", "U.S." (next char lowercase).
+ * Rejects: "Mr. Smith", "3.14", "e.g.", "U.S." (next char lowercase),
+ *          "I spoke to Dr. Smith" (abbreviation guard).
  * Accepts: "It is four pm. The weather…", "बहुत अच्छा है. अगला…",
  *          "He said \"go.\" She left.", "これ。後で。".
  *
@@ -230,6 +245,9 @@ export function extractSentence(buf: string): { sentence: string; rest: string }
         if (!looksLikeStart) continue;
         const sentence = buf.slice(0, endIdx).trim();
         if (sentence.length < MIN_SENTENCE_CHARS) continue;
+        // Abbreviation guard — "I spoke to Dr. Smith." must NOT split at "Dr."
+        // even though the next char ("S") looks like a sentence-starter.
+        if (ABBR_AT_END.test(sentence)) continue;
         return { sentence, rest: wsMatch[2] };
     }
     return null;
@@ -299,6 +317,33 @@ export class TranscriptSpeaker {
         const tail = this.buffer.trim();
         this.buffer = "";
         if (tail) this.enqueue(tail);
+    }
+
+    /**
+     * Play an already-synthesized PCM buffer directly — used by the ack bank
+     * to fire pre-generated "one sec" / "got it" acknowledgments the moment
+     * a tool call starts, with no Kokoro synth round-trip. If there's already
+     * a child playing, we SIGTERM it first (its PCM is stale now — a new
+     * tool-call ack means a new turn is happening) and bump the generation
+     * so any prefetched synth is dropped.
+     */
+    playRawPcm(pcm: Buffer): void {
+        if (!this.enabled || this.disabled || pcm.length === 0) return;
+        if (this.running) {
+            // Stale child from a prior turn — kill it so we don't get two
+            // afplays blasting simultaneously. attachChildHandlers's onExit
+            // will still fire and clean up the temp wav; `stillActive` will
+            // be false by then since we null `running` below.
+            try { this.running.kill("SIGTERM"); } catch { /* already dead */ }
+            this.running = null;
+        }
+        // Bump generation so any stale Kokoro `.then` or prefetch drops.
+        this.generation++;
+        this.synthesizing = false;
+        this.queue = [];
+        this.prefetchedPcm = null;
+        this.prefetchedGen = -1;
+        this.playPcm(pcm);
     }
 
     /**

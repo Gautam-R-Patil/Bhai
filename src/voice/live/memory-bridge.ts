@@ -168,6 +168,53 @@ export async function getFullMemoryContext(userHint?: string): Promise<string> {
     return parts.join("\n\n");
 }
 
+// ── Voice-to-memory shortcut ─────────────────────────
+// Detects explicit memory intent in what the user said ("remember that…",
+// "don't forget…", "note that…", "for future reference…") and auto-saves
+// the rest of the utterance to sqlite memory. Runs BEFORE the llm.chat
+// turn so the model doesn't need to spend a tool call on memory_store.
+// Kept intentionally strict — only fires on imperative verbs at the start
+// so casual mentions of "I'll remember that" don't accidentally save.
+
+// Case-insensitive, matches at the start of the utterance after optional
+// greeting/filler. Captures the content AFTER the verb clause.
+const MEMORY_VERB_PATTERN = new RegExp(
+    // Optional leading filler like "hey atlas" / "okay" / "so"
+    "^\\s*(?:hey\\s+atlas[,.\\s]+|okay[,.\\s]+|so[,.\\s]+)?" +
+    // The imperative verb clause
+    "(?:please\\s+)?(?:" +
+    "remember(?:\\s+this)?(?:\\s+that)?" +
+    "|note(?:\\s+this)?(?:\\s+that)?" +
+    "|don'?t\\s+forget(?:\\s+that)?" +
+    "|for\\s+(?:future\\s+)?reference[,.]?" +
+    "|keep\\s+in\\s+mind(?:\\s+that)?" +
+    "|save\\s+this" +
+    ")" +
+    // Separator between verb and content
+    "[:,.]?\\s+(.+)$",
+    "is",
+);
+
+export interface MemoryVerbMatch {
+    content: string;
+    verb: string;
+}
+
+/**
+ * Returns the content to save if the utterance matches a memory verb,
+ * null otherwise. Does NOT actually save — caller decides whether to
+ * persist (e.g. skip in mock/dev mode, batch multiple).
+ */
+export function detectMemoryVerb(utterance: string): MemoryVerbMatch | null {
+    const m = utterance.match(MEMORY_VERB_PATTERN);
+    if (!m) return null;
+    const content = m[1]?.trim().replace(/[.!?]+$/, "");
+    if (!content || content.length < 4) return null;
+    // First word of the original match is the verb for logging.
+    const verb = (utterance.match(/\b(remember|note|don'?t forget|for\s+future|keep\s+in\s+mind|save)\b/i)?.[0] || "remember").toLowerCase();
+    return { content, verb };
+}
+
 // ── Lightweight Refresh (mid-session, every N turns) ──
 
 /**

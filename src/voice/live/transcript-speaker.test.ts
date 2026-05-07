@@ -89,6 +89,73 @@ describe("extractSentence — sentence splitter for on-device TTS", () => {
         // and rely on flush() to handle the trailing buffer at turn_complete.
         expect(got).toBeNull();
     });
+
+    it("abbreviation guard: does NOT split at 'Dr.' when followed by a capitalized name", () => {
+        // Old splitter would greedily split here because "S" is uppercase.
+        // New guard keeps "Dr. Smith" together.
+        const got = extractSentence("I met with Dr. Smith about the project. Then I left.");
+        expect(got?.sentence).toBe("I met with Dr. Smith about the project.");
+        expect(got?.rest).toBe("Then I left.");
+    });
+
+    it("abbreviation guard: 'Mrs.', 'Ms.', 'Prof.', 'St.', 'Rev.' all preserved before a capital", () => {
+        for (const [input, expected] of [
+            ["Talking to Mrs. Johnson was fine. Next up.", "Talking to Mrs. Johnson was fine."],
+            ["I emailed Ms. Davis already. She replied fast.", "I emailed Ms. Davis already."],
+            ["Saw Prof. Kellar today. Great lecture.", "Saw Prof. Kellar today."],
+            ["Visited St. Peter's basilica. Incredible place.", "Visited St. Peter's basilica."],
+        ] as const) {
+            const got = extractSentence(input);
+            expect(got?.sentence, `input=${input}`).toBe(expected);
+        }
+    });
+
+    it("abbreviation guard: 'e.g.' mid-sentence is preserved", () => {
+        // "some fruits e.g. apples and oranges. The store had many."
+        // Old splitter would split at "e.g." because next char is lowercase → continues.
+        // But if "e.g." were followed by a capital it would wrongly split.
+        const got = extractSentence("Some fruits e.g. Apples and oranges. The store had many.");
+        expect(got?.sentence).toBe("Some fruits e.g. Apples and oranges.");
+    });
+
+    it("abbreviation guard: known U.S. / U.K. / p.m. / a.m. / No. / etc. are preserved", () => {
+        for (const [input, expected] of [
+            ["He moved to the U.S. Some time ago. Good for him.", "He moved to the U.S. Some time ago."],
+            ["Meeting at 3 p.m. Starting room four. On the dot.", "Meeting at 3 p.m. Starting room four."],
+            ["Part No. Four was missing. Reordered today.", "Part No. Four was missing."],
+        ] as const) {
+            const got = extractSentence(input);
+            expect(got?.sentence, `input=${input}`).toBe(expected);
+        }
+    });
+
+    it("abbreviation guard does NOT over-preserve common words", () => {
+        // These words end in letters that WOULD match abbreviations if we were
+        // too aggressive (ed/co/gen/rep/pres/col etc.). Make sure they still
+        // split normally — they are NOT in ABBR_AT_END.
+        for (const [input, expected] of [
+            ["She shipped. Then she left.", "She shipped."],
+            ["He's in general. Next topic.", "He's in general."],
+            ["The company rep. Spoke briefly.", "The company rep."],
+            ["He owns the co. Next year expands.", "He owns the co."],
+        ] as const) {
+            const got = extractSentence(input);
+            expect(got?.sentence, `input=${input}`).toBe(expected);
+        }
+    });
+
+    it("abbreviation at very end of buffer returns null (waits for more)", () => {
+        // "Dr." alone — no continuation yet. extractSentence should NOT fire
+        // a bogus flush since the caller might still be buffering.
+        expect(extractSentence("Dr.")).toBeNull();
+    });
+
+    it("abbreviation followed by a lowercase word splits normally (not blocked)", () => {
+        // "Meeting at 3 p.m. the conference starts." — next char lowercase,
+        // so `looksLikeStart` already returns false; no need for the new
+        // guard. Verify the existing uppercase-next rule still reigns.
+        expect(extractSentence("Meeting at 3 p.m. the conference starts.")).toBeNull();
+    });
 });
 
 describe("TranscriptSpeaker — onNewTurn vs cancel semantics", () => {
