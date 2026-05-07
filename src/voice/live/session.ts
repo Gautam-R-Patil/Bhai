@@ -31,6 +31,23 @@ import { TranscriptSpeaker } from "./transcript-speaker.js";
 
 type SessionState = "idle" | "connecting" | "active" | "stopping";
 
+// Barge-in threshold: 16-bit signed PCM samples are in [-32768, 32767]; RMS
+// of Kokoro echo bleeding through a MacBook's built-in mic typically sits
+// around 200-600, room noise at 100-200, intentional speech at 1500+. Pick
+// 1200 as a starting floor; env-overrideable for tuning in the field.
+const BARGE_IN_RMS_THRESHOLD = Number(process.env.ATLAS_BARGE_IN_RMS) || 1200;
+
+function computePcmRms(buf: Buffer): number {
+    if (buf.length < 2) return 0;
+    let sumSq = 0;
+    const n = buf.length >>> 1;
+    for (let i = 0; i < n; i++) {
+        const s = buf.readInt16LE(i << 1);
+        sumSq += s * s;
+    }
+    return Math.sqrt(sumSq / n);
+}
+
 // ── Live Voice Session Class ─────────────────────
 
 export class LiveVoiceSession extends EventEmitter {
@@ -70,7 +87,10 @@ export class LiveVoiceSession extends EventEmitter {
     // full utterance to the LLM — otherwise we'd fire one turn per chunk.
     private pendingUserText = "";
     private pendingUserTimer: NodeJS.Timeout | null = null;
-    private static readonly END_OF_SPEECH_MS = 700;
+    // Silence window before dispatching accumulated user speech. Natural
+    // mid-utterance pauses > this fire a premature turn; tune up for users
+    // who speak slowly or tune down for snappier dispatch.
+    private static readonly END_OF_SPEECH_MS = Number(process.env.ATLAS_END_OF_SPEECH_MS) || 700;
 
     constructor(config: Partial<LiveVoiceConfig> & Pick<LiveVoiceConfig, "keys">, llm: LLMClient) {
         super();
@@ -282,9 +302,19 @@ export class LiveVoiceSession extends EventEmitter {
             if (this.micMuted) return;
             // Guard against a buffered mic event landing after stop() nulled the backend.
             if (!this.backend) return;
-            // Echo gate: `say` fallback bleeds into the mic and bypasses Gemini's
-            // server VAD — drop chunks while speaking (user mutes to interrupt).
-            if (this.speaker.isSpeaking()) return;
+            // Echo-aware barge-in. In hybrid mode Kokoro plays through sox —
+            // macOS doesn't do AEC on that path, so the mic picks up the AI's
+            // own voice. Naive gating (native-style) kills barge-in; naive
+            // pass-through creates a feedback loop where the AI transcribes
+            // itself. Compromise: while speaker is active, forward ONLY if
+            // the mic sample is clearly above the echo floor (user's voice
+            // louder than Kokoro bleed-through). Rough RMS threshold works
+            // well enough at room volume; if barge-in feels flaky we can
+            // tune BARGE_IN_RMS_THRESHOLD.
+            if (this.speaker.isSpeaking()) {
+                if (!this.hybridMode) return;               // native: hard gate
+                if (computePcmRms(pcm) < BARGE_IN_RMS_THRESHOLD) return;
+            }
             this.backend.sendAudio(pcm);
         });
 
@@ -323,21 +353,30 @@ export class LiveVoiceSession extends EventEmitter {
             });
         }
 
-        // Backend → Input transcript. In hybrid mode, chunks accumulate and
-        // dispatch after END_OF_SPEECH_MS silence. Native mode just reflects
-        // to the UI.
+        // Backend → Input transcript (filtered). Native mode relays it to UI
+        // for live/partial display; hybrid mode ignores it here and emits a
+        // single clean final transcript when the debouncer fires — the
+        // per-chunk filter drops single-letter words so fragmented partial
+        // display would look broken ("Ho are you" with missing "w").
         this.backend.on("user_transcript", (text: string) => {
-            this.emitEvent("user_transcript", text);
+            if (!this.hybridMode) this.emitEvent("user_transcript", text);
             this.speaker.onNewTurn();
-            if (!this.hybridMode) return;
+        });
 
-            this.pendingUserText += text;
+        // Backend → RAW input transcript chunks (hybrid-mode dispatch path).
+        // We must use raw (pre-filter) chunks so short fragments like "w" or "I"
+        // survive concat — otherwise "How are you" becomes "Hoareyou".
+        this.backend.on("user_transcript_raw", (rawChunk: string) => {
+            if (!this.hybridMode) return;
+            this.pendingUserText += rawChunk;
             if (this.pendingUserTimer) clearTimeout(this.pendingUserTimer);
             this.pendingUserTimer = setTimeout(() => {
-                const finalText = this.pendingUserText.trim();
+                const finalText = this.pendingUserText.replace(/\s+/g, " ").trim();
                 this.pendingUserText = "";
                 this.pendingUserTimer = null;
                 if (!finalText) return;
+                // Emit the clean final transcript for UI display.
+                this.emitEvent("user_transcript", finalText);
                 this.runHybridTurn(finalText).catch((err) => {
                     console.error("[LIVE-SESSION] Hybrid turn errored:", err);
                     this.emitEvent("error", err);
@@ -361,6 +400,14 @@ export class LiveVoiceSession extends EventEmitter {
             if (this.hybridMode) {
                 // Invalidate any in-flight hybrid turn — its response drops.
                 this.hybridTurn++;
+                // Clear any partial user text the debouncer was accumulating.
+                // Otherwise echo-derived fragments would concat onto the
+                // user's real barge-in utterance.
+                this.pendingUserText = "";
+                if (this.pendingUserTimer) {
+                    clearTimeout(this.pendingUserTimer);
+                    this.pendingUserTimer = null;
+                }
             }
             this.emitEvent("interrupted");
         });
@@ -597,16 +644,40 @@ export class LiveVoiceSession extends EventEmitter {
             if (text.trim()) {
                 this.hybridHistory.push({ role: "assistant", content: text });
                 this.emitEvent("response_transcript", text);
-                // Feed to Kokoro. speaker.append will split on sentence boundaries
-                // and enqueue each sentence for synthesis.
+                // Signal "speaking" state to the UI. We emit an empty response_audio
+                // event with a zero-length PCM so existing overlay listeners flip
+                // to the speaking orb without needing a new event type.
+                this.emitEvent("response_audio", { pcm: Buffer.alloc(0), sampleRate: 24000, channels: 1 as const });
                 this.speaker.append(text);
                 this.speaker.flush();
+                // Hold turn_complete until Kokoro has actually finished speaking
+                // the whole utterance. Otherwise the UI flips to "Listening"
+                // mid-sentence and the user thinks it's their turn.
+                await this.waitForSpeakerIdle(turnId);
+                // If the user barged in while we were waiting, the new turn
+                // owns the UI state — don't stomp it with a stale turn_complete.
+                if (turnId !== this.hybridTurn) return;
             }
             this.turnCount++;
             this.emitEvent("turn_complete");
             return;
         }
         console.warn("[LIVE-SESSION] Hybrid turn exceeded 6 tool-call steps");
+    }
+
+    // Poll until Kokoro's speaker queue drains OR the turn is superseded.
+    // Capped at 30s so a stuck synth can't wedge the session forever.
+    private waitForSpeakerIdle(turnId: number): Promise<void> {
+        return new Promise<void>((resolve) => {
+            const started = Date.now();
+            const poll = () => {
+                if (turnId !== this.hybridTurn) return resolve();
+                if (!this.speaker.isSpeaking()) return resolve();
+                if (Date.now() - started > 30_000) return resolve();
+                setTimeout(poll, 200);
+            };
+            poll();
+        });
     }
 
     // ── Memory Refresh ───────────────────────────

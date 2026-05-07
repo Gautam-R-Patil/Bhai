@@ -410,6 +410,11 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
         // ── Input transcription ──
         if (data.serverContent?.inputTranscription?.text) {
             const raw = String(data.serverContent.inputTranscription.text);
+            // Always emit the raw chunk so hybrid mode can accumulate without
+            // losing single-letter/low-content fragments ("w", "I", "2") that
+            // legitimately make up longer words. The noise filter is useful
+            // for display/log purposes only — not for semantic concat.
+            this.emit("user_transcript_raw", raw);
             const filtered = filterNoiseTranscript(raw);
             if (filtered) {
                 console.log(`[GEMINI-LIVE] User said: "${filtered}"`);

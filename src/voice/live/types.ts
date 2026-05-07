@@ -127,6 +127,7 @@ export interface LiveBackendEvents {
     text: (text: string) => void;
     transcript: (transcript: string) => void;
     user_transcript: (text: string) => void;
+    user_transcript_raw: (chunk: string) => void;
     tool_call: (calls: LiveToolCall[]) => void;
     tool_cancelled: (ids: string[]) => void;
     interrupted: () => void;
