@@ -20,7 +20,8 @@ import { OpenAIRealtimeBackend } from "./backends/openai-realtime.js";
 import { HybridPipelineBackend } from "./backends/hybrid-pipeline.js";
 import { MicCapture } from "./audio/mic-capture.js";
 import { AudioPlayer } from "./audio/audio-player.js";
-import { getVoiceToolDeclarations, executeVoiceToolCalls } from "./tool-bridge.js";
+import { getVoiceToolDeclarations, getVoiceToolSchemas, executeVoiceToolCalls } from "./tool-bridge.js";
+import { MODELS } from "../../llm.js";
 import { buildVoiceSystemPrompt } from "./prompt-builder.js";
 import { getLightMemoryRefresh } from "./memory-bridge.js";
 import { startScreenShare, stopScreenShare } from "./screen-share.js";
@@ -53,6 +54,23 @@ export class LiveVoiceSession extends EventEmitter {
     // Bumped on every reconnect so in-flight tool-execution promises can see
     // they've been orphaned and skip sending stale IDs to a fresh session.
     private backendEpoch = 0;
+
+    // ── Hybrid-mode state ────────────────────────
+    // In hybrid mode, Gemini Live is STT-only. Reasoning + tool calls happen
+    // via llm.chat() (fast regular Gemini) and output is spoken via Kokoro
+    // TranscriptSpeaker. This path is ~1-2s user-to-hears vs ~3-4s for the
+    // native-audio Live API path.
+    private hybridMode = process.env.ATLAS_VOICE_MODE !== "native";
+    private hybridHistory: import("openai/resources/chat/completions.js").ChatCompletionMessageParam[] = [];
+    // Bumped whenever the user starts a new turn so an in-flight llm.chat()
+    // response from the prior turn can recognize it's been orphaned and drop.
+    private hybridTurn = 0;
+    // Gemini emits inputTranscription in chunks ("He"→"llo"→" what's the time").
+    // Accumulate chunks and wait for 700ms of silence before dispatching the
+    // full utterance to the LLM — otherwise we'd fire one turn per chunk.
+    private pendingUserText = "";
+    private pendingUserTimer: NodeJS.Timeout | null = null;
+    private static readonly END_OF_SPEECH_MS = 700;
 
     constructor(config: Partial<LiveVoiceConfig> & Pick<LiveVoiceConfig, "keys">, llm: LLMClient) {
         super();
@@ -91,12 +109,18 @@ export class LiveVoiceSession extends EventEmitter {
             // 1. Select backend
             this.backend = this.selectBackend();
 
-            // 2. Build system prompt (personality + memory)
-            const systemPrompt = await buildVoiceSystemPrompt();
+            // 2. Build system prompt. In hybrid mode Gemini Live is STT-only
+            // so it doesn't need the full ATLAS identity/memory prompt — a
+            // minimal transcription-focused prompt keeps Live's token budget
+            // low. The FULL prompt goes to the regular LLM turn instead.
+            const systemPrompt = this.hybridMode
+                ? "You are a silent transcription service. Do not respond with audio or text. Just transcribe."
+                : await buildVoiceSystemPrompt();
 
-            // 3. Get voice tool declarations
-            const tools = getVoiceToolDeclarations();
-            console.log(`[LIVE-SESSION] ${tools.length} voice tools loaded`);
+            // 3. Voice tool declarations — skipped in hybrid mode (tools go
+            // to the regular LLM, not to Live).
+            const tools = this.hybridMode ? [] : getVoiceToolDeclarations();
+            console.log(`[LIVE-SESSION] mode=${this.hybridMode ? "hybrid" : "native"}, ${tools.length} tools for Live`);
 
             // 4. Connect backend
             const sessionConfig: LiveSessionConfig = {
@@ -208,6 +232,10 @@ export class LiveVoiceSession extends EventEmitter {
         this.inflightToolIds.clear();
         this.reconnecting = false;
         this.reconnectTimes = [];
+        this.hybridHistory = [];
+        this.hybridTurn++;
+        this.pendingUserText = "";
+        if (this.pendingUserTimer) { clearTimeout(this.pendingUserTimer); this.pendingUserTimer = null; }
 
         // Reset session-scoped caches in downstream tools.
         try {
@@ -265,80 +293,76 @@ export class LiveVoiceSession extends EventEmitter {
             this.emitEvent("error", err);
         });
 
-        // Backend → Player (play model's audio response).
-        // If inline audio arrives, Gemini IS producing speech — suppress the
-        // on-device TTS fallback so the two streams don't overlap.
-        this.backend.on("audio", (chunk) => {
-            this.speaker.suppressForTurn();
-            this.player!.write(chunk.pcm);
-            this.emitEvent("response_audio", chunk);
-        });
+        // Backend → Player (native mode only). In hybrid mode, we IGNORE
+        // Gemini Live's audio output entirely — Kokoro handles all TTS.
+        if (!this.hybridMode) {
+            this.backend.on("audio", (chunk) => {
+                this.speaker.suppressForTurn();
+                this.player!.write(chunk.pcm);
+                this.emitEvent("response_audio", chunk);
+            });
 
-        // Backend → Output transcript (model → speech).
-        // Gemini Live is AUDIO-only (see gemini-live.ts Modality config),
-        // so the assistant-side text stream flows only via outputTranscription.
-        // Also feed deltas to the on-device TTS speaker so the user hears a
-        // voice even when the 2.5-native-audio model emits text without audio.
-        this.backend.on("transcript", (transcript) => {
-            this.emitEvent("response_transcript", transcript);
-            this.speaker.append(transcript);
-        });
+            this.backend.on("transcript", (transcript) => {
+                this.emitEvent("response_transcript", transcript);
+                this.speaker.append(transcript);
+            });
 
-        // Backend → Input transcript (user → speech).
-        // NB: do NOT push memory context back via sendRealtimeInput on every
-        // transcript. Gemini Live treats realtime-input text as a user utterance,
-        // which can race against a pending tool_call and cause Gemini to
-        // CANCEL the tool call (the exact pattern we saw in logs: tool result
-        // sent at T, server-side cancellation 60ms later). The session-start
-        // full memory dump in buildVoiceSystemPrompt already gives the model
-        // every memory system it needs.
+            this.backend.on("tool_call", (calls) => {
+                this.handleToolCalls(calls);
+            });
+
+            this.backend.on("turn_complete", () => {
+                this.turnCount++;
+                this.emitEvent("turn_complete");
+                this.player!.end();
+                this.speaker.flush();
+                this.speaker.onNewTurn();
+                if (this.turnCount % this.config.memoryRefreshInterval === 0) {
+                    this.refreshMemory();
+                }
+            });
+        }
+
+        // Backend → Input transcript. In hybrid mode, chunks accumulate and
+        // dispatch after END_OF_SPEECH_MS silence. Native mode just reflects
+        // to the UI.
         this.backend.on("user_transcript", (text: string) => {
             this.emitEvent("user_transcript", text);
-            // New user turn → reset the speaker (re-enable + clear buffers).
             this.speaker.onNewTurn();
+            if (!this.hybridMode) return;
+
+            this.pendingUserText += text;
+            if (this.pendingUserTimer) clearTimeout(this.pendingUserTimer);
+            this.pendingUserTimer = setTimeout(() => {
+                const finalText = this.pendingUserText.trim();
+                this.pendingUserText = "";
+                this.pendingUserTimer = null;
+                if (!finalText) return;
+                this.runHybridTurn(finalText).catch((err) => {
+                    console.error("[LIVE-SESSION] Hybrid turn errored:", err);
+                    this.emitEvent("error", err);
+                });
+            }, LiveVoiceSession.END_OF_SPEECH_MS);
         });
 
-        // Backend → Tool call cancelled by server (user interrupted mid-call).
-        // Gemini Live's toolCallCancellation.ids is optional per SDK docs — when
-        // absent, cancel ALL in-flight tools so UI chips don't stick in pending.
+        // Backend → Tool call cancelled by server (native only).
         this.backend.on("tool_cancelled", (ids: string[]) => {
             const toCancel = ids.length > 0 ? ids : [...this.inflightToolIds];
             for (const id of toCancel) this.inflightToolIds.delete(id);
             this.emitEvent("tool_cancelled", toCancel);
         });
 
-        // Backend → Tool calls (execute in parallel, don't block audio)
-        this.backend.on("tool_call", (calls) => {
-            this.handleToolCalls(calls);
-        });
-
-        // Backend → Interrupted (user spoke while model was responding)
+        // Backend → Interrupted (user spoke while model was responding).
+        // In hybrid mode this is our barge-in signal: cancel the in-flight
+        // llm.chat turn and silence Kokoro.
         this.backend.on("interrupted", () => {
-            // Immediately flush the audio player for instant silence
             this.player!.flush();
-            // Kill any in-flight on-device TTS too — same reason.
             this.speaker.cancel();
-            this.emitEvent("interrupted");
-        });
-
-        // Backend → Turn complete (model finished responding)
-        this.backend.on("turn_complete", () => {
-            this.turnCount++;
-            this.emitEvent("turn_complete");
-
-            // End the current audio playback gracefully
-            this.player!.end();
-            // Flush the last trailing fragment through the on-device TTS,
-            // then re-enable the speaker for the NEXT turn. Re-enabling here
-            // rather than on user_transcript closes the gap where VAD is slow
-            // to transcribe and the next model reply would stay muted.
-            this.speaker.flush();
-            this.speaker.onNewTurn();
-
-            // Periodic memory refresh
-            if (this.turnCount % this.config.memoryRefreshInterval === 0) {
-                this.refreshMemory();
+            if (this.hybridMode) {
+                // Invalidate any in-flight hybrid turn — its response drops.
+                this.hybridTurn++;
             }
+            this.emitEvent("interrupted");
         });
 
         // Backend → User speech detected
@@ -408,8 +432,10 @@ export class LiveVoiceSession extends EventEmitter {
             try {
                 // Rebuild + connect a fresh backend using the same config.
                 this.backend = this.selectBackend();
-                const systemPrompt = await buildVoiceSystemPrompt();
-                const tools = getVoiceToolDeclarations();
+                const systemPrompt = this.hybridMode
+                    ? "You are a silent transcription service. Do not respond with audio or text. Just transcribe."
+                    : await buildVoiceSystemPrompt();
+                const tools = this.hybridMode ? [] : getVoiceToolDeclarations();
                 const sessionConfig: LiveSessionConfig = {
                     systemPrompt,
                     tools,
@@ -479,6 +505,108 @@ export class LiveVoiceSession extends EventEmitter {
             .catch((err) => {
                 console.error("[LIVE-SESSION] Tool execution failed:", err);
             });
+    }
+
+    // ── Hybrid Turn ──────────────────────────────
+    //
+    // On user_transcript we call llm.chat() (fast regular Gemini) with the
+    // voice tool schemas. Tool calls round-trip through executeVoiceToolCalls.
+    // Final text is fed to TranscriptSpeaker (Kokoro). Any existing in-flight
+    // turn is invalidated via hybridTurn counter so a newer user utterance
+    // cleanly cancels the old reasoning + Kokoro speech.
+
+    private async runHybridTurn(userText: string): Promise<void> {
+        if (!userText.trim()) return;
+        const turnId = ++this.hybridTurn;
+
+        // Cancel any in-flight Kokoro audio from the previous turn.
+        this.speaker.cancel();
+
+        // Lazy-init system prompt on first turn. Built once per session.
+        if (this.hybridHistory.length === 0) {
+            const systemPrompt = await buildVoiceSystemPrompt();
+            this.hybridHistory.push({ role: "system", content: systemPrompt });
+        }
+
+        this.hybridHistory.push({ role: "user", content: userText });
+
+        const tools = getVoiceToolSchemas();
+
+        // Tool loop: call model → if tool_calls, execute + loop → if text, speak.
+        // Cap the loop so a misbehaving model can't infinitely tool-call.
+        for (let step = 0; step < 6; step++) {
+            if (turnId !== this.hybridTurn) return; // user barged in
+
+            let response;
+            try {
+                response = await this.llm.chat({
+                    messages: this.hybridHistory,
+                    tools,
+                    modelOverride: MODELS.GEMINI_25_FLASH,
+                });
+            } catch (err) {
+                console.error("[LIVE-SESSION] llm.chat failed:", (err as Error).message);
+                return;
+            }
+
+            if (turnId !== this.hybridTurn) return; // user barged in during await
+
+            const msg = response.choices?.[0]?.message;
+            if (!msg) return;
+
+            const toolCalls = msg.tool_calls ?? [];
+            const text = typeof msg.content === "string" ? msg.content : "";
+
+            if (toolCalls.length > 0) {
+                // Persist the assistant's tool-request in history so the model
+                // sees its own prior turn when it re-reasons after results land.
+                this.hybridHistory.push({
+                    role: "assistant",
+                    content: text || null,
+                    tool_calls: toolCalls,
+                });
+
+                // Translate OpenAI tool_calls → LiveToolCall shape for executeVoiceToolCalls.
+                const liveCalls = toolCalls.map((tc: any) => {
+                    let args: Record<string, unknown> = {};
+                    try { args = JSON.parse(tc.function?.arguments || "{}"); } catch { /* */ }
+                    return { id: tc.id, name: tc.function?.name ?? "", args } satisfies LiveToolCall;
+                });
+
+                for (const c of liveCalls) this.inflightToolIds.add(c.id);
+                this.emitEvent("tool_call", liveCalls);
+
+                const results = await executeVoiceToolCalls(liveCalls);
+
+                if (turnId !== this.hybridTurn) return;
+
+                for (const r of results) {
+                    this.hybridHistory.push({
+                        role: "tool",
+                        tool_call_id: r.id,
+                        content: typeof r.result === "string" ? r.result : JSON.stringify(r.result ?? {}),
+                    });
+                    const wasCancelled = !this.inflightToolIds.has(r.id);
+                    this.inflightToolIds.delete(r.id);
+                    if (!wasCancelled) this.emitEvent("tool_result", r);
+                }
+                continue; // loop back to the model with tool results in history
+            }
+
+            // No tool calls — this is the final spoken reply.
+            if (text.trim()) {
+                this.hybridHistory.push({ role: "assistant", content: text });
+                this.emitEvent("response_transcript", text);
+                // Feed to Kokoro. speaker.append will split on sentence boundaries
+                // and enqueue each sentence for synthesis.
+                this.speaker.append(text);
+                this.speaker.flush();
+            }
+            this.turnCount++;
+            this.emitEvent("turn_complete");
+            return;
+        }
+        console.warn("[LIVE-SESSION] Hybrid turn exceeded 6 tool-call steps");
     }
 
     // ── Memory Refresh ───────────────────────────

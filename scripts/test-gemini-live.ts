@@ -150,6 +150,9 @@ async function main() {
             cfg.maxOutputTokens = 600;
         }
         if (USE_TOOLS) cfg.tools = TOOLS;
+        if (process.env.TEST_NOTHINK === "true") {
+            cfg.thinkingConfig = { includeThoughts: false, thinkingBudget: 0 };
+        }
         console.log(`[TEST] Config: model=${MODEL} tools=${USE_TOOLS} trans=${USE_TRANSCRIPTIONS} temp=${USE_TEMP}`);
 
         ai.live
