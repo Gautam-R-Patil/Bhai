@@ -48,6 +48,19 @@ function computePcmRms(buf: Buffer): number {
     return Math.sqrt(sumSq / n);
 }
 
+// Tool results going into voice-turn history. Large payloads (os_scan
+// accessibility tree, web_search results, browser_* page dumps) otherwise
+// balloon the next llm.chat input from ~30K to ~400K tokens and make every
+// subsequent turn 5-6s slower.
+const MAX_TOOL_RESULT_CHARS = Number(process.env.ATLAS_VOICE_TOOL_RESULT_MAX) || 2000;
+function truncateToolResult(result: unknown): string {
+    const s = typeof result === "string" ? result : JSON.stringify(result ?? {});
+    if (s.length <= MAX_TOOL_RESULT_CHARS) return s;
+    const head = s.slice(0, Math.floor(MAX_TOOL_RESULT_CHARS * 0.6));
+    const tail = s.slice(-Math.floor(MAX_TOOL_RESULT_CHARS * 0.3));
+    return `${head}\n…[truncated ${s.length - MAX_TOOL_RESULT_CHARS} chars]…\n${tail}`;
+}
+
 // ── Live Voice Session Class ─────────────────────
 
 export class LiveVoiceSession extends EventEmitter {
@@ -571,8 +584,14 @@ export class LiveVoiceSession extends EventEmitter {
 
         // Lazy-init system prompt on first turn. Built once per session.
         if (this.hybridHistory.length === 0) {
-            const systemPrompt = await buildVoiceSystemPrompt();
-            this.hybridHistory.push({ role: "system", content: systemPrompt });
+            const basePrompt = await buildVoiceSystemPrompt();
+            // Voice-specific guidance: always emit brief acknowledgment text
+            // alongside tool calls. OpenAI function-calling allows both
+            // `content` and `tool_calls` in one message — use it so the user
+            // hears "sure, opening that..." while the tool runs, instead of
+            // silence for 1-2s until the tool-result re-call produces text.
+            const ackHint = "\n\nVOICE MODE RULE: When you call a tool, ALWAYS also emit a short acknowledgment sentence in the same message (e.g. \"Sure, opening that now.\", \"Got it, checking...\", \"One sec.\"). Never call a tool silently — the user needs audible feedback that you heard them.";
+            this.hybridHistory.push({ role: "system", content: basePrompt + ackHint });
         }
 
         this.hybridHistory.push({ role: "user", content: userText });
@@ -605,6 +624,17 @@ export class LiveVoiceSession extends EventEmitter {
             const text = typeof msg.content === "string" ? msg.content : "";
 
             if (toolCalls.length > 0) {
+                // Speak acknowledgment text BEFORE executing tools so the
+                // user hears immediate feedback ("sure, opening that...").
+                // Kokoro synth + playback happens in parallel with tool
+                // execution — by the time Kokoro finishes the ack, the tool
+                // result is usually already back and the next llm.chat fires.
+                if (text.trim()) {
+                    this.emitEvent("response_transcript", text);
+                    this.emitEvent("response_audio", { pcm: Buffer.alloc(0), sampleRate: 24000, channels: 1 as const });
+                    this.speaker.speak(text);
+                }
+
                 // Persist the assistant's tool-request in history so the model
                 // sees its own prior turn when it re-reasons after results land.
                 this.hybridHistory.push({
@@ -628,28 +658,38 @@ export class LiveVoiceSession extends EventEmitter {
                 if (turnId !== this.hybridTurn) return;
 
                 for (const r of results) {
+                    // Truncate big tool results. os_scan / web_search / browser_*
+                    // can return 300K+ tokens of raw content which makes every
+                    // subsequent llm.chat dwell 5-6s. Voice turns don't need
+                    // the full payload — the model used it already. Keep
+                    // head+tail so it can still cite specific items.
                     this.hybridHistory.push({
                         role: "tool",
                         tool_call_id: r.id,
-                        content: typeof r.result === "string" ? r.result : JSON.stringify(r.result ?? {}),
+                        content: truncateToolResult(r.result),
                     });
                     const wasCancelled = !this.inflightToolIds.has(r.id);
                     this.inflightToolIds.delete(r.id);
                     if (!wasCancelled) this.emitEvent("tool_result", r);
                 }
+                // Rolling window: keep system + last 30 non-system messages.
+                // Prevents unbounded growth over long sessions.
+                this.trimHybridHistory();
                 continue; // loop back to the model with tool results in history
             }
 
             // No tool calls — this is the final spoken reply.
             if (text.trim()) {
                 this.hybridHistory.push({ role: "assistant", content: text });
+                this.trimHybridHistory();
                 this.emitEvent("response_transcript", text);
                 // Signal "speaking" state to the UI. We emit an empty response_audio
                 // event with a zero-length PCM so existing overlay listeners flip
                 // to the speaking orb without needing a new event type.
                 this.emitEvent("response_audio", { pcm: Buffer.alloc(0), sampleRate: 24000, channels: 1 as const });
-                this.speaker.append(text);
-                this.speaker.flush();
+                // speak() synthesizes the whole utterance in ONE Kokoro call —
+                // no sentence-splitting, no 1s inter-sentence gaps.
+                this.speaker.speak(text);
                 // Hold turn_complete until Kokoro has actually finished speaking
                 // the whole utterance. Otherwise the UI flips to "Listening"
                 // mid-sentence and the user thinks it's their turn.
@@ -667,6 +707,17 @@ export class LiveVoiceSession extends EventEmitter {
 
     // Poll until Kokoro's speaker queue drains OR the turn is superseded.
     // Capped at 30s so a stuck synth can't wedge the session forever.
+    // Rolling window: keep system message + last MAX_HYBRID_HISTORY non-system
+    // messages. Prevents unbounded growth over long sessions from turning
+    // every subsequent llm.chat into a multi-second request.
+    private trimHybridHistory(): void {
+        const MAX_HYBRID_HISTORY = Number(process.env.ATLAS_VOICE_HISTORY_MAX) || 30;
+        if (this.hybridHistory.length <= MAX_HYBRID_HISTORY + 1) return;
+        const system = this.hybridHistory[0]?.role === "system" ? [this.hybridHistory[0]] : [];
+        const recent = this.hybridHistory.slice(-MAX_HYBRID_HISTORY);
+        this.hybridHistory = [...system, ...recent];
+    }
+
     private waitForSpeakerIdle(turnId: number): Promise<void> {
         return new Promise<void>((resolve) => {
             const started = Date.now();

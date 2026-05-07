@@ -135,6 +135,20 @@ export class TranscriptSpeaker {
     }
 
     /**
+     * Speak a complete utterance in a single Kokoro call — no sentence
+     * splitting. Use this when you already have the full response text
+     * (e.g. from a non-streaming llm.chat). Avoids the ~1s inter-sentence
+     * synthesis gap that the streaming append() path produces, and the
+     * 250ms echo-gate quiet window between each sentence. Users perceive
+     * the split path as "audio cuts / stops / missing words".
+     */
+    speak(fullText: string): void {
+        if (!this.enabled || this.disabled) return;
+        const t = fullText.trim();
+        if (t) this.enqueue(t);
+    }
+
+    /**
      * Call when Gemini starts producing inline audio for this turn. The
      * speaker stays quiet for the rest of the turn so the two audio
      * streams don't overlap. Reset via onNewTurn().
