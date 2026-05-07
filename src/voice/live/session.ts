@@ -24,6 +24,7 @@ import { getVoiceToolDeclarations, executeVoiceToolCalls } from "./tool-bridge.j
 import { buildVoiceSystemPrompt } from "./prompt-builder.js";
 import { getLightMemoryRefresh } from "./memory-bridge.js";
 import { startScreenShare, stopScreenShare } from "./screen-share.js";
+import { TranscriptSpeaker } from "./transcript-speaker.js";
 
 // ── Session State ────────────────────────────────
 
@@ -44,6 +45,7 @@ export class LiveVoiceSession extends EventEmitter {
     private micMuted = false;
     private inflightToolIds = new Set<string>();
     private screenShare: import("./screen-share.js").ScreenShareHandle | null = null;
+    private speaker = new TranscriptSpeaker();
 
     constructor(config: Partial<LiveVoiceConfig> & Pick<LiveVoiceConfig, "keys">, llm: LLMClient) {
         super();
@@ -166,6 +168,9 @@ export class LiveVoiceSession extends EventEmitter {
             this.screenShare = null;
         }
 
+        // Kill any in-flight on-device TTS
+        this.speaker.cancel();
+
         // Stop mic
         if (this.mic) {
             this.mic.stop();
@@ -248,8 +253,11 @@ export class LiveVoiceSession extends EventEmitter {
             this.emitEvent("error", err);
         });
 
-        // Backend → Player (play model's audio response)
+        // Backend → Player (play model's audio response).
+        // If inline audio arrives, Gemini IS producing speech — suppress the
+        // on-device TTS fallback so the two streams don't overlap.
         this.backend.on("audio", (chunk) => {
+            this.speaker.suppressForTurn();
             this.player!.write(chunk.pcm);
             this.emitEvent("response_audio", chunk);
         });
@@ -257,10 +265,11 @@ export class LiveVoiceSession extends EventEmitter {
         // Backend → Output transcript (model → speech).
         // Gemini Live is AUDIO-only (see gemini-live.ts Modality config),
         // so the assistant-side text stream flows only via outputTranscription.
-        // We deliberately do NOT wire `backend.on("text")` → response_text:
-        // re-enabling text modality later would otherwise double-emit.
+        // Also feed deltas to the on-device TTS speaker so the user hears a
+        // voice even when the 2.5-native-audio model emits text without audio.
         this.backend.on("transcript", (transcript) => {
             this.emitEvent("response_transcript", transcript);
+            this.speaker.append(transcript);
         });
 
         // Backend → Input transcript (user → speech).
@@ -273,6 +282,8 @@ export class LiveVoiceSession extends EventEmitter {
         // every memory system it needs.
         this.backend.on("user_transcript", (text: string) => {
             this.emitEvent("user_transcript", text);
+            // New user turn → reset the speaker (re-enable + clear buffers).
+            this.speaker.onNewTurn();
         });
 
         // Backend → Tool call cancelled by server (user interrupted mid-call).
@@ -293,6 +304,8 @@ export class LiveVoiceSession extends EventEmitter {
         this.backend.on("interrupted", () => {
             // Immediately flush the audio player for instant silence
             this.player!.flush();
+            // Kill any in-flight on-device TTS too — same reason.
+            this.speaker.cancel();
             this.emitEvent("interrupted");
         });
 
@@ -303,6 +316,12 @@ export class LiveVoiceSession extends EventEmitter {
 
             // End the current audio playback gracefully
             this.player!.end();
+            // Flush the last trailing fragment through the on-device TTS,
+            // then re-enable the speaker for the NEXT turn. Re-enabling here
+            // rather than on user_transcript closes the gap where VAD is slow
+            // to transcribe and the next model reply would stay muted.
+            this.speaker.flush();
+            this.speaker.onNewTurn();
 
             // Periodic memory refresh
             if (this.turnCount % this.config.memoryRefreshInterval === 0) {

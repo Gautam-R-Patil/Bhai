@@ -123,6 +123,15 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
                 // Keep responses short — voice mode should feel conversational,
                 // not essay-like. Roughly 30-60 spoken seconds max per turn.
                 maxOutputTokens: 600,
+                // Disable "thinking" tokens — the 2.5-native-audio model was
+                // burning budget on internal reasoning chains instead of
+                // producing audio. SDK warning: "there are non-data parts
+                // text,thought in the response". Voice needs speech, not
+                // chain-of-thought.
+                thinkingConfig: {
+                    includeThoughts: false,
+                    thinkingBudget: 0,
+                },
             };
             // NOTE: enableAffectiveDialog is Vertex-only per the SDK docs.
             // The Gemini Developer API path (which we use) silently drops or
