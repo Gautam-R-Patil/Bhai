@@ -4,9 +4,9 @@
 
 import { describe, it, expect, vi } from "vitest";
 
-// Stub Kokoro. Default to "not ready" so the real `next()` falls to speakViaSay
-// (which we in turn stub per-test by monkey-patching the class). Individual
-// tests flip these via the mocked module's named exports.
+// Stub Kokoro. Default to "not ready" so the real `next()` falls through to
+// speakViaSystemTts (which we in turn stub per-test by monkey-patching the
+// class). Individual tests flip these via the mocked module's named exports.
 let kokoroReadyFlag = false;
 let kokoroFailedFlag = false;
 const kokoroSynthesizeMock = vi.fn<(text: string) => Promise<Buffer>>();
@@ -235,7 +235,7 @@ describe("TranscriptSpeaker — onNewTurn vs cancel semantics", () => {
 
         const s = new TranscriptSpeaker() as any;
         s.enabled = true;
-        // Stub playPcm so A's .then doesn't actually spawn a sox child on a stale resolve.
+        // Stub playPcm so A's .then doesn't actually spawn a player child on a stale resolve.
         s.playPcm = () => { /* stubbed */ };
 
         // Drive synth A through the real next().

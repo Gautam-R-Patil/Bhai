@@ -11,33 +11,184 @@
 // the first sentence finishes, not at end-of-turn.
 //
 // TTS chain, tried in order per sentence:
-//   1. Kokoro 82M ONNX (natural voice, ~1s latency, $0, downloaded once).
-//   2. macOS `say` (robotic, instant, always-on mac).
+//   1. Kokoro 82M ONNX → WAV file → platform-native player (natural voice).
+//   2. Platform-native TTS (say / PowerShell SpeechSynthesizer / espeak) —
+//      robotic but instant; used before Kokoro's cold load finishes.
+//
+// Playback path: Kokoro's raw PCM is wrapped in a 44-byte WAV header, written
+// to an os.tmpdir() file, and played via the platform's canonical WAV player:
+//   - macOS:   afplay (always at /usr/bin/afplay)
+//   - Windows: PowerShell + System.Media.SoundPlayer.PlaySync (no bundling)
+//   - Linux:   paplay → aplay → ffplay fallback chain (probed at module load)
+//
+// We used to pipe raw PCM into sox `play` via stdin, but multi-second
+// utterances at 24 kHz × 2 B overflow the OS's 64 KB pipe buffer; sox would
+// read one buffer-full, see EOF (because `.end()` raced drain), and exit —
+// truncating output to ~1 second. File-based playback sidesteps the pipe
+// entirely and is the pattern node-wav-player, kokoro-js, and every
+// production Node-TTS wrapper uses.
 //
 // It disables itself for the current turn as soon as any inline audio
 // arrives from Gemini — we don't want to speak on top of the model's own
 // voice. Reset on each new user turn.
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { writeFileSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { initKokoro, synthesize as kokoroSynthesize, hasKokoroFailed, isKokoroReady } from "./kokoro-tts.js";
 
+// ── Cross-platform subprocess lookup ─────────────────────
+// Check once at module load which binaries are present. Linux ships a mix of
+// paplay / aplay / ffplay depending on distro + sound server (PipeWire vs Pulse
+// vs plain ALSA); we detect rather than assume.
+function hasCommand(bin: string): boolean {
+    const probe = process.platform === "win32"
+        ? spawnSync("where", [bin], { stdio: "ignore" })
+        : spawnSync("command", ["-v", bin], { stdio: "ignore", shell: true });
+    return probe.status === 0;
+}
+
+// ── Kokoro PCM format (matches kokoro-tts.ts output) ──
+const KOKORO_SAMPLE_RATE = 24000;
+const KOKORO_CHANNELS = 1;
+const KOKORO_BIT_DEPTH = 16;
+
+/**
+ * Build a 44-byte RIFF/WAVE header for a 16-bit LE PCM payload.
+ * We wrap Kokoro's raw PCM in a WAV container and spawn the platform's native
+ * WAV player rather than piping PCM into sox via stdin. Why: Node's
+ * child_process stdin goes through the OS pipe buffer (~64 KB). A multi-second
+ * utterance at 24 kHz × 2 bytes fills one pipe-buffer in ~0.7 s, and calling
+ * `.end()` immediately after `.write(bigBuf)` races against drain — the player
+ * sees EOF after reading the first buffer-full and exits, truncating the tail.
+ * Writing to a temp file bypasses the pipe entirely.
+ */
+function buildWavHeader(
+    pcmByteLength: number,
+    sampleRate = KOKORO_SAMPLE_RATE,
+    channels = KOKORO_CHANNELS,
+    bitDepth = KOKORO_BIT_DEPTH,
+): Buffer {
+    const h = Buffer.alloc(44);
+    h.write("RIFF", 0);
+    h.writeUInt32LE(36 + pcmByteLength, 4);
+    h.write("WAVE", 8);
+    h.write("fmt ", 12);
+    h.writeUInt32LE(16, 16);                                 // fmt chunk size
+    h.writeUInt16LE(1, 20);                                  // PCM
+    h.writeUInt16LE(channels, 22);
+    h.writeUInt32LE(sampleRate, 24);
+    h.writeUInt32LE(sampleRate * channels * (bitDepth / 8), 28); // byte rate
+    h.writeUInt16LE(channels * (bitDepth / 8), 32);          // block align
+    h.writeUInt16LE(bitDepth, 34);
+    h.write("data", 36);
+    h.writeUInt32LE(pcmByteLength, 40);
+    return h;
+}
+
 const SAY_VOICE = process.env.ATLAS_SAY_VOICE || "Samantha";
-// Default pace ~200 wpm. Parse-and-validate so a bad env var doesn't break
-// the spawn; `say` requires an integer rate.
+// Default pace ~200 wpm (macOS `say` rate; espeak and SpeechSynthesizer
+// interpret the number differently but this is a reasonable middle).
+// Parse-and-validate so a bad env var doesn't break the spawn.
 const SAY_RATE = (() => {
     const raw = Number(process.env.ATLAS_SAY_RATE);
     return Number.isFinite(raw) && raw >= 80 && raw <= 400 ? String(Math.round(raw)) : "200";
 })();
 
+// ── Platform-specific WAV playback command ───────────────
+// Resolve at module load so we know up-front whether TTS can play on this box.
+// Returns null if nothing usable is installed (Linux with no audio tools).
+interface PlaybackCommand {
+    cmd: string;
+    buildArgs: (wavPath: string) => string[];
+    // Node spawn options — Windows needs windowsHide to suppress the PowerShell
+    // flash window; other platforms fine with defaults.
+    spawnOpts?: { windowsHide?: boolean };
+}
+
+function pickPlaybackCommand(): PlaybackCommand | null {
+    if (process.platform === "darwin") {
+        // afplay ships at /usr/bin/afplay on every macOS. Hardcode the
+        // absolute path — Electron launched from Finder gets a minimal PATH
+        // that we don't want to depend on.
+        return { cmd: "/usr/bin/afplay", buildArgs: (p) => [p] };
+    }
+    if (process.platform === "win32") {
+        // PowerShell + System.Media.SoundPlayer is the canonical pattern
+        // (node-wav-player source). PlaySync blocks until EOF, so `close`
+        // fires when audio finishes. -WindowStyle Hidden + windowsHide
+        // prevents a console flash on spawn from Electron.
+        return {
+            cmd: "powershell.exe",
+            buildArgs: (p) => [
+                "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+                "-Command",
+                // Double single-quotes escape the path inside the PS literal.
+                `(New-Object System.Media.SoundPlayer '${p.replace(/'/g, "''")}').PlaySync()`,
+            ],
+            spawnOpts: { windowsHide: true },
+        };
+    }
+    // Linux: try PulseAudio first (ubiquitous on desktop; works on PipeWire
+    // via pipewire-pulse), fall back to plain ALSA, last resort ffplay.
+    if (hasCommand("paplay")) return { cmd: "paplay", buildArgs: (p) => [p] };
+    if (hasCommand("aplay"))  return { cmd: "aplay", buildArgs: (p) => ["-q", p] };
+    if (hasCommand("ffplay")) {
+        return { cmd: "ffplay", buildArgs: (p) => ["-nodisp", "-autoexit", "-loglevel", "quiet", p] };
+    }
+    return null;
+}
+
+// ── Platform-specific fallback TTS (used before Kokoro loads or if it fails) ──
+// macOS: /usr/bin/say (always present). Windows: PowerShell SpeechSynthesizer
+// (always present via .NET). Linux: `espeak` if installed, otherwise we just
+// drop the utterance (the user will get Kokoro audio once the model is ready).
+interface FallbackTts {
+    cmd: string;
+    buildArgs: (text: string) => string[];
+    spawnOpts?: { windowsHide?: boolean };
+}
+
+function pickFallbackTts(): FallbackTts | null {
+    if (process.platform === "darwin") {
+        // Absolute path for the same Electron-PATH reason as afplay above.
+        return { cmd: "/usr/bin/say", buildArgs: (t) => ["-v", SAY_VOICE, "-r", SAY_RATE, t] };
+    }
+    if (process.platform === "win32") {
+        // System.Speech.Synthesis.SpeechSynthesizer ships with every Windows.
+        // Single-quote escape the user text to prevent PS injection.
+        return {
+            cmd: "powershell.exe",
+            buildArgs: (t) => [
+                "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+                "-Command",
+                `Add-Type -AssemblyName System.Speech; ` +
+                `$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; ` +
+                `$s.Speak('${t.replace(/'/g, "''")}')`,
+            ],
+            spawnOpts: { windowsHide: true },
+        };
+    }
+    if (hasCommand("espeak")) {
+        return { cmd: "espeak", buildArgs: (t) => ["-s", SAY_RATE, t] };
+    }
+    return null;
+}
+
+// Resolved at module load. Used in the constructor + playback paths.
+const PLAYBACK_COMMAND = pickPlaybackCommand();
+const FALLBACK_TTS = pickFallbackTts();
+
 // Minimum spoken fragment before we flush. Stops "3.14" from being split
 // into "3." "14" and gives breath-sized sentences instead of staccato.
 const MIN_SENTENCE_CHARS = 12;
 
-// Grace period after `say` exits before we re-open the mic gate. The
-// subprocess close fires when synthesis ends, but the tail of the last
-// sentence still lives in the OS audio buffer + room acoustics for
-// ~100-300ms — long enough to leak back through the mic and re-ignite
-// the feedback loop.
+// Grace period after the player subprocess exits before we re-open the mic
+// gate. close fires when the process ends, but the tail of the last sentence
+// still lives in the OS audio buffer + room acoustics for ~100-300 ms — long
+// enough to leak back through the mic and re-ignite the feedback loop.
 const POST_SPEAK_QUIET_MS = 250;
 
 /**
@@ -96,12 +247,22 @@ export class TranscriptSpeaker {
     // so a stale .then can recognize it should skip.
     private synthesizing = false;
     private generation = 0;
+    // Rate-limit the "no fallback TTS" warning so a long session without
+    // espeak doesn't spam the console once per utterance.
+    private warnedNoFallback = false;
 
     constructor() {
-        // Gated to darwin because the last-resort fallback is macOS `say`.
-        this.enabled = process.platform === "darwin";
+        // Enabled as long as we have SOMETHING to play audio on this OS. The
+        // primary path is Kokoro→WAV→PLAYBACK_COMMAND; if Kokoro isn't ready
+        // yet we fall back to the OS's built-in speech synth (say / PS /
+        // espeak). On a Linux box with no audio tooling at all, disable.
+        this.enabled = PLAYBACK_COMMAND !== null || FALLBACK_TTS !== null;
         if (!this.enabled) {
-            console.log("[TRANSCRIPT-SPEAKER] disabled (not macOS)");
+            console.log(
+                "[TRANSCRIPT-SPEAKER] disabled — no audio playback or TTS found. " +
+                "Install one of: paplay (pulseaudio-utils), aplay (alsa-utils), " +
+                "ffplay (ffmpeg), or espeak for fallback speech."
+            );
             return;
         }
         // Background model download. Skip under vitest so tests don't pull 96 MB.
@@ -187,7 +348,12 @@ export class TranscriptSpeaker {
         this.generation++;          // signals any in-flight Kokoro synth to drop
         this.synthesizing = false;
         if (this.running) {
-            try { this.running.kill("SIGKILL"); } catch { /* already dead */ }
+            // SIGTERM lets the player subprocess exit cleanly (within ~10 ms)
+            // so its close handler fires and we clean up any temp WAV file.
+            // SIGKILL also fires close, but SIGTERM is the documented pattern
+            // for afplay / paplay / PowerShell cancel. Indistinguishable for
+            // the user's perceived latency.
+            try { this.running.kill("SIGTERM"); } catch { /* already dead */ }
             this.running = null;
         }
     }
@@ -215,8 +381,9 @@ export class TranscriptSpeaker {
             return;
         }
         // Only use Kokoro when the model is fully loaded. Otherwise the first
-        // sentence would block 25-60s on the cold download — fall back to
-        // `say` during that window so the user hears something immediately.
+        // sentence would block 25-60s on the cold download — fall back to the
+        // OS's built-in TTS during that window so the user hears something
+        // immediately.
         const myGen = this.generation;
         if (!hasKokoroFailed() && isKokoroReady()) {
             this.synthesizing = true;
@@ -232,61 +399,123 @@ export class TranscriptSpeaker {
                 .catch(err => {
                     if (myGen !== this.generation) return;
                     this.synthesizing = false;
-                    console.warn("[TRANSCRIPT-SPEAKER] Kokoro synth failed, falling back to say:", (err as Error).message);
-                    this.speakViaSay(sentence);
+                    console.warn("[TRANSCRIPT-SPEAKER] Kokoro synth failed, falling back to OS TTS:", (err as Error).message);
+                    this.speakViaSystemTts(sentence);
                 });
             return;
         }
-        this.speakViaSay(sentence);
+        this.speakViaSystemTts(sentence);
     }
 
     private playPcm(pcm: Buffer): void {
-        // Pipe raw 16-bit signed LE PCM at 24 kHz mono into sox `play`.
-        // Same wire format as AudioPlayer so consistency is baked in.
-        const child = spawn("play", [
-            "-q", "-t", "raw", "-b", "16", "-e", "signed-integer",
-            "-c", "1", "-r", "24000", "-",
-        ], { stdio: ["pipe", "ignore", "ignore"] });
-        this.running = child;
-        // Silence EPIPE on stdin — `play` may exit before draining our buffer,
-        // and an unhandled 'error' event on stdin would crash the bot.
-        child.stdin?.on("error", () => { /* handled via attachChildHandlers */ });
-        this.attachChildHandlers(child);
-        try {
-            child.stdin?.write(pcm);
-            child.stdin?.end();
-        } catch {
-            // stdin already closed — error listener + close handler tidy up.
+        // Wrap PCM in a WAV container on disk, then spawn the platform-picked
+        // player (afplay / PowerShell SoundPlayer / paplay|aplay|ffplay).
+        // See buildWavHeader() above for why stdin piping was unreliable.
+        if (!PLAYBACK_COMMAND) {
+            // No player on this box — fall through to OS TTS (or drop).
+            this.speakViaSystemTts("");  // no text means: just advance queue
+            return;
         }
+        const wavPath = join(tmpdir(), `atlas-tts-${randomUUID()}.wav`);
+        try {
+            writeFileSync(wavPath, Buffer.concat([buildWavHeader(pcm.length), pcm]));
+        } catch (err) {
+            console.warn("[TRANSCRIPT-SPEAKER] WAV temp-file write failed:", (err as Error).message);
+            this.running = null;
+            this.next();
+            return;
+        }
+        const { cmd, buildArgs, spawnOpts } = PLAYBACK_COMMAND;
+        let child: ChildProcess;
+        try {
+            child = spawn(cmd, buildArgs(wavPath), {
+                stdio: ["ignore", "ignore", "ignore"],
+                ...(spawnOpts ?? {}),
+            });
+        } catch (err) {
+            // Rare path: spawn() can throw synchronously on EINVAL / resource
+            // limits. Without this catch the temp WAV would leak into tmpdir.
+            console.warn(`[TRANSCRIPT-SPEAKER] spawn(${cmd}) failed synchronously:`, (err as Error).message);
+            try { unlinkSync(wavPath); } catch { /* already gone */ }
+            this.running = null;
+            this.next();
+            return;
+        }
+        this.running = child;
+        // Remember the temp file so attachChildHandlers can delete it once
+        // playback exits. Any-cast because ChildProcess has no user slot.
+        (child as unknown as { __atlasTempFile?: string }).__atlasTempFile = wavPath;
+        this.attachChildHandlers(child);
     }
 
-    private speakViaSay(sentence: string): void {
-        const child = spawn("say", ["-v", SAY_VOICE, "-r", SAY_RATE, sentence], {
-            stdio: ["ignore", "ignore", "ignore"],
-        });
+    private speakViaSystemTts(sentence: string): void {
+        // Fallback path: used before Kokoro has finished its first cold load,
+        // or if Kokoro synthesis fails. On Linux with no espeak available,
+        // we just drop the utterance — the user will get Kokoro audio once
+        // the model is ready.
+        if (!sentence.trim()) {
+            // Internal queue-advance signal from playPcm's no-player branch.
+            this.running = null;
+            this.next();
+            return;
+        }
+        if (!FALLBACK_TTS) {
+            // Real sentence but no fallback binary. Warn once so a Linux user
+            // without espeak can see WHY their voice assistant went silent.
+            if (!this.warnedNoFallback) {
+                this.warnedNoFallback = true;
+                console.warn(
+                    "[TRANSCRIPT-SPEAKER] Kokoro not ready and no fallback TTS installed. " +
+                    "Install `espeak` (e.g. `apt install espeak`) to hear audio during Kokoro's cold start."
+                );
+            }
+            this.running = null;
+            this.next();
+            return;
+        }
+        const { cmd, buildArgs, spawnOpts } = FALLBACK_TTS;
+        let child: ChildProcess;
+        try {
+            child = spawn(cmd, buildArgs(sentence), {
+                stdio: ["ignore", "ignore", "ignore"],
+                ...(spawnOpts ?? {}),
+            });
+        } catch (err) {
+            console.warn(`[TRANSCRIPT-SPEAKER] spawn(${cmd}) failed synchronously:`, (err as Error).message);
+            this.running = null;
+            this.next();
+            return;
+        }
         this.running = child;
         this.attachChildHandlers(child);
     }
 
-    // Common close/error handling for both `play` (Kokoro PCM) and `say`
-    // children. cancel() detaches by nulling `running`; only the handler
-    // whose child is still the active one should extend the quiet window.
-    // Otherwise a cancel()-triggered SIGKILL close handler would clobber
-    // `quietUntil=0` and clip the next 250ms of user mic input.
+    // Common close/error handling for the WAV-player child (afplay / PS /
+    // paplay etc.) AND the fallback OS-TTS child (say / PS SpeechSynthesizer /
+    // espeak). cancel() detaches by nulling `running`; only the handler whose
+    // child is still the active one should extend the quiet window. Otherwise
+    // a cancel()-triggered SIGTERM close handler would clobber `quietUntil=0`
+    // and clip the next 250 ms of user mic input.
+    //
+    // Node emits BOTH `error` and `close` for the same child on ENOENT, so we
+    // gate shared work behind a per-child `fired` flag — otherwise `next()`
+    // would drain the queue by 2 per failure and we'd spawn overlapping audio.
     private attachChildHandlers(child: ChildProcess): void {
-        child.on("error", () => {
+        let fired = false;
+        const onExit = () => {
+            if (fired) return;
+            fired = true;
+            const path = (child as unknown as { __atlasTempFile?: string }).__atlasTempFile;
+            if (path) {
+                try { unlinkSync(path); } catch { /* already gone */ }
+            }
             if (this.running === child) {
                 this.running = null;
                 this.quietUntil = Date.now() + POST_SPEAK_QUIET_MS;
             }
             this.next();
-        });
-        child.on("close", () => {
-            if (this.running === child) {
-                this.running = null;
-                this.quietUntil = Date.now() + POST_SPEAK_QUIET_MS;
-            }
-            this.next();
-        });
+        };
+        child.on("error", onExit);
+        child.on("close", onExit);
     }
 }
