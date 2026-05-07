@@ -46,6 +46,13 @@ export class LiveVoiceSession extends EventEmitter {
     private inflightToolIds = new Set<string>();
     private screenShare: import("./screen-share.js").ScreenShareHandle | null = null;
     private speaker = new TranscriptSpeaker();
+    // Rate-limit reconnect attempts: at most 3 in a rolling 30s window,
+    // otherwise we'd loop forever against a genuinely broken backend.
+    private reconnectTimes: number[] = [];
+    private reconnecting = false;
+    // Bumped on every reconnect so in-flight tool-execution promises can see
+    // they've been orphaned and skip sending stale IDs to a fresh session.
+    private backendEpoch = 0;
 
     constructor(config: Partial<LiveVoiceConfig> & Pick<LiveVoiceConfig, "keys">, llm: LLMClient) {
         super();
@@ -199,6 +206,8 @@ export class LiveVoiceSession extends EventEmitter {
         this.turnCount = 0;
         this.micMuted = false;
         this.inflightToolIds.clear();
+        this.reconnecting = false;
+        this.reconnectTimes = [];
 
         // Reset session-scoped caches in downstream tools.
         try {
@@ -348,11 +357,88 @@ export class LiveVoiceSession extends EventEmitter {
         });
 
         this.backend.on("disconnected", () => {
-            if (this.state === "active") {
-                console.warn("[LIVE-SESSION] Backend disconnected unexpectedly, stopping session");
-                this.stop().catch(console.error);
+            if (this.state === "active" && !this.reconnecting) {
+                this.attemptReconnect().catch((err) => {
+                    console.error("[LIVE-SESSION] Reconnect path errored:", err);
+                    this.stop().catch(console.error);
+                });
             }
         });
+    }
+
+    // ── Auto-Reconnect ───────────────────────────
+
+    private async attemptReconnect(): Promise<void> {
+        // Rate limit: drop old timestamps, bail if >=3 attempts in last 30s.
+        const now = Date.now();
+        this.reconnectTimes = this.reconnectTimes.filter(t => now - t < 30_000);
+        if (this.reconnectTimes.length >= 3) {
+            console.warn("[LIVE-SESSION] Reconnect budget exhausted (3 tries in 30s) — stopping session");
+            if (this.inflightToolIds.size > 0) {
+                this.emitEvent("tool_cancelled", [...this.inflightToolIds]);
+                this.inflightToolIds.clear();
+            }
+            await this.stop();
+            return;
+        }
+        this.reconnectTimes.push(now);
+        this.reconnecting = true;
+        this.backendEpoch++;
+        console.warn("[LIVE-SESSION] Backend disconnected — silent reconnect attempt…");
+        this.emitEvent("reconnecting");
+
+        try {
+            // Detach the dead backend.
+            const oldBackend = this.backend;
+            this.backend = null;
+            if (oldBackend) {
+                oldBackend.removeAllListeners();
+                await oldBackend.disconnect().catch(() => { /* already dead */ });
+            }
+
+            // Cancel any in-flight tool calls — Gemini Live state does NOT
+            // persist across sessions, so tool IDs from the dead backend are
+            // meaningless to the new one. UI chips flip to `failed` cleanly.
+            if (this.inflightToolIds.size > 0) {
+                const cancelled = [...this.inflightToolIds];
+                this.inflightToolIds.clear();
+                this.emitEvent("tool_cancelled", cancelled);
+            }
+
+            try {
+                // Rebuild + connect a fresh backend using the same config.
+                this.backend = this.selectBackend();
+                const systemPrompt = await buildVoiceSystemPrompt();
+                const tools = getVoiceToolDeclarations();
+                const sessionConfig: LiveSessionConfig = {
+                    systemPrompt,
+                    tools,
+                    voiceName: this.config.voiceName,
+                    responseModalities: ["AUDIO", "TEXT"],
+                    inputSampleRate: this.config.inputSampleRate,
+                    outputSampleRate: this.config.outputSampleRate,
+                };
+                await this.backend.connect(sessionConfig);
+            } catch (err) {
+                // Connect failed → tear down half-initialized backend, emit a
+                // terminal error so the UI leaves "Reconnecting…", then let
+                // the caller's .catch route us through stop().
+                const half = this.backend;
+                this.backend = null;
+                if (half) await half.disconnect().catch(() => { /* */ });
+                this.emitEvent("error", err instanceof Error ? err : new Error(String(err)));
+                throw err;
+            }
+
+            // Re-wire backend listeners AND refresh mic listeners (they
+            // forwarded to the now-dead backend). Player is unchanged.
+            this.mic?.removeAllListeners();
+            this.wireEvents();
+            this.emitEvent("reconnected");
+            console.log("[LIVE-SESSION] ✓ Reconnected");
+        } finally {
+            this.reconnecting = false;
+        }
     }
 
     // ── Tool Call Handler ─────────────────────────
@@ -361,9 +447,19 @@ export class LiveVoiceSession extends EventEmitter {
         for (const c of calls) this.inflightToolIds.add(c.id);
         this.emitEvent("tool_call", calls);
 
+        // Snapshot backend identity so we can tell if a reconnect happened
+        // between dispatch and .then — Gemini Live tool IDs don't carry
+        // across sessions, sending a stale one to a fresh backend is a
+        // protocol violation.
+        const epoch = this.backendEpoch;
+
         // Execute tools in parallel — do NOT await (audio keeps playing)
         executeVoiceToolCalls(calls)
             .then((results) => {
+                if (epoch !== this.backendEpoch) {
+                    console.warn("[LIVE-SESSION] Reconnect happened during tool execution — dropping stale tool response");
+                    return;
+                }
                 // Send results back to the model so it can generate a voice response
                 if (this.backend?.isConnected()) {
                     console.log(`[LIVE-SESSION] Sending ${results.length} tool result(s) back to model`);

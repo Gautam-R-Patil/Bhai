@@ -1364,6 +1364,7 @@ async function handleLiveVoiceStart(ws: WebSocket): Promise<void> {
             session.on("muted",        () => { sendStatus("muted"); });
             session.on("unmuted",      () => { sendStatus("unmuted"); });
             session.on("reconnecting", () => { sendStatus("reconnecting"); });
+            session.on("reconnected",  () => { sendStatus("active"); });
 
             session.on("error", (err: Error) => {
                 sendStatus("error", { error: err.message });

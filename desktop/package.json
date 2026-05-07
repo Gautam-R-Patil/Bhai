@@ -100,6 +100,13 @@
                 ]
             },
             {
+                "from": "../models",
+                "to": "bot/models",
+                "filter": [
+                    "**/*"
+                ]
+            },
+            {
                 "from": "../src/overlay/overlay.html",
                 "to": "bot/src/overlay/overlay.html"
             },

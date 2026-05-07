@@ -63,6 +63,7 @@ export type LiveVoiceEventType =
     | "turn_complete"
     | "session_ended"
     | "reconnecting"
+    | "reconnected"
     | "muted"
     | "unmuted"
     | "error";

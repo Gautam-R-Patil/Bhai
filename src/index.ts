@@ -920,6 +920,10 @@ async function boot() {
         await closeDiscord();
         await closeWhatsApp();
         await closeEmail();
+        try {
+            const { stopKokoro } = await import("./voice/live/kokoro-tts.js");
+            stopKokoro();
+        } catch { /* never loaded — live voice wasn't used */ }
         await revokeCurrentSession();
         process.exit(0);
     }

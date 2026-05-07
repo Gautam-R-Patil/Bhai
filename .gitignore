@@ -133,3 +133,6 @@ overlay-app/.build/
 tts-samples/
 scripts/test-gemini-tts.ts
 scripts/compare-tts.ts
+
+# Bundled Kokoro ONNX model — staged locally, copied into DMG, never committed
+models/

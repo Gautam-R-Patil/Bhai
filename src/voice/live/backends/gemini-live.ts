@@ -51,14 +51,15 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
 
         this.ai = new GoogleGenAI({ apiKey: this.apiKey });
 
-        // Try models in order — availability changes across API versions.
-        // IMPORTANT: gemini-3.1-flash-live-preview is currently broken — it
-        // connects fine and receives our tool responses but generates ZERO
-        // output (no audio, no text, no toolCall, no turnComplete). Verified
-        // via scripts/test-gemini-live.ts: 2.5-native-audio streams back
-        // hundreds of messages for the exact same request the 3.1 preview
-        // silently drops. Keep 3.1 last as an opt-in fallback.
+        // Try models in order. `gemini-live-2.5-flash-preview` (non-native-audio
+        // Live API — separate TTS stage) is primary because the native-audio
+        // variants reliably go silent after tool calls and then disconnect
+        // with "Internal error occurred" when the user tries to nudge them.
+        // Verified pattern across multiple sessions in production logs.
+        // gemini-3.1-flash-live-preview stays last — it silently produces no
+        // output for tool-heavy turns in all earlier testing.
         const LIVE_MODELS = [
+            "gemini-live-2.5-flash-preview",
             "gemini-2.5-flash-native-audio-latest",
             "gemini-2.5-flash-native-audio-preview-12-2025",
             "gemini-2.5-flash-native-audio-preview-09-2025",
@@ -70,7 +71,7 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
             ? [{ functionDeclarations: config.tools }]
             : undefined;
 
-        // Native audio Live API models only support AUDIO modality
+        // All models in LIVE_MODELS support AUDIO-only response modality.
         const responseModalities = [Modality.AUDIO];
 
         let lastError = "";
@@ -123,16 +124,13 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
                 // Keep responses short — voice mode should feel conversational,
                 // not essay-like. Roughly 30-60 spoken seconds max per turn.
                 maxOutputTokens: 600,
-                // Disable "thinking" tokens — the 2.5-native-audio model was
-                // burning budget on internal reasoning chains instead of
-                // producing audio. SDK warning: "there are non-data parts
-                // text,thought in the response". Voice needs speech, not
-                // chain-of-thought.
-                thinkingConfig: {
-                    includeThoughts: false,
-                    thinkingBudget: 0,
-                },
             };
+            // Disable "thinking" tokens — only applies to native-audio models.
+            // The half-cascade `gemini-live-2.5-flash-preview` doesn't expose
+            // thinkingConfig and Google's validator may reject unknown fields.
+            if (/native-audio/.test(model)) {
+                config.thinkingConfig = { includeThoughts: false, thinkingBudget: 0 };
+            }
             // NOTE: enableAffectiveDialog is Vertex-only per the SDK docs.
             // The Gemini Developer API path (which we use) silently drops or
             // rejects it. Emotion mirroring is handled in the prompt instead.
