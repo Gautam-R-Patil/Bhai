@@ -2,7 +2,21 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+// Stub Kokoro. Default to "not ready" so the real `next()` falls to speakViaSay
+// (which we in turn stub per-test by monkey-patching the class). Individual
+// tests flip these via the mocked module's named exports.
+let kokoroReadyFlag = false;
+let kokoroFailedFlag = false;
+const kokoroSynthesizeMock = vi.fn<(text: string) => Promise<Buffer>>();
+vi.mock("./kokoro-tts.js", () => ({
+    initKokoro: async () => null,
+    synthesize: (text: string) => kokoroSynthesizeMock(text),
+    isKokoroReady: () => kokoroReadyFlag,
+    hasKokoroFailed: () => kokoroFailedFlag,
+}));
+
 import { extractSentence, TranscriptSpeaker } from "./transcript-speaker.js";
 
 describe("extractSentence — sentence splitter for on-device TTS", () => {
@@ -156,26 +170,147 @@ describe("TranscriptSpeaker — onNewTurn vs cancel semantics", () => {
         expect(s.isSpeaking()).toBe(false);
     });
 
-    it("cancel()-triggered close handler does NOT re-arm quietUntil (gate stays open)", () => {
-        // Reproduces the subtle race: cancel()/suppressForTurn() SIGKILLs the
-        // child and sets quietUntil=0. The child's 'close' event fires on the
-        // next tick — if that handler unconditionally writes quietUntil, the
-        // next 250ms of user speech gets clipped. The fix is guarded writes
-        // that only extend quietUntil if `running === child` is still true.
+    it("isSpeaking() reports true while Kokoro is synthesizing even without a child yet", () => {
         const s = new TranscriptSpeaker() as any;
         s.enabled = true;
-        // Simulate: we were speaking, then cancel() ran — running=null, quietUntil=0.
-        const staleChild = { kill() { /* noop */ } };
-        s.running = null;          // cancel already detached
-        s.quietUntil = 0;          // cancel already reset
-        // Now the close-handler logic: emulate the check from next() inline.
-        if (s.running === staleChild) {
-            s.running = null;
-            s.quietUntil = Date.now() + 250;
-        }
-        // Expectation: the stale close handler was a no-op.
+        s.running = null;
+        s.queue = [];
+        s.quietUntil = 0;
+        // Kokoro is mid-synthesis: we have no child yet but audio IS being produced.
+        // isSpeaking() must return true so the mic gate stays closed through that window.
+        s.synthesizing = true;
+        expect(s.isSpeaking()).toBe(true);
+        s.synthesizing = false;
+        expect(s.isSpeaking()).toBe(false);
+    });
+
+    it("cancel() bumps generation + clears synthesizing so in-flight Kokoro audio is dropped", () => {
+        const s = new TranscriptSpeaker() as any;
+        s.enabled = true;
+        s.synthesizing = true;
+        const beforeGen = s.generation;
+        s.cancel();
+        expect(s.generation).toBe(beforeGen + 1);
+        expect(s.synthesizing).toBe(false);
+        // Gate should be open immediately (user-initiated stop = instant mic).
+        expect(s.isSpeaking()).toBe(false);
+    });
+
+    it("enqueue() does NOT start a second Kokoro synth while one is already in-flight", () => {
+        // Kokoro's synth is async: next() sets synthesizing=true then returns
+        // BEFORE a child is spawned. If a second sentence arrives in that
+        // window and enqueue() only checked `running`, it would call next()
+        // again and kick off a concurrent synth whose audio would overlap
+        // the first. The fix: enqueue gates on BOTH running AND synthesizing.
+        const s = new TranscriptSpeaker() as any;
+        s.enabled = true;
+        let nextCalls = 0;
+        s.next = () => { nextCalls++; };
+        // Synth A is mid-flight: synthesizing=true, running=null (no child yet).
+        s.synthesizing = true;
+        s.running = null;
+        // Second sentence enqueued — should NOT trigger another next().
+        s.enqueue("second sentence");
+        expect(nextCalls).toBe(0);
+        expect(s.queue).toContain("second sentence");
+        // Once synthesis finishes (synthesizing=false) and a child spawns (running=child),
+        // the child's close handler calls next() — that's the normal drain path.
+        // Here we just assert the guard held during the overlap.
+    });
+
+    it("old Kokoro .then does NOT clobber a newer synth's synthesizing flag", async () => {
+        // Real regression test exercising the actual next() implementation.
+        // Two Kokoro synths overlap; A's .then settles AFTER cancel + B starts.
+        // If the guard `myGen !== generation` is removed or reordered, A's
+        // .then would clear B's synthesizing=true — this test would fail.
+        kokoroReadyFlag = true;
+        kokoroFailedFlag = false;
+
+        let resolveA!: (pcm: Buffer) => void;
+        let resolveB!: (pcm: Buffer) => void;
+        kokoroSynthesizeMock.mockReset();
+        kokoroSynthesizeMock
+            .mockImplementationOnce(() => new Promise<Buffer>((resolve) => { resolveA = resolve; }))
+            .mockImplementationOnce(() => new Promise<Buffer>((resolve) => { resolveB = resolve; }));
+
+        const s = new TranscriptSpeaker() as any;
+        s.enabled = true;
+        // Stub playPcm so A's .then doesn't actually spawn a sox child on a stale resolve.
+        s.playPcm = () => { /* stubbed */ };
+
+        // Drive synth A through the real next().
+        s.queue.push("first");
+        s.next();
+        const genA = s.generation;
+        expect(s.synthesizing).toBe(true);
+
+        // cancel() bumps generation + clears synthesizing.
+        s.cancel();
+        expect(s.generation).toBe(genA + 1);
+        expect(s.synthesizing).toBe(false);
+
+        // Drive synth B through the real next().
+        s.queue.push("second");
+        s.next();
+        expect(s.synthesizing).toBe(true);
+
+        // A's promise finally resolves — the real .then runs. Guard MUST early-return.
+        resolveA(Buffer.alloc(0));
+        await new Promise(r => setImmediate(r));
+
+        // B's flag must survive.
+        expect(s.synthesizing).toBe(true);
+
+        // Clean up: resolve B so its .then can finish naturally.
+        resolveB(Buffer.alloc(0));
+        await new Promise(r => setImmediate(r));
+    });
+
+    it("close handler does NOT re-arm quietUntil when cancel() already detached the child", async () => {
+        // Drives the REAL attachChildHandlers() code path. Mounts a fake
+        // EventEmitter child on the speaker, calls cancel() (which nulls
+        // `running`), then fires the child's own 'close' event. Asserts
+        // quietUntil stays 0.
+        const { EventEmitter } = await import("node:events");
+        const s = new TranscriptSpeaker() as any;
+        s.enabled = true;
+
+        const fakeChild: any = new EventEmitter();
+        fakeChild.kill = () => { /* noop */ };
+        s.running = fakeChild;
+        s.attachChildHandlers(fakeChild);
+
+        // cancel() nulls running + resets quietUntil.
+        s.cancel();
+        expect(s.running).toBeNull();
+        expect(s.quietUntil).toBe(0);
+
+        // Now fire the child's close event — the real handler runs.
+        // Since running !== fakeChild, the guard should skip the quietUntil write.
+        fakeChild.emit("close");
         expect(s.quietUntil).toBe(0);
         expect(s.isSpeaking()).toBe(false);
+    });
+
+    it("close handler DOES re-arm quietUntil when the child is still active", async () => {
+        // Complement of the previous test — normal drain path. If `running`
+        // still points at the child when close fires, quietUntil MUST extend
+        // to protect against trailing echo.
+        const { EventEmitter } = await import("node:events");
+        const s = new TranscriptSpeaker() as any;
+        s.enabled = true;
+
+        const fakeChild: any = new EventEmitter();
+        fakeChild.kill = () => { /* noop */ };
+        s.running = fakeChild;
+        s.attachChildHandlers(fakeChild);
+
+        const before = Date.now();
+        fakeChild.emit("close");
+        // Guard was satisfied (running === child), so quietUntil extends.
+        expect(s.running).toBeNull();
+        expect(s.quietUntil).toBeGreaterThanOrEqual(before);
+        expect(s.isSpeaking()).toBe(true);
     });
 });
 

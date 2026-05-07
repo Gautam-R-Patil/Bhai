@@ -6,15 +6,20 @@
 //
 // When Gemini Live produces text output but no inline audio (as the
 // 2.5-native-audio model sometimes does for tool-heavy turns), this speaker
-// pipes the accumulated transcript through macOS `say` so the user still
-// hears a spoken reply. Runs per-sentence so speech starts as soon as the
-// first sentence finishes, not at end-of-turn.
+// pipes the accumulated transcript through an on-device TTS so the user
+// still hears a spoken reply. Runs per-sentence so speech starts as soon as
+// the first sentence finishes, not at end-of-turn.
+//
+// TTS chain, tried in order per sentence:
+//   1. Kokoro 82M ONNX (natural voice, ~1s latency, $0, downloaded once).
+//   2. macOS `say` (robotic, instant, always-on mac).
 //
 // It disables itself for the current turn as soon as any inline audio
 // arrives from Gemini — we don't want to speak on top of the model's own
 // voice. Reset on each new user turn.
 
 import { spawn, type ChildProcess } from "node:child_process";
+import { initKokoro, synthesize as kokoroSynthesize, hasKokoroFailed, isKokoroReady } from "./kokoro-tts.js";
 
 const SAY_VOICE = process.env.ATLAS_SAY_VOICE || "Samantha";
 // Default pace ~200 wpm. Parse-and-validate so a bad env var doesn't break
@@ -86,13 +91,24 @@ export class TranscriptSpeaker {
     private disabled = false;
     private readonly enabled: boolean;
     private quietUntil = 0;
+    // True while Kokoro is synthesizing — no child yet but audio IS coming,
+    // so the mic echo gate stays closed. Bumped via `generation` on cancel()
+    // so a stale .then can recognize it should skip.
+    private synthesizing = false;
+    private generation = 0;
 
     constructor() {
-        // Only macOS has `say` built-in. On other platforms the fallback is
-        // a no-op — the overlay transcript still displays, just no voice.
+        // Gated to darwin because the last-resort fallback is macOS `say`.
         this.enabled = process.platform === "darwin";
         if (!this.enabled) {
             console.log("[TRANSCRIPT-SPEAKER] disabled (not macOS)");
+            return;
+        }
+        // Background model download. Skip under vitest so tests don't pull 96 MB.
+        if (!process.env.VITEST) {
+            initKokoro().catch(err => {
+                console.warn("[TRANSCRIPT-SPEAKER] Kokoro init error:", (err as Error).message);
+            });
         }
     }
 
@@ -154,6 +170,8 @@ export class TranscriptSpeaker {
     cancel(): void {
         this.queue = [];
         this.quietUntil = 0;
+        this.generation++;          // signals any in-flight Kokoro synth to drop
+        this.synthesizing = false;
         if (this.running) {
             try { this.running.kill("SIGKILL"); } catch { /* already dead */ }
             this.running = null;
@@ -164,13 +182,16 @@ export class TranscriptSpeaker {
     // short post-close quiet window so the audio tail doesn't leak back
     // through the mic and re-ignite the feedback loop.
     isSpeaking(): boolean {
-        if (this.running !== null || this.queue.length > 0) return true;
+        if (this.running !== null || this.queue.length > 0 || this.synthesizing) return true;
         return Date.now() < this.quietUntil;
     }
 
     private enqueue(sentence: string): void {
         this.queue.push(sentence);
-        if (!this.running) this.next();
+        // Also gate on `synthesizing`: Kokoro's async start means `next()` returns
+        // without setting `running`, so two overlapping sentences could otherwise
+        // launch two concurrent syntheses whose audio would play simultaneously.
+        if (!this.running && !this.synthesizing) this.next();
     }
 
     private next(): void {
@@ -179,14 +200,63 @@ export class TranscriptSpeaker {
             this.running = null;
             return;
         }
+        // Only use Kokoro when the model is fully loaded. Otherwise the first
+        // sentence would block 25-60s on the cold download — fall back to
+        // `say` during that window so the user hears something immediately.
+        const myGen = this.generation;
+        if (!hasKokoroFailed() && isKokoroReady()) {
+            this.synthesizing = true;
+            kokoroSynthesize(sentence)
+                .then(pcm => {
+                    // Stale-path check MUST come before touching synthesizing.
+                    // Otherwise the old .then clobbers a newer synth's flag and
+                    // opens the mic gate while Kokoro is still producing audio.
+                    if (myGen !== this.generation) return;
+                    this.synthesizing = false;
+                    this.playPcm(pcm);
+                })
+                .catch(err => {
+                    if (myGen !== this.generation) return;
+                    this.synthesizing = false;
+                    console.warn("[TRANSCRIPT-SPEAKER] Kokoro synth failed, falling back to say:", (err as Error).message);
+                    this.speakViaSay(sentence);
+                });
+            return;
+        }
+        this.speakViaSay(sentence);
+    }
+
+    private playPcm(pcm: Buffer): void {
+        // Pipe raw 16-bit signed LE PCM at 24 kHz mono into sox `play`.
+        // Same wire format as AudioPlayer so consistency is baked in.
+        const child = spawn("play", [
+            "-q", "-t", "raw", "-b", "16", "-e", "signed-integer",
+            "-c", "1", "-r", "24000", "-",
+        ], { stdio: ["pipe", "ignore", "ignore"] });
+        this.running = child;
+        this.attachChildHandlers(child);
+        try {
+            child.stdin?.write(pcm);
+            child.stdin?.end();
+        } catch {
+            // stdin already closed — the error handler below will tidy up.
+        }
+    }
+
+    private speakViaSay(sentence: string): void {
         const child = spawn("say", ["-v", SAY_VOICE, "-r", SAY_RATE, sentence], {
             stdio: ["ignore", "ignore", "ignore"],
         });
         this.running = child;
-        // cancel() detaches by nulling `running`; only the handler whose child
-        // is still the active one should extend the quiet window. Otherwise a
-        // cancel()-triggered SIGKILL close handler would clobber `quietUntil=0`
-        // and clip the next 250ms of user mic input.
+        this.attachChildHandlers(child);
+    }
+
+    // Common close/error handling for both `play` (Kokoro PCM) and `say`
+    // children. cancel() detaches by nulling `running`; only the handler
+    // whose child is still the active one should extend the quiet window.
+    // Otherwise a cancel()-triggered SIGKILL close handler would clobber
+    // `quietUntil=0` and clip the next 250ms of user mic input.
+    private attachChildHandlers(child: ChildProcess): void {
         child.on("error", () => {
             if (this.running === child) {
                 this.running = null;

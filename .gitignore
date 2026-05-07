@@ -128,3 +128,8 @@ desktop/hostinger-upload/
 scripts/get_location_bin
 scripts/ocr_screen_bin
 overlay-app/.build/
+
+# Local TTS eval artifacts + investigation scripts
+tts-samples/
+scripts/test-gemini-tts.ts
+scripts/compare-tts.ts

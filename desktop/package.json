@@ -150,7 +150,8 @@
                     "!**/examples/**",
                     "!**/example/**",
                     "!ffprobe-static/bin/**",
-                    "!onnxruntime-node/bin/**"
+                    "!onnxruntime-node/bin/**",
+                    "!**/onnxruntime-node/bin/**"
                 ]
             }
         ],
@@ -174,6 +175,10 @@
                 {
                     "from": "../node_modules/onnxruntime-node/bin/napi-v3/win32",
                     "to": "bot/node_modules/onnxruntime-node/bin/napi-v3/win32"
+                },
+                {
+                    "from": "../node_modules/@huggingface/transformers/node_modules/onnxruntime-node/bin/napi-v3/win32",
+                    "to": "bot/node_modules/@huggingface/transformers/node_modules/onnxruntime-node/bin/napi-v3/win32"
                 }
             ]
         },
@@ -197,6 +202,10 @@
                 {
                     "from": "../node_modules/onnxruntime-node/bin/napi-v3/darwin",
                     "to": "bot/node_modules/onnxruntime-node/bin/napi-v3/darwin"
+                },
+                {
+                    "from": "../node_modules/@huggingface/transformers/node_modules/onnxruntime-node/bin/napi-v3/darwin",
+                    "to": "bot/node_modules/@huggingface/transformers/node_modules/onnxruntime-node/bin/napi-v3/darwin"
                 }
             ]
         },
