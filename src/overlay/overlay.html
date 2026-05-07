@@ -2961,9 +2961,6 @@
       let lvStartTs = 0;
       let lvTimerHandle = null;
       let lvActive = false;
-      let lvAmpStream = null;        // MediaStream for mic amplitude
-      let lvAmpCtx = null;            // AudioContext
-      let lvAmpRaf = 0;               // RAF handle
       let lvStreamingAiTurn = null;  // the currently-streaming AI turn element
       const lvChipMap = new Map();    // id → chip element
 
@@ -3059,64 +3056,15 @@
         }
       }
 
-      let lvAmpStarting = false;
-      async function lvStartAmpMonitor() {
-        if (lvAmpStream || lvAmpStarting) return;
-        lvAmpStarting = true;
-        let stream = null, ctx = null;
-        try {
-          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          // If the panel was closed while the permission prompt was up, abort.
-          if (!lvActive) {
-            stream.getTracks().forEach(t => t.stop());
-            return;
-          }
-          ctx = new (window.AudioContext || window.webkitAudioContext)();
-          lvAmpStream = stream;
-          lvAmpCtx = ctx;
-          const source = ctx.createMediaStreamSource(stream);
-          const analyser = ctx.createAnalyser();
-          analyser.fftSize = 512;
-          source.connect(analyser);
-          const data = new Uint8Array(analyser.fftSize);
-          // Simple envelope follower so the orb doesn't jitter between samples.
-          let smoothed = 0;
-          const tick = () => {
-            if (!lvActive) return;
-            analyser.getByteTimeDomainData(data);
-            let sum = 0;
-            for (let i = 0; i < data.length; i++) {
-              const v = (data[i] - 128) / 128;
-              sum += v * v;
-            }
-            const rms = Math.sqrt(sum / data.length);
-            const target = Math.min(1, rms * 3.6);
-            // Attack fast, release slow — gives the orb a lively-but-not-twitchy pulse.
-            smoothed += (target > smoothed ? 0.4 : 0.1) * (target - smoothed);
-            lvPanel.style.setProperty('--lv-amp', smoothed.toFixed(3));
-            lvAmpRaf = requestAnimationFrame(tick);
-          };
-          tick();
-        } catch (err) {
-          // User denied mic permission or browser can't tap the stream — degrade silently.
-          console.warn('Live voice amp monitor unavailable:', err && err.message);
-          if (stream) stream.getTracks().forEach(t => t.stop());
-          if (ctx && ctx.state !== 'closed') ctx.close().catch(() => {});
-          // Clear the globals too — otherwise the in-flight guard
-          // blocks future restarts for the remainder of the session.
-          lvAmpStream = null;
-          lvAmpCtx = null;
-        } finally {
-          lvAmpStarting = false;
-        }
-      }
-
+      // Amp monitor disabled: WebKit inside the Swift overlay leaks the mic
+      // indicator after track.stop() — the privacy HUD stays lit even though
+      // we correctly release the stream, confusing users into thinking the
+      // bot is still listening. The orb animates from state transitions
+      // (listening/speaking/thinking CSS classes) instead of live amplitude.
+      // If we want an audio-reactive orb later, feed amplitude from the bot
+      // process over WebSocket — it already has the mic via sox.
+      function lvStartAmpMonitor() { /* no-op */ }
       function lvStopAmpMonitor() {
-        if (lvAmpRaf) cancelAnimationFrame(lvAmpRaf);
-        lvAmpRaf = 0;
-        if (lvAmpStream) { lvAmpStream.getTracks().forEach(t => t.stop()); lvAmpStream = null; }
-        if (lvAmpCtx && lvAmpCtx.state !== 'closed') { lvAmpCtx.close().catch(() => {}); }
-        lvAmpCtx = null;
         lvPanel.style.setProperty('--lv-amp', '0');
       }
 
