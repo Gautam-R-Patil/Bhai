@@ -137,6 +137,7 @@ desktop/hostinger-upload/
 !src/voice/live/backends/gemini-live.test.ts
 !src/tools/spotify-cache.test.ts
 !src/proactive/sources/_shared/build-intent.test.ts
+!src/proactive/sources/_shared/calendar-fetch.test.ts
 
 # Compiled Swift helpers (built by npm run build:location / build:ocr)
 scripts/get_location_bin

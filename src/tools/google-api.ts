@@ -585,6 +585,48 @@ export const googleCalendarTool: ToolDefinition = {
     },
 };
 
+export async function listCalendarEventsRaw(params: {
+    timeMin: string;
+    timeMax: string;
+    maxResults?: number;
+}): Promise<Array<{
+    id: string;
+    summary: string;
+    start: { dateTime?: string; date?: string };
+    end: { dateTime?: string; date?: string };
+    location?: string;
+    attendees?: Array<{ email?: string }>;
+}>> {
+    const accountsToQuery = Array.from(accounts.values());
+    const allEvents: any[] = [];
+    for (const acc of accountsToQuery) {
+        try {
+            const calendar = google.calendar({ version: "v3", auth: acc.client });
+            const res = await calendar.events.list({
+                calendarId: "primary",
+                timeMin: params.timeMin,
+                timeMax: params.timeMax,
+                maxResults: params.maxResults ?? 25,
+                singleEvents: true,
+                orderBy: "startTime",
+            });
+            for (const ev of res.data.items ?? []) {
+                allEvents.push({
+                    id: ev.id ?? "",
+                    summary: ev.summary ?? "(untitled)",
+                    start: ev.start ?? {},
+                    end: ev.end ?? {},
+                    location: ev.location ?? undefined,
+                    attendees: ev.attendees ?? undefined,
+                });
+            }
+        } catch {
+            // One account's failure doesn't block others.
+        }
+    }
+    return allEvents;
+}
+
 // ═══════════════════════════════════════════════
 // Tool: Gmail
 // ═══════════════════════════════════════════════
