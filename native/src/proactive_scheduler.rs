@@ -23,6 +23,8 @@ pub struct QueuedIntent {
     pub expires_at: f64,
     pub posture_weight: f64,
     pub source_weight: f64,
+    pub scheduled_for: f64,
+    pub payload_kind: String,
 }
 
 #[napi(object)]
@@ -263,6 +265,8 @@ mod tests {
             expires_at: now_ms() + 60_000.0,
             posture_weight: 1.0,
             source_weight: 1.0,
+            scheduled_for: 0.0,
+            payload_kind: String::new(),
         }
     }
 

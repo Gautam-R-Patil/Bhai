@@ -400,9 +400,14 @@ export declare function isDomainAllowed(domain: string): boolean
 export declare function addAllowedDomain(domain: string): void
 /** Add a protected path */
 export declare function addProtectedPath(dirPath: string): void
-/** AES-256-GCM encrypt. Returns "iv_hex:tag_hex:ciphertext_hex" */
+/** AES-256-GCM encrypt. Returns "v<version>:iv_hex:tag_hex:ciphertext_hex". */
 export declare function aesEncrypt(plaintext: string, masterKey: string): string
-/** AES-256-GCM decrypt. Input format: "iv_hex:tag_hex:ciphertext_hex" */
+/**
+ * AES-256-GCM decrypt. Accepts both
+ *   "v2:iv_hex:tag_hex:ciphertext_hex"  (new)
+ *   "iv_hex:tag_hex:ciphertext_hex"     (legacy v1, no prefix)
+ * The version determines which scrypt params are used for key derivation.
+ */
 export declare function aesDecrypt(encrypted: string, masterKey: string): string
 /**
  * Anti-tampering: check if a debugger is attached.
@@ -2479,6 +2484,8 @@ export interface QueuedIntent {
   expiresAt: number
   postureWeight: number
   sourceWeight: number
+  scheduledFor: number
+  payloadKind: string
 }
 export interface PostureParams {
   channel: string

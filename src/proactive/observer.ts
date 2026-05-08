@@ -172,6 +172,8 @@ export class Observer {
             expiresAt: intent.expiresAt,
             postureWeight,
             sourceWeight,
+            scheduledFor: 0,
+            payloadKind: (intent.payload?.kind as string) ?? "",
         });
         debugProactive("observer_enqueued", { id: intent.id, channel, res });
         if (res !== "enqueued") {
