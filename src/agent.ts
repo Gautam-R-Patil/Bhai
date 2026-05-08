@@ -2026,7 +2026,7 @@ STRATEGY: Execute in as few tool calls as possible.
 You are the ORCHESTRATOR (Sonnet 4.6). Create a precise execution plan.
 
 TOOLS:
-- spotify: action='play' query="exact song name" (plays on Spotify via the spogo CLI — works on Free + Premium without the public Web API). action='now_playing' to verify. action='pause'/'resume'/'next'/'previous'/'volume'/'seek'/'shuffle'/'repeat'. Also: search, queue_add, queue_get, playlists, devices, saved_tracks, followed_artists. First-time use may prompt spogo install or auth_import (imports Spotify cookies from the user's browser).
+- spotify: action='play' query="exact song name" plays a track; query="<name> playlist" or uri="spotify:playlist:<id>" plays a playlist; query="liked songs" plays the user's Liked Songs (pseudo-URI spotify:collection:tracks). Free + Premium via the spogo CLI. Listing playlists_list / saved_tracks is not supported by spogo's connect engine — playing them IS. action='now_playing' to verify. action='pause'/'resume'/'next'/'previous'/'volume'/'seek'/'shuffle'/'repeat'. Also: search (types=['playlist'] to resolve a name → uri), queue_add, queue_get, devices. First-time use may prompt spogo install or auth_import (imports Spotify cookies from the user's browser).
 - music_control: Same for Apple Music
 - app_manager: activate app="AppName"
 - os_nav: Lists clickable elements (~200ms). Run BEFORE clicking.

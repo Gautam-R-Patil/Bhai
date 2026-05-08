@@ -251,7 +251,12 @@ async function ensureAuth(): Promise<{ ok: boolean; error?: string; hint?: strin
 
 // Session-scoped "last played" fast-path. Repeats of the same query within
 // the session skip the search roundtrip entirely.
-interface LastPlayed { query: string; uri: string; label: string; at: number; }
+interface LastPlayed {
+    query: string;
+    uri: string;
+    label: string;
+    at: number;
+}
 let _lastPlayed: LastPlayed | null = null;
 const LAST_PLAYED_TTL_MS = 30 * 60 * 1000;
 
@@ -286,9 +291,16 @@ export const _forTests = {
     forgetLastPlayed,
     invalidateAuthCache,
     getAuthOkAt: () => _authOkAt,
-    setAuthOkAt: (t: number) => { _authOkAt = t; },
+    setAuthOkAt: (t: number) => {
+        _authOkAt = t;
+    },
     getLastPlayed: () => _lastPlayed,
     authCacheTtlMs: () => AUTH_CACHE_TTL_MS,
+    isLikedSongsQuery: (q: string) => isLikedSongsQuery(q),
+    isSpogoUnsupportedError: (e: string) => isSpogoUnsupportedError(e),
+    uriType: (u: string) => uriType(u),
+    isContextType: (t: SpotifyUriType) => isContextType(t),
+    likedSongsUri: () => LIKED_SONGS_URI,
 };
 
 // ── Invocation wrapper that maps exit codes to responses ──
@@ -455,27 +467,160 @@ async function readCurrentUri(): Promise<string> {
     return "";
 }
 
+async function readPlaybackSnapshot(): Promise<{ trackUri: string; contextUri: string; playing: boolean }> {
+    const local = await osNowPlayingLocal();
+    let trackUri = local.track_uri ?? "";
+    let playing = local.playing === true;
+    let contextUri = "";
+    const r = await runSpogo(["status"], { timeout: 3000 });
+    if (r.exitCode === 0 && r.json && typeof r.json === "object") {
+        const obj = r.json as Record<string, unknown>;
+        const item = obj.item as Record<string, unknown> | undefined;
+        if (!trackUri && item && typeof item.uri === "string") trackUri = item.uri;
+        if (typeof obj.is_playing === "boolean") playing = playing || obj.is_playing;
+        const ctx = obj.context as Record<string, unknown> | undefined;
+        if (ctx && typeof ctx.uri === "string") contextUri = ctx.uri;
+    }
+    return { trackUri, contextUri, playing };
+}
+
+type SpotifyUriType =
+    | "track"
+    | "album"
+    | "playlist"
+    | "artist"
+    | "show"
+    | "episode"
+    | "collection"
+    | "unknown";
+
+function uriType(uri: string): SpotifyUriType {
+    const m = uri.match(/^spotify:([a-z]+):/i);
+    if (!m) return "unknown";
+    const t = m[1].toLowerCase();
+    if (t === "track" || t === "album" || t === "playlist" || t === "artist" || t === "show" || t === "episode")
+        return t;
+    if (t === "collection") return "collection";
+    return "unknown";
+}
+
+// A "context" is a container URI that plays a list of tracks (as opposed to
+// a single track/show/episode). verifyPlayback's context-aware branch and
+// doPlay's OS-fixup routing both depend on this being the same predicate —
+// divergence between the two would silently break verification.
+const CONTEXT_URI_TYPES: ReadonlySet<SpotifyUriType> = new Set([
+    "playlist",
+    "album",
+    "artist",
+    "collection",
+]);
+
+function isContextType(t: SpotifyUriType): boolean {
+    return CONTEXT_URI_TYPES.has(t);
+}
+
 // spogo's Connect engine sometimes returns {"status":"ok"} for `play <uri>`
-// without actually switching the active device's track (the HTTP request
-// succeeds, the local Spotify app ignores it). Poll playback state to confirm
-// the switch actually happened. Resolves as soon as URIs match.
-async function verifyPlayback(targetUri: string, timeoutMs = 2500): Promise<boolean> {
+// without actually switching the active device's track. For context URIs
+// (playlist/album/artist/collection) the track URI will never equal the
+// target, so compare status.context.uri, or fall back to "track changed
+// since pre-play snapshot" — which avoids false-positives when something
+// was already playing.
+async function verifyPlayback(
+    targetUri: string,
+    timeoutMs = 2500,
+    prePlaySnapshot?: { trackUri: string; contextUri: string },
+): Promise<boolean> {
     const target = normalizeSpotifyUri(targetUri);
+    const isContext = isContextType(uriType(target));
+    const pre = prePlaySnapshot;
     const deadline = Date.now() + timeoutMs;
     await new Promise((r) => setTimeout(r, 200));
     while (Date.now() < deadline) {
-        const cur = await readCurrentUri();
-        if (cur && normalizeSpotifyUri(cur) === target) return true;
+        if (isContext) {
+            const snap = await readPlaybackSnapshot();
+            if (snap.contextUri && normalizeSpotifyUri(snap.contextUri) === target) return true;
+            // Fallback: without a context.uri, consider it switched only if
+            // playback is live AND the track actually changed from pre-play.
+            if (pre && snap.playing && snap.trackUri && snap.trackUri !== pre.trackUri) return true;
+        } else {
+            const cur = await readCurrentUri();
+            if (cur && normalizeSpotifyUri(cur) === target) return true;
+        }
         if (Date.now() >= deadline) break;
         await new Promise((r) => setTimeout(r, 300));
     }
     return false;
 }
 
+// spogo's connect engine rejects spotify:collection:tracks, but the desktop
+// Spotify app accepts it via the OS URI handler. Route "liked songs"
+// phrasings around spogo. Anchored to avoid matching "liked songs by X" or
+// "my favorites of 2024", which are real tracks/playlists the user meant.
+const LIKED_QUERY_RE =
+    /^\s*(play\s+)?(my\s+)?(liked (songs?|tracks?|music|playlist)|saved (songs?|tracks?)|favou?rites?)\s*$/i;
+
+function isLikedSongsQuery(query: string): boolean {
+    return LIKED_QUERY_RE.test(query.trim());
+}
+
+const LIKED_SONGS_URI = "spotify:collection:tracks";
+
+async function playLikedSongs(query: string, shuffle: boolean): Promise<string> {
+    try {
+        await ensureSpotifyAppRunning();
+        await osLaunchUri(LIKED_SONGS_URI);
+        let shuffleApplied = shuffle;
+        let shuffleError: string | undefined;
+        if (shuffle) {
+            // spogo needs a live Connect device to toggle shuffle. Poll up to ~2s
+            // for the desktop app to start playing before issuing the command —
+            // otherwise it either errors or targets a stale device.
+            const deadline = Date.now() + 2000;
+            while (Date.now() < deadline) {
+                const snap = await readPlaybackSnapshot();
+                if (snap.playing) break;
+                await new Promise((r) => setTimeout(r, 200));
+            }
+            const sr = await call(["shuffle", "on"]);
+            if (!sr.ok) {
+                shuffleApplied = false;
+                shuffleError = sr.error;
+            }
+        }
+        rememberLastPlayed(query || "liked songs", LIKED_SONGS_URI, "Liked Songs");
+        return ok({
+            action: "play",
+            mode: "os_launch_uri",
+            uri: LIKED_SONGS_URI,
+            label: "Liked Songs",
+            shuffle: shuffleApplied,
+            ...(shuffleError ? { shuffle_error: shuffleError } : {}),
+            note: "Liked Songs launched via OS URI handler (spogo's connect engine can't play it directly).",
+        });
+    } catch (err) {
+        return fail(`Could not play Liked Songs: ${(err as Error).message}`, {
+            hint: "Make sure Spotify desktop is installed.",
+        });
+    }
+}
+
 async function doPlay(input: Record<string, unknown>): Promise<string> {
     const rawUri = (input.uri as string) || (input.context_uri as string) || "";
     const query = (input.query as string) || "";
     const shuffle = Boolean(input.shuffle);
+
+    // Liked Songs fast-path — bypass spogo entirely. Both natural-language
+    // queries ("liked songs") and the explicit URI spogo can't handle
+    // (spotify:collection:tracks) route here. The desktop app plays it via
+    // the OS URI handler.
+    if (!rawUri && query && isLikedSongsQuery(query)) {
+        return await playLikedSongs(query, shuffle);
+    }
+    if (rawUri && normalizeSpotifyUri(rawUri) === LIKED_SONGS_URI) {
+        // Don't pass the caller's `query` through — it may describe a
+        // different intent and would poison the last-played cache.
+        return await playLikedSongs("liked songs", shuffle);
+    }
 
     // Kick off a Spotify-app wakeup in parallel — on the common "play X" path we'll
     // need an active device anyway. Running it concurrently with the ~15s spogo search
@@ -528,20 +673,35 @@ async function doPlay(input: Record<string, unknown>): Promise<string> {
         return fail(`Couldn't resolve a Spotify URI for "${query}".`);
     }
 
+    const isContext = isContextType(uriType(normalizeSpotifyUri(targetUri)));
+
+    // Pre-play snapshot lets verifyPlayback distinguish "already playing
+    // something" from "new context started" when status.context.uri is absent.
+    const preSnap = isContext
+        ? await readPlaybackSnapshot().catch(() => ({ trackUri: "", contextUri: "", playing: false }))
+        : undefined;
+
     // Try spogo first
     const playArgs = ["play", targetUri];
     if (shuffle) playArgs.push("--shuffle");
     const r = await call(playArgs);
     if (r.ok) {
-        if (await verifyPlayback(targetUri)) {
+        if (await verifyPlayback(targetUri, 2500, preSnap)) {
             if (query) rememberLastPlayed(query, targetUri, label);
             return ok({ action: "play", mode: "spogo", uri: targetUri, label: label || undefined });
         }
         try {
             await ensureSpotifyAppRunning();
-            await osPlayTrackByUri(targetUri);
+            if (isContext) {
+                // AppleScript `play track` rejects playlist/album/artist/collection URIs —
+                // they have to go through the OS URI handler, which forwards to the
+                // running Spotify app.
+                await osLaunchUri(targetUri);
+            } else {
+                await osPlayTrackByUri(targetUri);
+            }
             if (query) rememberLastPlayed(query, targetUri, label);
-            const reVerified = await verifyPlayback(targetUri);
+            const reVerified = await verifyPlayback(targetUri, 2500, preSnap);
             return ok({
                 action: "play",
                 mode: reVerified ? "os_fixup" : "os_fixup_unverified",
@@ -763,13 +923,27 @@ async function doDevices(action: "devices_list" | "transfer", input: Record<stri
     return r.ok ? ok({ action, device: name }) : fail(r.error);
 }
 
+function isSpogoUnsupportedError(err: string): boolean {
+    return /unsupported operation|not supported in connect engine/i.test(err);
+}
+
 async function doLibrary(
     action: "saved_tracks" | "followed_artists" | "save_track" | "unsave_track" | "follow_artist" | "unfollow_artist",
     input: Record<string, unknown>,
 ): Promise<string> {
     if (action === "saved_tracks") {
         const r = await call(["library", "tracks", "list"]);
-        return r.ok ? ok({ action, items: r.data }) : fail(r.error);
+        if (r.ok) return ok({ action, items: r.data });
+        if (isSpogoUnsupportedError(r.error)) {
+            return ok({
+                action,
+                items: [],
+                unsupported: true,
+                note: "spogo's connect engine can't list Liked Songs, but the desktop app can play them. Call action='play' with query='liked songs' (or uri='spotify:collection:tracks') to start playback.",
+                play_uri: LIKED_SONGS_URI,
+            });
+        }
+        return fail(r.error);
     }
     if (action === "followed_artists") {
         const r = await call(["library", "artists", "list"]);
@@ -802,7 +976,16 @@ async function doLibrary(
 async function doPlaylists(action: string, input: Record<string, unknown>): Promise<string> {
     if (action === "playlists_list") {
         const r = await call(["library", "playlists", "list"]);
-        return r.ok ? ok({ action, playlists: r.data }) : fail(r.error);
+        if (r.ok) return ok({ action, playlists: r.data });
+        if (isSpogoUnsupportedError(r.error)) {
+            return ok({
+                action,
+                playlists: [],
+                unsupported: true,
+                note: "spogo's connect engine can't list the user's playlists. To play a specific playlist, use action='search' with types=['playlist'] to find it by name, then action='play' with the returned uri. For Liked Songs use query='liked songs'.",
+            });
+        }
+        return fail(r.error);
     }
     if (action === "playlist_create") {
         const name = (input.name as string) || "";
@@ -814,7 +997,18 @@ async function doPlaylists(action: string, input: Record<string, unknown>): Prom
         const id = (input.id as string) || "";
         if (!id) return fail("Provide 'id'");
         const r = await call(["playlist", "tracks", id]);
-        return r.ok ? ok({ action, id, tracks: r.data }) : fail(r.error);
+        if (r.ok) return ok({ action, id, tracks: r.data });
+        if (isSpogoUnsupportedError(r.error)) {
+            return ok({
+                action,
+                id,
+                tracks: [],
+                unsupported: true,
+                note: `spogo's connect engine can't list playlist tracks. Use action='play' with uri='spotify:playlist:${id}' to just play the playlist directly.`,
+                play_uri: `spotify:playlist:${id}`,
+            });
+        }
+        return fail(r.error);
     }
     if (action === "playlist_add_tracks" || action === "playlist_remove_tracks") {
         const id = (input.id as string) || "";
@@ -840,7 +1034,7 @@ export const spotifyTool: ToolDefinition = {
         function: {
             name: "spotify",
             description:
-                "Full Spotify control without the restricted Web API. Shells out to the `spogo` CLI (https://github.com/steipete/spogo), which talks to Spotify's internal web-player endpoints using browser cookies. Works on macOS/Windows/Linux, Free and Premium. Actions: play (by query or URI), pause, resume, next, previous, seek, volume, shuffle, repeat, search, queue_add, queue_get, now_playing, playback_state, devices_list, transfer, saved_tracks, followed_artists, playlists_list, playlist_create, playlist_tracks, playlist_add_tracks, playlist_remove_tracks, auth_import, auth_status. First-time setup: the tool auto-imports Spotify cookies from the user's Chrome/Brave/Edge/Firefox/Safari browser — the user must be logged into open.spotify.com in that browser. If spogo isn't installed, the tool surfaces install instructions and falls back to URI-launch + OS media keys for basic control.",
+                "Full Spotify control via the `spogo` CLI (https://github.com/steipete/spogo), no Web API. macOS/Windows/Linux, Free + Premium. Actions: play, pause, resume, next, previous, seek, volume, shuffle, repeat, search, queue_add, queue_get, now_playing, playback_state, devices_list, transfer, saved_tracks, followed_artists, playlists_list, playlist_create, playlist_tracks, playlist_add_tracks, playlist_remove_tracks, auth_import, auth_status. PLAYBACK: play a track with query='song name'; play a playlist with uri='spotify:playlist:<id>' or query='<name> playlist' (use action='search' types=['playlist'] to find the id); play Liked Songs with query='liked songs'. Listing saved_tracks / playlists_list isn't supported by spogo's connect engine, but playing them is. First-time setup auto-imports Spotify cookies from the user's browser (Chrome/Brave/Edge/Firefox/Safari — must be logged into open.spotify.com). If spogo isn't installed, falls back to URI-launch + OS media keys.",
             parameters: {
                 type: "object",
                 properties: {

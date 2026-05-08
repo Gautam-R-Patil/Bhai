@@ -2,7 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { _forTests, resetSpotifySession } from "./spotify.js";
 
 describe("spotify last-played + auth caches", () => {
@@ -55,5 +55,97 @@ describe("spotify last-played + auth caches", () => {
         const old = _forTests.getLastPlayed()!;
         (old as any).at = Date.now() - 31 * 60 * 1000;
         expect(_forTests.matchesLastPlayed("Perfect")).toBeNull();
+    });
+});
+
+describe("spotify liked-songs intent detection", () => {
+    it("matches 'play my liked songs' phrasings", () => {
+        expect(_forTests.isLikedSongsQuery("liked songs")).toBe(true);
+        expect(_forTests.isLikedSongsQuery("my liked songs")).toBe(true);
+        expect(_forTests.isLikedSongsQuery("liked playlist")).toBe(true);
+        expect(_forTests.isLikedSongsQuery("liked music")).toBe(true);
+        expect(_forTests.isLikedSongsQuery("my favourites")).toBe(true);
+        expect(_forTests.isLikedSongsQuery("favorites")).toBe(true);
+        expect(_forTests.isLikedSongsQuery("saved songs")).toBe(true);
+        expect(_forTests.isLikedSongsQuery("saved tracks")).toBe(true);
+    });
+    it("does not match unrelated queries", () => {
+        expect(_forTests.isLikedSongsQuery("perfect")).toBe(false);
+        expect(_forTests.isLikedSongsQuery("my chill playlist")).toBe(false);
+        expect(_forTests.isLikedSongsQuery("songs I like by Ed Sheeran")).toBe(false);
+    });
+    it("exposes the spotify:collection:tracks URI", () => {
+        expect(_forTests.likedSongsUri()).toBe("spotify:collection:tracks");
+    });
+});
+
+describe("spotify uri type classifier", () => {
+    it("classifies every context type correctly", () => {
+        expect(_forTests.uriType("spotify:track:abc")).toBe("track");
+        expect(_forTests.uriType("spotify:album:abc")).toBe("album");
+        expect(_forTests.uriType("spotify:playlist:abc")).toBe("playlist");
+        expect(_forTests.uriType("spotify:artist:abc")).toBe("artist");
+        expect(_forTests.uriType("spotify:collection:tracks")).toBe("collection");
+        expect(_forTests.uriType("spotify:show:abc")).toBe("show");
+        expect(_forTests.uriType("spotify:episode:abc")).toBe("episode");
+        expect(_forTests.uriType("https://open.spotify.com/track/abc")).toBe("unknown");
+        expect(_forTests.uriType("garbage")).toBe("unknown");
+        expect(_forTests.uriType("")).toBe("unknown");
+        // spogo occasionally emits spotify:user:<id>:playlist:<id>; only the
+        // first segment is classified and that's fine — we don't use the "user"
+        // type for anything, so it's intentionally "unknown".
+        expect(_forTests.uriType("spotify:user:alice:playlist:abc")).toBe("unknown");
+    });
+});
+
+describe("spotify liked-songs regex anchoring", () => {
+    it("does not match queries with trailing qualifiers (artist/year/context)", () => {
+        expect(_forTests.isLikedSongsQuery("liked songs by Ed Sheeran")).toBe(false);
+        expect(_forTests.isLikedSongsQuery("my favorites of 2024")).toBe(false);
+        expect(_forTests.isLikedSongsQuery("liked playlist chill vibes")).toBe(false);
+        expect(_forTests.isLikedSongsQuery("saved tracks from 2020")).toBe(false);
+    });
+    it("matches natural phrasings including 'play my ...' prefix", () => {
+        expect(_forTests.isLikedSongsQuery("play my liked songs")).toBe(true);
+        expect(_forTests.isLikedSongsQuery("play liked music")).toBe(true);
+        expect(_forTests.isLikedSongsQuery("play my favourites")).toBe(true);
+    });
+});
+
+describe("spotify context-type helper", () => {
+    it("treats playlist/album/artist/collection as contexts", () => {
+        expect(_forTests.isContextType("playlist")).toBe(true);
+        expect(_forTests.isContextType("album")).toBe(true);
+        expect(_forTests.isContextType("artist")).toBe(true);
+        expect(_forTests.isContextType("collection")).toBe(true);
+    });
+    it("treats track/show/episode/unknown as non-context", () => {
+        expect(_forTests.isContextType("track")).toBe(false);
+        expect(_forTests.isContextType("show")).toBe(false);
+        expect(_forTests.isContextType("episode")).toBe(false);
+        expect(_forTests.isContextType("unknown")).toBe(false);
+    });
+});
+
+describe("spotify unsupported-operation detection", () => {
+    it("recognises spogo's connect-engine unsupported messages", () => {
+        expect(
+            _forTests.isSpogoUnsupportedError(
+                "unsupported operation: library tracks not supported in connect engine yet",
+            ),
+        ).toBe(true);
+        expect(
+            _forTests.isSpogoUnsupportedError("unsupported operation: playlists not supported in connect engine yet"),
+        ).toBe(true);
+        expect(
+            _forTests.isSpogoUnsupportedError(
+                "unsupported operation: playlist tracks not supported in connect engine yet",
+            ),
+        ).toBe(true);
+    });
+    it("does not flag unrelated errors", () => {
+        expect(_forTests.isSpogoUnsupportedError("auth failed")).toBe(false);
+        expect(_forTests.isSpogoUnsupportedError("network timeout")).toBe(false);
+        expect(_forTests.isSpogoUnsupportedError("")).toBe(false);
     });
 });
