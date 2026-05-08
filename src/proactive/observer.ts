@@ -214,6 +214,18 @@ export class Observer {
     }
 
     async tickAll(): Promise<void> {
+        // 0. Drain wall-clock scheduled intents (V3)
+        for (const ch of ALL_CHANNELS) {
+            try {
+                const promoted = native.schedulerDrainScheduled(ch);
+                if (promoted.length > 0) {
+                    debugProactive("observer_drained_scheduled", { ch, count: promoted.length });
+                }
+            } catch (err) {
+                debugProactive("observer_drain_err", { ch, err: (err as Error).message });
+            }
+        }
+
         // 1. Collect new intents from all registered sources
         try {
             const intents = await this.registry.collectAll({ now: Date.now() });

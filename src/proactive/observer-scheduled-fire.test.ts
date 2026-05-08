@@ -2,7 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { Observer, setObserver } from "./observer.js";
 import type { ProactiveIntent } from "./intent.js";
 import * as native from "../../native/index.js";
@@ -44,5 +44,28 @@ describe("Observer scheduled-fire routing", () => {
         const intent = mkIntent({ scheduledFor: 0, payloadKind: "" });
         const ok = observer.enqueue(intent);
         expect(ok).toBe(true);
+    });
+
+    it("drainScheduled promotes pending intents after their fire time", async () => {
+        // Spy on the native drain to verify tickAll calls it
+        const drainSpy = vi.spyOn(native, "schedulerDrainScheduled");
+        const fireAt = Date.now() + 50;
+        const intent = mkIntent({
+            scheduledFor: fireAt,
+            payloadKind: "meeting_prep",
+            channelPreference: "telegram",
+        });
+        observer.enqueue(intent);
+        await new Promise((r) => setTimeout(r, 80));
+        await observer.tickAll();
+        // tickAll must have called schedulerDrainScheduled at least once per channel
+        expect(drainSpy).toHaveBeenCalled();
+        // The drain call for telegram should have returned the intent id
+        const telegramCalls = drainSpy.mock.results.filter(
+            (_, i) => drainSpy.mock.calls[i][0] === "telegram"
+        );
+        const promoted = telegramCalls.flatMap((r) => r.value as string[]);
+        expect(promoted).toContain(intent.id);
+        drainSpy.mockRestore();
     });
 });
