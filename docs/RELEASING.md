@@ -29,13 +29,18 @@ endpoint at `/api/updates` serves only the YAML metadata and points
 
 The Convex YAML surface supports:
 
-- **Channels** — clients append `?channel=beta` (or `canary`). Each
-  channel maps to suffixed env vars (e.g. `UPDATE_URL_MAC_BETA`).
+- **Channels** — `stable`, `alpha`, `beta`, `canary`. Clients append
+  `?channel=alpha` to the feed URL; each channel reads suffixed env
+  vars (e.g. `UPDATE_URL_MAC_ALPHA`). If a channel-specific var is
+  unset, the handler falls back to the unsuffixed `stable` var.
 - **Failover URLs** — set `UPDATE_URL_MAC_MIRROR` to add a second
   `files:` entry; electron-updater tries them in order.
 - **Delta updates** — uploading the `.blockmap` alongside the binary
   lets electron-updater diff the old install and download only the
   changed chunks. A 400 MB full update typically becomes 50–100 MB.
+- **User-facing channel toggle** — the panel → Preferences → Updates
+  section has a dropdown that calls `update:setChannel`. Testers
+  pick "Alpha (early access)" to opt in.
 
 ## One-time setup
 
@@ -132,6 +137,32 @@ only writes `UPDATE_*_MAC` and the win run only writes `UPDATE_*_WIN`.
 Convex env vars are the only source of truth for "which version is
 live." To roll back, re-run the commands for the previous version's
 artifacts (they're still in R2 unless you deleted them).
+
+### Moving a release between channels
+
+If you published to the wrong channel (e.g. pushed an unstable build
+to `stable`), use the migrate helper. It S3-copies the objects under
+the new channel prefix and deletes the old copies — no re-upload of
+the 400 MB binary.
+
+```
+node scripts/migrate-channel.mjs --from stable --to alpha --version 0.2.1
+```
+
+Then unset the stable Convex vars and set the alpha ones:
+
+```
+npx convex env remove UPDATE_VERSION
+npx convex env remove UPDATE_URL_MAC
+npx convex env remove UPDATE_SHA512_MAC
+npx convex env remove UPDATE_SIZE_MAC
+npx convex env remove UPDATE_RELEASE_DATE
+npx convex env set UPDATE_VERSION_ALPHA    0.2.1
+npx convex env set UPDATE_URL_MAC_ALPHA    https://.../alpha/0.2.1/<file>.dmg
+npx convex env set UPDATE_SHA512_MAC_ALPHA <base64-sha512>
+npx convex env set UPDATE_SIZE_MAC_ALPHA   <bytes>
+npx convex env set UPDATE_RELEASE_DATE_ALPHA <iso-date>
+```
 
 ## Client behavior
 
