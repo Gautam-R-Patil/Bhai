@@ -152,7 +152,10 @@ pub fn habit_detect_anomalies(
     let mut out = Vec::new();
 
     for habit in habits.iter() {
-        let hour_diff = (habit.typical_hour as i32 - now_hour as i32).abs();
+        let hour_diff = {
+            let d = (habit.typical_hour as i32 - now_hour as i32).abs();
+            d.min(24 - d)
+        };
         if hour_diff > 1 { continue; }
 
         let seen = recent_events.iter().any(|e| {
@@ -225,6 +228,28 @@ mod tests_anomaly {
         }];
         let result = habit_detect_anomalies(habits, recent_events, now_ms);
         assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn anomaly_handles_midnight_wrap_around() {
+        // Habit at 23:00, now at 00:00 (1 circular hour later) — should fire.
+        // UTC midnight is epoch multiples of 86_400_000.
+        let now_ms = 86_400_000.0 * 1000.0; // day 1000, 00:00 UTC → now_hour = 0
+
+        let habit = DetectedHabit {
+            event_type: "coding".into(),
+            pattern: "daily".into(),
+            typical_hour: 23.0,
+            typical_day: None,
+            frequency: 5,
+            consistency: 0.9,
+            confidence: 0.9,
+            next_expected_ms: 0.0,
+        };
+
+        let recent = vec![];
+        let anomalies = habit_detect_anomalies(vec![habit], recent, now_ms);
+        assert_eq!(anomalies.len(), 1, "habit at 23:00 should fire at 00:00");
     }
 
     #[test]
