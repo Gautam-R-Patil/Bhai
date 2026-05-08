@@ -49,6 +49,80 @@ function computePcmRms(buf: Buffer): number {
     return Math.sqrt(sumSq / n);
 }
 
+/**
+ * Normalize text for echo-overlap comparison: lowercase, strip punctuation,
+ * collapse whitespace. Keeps Unicode letters (Devanagari, CJK, etc) so the
+ * same check works for Hindi / mixed scripts.
+ */
+export function normalizeForEcho(s: string): string {
+    // Keep letters (\p{L}), combining marks (\p{M} — e.g. Devanagari vowel
+    // matras, Arabic diacritics), numbers (\p{N}), and whitespace. Strip
+    // everything else (punctuation, widget markers). Without \p{M}, Hindi
+    // text like "अभी" loses the ी matra and becomes just "अभ".
+    return s
+        .toLowerCase()
+        .replace(/[^\p{L}\p{M}\p{N}\s]/gu, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+/**
+ * Fraction of tokens from `candidate` that appear in `reference`.
+ * Returns 0-1. Higher = more overlap. Used to detect ATLAS's own words
+ * being re-transcribed as user speech (echo). Token-set overlap (not
+ * string-similarity) so "opening WhatsApp now" matches "now opening"
+ * regardless of order.
+ */
+export function tokenOverlap(candidate: string, reference: string): number {
+    const cTokens = candidate.split(/\s+/).filter(t => t.length >= 2);
+    if (cTokens.length === 0) return 0;
+    const refSet = new Set(reference.split(/\s+/).filter(t => t.length >= 2));
+    if (refSet.size === 0) return 0;
+    let hits = 0;
+    for (const t of cTokens) if (refSet.has(t)) hits++;
+    return hits / cTokens.length;
+}
+
+// Echo is declared when ≥60% of candidate tokens appear in recent-spoken.
+// Conservative enough that a human echoing "I think it's 26 degrees" after
+// ATLAS says it doesn't trigger (<60% overlap once their actual words
+// arrive), but strict enough to catch "opening WhatsApp now" looping.
+const ECHO_OVERLAP_THRESHOLD = Number(process.env.ATLAS_ECHO_OVERLAP) || 0.6;
+
+// Connective / function words that commonly appear mid-thought. When the
+// user's pending transcript ends in one of these, they almost certainly
+// have more to say — extend the end-of-speech window instead of dispatching
+// a fragment. Prevents the classic "Can you find" → [fire turn] → "me a
+// power bank" → [fire ANOTHER turn] → "under 5K" race seen in production logs.
+// Intentionally NARROW. Only words that are STRONG indicators of an unfinished
+// thought. Pronouns are excluded because sentences legitimately end with them
+// ("tell me about it"), same for "no" / "yes" / "thanks" which aren't here.
+// Transitive verbs like "find"/"get" are included because when they end a
+// chunk, the object is almost always coming ("find [a power bank]").
+const MID_SENTENCE_TAILS: ReadonlySet<string> = new Set([
+    // Articles + determiners
+    "a", "an", "the", "some", "any", "my", "your", "our", "their",
+    // Prepositions (strong signal of "next phrase coming")
+    "of", "in", "on", "at", "by", "for", "to", "with", "from", "into", "onto", "about", "over", "under", "through", "between", "against",
+    // Conjunctions
+    "and", "or", "but", "nor", "yet", "because", "although", "while", "unless",
+    // Auxiliaries / modals (always need a main verb following)
+    "is", "are", "was", "were", "be", "been", "being", "am", "do", "does", "did",
+    "have", "has", "had", "can", "could", "should", "would", "will", "may", "might", "must", "shall",
+    // Transitive verbs that usually take an object ("find X", "check Y")
+    "find", "get", "make", "take", "give", "send", "show", "tell", "ask", "bring", "buy", "put", "call",
+    "open", "close", "check", "want", "need",
+]);
+
+/** Is the pending transcript likely unfinished (ends in a function word)? */
+export function looksLikeMidSentence(text: string): boolean {
+    const trimmed = text.trim().toLowerCase().replace(/[^\p{L}\p{M}\p{N}\s]/gu, " ").trim();
+    if (!trimmed) return false;
+    const words = trimmed.split(/\s+/);
+    const lastWord = words[words.length - 1];
+    return MID_SENTENCE_TAILS.has(lastWord);
+}
+
 // Tool results going into voice-turn history. Large payloads (os_scan
 // accessibility tree, web_search results, browser_* page dumps) otherwise
 // balloon the next llm.chat input from ~30K to ~400K tokens and make every
@@ -112,6 +186,17 @@ export class LiveVoiceSession extends EventEmitter {
     // DOES cross this bar. Tuned to 5 so short interjections like "Wait",
     // "Stop", "Hey?" trigger — at 8 we'd lose those single-word barge-ins.
     private static readonly BARGE_IN_MIN_CHARS = Number(process.env.ATLAS_BARGE_IN_MIN_CHARS) || 5;
+    // Echo-filter: ATLAS's most-recent spoken text (normalized). When a
+    // user transcript arrives right after we spoke, we compare it against
+    // this — if it substantially overlaps, it's the mic picking up the
+    // speaker. Dropped. Windowed: cleared when speaker goes idle + a few
+    // seconds pass.
+    private lastSpokenNormalized = "";
+    private lastSpokenAt = 0;
+    // How long the echo window stays armed after a reply. Mic leakage is
+    // always immediate (<2 s), so a short window is fine and prevents
+    // dropping genuine user speech that happens to overlap the reply.
+    private static readonly ECHO_WINDOW_MS = Number(process.env.ATLAS_ECHO_WINDOW_MS) || 5000;
 
     constructor(config: Partial<LiveVoiceConfig> & Pick<LiveVoiceConfig, "keys">, llm: LLMClient) {
         super();
@@ -412,7 +497,14 @@ export class LiveVoiceSession extends EventEmitter {
             //   - Substantive chunks OR chunks that extend an already-accepted
             //     barge-in → accept, cancel the speaker, treat as user turn.
             //     This is what makes interrupting ATLAS actually work.
-            if (this.speaker.isSpeaking()) {
+            // Barge-in gate fires ONLY while the player subprocess is actively
+            // running, not during the post-playback quiet window. quietUntil
+            // is for mic-echo decay, not user-input suppression — a user ACK
+            // like "okay" / "yes" / "no" arriving right after ATLAS finishes
+            // is a legitimate reply and must pass through. Previously we
+            // used `isSpeaking()` which includes quietUntil and wrongly
+            // dropped these short replies.
+            if (this.speaker.activelyPlaying()) {
                 const shortEchoLikely = rawChunk.trim().length < LiveVoiceSession.BARGE_IN_MIN_CHARS;
                 const alreadyBargeIn = this.pendingUserText.length > 0;
                 if (shortEchoLikely && !alreadyBargeIn) {
@@ -428,14 +520,45 @@ export class LiveVoiceSession extends EventEmitter {
                 }
             }
             this.pendingUserText += rawChunk;
+            // ── Echo-self-loop guard ──
+            // Within the ECHO_WINDOW right after ATLAS spoke, check whether
+            // the accumulated pending text is just the mic picking up our
+            // own voice. Observed bug: user says "Yeah", then ATLAS replies
+            // "opening WhatsApp now", Gemini transcribes both as two user
+            // chunks, and we fire a turn asking ATLAS "Yeah, opening WhatsApp
+            // now." which the LLM responds to as if the user said it.
+            if (
+                this.lastSpokenNormalized &&
+                Date.now() - this.lastSpokenAt < LiveVoiceSession.ECHO_WINDOW_MS
+            ) {
+                const pendingNorm = normalizeForEcho(this.pendingUserText);
+                if (pendingNorm.length >= 4) {
+                    const overlap = tokenOverlap(pendingNorm, this.lastSpokenNormalized);
+                    if (overlap >= ECHO_OVERLAP_THRESHOLD) {
+                        console.log(`[HYBRID] ECHO detected (overlap=${overlap.toFixed(2)}) — dropping "${this.pendingUserText.slice(0, 60)}"`);
+                        this.pendingUserText = "";
+                        if (this.pendingUserTimer) { clearTimeout(this.pendingUserTimer); this.pendingUserTimer = null; }
+                        return;
+                    }
+                }
+            }
             console.log(`[HYBRID] raw chunk accepted: "${rawChunk.slice(0, 40)}" pendingLen=${this.pendingUserText.length}`);
             if (this.pendingUserTimer) clearTimeout(this.pendingUserTimer);
+            // Smart end-of-speech window. If the pending text ends in a
+            // function word ("find", "for", "the", ...), the user almost
+            // certainly has more to say — extend the wait instead of firing
+            // a fragmentary turn that the LLM must respond to mid-thought.
+            // Was hit repeatedly in prod: "Can you find" → [dispatch] →
+            // "me a power bank" → [dispatch] → "under 5K" → 400 race.
+            const wait = looksLikeMidSentence(this.pendingUserText)
+                ? LiveVoiceSession.END_OF_SPEECH_MS * 2
+                : LiveVoiceSession.END_OF_SPEECH_MS;
             this.pendingUserTimer = setTimeout(() => {
                 const finalText = this.pendingUserText.replace(/\s+/g, " ").trim();
                 this.pendingUserText = "";
                 this.pendingUserTimer = null;
                 if (!finalText) return;
-                console.log(`[HYBRID] end-of-speech fired, dispatching: "${finalText}"`);
+                console.log(`[HYBRID] end-of-speech fired (waited ${wait}ms), dispatching: "${finalText}"`);
                 // Emit the clean final transcript for UI display.
                 this.emitEvent("user_transcript", finalText);
                 // Memory-verb shortcut: "remember that X" / "note that Y" /
@@ -464,7 +587,7 @@ export class LiveVoiceSession extends EventEmitter {
                     console.error("[LIVE-SESSION] Hybrid turn errored:", err);
                     this.emitEvent("error", err);
                 });
-            }, LiveVoiceSession.END_OF_SPEECH_MS);
+            }, wait);
         });
 
         // Backend → Tool call cancelled by server (native only).
@@ -704,6 +827,10 @@ export class LiveVoiceSession extends EventEmitter {
                     this.emitEvent("response_transcript", text);
                     this.emitEvent("response_audio", { pcm: Buffer.alloc(0), sampleRate: 24000, channels: 1 as const });
                     this.speaker.speak(text);
+                    // Arm echo guard for the ack text too — mic can pick up
+                    // "opening that now" just as easily as the final reply.
+                    this.lastSpokenNormalized = normalizeForEcho(text);
+                    this.lastSpokenAt = Date.now();
                 }
 
                 // Persist the assistant's tool-request in history so the model
@@ -775,6 +902,11 @@ export class LiveVoiceSession extends EventEmitter {
                 // speak() synthesizes the whole utterance in ONE Kokoro call —
                 // no sentence-splitting, no 1s inter-sentence gaps.
                 this.speaker.speak(text);
+                // Arm the echo-self-loop guard: record what we just said so
+                // incoming transcripts in the next ~5 s can be matched
+                // against it and rejected if they overlap substantially.
+                this.lastSpokenNormalized = normalizeForEcho(text);
+                this.lastSpokenAt = Date.now();
                 // Hold turn_complete until Kokoro has actually finished speaking
                 // the whole utterance. Otherwise the UI flips to "Listening"
                 // mid-sentence and the user thinks it's their turn.

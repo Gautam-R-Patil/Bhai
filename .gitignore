@@ -122,6 +122,7 @@ desktop/hostinger-upload/
 !src/voice/live/tool-bridge.test.ts
 !src/voice/live/transcript-speaker.test.ts
 !src/voice/live/memory-bridge.test.ts
+!src/voice/live/echo.test.ts
 !src/tools/preflight.test.ts
 !src/tools/swarm-gate.test.ts
 !src/model-router.coding.test.ts

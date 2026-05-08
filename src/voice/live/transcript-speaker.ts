@@ -191,6 +191,35 @@ const MIN_SENTENCE_CHARS = 12;
 // enough to leak back through the mic and re-ignite the feedback loop.
 const POST_SPEAK_QUIET_MS = 250;
 
+/**
+ * Strip markup that the LLM sometimes leaks into text-mode responses even in
+ * voice mode — HTML comments, widget markers, overlay directives, code fences,
+ * markdown links, bullet-list prefixes. Kokoro reads these literally ("widget
+ * type colon clock"), which is terrible UX. The voice system prompt already
+ * forbids them but LLMs violate it; strip as belt-and-braces.
+ */
+export function stripTtsMarkup(text: string): string {
+    return text
+        // HTML comments (widget markers, collapse/quick_actions, etc)
+        .replace(/<!--[\s\S]*?-->/g, "")
+        // Code fences — keep the inner text, drop the backticks + language tag
+        .replace(/```[a-zA-Z0-9]*\n?/g, "")
+        .replace(/```/g, "")
+        // Inline code backticks — TTS reads them as "backtick"
+        .replace(/`([^`]*)`/g, "$1")
+        // Markdown links: [text](url) → text
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+        // Bold/italic asterisks around words — keep the word
+        .replace(/\*{1,3}([^*]+)\*{1,3}/g, "$1")
+        // Leading bullet markers on a line (*, -, •, numbered)
+        .replace(/^\s*[-*•]\s+/gm, "")
+        .replace(/^\s*\d+\.\s+/gm, "")
+        // Trailing whitespace cleanup
+        .replace(/[ \t]+\n/g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+}
+
 // Common English abbreviations that end in `.` and are followed by a capital
 // word — "I spoke to Dr. Smith about…" must NOT split at "Dr.". Checked against
 // the end of a candidate sentence; case-insensitive.
@@ -354,7 +383,7 @@ export class TranscriptSpeaker {
      * gap between them — they flow back-to-back like natural speech.
      */
     speak(fullText: string): void {
-        const t = fullText.trim();
+        const t = stripTtsMarkup(fullText.trim());
         console.log(`[SPEAKER] speak() called: enabled=${this.enabled} disabled=${this.disabled} len=${t.length} preview="${t.slice(0, 60)}"`);
         if (!this.enabled || this.disabled) return;
         if (!t) return;
@@ -451,6 +480,17 @@ export class TranscriptSpeaker {
     isSpeaking(): boolean {
         if (this.running !== null || this.queue.length > 0 || this.synthesizing) return true;
         return Date.now() < this.quietUntil;
+    }
+
+    /**
+     * Strict variant: true ONLY while the player subprocess is running or
+     * a synth is in flight — NOT during the post-playback quiet window.
+     * Used for barge-in short-chunk gating so user ACKs like "okay" / "yes"
+     * arriving right after ATLAS finishes don't get wrongly dropped as
+     * echo-fragments.
+     */
+    activelyPlaying(): boolean {
+        return this.running !== null || this.queue.length > 0 || this.synthesizing;
     }
 
     private enqueue(sentence: string): void {

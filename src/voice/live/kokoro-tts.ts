@@ -159,7 +159,21 @@ export async function initKokoro(): Promise<boolean> {
                     ATLAS_KOKORO_CACHE_DIR: CACHE_DIR,
                 },
             });
-            worker.stderr?.on("data", (c) => process.stderr.write(c));
+            // Relay stderr to parent, but filter out the espeak-ng dictionary
+            // spam when Kokoro phonemizes non-English text (Devanagari, CJK,
+            // Arabic, etc). espeak-ng ships with an English dict by default;
+            // we don't want 30+ lines of "Can't read dictionary file" per
+            // utterance polluting the log. The synth still produces audio;
+            // the missing dict just makes the phoneme output less accurate.
+            worker.stderr?.on("data", (chunk: Buffer) => {
+                const text = chunk.toString();
+                // Drop lines matching known noise patterns; keep everything else.
+                const filtered = text
+                    .split("\n")
+                    .filter((line) => !/Can't read dictionary file:/.test(line))
+                    .join("\n");
+                if (filtered.length > 0) process.stderr.write(filtered);
+            });
             // CRITICAL: attach 'error' handlers on stdin and stdout. If the
             // worker exits mid-synth, a subsequent write to its stdin emits
             // 'error' on the pipe; without a listener that error is unhandled

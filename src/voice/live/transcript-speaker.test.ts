@@ -17,7 +17,7 @@ vi.mock("./kokoro-tts.js", () => ({
     hasKokoroFailed: () => kokoroFailedFlag,
 }));
 
-import { extractSentence, TranscriptSpeaker } from "./transcript-speaker.js";
+import { extractSentence, TranscriptSpeaker, stripTtsMarkup } from "./transcript-speaker.js";
 
 describe("extractSentence — sentence splitter for on-device TTS", () => {
     it("returns null when the buffer has no complete sentence yet", () => {
@@ -155,6 +155,47 @@ describe("extractSentence — sentence splitter for on-device TTS", () => {
         // so `looksLikeStart` already returns false; no need for the new
         // guard. Verify the existing uppercase-next rule still reigns.
         expect(extractSentence("Meeting at 3 p.m. the conference starts.")).toBeNull();
+    });
+});
+
+describe("stripTtsMarkup — strip text-mode markup before TTS", () => {
+    it("strips HTML comments (widget / overlay markers)", () => {
+        expect(stripTtsMarkup("It's 11:46 AM.<!--WIDGET: {\"type\": \"clock\"}-->")).toBe("It's 11:46 AM.");
+        expect(stripTtsMarkup("before <!--COLLAPSE--> after")).toBe("before  after");
+    });
+
+    it("strips multi-line HTML comments", () => {
+        expect(stripTtsMarkup("before<!--\nline\n-->after")).toBe("beforeafter");
+    });
+
+    it("strips code fences but keeps inner text", () => {
+        expect(stripTtsMarkup("```js\nconst x = 1;\n```")).toBe("const x = 1;");
+    });
+
+    it("strips inline backticks", () => {
+        expect(stripTtsMarkup("use `foo` to bar")).toBe("use foo to bar");
+    });
+
+    it("strips markdown link syntax but keeps link text", () => {
+        expect(stripTtsMarkup("see [the docs](https://example.com) for more")).toBe("see the docs for more");
+    });
+
+    it("strips bold/italic asterisks", () => {
+        expect(stripTtsMarkup("this is **bold** and *italic*")).toBe("this is bold and italic");
+    });
+
+    it("strips leading bullet markers from each line", () => {
+        const input = "* first\n- second\n• third\n1. fourth";
+        expect(stripTtsMarkup(input)).toBe("first\nsecond\nthird\nfourth");
+    });
+
+    it("preserves Devanagari and other non-Latin scripts", () => {
+        expect(stripTtsMarkup("अभी सुबह के 11:46 हो रहे हैं।<!--WIDGET-->")).toBe("अभी सुबह के 11:46 हो रहे हैं।");
+    });
+
+    it("handles empty / already-clean input", () => {
+        expect(stripTtsMarkup("")).toBe("");
+        expect(stripTtsMarkup("Hello, how are you?")).toBe("Hello, how are you?");
     });
 });
 
