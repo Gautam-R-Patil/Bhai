@@ -144,6 +144,16 @@ desktop/hostinger-upload/
 !src/proactive/sources/_shared/weather-fetch.test.ts
 !src/proactive/sources/_shared/news-fetch.test.ts
 !src/proactive/sources/calendar-morning.test.ts
+!src/proactive/sources/calendar-prep.test.ts
+!src/proactive/sources/meeting-followup.test.ts
+!src/proactive/sources/tasks-morning.test.ts
+!src/proactive/sources/tasks-deadline.test.ts
+!src/proactive/sources/goals-morning.test.ts
+!src/proactive/sources/habit-anomaly.test.ts
+!src/proactive/sources/weather-morning.test.ts
+!src/proactive/sources/news-morning.test.ts
+!src/proactive/sources/stale-email.test.ts
+!src/proactive/sources/deep-work-gap.test.ts
 !desktop/tests/
 !desktop/tests/auth-helpers.test.js
 
