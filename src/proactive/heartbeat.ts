@@ -48,6 +48,37 @@ export function pickBriefingTime(): number {
     return low + Math.floor(Math.random() * (high - low));
 }
 
+export function maybeEmitMorningBoundary(params: {
+    minutesNow: number;
+    todayStr: string;
+    inWindow: boolean;
+    targetMinute: number;
+}): boolean {
+    const { minutesNow, todayStr, inWindow, targetMinute } = params;
+    if (process.env.ATLAS_PROACTIVE_V3_SOURCES !== "true") return false;
+    if (briefingSentDate === todayStr) return false;
+
+    const primary = inWindow && targetMinute !== -1 && minutesNow >= targetMinute;
+    const catchUp = !inWindow && minutesNow > 10 * 60 && minutesNow < 14 * 60;
+
+    if (!primary && !catchUp) return false;
+
+    briefingSentDate = todayStr;
+    briefingTargetMinute = -1;
+    globalBoundaryBus.emit({ kind: "morning_window", ts: Date.now() });
+    console.log(
+        primary
+            ? "💓 Morning window boundary emitted (V3 path)"
+            : "💓 Missed morning window — emitting catch-up boundary",
+    );
+    return true;
+}
+
+export function _resetBriefingStateForTests(): void {
+    briefingSentDate = "";
+    briefingTargetMinute = -1;
+}
+
 // ── Start ─────────────────────────────────────
 
 export function startHeartbeat(llm: LLMClient, cfg: HeartbeatConfig): void {
@@ -119,41 +150,50 @@ export function startHeartbeat(llm: LLMClient, cfg: HeartbeatConfig): void {
                 );
             }
 
-            // Fire once when we pass the randomly chosen minute and haven't sent today
             const inWindow = minutesNow >= 6 * 60 && minutesNow <= 10 * 60;
-            if (
-                inWindow &&
-                briefingTargetMinute !== -1 &&
-                minutesNow >= briefingTargetMinute &&
-                briefingSentDate !== todayStr
-            ) {
-                briefingSentDate = todayStr;
-                briefingTargetMinute = -1;
-                const briefing = await generateBriefing(llm);
-                if (config?.onNotification) {
-                    await config.onNotification(briefing);
-                    try {
-                        const { recordNotification } = await import("./notification-tracker.js");
-                        recordNotification("briefing", briefing);
-                    } catch {
-                        /* non-fatal */
+
+            const emitted = maybeEmitMorningBoundary({
+                minutesNow,
+                todayStr,
+                inWindow,
+                targetMinute: briefingTargetMinute,
+            });
+
+            // Legacy path — only runs when V3 flag is off
+            if (!emitted && process.env.ATLAS_PROACTIVE_V3_SOURCES !== "true") {
+                if (
+                    inWindow &&
+                    briefingTargetMinute !== -1 &&
+                    minutesNow >= briefingTargetMinute &&
+                    briefingSentDate !== todayStr
+                ) {
+                    briefingSentDate = todayStr;
+                    briefingTargetMinute = -1;
+                    const briefing = await generateBriefing(llm);
+                    if (config?.onNotification) {
+                        await config.onNotification(briefing);
+                        try {
+                            const { recordNotification } = await import("./notification-tracker.js");
+                            recordNotification("briefing", briefing);
+                        } catch {
+                            /* non-fatal */
+                        }
                     }
                 }
-            }
 
-            // Catch-up if bot restarted after 10 AM
-            if (!inWindow && minutesNow > 10 * 60 && minutesNow < 14 * 60 && briefingSentDate !== todayStr) {
-                console.log(`💓 Missed morning window — sending catch-up briefing now`);
-                briefingSentDate = todayStr;
-                briefingTargetMinute = -1;
-                const briefing = await generateBriefing(llm);
-                if (config?.onNotification) {
-                    await config.onNotification(briefing);
-                    try {
-                        const { recordNotification } = await import("./notification-tracker.js");
-                        recordNotification("briefing", briefing);
-                    } catch {
-                        /* non-fatal */
+                if (!inWindow && minutesNow > 10 * 60 && minutesNow < 14 * 60 && briefingSentDate !== todayStr) {
+                    console.log(`💓 Missed morning window — sending catch-up briefing now`);
+                    briefingSentDate = todayStr;
+                    briefingTargetMinute = -1;
+                    const briefing = await generateBriefing(llm);
+                    if (config?.onNotification) {
+                        await config.onNotification(briefing);
+                        try {
+                            const { recordNotification } = await import("./notification-tracker.js");
+                            recordNotification("briefing", briefing);
+                        } catch {
+                            /* non-fatal */
+                        }
                     }
                 }
             }
