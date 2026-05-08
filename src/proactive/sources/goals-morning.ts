@@ -5,7 +5,7 @@
 import type { IntentSourceModule, SourceCtx } from "./source.js";
 import type { ProactiveIntent } from "../intent.js";
 import * as native from "../../../native/index.js";
-import { getActiveGoals } from "../../goal-engine.js";
+import { getActiveGoals, type Goal } from "../goal-engine.js";
 import { buildIntent } from "./_shared/build-intent.js";
 import { debugProactive } from "../kill-switches.js";
 
@@ -34,10 +34,10 @@ export const GOALS_MORNING: IntentSourceModule = {
             channelPreference: "any",
             payloadKind: "goals_status",
             topic: `morning goals ${dateStr}`,
-            evidence: goals.map(g => ({ label: "goal", value: g.title })),
+            evidence: goals.map((g: Goal) => ({ label: "goal", value: g.title })),
             payload: {
                 kind: "goals_status",
-                goals: goals.map(g => ({ title: g.title, progress: g.progress, status: g.status })),
+                goals: goals.map((g: Goal) => ({ title: g.title, progress: g.progress, status: g.status })),
             },
         });
         return [intent];

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../../goal-engine.js", () => ({
+vi.mock("../goal-engine.js", () => ({
     getActiveGoals: vi.fn(() => [
         { id: 1, title: "Ship v2", progress: 0.4, status: "active", description: "", source: "user_explicit", priority: 0.8, parentGoalId: null, evidence: "", createdAt: "", updatedAt: "" },
         { id: 2, title: "Learn Rust", progress: 0.1, status: "active", description: "", source: "curiosity", priority: 0.5, parentGoalId: null, evidence: "", createdAt: "", updatedAt: "" },
@@ -30,7 +30,7 @@ describe("goals-morning source", () => {
     });
 
     it("returns empty when no active goals", async () => {
-        const goalMod = await import("../../goal-engine.js");
+        const goalMod = await import("../goal-engine.js");
         (goalMod.getActiveGoals as any).mockReturnValueOnce([]);
         const intents = await GOALS_MORNING.collectIntents({ now: Date.now() });
         expect(intents).toHaveLength(0);
