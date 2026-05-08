@@ -1771,8 +1771,10 @@ function registerIPC() {
                 devTools: IS_DEV,
             },
         });
-        // Load local auth page — no OTPless SDK, no domain restrictions
-        authWindow.loadFile(path.join(__dirname, "auth.html"));
+        // OTPless SDK requires a real HTTPS origin; auth-login/ hosts the
+        // headless SDK page and hands the token back via the preload bridge.
+        const authUrl = process.env.ATLAS_AUTH_URL || "https://tryatlasagi.com/auth-login";
+        authWindow.loadURL(authUrl);
         authWindow.on("closed", () => { authWindow = null; });
         if (IS_DEV) authWindow.webContents.openDevTools({ mode: "detach" });
     }
