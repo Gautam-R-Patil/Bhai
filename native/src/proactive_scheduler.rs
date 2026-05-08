@@ -6,7 +6,8 @@ use napi_derive::napi;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BinaryHeap, HashMap, VecDeque};
+use std::cmp::Reverse;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -52,6 +53,29 @@ pub struct ReleaseResult {
     pub dropped: Vec<DropEntry>,
 }
 
+#[derive(Clone)]
+struct ScheduledIntent {
+    scheduled_for: u64,
+    intent: QueuedIntent,
+}
+
+impl PartialEq for ScheduledIntent {
+    fn eq(&self, other: &Self) -> bool {
+        self.scheduled_for == other.scheduled_for
+    }
+}
+impl Eq for ScheduledIntent {}
+impl PartialOrd for ScheduledIntent {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for ScheduledIntent {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.scheduled_for.cmp(&other.scheduled_for)
+    }
+}
+
 struct ChannelState {
     queue: VecDeque<QueuedIntent>,
     posture: PostureParams,
@@ -61,6 +85,7 @@ struct ChannelState {
     boundary_window_until_ms: f64,
     dnd_active: bool,
     recent_topic_embeddings: VecDeque<(f64, Vec<f64>)>,
+    pending_scheduled: BinaryHeap<Reverse<ScheduledIntent>>,
 }
 
 static STATE: Lazy<Arc<Mutex<HashMap<String, ChannelState>>>> =
@@ -114,6 +139,7 @@ pub fn scheduler_configure(posture: PostureParams) {
         boundary_window_until_ms: 0.0,
         dnd_active: false,
         recent_topic_embeddings: VecDeque::new(),
+        pending_scheduled: BinaryHeap::new(),
     });
     entry.posture = posture;
 }
