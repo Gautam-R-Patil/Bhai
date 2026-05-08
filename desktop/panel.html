@@ -2698,7 +2698,22 @@
                     document.getElementById('prefUpdateStatus').textContent =
                         `Last checked: ${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
                 }
+                const channelEl = document.getElementById('prefUpdateChannel');
+                if (channelEl && status.channel) channelEl.value = status.channel;
             });
+        }
+
+        async function setUpdateChannel(channel) {
+            try {
+                const result = await atlas.setUpdateChannel(channel);
+                if (result?.success) {
+                    showToast(`✅ Switched to ${channel} channel — checking for updates…`);
+                } else {
+                    showToast(`⚠️ Couldn't switch channel: ${result?.error || 'unknown error'}`);
+                }
+            } catch (err) {
+                showToast(`⚠️ Couldn't switch channel: ${err.message}`);
+            }
         }
 
         // ── Preferences ───────────────────────────────
