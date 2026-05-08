@@ -146,6 +146,8 @@ const OVERLAY_HIDE_DELAY_MS = 260;
 // ── Convex Site URL (HTTP actions endpoint — public, not a secret) ──
 const CONVEX_SITE_URL = "https://zany-kudu-607.convex.site";
 
+const { parseOtplessVerifyResponse, isLegacyUserId } = require("./auth-helpers");
+
 // ── Desktop Session Token Management ─────────────
 // Authenticates the Electron main process with the Convex backend
 // via session tokens — NO deploy key needed.
@@ -209,6 +211,30 @@ async function getDesktopSessionToken(overrideUserId, overrideInfo) {
         });
         req.on("error", () => resolve(null));
         req.on("timeout", () => { req.destroy(); resolve(null); });
+        req.write(bodyStr);
+        req.end();
+    });
+}
+
+function convexPostNoAuth(urlPath, bodyObj) {
+    return new Promise((resolve, reject) => {
+        const https = require("https");
+        const bodyStr = JSON.stringify(bodyObj || {});
+        const url = new URL(`${CONVEX_SITE_URL}${urlPath}`);
+        const req = https.request(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(bodyStr) },
+            timeout: 20000,
+        }, (res) => {
+            let raw = "";
+            res.on("data", c => raw += c);
+            res.on("end", () => {
+                try { resolve(JSON.parse(raw)); }
+                catch { reject(new Error("Invalid JSON response")); }
+            });
+        });
+        req.on("error", reject);
+        req.on("timeout", () => { req.destroy(); reject(new Error("Request timed out")); });
         req.write(bodyStr);
         req.end();
     });
@@ -1699,6 +1725,27 @@ function registerIPC() {
 
     let authWindow = null;
 
+    function finalizeAuth({ session, userId, email, phone, name }) {
+        saveAccountSession({
+            userId,
+            token: session.token,
+            email: email || null,
+            phone: phone || null,
+            name: name || null,
+            created_at: new Date().toISOString(),
+        });
+        _desktopSessionToken = session.token;
+        _desktopSessionExpiry = session.expiresAt || (Date.now() + 86400000);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send("account-status-change", { signedIn: true });
+            mainWindow.focus();
+        }
+        if (authWindow && !authWindow.isDestroyed()) {
+            authWindow.close();
+            authWindow = null;
+        }
+    }
+
     function openAuthWindow() {
         if (authWindow && !authWindow.isDestroyed()) {
             authWindow.focus();
@@ -1756,6 +1803,21 @@ function registerIPC() {
     ipcMain.handle("window:openAuth", () => {
         openAuthWindow();
         return { success: true };
+    });
+
+    ipcMain.handle("otpless:submit-token", async (_, { token }) => {
+        if (!token || typeof token !== "string") {
+            return { success: false, error: "Missing token" };
+        }
+        try {
+            const raw = await convexPostNoAuth("/api/otpless/validate-token", { token });
+            const parsed = parseOtplessVerifyResponse(raw);
+            if (!parsed.ok) return { success: false, error: parsed.error };
+            finalizeAuth(parsed);
+            return { success: true, userId: parsed.userId };
+        } catch (err) {
+            return { success: false, error: err.message || "Network error" };
+        }
     });
 
     // Window controls
