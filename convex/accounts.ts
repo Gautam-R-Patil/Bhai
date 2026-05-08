@@ -248,3 +248,28 @@ export const deleteAccountInternal = internalMutation({
     return { success: true };
   },
 });
+
+// ══════════════════════════════════════════════════
+// ONE-SHOT: wipe legacy synthetic IDs (phone_*, google_*) pre-OTPless migration.
+// Removed in a follow-up commit after rollout.
+// ══════════════════════════════════════════════════
+
+export const wipeLegacyIdsInternal = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const all = await ctx.db.query("accounts").take(10000);
+    let deleted = 0;
+    for (const a of all) {
+      if (/^(phone_|google_)/.test(a.otplessUserId)) {
+        const sessions = await ctx.db
+          .query("sessions")
+          .withIndex("by_user", (q) => q.eq("otplessUserId", a.otplessUserId))
+          .take(1000);
+        for (const s of sessions) await ctx.db.delete(s._id);
+        await ctx.db.delete(a._id);
+        deleted += 1;
+      }
+    }
+    return { deleted };
+  },
+});
