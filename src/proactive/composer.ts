@@ -138,3 +138,28 @@ function hourBucket(): string {
     if (h < 22) return "evening";
     return "late_night";
 }
+
+/**
+ * Morning fan-in composer — STUB.
+ * Plan 2 phase 5 replaces this with an LLM-composed natural-language rollup.
+ * For now, concatenates evidence from each intent as plaintext so the pipeline
+ * is end-to-end testable.
+ */
+export async function composeMorningBatch(
+    intents: ProactiveIntent[],
+    _channel: Channel,
+    _recentSends: string[],
+    _deps: { llm: LLMClient | null },
+): Promise<{ text: string; modeTag: "fyi" | "question" | "review" } | null> {
+    if (intents.length === 0) return null;
+    const lines: string[] = [];
+    for (const intent of intents) {
+        const kind = (intent.payloadKind ?? (intent.payload?.kind as string)) ?? "";
+        const topic = intent.topic;
+        lines.push(`- [${kind}] ${topic}`);
+    }
+    return {
+        text: `morning signals (stub):\n${lines.join("\n")}`,
+        modeTag: "fyi",
+    };
+}

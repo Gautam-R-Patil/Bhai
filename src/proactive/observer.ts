@@ -16,7 +16,7 @@ import {
     type ProactiveConfig,
     type Posture,
 } from "./config.js";
-import { compose } from "./composer.js";
+import { compose, composeMorningBatch } from "./composer.js";
 import { dispatchProactiveMessage } from "./dispatch.js";
 import { globalBoundaryBus, type BoundaryEvent } from "./boundary-events.js";
 import {
@@ -244,8 +244,9 @@ export class Observer {
     }
 
     private async releaseChannel(channel: Channel): Promise<void> {
-        const r = native.schedulerTryRelease(channel);
+        const r = native.schedulerReleaseGrouped(channel);
         if (!r) return;
+
         for (const d of r.dropped) {
             debugProactive("observer_dropped", { id: d.id, reason: d.reason });
             const droppedIntent = this.intentsById.get(d.id);
@@ -258,7 +259,54 @@ export class Observer {
             });
             this.intentsById.delete(d.id);
         }
-        for (const id of r.released) {
+
+        const morningBatchIds: string[] = r.morningBatch ?? [];
+        const singleIds: string[] = r.singles ?? [];
+
+        const recent = this.recentSendsByChannel.get(channel) ?? [];
+
+        if (morningBatchIds.length >= 2) {
+            const intents: ProactiveIntent[] = [];
+            for (const id of morningBatchIds) {
+                const intent = this.intentsById.get(id);
+                if (intent) intents.push(intent);
+            }
+            if (intents.length > 0) {
+                try {
+                    const composed = await composeMorningBatch(intents, channel, recent, { llm: this.deps.llm });
+                    if (composed) {
+                        await dispatchProactiveMessage(channel, composed.text, composed.modeTag);
+                        this.telemetry().log({
+                            intentId: intents[0].id,
+                            source: intents[0].source,
+                            channel,
+                            decision: "dispatched",
+                            dispatchedAt: Date.now(),
+                            batchIds: intents.map((i) => i.id),
+                        });
+                        const updated = [composed.text, ...recent].slice(0, RECENT_SENDS_PER_CHANNEL);
+                        this.recentSendsByChannel.set(channel, updated);
+                    } else {
+                        for (const intent of intents) {
+                            this.telemetry().log({
+                                intentId: intent.id,
+                                source: intent.source,
+                                channel,
+                                decision: "dropped",
+                                dropReason: "compose_failed",
+                            });
+                        }
+                    }
+                } catch (err) {
+                    debugProactive("observer_morning_batch_failed", { channel, err: (err as Error).message });
+                } finally {
+                    for (const intent of intents) this.intentsById.delete(intent.id);
+                }
+            }
+        }
+
+        // Singles — compose + dispatch individually (V2 per-intent logic preserved)
+        for (const id of singleIds) {
             const intent = this.intentsById.get(id);
             if (!intent) continue;
             this.telemetry().log({
@@ -267,9 +315,9 @@ export class Observer {
                 channel,
                 decision: "released",
             });
-            const recent = this.recentSendsByChannel.get(channel) ?? [];
+            const intentRecent = this.recentSendsByChannel.get(channel) ?? [];
             try {
-                const composed = await compose(intent, channel, { tone: "warm" }, recent, { llm: this.deps.llm });
+                const composed = await compose(intent, channel, { tone: "warm" }, intentRecent, { llm: this.deps.llm });
                 if (!composed) {
                     this.telemetry().log({
                         intentId: intent.id,
@@ -314,7 +362,7 @@ export class Observer {
                     decision: "dispatched",
                     dispatchedAt: Date.now(),
                 });
-                const updated = [composed.text, ...recent].slice(0, RECENT_SENDS_PER_CHANNEL);
+                const updated = [composed.text, ...(this.recentSendsByChannel.get(channel) ?? [])].slice(0, RECENT_SENDS_PER_CHANNEL);
                 this.recentSendsByChannel.set(channel, updated);
             } catch (err) {
                 debugProactive("observer_dispatch_failed", { id, channel, err: (err as Error).message });
