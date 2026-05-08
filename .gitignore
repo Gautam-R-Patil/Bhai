@@ -139,6 +139,8 @@ desktop/hostinger-upload/
 !src/proactive/sources/_shared/build-intent.test.ts
 !src/proactive/sources/_shared/calendar-fetch.test.ts
 !src/proactive/sources/calendar-morning.test.ts
+!desktop/tests/
+!desktop/tests/auth-helpers.test.js
 
 # Compiled Swift helpers (built by npm run build:location / build:ocr)
 scripts/get_location_bin
