@@ -1705,4 +1705,40 @@ http.route({
   }),
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// OTPless auth proxy — validates OTPless SDK tokens server-side and issues
+// ATLAS sessions. clientId/clientSecret stay server-side in Convex env vars.
+// ══════════════════════════════════════════════════════════════════════════
+
+http.route({
+  path: "/api/otpless/validate-token",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    let body: any;
+    try { body = await request.json(); } catch {
+      return new Response(JSON.stringify({ error: "Invalid JSON" }), { status: 400, headers: { "Content-Type": "application/json" } });
+    }
+    const { token, deviceFingerprint } = body || {};
+    if (!token || typeof token !== "string") {
+      return new Response(JSON.stringify({ error: "token is required" }), { status: 400, headers: { "Content-Type": "application/json" } });
+    }
+    try {
+      const identity = await ctx.runAction(internal.otpless.validateTokenInternal, { token });
+      await ctx.runMutation(internal.accounts.upsertAccountInternal, {
+        otplessUserId: identity.userId,
+        email: identity.email,
+        phone: identity.phone,
+        name: identity.name,
+      });
+      const session = await ctx.runMutation(internal.sessions.createSessionInternal, {
+        otplessUserId: identity.userId,
+        deviceFingerprint: deviceFingerprint || undefined,
+      });
+      return new Response(JSON.stringify({ session, ...identity }), { status: 200, headers: { "Content-Type": "application/json" } });
+    } catch (err: any) {
+      return new Response(JSON.stringify({ error: err.message || "validate failed" }), { status: 401, headers: { "Content-Type": "application/json" } });
+    }
+  }),
+});
+
 export default http;
