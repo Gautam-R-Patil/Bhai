@@ -87,7 +87,6 @@ desktop/hostinger-upload/
 !src/whatsapp-sweep.test.ts
 !convex/credit-cost.test.ts
 !convex/credit_cost.test.ts
-!convex/crypto.test.ts
 !convex/otpless.test.ts
 !src/security/secrets-sanitizer.test.ts
 !src/crypto-kdf.test.ts
