@@ -46,6 +46,8 @@ export type ProactiveIntent = {
   suggestedAction?: SuggestedAction;
   createdAt: number;
   expiresAt: number;
+  scheduledFor?: number;
+  payloadKind?: string;
 };
 
 export type ValidationResult =
