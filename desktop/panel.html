@@ -2459,11 +2459,6 @@
             }, isError ? 5000 : 3500); // Errors show longer
         }
 
-        // ── Account — Auth via OTPless Hosted Page ─────────────────────
-        // Opens a secure popup BrowserWindow loading atlas-auth.html from Hostinger.
-        // OTPless SDK runs on a real HTTPS domain there — no file:// restrictions.
-        // On success, the preload bridge sends "otpless:auth-success" to main.js.
-
         async function openSignIn() {
             const btn = document.getElementById('signInBtn');
             if (btn) { btn.disabled = true; btn.textContent = 'Opening…'; }
