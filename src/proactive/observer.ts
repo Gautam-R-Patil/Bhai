@@ -172,11 +172,11 @@ export class Observer {
             expiresAt: intent.expiresAt,
             postureWeight,
             sourceWeight,
-            scheduledFor: 0,
-            payloadKind: (intent.payload?.kind as string) ?? "",
+            scheduledFor: intent.scheduledFor ?? 0,
+            payloadKind: intent.payloadKind ?? (intent.payload?.kind as string) ?? "",
         });
         debugProactive("observer_enqueued", { id: intent.id, channel, res });
-        if (res !== "enqueued") {
+        if (res !== "enqueued" && res !== "scheduled") {
             this.intentsById.delete(intent.id);
             this.telemetry().log({
                 intentId: intent.id,
@@ -191,7 +191,8 @@ export class Observer {
             intentId: intent.id,
             source: intent.source,
             channel,
-            decision: "enqueued",
+            decision: res === "scheduled" ? "scheduled" : "enqueued",
+            ...(res === "scheduled" && intent.scheduledFor ? { scheduledFor: intent.scheduledFor } : {}),
         });
         return true;
     }

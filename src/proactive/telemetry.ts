@@ -17,7 +17,7 @@
 import type Database from "better-sqlite3";
 import type { IntentSource, Channel } from "./intent.js";
 
-export type Decision = "enqueued" | "dropped" | "released" | "dispatched";
+export type Decision = "enqueued" | "dropped" | "released" | "dispatched" | "scheduled";
 export type Sentiment = "positive" | "neutral" | "negative";
 
 export type ProactiveOutcome = {
@@ -27,6 +27,8 @@ export type ProactiveOutcome = {
     decision: Decision;
     dropReason?: string;
     dispatchedAt?: number;
+    scheduledFor?: number;
+    batchIds?: string[];
     userReplied?: boolean;
     userReplyLatencyMs?: number;
     userReplySentiment?: Sentiment;
@@ -94,11 +96,12 @@ export class TelemetryLogger {
             .all(...args) as Array<{ decision: string; n: number }>;
 
         const result: Record<Decision, number> = {
-            enqueued: 0, dropped: 0, released: 0, dispatched: 0,
+            enqueued: 0, dropped: 0, released: 0, dispatched: 0, scheduled: 0,
         };
         for (const r of rows) {
             if (r.decision === "enqueued" || r.decision === "dropped" ||
-                r.decision === "released" || r.decision === "dispatched") {
+                r.decision === "released" || r.decision === "dispatched" ||
+                r.decision === "scheduled") {
                 result[r.decision] = r.n;
             }
         }
