@@ -157,6 +157,18 @@ pub fn scheduler_enqueue(intent: QueuedIntent) -> String {
         cs.day_bucket = today;
         cs.sent_today = 0;
     }
+
+    if intent.scheduled_for > 0.0 && intent.scheduled_for > now {
+        if cs.pending_scheduled.len() >= 500 {
+            return "scheduled_cap".into();
+        }
+        cs.pending_scheduled.push(Reverse(ScheduledIntent {
+            scheduled_for: intent.scheduled_for as u64,
+            intent,
+        }));
+        return "scheduled".into();
+    }
+
     let six_h_ago = now - 6.0 * 3600.0 * 1000.0;
     cs.recent_topic_embeddings.retain(|(ts, _)| *ts >= six_h_ago);
     for (_, emb) in cs.recent_topic_embeddings.iter() {
@@ -398,5 +410,82 @@ mod tests {
         let r = scheduler_try_release("t".into());
         assert_eq!(r.released.len(), 2);
         assert_eq!(r.released[0], "urgent");
+    }
+}
+
+#[cfg(test)]
+mod tests_scheduled_fire {
+    use super::*;
+
+    fn clear_state() {
+        STATE.lock().clear();
+    }
+
+    fn mk_intent(id: &str, channel: &str, scheduled_for: f64) -> QueuedIntent {
+        QueuedIntent {
+            id: id.into(),
+            source: "test".into(),
+            mode: "fyi".into(),
+            urgency: "normal".into(),
+            channel: channel.into(),
+            topic_embedding: vec![0.0; 384],
+            created_at: 0.0,
+            expires_at: now_ms() + 3600_000.0,
+            posture_weight: 1.0,
+            source_weight: 1.0,
+            scheduled_for,
+            payload_kind: "".into(),
+        }
+    }
+
+    #[test]
+    fn enqueue_future_scheduled_goes_to_pending() {
+        clear_state();
+        scheduler_configure(PostureParams {
+            channel: "sfire_a".into(),
+            max_per_day: 10,
+            min_gap_min: 0,
+            heartbeat_min: 0,
+            boundary_only: false,
+            urgent_bypass: true,
+        });
+        let future = now_ms() + 3600_000.0;
+        let res = scheduler_enqueue(mk_intent("i1", "sfire_a", future));
+        assert_eq!(res, "scheduled");
+    }
+
+    #[test]
+    fn enqueue_zero_scheduled_takes_normal_path() {
+        clear_state();
+        scheduler_configure(PostureParams {
+            channel: "sfire_b".into(),
+            max_per_day: 10,
+            min_gap_min: 0,
+            heartbeat_min: 0,
+            boundary_only: false,
+            urgent_bypass: true,
+        });
+        let res = scheduler_enqueue(mk_intent("i1", "sfire_b", 0.0));
+        assert_eq!(res, "enqueued");
+    }
+
+    #[test]
+    fn scheduled_cap_enforced_at_500() {
+        clear_state();
+        scheduler_configure(PostureParams {
+            channel: "sfire_c".into(),
+            max_per_day: 10,
+            min_gap_min: 0,
+            heartbeat_min: 0,
+            boundary_only: false,
+            urgent_bypass: true,
+        });
+        let future = now_ms() + 3600_000.0;
+        for i in 0..500 {
+            let res = scheduler_enqueue(mk_intent(&format!("i{}", i), "sfire_c", future + i as f64));
+            assert_eq!(res, "scheduled");
+        }
+        let res = scheduler_enqueue(mk_intent("i500", "sfire_c", future + 500.0));
+        assert_eq!(res, "scheduled_cap");
     }
 }
