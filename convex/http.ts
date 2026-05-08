@@ -1705,31 +1705,4 @@ http.route({
   }),
 });
 
-// ══════════════════════════════════════════════════════════════════════════
-// OTPless auth proxy — all routes below keep clientId/clientSecret server-side
-// ══════════════════════════════════════════════════════════════════════════
-
-http.route({
-  path: "/api/otpless/initiate",
-  method: "POST",
-  handler: httpAction(async (ctx, request) => {
-    let body: any;
-    try { body = await request.json(); } catch {
-      return new Response(JSON.stringify({ error: "Invalid JSON" }), { status: 400, headers: { "Content-Type": "application/json" } });
-    }
-    const { channel, phone, countryCode, email } = body || {};
-    if (channel !== "PHONE" && channel !== "EMAIL") {
-      return new Response(JSON.stringify({ error: "channel must be PHONE or EMAIL" }), { status: 400, headers: { "Content-Type": "application/json" } });
-    }
-    try {
-      const result = await ctx.runAction(internal.otpless.initiateOtpInternal, {
-        channel, phone, countryCode, email,
-      });
-      return new Response(JSON.stringify(result), { status: 200, headers: { "Content-Type": "application/json" } });
-    } catch (err: any) {
-      return new Response(JSON.stringify({ error: err.message || "initiate failed" }), { status: 502, headers: { "Content-Type": "application/json" } });
-    }
-  }),
-});
-
 export default http;

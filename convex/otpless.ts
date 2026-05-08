@@ -4,7 +4,6 @@
 import { internalAction } from "./_generated/server";
 import { v } from "convex/values";
 
-const OTPLESS_BASE = "https://auth.otpless.app";
 const OTPLESS_USER_AUTH_BASE = "https://user-auth.otpless.app";
 
 function authHeaders() {
@@ -45,63 +44,6 @@ export function parseOtplessIdentity(raw: any): {
   }
   return { userId, email, phone, name };
 }
-
-export const initiateOtpInternal = internalAction({
-  args: {
-    channel: v.union(v.literal("PHONE"), v.literal("EMAIL")),
-    phone: v.optional(v.string()),
-    countryCode: v.optional(v.string()),
-    email: v.optional(v.string()),
-  },
-  handler: async (_ctx, { channel, phone, countryCode, email }) => {
-    const body: Record<string, unknown> = {
-      channels: channel === "PHONE" ? ["SMS", "WHATSAPP"] : ["EMAIL"],
-      expiry: 300,
-      otpLength: 6,
-    };
-    if (channel === "PHONE") {
-      if (!phone || !countryCode) throw new Error("phone+countryCode required for PHONE channel");
-      body.phoneNumber = `${countryCode.replace(/^\+/, "")}${phone.replace(/\D/g, "")}`;
-    } else {
-      if (!email) throw new Error("email required for EMAIL channel");
-      body.email = email;
-    }
-
-    const res = await fetch(`${OTPLESS_BASE}/auth/v1/initiate/otp`, {
-      method: "POST",
-      headers: authHeaders(),
-      body: JSON.stringify(body),
-    });
-    const raw = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      throw new Error(raw?.description || raw?.message || `OTPless initiate failed (${res.status})`);
-    }
-    const requestId: string | undefined = raw?.requestId || raw?.response?.requestId;
-    if (!requestId) throw new Error("OTPless initiate returned no requestId");
-    const deliveryChannel: string = raw?.response?.deliveryChannel || (channel === "PHONE" ? "SMS" : "EMAIL");
-    return { requestId, deliveryChannel };
-  },
-});
-
-export const verifyOtpInternal = internalAction({
-  args: { requestId: v.string(), otp: v.string() },
-  handler: async (_ctx, { requestId, otp }) => {
-    const res = await fetch(`${OTPLESS_BASE}/auth/v1/verify/otp`, {
-      method: "POST",
-      headers: authHeaders(),
-      body: JSON.stringify({ requestId, otp }),
-    });
-    const raw = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      throw new Error(raw?.description || raw?.message || `OTPless verify failed (${res.status})`);
-    }
-    const verification = raw?.response?.verification || raw?.verification;
-    if (verification !== "COMPLETED") {
-      throw new Error(raw?.description || "OTP verification did not complete");
-    }
-    return parseOtplessIdentity(raw);
-  },
-});
 
 export const validateTokenInternal = internalAction({
   args: { token: v.string() },
