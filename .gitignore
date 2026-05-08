@@ -86,6 +86,9 @@ desktop/hostinger-upload/
 !src/memory/resolve-embedding.test.ts
 !src/whatsapp-sweep.test.ts
 !convex/credit-cost.test.ts
+!convex/credit_cost.test.ts
+!convex/crypto.test.ts
+!convex/otpless.test.ts
 !src/security/secrets-sanitizer.test.ts
 !src/crypto-kdf.test.ts
 !src/tools/coding/evidence-phrase.test.ts
