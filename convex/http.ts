@@ -1290,90 +1290,135 @@ http.route({
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// GET /api/updates/* — Generic auto-updater endpoint for electron-updater
-// Serves update metadata YAML (latest-mac.yml, latest.yml, latest-linux.yml).
-// No GitHub token needed — update metadata is read from Convex env vars.
+// GET /api/updates/* — Generic auto-updater endpoint for electron-updater.
 //
-// Required Convex env vars:
-//   UPDATE_VERSION  — e.g. "0.2.1"
-//   UPDATE_URL_MAC  — direct download URL for the macOS .dmg / .zip
-//   UPDATE_URL_WIN  — direct download URL for the Windows .exe / .nsis
-//   UPDATE_SHA512_MAC — SHA-512 hash of the macOS artifact
-//   UPDATE_SHA512_WIN — SHA-512 hash of the Windows artifact
-//   UPDATE_RELEASE_DATE — ISO date string, e.g. "2026-04-15T00:00:00Z"
+// Binaries live in an external object store (Cloudflare R2 recommended).
+// This endpoint ONLY serves update metadata — it does not proxy the binary.
+// The client uses the generic provider; electron-updater fetches the YAML
+// here and then downloads the binary from whatever URL is in the YAML.
 //
-// electron-updater expects the YAML at <feedURL>/latest-mac.yml (macOS)
-// or <feedURL>/latest.yml (Windows).
+// Channels: the client may append ?channel=beta to the feed URL. When a
+// channel is specified, the handler looks for <name>_<CHANNEL> env vars
+// and falls back to the unsuffixed vars if the channel-specific ones are
+// unset. Default channel is "stable" (no suffix).
+//
+// Env vars (per channel; replace <C> with STABLE / BETA / CANARY — or
+// leave blank for the stable channel):
+//   UPDATE_VERSION[_<C>]      — e.g. "0.2.1"
+//   UPDATE_URL_MAC[_<C>]      — direct download URL for the macOS .dmg
+//   UPDATE_URL_WIN[_<C>]      — direct download URL for the Windows .exe
+//   UPDATE_SHA512_MAC[_<C>]   — SHA-512 (base64) of the macOS artifact
+//   UPDATE_SHA512_WIN[_<C>]   — SHA-512 (base64) of the Windows artifact
+//   UPDATE_SIZE_MAC[_<C>]     — byte size of the macOS artifact
+//   UPDATE_SIZE_WIN[_<C>]     — byte size of the Windows artifact
+//   UPDATE_RELEASE_DATE[_<C>] — ISO date string
+//
+// Optional mirror URLs for failover (electron-updater will try each
+// entry in the `files:` array in order if the prior one fails):
+//   UPDATE_URL_MAC_MIRROR[_<C>]
+//   UPDATE_URL_WIN_MIRROR[_<C>]
 // ══════════════════════════════════════════════════════════════════════════
+
+const EMPTY_YAML = 'version: 0.0.0\npath: ""\nsha512: ""\nreleaseDate: ""\n';
+
+function yamlHeaders(): Record<string, string> {
+  return {
+    "Content-Type": "text/yaml; charset=utf-8",
+    // Cache for 2 minutes at the edge so a thundering-herd recheck doesn't
+    // hammer the backend. Clients can still bypass via ?t=<timestamp>.
+    "Cache-Control": "public, max-age=120",
+  };
+}
+
+function pickChannel(request: Request): string {
+  try {
+    const url = new URL(request.url);
+    const ch = (url.searchParams.get("channel") || "stable").toLowerCase();
+    // Only allow a small whitelist — env var names must be predictable.
+    if (ch === "stable" || ch === "beta" || ch === "alpha" || ch === "canary") return ch;
+  } catch { /* fall through */ }
+  return "stable";
+}
+
+function envForChannel(name: string, channel: string): string | undefined {
+  if (channel && channel !== "stable") {
+    const v = process.env[`${name}_${channel.toUpperCase()}`];
+    if (v) return v;
+  }
+  return process.env[name];
+}
+
+function buildYaml(opts: {
+  platform: "mac" | "win";
+  channel: string;
+  defaultFilename: string;
+}): string | null {
+  const { platform, channel, defaultFilename } = opts;
+  const P = platform.toUpperCase(); // MAC | WIN
+
+  const version = envForChannel("UPDATE_VERSION", channel);
+  const url = envForChannel(`UPDATE_URL_${P}`, channel);
+  if (!version || !url) return null;
+
+  const sha512 = envForChannel(`UPDATE_SHA512_${P}`, channel) || "";
+  const size = Number(envForChannel(`UPDATE_SIZE_${P}`, channel) || 0) || 0;
+  const mirror = envForChannel(`UPDATE_URL_${P}_MIRROR`, channel);
+  const releaseDate =
+    envForChannel("UPDATE_RELEASE_DATE", channel) || new Date().toISOString();
+
+  const filename = url.split("/").pop() || defaultFilename;
+
+  // electron-updater reads the first entry in `files:`; additional entries
+  // are tried as fallbacks. Top-level path/sha512 kept for v5 compat.
+  const lines = [
+    `version: ${version}`,
+    `files:`,
+    `  - url: ${url}`,
+    `    sha512: ${sha512}`,
+    `    size: ${size}`,
+  ];
+  if (mirror) {
+    lines.push(
+      `  - url: ${mirror}`,
+      `    sha512: ${sha512}`,
+      `    size: ${size}`,
+    );
+  }
+  lines.push(
+    `path: ${filename}`,
+    `sha512: ${sha512}`,
+    `releaseDate: ${releaseDate}`,
+  );
+  return lines.join("\n") + "\n";
+}
 
 http.route({
   path: "/api/updates/latest-mac.yml",
   method: "GET",
-  handler: httpAction(async (_ctx, _request) => {
-    const version = process.env.UPDATE_VERSION;
-    const url = process.env.UPDATE_URL_MAC;
-    const sha512 = process.env.UPDATE_SHA512_MAC;
-    const releaseDate = process.env.UPDATE_RELEASE_DATE || new Date().toISOString();
-
-    if (!version || !url) {
-      return new Response("version: 0.0.0\npath: \"\"\nsha512: \"\"\nreleaseDate: \"\"\n", {
-        status: 200,
-        headers: { "Content-Type": "text/yaml; charset=utf-8", "Cache-Control": "no-cache" },
-      });
-    }
-
-    // Extract filename from URL for the path field
-    const filename = url.split("/").pop() || `A.T.L.A.S-${version}-arm64.dmg`;
-    const yaml = [
-      `version: ${version}`,
-      `files:`,
-      `  - url: ${url}`,
-      `    sha512: ${sha512 || ""}`,
-      `    size: 0`,
-      `path: ${filename}`,
-      `sha512: ${sha512 || ""}`,
-      `releaseDate: ${releaseDate}`,
-    ].join("\n") + "\n";
-
-    return new Response(yaml, {
-      status: 200,
-      headers: { "Content-Type": "text/yaml; charset=utf-8", "Cache-Control": "no-cache" },
-    });
+  handler: httpAction(async (_ctx, request) => {
+    const channel = pickChannel(request);
+    const body =
+      buildYaml({
+        platform: "mac",
+        channel,
+        defaultFilename: `A.T.L.A.S-${process.env.UPDATE_VERSION || "0.0.0"}-arm64.dmg`,
+      }) || EMPTY_YAML;
+    return new Response(body, { status: 200, headers: yamlHeaders() });
   }),
 });
 
 http.route({
   path: "/api/updates/latest.yml",
   method: "GET",
-  handler: httpAction(async (_ctx, _request) => {
-    const version = process.env.UPDATE_VERSION;
-    const url = process.env.UPDATE_URL_WIN;
-    const sha512 = process.env.UPDATE_SHA512_WIN;
-    const releaseDate = process.env.UPDATE_RELEASE_DATE || new Date().toISOString();
-
-    if (!version || !url) {
-      return new Response("version: 0.0.0\npath: \"\"\nsha512: \"\"\nreleaseDate: \"\"\n", {
-        status: 200,
-        headers: { "Content-Type": "text/yaml; charset=utf-8", "Cache-Control": "no-cache" },
-      });
-    }
-
-    const filename = url.split("/").pop() || `A.T.L.A.S-${version}-Setup.exe`;
-    const yaml = [
-      `version: ${version}`,
-      `files:`,
-      `  - url: ${url}`,
-      `    sha512: ${sha512 || ""}`,
-      `    size: 0`,
-      `path: ${filename}`,
-      `sha512: ${sha512 || ""}`,
-      `releaseDate: ${releaseDate}`,
-    ].join("\n") + "\n";
-
-    return new Response(yaml, {
-      status: 200,
-      headers: { "Content-Type": "text/yaml; charset=utf-8", "Cache-Control": "no-cache" },
-    });
+  handler: httpAction(async (_ctx, request) => {
+    const channel = pickChannel(request);
+    const body =
+      buildYaml({
+        platform: "win",
+        channel,
+        defaultFilename: `A.T.L.A.S-${process.env.UPDATE_VERSION || "0.0.0"}-Setup.exe`,
+      }) || EMPTY_YAML;
+    return new Response(body, { status: 200, headers: yamlHeaders() });
   }),
 });
 

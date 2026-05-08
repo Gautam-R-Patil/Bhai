@@ -101,6 +101,7 @@ contextBridge.exposeInMainWorld("atlas", {
     downloadUpdate: () => ipcRenderer.invoke("update:download"),
     installUpdate: () => ipcRenderer.invoke("update:install"),
     getUpdateStatus: () => ipcRenderer.invoke("update:status"),
+    setUpdateChannel: (channel) => ipcRenderer.invoke("update:setChannel", channel),
 
     onUpdateAvailable: (callback) => {
         ipcRenderer.on("update-available", (_, data) => callback(data));

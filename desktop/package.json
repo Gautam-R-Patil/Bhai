@@ -1,6 +1,6 @@
 {
     "name": "atlas-desktop",
-    "version": "0.2.0-alpha",
+    "version": "0.2.1",
     "description": "A.T.L.A.S AI — Desktop Control Panel & Installer",
     "author": "XAGI Labs Private Limited",
     "license": "UNLICENSED",
@@ -41,10 +41,9 @@
         "productName": "A.T.L.A.S",
         "copyright": "Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.",
         "publish": {
-            "provider": "github",
-            "owner": "dheeraj-xagilabs",
-            "repo": "Atlas",
-            "releaseType": "release"
+            "provider": "generic",
+            "url": "https://zany-kudu-607.convex.site/api/updates",
+            "useMultipleRangeRequest": false
         },
         "asar": true,
         "asarUnpack": [

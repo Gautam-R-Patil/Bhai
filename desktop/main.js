@@ -246,13 +246,28 @@ function convexSiteRequest(method, urlPath, bodyObj) {
 // ── Auto-Updater Feed Configuration ──
 // Uses a generic HTTP provider via the Convex backend proxy.
 // No GitHub token needed — the Convex endpoint serves update metadata
-// and redirects asset downloads to public release URLs.
+// and redirects asset downloads to public release URLs (Cloudflare R2).
+//
+// Channels: users on the "beta" channel get the BETA feed. Switch via
+// store.set("updateChannel", "beta" | "stable" | "canary").
+const UPDATE_FEED_BASE = "https://zany-kudu-607.convex.site/api/updates";
+
+function getUpdateChannel() {
+    const ch = (store.get("updateChannel") || "stable").toString().toLowerCase();
+    return ch === "beta" || ch === "alpha" || ch === "canary" ? ch : "stable";
+}
+
 function configureAutoUpdater() {
-    autoUpdater.setFeedURL({
-        provider: "generic",
-        url: "https://zany-kudu-607.convex.site/api/updates",
-    });
-    console.log("[Updater] Configured with Convex generic update endpoint");
+    const channel = getUpdateChannel();
+    // Feed URL is the directory; electron-updater appends latest-mac.yml /
+    // latest.yml. Pass channel via query string — our Convex handler reads
+    // it from `?channel=...`.
+    const url = channel === "stable"
+        ? UPDATE_FEED_BASE
+        : `${UPDATE_FEED_BASE}?channel=${channel}`;
+    autoUpdater.setFeedURL({ provider: "generic", url });
+    autoUpdater.channel = channel;
+    console.log(`[Updater] Configured | channel=${channel} | url=${url}`);
 }
 
 
@@ -723,6 +738,7 @@ function setupAutoUpdater() {
 
     autoUpdater.on("update-available", (info) => {
         console.log("[Updater] Update available:", info.version);
+        resetRetryBudget();
         updateAvailable = info;
         if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send("update-available", {
@@ -747,6 +763,7 @@ function setupAutoUpdater() {
 
     autoUpdater.on("update-not-available", (info) => {
         console.log("[Updater] No updates available");
+        resetRetryBudget();
         store.set("lastUpdateCheck", new Date().toISOString());
     });
 
@@ -786,10 +803,17 @@ function setupAutoUpdater() {
 
     autoUpdater.on("error", (err) => {
         const msg = err.message || "";
-        if (msg.includes("401") || msg.includes("403") || msg.includes("Not Found")) {
-            console.error("[Updater] Update endpoint returned error — update server may be unavailable");
+        // 404 is expected when the server hasn't published a release yet
+        // (empty YAML with version 0.0.0). Don't spam retries for those.
+        const isMissing =
+            msg.includes("404") ||
+            msg.includes("Not Found") ||
+            msg.includes("ERR_UPDATER_LATEST_VERSION_NOT_FOUND");
+        if (msg.includes("401") || msg.includes("403") || isMissing) {
+            console.error("[Updater] endpoint unavailable:", msg);
         } else {
             console.error("[Updater] Error:", msg);
+            scheduleRetry();
         }
         if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send("update-error", msg);
@@ -797,12 +821,47 @@ function setupAutoUpdater() {
     });
 }
 
-async function checkForUpdates() {
-    if (!IS_DEV) {
-        configureAutoUpdater();
+// ── Retry with exponential backoff ───────────────
+// Transient network failures (DNS, TLS handshake, temporary 5xx) should
+// not wait the full 4h interval. Retry up to 3 times with backoff, then
+// give up until the next scheduled check.
+let _retryAttempt = 0;
+let _retryTimer = null;
+const RETRY_SCHEDULE_MS = [30_000, 120_000, 600_000]; // 30s, 2m, 10m
+
+function scheduleRetry() {
+    if (_retryTimer) return; // already queued
+    if (_retryAttempt >= RETRY_SCHEDULE_MS.length) {
+        console.log("[Updater] Retry budget exhausted; waiting for next scheduled check");
+        return;
+    }
+    const delay = RETRY_SCHEDULE_MS[_retryAttempt++];
+    console.log(`[Updater] Retry #${_retryAttempt} in ${Math.round(delay / 1000)}s`);
+    _retryTimer = setTimeout(() => {
+        _retryTimer = null;
         autoUpdater.checkForUpdates().catch(err => {
-            console.warn("[Updater] Check failed:", err.message);
+            console.warn("[Updater] Retry check failed:", err.message);
         });
+    }, delay);
+}
+
+function resetRetryBudget() {
+    _retryAttempt = 0;
+    if (_retryTimer) {
+        clearTimeout(_retryTimer);
+        _retryTimer = null;
+    }
+}
+
+async function checkForUpdates() {
+    if (IS_DEV) return;
+    configureAutoUpdater();
+    resetRetryBudget(); // fresh budget for each scheduled check
+    try {
+        await autoUpdater.checkForUpdates();
+    } catch (err) {
+        console.warn("[Updater] Check failed:", err.message);
+        // error listener already called scheduleRetry — nothing more here
     }
 }
 
@@ -2466,7 +2525,26 @@ function registerIPC() {
         downloaded: updateDownloaded,
         progress: downloadProgress,
         lastCheck: store.get("lastUpdateCheck"),
+        channel: getUpdateChannel(),
     }));
+
+    ipcMain.handle("update:setChannel", async (_, channel) => {
+        const allowed = ["stable", "beta", "alpha", "canary"];
+        const next = String(channel || "stable").toLowerCase();
+        if (!allowed.includes(next)) {
+            return { success: false, error: "Invalid channel" };
+        }
+        store.set("updateChannel", next);
+        // Re-check immediately on the new channel so the user gets feedback.
+        if (!IS_DEV) {
+            configureAutoUpdater();
+            resetRetryBudget();
+            autoUpdater.checkForUpdates().catch(err => {
+                console.warn("[Updater] Channel-switch check failed:", err.message);
+            });
+        }
+        return { success: true, channel: next };
+    });
 
     // ── Preferences IPC ──────────────────────────
     ipcMain.handle("prefs:get", () => store.store);
