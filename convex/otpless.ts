@@ -1,8 +1,5 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
-// Server-side OTPless client. Calls OTPless REST API with clientId/clientSecret
-// headers. NEVER imported by any client — only by convex/http.ts routes.
-
-// Tasks 3 and 4 will add `internalAction` and `v` imports when defining actions.
+// Never import from a client bundle — `clientSecret` must stay server-side.
 
 const OTPLESS_BASE = "https://auth.otpless.app";
 const OTPLESS_USER_AUTH_BASE = "https://user-auth.otpless.app";
@@ -20,7 +17,6 @@ function authHeaders() {
   };
 }
 
-// Pure helper — exported for unit testing.
 export function parseOtplessIdentity(raw: any): {
   userId: string;
   email?: string;
