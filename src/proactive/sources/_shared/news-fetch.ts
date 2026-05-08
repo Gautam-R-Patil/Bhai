@@ -59,9 +59,10 @@ export async function fetchNews(deps: NewsFetchDeps): Promise<NewsFetchResult> {
 
     if (!deps.llm) return { headlines: [] };
 
-    const interestQuery = interest.keywords.length > 0
-        ? `${interest.keywords.join(" OR ")} news`
-        : "tech news";
+    const interestQuery = process.env.ATLAS_PROACTIVE_NEWS_QUERY
+        ?? (interest.keywords.length > 0
+            ? `${interest.keywords.join(" OR ")} news`
+            : "tech news");
     const localQuery = loc?.city ? `news ${loc.city} today` : "news today";
 
     const [interestResult, localResult] = await Promise.all([

@@ -62,9 +62,12 @@ export type WeatherFetchDeps = {
 };
 
 export async function fetchWeather(deps: WeatherFetchDeps): Promise<WeatherFetchResult | null> {
-    const loc = getLocation();
-    if (!loc) return null;
-    const locationStr = [loc.city, loc.region].filter(Boolean).join(", ") || "unknown";
+    const override = process.env.ATLAS_PROACTIVE_WEATHER_LOCATION;
+    const locationStr = override ?? (() => {
+        const loc = getLocation();
+        return loc ? [loc.city, loc.region].filter(Boolean).join(", ") || "unknown" : null;
+    })();
+    if (!locationStr) return null;
     const hit = cacheByLocation.get(locationStr);
     if (hit && hit.expires > Date.now()) return hit.result;
 

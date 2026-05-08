@@ -125,4 +125,22 @@ describe("news-fetch", () => {
             expect.arrayContaining([expect.arrayContaining([expect.any(Number)])]),
         );
     });
+
+    it("ATLAS_PROACTIVE_NEWS_QUERY overrides interest-derived query", async () => {
+        process.env.ATLAS_PROACTIVE_NEWS_QUERY = "AI funding news";
+        try {
+            const webSearch = vi.fn(async () => "search results");
+            const deps: NewsFetchDeps = {
+                llm: makeMockLlm(["AI startup raises $100M"]),
+                webSearch,
+            };
+            await fetchNews(deps);
+            const calls = (webSearch.mock.calls as unknown as Array<[string]>).map(c => c[0]);
+            expect(calls[0]).toBe("AI funding news");
+            expect(calls[0]).not.toContain("typescript");
+            expect(calls[0]).not.toContain("machine-learning");
+        } finally {
+            delete process.env.ATLAS_PROACTIVE_NEWS_QUERY;
+        }
+    });
 });

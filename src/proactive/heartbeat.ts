@@ -18,6 +18,7 @@ import { getTimeContext, getProactivePrefix } from "../alive-ux.js";
 import { tick as innerThoughtsTick, initInnerThoughts, recordUserEngagement } from "./inner-thoughts.js";
 import { resetDailyCounts as resetWorldModelDailyCounts } from "../memory/world-model.js";
 import { getTimezone } from "../location/index.js";
+import { globalBoundaryBus } from "./boundary-events.js";
 
 // ── Types ─────────────────────────────────────
 
@@ -49,6 +50,13 @@ export function startHeartbeat(
     cfg: HeartbeatConfig
 ): void {
     config = cfg;
+
+    if (process.env.ATLAS_PROACTIVE_FORCE_MORNING === "true" && process.env.ATLAS_PROACTIVE_V3_SOURCES === "true") {
+        console.log("💓 ATLAS_PROACTIVE_FORCE_MORNING — emitting morning_window boundary now");
+        setTimeout(() => {
+            globalBoundaryBus.emit({ kind: "morning_window", ts: Date.now() });
+        }, 1000);
+    }
 
     heartbeatTimer = setInterval(async () => {
         checkCount++;
