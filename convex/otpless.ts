@@ -82,3 +82,42 @@ export const initiateOtpInternal = internalAction({
     return { requestId, deliveryChannel };
   },
 });
+
+export const verifyOtpInternal = internalAction({
+  args: { requestId: v.string(), otp: v.string() },
+  handler: async (_ctx, { requestId, otp }) => {
+    const res = await fetch(`${OTPLESS_BASE}/auth/v1/verify/otp`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ requestId, otp }),
+    });
+    const raw = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(raw?.description || raw?.message || `OTPless verify failed (${res.status})`);
+    }
+    const verification = raw?.response?.verification || raw?.verification;
+    if (verification !== "COMPLETED") {
+      throw new Error(raw?.description || "OTP verification did not complete");
+    }
+    return parseOtplessIdentity(raw);
+  },
+});
+
+export const validateTokenInternal = internalAction({
+  args: { token: v.string() },
+  handler: async (_ctx, { token }) => {
+    const res = await fetch(`${OTPLESS_USER_AUTH_BASE}/auth/v1/validate/token`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ token }),
+    });
+    const raw = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(raw?.description || raw?.message || `OTPless validate-token failed (${res.status})`);
+    }
+    if (raw?.status !== "SUCCESS") {
+      throw new Error(raw?.description || "Token validation did not succeed");
+    }
+    return parseOtplessIdentity(raw);
+  },
+});
