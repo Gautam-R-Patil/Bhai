@@ -2509,6 +2509,12 @@ export declare function schedulerMarkBoundary(channel: string, windowMs: number)
 export declare function schedulerDrainScheduled(channel: string): Array<string>
 export declare function schedulerSetDnd(channel: string, active: boolean): void
 export declare function schedulerTryRelease(channel: string): ReleaseResult
+export interface GroupedReleaseResult {
+  morningBatch: Array<string>
+  singles: Array<string>
+  dropped: Array<DropEntry>
+}
+export declare function schedulerReleaseGrouped(channel: string): GroupedReleaseResult
 export declare function schedulerDebugState(channel: string): string
 export interface MonitorRuleRust {
   id: string
