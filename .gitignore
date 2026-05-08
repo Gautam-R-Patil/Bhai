@@ -138,6 +138,11 @@ desktop/hostinger-upload/
 !src/tools/spotify-cache.test.ts
 !src/proactive/sources/_shared/build-intent.test.ts
 !src/proactive/sources/_shared/calendar-fetch.test.ts
+!src/proactive/sources/_shared/tasks-fetch.test.ts
+!src/proactive/sources/_shared/gmail-stale-fetch.test.ts
+!src/proactive/sources/_shared/interest-vector.test.ts
+!src/proactive/sources/_shared/weather-fetch.test.ts
+!src/proactive/sources/_shared/news-fetch.test.ts
 !src/proactive/sources/calendar-morning.test.ts
 !desktop/tests/
 !desktop/tests/auth-helpers.test.js
