@@ -5,20 +5,21 @@
 // ── Heartbeat System ──────────────────────────
 // Periodic check-ins + proactive notifications with activity awareness
 
-import type { LLMClient, ChatCompletionMessageParam } from "../llm.js";
-import { getIdentityPromptSnippet } from "../memory/identity.js";
-import { getEpisodicSnippet } from "../memory/episodic.js";
-import { getCoreMemory } from "../memory/sqlite.js";
-import { getSessionSummary } from "../memory/session.js";
-import { getUserPresence, describePresence, type UserPresence } from "./activity.js";
-import { runAllMonitors, buildAlertMessage } from "./monitors.js";
-import { shouldSuppressMessage } from "./dnd.js";
-import { getUnrespondedProactiveTopics } from "../telegram.js";
-import { getTimeContext, getProactivePrefix } from "../alive-ux.js";
-import { tick as innerThoughtsTick, initInnerThoughts, recordUserEngagement } from "./inner-thoughts.js";
-import { resetDailyCounts as resetWorldModelDailyCounts } from "../memory/world-model.js";
+import { getProactivePrefix, getTimeContext } from "../alive-ux.js";
+import type { ChatCompletionMessageParam, LLMClient } from "../llm.js";
 import { getTimezone } from "../location/index.js";
+import { getEpisodicSnippet } from "../memory/episodic.js";
+import { getIdentityPromptSnippet } from "../memory/identity.js";
+import { getSessionSummary } from "../memory/session.js";
+import { getCoreMemory } from "../memory/sqlite.js";
+import { resetDailyCounts as resetWorldModelDailyCounts } from "../memory/world-model.js";
+import { getUnrespondedProactiveTopics } from "../telegram.js";
+import { describePresence, getUserPresence, type UserPresence } from "./activity.js";
 import { globalBoundaryBus } from "./boundary-events.js";
+import { shouldSuppressMessage } from "./dnd.js";
+import { initInnerThoughts, tick as innerThoughtsTick, recordUserEngagement } from "./inner-thoughts.js";
+import { buildAlertMessage, runAllMonitors } from "./monitors.js";
+import { getEstimatedWakeTime } from "./notification-tracker.js";
 
 // ── Types ─────────────────────────────────────
 
@@ -32,23 +33,24 @@ interface HeartbeatConfig {
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let config: HeartbeatConfig | null = null;
 let checkCount = 0;
-let briefingSentDate = "";       // YYYY-MM-DD — which day we already sent the briefing
-let briefingTargetMinute = -1;   // minutes-since-midnight (local tz) randomly chosen for today
-let worldModelResetDate = "";    // YYYY-MM-DD — which day we already reset world model counts
+let briefingSentDate = ""; // YYYY-MM-DD — which day we already sent the briefing
+let briefingTargetMinute = -1; // minutes-since-midnight (local tz) randomly chosen for today
+let worldModelResetDate = ""; // YYYY-MM-DD — which day we already reset world model counts
 
-// Pick a random time between 6:00 AM and 10:00 AM (in local tz minutes-since-midnight)
-function pickRandomBriefingTime(): number {
-    const earliest = 6 * 60;  // 6:00 AM → 360 min
-    const latest = 10 * 60; // 10:00 AM → 600 min
-    return Math.floor(Math.random() * (latest - earliest + 1)) + earliest;
+export function pickBriefingTime(): number {
+    const low = 6 * 60;
+    const high = 10 * 60;
+    const est = getEstimatedWakeTime();
+    if (est && est.confidence >= 0.5) {
+        const candidate = Math.round(est.meanHour * 60) + 5;
+        return Math.max(low, Math.min(high, candidate));
+    }
+    return low + Math.floor(Math.random() * (high - low));
 }
 
 // ── Start ─────────────────────────────────────
 
-export function startHeartbeat(
-    llm: LLMClient,
-    cfg: HeartbeatConfig
-): void {
+export function startHeartbeat(llm: LLMClient, cfg: HeartbeatConfig): void {
     config = cfg;
 
     if (process.env.ATLAS_PROACTIVE_FORCE_MORNING === "true" && process.env.ATLAS_PROACTIVE_V3_SOURCES === "true") {
@@ -65,7 +67,9 @@ export function startHeartbeat(
         try {
             // ── Network health guard: skip LLM/network operations when offline ──
             try {
-                const { isOffline, shouldNotifyUser, getOfflineNotificationMessage, getNetworkStatus } = await import("../network-health.js");
+                const { isOffline, shouldNotifyUser, getOfflineNotificationMessage, getNetworkStatus } = await import(
+                    "../network-health.js"
+                );
                 if (isOffline()) {
                     console.log(`💓 Heartbeat skipping — internet offline`);
                     // Notify user once about the outage via overlay
@@ -73,14 +77,18 @@ export function startHeartbeat(
                         try {
                             const { sendOverlayNotification } = await import("../overlay/overlay-chat.js");
                             sendOverlayNotification(getOfflineNotificationMessage());
-                        } catch { /* overlay not initialized */ }
+                        } catch {
+                            /* overlay not initialized */
+                        }
                     }
                     return; // Skip entire heartbeat tick
                 }
                 if (getNetworkStatus() === "degraded") {
                     console.log(`💓 Heartbeat running in degraded mode — skipping non-essential operations`);
                 }
-            } catch { /* network monitor not loaded yet — continue normally */ }
+            } catch {
+                /* network monitor not loaded yet — continue normally */
+            }
 
             // Use detected timezone for all time logic
             const nowLocal = new Date(new Date().toLocaleString("en-US", { timeZone: getTimezone() }));
@@ -91,7 +99,11 @@ export function startHeartbeat(
             // ── World Model Daily Reset ──
             if (worldModelResetDate !== todayStr) {
                 worldModelResetDate = todayStr;
-                try { resetWorldModelDailyCounts(); } catch { /* non-fatal */ }
+                try {
+                    resetWorldModelDailyCounts();
+                } catch {
+                    /* non-fatal */
+                }
             }
 
             // ── Morning Briefing Logic (unchanged) ──
@@ -101,13 +113,20 @@ export function startHeartbeat(
                 briefingTargetMinute = -1;
             }
             if (briefingTargetMinute === -1 && minutesNow >= 6 * 60) {
-                briefingTargetMinute = pickRandomBriefingTime();
-                console.log(`💓 Morning briefing scheduled for ${Math.floor(briefingTargetMinute / 60)}:${String(briefingTargetMinute % 60).padStart(2, "0")} (${getTimezone()}) today`);
+                briefingTargetMinute = pickBriefingTime();
+                console.log(
+                    `💓 Morning briefing scheduled for ${Math.floor(briefingTargetMinute / 60)}:${String(briefingTargetMinute % 60).padStart(2, "0")} (${getTimezone()}) today`,
+                );
             }
 
             // Fire once when we pass the randomly chosen minute and haven't sent today
             const inWindow = minutesNow >= 6 * 60 && minutesNow <= 10 * 60;
-            if (inWindow && briefingTargetMinute !== -1 && minutesNow >= briefingTargetMinute && briefingSentDate !== todayStr) {
+            if (
+                inWindow &&
+                briefingTargetMinute !== -1 &&
+                minutesNow >= briefingTargetMinute &&
+                briefingSentDate !== todayStr
+            ) {
                 briefingSentDate = todayStr;
                 briefingTargetMinute = -1;
                 const briefing = await generateBriefing(llm);
@@ -116,7 +135,9 @@ export function startHeartbeat(
                     try {
                         const { recordNotification } = await import("./notification-tracker.js");
                         recordNotification("briefing", briefing);
-                    } catch { /* non-fatal */ }
+                    } catch {
+                        /* non-fatal */
+                    }
                 }
             }
 
@@ -131,7 +152,9 @@ export function startHeartbeat(
                     try {
                         const { recordNotification } = await import("./notification-tracker.js");
                         recordNotification("briefing", briefing);
-                    } catch { /* non-fatal */ }
+                    } catch {
+                        /* non-fatal */
+                    }
                 }
             }
 
@@ -140,7 +163,11 @@ export function startHeartbeat(
             try {
                 const { checkDreamingConditions } = await import("./dreaming.js");
                 let sessionSummary = "";
-                try { sessionSummary = getSessionSummary() || ""; } catch { /* */ }
+                try {
+                    sessionSummary = getSessionSummary() || "";
+                } catch {
+                    /* */
+                }
                 await checkDreamingConditions(llm, sessionSummary);
             } catch {
                 // Dreaming module not loaded — skip
@@ -164,7 +191,9 @@ export function startHeartbeat(
                     try {
                         const { recordNotification } = await import("./notification-tracker.js");
                         recordNotification("monitor_alert", alertMsg);
-                    } catch { /* non-fatal */ }
+                    } catch {
+                        /* non-fatal */
+                    }
                 } else {
                     console.log(`💓 Monitor alert suppressed by DND`);
                 }
@@ -192,10 +221,14 @@ export function startHeartbeat(
                             hourOfDay: hourNow,
                         });
                         if (rewardScore.recommendation === "suppress") {
-                            console.log(`💓 Inner thought suppressed by reward model (acceptance: ${rewardScore.acceptanceProbability.toFixed(2)})`);
+                            console.log(
+                                `💓 Inner thought suppressed by reward model (acceptance: ${rewardScore.acceptanceProbability.toFixed(2)})`,
+                            );
                             shouldSurface = false;
                         } else {
-                            console.log(`💓 Inner thought scored (acceptance: ${rewardScore.acceptanceProbability.toFixed(2)}, rec: ${rewardScore.recommendation})`);
+                            console.log(
+                                `💓 Inner thought scored (acceptance: ${rewardScore.acceptanceProbability.toFixed(2)}, rec: ${rewardScore.recommendation})`,
+                            );
                         }
                     } catch (rewardErr) {
                         console.warn("💓 Proactive reward scoring failed (non-fatal):", (rewardErr as Error).message);
@@ -209,7 +242,9 @@ export function startHeartbeat(
                         try {
                             const { recordNotification } = await import("./notification-tracker.js");
                             recordNotification("thought", thought);
-                        } catch { /* non-fatal */ }
+                        } catch {
+                            /* non-fatal */
+                        }
                     }
                 }
             } catch (err) {
@@ -218,7 +253,10 @@ export function startHeartbeat(
                 // Fallback to legacy proactive check if inner thoughts fails
                 if (checkCount % 6 === 0) {
                     const isQuietHours = hourNow >= 0 && hourNow < 7;
-                    if (!(isQuietHours && (!presence.isActive || presence.isJustServerProcesses)) && presence.idleMinutes < 30) {
+                    if (
+                        !(isQuietHours && (!presence.isActive || presence.isJustServerProcesses)) &&
+                        presence.idleMinutes < 30
+                    ) {
                         const check = await runProactiveCheck(llm, presence, hourNow);
                         if (check && config?.onNotification) {
                             const suppress = await shouldSuppressMessage(check);
@@ -269,7 +307,6 @@ export function startHeartbeat(
             } catch (err) {
                 console.warn("💓 Recommendations error:", (err as Error).message);
             }
-
         } catch (err) {
             console.error("Heartbeat error:", (err as Error).message);
         }
@@ -296,7 +333,9 @@ function gatherUserContext(): string {
     try {
         const identity = getIdentityPromptSnippet();
         if (identity) parts.push(identity);
-    } catch { /* identity not initialized */ }
+    } catch {
+        /* identity not initialized */
+    }
 
     try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -305,17 +344,23 @@ function gatherUserContext(): string {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             parts.push("Key facts about the user:\n" + coreMems.map((m: any) => `- ${m.content}`).join("\n"));
         }
-    } catch { /* DB not ready */ }
+    } catch {
+        /* DB not ready */
+    }
 
     try {
         const episodic = getEpisodicSnippet();
         if (episodic) parts.push(episodic);
-    } catch { /* no episodes yet */ }
+    } catch {
+        /* no episodes yet */
+    }
 
     try {
         const session = getSessionSummary();
         if (session) parts.push("Last session context:\n" + session);
-    } catch { /* no session */ }
+    } catch {
+        /* no session */
+    }
 
     return parts.length > 0 ? parts.join("\n\n") : "";
 }
@@ -324,8 +369,19 @@ function gatherUserContext(): string {
 
 async function generateBriefing(llm: LLMClient): Promise<string> {
     const now = new Date();
-    const timeStr = now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: getTimezone() });
-    const dateStr = now.toLocaleDateString("en-IN", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: getTimezone() });
+    const timeStr = now.toLocaleTimeString("en-IN", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+        timeZone: getTimezone(),
+    });
+    const dateStr = now.toLocaleDateString("en-IN", {
+        weekday: "long",
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+        timeZone: getTimezone(),
+    });
 
     const timeContext = getTimeContext();
     const userContext = gatherUserContext();
@@ -383,7 +439,12 @@ async function gatherBriefingData(llm: LLMClient): Promise<string> {
 
     // Get today's date info
     const now = new Date();
-    const todayStr = now.toLocaleDateString("en-IN", { weekday: "long", month: "long", day: "numeric", timeZone: getTimezone() });
+    const todayStr = now.toLocaleDateString("en-IN", {
+        weekday: "long",
+        month: "long",
+        day: "numeric",
+        timeZone: getTimezone(),
+    });
 
     // Calendar check (using Google Calendar tool if available)
     try {
@@ -396,10 +457,19 @@ async function gatherBriefingData(llm: LLMClient): Promise<string> {
         });
         const calData = JSON.parse(calendarResult);
         if (calData.events && calData.events.length > 0) {
-            const events = calData.events.map((e: { summary?: string; start?: { dateTime?: string } }) => {
-                const time = e.start?.dateTime ? new Date(e.start.dateTime).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: getTimezone() }) : "all day";
-                return `• ${e.summary || "Event"} at ${time}`;
-            }).join("\n");
+            const events = calData.events
+                .map((e: { summary?: string; start?: { dateTime?: string } }) => {
+                    const time = e.start?.dateTime
+                        ? new Date(e.start.dateTime).toLocaleTimeString("en-IN", {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                              hour12: true,
+                              timeZone: getTimezone(),
+                          })
+                        : "all day";
+                    return `• ${e.summary || "Event"} at ${time}`;
+                })
+                .join("\n");
             parts.push(`CALENDAR TODAY:\n${events}`);
         } else {
             parts.push("CALENDAR: Nothing scheduled today");
@@ -418,10 +488,13 @@ async function gatherBriefingData(llm: LLMClient): Promise<string> {
         });
         const emailData = JSON.parse(emailResult);
         if (emailData.messages && emailData.messages.length > 0) {
-            const emails = emailData.messages.slice(0, 3).map((e: { from?: string; subject?: string }) => {
-                const from = (e.from || "").split("<")[0].trim();
-                return `• ${from}: "${(e.subject || "").substring(0, 40)}"`;
-            }).join("\n");
+            const emails = emailData.messages
+                .slice(0, 3)
+                .map((e: { from?: string; subject?: string }) => {
+                    const from = (e.from || "").split("<")[0].trim();
+                    return `• ${from}: "${(e.subject || "").substring(0, 40)}"`;
+                })
+                .join("\n");
             parts.push(`IMPORTANT EMAILS (${emailData.messages.length} unread important):\n${emails}`);
         } else {
             parts.push("EMAIL: No important unread emails");
@@ -455,7 +528,10 @@ async function gatherBriefingData(llm: LLMClient): Promise<string> {
         });
         const newsData = JSON.parse(newsResult);
         if (newsData.results && newsData.results.length > 0) {
-            const headlines = newsData.results.slice(0, 2).map((n: { title?: string }) => `• ${(n.title || "").substring(0, 60)}`).join("\n");
+            const headlines = newsData.results
+                .slice(0, 2)
+                .map((n: { title?: string }) => `• ${(n.title || "").substring(0, 60)}`)
+                .join("\n");
             parts.push(`NEWS HEADLINES:\n${headlines}`);
         }
     } catch {
@@ -466,19 +542,19 @@ async function gatherBriefingData(llm: LLMClient): Promise<string> {
     try {
         const { recall } = await import("../memory/sqlite.js");
         const birthdayMemsRaw = await recall(`birthday ${todayStr}`, 3);
-        const birthdayMems = birthdayMemsRaw.filter(m => m.content.toLowerCase().includes("birthday"));
+        const birthdayMems = birthdayMemsRaw.filter((m) => m.content.toLowerCase().includes("birthday"));
         if (birthdayMems.length > 0) {
-            parts.push(`BIRTHDAYS TODAY: ${birthdayMems.map(m => m.content).join("; ")}`);
+            parts.push(`BIRTHDAYS TODAY: ${birthdayMems.map((m) => m.content).join("; ")}`);
         }
 
         // Check for any travel plans mentioned
         const travelMemsRaw = await recall("travel today trip flight", 2);
-        const travelMems = travelMemsRaw.filter(m => {
+        const travelMems = travelMemsRaw.filter((m) => {
             const content = m.content.toLowerCase();
             return content.includes("travel") || content.includes("trip") || content.includes("flight");
         });
         if (travelMems.length > 0) {
-            parts.push(`TRAVEL PLANS: ${travelMems.map(m => m.content).join("; ")}`);
+            parts.push(`TRAVEL PLANS: ${travelMems.map((m) => m.content).join("; ")}`);
         }
     } catch {
         // Memory not available
@@ -489,18 +565,19 @@ async function gatherBriefingData(llm: LLMClient): Promise<string> {
 
 // ── Proactive Check (Activity-Aware) ──────────
 
-async function runProactiveCheck(
-    llm: LLMClient,
-    presence: UserPresence,
-    hourNow: number
-): Promise<string | null> {
+async function runProactiveCheck(llm: LLMClient, presence: UserPresence, hourNow: number): Promise<string | null> {
     const userContext = gatherUserContext();
 
     // If we have zero context, skip entirely
     if (!userContext) return null;
 
     const now = new Date();
-    const timeStr = now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: getTimezone() });
+    const timeStr = now.toLocaleTimeString("en-IN", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+        timeZone: getTimezone(),
+    });
     const activityDesc = describePresence(presence);
     const timeContext = getTimeContext();
 
@@ -513,7 +590,12 @@ What they're doing: ${activityDesc}
 Context about them:
 ${userContext}
 
-${(() => { const topics = getUnrespondedProactiveTopics(); return topics.length > 0 ? `Already sent (no reply):\n${topics.map(t => `- "${t}"`).join("\n")}\nDon't repeat these.\n` : ""; })()}
+${(() => {
+    const topics = getUnrespondedProactiveTopics();
+    return topics.length > 0
+        ? `Already sent (no reply):\n${topics.map((t) => `- "${t}"`).join("\n")}\nDon't repeat these.\n`
+        : "";
+})()}
 
 Should you say something? Only if it genuinely matters. Think:
 - Would a real friend text this right now?
