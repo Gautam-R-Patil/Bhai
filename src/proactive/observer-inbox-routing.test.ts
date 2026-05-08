@@ -21,6 +21,7 @@ vi.mock("./composer.js", () => ({
             modeTag: intent.mode,
         }),
     ),
+    composeMorningBatch: vi.fn(async () => ({ text: "morning (mock)", modeTag: "fyi" })),
 }));
 
 // Mock dispatch so we can assert whether the chat channel was invoked.
