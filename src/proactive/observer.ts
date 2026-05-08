@@ -42,6 +42,16 @@ const SOURCE_WEIGHTS: Record<IntentSource, number> = {
     convex_notification: 0.8,
     env_context: 0.8,
     memory_anticipation: 0.7,
+    // V3
+    calendar_prep: 1.4,
+    tasks_deadline: 1.3,
+    calendar_morning: 1.1,
+    tasks_morning: 1.0,
+    stale_email: 0.9,
+    deep_work_gap: 0.8,
+    goals_morning: 0.7,
+    weather_morning: 0.6,
+    news_morning: 0.5,
 };
 
 const BOUNDARY_WINDOW_MS = 120_000;          // 2-minute window after a boundary

@@ -8,7 +8,10 @@ export type IntentSource =
   | "latent_topic_monitor" | "memory_anticipation" | "calendar_fact_check"
   | "calendar_fusion" | "stale_todo" | "meeting_followup"
   | "habit_anomaly" | "env_context" | "long_task_status"
-  | "convex_notification";
+  | "convex_notification"
+  | "calendar_morning" | "calendar_prep" | "tasks_morning"
+  | "tasks_deadline" | "goals_morning" | "weather_morning"
+  | "news_morning" | "stale_email" | "deep_work_gap";
 
 export type Channel =
   | "whatsapp" | "telegram" | "discord" | "slack"
@@ -59,6 +62,9 @@ const VALID_SOURCES: IntentSource[] = [
   "calendar_fusion", "stale_todo", "meeting_followup",
   "habit_anomaly", "env_context", "long_task_status",
   "convex_notification",
+  "calendar_morning", "calendar_prep", "tasks_morning",
+  "tasks_deadline", "goals_morning", "weather_morning",
+  "news_morning", "stale_email", "deep_work_gap",
 ];
 const VALID_MODES: ProactiveMode[] = ["fyi", "question", "review"];
 const VALID_URGENCIES: Urgency[] = ["urgent", "normal", "ambient"];
