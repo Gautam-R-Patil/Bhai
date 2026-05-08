@@ -917,7 +917,13 @@ function loadAccountSession() {
         const masterKey = getMasterKey();
         const encrypted = fs.readFileSync(ACCOUNT_SESSION_PATH);
         const json = decrypt(encrypted, masterKey);
-        return JSON.parse(json);
+        const session = JSON.parse(json);
+        if (session && isLegacyUserId(session.userId)) {
+            console.log("[Auth] Purging legacy session:", session.userId);
+            deleteAccountSession();
+            return null;
+        }
+        return session;
     } catch {
         return null;
     }
@@ -1799,8 +1805,13 @@ function registerIPC() {
         }
     });
 
-    // Open auth window from renderer
+    // Open auth window from renderer. Short-circuits if a valid session already exists.
     ipcMain.handle("window:openAuth", () => {
+        const existing = loadAccountSession();
+        if (existing && existing.userId && !isLegacyUserId(existing.userId)) {
+            if (mainWindow && !mainWindow.isDestroyed()) mainWindow.focus();
+            return { success: true, alreadySignedIn: true };
+        }
         openAuthWindow();
         return { success: true };
     });
