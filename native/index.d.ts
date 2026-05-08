@@ -2506,6 +2506,7 @@ export interface ReleaseResult {
 export declare function schedulerConfigure(posture: PostureParams): void
 export declare function schedulerEnqueue(intent: QueuedIntent): string
 export declare function schedulerMarkBoundary(channel: string, windowMs: number): void
+export declare function schedulerDrainScheduled(channel: string): Array<string>
 export declare function schedulerSetDnd(channel: string, active: boolean): void
 export declare function schedulerTryRelease(channel: string): ReleaseResult
 export declare function schedulerDebugState(channel: string): string

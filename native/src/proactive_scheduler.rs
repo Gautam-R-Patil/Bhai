@@ -189,6 +189,25 @@ pub fn scheduler_mark_boundary(channel: String, window_ms: f64) {
 }
 
 #[napi]
+pub fn scheduler_drain_scheduled(channel: String) -> Vec<String> {
+    let mut st = STATE.lock();
+    let cs = match st.get_mut(&channel) {
+        Some(c) => c,
+        None => return vec![],
+    };
+    let now = now_ms() as u64;
+    let mut promoted = Vec::new();
+    while let Some(Reverse(top)) = cs.pending_scheduled.peek() {
+        if top.scheduled_for > now { break; }
+        let Reverse(entry) = cs.pending_scheduled.pop().unwrap();
+        let id = entry.intent.id.clone();
+        cs.queue.push_back(entry.intent);
+        promoted.push(id);
+    }
+    promoted
+}
+
+#[napi]
 pub fn scheduler_set_dnd(channel: String, active: bool) {
     let mut st = STATE.lock();
     if let Some(cs) = st.get_mut(&channel) {
@@ -487,5 +506,59 @@ mod tests_scheduled_fire {
         }
         let res = scheduler_enqueue(mk_intent("i500", "sfire_c", future + 500.0));
         assert_eq!(res, "scheduled_cap");
+    }
+
+    #[test]
+    fn drain_before_time_returns_empty() {
+        clear_state();
+        scheduler_configure(PostureParams {
+            channel: "drain_a".into(),
+            max_per_day: 10,
+            min_gap_min: 0,
+            heartbeat_min: 0,
+            boundary_only: false,
+            urgent_bypass: true,
+        });
+        let future = now_ms() + 10.0 * 60_000.0;
+        scheduler_enqueue(mk_intent("i1", "drain_a", future));
+        let promoted = scheduler_drain_scheduled("drain_a".into());
+        assert_eq!(promoted.len(), 0);
+    }
+
+    #[test]
+    fn drain_after_time_promotes_to_queue() {
+        clear_state();
+        scheduler_configure(PostureParams {
+            channel: "drain_b".into(),
+            max_per_day: 10,
+            min_gap_min: 0,
+            heartbeat_min: 0,
+            boundary_only: false,
+            urgent_bypass: true,
+        });
+        let soon = now_ms() + 50.0;
+        scheduler_enqueue(mk_intent("i2", "drain_b", soon));
+        std::thread::sleep(std::time::Duration::from_millis(80));
+        let promoted = scheduler_drain_scheduled("drain_b".into());
+        assert_eq!(promoted, vec!["i2".to_string()]);
+    }
+
+    #[test]
+    fn drain_preserves_heap_order() {
+        clear_state();
+        scheduler_configure(PostureParams {
+            channel: "drain_c".into(),
+            max_per_day: 10,
+            min_gap_min: 0,
+            heartbeat_min: 0,
+            boundary_only: false,
+            urgent_bypass: true,
+        });
+        let base = now_ms() + 50.0;
+        scheduler_enqueue(mk_intent("late", "drain_c", base + 20.0));
+        scheduler_enqueue(mk_intent("early", "drain_c", base));
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let promoted = scheduler_drain_scheduled("drain_c".into());
+        assert_eq!(promoted, vec!["early".to_string(), "late".to_string()]);
     }
 }
