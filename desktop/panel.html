@@ -1246,6 +1246,17 @@
                                     Check Now
                                 </button>
                             </div>
+                            <div class="pref-item">
+                                <div class="pref-item-label">
+                                    <span>Update channel</span>
+                                    <small>Alpha gets new builds first. Stable is for when you want the tested, released version only.</small>
+                                </div>
+                                <select id="prefUpdateChannel" class="select-sm" onchange="setUpdateChannel(this.value)">
+                                    <option value="stable">Stable</option>
+                                    <option value="alpha">Alpha (early access)</option>
+                                    <option value="beta">Beta</option>
+                                </select>
+                            </div>
                         </div>
                     </div>
 
