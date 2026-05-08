@@ -2537,6 +2537,12 @@ export declare function monitorDeleteRule(id: string): void
 export declare function monitorCount(): number
 export declare function monitorCheck(msgEmbedding: Array<number>, channel: string, sender: string, nowMs: number): Array<RuleHit>
 export declare function monitorMarkFired(id: string, tsMs: number): void
+export interface GateResult {
+  mayRun: boolean
+  nextEligibleMs: number
+}
+export declare function sourceGateCheck(source: string, minGapSec: number): GateResult
+export declare function sourceGateReset(source: string): void
 /** A candidate DOM element passed in from TypeScript after browser_scan */
 export interface ElementCandidate {
   label: number
