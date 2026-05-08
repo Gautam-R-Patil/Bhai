@@ -1736,7 +1736,13 @@ http.route({
       });
       return new Response(JSON.stringify({ session, ...identity }), { status: 200, headers: { "Content-Type": "application/json" } });
     } catch (err: any) {
-      return new Response(JSON.stringify({ error: err.message || "validate failed" }), { status: 401, headers: { "Content-Type": "application/json" } });
+      const raw = (err?.message || "validate failed") as string;
+      const clean = raw
+        .replace(/^Uncaught Error:\s*/, "")
+        .replace(/\s*at handler \([^\)]*\)\s*$/, "")
+        .replace(/\n.*$/s, "")
+        .trim();
+      return new Response(JSON.stringify({ error: clean || "validate failed" }), { status: 401, headers: { "Content-Type": "application/json" } });
     }
   }),
 });
