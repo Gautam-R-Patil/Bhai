@@ -1,59 +1,86 @@
 /* Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved. */
-/* Jarvis Desktop — Colorful Light Mode Liquid Glass Theme */
+/* A.T.L.A.S Desktop — Liquid Glass, Warm Neutrals */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap');
 
 /* ═══════════════════════════════════════════════
    CSS Variables — Apple Light Glass Palette
    ═══════════════════════════════════════════════ */
 
 :root {
-    /* Backgrounds */
-    --bg-window: #fefefe;
+    /* ── Backgrounds ────────────────────────────────── */
+    /* Soft warm off-white so the vivid orbs pop without looking neon.
+       Arc's setup pages use a near-white base with saturated orbs on top. */
+    --bg-window: #fdfbf7;
 
-    /* Glass Surfaces */
-    --glass-bg: rgba(255, 255, 255, 0.65);
-    --glass-hover: rgba(255, 255, 255, 0.85);
-    --glass-input: rgba(255, 255, 255, 0.5);
-    --glass-input-focus: rgba(255, 255, 255, 0.9);
+    /* ── Glass Surfaces ─────────────────────────────── */
+    /* Slightly more opaque than before — with saturated orbs behind, too
+       much transparency makes text hard to read. */
+    --glass-bg: rgba(255, 253, 249, 0.70);
+    --glass-hover: rgba(255, 253, 249, 0.90);
+    --glass-input: rgba(255, 253, 249, 0.62);
+    --glass-input-focus: rgba(255, 255, 255, 0.94);
 
-    /* Glass Effects */
+    /* ── Glass Effects ──────────────────────────────── */
     --glass-blur: 40px;
-    --glass-border: 1px solid rgba(255, 255, 255, 0.5);
-    --glass-border-strong: 1px solid rgba(255, 255, 255, 0.8);
-    --shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.08);
-    --shadow-inner: inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+    --glass-border: 1px solid rgba(255, 255, 255, 0.60);
+    --glass-border-strong: 1px solid rgba(255, 255, 255, 0.85);
+    /* Shadows tinted warm so they read as "sunset" not "surgical". */
+    --shadow-glass: 0 10px 32px rgba(75, 45, 90, 0.10);
+    --shadow-glass-lg: 0 18px 48px rgba(75, 45, 90, 0.14);
+    --shadow-inner: inset 0 0 0 1px rgba(255, 255, 255, 0.5);
 
-    /* Floating Orb Colors (Vibrant Pastels) */
-    --orb-blue: #32d4ff;
-    --orb-purple: #c471ed;
-    --orb-pink: #ff758c;
-    --orb-orange: #ffca28;
-    --orb-green: #20e3b2;
+    /* ── Floating Orbs — Arc / Apple Welcome energy ── */
+    /* Five saturated orbs in a warm-cool rainbow. Not the AI-gradient cliché
+       (which is purple+pink+blue in a single direction) — here we have a
+       coral/amber/peach warm cluster balanced by a cobalt/mint cool cluster
+       on the opposite side, with a lavender bridge. Feels "Apple Welcome
+       screen", not "stable diffusion landing page". */
+    --orb-coral:    #ff7a6b;
+    --orb-amber:    #f9b34d;
+    --orb-peach:    #ffa27a;
+    --orb-cobalt:   #4d7bff;
+    --orb-mint:     #39d9b6;
+    --orb-lavender: #b58cff;
 
-    /* Accents */
-    --accent-primary: #0066cc;
-    --accent-hover: #0055b3;
-    --accent-success: #34c759;
-    --accent-danger: #ff3b30;
+    /* ── Accent — single, warm, energetic ───────────── */
+    /* Coral-leaning red — reads as friendly + distinctive, not "iOS blue".
+       Arc's setup uses a similar saturated warm tone for emphasis. */
+    --accent-primary: #e8533f;
+    --accent-hover:   #d3402c;
+    --accent-tint:    rgba(232, 83, 63, 0.13);
+    --accent-ring:    rgba(232, 83, 63, 0.30);
+    /* Status colors — intent only, not decoration. Warmer than iOS greens. */
+    --accent-success: #2fb06a;
+    --accent-warning: #e3a31f;
+    --accent-danger:  #c5392f;
 
-    /* Radii */
-    --radius-sm: 12px;
-    --radius-md: 18px;
-    --radius-lg: 32px;
-    --radius-window: 16px;
+    /* ── Radii — varied so nested elements feel layered ── */
+    --radius-sm: 10px;
+    --radius-md: 14px;
+    --radius-lg: 24px;
+    --radius-window: 18px;
 
-    /* Text */
-    --text-primary: #1d1d1f;
-    --text-secondary: #515154;
-    --text-muted: #86868b;
+    /* ── Text — warm grays, consistent hue family ────── */
+    --text-primary:   #1d1a1a;
+    --text-secondary: #585253;
+    --text-muted:     #8c8689;
 
-    /* Spacing */
+    /* ── Spacing (kept for compat) ──────────────────── */
     --space-xs: 4px;
     --space-sm: 8px;
     --space-md: 16px;
     --space-lg: 24px;
     --space-xl: 40px;
+
+    /* ── z-index scale (replaces ad-hoc 9999s) ──────── */
+    --z-base:      1;
+    --z-dropdown:  100;
+    --z-sticky:    200;
+    --z-overlay:   800;
+    --z-modal:     1000;
+    --z-toast:     2000;
+    --z-tooltip:   3000;
 }
 
 /* ═══════════════════════════════════════════════
@@ -69,7 +96,8 @@
 }
 
 body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-feature-settings: 'cv11', 'ss01', 'ss03';  /* Geist alternates: rounded a, flat g, single-storey ɑ */
     background: var(--bg-window);
     color: var(--text-primary);
     overflow: hidden;
@@ -77,8 +105,87 @@ body {
     -moz-osx-font-smoothing: grayscale;
     user-select: none;
     border-radius: var(--radius-window);
-    /* Outer window border */
-    border: 1px solid rgba(0, 0, 0, 0.1);
+    /* Outer window border — soft warm tint so it matches the sunset-ish
+       shadow palette, not generic surgical black. */
+    border: 1px solid rgba(80, 60, 55, 0.08);
+}
+
+/* Numbers everywhere should be tabular so version numbers, timestamps,
+   and counters line up column-wise. Applied globally but easy to opt-out
+   via `font-variant-numeric: normal` if a specific element needs proportional. */
+time, .num, .stat-value, .version, .timestamp, code, kbd, samp,
+input[type="number"], [data-numeric] {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1;
+}
+
+/* Monospace — Geist Mono for timestamps, code, version numbers, kbd */
+code, kbd, samp, pre, .mono, .version, .timestamp {
+    font-family: 'Geist Mono', ui-monospace, SFMono-Regular, 'SF Mono',
+        Menlo, Monaco, Consolas, monospace;
+}
+
+/* ═══════════════════════════════════════════════
+   Typography Hierarchy
+   ═══════════════════════════════════════════════ */
+
+/* Display / headline — tighten letter-spacing and line-height so big
+   text feels heavy and intentional. Balance wrapping so the last line
+   isn't a lonely word. */
+h1, h2, h3, .display-xl, .display-lg, .display-md {
+    font-weight: 600;
+    letter-spacing: -0.022em;
+    line-height: 1.1;
+    text-wrap: balance;
+    color: var(--text-primary);
+}
+h1, .display-xl { font-size: clamp(28px, 3vw, 36px); letter-spacing: -0.03em; }
+h2, .display-lg { font-size: clamp(22px, 2.4vw, 28px); }
+h3, .display-md { font-size: clamp(18px, 2vw, 22px); letter-spacing: -0.015em; }
+
+/* Body text — readable line-length + line-height. Content gets
+   text-wrap: pretty to avoid ugly last-line rivers. */
+p, .body {
+    font-size: 15px;
+    line-height: 1.55;
+    color: var(--text-secondary);
+    text-wrap: pretty;
+    max-width: 65ch;
+}
+
+/* Labels — small, positive tracking, sentence case (NOT all-caps). */
+.label, label, .small-label {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    color: var(--text-muted);
+    text-transform: none;  /* opt out of inherited uppercase if any */
+}
+
+/* Captions / hints */
+small, .caption, .hint {
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text-muted);
+}
+
+/* Global focus-visible fallback — anything interactive without a more
+   specific focus style still gets a visible ring. Keyboard accessibility
+   requirement; also makes tab-ordering visible during QA. */
+:focus-visible {
+    outline: 2px solid var(--accent-ring);
+    outline-offset: 2px;
+    border-radius: 6px;
+}
+/* Interactive elements that already style their own ring: suppress the
+   global fallback so we don't get a double-ring. */
+.btn:focus-visible,
+.title-btn:focus-visible,
+.nav-item:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+    outline: none;
 }
 
 /* ═══════════════════════════════════════════════
@@ -99,49 +206,80 @@ body {
 .orb {
     position: absolute;
     border-radius: 50%;
-    filter: blur(60px);
-    opacity: 0.55;
+    filter: blur(70px);
+    /* Higher opacity than the muted version so colors read as "wallpaper
+       wants to be seen", not "ghost of a background". */
+    opacity: 0.62;
+    mix-blend-mode: normal;
     will-change: transform;
 }
 
+/* Warm cluster — upper-left, lower-right */
 .orb-1 {
-    width: 400px;
-    height: 400px;
-    background: var(--orb-blue);
-    top: -100px;
-    left: -100px;
-    animation: orbDrift1 8s ease-in-out infinite alternate, orbHue 14s linear infinite;
+    width: 460px;
+    height: 460px;
+    background: var(--orb-coral);
+    top: -140px;
+    left: -140px;
+    animation: orbDrift1 9s ease-in-out infinite alternate;
 }
 
 .orb-2 {
-    width: 350px;
-    height: 350px;
-    background: var(--orb-pink);
-    bottom: -50px;
-    right: -100px;
-    animation: orbDrift2 10s ease-in-out infinite alternate, orbHue 16s linear infinite;
-    animation-delay: -7s;
+    width: 380px;
+    height: 380px;
+    background: var(--orb-amber);
+    bottom: -100px;
+    right: -80px;
+    animation: orbDrift2 11s ease-in-out infinite alternate;
+    animation-delay: -5s;
+    opacity: 0.58;
 }
 
+/* Cool cluster — middle-right, upper-right */
 .orb-3 {
-    width: 300px;
-    height: 300px;
-    background: var(--orb-purple);
-    top: 40%;
-    left: 20%;
-    animation: orbDrift3 9s ease-in-out infinite alternate, orbHue 18s linear infinite;
-    animation-delay: -12s;
+    width: 340px;
+    height: 340px;
+    background: var(--orb-cobalt);
+    top: 35%;
+    right: 18%;
+    animation: orbDrift3 10s ease-in-out infinite alternate;
+    animation-delay: -8s;
+    opacity: 0.48;
 }
 
 .orb-4 {
-    width: 350px;
-    height: 350px;
-    background: var(--orb-orange);
-    top: -50px;
-    right: 15%;
-    animation: orbDrift4 12s ease-in-out infinite alternate, orbHue 12s linear infinite;
-    opacity: 0.45;
-    animation-delay: -4s;
+    width: 320px;
+    height: 320px;
+    background: var(--orb-mint);
+    top: -60px;
+    right: 22%;
+    animation: orbDrift4 12s ease-in-out infinite alternate;
+    animation-delay: -3s;
+    opacity: 0.50;
+}
+
+/* Lavender bridge — center-bottom */
+.orb-5 {
+    width: 300px;
+    height: 300px;
+    background: var(--orb-lavender);
+    bottom: 15%;
+    left: 28%;
+    animation: orbDrift5 13s ease-in-out infinite alternate;
+    animation-delay: -10s;
+    opacity: 0.46;
+}
+
+/* Peach accent — center-top-ish */
+.orb-6 {
+    width: 260px;
+    height: 260px;
+    background: var(--orb-peach);
+    top: 12%;
+    left: 45%;
+    animation: orbDrift6 14s ease-in-out infinite alternate;
+    animation-delay: -6s;
+    opacity: 0.42;
 }
 
 /* Each orb gets its own drift path */
@@ -233,15 +371,32 @@ body {
     }
 }
 
-/* Very subtle hue rotation so colors slowly evolve */
-@keyframes orbHue {
-    0% {
-        filter: blur(60px) hue-rotate(0deg);
-    }
+@keyframes orbDrift5 {
+    0%   { transform: translate(0, 0) scale(1); }
+    25%  { transform: translate(-100px, 80px) scale(1.05); }
+    50%  { transform: translate(80px, -120px) scale(0.94); }
+    75%  { transform: translate(-60px, 100px) scale(1.08); }
+    100% { transform: translate(120px, -50px) scale(1); }
+}
 
-    100% {
-        filter: blur(60px) hue-rotate(25deg);
-    }
+@keyframes orbDrift6 {
+    0%   { transform: translate(0, 0) scale(1); }
+    25%  { transform: translate(90px, -60px) scale(0.96); }
+    50%  { transform: translate(-80px, 110px) scale(1.1); }
+    75%  { transform: translate(130px, 40px) scale(0.98); }
+    100% { transform: translate(-50px, -90px) scale(1.04); }
+}
+
+/* Subtle grain overlay — breaks the glass-flatness so surfaces don't feel
+   vector-perfect. Fixed, ignores clicks, sits above orbs but below content. */
+.bg-canvas::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.45;
+    mix-blend-mode: soft-light;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180' viewBox='0 0 180 180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.55'/></svg>");
 }
 
 /* ═══════════════════════════════════════════════
@@ -252,22 +407,23 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    height: 48px;
+    height: 44px;
     padding: 0 16px;
     -webkit-app-region: drag;
-    background: rgba(255, 255, 255, 0.4);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.4);
+    background: rgba(255, 253, 249, 0.55);
+    backdrop-filter: blur(24px) saturate(160%);
+    -webkit-backdrop-filter: blur(24px) saturate(160%);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.5);
     position: relative;
-    z-index: 100;
+    z-index: var(--z-sticky);
 }
 
 .title-bar-text {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     color: var(--text-primary);
-    letter-spacing: -0.2px;
+    letter-spacing: 0.04em;    /* positive tracking on small caps feel */
+    opacity: 0.75;
 }
 
 .title-bar-buttons {
@@ -279,8 +435,8 @@ body {
 }
 
 .title-btn {
-    width: 24px;
-    height: 24px;
+    width: 26px;
+    height: 26px;
     border: none;
     background: transparent;
     color: var(--text-secondary);
@@ -289,15 +445,24 @@ body {
     align-items: center;
     justify-content: center;
     font-size: 16px;
-    transition: color 0.2s ease;
+    border-radius: 6px;
+    transition: color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+    -webkit-app-region: no-drag;
 }
 
 .title-btn:hover {
     color: var(--text-primary);
+    background: rgba(0, 0, 0, 0.05);
+}
+
+.title-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--accent-ring);
 }
 
 .title-btn.close:hover {
-    color: var(--accent-danger);
+    color: #ffffff;
+    background: var(--accent-danger);
 }
 
 /* ═══════════════════════════════════════════════
@@ -458,73 +623,137 @@ body {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 12px 24px;
-    font-size: 15px;
+    gap: 8px;
+    padding: 11px 20px;
+    font-size: 14px;
     font-weight: 500;
+    letter-spacing: -0.005em;
     border-radius: var(--radius-md);
-    border: none;
+    border: 1px solid transparent;
     cursor: pointer;
-    transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    /* Spring easing for the press; shorter duration on hover for snap */
+    transition:
+        transform 140ms cubic-bezier(0.34, 1.56, 0.64, 1),
+        box-shadow 180ms ease,
+        background 160ms ease,
+        border-color 160ms ease,
+        color 160ms ease;
     user-select: none;
     font-family: inherit;
     position: relative;
     overflow: hidden;
+    /* Hover nudge baseline — transforms composite so GPU-only animations */
+    will-change: transform;
+}
+
+/* Focus ring — accessibility + consistency. The outline-less focus-visible
+   ring is the accent tint so it reads as "selected", not "error". */
+.btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
 .btn-primary {
     background: var(--accent-primary);
-    color: white;
-    box-shadow: 0 4px 12px rgba(0, 102, 204, 0.3);
+    color: #ffffff;
+    /* Tinted shadow matching the button hue — warm coral drop-shadow
+       reads like evening sun, not surgical black. */
+    box-shadow:
+        0 1px 2px rgba(80, 20, 15, 0.14),
+        0 4px 14px rgba(232, 83, 63, 0.30);
+}
+
+.btn-primary:hover {
+    background: var(--accent-hover);
+    transform: translateY(-1px);
+    box-shadow:
+        0 2px 3px rgba(80, 20, 15, 0.16),
+        0 8px 22px rgba(232, 83, 63, 0.36);
 }
 
 .btn-primary:active {
-    transform: scale(0.96);
+    transform: translateY(0) scale(0.98);
+    box-shadow:
+        0 1px 2px rgba(80, 20, 15, 0.12),
+        0 2px 6px rgba(232, 83, 63, 0.24);
+    transition-duration: 80ms;
 }
 
 .btn-secondary {
     background: var(--glass-bg);
     backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     color: var(--text-primary);
     border: var(--glass-border);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    box-shadow: 0 1px 3px rgba(80, 60, 55, 0.08);
 }
 
 .btn-secondary:hover {
     background: var(--glass-hover);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(80, 60, 55, 0.10);
 }
 
 .btn-secondary:active {
-    transform: scale(0.96);
+    transform: translateY(0) scale(0.98);
+    transition-duration: 80ms;
 }
 
 .btn-success {
     background: var(--accent-success);
-    color: white;
-    box-shadow: 0 4px 12px rgba(52, 199, 89, 0.3);
+    color: #ffffff;
+    box-shadow:
+        0 1px 2px rgba(25, 50, 30, 0.12),
+        0 4px 14px rgba(46, 165, 97, 0.28);
+}
+
+.btn-success:hover {
+    filter: brightness(1.06);
+    transform: translateY(-1px);
 }
 
 .btn-success:active {
-    transform: scale(0.96);
+    transform: translateY(0) scale(0.98);
+    transition-duration: 80ms;
 }
 
 .btn-danger {
-    background: white;
+    background: #ffffff;
     color: var(--accent-danger);
-    border: 1px solid rgba(255, 59, 48, 0.2);
-    box-shadow: 0 2px 8px rgba(255, 59, 48, 0.1);
+    border: 1px solid rgba(209, 58, 54, 0.22);
+    box-shadow: 0 1px 3px rgba(209, 58, 54, 0.08);
 }
 
 .btn-danger:hover {
-    background: #fffafa;
+    background: #fff4f3;
+    border-color: rgba(209, 58, 54, 0.34);
+    transform: translateY(-1px);
 }
 
 .btn-danger:active {
-    transform: scale(0.96);
+    transform: translateY(0) scale(0.98);
+    transition-duration: 80ms;
 }
 
 .btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+/* Text-link tertiary action — reduces visual noise where a solid
+   "ghost button" would feel heavy. */
+.btn-link {
+    background: transparent;
+    color: var(--accent-primary);
+    padding: 8px 12px;
+    font-weight: 500;
+    border: none;
+    box-shadow: none;
+}
+.btn-link:hover {
+    background: var(--accent-tint);
     transform: none;
 }
 

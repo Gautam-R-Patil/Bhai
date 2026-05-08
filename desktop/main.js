@@ -290,6 +290,179 @@ function writeToLogFile(message) {
     }
 }
 
+// ── OAuth callback page ────────────────────────
+// Rendered by the ephemeral localhost:8844 server that catches Google's
+// redirect after the user consents. They see this in their BROWSER, not in
+// the Electron window — so it ships its own styles inline. Must match the
+// warm ATLAS aesthetic (coral/amber/cobalt orbs, Geist type, tinted
+// shadows) since the previous version was a jarring dark-purple.
+function renderOAuthCallbackPage({ kind, error } = {}) {
+    const success = kind !== "error";
+    const safeErr = (error || "").toString().replace(/[<>&"']/g, (c) => ({
+        "<": "&lt;", ">": "&gt;", "&": "&amp;", "\"": "&quot;", "'": "&#39;",
+    }[c]));
+    const heading = success ? "You're connected" : "Couldn't connect";
+    const sub = success
+        ? "Your Google account is now linked to A.T.L.A.S. You can close this tab."
+        : "We hit an issue during sign-in. Close this tab and try again from A.T.L.A.S.";
+    const errBlock = success
+        ? ""
+        : `<p class="err-detail">${safeErr}</p>`;
+    const autoClose = success
+        ? "<script>setTimeout(()=>window.close(),3000)</script>"
+        : "";
+    const iconSvg = success
+        ? `<svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="16" cy="16" r="15" class="icon-ring icon-ok"/>
+              <path d="M10 16.5 L14.5 21 L22.5 12" class="icon-check icon-ok-stroke"/>
+           </svg>`
+        : `<svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="16" cy="16" r="15" class="icon-ring icon-err"/>
+              <path d="M11 11 L21 21 M21 11 L11 21" class="icon-check icon-err-stroke"/>
+           </svg>`;
+    const statusColor = success ? "#2fb06a" : "#c5392f";
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>A.T.L.A.S — ${success ? "Connected" : "Sign-in error"}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap">
+<style>
+:root {
+  --coral:#ff7a6b; --amber:#f9b34d; --peach:#ffa27a;
+  --cobalt:#4d7bff; --mint:#39d9b6; --lavender:#b58cff;
+  --accent:#e8533f; --accent-ring:rgba(232,83,63,.30);
+  --text:#1d1a1a; --text-sub:#585253; --text-muted:#8c8689;
+  --bg:#fdfbf7;
+}
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{
+  font-family:'Geist',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  background:var(--bg); color:var(--text); overflow:hidden;
+  display:flex; align-items:center; justify-content:center; padding:24px;
+  -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+}
+/* Colorful orb backdrop — same palette as the rest of A.T.L.A.S. */
+.bg{position:fixed; inset:0; z-index:-1; overflow:hidden; background:var(--bg)}
+.orb{position:absolute; border-radius:50%; filter:blur(70px); will-change:transform}
+.o1{width:460px;height:460px;background:var(--coral);top:-140px;left:-140px;opacity:.62;animation:d1 9s ease-in-out infinite alternate}
+.o2{width:380px;height:380px;background:var(--amber);bottom:-100px;right:-80px;opacity:.58;animation:d2 11s ease-in-out infinite alternate;animation-delay:-5s}
+.o3{width:340px;height:340px;background:var(--cobalt);top:35%;right:18%;opacity:.48;animation:d3 10s ease-in-out infinite alternate;animation-delay:-8s}
+.o4{width:320px;height:320px;background:var(--mint);top:-60px;right:22%;opacity:.50;animation:d4 12s ease-in-out infinite alternate;animation-delay:-3s}
+.o5{width:300px;height:300px;background:var(--lavender);bottom:15%;left:28%;opacity:.46;animation:d5 13s ease-in-out infinite alternate;animation-delay:-10s}
+.o6{width:260px;height:260px;background:var(--peach);top:12%;left:45%;opacity:.42;animation:d6 14s ease-in-out infinite alternate;animation-delay:-6s}
+@keyframes d1{to{transform:translate(140px,-50px) scale(1.02)}}
+@keyframes d2{to{transform:translate(-80px,100px) scale(1)}}
+@keyframes d3{to{transform:translate(-80px,80px) scale(1.06)}}
+@keyframes d4{to{transform:translate(100px,30px) scale(1)}}
+@keyframes d5{to{transform:translate(120px,-50px) scale(1)}}
+@keyframes d6{to{transform:translate(-50px,-90px) scale(1.04)}}
+.bg::after{
+  content:"";position:absolute;inset:0;pointer-events:none;opacity:.42;mix-blend-mode:soft-light;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.55'/></svg>");
+}
+.card{
+  position:relative; z-index:1;
+  width:100%; max-width:420px;
+  background:rgba(255,253,249,.72);
+  backdrop-filter:blur(40px) saturate(160%);
+  -webkit-backdrop-filter:blur(40px) saturate(160%);
+  border:1px solid rgba(255,255,255,.6);
+  border-radius:24px;
+  padding:44px 36px 32px;
+  text-align:center;
+  box-shadow:
+    0 18px 48px rgba(75,45,90,.14),
+    inset 0 0 0 1px rgba(255,255,255,.5);
+  animation:card-in .4s cubic-bezier(.16,1,.3,1);
+}
+@keyframes card-in{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
+
+.icon-wrap{
+  width:72px; height:72px; margin:0 auto 20px;
+  display:flex; align-items:center; justify-content:center;
+  border-radius:50%;
+  background:radial-gradient(circle, ${success
+    ? "rgba(47,176,106,.22) 0%, rgba(47,176,106,.08) 60%, rgba(47,176,106,0) 100%"
+    : "rgba(197,57,47,.22) 0%, rgba(197,57,47,.08) 60%, rgba(197,57,47,0) 100%"});
+  animation:pop .5s cubic-bezier(.34,1.56,.64,1);
+}
+@keyframes pop{0%{transform:scale(.3);opacity:0}60%{transform:scale(1.1);opacity:1}100%{transform:scale(1);opacity:1}}
+.icon-wrap svg{width:44px;height:44px;overflow:visible}
+.icon-ring{fill:none;stroke-width:2.5;stroke-dasharray:94;stroke-dashoffset:94;animation:draw .5s .05s cubic-bezier(.65,0,.35,1) forwards}
+.icon-check{fill:none;stroke-width:2.8;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:30;stroke-dashoffset:30;animation:draw .38s .38s cubic-bezier(.65,0,.35,1) forwards}
+.icon-ok{stroke:#2fb06a}.icon-ok-stroke{stroke:#2fb06a}
+.icon-err{stroke:#c5392f}.icon-err-stroke{stroke:#c5392f}
+@keyframes draw{to{stroke-dashoffset:0}}
+
+h1{
+  font-size:24px; font-weight:600; letter-spacing:-.02em;
+  color:var(--text); text-wrap:balance;
+  opacity:0; animation:fade-up .4s .45s cubic-bezier(.16,1,.3,1) forwards;
+}
+.sub{
+  font-size:14px; color:var(--text-sub); margin-top:10px;
+  max-width:34ch; margin-left:auto; margin-right:auto;
+  text-wrap:pretty; line-height:1.55;
+  opacity:0; animation:fade-up .4s .55s cubic-bezier(.16,1,.3,1) forwards;
+}
+.err-detail{
+  margin-top:14px; font-size:12px; color:var(--text-muted);
+  font-family:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  background:rgba(197,57,47,.08); border:1px solid rgba(197,57,47,.18);
+  border-radius:10px; padding:10px 14px;
+  max-width:340px; margin-left:auto; margin-right:auto;
+  word-break:break-word;
+  opacity:0; animation:fade-up .4s .65s cubic-bezier(.16,1,.3,1) forwards;
+}
+.hint{
+  font-size:12px; color:var(--text-muted); margin-top:22px;
+  letter-spacing:.005em;
+  opacity:0; animation:fade-up .4s .75s cubic-bezier(.16,1,.3,1) forwards;
+}
+.hint .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:${statusColor};vertical-align:middle;margin-right:6px;box-shadow:0 0 0 4px ${success ? "rgba(47,176,106,.15)" : "rgba(197,57,47,.15)"}}
+@keyframes fade-up{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+
+/* Thin progress bar on success — matches the auth.html success state */
+.prog{
+  width:140px; height:3px; margin:22px auto 0;
+  border-radius:2px; background:rgba(47,176,106,.12); overflow:hidden;
+  opacity:0; animation:fade-up .4s .7s cubic-bezier(.16,1,.3,1) forwards;
+}
+.prog::after{
+  content:""; display:block; height:100%; width:0;
+  background:linear-gradient(90deg,#2fb06a,rgba(47,176,106,.5));
+  animation:fill 2.8s .8s cubic-bezier(.45,.05,.55,.95) forwards;
+}
+@keyframes fill{to{width:100%}}
+</style>
+</head>
+<body>
+<div class="bg">
+  <div class="orb o1"></div>
+  <div class="orb o2"></div>
+  <div class="orb o3"></div>
+  <div class="orb o4"></div>
+  <div class="orb o5"></div>
+  <div class="orb o6"></div>
+</div>
+<main class="card" role="alert">
+  <div class="icon-wrap" aria-hidden="true">${iconSvg}</div>
+  <h1>${heading}</h1>
+  <p class="sub">${sub}</p>
+  ${errBlock}
+  <p class="hint"><span class="dot"></span>${success ? "This tab will close automatically." : "You can close this tab."}</p>
+  ${success ? `<div class="prog" aria-hidden="true"></div>` : ""}
+</main>
+${autoClose}
+</body>
+</html>`;
+}
+
 function cleanOldLogs() {
     try {
         if (!fs.existsSync(LOGS_DIR)) return;
@@ -2030,7 +2203,7 @@ function registerIPC() {
 
                     if (error) {
                         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-                        res.end(`<html><body style="font-family:system-ui;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#1a1a2e;color:#e0e0e0"><div style="text-align:center"><h1 style="font-size:3em;margin-bottom:0.2em">❌</h1><h2>Connection Failed</h2><p style="opacity:0.8">${error}</p><p style="opacity:0.5;margin-top:2em">You can close this tab.</p></div></body></html>`);
+                        res.end(renderOAuthCallbackPage({ kind: "error", error }));
                         server.close();
                         resolve({ success: false, error });
                         return;
@@ -2038,7 +2211,7 @@ function registerIPC() {
 
                     if (code) {
                         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-                        res.end(`<html><body style="font-family:system-ui;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#1a1a2e;color:#e0e0e0"><div style="text-align:center"><h1 style="font-size:3em;margin-bottom:0.2em">✅</h1><h2>Account Connected!</h2><p style="opacity:0.5;margin-top:2em">You can close this tab now.</p><script>setTimeout(()=>window.close(),3000)</script></div></body></html>`);
+                        res.end(renderOAuthCallbackPage({ kind: "success" }));
                         server.close();
 
                         // Exchange token
