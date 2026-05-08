@@ -81,7 +81,7 @@ pub fn calendar_analyze(
             let a = &filtered[i];
             let b = &filtered[j];
             if b.start_ms >= a.end_ms { break; }
-            if a.start_ms < b.start_ms && b.start_ms < a.end_ms {
+            if a.start_ms <= b.start_ms && b.start_ms < a.end_ms {
                 conflicts.push(EventPair { first: a.id.clone(), second: b.id.clone() });
             }
         }
@@ -184,6 +184,15 @@ mod tests {
             has_attendees: false,
             is_all_day: false,
         }
+    }
+
+    #[test]
+    fn overlap_detected_same_start() {
+        // Two events that start at exactly the same millisecond should be flagged
+        // as conflicting. Real-world: double-booked parallel meetings.
+        let events = vec![ev("a", 9.0e6, 10.0e6), ev("b", 9.0e6, 10.5e6)];
+        let r = calendar_analyze(events, 8.0e6, 9, 18, 0);
+        assert_eq!(r.conflicts.len(), 1);
     }
 
     #[test]
