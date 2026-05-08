@@ -57,8 +57,9 @@ export class TelemetryLogger {
                     `INSERT INTO proactive_outcomes (
                         intent_id, source, channel, decision, drop_reason,
                         dispatched_at, user_replied, user_reply_latency_ms,
-                        user_reply_sentiment, user_marked_useful, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        user_reply_sentiment, user_marked_useful, created_at,
+                        scheduled_for, batch_ids
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 )
                 .run(
                     o.intentId,
@@ -72,6 +73,8 @@ export class TelemetryLogger {
                     o.userReplySentiment ?? null,
                     o.userMarkedUseful == null ? null : (o.userMarkedUseful ? 1 : 0),
                     Date.now(),
+                    o.scheduledFor ?? null,
+                    o.batchIds ? JSON.stringify(o.batchIds) : null,
                 );
         } catch {
             // Best-effort — never break the caller.

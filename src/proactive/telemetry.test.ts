@@ -134,6 +134,31 @@ describe("TelemetryLogger", () => {
         expect(() => tl.log(outcome())).not.toThrow();
     });
 
+    it("batchIds persists as JSON and round-trips", () => {
+        const { raw, tl } = mkLogger();
+        tl.log(outcome({ decision: "dispatched", batchIds: ["a", "b"] }));
+        const row = raw.prepare("SELECT batch_ids FROM proactive_outcomes").get() as { batch_ids: string };
+        expect(JSON.parse(row.batch_ids)).toEqual(["a", "b"]);
+    });
+
+    it("scheduledFor persists as numeric epoch ms", () => {
+        const { raw, tl } = mkLogger();
+        tl.log(outcome({ decision: "scheduled", scheduledFor: 12345 }));
+        const row = raw.prepare("SELECT scheduled_for FROM proactive_outcomes").get() as { scheduled_for: number };
+        expect(row.scheduled_for).toBe(12345);
+    });
+
+    it("batchIds and scheduledFor default to null when not supplied", () => {
+        const { raw, tl } = mkLogger();
+        tl.log(outcome());
+        const row = raw.prepare("SELECT batch_ids, scheduled_for FROM proactive_outcomes").get() as {
+            batch_ids: null;
+            scheduled_for: null;
+        };
+        expect(row.batch_ids).toBeNull();
+        expect(row.scheduled_for).toBeNull();
+    });
+
     it("getTelemetry/setTelemetry singleton access works", async () => {
         const { getTelemetry, setTelemetry } = await import("./telemetry.js");
         expect(getTelemetry()).toBeNull();

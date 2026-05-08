@@ -603,6 +603,17 @@ export function initProactiveSchema(db: CompatDatabase): void {
     )
   `);
     db.run(`CREATE INDEX IF NOT EXISTS idx_outcomes_source_channel ON proactive_outcomes(source, channel, created_at)`);
+    // ── Safe migrations: add scheduled_for + batch_ids columns (Phase 2) ──
+    try {
+        db.run(`ALTER TABLE proactive_outcomes ADD COLUMN scheduled_for REAL`);
+    } catch {
+        /* column already exists */
+    }
+    try {
+        db.run(`ALTER TABLE proactive_outcomes ADD COLUMN batch_ids TEXT`);
+    } catch {
+        /* column already exists */
+    }
 }
 
 // ── FTS5 Backfill ────────────────────────────────
