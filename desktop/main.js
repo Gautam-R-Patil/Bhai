@@ -143,8 +143,15 @@ const OVERLAY_URL = "http://127.0.0.1:18792";
 const OVERLAY_RESIZE_MS = 300;
 const OVERLAY_HIDE_DELAY_MS = 260;
 
-// ── Convex Site URL (HTTP actions endpoint — public, not a secret) ──
-const CONVEX_SITE_URL = "https://zany-kudu-607.convex.site";
+// ── Convex deployment selector ─────────────────────────────────────
+// Packaged DMG → prod by default. `npm start` (dev) → dev. Override either
+// via `ATLAS_ENV=prod|dev` or per-URL via `CONVEX_URL` / `CONVEX_SITE_URL`.
+const _ATLAS_IS_PROD = process.env.ATLAS_ENV
+    ? process.env.ATLAS_ENV === "prod"
+    : app.isPackaged;
+const _CONVEX_DEPLOY_NAME = _ATLAS_IS_PROD ? "avid-oyster-465" : "zany-kudu-607";
+const CONVEX_SITE_URL = process.env.CONVEX_SITE_URL || `https://${_CONVEX_DEPLOY_NAME}.convex.site`;
+const CONVEX_API_URL = process.env.CONVEX_URL || `https://${_CONVEX_DEPLOY_NAME}.convex.cloud`;
 
 const { parseOtplessVerifyResponse, isLegacyUserId } = require("./auth-helpers");
 
@@ -276,7 +283,7 @@ function convexSiteRequest(method, urlPath, bodyObj) {
 //
 // Channels: users on the "beta" channel get the BETA feed. Switch via
 // store.set("updateChannel", "beta" | "stable" | "canary").
-const UPDATE_FEED_BASE = "https://zany-kudu-607.convex.site/api/updates";
+const UPDATE_FEED_BASE = `${CONVEX_SITE_URL}/api/updates`;
 
 function getUpdateChannel() {
     const ch = (store.get("updateChannel") || "stable").toString().toLowerCase();
@@ -1154,7 +1161,7 @@ async function startBot() {
     };
 
     // Pass Convex URL + OTPless identity to bot process for credit enforcement
-    spawnEnv.CONVEX_URL = "https://zany-kudu-607.convex.cloud";
+    spawnEnv.CONVEX_URL = CONVEX_API_URL;
     if (session && session.userId) {
         spawnEnv.ATLAS_OTPLESS_USER_ID = session.userId;
         spawnEnv.ATLAS_ACCOUNT_EMAIL = session.email || "";
@@ -2892,7 +2899,7 @@ function registerIPC() {
 
                 console.log("[Store] Making HTTPS request to Convex...");
 
-                const req = https.request("https://zany-kudu-607.convex.cloud/api/query", {
+                const req = https.request(`${CONVEX_API_URL}/api/query`, {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json",
