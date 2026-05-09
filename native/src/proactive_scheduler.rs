@@ -6,7 +6,8 @@ use napi_derive::napi;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BinaryHeap, HashMap, VecDeque};
+use std::cmp::Reverse;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -23,6 +24,8 @@ pub struct QueuedIntent {
     pub expires_at: f64,
     pub posture_weight: f64,
     pub source_weight: f64,
+    pub scheduled_for: f64,
+    pub payload_kind: String,
 }
 
 #[napi(object)]
@@ -50,6 +53,29 @@ pub struct ReleaseResult {
     pub dropped: Vec<DropEntry>,
 }
 
+#[derive(Clone)]
+struct ScheduledIntent {
+    scheduled_for: u64,
+    intent: QueuedIntent,
+}
+
+impl PartialEq for ScheduledIntent {
+    fn eq(&self, other: &Self) -> bool {
+        self.scheduled_for == other.scheduled_for
+    }
+}
+impl Eq for ScheduledIntent {}
+impl PartialOrd for ScheduledIntent {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for ScheduledIntent {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.scheduled_for.cmp(&other.scheduled_for)
+    }
+}
+
 struct ChannelState {
     queue: VecDeque<QueuedIntent>,
     posture: PostureParams,
@@ -59,6 +85,7 @@ struct ChannelState {
     boundary_window_until_ms: f64,
     dnd_active: bool,
     recent_topic_embeddings: VecDeque<(f64, Vec<f64>)>,
+    pending_scheduled: BinaryHeap<Reverse<ScheduledIntent>>,
 }
 
 static STATE: Lazy<Arc<Mutex<HashMap<String, ChannelState>>>> =
@@ -112,6 +139,7 @@ pub fn scheduler_configure(posture: PostureParams) {
         boundary_window_until_ms: 0.0,
         dnd_active: false,
         recent_topic_embeddings: VecDeque::new(),
+        pending_scheduled: BinaryHeap::new(),
     });
     entry.posture = posture;
 }
@@ -129,6 +157,18 @@ pub fn scheduler_enqueue(intent: QueuedIntent) -> String {
         cs.day_bucket = today;
         cs.sent_today = 0;
     }
+
+    if intent.scheduled_for > 0.0 && intent.scheduled_for > now {
+        if cs.pending_scheduled.len() >= 500 {
+            return "scheduled_cap".into();
+        }
+        cs.pending_scheduled.push(Reverse(ScheduledIntent {
+            scheduled_for: intent.scheduled_for as u64,
+            intent,
+        }));
+        return "scheduled".into();
+    }
+
     let six_h_ago = now - 6.0 * 3600.0 * 1000.0;
     cs.recent_topic_embeddings.retain(|(ts, _)| *ts >= six_h_ago);
     for (_, emb) in cs.recent_topic_embeddings.iter() {
@@ -149,6 +189,25 @@ pub fn scheduler_mark_boundary(channel: String, window_ms: f64) {
 }
 
 #[napi]
+pub fn scheduler_drain_scheduled(channel: String) -> Vec<String> {
+    let mut st = STATE.lock();
+    let cs = match st.get_mut(&channel) {
+        Some(c) => c,
+        None => return vec![],
+    };
+    let now = now_ms() as u64;
+    let mut promoted = Vec::new();
+    while let Some(Reverse(top)) = cs.pending_scheduled.peek() {
+        if top.scheduled_for > now { break; }
+        let Reverse(entry) = cs.pending_scheduled.pop().unwrap();
+        let id = entry.intent.id.clone();
+        cs.queue.push_back(entry.intent);
+        promoted.push(id);
+    }
+    promoted
+}
+
+#[napi]
 pub fn scheduler_set_dnd(channel: String, active: bool) {
     let mut st = STATE.lock();
     if let Some(cs) = st.get_mut(&channel) {
@@ -156,23 +215,11 @@ pub fn scheduler_set_dnd(channel: String, active: bool) {
     }
 }
 
-#[napi]
-pub fn scheduler_try_release(channel: String) -> ReleaseResult {
-    let mut st = STATE.lock();
-    let cs = match st.get_mut(&channel) {
-        Some(c) => c,
-        None => return ReleaseResult { released: vec![], dropped: vec![] },
-    };
-    let now = now_ms();
-    let mut released: Vec<String> = Vec::new();
-    let mut dropped: Vec<DropEntry> = Vec::new();
-
-    let today = day_index(now);
-    if today != cs.day_bucket {
-        cs.day_bucket = today;
-        cs.sent_today = 0;
-    }
-
+fn _release_candidates(
+    cs: &mut ChannelState,
+    now: f64,
+    dropped: &mut Vec<DropEntry>,
+) -> Vec<QueuedIntent> {
     cs.queue.retain(|q| {
         if q.expires_at < now {
             dropped.push(DropEntry {
@@ -194,6 +241,7 @@ pub fn scheduler_try_release(channel: String) -> ReleaseResult {
 
     let p = cs.posture.clone();
     let boundary_active = now <= cs.boundary_window_until_ms;
+    let mut selected: Vec<QueuedIntent> = Vec::new();
 
     for q in sorted {
         let urgent = q.urgency == "urgent";
@@ -220,10 +268,94 @@ pub fn scheduler_try_release(channel: String) -> ReleaseResult {
         cs.last_sent_ms = now;
         cs.sent_today += 1;
         cs.recent_topic_embeddings.push_back((now, q.topic_embedding.clone()));
-        released.push(q.id);
+        selected.push(q);
     }
 
-    ReleaseResult { released, dropped }
+    selected
+}
+
+#[napi]
+pub fn scheduler_try_release(channel: String) -> ReleaseResult {
+    let mut st = STATE.lock();
+    let cs = match st.get_mut(&channel) {
+        Some(c) => c,
+        None => return ReleaseResult { released: vec![], dropped: vec![] },
+    };
+    let now = now_ms();
+    let today = day_index(now);
+    if today != cs.day_bucket {
+        cs.day_bucket = today;
+        cs.sent_today = 0;
+    }
+    let mut dropped: Vec<DropEntry> = Vec::new();
+    let selected = _release_candidates(cs, now, &mut dropped);
+    ReleaseResult {
+        released: selected.into_iter().map(|q| q.id).collect(),
+        dropped,
+    }
+}
+
+#[napi(object)]
+#[derive(Clone, Serialize, Deserialize)]
+pub struct GroupedReleaseResult {
+    pub morning_batch: Vec<String>,
+    pub singles: Vec<String>,
+    pub dropped: Vec<DropEntry>,
+}
+
+const MORNING_KINDS: &[&str] = &[
+    "calendar_today_summary",
+    "tasks_today",
+    "goals_status",
+    "weather_today",
+    "news_today",
+    "habit_anomaly",
+];
+
+fn is_morning_kind(kind: &str) -> bool {
+    MORNING_KINDS.contains(&kind)
+}
+
+#[napi]
+pub fn scheduler_release_grouped(channel: String) -> GroupedReleaseResult {
+    let mut st = STATE.lock();
+    let cs = match st.get_mut(&channel) {
+        Some(c) => c,
+        None => return GroupedReleaseResult {
+            morning_batch: vec![],
+            singles: vec![],
+            dropped: vec![],
+        },
+    };
+    let now = now_ms();
+    let today = day_index(now);
+    if today != cs.day_bucket {
+        cs.day_bucket = today;
+        cs.sent_today = 0;
+    }
+
+    let mut dropped: Vec<DropEntry> = Vec::new();
+    let selected = _release_candidates(cs, now, &mut dropped);
+
+    let mut morning: Vec<QueuedIntent> = Vec::new();
+    let mut singles_vec: Vec<QueuedIntent> = Vec::new();
+    for q in selected.into_iter() {
+        if q.mode != "review" && is_morning_kind(&q.payload_kind) {
+            morning.push(q);
+        } else {
+            singles_vec.push(q);
+        }
+    }
+
+    if morning.len() < 2 {
+        singles_vec.extend(morning.drain(..));
+    }
+
+    GroupedReleaseResult {
+        morning_batch: morning.iter().map(|q| q.id.clone()).collect(),
+        singles: singles_vec.iter().map(|q| q.id.clone()).collect(),
+        dropped,
+    }
 }
 
 #[napi]
@@ -263,6 +395,8 @@ mod tests {
             expires_at: now_ms() + 60_000.0,
             posture_weight: 1.0,
             source_weight: 1.0,
+            scheduled_for: 0.0,
+            payload_kind: String::new(),
         }
     }
 
@@ -368,5 +502,240 @@ mod tests {
         let r = scheduler_try_release("t".into());
         assert_eq!(r.released.len(), 2);
         assert_eq!(r.released[0], "urgent");
+    }
+}
+
+#[cfg(test)]
+mod tests_scheduled_fire {
+    use super::*;
+
+    fn clear_state() {
+        STATE.lock().clear();
+    }
+
+    fn mk_intent(id: &str, channel: &str, scheduled_for: f64) -> QueuedIntent {
+        QueuedIntent {
+            id: id.into(),
+            source: "test".into(),
+            mode: "fyi".into(),
+            urgency: "normal".into(),
+            channel: channel.into(),
+            topic_embedding: vec![0.0; 384],
+            created_at: 0.0,
+            expires_at: now_ms() + 3600_000.0,
+            posture_weight: 1.0,
+            source_weight: 1.0,
+            scheduled_for,
+            payload_kind: "".into(),
+        }
+    }
+
+    #[test]
+    fn enqueue_future_scheduled_goes_to_pending() {
+        clear_state();
+        scheduler_configure(PostureParams {
+            channel: "sfire_a".into(),
+            max_per_day: 10,
+            min_gap_min: 0,
+            heartbeat_min: 0,
+            boundary_only: false,
+            urgent_bypass: true,
+        });
+        let future = now_ms() + 3600_000.0;
+        let res = scheduler_enqueue(mk_intent("i1", "sfire_a", future));
+        assert_eq!(res, "scheduled");
+    }
+
+    #[test]
+    fn enqueue_zero_scheduled_takes_normal_path() {
+        clear_state();
+        scheduler_configure(PostureParams {
+            channel: "sfire_b".into(),
+            max_per_day: 10,
+            min_gap_min: 0,
+            heartbeat_min: 0,
+            boundary_only: false,
+            urgent_bypass: true,
+        });
+        let res = scheduler_enqueue(mk_intent("i1", "sfire_b", 0.0));
+        assert_eq!(res, "enqueued");
+    }
+
+    #[test]
+    fn scheduled_cap_enforced_at_500() {
+        clear_state();
+        scheduler_configure(PostureParams {
+            channel: "sfire_c".into(),
+            max_per_day: 10,
+            min_gap_min: 0,
+            heartbeat_min: 0,
+            boundary_only: false,
+            urgent_bypass: true,
+        });
+        let future = now_ms() + 3600_000.0;
+        for i in 0..500 {
+            let res = scheduler_enqueue(mk_intent(&format!("i{}", i), "sfire_c", future + i as f64));
+            assert_eq!(res, "scheduled");
+        }
+        let res = scheduler_enqueue(mk_intent("i500", "sfire_c", future + 500.0));
+        assert_eq!(res, "scheduled_cap");
+    }
+
+    #[test]
+    fn drain_before_time_returns_empty() {
+        clear_state();
+        scheduler_configure(PostureParams {
+            channel: "drain_a".into(),
+            max_per_day: 10,
+            min_gap_min: 0,
+            heartbeat_min: 0,
+            boundary_only: false,
+            urgent_bypass: true,
+        });
+        let future = now_ms() + 10.0 * 60_000.0;
+        scheduler_enqueue(mk_intent("i1", "drain_a", future));
+        let promoted = scheduler_drain_scheduled("drain_a".into());
+        assert_eq!(promoted.len(), 0);
+    }
+
+    #[test]
+    fn drain_after_time_promotes_to_queue() {
+        clear_state();
+        scheduler_configure(PostureParams {
+            channel: "drain_b".into(),
+            max_per_day: 10,
+            min_gap_min: 0,
+            heartbeat_min: 0,
+            boundary_only: false,
+            urgent_bypass: true,
+        });
+        let soon = now_ms() + 50.0;
+        scheduler_enqueue(mk_intent("i2", "drain_b", soon));
+        std::thread::sleep(std::time::Duration::from_millis(80));
+        let promoted = scheduler_drain_scheduled("drain_b".into());
+        assert_eq!(promoted, vec!["i2".to_string()]);
+    }
+
+    #[test]
+    fn drain_preserves_heap_order() {
+        clear_state();
+        scheduler_configure(PostureParams {
+            channel: "drain_c".into(),
+            max_per_day: 10,
+            min_gap_min: 0,
+            heartbeat_min: 0,
+            boundary_only: false,
+            urgent_bypass: true,
+        });
+        let base = now_ms() + 50.0;
+        scheduler_enqueue(mk_intent("late", "drain_c", base + 20.0));
+        scheduler_enqueue(mk_intent("early", "drain_c", base));
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let promoted = scheduler_drain_scheduled("drain_c".into());
+        assert_eq!(promoted, vec!["early".to_string(), "late".to_string()]);
+    }
+
+    #[test]
+    fn grouped_release_batches_morning_kinds() {
+        clear_state();
+        scheduler_configure(PostureParams {
+            channel: "grp_a".into(),
+            max_per_day: 10,
+            min_gap_min: 0,
+            heartbeat_min: 0,
+            boundary_only: false,
+            urgent_bypass: true,
+        });
+        let mut m1 = mk_intent("m1", "grp_a", 0.0);
+        m1.payload_kind = "calendar_today_summary".into();
+        m1.topic_embedding = vec![1.0; 384];
+        let mut m2 = mk_intent("m2", "grp_a", 0.0);
+        m2.payload_kind = "tasks_today".into();
+        m2.topic_embedding = {
+            let mut v = vec![0.0; 384];
+            v[0] = 1.0;
+            v
+        };
+        let mut m3 = mk_intent("m3", "grp_a", 0.0);
+        m3.payload_kind = "goals_status".into();
+        m3.topic_embedding = {
+            let mut v = vec![0.0; 384];
+            v[1] = 1.0;
+            v
+        };
+        let mut s1 = mk_intent("s1", "grp_a", 0.0);
+        s1.payload_kind = "meeting_prep".into();
+        s1.topic_embedding = {
+            let mut v = vec![0.0; 384];
+            v[2] = 1.0;
+            v
+        };
+        scheduler_enqueue(m1);
+        scheduler_enqueue(m2);
+        scheduler_enqueue(m3);
+        scheduler_enqueue(s1);
+
+        let r = scheduler_release_grouped("grp_a".into());
+        assert_eq!(r.morning_batch.len(), 3);
+        assert_eq!(r.singles.len(), 1);
+        assert_eq!(r.singles[0], "s1");
+    }
+
+    #[test]
+    fn grouped_release_demotes_single_morning_kind() {
+        clear_state();
+        scheduler_configure(PostureParams {
+            channel: "grp_b".into(),
+            max_per_day: 10,
+            min_gap_min: 0,
+            heartbeat_min: 0,
+            boundary_only: false,
+            urgent_bypass: true,
+        });
+        let mut m1 = mk_intent("only", "grp_b", 0.0);
+        m1.payload_kind = "calendar_today_summary".into();
+        m1.topic_embedding = vec![1.0; 384];
+        scheduler_enqueue(m1);
+        let r = scheduler_release_grouped("grp_b".into());
+        assert_eq!(r.morning_batch.len(), 0);
+        assert_eq!(r.singles, vec!["only".to_string()]);
+    }
+
+    #[test]
+    fn grouped_release_review_never_in_batch() {
+        clear_state();
+        scheduler_configure(PostureParams {
+            channel: "grp_c".into(),
+            max_per_day: 10,
+            min_gap_min: 0,
+            heartbeat_min: 0,
+            boundary_only: false,
+            urgent_bypass: true,
+        });
+        let mut rv = mk_intent("rv", "grp_c", 0.0);
+        rv.mode = "review".into();
+        rv.payload_kind = "habit_anomaly".into();
+        rv.topic_embedding = vec![1.0; 384];
+        let mut m1 = mk_intent("m1", "grp_c", 0.0);
+        m1.payload_kind = "tasks_today".into();
+        m1.topic_embedding = {
+            let mut v = vec![0.0; 384];
+            v[0] = 1.0;
+            v
+        };
+        let mut m2 = mk_intent("m2", "grp_c", 0.0);
+        m2.payload_kind = "goals_status".into();
+        m2.topic_embedding = {
+            let mut v = vec![0.0; 384];
+            v[1] = 1.0;
+            v
+        };
+        scheduler_enqueue(rv);
+        scheduler_enqueue(m1);
+        scheduler_enqueue(m2);
+        let r = scheduler_release_grouped("grp_c".into());
+        assert!(!r.morning_batch.contains(&"rv".to_string()));
+        assert!(r.singles.contains(&"rv".to_string()));
+        assert_eq!(r.morning_batch.len(), 2);
     }
 }

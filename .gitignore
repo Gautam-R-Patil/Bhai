@@ -86,6 +86,8 @@ desktop/hostinger-upload/
 !src/memory/resolve-embedding.test.ts
 !src/whatsapp-sweep.test.ts
 !convex/credit-cost.test.ts
+!convex/credit_cost.test.ts
+!convex/otpless.test.ts
 !src/security/secrets-sanitizer.test.ts
 !src/crypto-kdf.test.ts
 !src/tools/coding/evidence-phrase.test.ts
@@ -117,6 +119,11 @@ desktop/hostinger-upload/
 !src/utils/atomic-io.test.ts
 !src/memory/fts5-query.test.ts
 !src/proactive/dreaming-self-edit.test.ts
+!src/proactive/observer-scheduled-fire.test.ts
+!src/proactive/observer-morning-fan-in.test.ts
+!src/proactive/observer.test.ts
+!src/proactive/observer-inbox-routing.test.ts
+!src/proactive/telemetry.test.ts
 !src/context-scrubber.test.ts
 !src/voice/live/types.test.ts
 !src/voice/live/tool-bridge.test.ts
@@ -129,6 +136,30 @@ desktop/hostinger-upload/
 !src/llm-cache.toolsig.test.ts
 !src/voice/live/backends/gemini-live.test.ts
 !src/tools/spotify-cache.test.ts
+!src/proactive/sources/_shared/build-intent.test.ts
+!src/proactive/sources/_shared/calendar-fetch.test.ts
+!src/proactive/sources/_shared/tasks-fetch.test.ts
+!src/proactive/sources/_shared/gmail-stale-fetch.test.ts
+!src/proactive/sources/_shared/interest-vector.test.ts
+!src/proactive/sources/_shared/weather-fetch.test.ts
+!src/proactive/sources/_shared/news-fetch.test.ts
+!src/proactive/sources/calendar-morning.test.ts
+!src/proactive/sources/calendar-prep.test.ts
+!src/proactive/sources/meeting-followup.test.ts
+!src/proactive/sources/tasks-morning.test.ts
+!src/proactive/sources/tasks-deadline.test.ts
+!src/proactive/sources/goals-morning.test.ts
+!src/proactive/sources/habit-anomaly.test.ts
+!src/proactive/sources/weather-morning.test.ts
+!src/proactive/sources/news-morning.test.ts
+!src/proactive/sources/stale-email.test.ts
+!src/proactive/sources/deep-work-gap.test.ts
+!src/proactive/composer-morning-batch.test.ts
+!src/proactive/composer-templates.test.ts
+!src/proactive/heartbeat-wake-adaptation.test.ts
+!src/proactive/heartbeat-morning-boundary.test.ts
+!desktop/tests/
+!desktop/tests/auth-helpers.test.js
 
 # Compiled Swift helpers (built by npm run build:location / build:ocr)
 scripts/get_location_bin

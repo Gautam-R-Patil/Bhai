@@ -701,6 +701,107 @@ async function boot() {
                     (err as Error).message,
                 );
             }
+
+            // ── V3 sources (default ON; set ATLAS_PROACTIVE_V3_SOURCES=false to disable) ──
+            if (process.env.ATLAS_PROACTIVE_V3_SOURCES !== "false") {
+                const webSearch = async (query: string): Promise<string> => {
+                    try {
+                        return await executeTool("web_search", { query });
+                    } catch {
+                        return "";
+                    }
+                };
+
+                try {
+                    const { CALENDAR_MORNING } = await import("./proactive/sources/calendar-morning.js");
+                    obs.registerSource(CALENDAR_MORNING);
+                    console.log("💓 Registered source: calendar_morning (V3)");
+                } catch (err) {
+                    console.log("[BOOT] calendar_morning registration failed (non-fatal):", (err as Error).message);
+                }
+
+                try {
+                    const { CALENDAR_PREP } = await import("./proactive/sources/calendar-prep.js");
+                    obs.registerSource(CALENDAR_PREP);
+                    console.log("💓 Registered source: calendar_prep (V3)");
+                } catch (err) {
+                    console.log("[BOOT] calendar_prep registration failed (non-fatal):", (err as Error).message);
+                }
+
+                try {
+                    const { MEETING_FOLLOWUP } = await import("./proactive/sources/meeting-followup.js");
+                    obs.registerSource(MEETING_FOLLOWUP);
+                    console.log("💓 Registered source: meeting_followup (V3)");
+                } catch (err) {
+                    console.log("[BOOT] meeting_followup registration failed (non-fatal):", (err as Error).message);
+                }
+
+                try {
+                    const { TASKS_MORNING } = await import("./proactive/sources/tasks-morning.js");
+                    obs.registerSource(TASKS_MORNING);
+                    console.log("💓 Registered source: tasks_morning (V3)");
+                } catch (err) {
+                    console.log("[BOOT] tasks_morning registration failed (non-fatal):", (err as Error).message);
+                }
+
+                try {
+                    const { TASKS_DEADLINE } = await import("./proactive/sources/tasks-deadline.js");
+                    obs.registerSource(TASKS_DEADLINE);
+                    console.log("💓 Registered source: tasks_deadline (V3)");
+                } catch (err) {
+                    console.log("[BOOT] tasks_deadline registration failed (non-fatal):", (err as Error).message);
+                }
+
+                try {
+                    const { GOALS_MORNING } = await import("./proactive/sources/goals-morning.js");
+                    obs.registerSource(GOALS_MORNING);
+                    console.log("💓 Registered source: goals_morning (V3)");
+                } catch (err) {
+                    console.log("[BOOT] goals_morning registration failed (non-fatal):", (err as Error).message);
+                }
+
+                try {
+                    const { HABIT_ANOMALY } = await import("./proactive/sources/habit-anomaly.js");
+                    obs.registerSource(HABIT_ANOMALY);
+                    console.log("💓 Registered source: habit_anomaly (V3)");
+                } catch (err) {
+                    console.log("[BOOT] habit_anomaly registration failed (non-fatal):", (err as Error).message);
+                }
+
+                try {
+                    const { makeWeatherMorningSource } = await import("./proactive/sources/weather-morning.js");
+                    obs.registerSource(makeWeatherMorningSource({ llm, webSearch }));
+                    console.log("💓 Registered source: weather_morning (V3)");
+                } catch (err) {
+                    console.log("[BOOT] weather_morning registration failed (non-fatal):", (err as Error).message);
+                }
+
+                try {
+                    const { makeNewsMorningSource } = await import("./proactive/sources/news-morning.js");
+                    obs.registerSource(makeNewsMorningSource({ llm, webSearch }));
+                    console.log("💓 Registered source: news_morning (V3)");
+                } catch (err) {
+                    console.log("[BOOT] news_morning registration failed (non-fatal):", (err as Error).message);
+                }
+
+                try {
+                    const { STALE_EMAIL } = await import("./proactive/sources/stale-email.js");
+                    obs.registerSource(STALE_EMAIL);
+                    console.log("💓 Registered source: stale_email (V3)");
+                } catch (err) {
+                    console.log("[BOOT] stale_email registration failed (non-fatal):", (err as Error).message);
+                }
+
+                try {
+                    const { DEEP_WORK_GAP } = await import("./proactive/sources/deep-work-gap.js");
+                    obs.registerSource(DEEP_WORK_GAP);
+                    console.log("💓 Registered source: deep_work_gap (V3)");
+                } catch (err) {
+                    console.log("[BOOT] deep_work_gap registration failed (non-fatal):", (err as Error).message);
+                }
+            } else {
+                console.log("💓 V3 sources disabled (ATLAS_PROACTIVE_V3_SOURCES=false)");
+            }
         } catch (err) {
             console.log("[BOOT] Observer init failed (non-fatal):", (err as Error).message);
         }

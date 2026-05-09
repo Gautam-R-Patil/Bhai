@@ -124,3 +124,140 @@ pub fn is_habit_due(habit: DetectedHabit, current_hour: f64, current_day: u32) -
     let day_match = habit.typical_day.map_or(true, |d| d == current_day);
     hour_match && day_match
 }
+
+#[napi(object)]
+#[derive(Clone, Serialize, Deserialize)]
+pub struct HabitEvent {
+    pub event_type: String,
+    pub ts_ms: f64,
+}
+
+#[napi(object)]
+#[derive(Clone, Serialize, Deserialize)]
+pub struct HabitAnomaly {
+    pub event_type: String,
+    pub expected_hour: u32,
+    pub last_seen_days_ago: u32,
+    pub confidence: f64,
+}
+
+#[napi]
+pub fn habit_detect_anomalies(
+    habits: Vec<DetectedHabit>,
+    recent_events: Vec<HabitEvent>,
+    now_ms: f64,
+) -> Vec<HabitAnomaly> {
+    let now_hour = ((now_ms / 1000.0 / 3600.0) as u32) % 24;
+    let six_h_ago = now_ms - 6.0 * 3600.0 * 1000.0;
+    let mut out = Vec::new();
+
+    for habit in habits.iter() {
+        let hour_diff = {
+            let d = (habit.typical_hour as i32 - now_hour as i32).abs();
+            d.min(24 - d)
+        };
+        if hour_diff > 1 { continue; }
+
+        let seen = recent_events.iter().any(|e| {
+            e.event_type == habit.event_type && e.ts_ms >= six_h_ago
+        });
+        if seen { continue; }
+
+        let proximity = 1.0 - (hour_diff as f64) * 0.5;
+        let confidence = habit.confidence * proximity;
+        if confidence < 0.3 { continue; }
+
+        let last_ts = recent_events
+            .iter()
+            .filter(|e| e.event_type == habit.event_type)
+            .map(|e| e.ts_ms)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let days_ago = if last_ts.is_finite() {
+            ((now_ms - last_ts) / 86_400_000.0) as u32
+        } else {
+            99
+        };
+
+        out.push(HabitAnomaly {
+            event_type: habit.event_type.clone(),
+            expected_hour: habit.typical_hour as u32,
+            last_seen_days_ago: days_ago,
+            confidence,
+        });
+    }
+
+    out
+}
+
+#[cfg(test)]
+mod tests_anomaly {
+    use super::*;
+
+    fn make_habit(event_type: &str, typical_hour: f64, confidence: f64) -> DetectedHabit {
+        DetectedHabit {
+            event_type: event_type.into(),
+            pattern: "daily_morning".into(),
+            typical_hour,
+            typical_day: None,
+            frequency: 10,
+            consistency: 0.9,
+            confidence,
+            next_expected_ms: 0.0,
+        }
+    }
+
+    #[test]
+    fn anomaly_fires_within_1h_of_typical_hour_when_no_recent_event() {
+        // now_ms at hour=9 exactly: 9 * 3600 * 1000 = 32_400_000
+        let now_ms = 9.0 * 3600_000.0;
+        let habits = vec![make_habit("morning_run", 9.0, 0.8)];
+        let result = habit_detect_anomalies(habits, vec![], now_ms);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].event_type, "morning_run");
+        assert_eq!(result[0].expected_hour, 9);
+        assert_eq!(result[0].last_seen_days_ago, 99);
+    }
+
+    #[test]
+    fn anomaly_suppressed_when_recent_event_matches_type() {
+        let now_ms = 9.0 * 3600_000.0;
+        let habits = vec![make_habit("morning_run", 9.0, 0.8)];
+        let recent_events = vec![HabitEvent {
+            event_type: "morning_run".into(),
+            ts_ms: now_ms - 1.0 * 3600_000.0, // 1h ago, within 6h window
+        }];
+        let result = habit_detect_anomalies(habits, recent_events, now_ms);
+        assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn anomaly_handles_midnight_wrap_around() {
+        // Habit at 23:00, now at 00:00 (1 circular hour later) — should fire.
+        // UTC midnight is epoch multiples of 86_400_000.
+        let now_ms = 86_400_000.0 * 1000.0; // day 1000, 00:00 UTC → now_hour = 0
+
+        let habit = DetectedHabit {
+            event_type: "coding".into(),
+            pattern: "daily".into(),
+            typical_hour: 23.0,
+            typical_day: None,
+            frequency: 5,
+            consistency: 0.9,
+            confidence: 0.9,
+            next_expected_ms: 0.0,
+        };
+
+        let recent = vec![];
+        let anomalies = habit_detect_anomalies(vec![habit], recent, now_ms);
+        assert_eq!(anomalies.len(), 1, "habit at 23:00 should fire at 00:00");
+    }
+
+    #[test]
+    fn anomaly_suppressed_when_outside_1h_window() {
+        // now_ms at hour=11 (typical_hour=9, diff=2 > 1)
+        let now_ms = 11.0 * 3600_000.0;
+        let habits = vec![make_habit("morning_run", 9.0, 0.8)];
+        let result = habit_detect_anomalies(habits, vec![], now_ms);
+        assert_eq!(result.len(), 0);
+    }
+}

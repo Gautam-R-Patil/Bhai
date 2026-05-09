@@ -37,6 +37,7 @@ const SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.send",
     "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/tasks",
 ];
 
 interface GoogleAccount {
@@ -585,6 +586,48 @@ export const googleCalendarTool: ToolDefinition = {
     },
 };
 
+export async function listCalendarEventsRaw(params: {
+    timeMin: string;
+    timeMax: string;
+    maxResults?: number;
+}): Promise<Array<{
+    id: string;
+    summary: string;
+    start: { dateTime?: string; date?: string };
+    end: { dateTime?: string; date?: string };
+    location?: string;
+    attendees?: Array<{ email?: string }>;
+}>> {
+    const accountsToQuery = Array.from(accounts.values());
+    const allEvents: any[] = [];
+    for (const acc of accountsToQuery) {
+        try {
+            const calendar = google.calendar({ version: "v3", auth: acc.client });
+            const res = await calendar.events.list({
+                calendarId: "primary",
+                timeMin: params.timeMin,
+                timeMax: params.timeMax,
+                maxResults: params.maxResults ?? 25,
+                singleEvents: true,
+                orderBy: "startTime",
+            });
+            for (const ev of res.data.items ?? []) {
+                allEvents.push({
+                    id: ev.id ?? "",
+                    summary: ev.summary ?? "(untitled)",
+                    start: ev.start ?? {},
+                    end: ev.end ?? {},
+                    location: ev.location ?? undefined,
+                    attendees: ev.attendees ?? undefined,
+                });
+            }
+        } catch {
+            // One account's failure doesn't block others.
+        }
+    }
+    return allEvents;
+}
+
 // ═══════════════════════════════════════════════
 // Tool: Gmail
 // ═══════════════════════════════════════════════
@@ -864,6 +907,132 @@ export const gmailTool: ToolDefinition = {
         }
     },
 };
+
+// ═══════════════════════════════════════════════
+// Raw export: Google Tasks
+// ═══════════════════════════════════════════════
+
+export async function listGoogleTasksRaw(params: {
+    showCompleted?: boolean;
+    dueMax?: string;
+}): Promise<Array<{
+    id: string;
+    title: string;
+    due?: string;
+    status: "needsAction" | "completed";
+}>> {
+    const accountsToQuery = Array.from(accounts.values());
+    const allTasks: any[] = [];
+    for (const acc of accountsToQuery) {
+        try {
+            const tasks = google.tasks({ version: "v1", auth: acc.client });
+            const res = await tasks.tasks.list({
+                tasklist: "@default",
+                showCompleted: params.showCompleted ?? false,
+                dueMax: params.dueMax,
+                maxResults: 100,
+            });
+            for (const t of res.data.items ?? []) {
+                allTasks.push({
+                    id: t.id ?? "",
+                    title: t.title ?? "(untitled)",
+                    due: t.due ?? undefined,
+                    status: (t.status as "needsAction" | "completed") ?? "needsAction",
+                });
+            }
+        } catch {
+            // Graceful degradation: scope missing or API down → empty result for this account.
+        }
+    }
+    return allTasks;
+}
+
+// ═══════════════════════════════════════════════
+// Raw export: Gmail stale emails + engaged senders
+// ═══════════════════════════════════════════════
+
+export async function listStaleEmailsRaw(): Promise<Array<{
+    id: string;
+    from: string;
+    subject: string;
+    received_ms: number;
+    is_important: boolean;
+    thread_msg_count: number;
+}>> {
+    const accountsToQuery = Array.from(accounts.values());
+    const all: any[] = [];
+    for (const acc of accountsToQuery) {
+        try {
+            const gmail = google.gmail({ version: "v1", auth: acc.client });
+            const listRes = await gmail.users.messages.list({
+                userId: "me",
+                q: "(is:unread OR is:important) older_than:3d -from:me",
+                maxResults: 20,
+            });
+            const messages = listRes.data.messages ?? [];
+            for (const m of messages) {
+                if (!m.id) continue;
+                const meta = await gmail.users.messages.get({
+                    userId: "me",
+                    id: m.id,
+                    format: "metadata",
+                    metadataHeaders: ["From", "Subject", "Date"],
+                });
+                const headers = meta.data.payload?.headers ?? [];
+                const fromHdr = headers.find(h => h.name?.toLowerCase() === "from")?.value ?? "";
+                const subjHdr = headers.find(h => h.name?.toLowerCase() === "subject")?.value ?? "";
+                const dateHdr = headers.find(h => h.name?.toLowerCase() === "date")?.value ?? "";
+                const labels = meta.data.labelIds ?? [];
+                all.push({
+                    id: m.id,
+                    from: fromHdr,
+                    subject: subjHdr,
+                    received_ms: dateHdr ? Date.parse(dateHdr) : 0,
+                    is_important: labels.includes("IMPORTANT"),
+                    thread_msg_count: 1,
+                });
+            }
+        } catch {
+            // Graceful degradation
+        }
+    }
+    return all;
+}
+
+export async function getEngagedSenders(): Promise<string[]> {
+    const accountsToQuery = Array.from(accounts.values());
+    const senders = new Set<string>();
+    for (const acc of accountsToQuery) {
+        try {
+            const gmail = google.gmail({ version: "v1", auth: acc.client });
+            const listRes = await gmail.users.messages.list({
+                userId: "me",
+                q: "from:me newer_than:30d",
+                maxResults: 100,
+            });
+            const messages = listRes.data.messages ?? [];
+            for (const m of messages.slice(0, 50)) {
+                if (!m.id) continue;
+                try {
+                    const meta = await gmail.users.messages.get({
+                        userId: "me",
+                        id: m.id,
+                        format: "metadata",
+                        metadataHeaders: ["To"],
+                    });
+                    const to = meta.data.payload?.headers?.find(h => h.name?.toLowerCase() === "to")?.value ?? "";
+                    const emails = to.match(/[\w.+-]+@[\w-]+\.[\w.-]+/g) ?? [];
+                    for (const e of emails) senders.add(e.toLowerCase());
+                } catch {
+                    // skip this message
+                }
+            }
+        } catch {
+            // skip this account
+        }
+    }
+    return Array.from(senders);
+}
 
 // ═══════════════════════════════════════════════
 // Initialize on boot

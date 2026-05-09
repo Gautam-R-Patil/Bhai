@@ -400,9 +400,14 @@ export declare function isDomainAllowed(domain: string): boolean
 export declare function addAllowedDomain(domain: string): void
 /** Add a protected path */
 export declare function addProtectedPath(dirPath: string): void
-/** AES-256-GCM encrypt. Returns "iv_hex:tag_hex:ciphertext_hex" */
+/** AES-256-GCM encrypt. Returns "v<version>:iv_hex:tag_hex:ciphertext_hex". */
 export declare function aesEncrypt(plaintext: string, masterKey: string): string
-/** AES-256-GCM decrypt. Input format: "iv_hex:tag_hex:ciphertext_hex" */
+/**
+ * AES-256-GCM decrypt. Accepts both
+ *   "v2:iv_hex:tag_hex:ciphertext_hex"  (new)
+ *   "iv_hex:tag_hex:ciphertext_hex"     (legacy v1, no prefix)
+ * The version determines which scrypt params are used for key derivation.
+ */
 export declare function aesDecrypt(encrypted: string, masterKey: string): string
 /**
  * Anti-tampering: check if a debugger is attached.
@@ -2479,6 +2484,8 @@ export interface QueuedIntent {
   expiresAt: number
   postureWeight: number
   sourceWeight: number
+  scheduledFor: number
+  payloadKind: string
 }
 export interface PostureParams {
   channel: string
@@ -2499,8 +2506,15 @@ export interface ReleaseResult {
 export declare function schedulerConfigure(posture: PostureParams): void
 export declare function schedulerEnqueue(intent: QueuedIntent): string
 export declare function schedulerMarkBoundary(channel: string, windowMs: number): void
+export declare function schedulerDrainScheduled(channel: string): Array<string>
 export declare function schedulerSetDnd(channel: string, active: boolean): void
 export declare function schedulerTryRelease(channel: string): ReleaseResult
+export interface GroupedReleaseResult {
+  morningBatch: Array<string>
+  singles: Array<string>
+  dropped: Array<DropEntry>
+}
+export declare function schedulerReleaseGrouped(channel: string): GroupedReleaseResult
 export declare function schedulerDebugState(channel: string): string
 export interface MonitorRuleRust {
   id: string
@@ -2523,6 +2537,12 @@ export declare function monitorDeleteRule(id: string): void
 export declare function monitorCount(): number
 export declare function monitorCheck(msgEmbedding: Array<number>, channel: string, sender: string, nowMs: number): Array<RuleHit>
 export declare function monitorMarkFired(id: string, tsMs: number): void
+export interface GateResult {
+  mayRun: boolean
+  nextEligibleMs: number
+}
+export declare function sourceGateCheck(source: string, minGapSec: number): GateResult
+export declare function sourceGateReset(source: string): void
 /** A candidate DOM element passed in from TypeScript after browser_scan */
 export interface ElementCandidate {
   label: number

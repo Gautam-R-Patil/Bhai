@@ -15,7 +15,8 @@ export type BoundaryEventKind =
     | "screen_lock"
     | "screen_unlock"
     | "meeting_end"
-    | "typing_stopped";
+    | "typing_stopped"
+    | "morning_window";
 
 export type BoundaryEvent = {
     kind: BoundaryEventKind;

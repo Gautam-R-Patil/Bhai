@@ -87,14 +87,7 @@ contextBridge.exposeInMainWorld("atlas", {
         ipcRenderer.on("account-status-change", (_, data) => callback(data));
     },
 
-    // ── OTPless Auth Popup ──────────────────────────────
-    // Opens a secure popup BrowserWindow loading the Hostinger-hosted auth page.
-    // OTPless SDK runs on a real HTTPS domain (no file:// restriction).
     openAuthWindow: () => ipcRenderer.invoke("window:openAuth"),
-
-    // ── Fallback SMS OTP (fast2sms) ─────────────────────
-    otpSend: (phone, countryCode) => ipcRenderer.invoke("otp:send", { phone, countryCode }),
-    otpVerify: (phone, countryCode, otp, orderId) => ipcRenderer.invoke("otp:verify", { phone, countryCode, otp, orderId }),
 
     // ── Auto-Updater ────────────────────────────────────
     checkForUpdates: () => ipcRenderer.invoke("update:check"),

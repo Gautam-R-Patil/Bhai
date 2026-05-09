@@ -16,7 +16,7 @@ import {
     type ProactiveConfig,
     type Posture,
 } from "./config.js";
-import { compose } from "./composer.js";
+import { compose, composeMorningBatch } from "./composer.js";
 import { dispatchProactiveMessage } from "./dispatch.js";
 import { globalBoundaryBus, type BoundaryEvent } from "./boundary-events.js";
 import {
@@ -42,6 +42,16 @@ const SOURCE_WEIGHTS: Record<IntentSource, number> = {
     convex_notification: 0.8,
     env_context: 0.8,
     memory_anticipation: 0.7,
+    // V3
+    calendar_prep: 1.4,
+    tasks_deadline: 1.3,
+    calendar_morning: 1.1,
+    tasks_morning: 1.0,
+    stale_email: 0.9,
+    deep_work_gap: 0.8,
+    goals_morning: 0.7,
+    weather_morning: 0.6,
+    news_morning: 0.5,
 };
 
 const BOUNDARY_WINDOW_MS = 120_000;          // 2-minute window after a boundary
@@ -172,9 +182,11 @@ export class Observer {
             expiresAt: intent.expiresAt,
             postureWeight,
             sourceWeight,
+            scheduledFor: intent.scheduledFor ?? 0,
+            payloadKind: intent.payloadKind ?? (intent.payload?.kind as string) ?? "",
         });
         debugProactive("observer_enqueued", { id: intent.id, channel, res });
-        if (res !== "enqueued") {
+        if (res !== "enqueued" && res !== "scheduled") {
             this.intentsById.delete(intent.id);
             this.telemetry().log({
                 intentId: intent.id,
@@ -189,7 +201,8 @@ export class Observer {
             intentId: intent.id,
             source: intent.source,
             channel,
-            decision: "enqueued",
+            decision: res === "scheduled" ? "scheduled" : "enqueued",
+            ...(res === "scheduled" && intent.scheduledFor ? { scheduledFor: intent.scheduledFor } : {}),
         });
         return true;
     }
@@ -211,6 +224,18 @@ export class Observer {
     }
 
     async tickAll(): Promise<void> {
+        // 0. Drain wall-clock scheduled intents (V3)
+        for (const ch of ALL_CHANNELS) {
+            try {
+                const promoted = native.schedulerDrainScheduled(ch);
+                if (promoted.length > 0) {
+                    debugProactive("observer_drained_scheduled", { ch, count: promoted.length });
+                }
+            } catch (err) {
+                debugProactive("observer_drain_err", { ch, err: (err as Error).message });
+            }
+        }
+
         // 1. Collect new intents from all registered sources
         try {
             const intents = await this.registry.collectAll({ now: Date.now() });
@@ -229,8 +254,9 @@ export class Observer {
     }
 
     private async releaseChannel(channel: Channel): Promise<void> {
-        const r = native.schedulerTryRelease(channel);
+        const r = native.schedulerReleaseGrouped(channel);
         if (!r) return;
+
         for (const d of r.dropped) {
             debugProactive("observer_dropped", { id: d.id, reason: d.reason });
             const droppedIntent = this.intentsById.get(d.id);
@@ -243,7 +269,54 @@ export class Observer {
             });
             this.intentsById.delete(d.id);
         }
-        for (const id of r.released) {
+
+        const morningBatchIds: string[] = r.morningBatch ?? [];
+        const singleIds: string[] = r.singles ?? [];
+
+        const recent = this.recentSendsByChannel.get(channel) ?? [];
+
+        if (morningBatchIds.length >= 2) {
+            const intents: ProactiveIntent[] = [];
+            for (const id of morningBatchIds) {
+                const intent = this.intentsById.get(id);
+                if (intent) intents.push(intent);
+            }
+            if (intents.length > 0) {
+                try {
+                    const composed = await composeMorningBatch(intents, channel, recent, { llm: this.deps.llm });
+                    if (composed) {
+                        await dispatchProactiveMessage(channel, composed.text, composed.modeTag);
+                        this.telemetry().log({
+                            intentId: intents[0].id,
+                            source: intents[0].source,
+                            channel,
+                            decision: "dispatched",
+                            dispatchedAt: Date.now(),
+                            batchIds: intents.map((i) => i.id),
+                        });
+                        const updated = [composed.text, ...recent].slice(0, RECENT_SENDS_PER_CHANNEL);
+                        this.recentSendsByChannel.set(channel, updated);
+                    } else {
+                        for (const intent of intents) {
+                            this.telemetry().log({
+                                intentId: intent.id,
+                                source: intent.source,
+                                channel,
+                                decision: "dropped",
+                                dropReason: "compose_failed",
+                            });
+                        }
+                    }
+                } catch (err) {
+                    debugProactive("observer_morning_batch_failed", { channel, err: (err as Error).message });
+                } finally {
+                    for (const intent of intents) this.intentsById.delete(intent.id);
+                }
+            }
+        }
+
+        // Singles — compose + dispatch individually (V2 per-intent logic preserved)
+        for (const id of singleIds) {
             const intent = this.intentsById.get(id);
             if (!intent) continue;
             this.telemetry().log({
@@ -252,9 +325,9 @@ export class Observer {
                 channel,
                 decision: "released",
             });
-            const recent = this.recentSendsByChannel.get(channel) ?? [];
+            const intentRecent = this.recentSendsByChannel.get(channel) ?? [];
             try {
-                const composed = await compose(intent, channel, { tone: "warm" }, recent, { llm: this.deps.llm });
+                const composed = await compose(intent, channel, { tone: "warm" }, intentRecent, { llm: this.deps.llm });
                 if (!composed) {
                     this.telemetry().log({
                         intentId: intent.id,
@@ -299,7 +372,7 @@ export class Observer {
                     decision: "dispatched",
                     dispatchedAt: Date.now(),
                 });
-                const updated = [composed.text, ...recent].slice(0, RECENT_SENDS_PER_CHANNEL);
+                const updated = [composed.text, ...(this.recentSendsByChannel.get(channel) ?? [])].slice(0, RECENT_SENDS_PER_CHANNEL);
                 this.recentSendsByChannel.set(channel, updated);
             } catch (err) {
                 debugProactive("observer_dispatch_failed", { id, channel, err: (err as Error).message });

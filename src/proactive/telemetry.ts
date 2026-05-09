@@ -17,7 +17,7 @@
 import type Database from "better-sqlite3";
 import type { IntentSource, Channel } from "./intent.js";
 
-export type Decision = "enqueued" | "dropped" | "released" | "dispatched";
+export type Decision = "enqueued" | "dropped" | "released" | "dispatched" | "scheduled";
 export type Sentiment = "positive" | "neutral" | "negative";
 
 export type ProactiveOutcome = {
@@ -27,6 +27,8 @@ export type ProactiveOutcome = {
     decision: Decision;
     dropReason?: string;
     dispatchedAt?: number;
+    scheduledFor?: number;
+    batchIds?: string[];
     userReplied?: boolean;
     userReplyLatencyMs?: number;
     userReplySentiment?: Sentiment;
@@ -55,8 +57,9 @@ export class TelemetryLogger {
                     `INSERT INTO proactive_outcomes (
                         intent_id, source, channel, decision, drop_reason,
                         dispatched_at, user_replied, user_reply_latency_ms,
-                        user_reply_sentiment, user_marked_useful, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        user_reply_sentiment, user_marked_useful, created_at,
+                        scheduled_for, batch_ids
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 )
                 .run(
                     o.intentId,
@@ -70,6 +73,8 @@ export class TelemetryLogger {
                     o.userReplySentiment ?? null,
                     o.userMarkedUseful == null ? null : (o.userMarkedUseful ? 1 : 0),
                     Date.now(),
+                    o.scheduledFor ?? null,
+                    o.batchIds ? JSON.stringify(o.batchIds) : null,
                 );
         } catch {
             // Best-effort — never break the caller.
@@ -94,11 +99,12 @@ export class TelemetryLogger {
             .all(...args) as Array<{ decision: string; n: number }>;
 
         const result: Record<Decision, number> = {
-            enqueued: 0, dropped: 0, released: 0, dispatched: 0,
+            enqueued: 0, dropped: 0, released: 0, dispatched: 0, scheduled: 0,
         };
         for (const r of rows) {
             if (r.decision === "enqueued" || r.decision === "dropped" ||
-                r.decision === "released" || r.decision === "dispatched") {
+                r.decision === "released" || r.decision === "dispatched" ||
+                r.decision === "scheduled") {
                 result[r.decision] = r.n;
             }
         }
