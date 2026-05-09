@@ -486,6 +486,7 @@ async function executeAndProcessToolCall(
     onToolRequest?: (request: { capability: string; reason: string }) => Promise<string>,
     userMessage?: string,
     toolAllowlist?: string[],
+    channelContext?: ChannelContext,
 ): Promise<ToolCallResult> {
     const fnName = toolCall.function.name;
     let fnArgs: Record<string, unknown> = {};
@@ -508,9 +509,13 @@ async function executeAndProcessToolCall(
         };
     }
 
-    // Inject original user prompt for tools that support continuation (e.g. deep_research)
+    // Inject original user prompt + caller channel context for tools that support
+    // continuation (e.g. deep_research). The continuation re-invokes runAgent in a
+    // background .then() block; without channelContext it would run as a non-owner
+    // and tools that gate on owner identity would refuse.
     if (fnName === "deep_research" && userMessage) {
         fnArgs._originalPrompt = userMessage;
+        if (channelContext) fnArgs._channelContext = channelContext;
     }
 
     // ── Handle request_tools meta-tool (bidirectional router communication) ──
@@ -656,6 +661,7 @@ async function executeToolCallsBatch(
         onToolRequest?: (request: { capability: string; reason: string }) => Promise<string>;
         userMessage?: string;
         toolAllowlist?: string[];
+        channelContext?: ChannelContext;
     },
 ): Promise<ToolCallResult[]> {
     // Separate browser, non-browser, and deferrable tool calls while preserving order
@@ -681,7 +687,7 @@ async function executeToolCallsBatch(
     for (const tc of deferrableCalls) {
         console.log(`  🔧 Tool call: ${tc.function.name} (deferred)`, tc.function.arguments?.substring(0, 200));
         // Track the promise to prevent unhandled rejections
-        const promise = executeAndProcessToolCall(tc, ctx.onToolRequest, ctx.userMessage, ctx.toolAllowlist)
+        const promise = executeAndProcessToolCall(tc, ctx.onToolRequest, ctx.userMessage, ctx.toolAllowlist, ctx.channelContext)
             .then((r) => {
                 const preview = r.result ? r.result.substring(0, 200) : "(empty)";
                 console.log(`  ✅ Deferred tool ${r.fnName} completed: ${preview}`);
@@ -699,7 +705,7 @@ async function executeToolCallsBatch(
             ? Promise.race([
                   Promise.all(
                       nonBrowserCalls.map((tc) =>
-                          executeAndProcessToolCall(tc, ctx.onToolRequest, ctx.userMessage, ctx.toolAllowlist),
+                          executeAndProcessToolCall(tc, ctx.onToolRequest, ctx.userMessage, ctx.toolAllowlist, ctx.channelContext),
                       ),
                   ),
                   new Promise<ToolCallResult[]>((_, reject) =>
@@ -734,7 +740,7 @@ async function executeToolCallsBatch(
         const milestone = getMilestoneMessage(tc.function.name, fnArgs);
         if (milestone) await ctx.sendProgress(milestone);
 
-        const r = await executeAndProcessToolCall(tc, ctx.onToolRequest, undefined, ctx.toolAllowlist);
+        const r = await executeAndProcessToolCall(tc, ctx.onToolRequest, undefined, ctx.toolAllowlist, ctx.channelContext);
         browserResults.push(r);
 
         // Track browser step immediately
@@ -1856,6 +1862,21 @@ STRATEGY: Execute in as few tool calls as possible.
                 // [Music Memory Hint] if the user used a possessive query.
             }
 
+            // ── Deep research awareness ──
+            // Surface running/recent/interrupted background researches so the
+            // agent never starts a duplicate, knows which ids it can reference
+            // without calling check_deep_research, and can report status when
+            // asked.
+            try {
+                const { getResearchStatusSnippet } = await import("./research/index.js");
+                const researchSnippet = await getResearchStatusSnippet();
+                if (researchSnippet) {
+                    activeInjection = `${activeInjection || ""}${activeInjection ? "\n\n" : ""}[Background Research Status]\n${researchSnippet}`;
+                }
+            } catch (err) {
+                console.warn("[AGENT] research status snippet failed:", (err as Error).message);
+            }
+
             // For simple casual messages, add a nudge for extra natural tone
             if (modelHint === "simple") {
                 const casualNudge = `\n\n[CASUAL MODE — this is a simple/casual message. Respond like you're texting a close friend. Be spontaneous, not formulaic. Don't pad your response. If 2 words is enough, send 2 words. Match their energy exactly. Don't try to be impressive or add observations just to fill space.]`;
@@ -2766,6 +2787,7 @@ PLAN:`,
                 },
                 userMessage,
                 toolAllowlist,
+                channelContext,
             },
         );
         totalToolCalls += batchResults.length;

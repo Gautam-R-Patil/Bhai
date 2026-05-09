@@ -4,11 +4,18 @@
 
 import type { ToolDefinition } from "../tools/get-current-time.js";
 import type { LLMClient } from "../llm.js";
-import type { ActiveResearch, NotifyFn } from "./types.js";
+import type { ChannelContext } from "../agent.js";
+import type { ActiveResearch, NotifyFn, ResearchIndexEntry } from "./types.js";
 import { PROFILES } from "./profiles.js";
 import { executeDeepResearch } from "./executor.js";
 import { multiEngineSearch } from "./engines.js";
 import type { SearchResult } from "./types.js";
+import {
+    upsertIndexEntry,
+    getIndexEntry,
+    listIndex,
+    recoverInterruptedResearches,
+} from "./persistence.js";
 
 // ── State ────────────────────────────────────
 
@@ -18,29 +25,77 @@ let _telegramNotifier: ((msg: string) => Promise<void>) | null = null;
 let _overlayProgress: ((msg: string) => Promise<void>) | null = null;
 
 const activeResearches = new Map<string, ActiveResearch>();
-const pendingFollowUps = new Map<string, { originalPrompt: string; remainingTasks: string }>();
 let researchCounter = 0;
 
-// ── Memory Leak Prevention: periodic cleanup of completed/failed research entries ──
-const RESEARCH_CLEANUP_AGE_MS = 30 * 60 * 1000; // 30 minutes
+// In-memory cap. Index file is the durable record; the Map only tracks what's
+// hot enough that we want sub-millisecond access for live phase/source counters.
+const ACTIVE_MAP_CAP = 100;
+const INDEX_HEARTBEAT_MS = 30_000;
 
-function cleanupStaleResearches(): void {
-    const now = Date.now();
-    for (const [id, research] of activeResearches) {
-        if (research.status === "completed" || research.status === "failed" || research.status === "cancelled") {
-            const updatedAt = new Date(research.updatedAt).getTime();
-            if (now - updatedAt > RESEARCH_CLEANUP_AGE_MS) {
-                activeResearches.delete(id);
-                pendingFollowUps.delete(id);
-                console.log(`[RESEARCH] 🧹 Cleaned up stale research: ${id} (${research.status})`);
-            }
-        }
+function syncActiveToIndex(research: ActiveResearch): Promise<void> {
+    const startedMs = new Date(research.startedAt).getTime();
+    const updatedMs = new Date(research.updatedAt).getTime();
+    const isTerminal = research.status !== "running";
+    const entry: ResearchIndexEntry = {
+        id: research.id,
+        topic: research.topic,
+        profile: research.profile,
+        status: research.status,
+        startedAt: research.startedAt,
+        updatedAt: research.updatedAt,
+        sourcesProcessed: research.sourcesProcessed,
+        findingsCount: research.findingsCount,
+        reportFile: research.reportFile || undefined,
+        originalPrompt: research.originalPrompt,
+        error: research.error,
+        completedAt: isTerminal ? research.updatedAt : undefined,
+        durationSec: isTerminal ? Math.max(0, Math.round((updatedMs - startedMs) / 1000)) : undefined,
+    };
+    return upsertIndexEntry(entry).catch(err => {
+        console.warn(`[RESEARCH] index sync failed for ${research.id}:`, (err as Error).message);
+    });
+}
+
+function purgeMapToCap(): void {
+    if (activeResearches.size <= ACTIVE_MAP_CAP) return;
+    const sorted = Array.from(activeResearches.values()).sort(
+        (a, b) => new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime(),
+    );
+    const drop = activeResearches.size - ACTIVE_MAP_CAP;
+    for (let i = 0; i < drop; i++) {
+        const r = sorted[i];
+        if (r.status === "running") continue; // never evict live researches
+        activeResearches.delete(r.id);
     }
 }
 
-// Run cleanup every 30 minutes
-const _researchCleanupInterval = setInterval(cleanupStaleResearches, 30 * 60 * 1000);
-_researchCleanupInterval.unref(); // Don't prevent process exit
+// Heartbeat: every 30s, mirror in-flight running research progress (sources,
+// findings, updatedAt) to the index. Without this, recoverInterruptedResearches
+// might mark long-running standard/deep research as interrupted on next boot.
+const _indexHeartbeat = setInterval(() => {
+    for (const r of activeResearches.values()) {
+        if (r.status === "running") {
+            r.updatedAt = new Date().toISOString();
+            void syncActiveToIndex(r);
+        }
+    }
+    purgeMapToCap();
+}, INDEX_HEARTBEAT_MS);
+_indexHeartbeat.unref();
+
+// Boot-time recovery: any research marked "running" in the index whose
+// updatedAt is stale was killed by a process restart. Mark it interrupted.
+// Call this from src/index.ts at boot.
+let _initialized = false;
+export async function initDeepResearch(): Promise<void> {
+    if (_initialized) return;
+    _initialized = true;
+    try {
+        await recoverInterruptedResearches();
+    } catch (err) {
+        console.warn(`[RESEARCH] Boot recovery failed:`, (err as Error).message);
+    }
+}
 
 // ── Public API (keep backward-compatible) ────
 
@@ -53,6 +108,15 @@ export function clearOverlayResearchProgress(): void { _overlayProgress = null; 
 
 // Re-export for web-search.ts compatibility
 export { multiEngineSearch, type SearchResult };
+
+// ── Prompt Injection Defense ─────────────────
+// Original user prompts are interpolated into triple-quote-fenced blocks in the
+// synthesis + contact + continuation prompts. A user prompt containing `"""`
+// would close the fence and resume as instructions to the LLM. Replacing those
+// runs with single quotes neutralizes the escape without distorting the prompt.
+export function sanitizePromptForFencing(s: string): string {
+    return s.replace(/"{3,}/g, '"').slice(0, 4000);
+}
 
 // ── Notify Helper ────────────────────────────
 
@@ -84,8 +148,13 @@ Research profiles:
 - "deep": ~15 min, 200 sources, academic DBs, citation chains, multi-pass
 - "exhaustive": ~30+ min, 500 sources, full depth, Opus synthesis
 
-Findings are stored in memory — you can answer follow-up questions about the research.
-Use check_deep_research to get status and the full report.`,
+CRITICAL — what to do AFTER this returns:
+1. Tell the user what research you started and the rough ETA (use the profile durations above).
+2. Optionally suggest what they can do meanwhile.
+3. END THE TURN.
+4. Do NOT call web_search, browser_*, or any other research tool for the same topic. The background process will read sources, synthesize findings, and deliver a final answer to the user automatically. You do not need to poll, check_deep_research, or do any parallel searching — that creates noise and confuses the user.
+
+Findings are stored in memory — you can answer follow-up questions about the research in future turns. Use check_deep_research only when the user explicitly asks for status or the report.`,
             parameters: {
                 type: "object",
                 properties: {
@@ -126,6 +195,9 @@ Use check_deep_research to get status and the full report.`,
 
         const id = `research_${++researchCounter}_${Date.now()}`;
 
+        const originalPrompt = (input._originalPrompt as string) || topic;
+        const capturedChannelContext = input._channelContext as ChannelContext | undefined;
+
         const research: ActiveResearch = {
             id,
             topic,
@@ -142,61 +214,70 @@ Use check_deep_research to get status and the full report.`,
             report: "",
             reportFile: "",
             abortController: new AbortController(),
+            originalPrompt,
         };
 
         activeResearches.set(id, research);
+        void syncActiveToIndex(research);
 
-        // Detect multi-part requests (e.g. "research X and make a PDF and show it to me")
-        const originalPrompt = (input._originalPrompt as string) || "";
-        if (originalPrompt) {
-            const continuationPatterns = [
-                /(?:then|after that|also|and)\s+(make|create|generate|build|show|send|email|present)\s+/i,
-                /(?:make|create|generate)\s+(?:a\s+)?(?:pdf|document|report|summary|presentation)/i,
-                /show\s+(?:it|the|results?|report|pdf)\s+(?:to\s+me)?/i,
-            ];
-            for (const pat of continuationPatterns) {
-                const match = originalPrompt.match(pat);
-                if (match) {
-                    const remainingTasks = originalPrompt.substring(originalPrompt.indexOf(match[0]));
-                    pendingFollowUps.set(id, { originalPrompt, remainingTasks });
-                    console.log(`[RESEARCH] 📋 Follow-up task detected: "${remainingTasks.substring(0, 80)}..."`);
-                    break;
-                }
-            }
-        }
-
-        // Capture references at start time (they may be cleared before research completes)
         const capturedNotify = createNotify();
         const capturedLLM = _llm!;
 
         // Fire and forget — runs in background
         executeDeepResearch(research, { ...profile, depth, maxSources }, capturedLLM, capturedNotify).then(async () => {
-            // Check for pending follow-up tasks
-            const followUp = pendingFollowUps.get(id);
-            if (followUp && research.status === "completed") {
-                pendingFollowUps.delete(id);
-                console.log(`[RESEARCH] 🔄 Executing follow-up: "${followUp.remainingTasks.substring(0, 80)}..."`);
+            // Always reflect terminal state to the index (completed | failed | cancelled).
+            await syncActiveToIndex(research);
+            if (research.status !== "completed") return;
 
-                const continuationPrompt = `The deep research on "${topic}" is now complete with ${research.sourcesProcessed} sources and a full report. The report is saved at: ${research.reportFile}\n\nThe user's original request also included: "${followUp.remainingTasks}"\n\nPlease continue and fulfill that part of the request now. Use check_deep_research("${id}") to get the full report content, then proceed with the remaining tasks.`;
+            const continuationPrompt = `Background deep research on "${topic}" is now complete (${research.sourcesProcessed} sources, ${research.findingsCount} findings, report saved at ${research.reportFile}).
 
-                try {
-                    const { runAgent } = await import("../agent.js");
-                    const result = await runAgent(capturedLLM, continuationPrompt);
-                    await capturedNotify(result.text);
-                } catch (err) {
-                    console.error(`[RESEARCH] Follow-up execution failed:`, err);
-                    await capturedNotify(`⚠️ Research completed but follow-up task failed: ${(err as Error).message}`);
-                }
+The user's original request was:
+"""
+${sanitizePromptForFencing(originalPrompt)}
+"""
+
+First, call check_deep_research("${id}") to read the full report. Then fulfill the user's intent end-to-end:
+- If the request implied follow-up actions (sending emails, drafting documents, scheduling reminders, creating files, posting messages, etc.), execute those actions yourself using the available tools — don't wait for the user to ask again, and don't ask permission.
+- Otherwise, deliver a clear, well-organized summary of the key findings.
+
+Always end by sending a final user-facing message describing what you found and what you did.`;
+
+            try {
+                const { runAgent } = await import("../agent.js");
+                const result = await runAgent(
+                    capturedLLM,
+                    continuationPrompt,
+                    undefined,
+                    undefined,
+                    undefined,
+                    undefined,
+                    undefined,
+                    undefined,
+                    capturedChannelContext,
+                );
+                if (result?.text) await capturedNotify(result.text);
+            } catch (err) {
+                console.error(`[RESEARCH] Continuation failed in ${id}:`, err);
+                await capturedNotify(`⚠️ Research completed but follow-up failed: ${(err as Error).message}`);
             }
-        }).catch(err => {
+        }).catch(async err => {
             console.error(`[RESEARCH] Fatal error in ${id}:`, err);
             research.status = "failed";
             research.error = (err as Error).message;
+            research.updatedAt = new Date().toISOString();
+            // Await: ensures the failed status is durably written before
+            // purgeMapToCap() in .finally() can evict the entry.
+            await syncActiveToIndex(research);
         }).finally(() => {
-            // Trigger cleanup of stale research entries after each completion
-            cleanupStaleResearches();
+            purgeMapToCap();
         });
 
+        const profileEta: Record<string, string> = {
+            quick: "~2 min",
+            standard: "~5 min",
+            deep: "~15 min",
+            exhaustive: "~30 min+",
+        };
         return JSON.stringify({
             success: true,
             research_id: id,
@@ -206,7 +287,8 @@ Use check_deep_research to get status and the full report.`,
             max_sources: maxSources,
             status: "running",
             phases: "Discovery → Deep Reading → Verification & Synthesis",
-            message: `Deep research started (${profileName} profile). Use check_deep_research("${id}") for status and results.`,
+            estimated_duration: profileEta[profileName] || "~5 min",
+            message: `Deep research started (${profileName} profile, ${profileEta[profileName] || "~5 min"} estimated). Research continues in the background — findings will be delivered automatically when complete. Tell the user it's running, give the ETA, suggest what they can do meanwhile, and end the turn. Do not poll, do not call check_deep_research, do not call web_search for the same topic.`,
         });
     },
 };
@@ -236,56 +318,172 @@ export const checkDeepResearch: ToolDefinition = {
         const researchId = input.research_id as string | undefined;
 
         if (!researchId) {
-            const list = Array.from(activeResearches.values()).map(r => ({
-                id: r.id,
-                topic: r.topic.substring(0, 80),
-                profile: r.profile,
-                status: r.status,
-                phase: `${r.currentPhase}/3`,
-                sources: r.sourcesProcessed,
-                rounds: `${r.roundsCompleted}/${r.depth}`,
-                findings: r.findingsCount,
-                current_query: r.currentQuery?.substring(0, 50),
-                engines: r.engineBreakdown,
-                eta_seconds: r.estimatedTimeRemaining,
-                started_at: r.startedAt,
-            }));
-            return JSON.stringify({ researches: list, count: list.length });
+            return JSON.stringify(await listAllResearches());
         }
 
+        // Live state first (running researches have phase/query/ETA only the Map knows).
         const research = activeResearches.get(researchId);
-        if (!research) return JSON.stringify({ error: `Research "${researchId}" not found` });
-
-        const result: Record<string, unknown> = {
-            id: research.id,
-            topic: research.topic,
-            profile: research.profile,
-            status: research.status,
-            current_phase: research.currentPhase,
-            total_phases: 3,
-            phase_names: ["Discovery", "Deep Reading", "Verification & Synthesis"],
-            rounds_completed: research.roundsCompleted,
-            rounds_total: research.depth,
-            sources_processed: research.sourcesProcessed,
-            max_sources: research.maxSources,
-            findings_count: research.findingsCount,
-            current_query: research.currentQuery,
-            engines_used: research.engineBreakdown,
-            estimated_time_remaining_seconds: research.estimatedTimeRemaining,
-            started_at: research.startedAt,
-            updated_at: research.updatedAt,
-        };
-
-        if (research.status === "completed") {
-            result.report = research.report;
-            result.report_file = research.reportFile;
-        } else if (research.status === "failed") {
-            result.error = research.error;
+        if (research) {
+            const result: Record<string, unknown> = {
+                id: research.id,
+                topic: research.topic,
+                profile: research.profile,
+                status: research.status,
+                current_phase: research.currentPhase,
+                total_phases: 3,
+                phase_names: ["Discovery", "Deep Reading", "Verification & Synthesis"],
+                rounds_completed: research.roundsCompleted,
+                rounds_total: research.depth,
+                sources_processed: research.sourcesProcessed,
+                max_sources: research.maxSources,
+                findings_count: research.findingsCount,
+                current_query: research.currentQuery,
+                engines_used: research.engineBreakdown,
+                estimated_time_remaining_seconds: research.estimatedTimeRemaining,
+                started_at: research.startedAt,
+                updated_at: research.updatedAt,
+            };
+            if (research.status === "completed") {
+                result.report = research.report;
+                result.report_file = research.reportFile;
+            } else if (research.status === "failed" || research.status === "interrupted") {
+                result.error = research.error;
+            }
+            return JSON.stringify(result);
         }
 
-        return JSON.stringify(result);
+        // Fall back to the durable index for archived/post-restart entries.
+        const archived = await getIndexEntry(researchId);
+        if (!archived) return JSON.stringify({ error: `Research "${researchId}" not found` });
+
+        const out: Record<string, unknown> = {
+            id: archived.id,
+            topic: archived.topic,
+            profile: archived.profile,
+            status: archived.status,
+            sources_processed: archived.sourcesProcessed,
+            findings_count: archived.findingsCount,
+            started_at: archived.startedAt,
+            updated_at: archived.updatedAt,
+            completed_at: archived.completedAt,
+            duration_seconds: archived.durationSec,
+            report_file: archived.reportFile,
+            archived: true,
+        };
+        if (archived.error) out.error = archived.error;
+        if (archived.reportFile && archived.status === "completed") {
+            try {
+                const { promises: fsp } = await import("node:fs");
+                out.report = await fsp.readFile(archived.reportFile, "utf-8");
+            } catch {
+                /* report file may have been deleted by user */
+            }
+        }
+        return JSON.stringify(out);
     },
 };
+
+// Merge live (in-memory) and archived (index) views. Live takes precedence when
+// the same id appears in both — the Map has fresher phase/query data.
+async function listAllResearches(): Promise<{
+    running: unknown[];
+    recent: unknown[];
+    interrupted: unknown[];
+    failed: unknown[];
+    count: number;
+}> {
+    const live = Array.from(activeResearches.values()).map(r => ({
+        id: r.id,
+        topic: r.topic.substring(0, 80),
+        profile: r.profile,
+        status: r.status,
+        phase: `${r.currentPhase}/3`,
+        sources: r.sourcesProcessed,
+        rounds: `${r.roundsCompleted}/${r.depth}`,
+        findings: r.findingsCount,
+        current_query: r.currentQuery?.substring(0, 50),
+        engines: r.engineBreakdown,
+        eta_seconds: r.estimatedTimeRemaining,
+        started_at: r.startedAt,
+        updated_at: r.updatedAt,
+    }));
+    const liveIds = new Set(live.map(l => l.id));
+
+    const recentArchive = await listIndex({ sinceMs: 24 * 60 * 60 * 1000 });
+    const archived = recentArchive
+        .filter(r => !liveIds.has(r.id))
+        .map(r => ({
+            id: r.id,
+            topic: r.topic.substring(0, 80),
+            profile: r.profile,
+            status: r.status,
+            sources: r.sourcesProcessed,
+            findings: r.findingsCount,
+            started_at: r.startedAt,
+            updated_at: r.updatedAt,
+            completed_at: r.completedAt,
+            duration_seconds: r.durationSec,
+            report_file: r.reportFile,
+            error: r.error,
+            archived: true,
+        }));
+
+    const all = [...live, ...archived];
+    return {
+        running: all.filter(r => r.status === "running"),
+        recent: all.filter(r => r.status === "completed" || r.status === "cancelled"),
+        interrupted: all.filter(r => r.status === "interrupted"),
+        failed: all.filter(r => r.status === "failed"),
+        count: all.length,
+    };
+}
+
+// First-iteration agent awareness snippet. Returns null when there's nothing
+// worth surfacing; agent.ts injects this verbatim into the dynamic context
+// block on the first iteration so the agent always knows what's running.
+export async function getResearchStatusSnippet(): Promise<string | null> {
+    const running: ActiveResearch[] = [];
+    for (const r of activeResearches.values()) {
+        if (r.status === "running") running.push(r);
+    }
+    const recent24h = await listIndex({
+        status: ["completed", "failed", "interrupted", "cancelled"],
+        sinceMs: 24 * 60 * 60 * 1000,
+    });
+    if (running.length === 0 && recent24h.length === 0) return null;
+
+    const lines: string[] = [];
+    if (running.length > 0) {
+        lines.push("Running deep researches:");
+        for (const r of running.slice(0, 5)) {
+            const eta = typeof r.estimatedTimeRemaining === "number"
+                ? `~${Math.max(1, Math.round(r.estimatedTimeRemaining / 60))}min remaining`
+                : `phase ${r.currentPhase}/3`;
+            lines.push(`  - ${r.id} "${r.topic.substring(0, 60)}" — ${eta}, ${r.sourcesProcessed} sources read`);
+        }
+        if (running.length > 5) lines.push(`  - …and ${running.length - 5} more`);
+    }
+    const completed = recent24h.filter(r => r.status === "completed");
+    const failed = recent24h.filter(r => r.status === "failed");
+    const interrupted = recent24h.filter(r => r.status === "interrupted");
+    const cancelled = recent24h.filter(r => r.status === "cancelled");
+    if (completed.length > 0 || failed.length > 0 || interrupted.length > 0 || cancelled.length > 0) {
+        const parts: string[] = [];
+        if (completed.length) parts.push(`${completed.length} completed`);
+        if (failed.length) parts.push(`${failed.length} failed`);
+        if (interrupted.length) parts.push(`${interrupted.length} interrupted (process restart)`);
+        if (cancelled.length) parts.push(`${cancelled.length} cancelled`);
+        lines.push(`Recent (24h): ${parts.join(", ")}.`);
+        for (const r of recent24h.slice(0, 3)) {
+            const tag = r.status === "completed" ? "✓" : r.status === "interrupted" ? "⚠" : r.status === "failed" ? "✗" : "○";
+            lines.push(`  ${tag} ${r.id} "${r.topic.substring(0, 60)}"`);
+        }
+    }
+    if (running.length > 0) {
+        lines.push("Use check_deep_research(id) for details. Don't start a duplicate research on the same topic.");
+    }
+    return lines.join("\n");
+}
 
 // ── Tool: Cancel Deep Research ───────────────
 
@@ -313,6 +511,7 @@ export const cancelDeepResearch: ToolDefinition = {
         research.abortController.abort();
         research.status = "cancelled";
         research.updatedAt = new Date().toISOString();
+        await syncActiveToIndex(research);
 
         return JSON.stringify({
             success: true,

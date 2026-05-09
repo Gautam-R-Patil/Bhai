@@ -2376,6 +2376,17 @@ export interface DetectedHabit {
 export declare function detectHabits(events: Array<TimestampedEvent>, minFrequency: number): Array<DetectedHabit>
 /** Check if now is within the expected window for a habit. */
 export declare function isHabitDue(habit: DetectedHabit, currentHour: number, currentDay: number): boolean
+export interface HabitEvent {
+  eventType: string
+  tsMs: number
+}
+export interface HabitAnomaly {
+  eventType: string
+  expectedHour: number
+  lastSeenDaysAgo: number
+  confidence: number
+}
+export declare function habitDetectAnomalies(habits: Array<DetectedHabit>, recentEvents: Array<HabitEvent>, nowMs: number): Array<HabitAnomaly>
 export interface SkillCandidate {
   slug: string
   name: string
@@ -2455,6 +2466,44 @@ export declare function validateBridgeCommand(jsonStr: string): string
 export declare function getBridgeStats(): string
 /** Record a bridge error */
 export declare function recordBridgeError(): void
+export interface CalendarEvent {
+  id: string
+  title: string
+  startMs: number
+  endMs: number
+  location?: string
+  hasAttendees: boolean
+  isAllDay: boolean
+}
+export interface EventPair {
+  first: string
+  second: string
+}
+export interface LongGap {
+  startMs: number
+  endMs: number
+  prevEventId?: string
+  nextEventId?: string
+  durationMin: number
+}
+export interface CalendarAnalysis {
+  conflicts: Array<EventPair>
+  backToBack: Array<EventPair>
+  longGaps: Array<LongGap>
+  nextEventId?: string
+  morningMeetingCount: number
+  afternoonMeetingCount: number
+}
+export interface PrepIntent {
+  eventId: string
+  title: string
+  fireAtMs: number
+  eventStartMs: number
+  location?: string
+  hasAttendees: boolean
+}
+export declare function calendarAnalyze(events: Array<CalendarEvent>, nowMs: number, workStartHr: number, workEndHr: number, timezoneOffsetMin: number): CalendarAnalysis
+export declare function calendarPrepIntents(events: Array<CalendarEvent>, nowMs: number, offsetMinutes: number): Array<PrepIntent>
 export interface RustProactiveIntent {
   id: string
   source: string
@@ -2473,6 +2522,33 @@ export interface RustValidationResult {
   error?: string
 }
 export declare function validateIntentRust(intent: RustProactiveIntent): RustValidationResult
+export interface MonitorRuleRust {
+  id: string
+  topicEmbedding: Array<number>
+  scopeChannels: Array<string>
+  scopeSenders?: Array<string>
+  excludeSelf: boolean
+  threshold: number
+  cooldownMinutes: number
+  active: boolean
+  lastFiredAt: number
+}
+export interface RuleHit {
+  ruleId: string
+  score: number
+}
+export declare function monitorLoadRules(rules: Array<MonitorRuleRust>): void
+export declare function monitorUpsertRule(rule: MonitorRuleRust): void
+export declare function monitorDeleteRule(id: string): void
+export declare function monitorCount(): number
+export declare function monitorCheck(msgEmbedding: Array<number>, channel: string, sender: string, nowMs: number): Array<RuleHit>
+export declare function monitorMarkFired(id: string, tsMs: number): void
+export interface ScoredHeadline {
+  title: string
+  score: number
+  index: number
+}
+export declare function newsScoreHeadlines(headlines: Array<string>, interestEmbedding: Array<number>, headlineEmbeddings: Array<Array<number>>): Array<ScoredHeadline>
 export interface QueuedIntent {
   id: string
   source: string
@@ -2516,33 +2592,55 @@ export interface GroupedReleaseResult {
 }
 export declare function schedulerReleaseGrouped(channel: string): GroupedReleaseResult
 export declare function schedulerDebugState(channel: string): string
-export interface MonitorRuleRust {
-  id: string
-  topicEmbedding: Array<number>
-  scopeChannels: Array<string>
-  scopeSenders?: Array<string>
-  excludeSelf: boolean
-  threshold: number
-  cooldownMinutes: number
-  active: boolean
-  lastFiredAt: number
-}
-export interface RuleHit {
-  ruleId: string
-  score: number
-}
-export declare function monitorLoadRules(rules: Array<MonitorRuleRust>): void
-export declare function monitorUpsertRule(rule: MonitorRuleRust): void
-export declare function monitorDeleteRule(id: string): void
-export declare function monitorCount(): number
-export declare function monitorCheck(msgEmbedding: Array<number>, channel: string, sender: string, nowMs: number): Array<RuleHit>
-export declare function monitorMarkFired(id: string, tsMs: number): void
 export interface GateResult {
   mayRun: boolean
   nextEligibleMs: number
 }
 export declare function sourceGateCheck(source: string, minGapSec: number): GateResult
 export declare function sourceGateReset(source: string): void
+export interface EmailSummary {
+  id: string
+  from: string
+  subject: string
+  receivedMs: number
+  isImportant: boolean
+  threadMsgCount: number
+}
+export interface StaleEmailCandidate {
+  id: string
+  from: string
+  subject: string
+  daysStale: number
+  score: number
+}
+export declare function staleEmailScore(emails: Array<EmailSummary>, userEngagedSenders: Array<string>, nowMs: number): Array<StaleEmailCandidate>
+export interface TaskEntry {
+  id: string
+  title: string
+  dueMs?: number
+  priority: string
+  completed: boolean
+}
+export interface DeadlineNudge {
+  taskId: string
+  title: string
+  dueMs: number
+  fireAtMs: number
+}
+export interface TaskUrgencyResult {
+  urgentToday: Array<string>
+  normalToday: Array<string>
+  overdue: Array<string>
+  deadlineNudges: Array<DeadlineNudge>
+}
+export declare function tasksScore(tasks: Array<TaskEntry>, nowMs: number, timezoneOffsetMin: number): TaskUrgencyResult
+export interface WeatherInput {
+  summary: string
+  tempC: number
+  rainProb: number
+  hasOutdoorEvent: boolean
+}
+export declare function weatherActionable(w: WeatherInput): boolean
 /** A candidate DOM element passed in from TypeScript after browser_scan */
 export interface ElementCandidate {
   label: number

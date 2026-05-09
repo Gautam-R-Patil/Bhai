@@ -14,6 +14,7 @@ import { fetchPages, extractOutboundLinks, rankOutboundLinks, scoreDomainQuality
 import {
     generateSeedQueries, generateMoreQueries, analyzeAndExtract,
     detectContradictions, identifyGaps, synthesizeResearch,
+    shouldExtractContacts, extractContactsSection,
 } from "./analysis.js";
 import { rankSource, deduplicateFindings, crossReferenceFindings } from "./scoring.js";
 import { saveResearchState, deleteResearchState, storeResearchInMemory } from "./persistence.js";
@@ -180,7 +181,7 @@ export async function executeDeepResearch(
                                         allFindings.push({ text: f, sourceUrl: page.url, sourceTitle: page.title, categories: analysis.categories });
                                     }
                                     allSources.push(rankSource(page.url, page.title, page.content, analysis.findings,
-                                        retryNew.find(r => r.url === page.url)?.citationCount || 0));
+                                        retryNew.find(r => r.url === page.url)?.citationCount || 0, research.topic));
                                     for (const fq of analysis.followUpQueries) {
                                         if (!usedQueries.has(fq) && !pendingQueries.includes(fq)) pendingQueries.push(fq);
                                     }
@@ -215,7 +216,7 @@ export async function executeDeepResearch(
                     }
 
                     const ranked = rankSource(page.url, page.title, page.content, analysis.findings,
-                        newResults.find(r => r.url === page.url)?.citationCount || 0);
+                        newResults.find(r => r.url === page.url)?.citationCount || 0, research.topic);
                     allSources.push(ranked);
 
                     for (const fq of analysis.followUpQueries) {
@@ -297,7 +298,7 @@ export async function executeDeepResearch(
                             for (const f of analysis.findings) {
                                 allFindings.push({ text: f, sourceUrl: page.url, sourceTitle: page.title, categories: analysis.categories });
                             }
-                            allSources.push(rankSource(page.url, page.title, page.content, analysis.findings));
+                            allSources.push(rankSource(page.url, page.title, page.content, analysis.findings, 0, research.topic));
                             for (const fq of analysis.followUpQueries) {
                                 if (!usedQueries.has(fq) && !pendingQueries.includes(fq)) pendingQueries.push(fq);
                             }
@@ -334,7 +335,7 @@ export async function executeDeepResearch(
         // Add citation chain links from top sources
         if (profile.citationDepth > 0) {
             for (const source of sourcesToDeepRead.slice(0, 30)) {
-                const links = rankOutboundLinks(source.outboundLinks, visitedUrls, 5);
+                const links = rankOutboundLinks(source.outboundLinks, visitedUrls, 5, research.topic);
                 for (const link of links) {
                     citationQueue.push({ url: link, title: `Citation from: ${source.title}`, depth: 1 });
                 }
@@ -408,13 +409,13 @@ export async function executeDeepResearch(
                         }
                     }
 
-                    const ranked = rankSource(page.url, page.title, page.content, analysis.findings);
+                    const ranked = rankSource(page.url, page.title, page.content, analysis.findings, 0, research.topic);
 
                     // Extract outbound links for citation chain
                     if (profile.citationDepth > 1) {
                         const links = extractOutboundLinks(page.content, page.url);
                         ranked.outboundLinks = links;
-                        const topLinks = rankOutboundLinks(links, visitedUrls, 3);
+                        const topLinks = rankOutboundLinks(links, visitedUrls, 3, research.topic);
                         for (const link of topLinks) {
                             citationQueue.push({ url: link, title: `Citation chain`, depth: 2 });
                         }
@@ -545,10 +546,23 @@ export async function executeDeepResearch(
         console.log(`[RESEARCH] 📝 Writing final report (router will select optimal model)...`);
         await notify(`📝 Synthesizing final report (${structuredFindings.length} findings, ${allSources.length} sources)...`);
 
-        const report = await synthesizeResearch(
+        let report = await synthesizeResearch(
             llm, research.topic, structuredFindings, allSources.length,
             rounds.length, engineBreakdown, contradictions, gaps, profile,
+            research.originalPrompt,
         );
+
+        // Outreach-intent post-pass: if the user's prompt implies action
+        // ("email them", "reach out to", "draft a pitch"), append a structured
+        // Contacts table the agent continuation can act on. Source-backed only —
+        // never invents emails or URLs.
+        if (shouldExtractContacts(research.originalPrompt)) {
+            await notify(`📇 Extracting contact paths for outreach...`);
+            const contactsSection = await extractContactsSection(
+                llm, research.topic, research.originalPrompt!, structuredFindings,
+            );
+            if (contactsSection) report += contactsSection;
+        }
 
         // Save report to disk
         await fs.mkdir(RESEARCH_DIR, { recursive: true });
@@ -570,7 +584,12 @@ export async function executeDeepResearch(
 
         const duration = Math.round((Date.now() - new Date(research.startedAt).getTime()) / 1000);
         console.log(`[RESEARCH] ✅ Complete: ${allSources.length} sources, ${structuredFindings.length} findings, ${duration}s`);
-        await notify(`✅ Deep research complete! "${research.topic.substring(0, 40)}" — ${allSources.length} sources, ${structuredFindings.length} findings (${Math.round(duration / 60)}min). Use check_deep_research to read the full report.`);
+        // Brief status notify — the actual user-facing message is produced by the
+        // agent continuation in research/index.ts (which reads the report and
+        // either summarizes or executes follow-up actions). The "✅" + "Research
+        // complete" tokens here are what overlay-chat.ts matches to fire the
+        // research_complete UI signal.
+        await notify(`✅ Research complete — analyzing findings...`);
 
     } catch (err) {
         research.status = "failed";

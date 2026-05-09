@@ -12,6 +12,8 @@ export {
     setDeepResearchNotifier,
     setOverlayResearchProgress,
     clearOverlayResearchProgress,
+    initDeepResearch,
+    getResearchStatusSnippet,
     multiEngineSearch,
     type SearchResult,
 } from "../research/index.js";

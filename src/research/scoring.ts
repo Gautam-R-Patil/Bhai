@@ -13,9 +13,10 @@ export function rankSource(
     content: string,
     findings: string[],
     citationCount = 0,
+    topic?: string,
 ): RankedSource {
     const domain = getDomain(url);
-    const domainScore = scoreDomainQuality(url);
+    const domainScore = scoreDomainQuality(url, topic);
     const contentDepth = Math.min(1, content.length / 30000); // normalized, 30KB = 1.0
     const findingDensity = content.length > 0
         ? Math.min(1, (findings.length / (content.length / 1000)) * 0.5)

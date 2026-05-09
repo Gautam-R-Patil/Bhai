@@ -59,11 +59,18 @@ export interface ResearchRound {
     phase: number;
 }
 
+export type ResearchStatus =
+    | "running"
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | "interrupted";
+
 export interface ActiveResearch {
     id: string;
     topic: string;
     profile: string;
-    status: "running" | "completed" | "failed" | "cancelled";
+    status: ResearchStatus;
     depth: number;
     maxSources: number;
     sourcesProcessed: number;
@@ -79,6 +86,28 @@ export interface ActiveResearch {
     currentQuery?: string;
     engineBreakdown?: Record<string, number>;
     estimatedTimeRemaining?: number;
+    originalPrompt?: string;
+}
+
+export interface ResearchIndexEntry {
+    id: string;
+    topic: string;
+    profile: string;
+    status: ResearchStatus;
+    startedAt: string;
+    updatedAt: string;
+    completedAt?: string;
+    sourcesProcessed: number;
+    findingsCount: number;
+    reportFile?: string;
+    originalPrompt?: string;
+    durationSec?: number;
+    error?: string;
+}
+
+export interface ResearchIndex {
+    version: 1;
+    researches: ResearchIndexEntry[];
 }
 
 export interface ResearchProfile {
