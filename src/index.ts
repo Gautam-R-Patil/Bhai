@@ -6,7 +6,7 @@ import { loadConfig } from "./config.js";
 import { createLLMClient } from "./llm.js";
 import { createTelegramBot, sendProactiveMessage } from "./telegram.js";
 import { initWhatsApp, closeWhatsApp, sendWhatsAppProactiveMessage } from "./whatsapp.js";
-import { getToolNames, setSwarmLLM, setDeepResearchLLM, setLongTaskLLM, setDeepResearchNotifier, rotateAuditLog, loadDynamicTools, setCodeActionLLM, setCodeActionExecutor, setComputerUseLLM, executeTool, registerChannelSender, setPresentationLLM, setIngestLLM, setBrandAuditLLM, setScriptWriterLLM, setCampaignPlannerLLM, setOutreachLLM, setProductHuntLLM } from "./tools/index.js";
+import { getToolNames, setSwarmLLM, setDeepResearchLLM, setLongTaskLLM, setDeepResearchNotifier, initDeepResearch, rotateAuditLog, loadDynamicTools, setCodeActionLLM, setCodeActionExecutor, setComputerUseLLM, executeTool, registerChannelSender, setPresentationLLM, setIngestLLM, setBrandAuditLLM, setScriptWriterLLM, setCampaignPlannerLLM, setOutreachLLM, setProductHuntLLM } from "./tools/index.js";
 import { initMemoryDB, embedExistingMemories, setMemoryLLM } from "./memory/sqlite.js";
 import { initKnowledgeGraph } from "./memory/knowledge-graph.js";
 import { initSupabase } from "./memory/supabase.js";
@@ -138,6 +138,11 @@ async function boot() {
         initCredibilityModel(memDb);
         initIdentityDB(memDb);
         initTraitsDB(memDb);
+
+        // Deep-research boot recovery — must run after data dir is created
+        // by initMemoryDB. Marks any "running" entries from the prior process
+        // as "interrupted" so the agent surfaces them honestly on next turn.
+        await initDeepResearch();
 
         // Seed identity from the setup wizard's `.user-profile.json` (if present).
         // Idempotent across restarts — renames source to `.user-profile.seeded.json`
