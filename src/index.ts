@@ -702,8 +702,8 @@ async function boot() {
                 );
             }
 
-            // ── V3 sources (gated by ATLAS_PROACTIVE_V3_SOURCES) ──
-            if (process.env.ATLAS_PROACTIVE_V3_SOURCES === "true") {
+            // ── V3 sources (default ON; set ATLAS_PROACTIVE_V3_SOURCES=false to disable) ──
+            if (process.env.ATLAS_PROACTIVE_V3_SOURCES !== "false") {
                 const webSearch = async (query: string): Promise<string> => {
                     try {
                         return await executeTool("web_search", { query });
@@ -800,7 +800,7 @@ async function boot() {
                     console.log("[BOOT] deep_work_gap registration failed (non-fatal):", (err as Error).message);
                 }
             } else {
-                console.log("💓 V3 sources not registered (ATLAS_PROACTIVE_V3_SOURCES != 'true')");
+                console.log("💓 V3 sources disabled (ATLAS_PROACTIVE_V3_SOURCES=false)");
             }
         } catch (err) {
             console.log("[BOOT] Observer init failed (non-fatal):", (err as Error).message);
