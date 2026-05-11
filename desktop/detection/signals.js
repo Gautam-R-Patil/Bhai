@@ -22,6 +22,20 @@ function detectSetupFlag(fs, setupFlagPath) {
     try { return !!fs.existsSync(setupFlagPath); } catch { return false; }
 }
 
+function detectLegalAcceptance(fs, legalAcceptancePath) {
+    try {
+        if (!fs.existsSync(legalAcceptancePath)) return { accepted: false };
+        const raw = fs.readFileSync(legalAcceptancePath, "utf8");
+        const data = JSON.parse(raw);
+        if (!data || data.accepted !== true) return { accepted: false };
+        return {
+            accepted: true,
+            acceptedAt: typeof data.acceptedAt === "string" ? data.acceptedAt : null,
+            version: typeof data.version === "string" ? data.version : null,
+        };
+    } catch { return { accepted: false }; }
+}
+
 function detectEnvPresent(fs, envPath) {
     // Presence-only. We do NOT read, parse, or return the file content here.
     try { return !!fs.existsSync(envPath); } catch { return false; }
@@ -319,6 +333,7 @@ function detectPersonalize(prefs, platform) {
 module.exports = {
     detectPlatform,
     detectSetupFlag,
+    detectLegalAcceptance,
     detectEnvPresent,
     detectGoogleTokens,
     detectOtplessSession,

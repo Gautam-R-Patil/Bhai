@@ -740,6 +740,7 @@ function buildDetectionDeps() {
 
     const paths = {
         setupFlag: SETUP_FLAG,
+        legalAcceptance: path.join(app.getPath("userData"), ".legal-acceptance.json"),
         envFile: path.join(app.getPath("userData"), ".env.enc"),
         googleTokens: path.join(app.getPath("userData"), "google-tokens"),
         botDir: path.join(process.resourcesPath || app.getAppPath(), "bot"),
@@ -2050,6 +2051,46 @@ function registerIPC() {
             catch { /* fresh profile or corrupt JSON — start over */ }
             const merged = mergeProfile(existing, profile);
             fs.writeFileSync(profilePath, JSON.stringify(merged, null, 2));
+            return { success: true };
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    // Setup: persist legal acceptance (clickwrap evidence record)
+    ipcMain.handle("setup:save-legal", async (_, payload) => {
+        try {
+            if (!payload || payload.accepted !== true) {
+                return { success: false, error: "Acceptance flag missing" };
+            }
+            const record = {
+                accepted: true,
+                acceptedAt: typeof payload.acceptedAt === "string" ? payload.acceptedAt : new Date().toISOString(),
+                version: typeof payload.version === "string" ? payload.version : "1.0.0",
+                appVersion: app.getVersion(),
+                platform: process.platform,
+                documents: (payload.documents && typeof payload.documents === "object") ? payload.documents : {},
+                consents: (payload.consents && typeof payload.consents === "object") ? payload.consents : {},
+            };
+            const targetPath = path.join(app.getPath("userData"), ".legal-acceptance.json");
+            fs.writeFileSync(targetPath, JSON.stringify(record, null, 2));
+            return { success: true };
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    // Util: open an external URL via the OS browser. Whitelisted to first-party
+    // legal/marketing pages so a compromised renderer can't pivot to phishing URLs.
+    ipcMain.handle("util:open-external", async (_, url) => {
+        try {
+            if (typeof url !== "string") return { success: false, error: "Invalid URL" };
+            const parsed = new URL(url);
+            if (parsed.protocol !== "https:") return { success: false, error: "Only https URLs allowed" };
+            const host = parsed.hostname.toLowerCase();
+            const allowed = host === "tryatlasagi.com" || host === "www.tryatlasagi.com" || host === "xagilab.com" || host === "www.xagilab.com";
+            if (!allowed) return { success: false, error: "Host not in allowlist" };
+            await shell.openExternal(parsed.toString());
             return { success: true };
         } catch (err) {
             return { success: false, error: err.message };

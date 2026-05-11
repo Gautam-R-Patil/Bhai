@@ -55,6 +55,7 @@ async function runDetection(deps) {
     ]);
 
     const isReconfigure = safeSync(() => signals.detectSetupFlag(fs, paths.setupFlag), false);
+    const legal = safeSync(() => signals.detectLegalAcceptance(fs, paths.legalAcceptance), { accepted: false });
     const envPresent = safeSync(() => signals.detectEnvPresent(fs, paths.envFile), false);
     const account = safeSync(() => signals.detectOtplessSession(prefs), { signedIn: false });
     const playwright = safeSync(() => signals.detectPlaywrightChromium(fs, paths.botDir), false);
@@ -106,6 +107,7 @@ async function runDetection(deps) {
     return {
         platform,
         isReconfigure,
+        legal,
         version,
         osUserName,
         envPresent,
