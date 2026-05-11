@@ -1387,6 +1387,20 @@ textarea:focus-visible {
     margin-bottom: 0;
 }
 
+.settings-group-heading {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--text-secondary);
+    margin: 18px 4px 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+}
+.settings-group-heading:first-child {
+    margin-top: 0;
+}
+
 .settings-fields .clean-input {
     padding: 10px 14px;
     font-size: 13px;

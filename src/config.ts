@@ -7,8 +7,12 @@ import "dotenv/config";
 // ── Types ─────────────────────────────────────
 
 export interface Config {
+    /** Empty string when Telegram is not configured. Check `telegramEnabled` before use. */
     telegramBotToken: string;
+    /** Always a Set; empty when Telegram is not configured. */
     allowedUserIds: Set<number>;
+    /** True only when both TELEGRAM_BOT_TOKEN and ALLOWED_USER_IDS are present and valid. */
+    telegramEnabled: boolean;
     // Email (optional)
     emailUser?: string;
     emailPassword?: string;
@@ -21,16 +25,6 @@ export interface Config {
 
 // ── Helpers ───────────────────────────────────
 
-function requireEnv(name: string): string {
-    const value = process.env[name];
-    if (!value) {
-        console.error(`❌ Missing required environment variable: ${name}`);
-        console.error(`   → Copy .env.example to .env and fill in your values`);
-        process.exit(1);
-    }
-    return value;
-}
-
 function parseUserIds(raw: string): Set<number> {
     const ids = raw
         .split(",")
@@ -38,13 +32,6 @@ function parseUserIds(raw: string): Set<number> {
         .filter(Boolean)
         .map(Number)
         .filter((n) => !isNaN(n) && n > 0);
-
-    if (ids.length === 0) {
-        console.error(`❌ ALLOWED_USER_IDS must contain at least one valid Telegram user ID`);
-        console.error(`   → Message @userinfobot on Telegram to find your ID`);
-        process.exit(1);
-    }
-
     return new Set(ids);
 }
 
@@ -60,8 +47,22 @@ function parseEmailWhitelist(raw?: string): Set<string> {
 // ── Load Config ───────────────────────────────
 
 export function loadConfig(): Config {
-    const telegramBotToken = requireEnv("TELEGRAM_BOT_TOKEN");
-    const allowedUserIds = parseUserIds(requireEnv("ALLOWED_USER_IDS"));
+    // Telegram is optional — A.T.L.A.S boots without it (other channels: overlay,
+    // desktop, WhatsApp, Discord, Slack, Matrix, email). Both env vars must be
+    // present AND valid for Telegram to be enabled; partial config (token without
+    // user IDs, or vice versa) is treated as "not configured" with a warning.
+    const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN || "";
+    const rawUserIds = process.env.ALLOWED_USER_IDS || "";
+    const allowedUserIds = rawUserIds ? parseUserIds(rawUserIds) : new Set<number>();
+    const telegramEnabled = telegramBotToken.length > 0 && allowedUserIds.size > 0;
+
+    if (telegramBotToken && allowedUserIds.size === 0) {
+        console.warn("⚠️  TELEGRAM_BOT_TOKEN is set but ALLOWED_USER_IDS is empty — Telegram channel disabled.");
+    } else if (!telegramBotToken && rawUserIds) {
+        console.warn("⚠️  ALLOWED_USER_IDS is set but TELEGRAM_BOT_TOKEN is missing — Telegram channel disabled.");
+    } else if (!telegramEnabled) {
+        console.log("ℹ️  Telegram channel not configured — running with other channels.");
+    }
 
     // Email (optional — A.T.L.A.S boots fine without these)
     const emailUser = process.env.EMAIL_USER || undefined;
@@ -75,6 +76,7 @@ export function loadConfig(): Config {
     return {
         telegramBotToken,
         allowedUserIds,
+        telegramEnabled,
         emailUser,
         emailPassword,
         emailWhitelist,

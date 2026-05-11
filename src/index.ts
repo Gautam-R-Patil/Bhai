@@ -424,13 +424,18 @@ async function boot() {
         })
         .catch(err => console.warn("[BOOT] Long task auto-resume failed (non-fatal):", err));
 
-    // ── Create Telegram Bot ───────────────────
-    const bot = createTelegramBot(config, llm);
+    // ── Create Telegram Bot (optional) ────────
+    // bot is null when TELEGRAM_BOT_TOKEN / ALLOWED_USER_IDS aren't configured.
+    // The rest of the system (overlay, desktop, WhatsApp, Discord, etc.) runs
+    // without it. All Telegram-specific code paths are gated on `bot != null`.
+    const bot = config.telegramEnabled ? createTelegramBot(config, llm) : null;
 
     // ── Register cross-channel senders (for send_message_on_channel tool) ──
-    registerChannelSender("telegram", async (message, filePath) => {
-        await sendProactiveMessage(bot, config, message, filePath);
-    });
+    if (bot) {
+        registerChannelSender("telegram", async (message, filePath) => {
+            await sendProactiveMessage(bot, config, message, filePath);
+        });
+    }
     registerChannelSender("whatsapp", async (message, filePath) => {
         await sendWhatsAppProactiveMessage(message, filePath);
     });
@@ -451,13 +456,13 @@ async function boot() {
     setDeepResearchNotifier(async (msg: string) => {
         // Primary channel gets the message first
         const sendPrimary: Record<string, () => Promise<void>> = {
-            telegram: () => sendProactiveMessage(bot, config, msg),
             whatsapp: () => sendWhatsAppProactiveMessage(msg),
             discord: () => sendDiscordProactiveMessage(msg),
             slack: () => sendSlackProactiveMessage(msg),
             matrix: () => sendMatrixProactiveMessage(msg),
             overlay: () => { sendOverlayNotification(msg); return Promise.resolve(); },
         };
+        if (bot) sendPrimary.telegram = () => sendProactiveMessage(bot, config, msg);
 
         // Send to primary channel
         const primaryFn = sendPrimary[PRIMARY_CHANNEL];
@@ -476,8 +481,8 @@ async function boot() {
         }
     });
 
-    // Wire voice handlers
-    setupTelegramVoice(bot, llm);
+    // Wire voice handlers (Telegram-only — skipped when bot is null)
+    if (bot) setupTelegramVoice(bot, llm);
 
     // Live voice mode (real-time conversation — Gemini Live / OpenAI Realtime)
     try {
@@ -493,7 +498,7 @@ async function boot() {
     console.log(`\n📋 Config loaded`);
     console.log(`   Model   : Pro`);
     console.log(`   Provider: XAGI Labs`);
-    console.log(`   Users   : ${config.allowedUserIds.size} allowed`);
+    console.log(`   Telegram: ${config.telegramEnabled ? `${config.allowedUserIds.size} allowed user(s)` : "disabled"}`);
     console.log(`   Tools   : ${toolNames.length} registered`);
     console.log(`   Skills  : server-side (metadata cached)`);
     console.log();
@@ -856,13 +861,13 @@ async function boot() {
 
         // Primary channel gets the message first
         const sendPrimary: Record<string, () => Promise<void>> = {
-            telegram: () => sendProactiveMessage(bot, config, message),
             whatsapp: () => sendWhatsAppProactiveMessage(message),
             discord: () => sendDiscordProactiveMessage(message),
             slack: () => sendSlackProactiveMessage(message),
             matrix: () => sendMatrixProactiveMessage(message),
             overlay: () => { sendOverlayNotification(message); return Promise.resolve(); },
         };
+        if (bot) sendPrimary.telegram = () => sendProactiveMessage(bot, config, message);
 
         // Send to primary channel
         const primaryFn = sendPrimary[PRIMARY_CHANNEL];
@@ -994,20 +999,26 @@ async function boot() {
         }
     }
 
-    // ── Start Bot ─────────────────────────────
-    bot.start({
-        onStart: (botInfo) => {
-            console.log(`✅ Bot online: @${botInfo.username}`);
-            console.log(`   Mode    : long-polling (no HTTP server)`);
-            console.log(`   Tools   : ${toolNames.join(", ")}`);
-            console.log(`   Send me a message on Telegram to get started!\n`);
-        },
-    });
+    // ── Start Bot (Telegram-only) ─────────────
+    if (bot) {
+        bot.start({
+            onStart: (botInfo) => {
+                console.log(`✅ Bot online: @${botInfo.username}`);
+                console.log(`   Mode    : long-polling (no HTTP server)`);
+                console.log(`   Tools   : ${toolNames.join(", ")}`);
+                console.log(`   Send me a message on Telegram to get started!\n`);
+            },
+        });
+    } else {
+        console.log(`✅ A.T.L.A.S online (Telegram disabled)`);
+        console.log(`   Tools   : ${toolNames.join(", ")}`);
+        console.log(`   Configure Telegram in the Channels tab to enable.\n`);
+    }
 
     // ── Graceful Shutdown ─────────────────────
     async function shutdown(signal: string) {
         console.log(`\n🛑 Received ${signal}, shutting down...`);
-        bot.stop();
+        if (bot) bot.stop();
         stopHeartbeat();
         stopNetworkMonitor();
         stopNetworkWatcher();

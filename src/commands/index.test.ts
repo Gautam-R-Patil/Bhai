@@ -23,6 +23,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     return {
         telegramBotToken: "fake",
         allowedUserIds: new Set([12345, 67890]),
+        telegramEnabled: true,
         emailWhitelist: new Set(),
         ...overrides,
     };

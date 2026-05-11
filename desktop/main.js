@@ -1871,19 +1871,20 @@ function registerIPC() {
     });
 
     // ── Settings: Save credentials ──
+    // Use saveEnvKVs (merge strategy) so saving from Settings does NOT
+    // wipe channel credentials that channels:save-config wrote (Email,
+    // Discord, Slack, WhatsApp, Matrix, etc.) or other env keys like
+    // CONVEX_URL / ATLAS_ENV. Only the keys explicitly present in the
+    // payload are touched; everything else in .env is preserved.
     ipcMain.handle("settings:save", (_, settings) => {
         try {
-            const envLines = [
-                "# A.T.L.A.S — Environment Variables",
-                "# Encrypted by XAGI Labs Secure Storage",
-                "",
-            ];
-            if (settings.TELEGRAM_BOT_TOKEN) envLines.push(`TELEGRAM_BOT_TOKEN=${settings.TELEGRAM_BOT_TOKEN}`);
-            if (settings.ALLOWED_USER_IDS) envLines.push(`ALLOWED_USER_IDS=${settings.ALLOWED_USER_IDS}`);
-            if (settings.GITHUB_TOKEN) envLines.push(`GITHUB_TOKEN=${settings.GITHUB_TOKEN}`);
-            if (settings.ATLAS_WORKSPACE) envLines.push(`ATLAS_WORKSPACE=${settings.ATLAS_WORKSPACE}`);
-            const envContent = envLines.join("\n") + "\n";
-            saveEnvEncrypted(envContent);
+            const kvs = {};
+            for (const key of ["TELEGRAM_BOT_TOKEN", "ALLOWED_USER_IDS", "GITHUB_TOKEN", "ATLAS_WORKSPACE"]) {
+                if (Object.prototype.hasOwnProperty.call(settings, key)) {
+                    kvs[key] = settings[key] ?? "";
+                }
+            }
+            saveEnvKVs(kvs);
             return { success: true };
         } catch (err) {
             return { success: false, error: err.message };
@@ -2057,20 +2058,43 @@ function registerIPC() {
         }
     });
 
-    // Setup: persist legal acceptance (clickwrap evidence record)
+    // Setup: persist legal acceptance (clickwrap evidence record).
+    // Trust nothing from the renderer for the evidentiary record:
+    //   - acceptedAt is set in main (un-spoofable)
+    //   - version is the constant from router.js (renderer can't downgrade)
+    //   - documents URLs and consents flags are whitelist-picked by key,
+    //     not forwarded as raw objects (blocks prototype pollution and
+    //     unexpected keys ending up in the audit log)
     ipcMain.handle("setup:save-legal", async (_, payload) => {
         try {
             if (!payload || payload.accepted !== true) {
                 return { success: false, error: "Acceptance flag missing" };
             }
+            const { CURRENT_ACCEPTANCE_VERSION } = require(path.join(__dirname, "wizard", "router.js"));
+            const expectedDocIds = ["terms", "privacy", "acceptableUse", "disclaimer", "refund"];
+            const documents = {};
+            const rawDocs = payload.documents;
+            if (rawDocs && typeof rawDocs === "object") {
+                for (const id of expectedDocIds) {
+                    const url = Object.prototype.hasOwnProperty.call(rawDocs, id) ? rawDocs[id] : null;
+                    if (typeof url === "string" && /^https:\/\/(www\.)?tryatlasagi\.com\//.test(url)) {
+                        documents[id] = url;
+                    }
+                }
+            }
+            const rawConsents = payload.consents && typeof payload.consents === "object" ? payload.consents : {};
+            const consents = {
+                documents: rawConsents.documents === true,
+                ageOrAuthority: rawConsents.ageOrAuthority === true,
+            };
             const record = {
                 accepted: true,
-                acceptedAt: typeof payload.acceptedAt === "string" ? payload.acceptedAt : new Date().toISOString(),
-                version: typeof payload.version === "string" ? payload.version : "1.0.0",
+                acceptedAt: new Date().toISOString(),
+                version: CURRENT_ACCEPTANCE_VERSION,
                 appVersion: app.getVersion(),
                 platform: process.platform,
-                documents: (payload.documents && typeof payload.documents === "object") ? payload.documents : {},
-                consents: (payload.consents && typeof payload.consents === "object") ? payload.consents : {},
+                documents,
+                consents,
             };
             const targetPath = path.join(app.getPath("userData"), ".legal-acceptance.json");
             fs.writeFileSync(targetPath, JSON.stringify(record, null, 2));
@@ -2087,10 +2111,15 @@ function registerIPC() {
             if (typeof url !== "string") return { success: false, error: "Invalid URL" };
             const parsed = new URL(url);
             if (parsed.protocol !== "https:") return { success: false, error: "Only https URLs allowed" };
+            // Reject URLs carrying user-info (https://attacker.com@trusted.com/) — these
+            // pass a hostname check but some OS handlers route to the userinfo host.
+            if (parsed.username || parsed.password) return { success: false, error: "URL must not contain credentials" };
             const host = parsed.hostname.toLowerCase();
             const allowed = host === "tryatlasagi.com" || host === "www.tryatlasagi.com" || host === "xagilab.com" || host === "www.xagilab.com";
             if (!allowed) return { success: false, error: "Host not in allowlist" };
-            await shell.openExternal(parsed.toString());
+            // Rebuild from canonical components so any retained userinfo / fragment quirks are dropped.
+            const safeUrl = `${parsed.protocol}//${host}${parsed.pathname}${parsed.search}${parsed.hash}`;
+            await shell.openExternal(safeUrl);
             return { success: true };
         } catch (err) {
             return { success: false, error: err.message };
