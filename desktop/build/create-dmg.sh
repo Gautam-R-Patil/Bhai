@@ -3,11 +3,27 @@
 set -e
 
 APP_NAME="A.T.L.A.S"
-APP_PATH="dist/mac-arm64/${APP_NAME}.app"
+# ARCH defaults to arm64 (host arch on Apple Silicon); pass ARCH=x64 to build
+# the Intel DMG once you've produced dist/mac-x64/A.T.L.A.S.app via
+# `electron-builder --mac --x64 --dir`.
+ARCH="${ARCH:-arm64}"
+case "$ARCH" in
+    arm64) APP_DIR="mac-arm64" ;;
+    x64)   APP_DIR="mac-x64" ;;
+    universal) APP_DIR="mac-universal" ;;
+    *) echo "❌ Unknown ARCH=${ARCH} (expected arm64|x64|universal)"; exit 1 ;;
+esac
+APP_PATH="dist/${APP_DIR}/${APP_NAME}.app"
+# electron-builder historically emitted x64 to dist/mac/ rather than dist/mac-x64/.
+# Fall back to dist/mac/ if the arch-suffixed dir is missing.
+if [ ! -d "${APP_PATH}" ] && [ "$ARCH" = "x64" ] && [ -d "dist/mac/${APP_NAME}.app" ]; then
+    APP_DIR="mac"
+    APP_PATH="dist/${APP_DIR}/${APP_NAME}.app"
+fi
 # Derive the version from package.json so bumping the `version` field is
 # the single place that moves. Fallback if jq-free / malformed.
 APP_VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "0.0.0")
-DMG_NAME="${APP_NAME}-${APP_VERSION}-arm64.dmg"
+DMG_NAME="${APP_NAME}-${APP_VERSION}-${ARCH}.dmg"
 DMG_PATH="dist/${DMG_NAME}"
 VOL_NAME="A.T.L.A.S Installer"
 TEMP_DMG="dist/.temp-dmg.dmg"

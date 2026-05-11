@@ -11,9 +11,10 @@
         "test": "vitest run",
         "prebuild": "echo 'Source protection will run after pack...'",
         "build:win": "cd .. && npm run build && cd desktop && node build/patch-nsis.js && electron-builder --win --x64",
-        "build:mac": "cd .. && npm run build && cd desktop && electron-builder --mac --dir && bash build/create-dmg.sh",
+        "build:mac": "cd .. && npm run build && cd desktop && electron-builder --mac --dir --arm64 && ARCH=arm64 bash build/create-dmg.sh",
         "build:mac:release": "cd .. && npm run build && cd desktop && electron-builder --mac dmg",
         "build:mac:protected": "cd .. && npm run build && cd desktop && npm run prebuild && electron-builder --mac",
+        "build:linux": "cd .. && npm run build && cd desktop && electron-builder --linux",
         "build:win:protected": "cd .. && npm run build && cd desktop && node build/patch-nsis.js && npm run prebuild && electron-builder --win --x64",
         "postinstall": "electron-builder install-app-deps",
         "protect:standalone": "node build/obfuscate.js ../dist ../dist-obfuscated && node build/compile-bytecode.js --in-place ../dist-obfuscated"
@@ -252,6 +253,52 @@
             "shortcutName": "A.T.L.A.S",
             "license": "../LICENSE.txt",
             "include": "./build/installer.nsh"
+        },
+        "linux": {
+            "target": [
+                {
+                    "target": "AppImage",
+                    "arch": ["x64"]
+                },
+                {
+                    "target": "deb",
+                    "arch": ["x64"]
+                }
+            ],
+            "icon": "logo.png",
+            "category": "Utility",
+            "synopsis": "A continuously running, proactive personal AI agent.",
+            "description": "ATLAS is an autonomous AI assistant with persistent memory, multi-channel presence (Telegram, Discord, Slack, WhatsApp, email), browsing, deep research and coding capabilities. Privacy-first: server-side prompts, end-to-end encrypted transport, your conversations are never used to train foundation models.",
+            "extraResources": [
+                {
+                    "from": "../node_modules/ffprobe-static/bin/linux",
+                    "to": "bot/node_modules/ffprobe-static/bin/linux"
+                },
+                {
+                    "from": "../node_modules/onnxruntime-node/bin/napi-v3/linux",
+                    "to": "bot/node_modules/onnxruntime-node/bin/napi-v3/linux"
+                },
+                {
+                    "from": "../node_modules/@huggingface/transformers/node_modules/onnxruntime-node/bin/napi-v3/linux",
+                    "to": "bot/node_modules/@huggingface/transformers/node_modules/onnxruntime-node/bin/napi-v3/linux"
+                }
+            ]
+        },
+        "deb": {
+            "depends": [
+                "libgtk-3-0",
+                "libnotify4",
+                "libnss3",
+                "libxss1",
+                "libxtst6",
+                "xdg-utils",
+                "libatspi2.0-0",
+                "libuuid1",
+                "libsecret-1-0"
+            ]
+        },
+        "appImage": {
+            "license": "../LICENSE.txt"
         },
         "afterPack": "./build/protect-source.js"
     }

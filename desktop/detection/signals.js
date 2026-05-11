@@ -25,9 +25,18 @@ function detectSetupFlag(fs, setupFlagPath) {
 function detectLegalAcceptance(fs, legalAcceptancePath) {
     try {
         if (!fs.existsSync(legalAcceptancePath)) return { accepted: false };
+        // Defence-in-depth: refuse to follow a symlink. The acceptance file
+        // is created by the install wizard and lives inside userData; if it
+        // is ever a symlink, treat that as tampered and fail closed.
+        const lst = fs.lstatSync(legalAcceptancePath);
+        if (lst.isSymbolicLink()) return { accepted: false };
+        if (!lst.isFile()) return { accepted: false };
+        // Hard cap on size — a legitimate record is < 2 KB.
+        if (lst.size > 65536) return { accepted: false };
         const raw = fs.readFileSync(legalAcceptancePath, "utf8");
         const data = JSON.parse(raw);
-        if (!data || data.accepted !== true) return { accepted: false };
+        if (!data || typeof data !== "object" || Array.isArray(data)) return { accepted: false };
+        if (data.accepted !== true) return { accepted: false };
         return {
             accepted: true,
             acceptedAt: typeof data.acceptedAt === "string" ? data.acceptedAt : null,
