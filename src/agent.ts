@@ -814,9 +814,11 @@ export async function runAgent(
     const runWithCaller = async (
         fn: () => Promise<AgentResponse>,
     ): Promise<AgentResponse> => {
-        // Lazy import to avoid circular dep at module-load time.
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const mod = require("./tools/cron-tool.js") as typeof import("./tools/cron-tool.js");
+        // Lazy ESM import to avoid circular dep at module-load time.
+        // (Was `require()` previously — `require` is undefined in ESM-
+        // compiled output and crashed every overlay/Telegram message
+        // through this path.)
+        const mod = await import("./tools/cron-tool.js");
         return await mod.runWithCallerContext({ isOwner: callerIsOwner }, fn);
     };
     if (!isForked) {
