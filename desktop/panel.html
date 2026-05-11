@@ -1272,10 +1272,12 @@
                 <div class="tab-header">
                     <h2 class="tab-title">Memory Studio</h2>
                     <div style="display:flex;gap:8px">
+                        <button class="btn btn-secondary btn-sm" id="studioDeletedToggle">View deleted</button>
                         <button class="btn btn-secondary btn-sm" id="studioAdvancedToggle">Show advanced</button>
                         <button class="btn btn-primary btn-sm" id="studioRecomputeInsights">Recompute insights</button>
                     </div>
                 </div>
+                <div class="studio-deleted-pane" id="studioDeletedPane" data-open="false"></div>
 
                 <div class="surface-card studio-search-card">
                     <input class="clean-input" id="studioSearch" placeholder="Search memories, people, episodes…" autocomplete="off" />
@@ -1284,11 +1286,11 @@
                         <button class="studio-chip active" data-filter="entity">People &amp; Things</button>
                         <button class="studio-chip active" data-filter="episode">Episodes</button>
                         <button class="studio-chip active" data-filter="trait">Traits</button>
-                        <label class="studio-chip"><input type="checkbox" id="studioSimilarity" />Similarity edges</label>
+                        <label class="studio-chip"><input type="checkbox" id="studioSimilarity" checked />Similarity edges</label>
                     </div>
                 </div>
 
-                <div class="studio-body">
+                <div class="studio-body" data-detail-open="false">
                     <div class="surface-card studio-canvas-card">
                         <div id="studioGraph"></div>
                         <div class="studio-canvas-toolbar">
@@ -1303,6 +1305,7 @@
                     </div>
                     <aside class="surface-card studio-detail" id="studioDetail" data-open="false"></aside>
                 </div>
+                <div class="studio-insights" id="studioInsights"></div>
             </div>
 
             <!-- ═══════════════════════════════ -->

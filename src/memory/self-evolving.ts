@@ -63,6 +63,7 @@ export function synapticPrune(db: Database): { pruned: number; weakened: number;
                 julianday('now') - julianday(COALESCE(accessed_at, created_at)) as days_since
          FROM memories
          WHERE consolidated_into IS NULL
+           AND COALESCE(pinned, 0) = 0
            AND (category IS NULL OR (category != 'code' AND category NOT LIKE 'code\\_%' ESCAPE '\\'))`,
     );
 

@@ -2065,8 +2065,11 @@ function registerIPC() {
         if (days >= 90) return 0;
         return _clamp01(1 - days / 90);
     }
+    function _isActive(recency) {
+        return recency >= 0.92;
+    }
     function _nodeSize(importance, recency) {
-        return 8 + _clamp01(importance) * 16 + _clamp01(recency) * 6;
+        return 6 + _clamp01(importance) * 22 + _clamp01(recency) * 10;
     }
     function _truncate(text, max = 60) {
         if (!text) return "";
@@ -2119,28 +2122,83 @@ function registerIPC() {
         const memBudget = Math.max(40, Math.floor(maxNodes * 0.3));
         const memRows = searchQuery
             ? _safeAll(db,
-                `SELECT id, content, category, tags, importance, created_at, accessed_at, access_count, decay_score
+                `SELECT id, content, category, tags, importance, created_at, accessed_at, access_count, decay_score, COALESCE(pinned, 0) AS pinned
                  FROM memories WHERE consolidated_into IS NULL AND (content LIKE ? OR tags LIKE ?)
                  ORDER BY (importance * 0.6 + decay_score * 0.4) DESC LIMIT ?`,
                 [`%${searchQuery}%`, `%${searchQuery}%`, memBudget])
             : _safeAll(db,
-                `SELECT id, content, category, tags, importance, created_at, accessed_at, access_count, decay_score
+                `SELECT id, content, category, tags, importance, created_at, accessed_at, access_count, decay_score, COALESCE(pinned, 0) AS pinned
                  FROM memories WHERE consolidated_into IS NULL ${windowClause}
                  ORDER BY (importance * 0.6 + decay_score * 0.4) DESC LIMIT ?`,
                 [memBudget]);
+        // Group memories by category so each category gets its own synthetic
+        // anchor node — memories of the same category cluster together
+        // visually, and each cluster connects to "you" via the anchor.
+        const categoryBuckets = new Map(); // category → [memRow]
+        for (const r of memRows) {
+            const cat = (r.category || "general").trim() || "general";
+            if (!categoryBuckets.has(cat)) categoryBuckets.set(cat, []);
+            categoryBuckets.get(cat).push(r);
+        }
+
+        // Add category anchors only when the bucket has ≥2 memories.
+        const categoryAnchors = new Set();
+        for (const [cat, rows] of categoryBuckets.entries()) {
+            if (rows.length < 2) continue;
+            const anchorId = `cat:${cat}`;
+            categoryAnchors.add(cat);
+            const recencyMax = rows.reduce((m, r) => Math.max(m, _recencyScore(r.accessed_at || r.created_at)), 0);
+            nodes.push({
+                id: anchorId, kind: "memory",
+                label: cat.replace(/_/g, " "),
+                fullText: `${rows.length} memories tagged "${cat}"`,
+                importance: 0.7, recency: recencyMax,
+                size: _nodeSize(0.55, recencyMax) + 4,
+                color: STUDIO_COLOR.memory, pinned: false,
+                tags: [cat], category: cat,
+                createdAt: rows[0].created_at,
+                meta: { active: _isActive(recencyMax), isCategoryAnchor: true, count: rows.length },
+            });
+            if (centerOnUser) {
+                edges.push({
+                    source: "you", target: anchorId,
+                    kind: "kg", label: "remembers",
+                    strength: 0.4 + recencyMax * 0.3, weight: rows.length,
+                });
+            }
+        }
+
         for (const r of memRows) {
             const importance = _clamp01((r.importance ?? 5) / 10);
             const recency = _recencyScore(r.accessed_at || r.created_at);
             memIds.add(r.id);
+            const score = importance * 0.6 + (r.decay_score ?? 1) * 0.4;
+            const cat = (r.category || "general").trim() || "general";
             nodes.push({
                 id: `mem:${r.id}`, kind: "memory",
                 label: _truncate(r.content), fullText: r.content,
                 importance, recency, size: _nodeSize(importance, recency),
-                color: STUDIO_COLOR.memory, pinned: false,
+                color: STUDIO_COLOR.memory, pinned: !!r.pinned,
                 tags: _parseTags(r.tags), category: r.category || undefined,
                 createdAt: r.created_at, accessCount: r.access_count ?? 0,
-                meta: { decayScore: r.decay_score ?? 1 },
+                meta: { decayScore: r.decay_score ?? 1, active: _isActive(recency), pinned: !!r.pinned },
             });
+            // Anchor every memory: if its category has its own anchor, edge
+            // there (clusters by category). Otherwise edge directly to "you"
+            // so no memory is ever an orphan.
+            if (categoryAnchors.has(cat)) {
+                edges.push({
+                    source: `cat:${cat}`, target: `mem:${r.id}`,
+                    kind: "mention", label: cat,
+                    strength: 0.4 + score * 0.3, weight: score,
+                });
+            } else if (centerOnUser) {
+                edges.push({
+                    source: "you", target: `mem:${r.id}`,
+                    kind: "kg", label: "remembers",
+                    strength: 0.18 + score * 0.25, weight: score,
+                });
+            }
         }
 
         // Entities
@@ -2163,8 +2221,16 @@ function registerIPC() {
                 label: _truncate(r.name, 40), fullText: r.name,
                 importance: 0.6, recency, size: _nodeSize(0.6, recency),
                 color: STUDIO_COLOR.entity, pinned: false, tags: [],
-                createdAt: r.created_at, meta: { entityType: r.type },
+                createdAt: r.created_at,
+                meta: { entityType: r.type, active: _isActive(recency) },
             });
+            if (centerOnUser) {
+                edges.push({
+                    source: "you", target: `ent:${r.id}`,
+                    kind: "kg", label: "knows",
+                    strength: 0.3 + recency * 0.3, weight: 1,
+                });
+            }
         }
 
         // Traits
@@ -2188,13 +2254,18 @@ function registerIPC() {
                 color: STUDIO_COLOR.trait, pinned: false,
                 tags: r.topics ? _safeJsonArray(r.topics) : [],
                 createdAt: r.created_at,
-                meta: { confidence: r.confidence, reinforcements: r.reinforcement_count ?? 0 },
+                meta: {
+                    confidence: r.confidence,
+                    reinforcements: r.reinforcement_count ?? 0,
+                    active: _isActive(recency),
+                },
             });
             if (centerOnUser) {
                 edges.push({
                     source: "you", target: `trait:${r.trait_key}`,
                     kind: "kg", label: "trait",
-                    strength: _clamp01(r.confidence), weight: r.confidence,
+                    strength: 0.05 + _clamp01(r.confidence) * 0.05,
+                    weight: r.confidence,
                 });
             }
         }
@@ -2218,8 +2289,15 @@ function registerIPC() {
                 importance, recency, size: _nodeSize(importance, recency),
                 color: STUDIO_COLOR.episode, pinned: false,
                 tags: [r.type], createdAt: r.timestamp,
-                meta: { episodeType: r.type },
+                meta: { episodeType: r.type, active: _isActive(recency) },
             });
+            if (centerOnUser) {
+                edges.push({
+                    source: "you", target: `epi:${r.id}`,
+                    kind: "kg", label: "lived",
+                    strength: 0.2 + importance * 0.3, weight: importance,
+                });
+            }
         }
 
         // Emotions
@@ -2235,8 +2313,16 @@ function registerIPC() {
                 label: r.emotion, fullText: `${r.emotion} — ${r.context}`,
                 importance, recency, size: _nodeSize(importance, recency),
                 color: STUDIO_COLOR.emotion, pinned: false, tags: [],
-                createdAt: r.timestamp, meta: { intensity: r.intensity },
+                createdAt: r.timestamp,
+                meta: { intensity: r.intensity, active: _isActive(recency) },
             });
+            if (centerOnUser && (importance > 0.6 || _isActive(recency))) {
+                edges.push({
+                    source: "you", target: `emo:${r.id}`,
+                    kind: "kg", label: "felt",
+                    strength: 0.15 + importance * 0.2, weight: importance,
+                });
+            }
         }
 
         // Advanced kinds
@@ -2255,6 +2341,68 @@ function registerIPC() {
                     tags: [r.status], createdAt: r.created_at,
                     meta: { progress: r.progress, deadline: r.deadline, status: r.status },
                 });
+                if (centerOnUser) {
+                    edges.push({
+                        source: "you", target: `goal:${r.id}`,
+                        kind: "kg", label: "pursues",
+                        strength: 0.3, weight: 1,
+                    });
+                }
+            }
+
+            // World model entities (apps/APIs/sites the agent has touched).
+            const worldRows = _safeAll(db,
+                `SELECT name, type, last_used_at, success_rate, total_uses
+                 FROM world_entities ORDER BY total_uses DESC LIMIT 15`);
+            for (const r of worldRows) {
+                const recency = _recencyScore(r.last_used_at);
+                const importance = _clamp01((r.success_rate ?? 0.5) * 0.6 + Math.min((r.total_uses || 0) / 50, 1) * 0.4);
+                nodes.push({
+                    id: `world:${r.name}`, kind: "world_model",
+                    label: _truncate(r.name, 30), fullText: `${r.name} (${r.type})`,
+                    importance, recency, size: _nodeSize(importance, recency),
+                    color: STUDIO_COLOR.world_model, pinned: false,
+                    tags: [r.type], createdAt: r.last_used_at || new Date().toISOString(),
+                    meta: { worldType: r.type, successRate: r.success_rate, totalUses: r.total_uses },
+                });
+                if (centerOnUser) {
+                    edges.push({
+                        source: "you", target: `world:${r.name}`,
+                        kind: "mention", strength: 0.18 + recency * 0.12, weight: 1,
+                    });
+                }
+            }
+
+            // Self-state — single row representing ATLAS's internal posture.
+            const ss = _safeGet(db,
+                `SELECT user_id, energy_level, engagement_mode, confidence_in_user_model, relationship_depth, recent_emotional_tone, updated_at
+                 FROM self_state LIMIT 1`);
+            if (ss) {
+                const recency = _recencyScore(ss.updated_at);
+                const energy = _clamp01(ss.energy_level ?? 0.5);
+                const summary = `Mode: ${ss.engagement_mode || "—"} · Energy ${Math.round(energy * 100)}% · Tone ${ss.recent_emotional_tone || "—"}`;
+                nodes.push({
+                    id: `self:state`, kind: "self_state",
+                    label: "Self-state", fullText: summary,
+                    importance: 0.6, recency, size: _nodeSize(0.6, recency),
+                    color: STUDIO_COLOR.self_state, pinned: false,
+                    tags: [ss.engagement_mode || "self-state"],
+                    createdAt: ss.updated_at || new Date().toISOString(),
+                    meta: {
+                        energyLevel: energy,
+                        engagementMode: ss.engagement_mode,
+                        confidence: ss.confidence_in_user_model,
+                        relationshipDepth: ss.relationship_depth,
+                        recentTone: ss.recent_emotional_tone,
+                    },
+                });
+                if (centerOnUser) {
+                    edges.push({
+                        source: "you", target: "self:state",
+                        kind: "kg", label: "self",
+                        strength: 0.25, weight: 1,
+                    });
+                }
             }
         }
 
@@ -2301,11 +2449,116 @@ function registerIPC() {
             }
         }
 
-        // Edge cap (4× node count)
-        const edgeCap = nodes.length * 4;
+        // ── Neural mesh layer ─────────────────────────────────────────
+        // Lateral peer-to-peer mesh so the canvas reads as an interconnected
+        // network without becoming a wall of strings. Pairing scores: same
+        // kind + shared category + shared tag overlap.
+        const meshTargetsByNode = 4;
+        const tagsOf = (n) => {
+            const set = new Set();
+            for (const t of (n.tags || [])) set.add(String(t).toLowerCase());
+            if (n.category) set.add(String(n.category).toLowerCase());
+            if (n.meta && n.meta.entityType) set.add(String(n.meta.entityType).toLowerCase());
+            if (n.meta && n.meta.episodeType) set.add(String(n.meta.episodeType).toLowerCase());
+            return set;
+        };
+        const peerableKinds = new Set(["memory", "entity", "episode", "trait", "emotion"]);
+        const peerable = nodes.filter((n) => peerableKinds.has(n.kind) && !(n.meta && n.meta.isCategoryAnchor));
+        const peerTagSets = new Map();
+        for (const n of peerable) peerTagSets.set(n.id, tagsOf(n));
+
+        const meshEdgeKey = new Set();
+        for (const e of edges) {
+            const src = typeof e.source === "object" ? e.source.id : e.source;
+            const tgt = typeof e.target === "object" ? e.target.id : e.target;
+            meshEdgeKey.add(src < tgt ? `${src}|${tgt}` : `${tgt}|${src}`);
+        }
+
+        for (const a of peerable) {
+            const aTags = peerTagSets.get(a.id);
+            const candidates = [];
+            for (const b of peerable) {
+                if (b.id === a.id) continue;
+                const bTags = peerTagSets.get(b.id);
+                let overlap = 0;
+                if (a.kind === b.kind) overlap += 1;
+                if (a.category && b.category && a.category === b.category) overlap += 2;
+                if (aTags && bTags) {
+                    for (const t of aTags) if (bTags.has(t)) overlap += 2;
+                }
+                if (overlap > 0) candidates.push({ b, overlap });
+            }
+            candidates.sort((x, y) => y.overlap - x.overlap);
+            const picks = candidates.slice(0, meshTargetsByNode);
+            for (const { b, overlap } of picks) {
+                const key = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`;
+                if (meshEdgeKey.has(key)) continue;
+                meshEdgeKey.add(key);
+                const strength = Math.min(0.45, 0.18 + overlap * 0.06);
+                edges.push({
+                    source: a.id, target: b.id,
+                    kind: "similarity",
+                    strength, weight: overlap,
+                });
+            }
+        }
+
+        // Full intra-category mesh for tiny clusters (≤4 members). Keeps
+        // small categories visually cohesive without exploding edge counts
+        // for big buckets.
+        for (const [cat, rows] of categoryBuckets.entries()) {
+            if (rows.length < 2 || rows.length > 4) continue;
+            for (let i = 0; i < rows.length; i++) {
+                for (let j = i + 1; j < rows.length; j++) {
+                    const a = `mem:${rows[i].id}`;
+                    const b = `mem:${rows[j].id}`;
+                    const key = a < b ? `${a}|${b}` : `${b}|${a}`;
+                    if (meshEdgeKey.has(key)) continue;
+                    meshEdgeKey.add(key);
+                    edges.push({
+                        source: a, target: b,
+                        kind: "similarity",
+                        strength: 0.32, weight: 4,
+                    });
+                }
+            }
+        }
+
+        // Cross-cluster bridges: each entity reaches to ~2 other entities so
+        // clusters are stitched rather than islands.
+        const entIdList2 = Array.from(entIds);
+        if (entIdList2.length > 1) {
+            const entRows3 = _safeAll(db,
+                `SELECT id, name FROM entities WHERE id IN (${entIdList2.map(() => "?").join(",")})`,
+                entIdList2);
+            for (let i = 0; i < entRows3.length; i++) {
+                for (let j = i + 1; j < Math.min(entRows3.length, i + 3); j++) {
+                    const a = `ent:${entRows3[i].id}`;
+                    const b = `ent:${entRows3[j].id}`;
+                    const key = a < b ? `${a}|${b}` : `${b}|${a}`;
+                    if (meshEdgeKey.has(key)) continue;
+                    meshEdgeKey.add(key);
+                    edges.push({
+                        source: a, target: b,
+                        kind: "similarity",
+                        strength: 0.22, weight: 2,
+                    });
+                }
+            }
+        }
+
+        // Edge cap (5× node count)
+        const edgeCap = nodes.length * 5;
         if (edges.length > edgeCap) {
-            edges.sort((a, b) => b.weight - a.weight);
-            edges.length = edgeCap;
+            // Keep KG edges (structure) preferentially; trim weakest similarity
+            // edges first.
+            const kgEdges = edges.filter((e) => e.kind !== "similarity");
+            const simEdges = edges
+                .filter((e) => e.kind === "similarity")
+                .sort((a, b) => b.weight - a.weight);
+            const simBudget = Math.max(0, edgeCap - kgEdges.length);
+            edges.length = 0;
+            edges.push(...kgEdges, ...simEdges.slice(0, simBudget));
         }
 
         const truncated = nodes.length > maxNodes;
@@ -2358,8 +2611,9 @@ function registerIPC() {
                 let row = null;
                 if (kind === "memory") {
                     row = _safeGet(db,
-                        `SELECT id, content, category, tags, importance, created_at, accessed_at, access_count, decay_score, source, scope
+                        `SELECT id, content, category, tags, importance, created_at, accessed_at, access_count, decay_score, source, scope, COALESCE(pinned, 0) AS pinned
                          FROM memories WHERE id = ?`, [id]);
+                    if (row) row.pinned = !!row.pinned;
                 } else if (kind === "entity") {
                     row = _safeGet(db,
                         `SELECT id, name, type, properties, created_at, updated_at, last_accessed_at
@@ -2499,6 +2753,443 @@ function registerIPC() {
                     stats.categories[r.category || "general"] = r.c;
                 }
                 return { success: true, stats };
+            } finally { db.close(); }
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    // ── Memory Studio: write paths ──────────────────────────────────
+    // Open a R/W handle, run the change in a transaction, retry on
+    // SQLITE_BUSY (the bot child process holds its own write handle and
+    // WAL mode lets us coexist).
+
+    function _studioOpenWriteDb() {
+        const dbPath = path.join(DATA_DIR, "memory.db");
+        if (!fs.existsSync(dbPath)) return null;
+        const Database = require("better-sqlite3");
+        const handle = new Database(dbPath, { fileMustExist: true });
+        // Make sure the schema additions exist on this handle too — the bot
+        // process runs the migrations when it boots, but the desktop main
+        // process also opens the DB before the bot has started. Best-effort
+        // self-heal so writes don't fail on a cold cache.
+        try { handle.prepare("ALTER TABLE memories ADD COLUMN pinned INTEGER DEFAULT 0").run(); } catch { /* exists */ }
+        try { handle.prepare("CREATE INDEX IF NOT EXISTS idx_memories_pinned ON memories(pinned) WHERE pinned = 1").run(); } catch { /* */ }
+        try {
+            handle.prepare(`CREATE TABLE IF NOT EXISTS memory_forget_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT NOT NULL,
+                original_id TEXT NOT NULL,
+                content_snapshot TEXT,
+                reason TEXT NOT NULL,
+                source TEXT DEFAULT 'user',
+                forgotten_at TEXT DEFAULT (datetime('now'))
+            )`).run();
+        } catch { /* */ }
+        try { handle.prepare("CREATE INDEX IF NOT EXISTS idx_forget_log_kind ON memory_forget_log(kind, forgotten_at)").run(); } catch { /* */ }
+        try {
+            handle.prepare(`CREATE TABLE IF NOT EXISTS memory_insights (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT NOT NULL,
+                title TEXT NOT NULL,
+                body TEXT NOT NULL,
+                evidence_ids TEXT NOT NULL DEFAULT '[]',
+                metric_value REAL,
+                metric_unit TEXT,
+                computed_at TEXT DEFAULT (datetime('now')),
+                window_days INTEGER DEFAULT 7
+            )`).run();
+        } catch { /* */ }
+        try { handle.prepare("CREATE INDEX IF NOT EXISTS idx_insights_computed ON memory_insights(computed_at DESC)").run(); } catch { /* */ }
+        try { handle.prepare("CREATE INDEX IF NOT EXISTS idx_insights_kind ON memory_insights(kind, computed_at DESC)").run(); } catch { /* */ }
+        return handle;
+    }
+
+    function _studioRunWithRetry(fn) {
+        const MAX_ATTEMPTS = 3;
+        let lastErr = null;
+        for (let i = 0; i < MAX_ATTEMPTS; i++) {
+            try {
+                return fn();
+            } catch (e) {
+                lastErr = e;
+                if (e && (e.code === "SQLITE_BUSY" || e.code === "SQLITE_LOCKED")) {
+                    const until = Date.now() + 50;
+                    while (Date.now() < until) { /* tight wait — short */ }
+                    continue;
+                }
+                throw e;
+            }
+        }
+        throw lastErr || new Error("studio write failed");
+    }
+
+    ipcMain.handle("memory:studio-update-memory", async (_, id, fields) => {
+        try {
+            const db = _studioOpenWriteDb();
+            if (!db) return { success: false, error: "No memory database found" };
+            try {
+                const sets = [];
+                const params = [];
+                if (typeof fields?.content === "string") { sets.push("content = ?"); params.push(fields.content); }
+                if (typeof fields?.category === "string") { sets.push("category = ?"); params.push(fields.category); }
+                if (typeof fields?.tags === "string") { sets.push("tags = ?"); params.push(fields.tags); }
+                if (typeof fields?.importance === "number") {
+                    sets.push("importance = ?");
+                    params.push(Math.max(1, Math.min(10, Math.round(fields.importance))));
+                }
+                if (sets.length === 0) return { success: false, error: "no fields to update" };
+
+                _studioRunWithRetry(() => {
+                    const tx = db.transaction(() => {
+                        db.prepare(`UPDATE memories SET ${sets.join(", ")} WHERE id = ?`).run(...params, id);
+                        if (typeof fields?.content === "string") {
+                            db.prepare("DELETE FROM memory_embeddings WHERE memory_id = ?").run(id);
+                        }
+                    });
+                    tx();
+                });
+                return { success: true };
+            } finally { db.close(); }
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle("memory:studio-set-importance", async (_, id, value) => {
+        try {
+            const db = _studioOpenWriteDb();
+            if (!db) return { success: false, error: "No memory database found" };
+            try {
+                const v = Math.max(1, Math.min(10, Math.round(value)));
+                _studioRunWithRetry(() => {
+                    db.prepare("UPDATE memories SET importance = ? WHERE id = ?").run(v, id);
+                });
+                return { success: true, importance: v };
+            } finally { db.close(); }
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle("memory:studio-pin-memory", async (_, id, pinned) => {
+        try {
+            const db = _studioOpenWriteDb();
+            if (!db) return { success: false, error: "No memory database found" };
+            try {
+                _studioRunWithRetry(() => {
+                    db.prepare("UPDATE memories SET pinned = ? WHERE id = ?").run(pinned ? 1 : 0, id);
+                });
+                return { success: true, pinned: !!pinned };
+            } finally { db.close(); }
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle("memory:studio-forget-memory", async (_, id, reason) => {
+        try {
+            const db = _studioOpenWriteDb();
+            if (!db) return { success: false, error: "No memory database found" };
+            try {
+                _studioRunWithRetry(() => {
+                    const tx = db.transaction(() => {
+                        const snap = db.prepare("SELECT content FROM memories WHERE id = ? LIMIT 1").get(id);
+                        const snapshot = snap ? snap.content ?? null : null;
+                        db.prepare(
+                            "INSERT INTO memory_forget_log (kind, original_id, content_snapshot, reason, source) VALUES (?, ?, ?, ?, 'user')"
+                        ).run("memory", String(id), snapshot, reason || "unspecified");
+                        db.prepare("DELETE FROM memory_embeddings WHERE memory_id = ?").run(id);
+                        db.prepare("DELETE FROM memories WHERE id = ?").run(id);
+                    });
+                    tx();
+                });
+                return { success: true };
+            } finally { db.close(); }
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle("memory:studio-bulk-forget", async (_, ids, reason) => {
+        try {
+            const db = _studioOpenWriteDb();
+            if (!db) return { success: false, error: "No memory database found" };
+            if (!Array.isArray(ids) || ids.length === 0) return { success: true, forgotten: 0 };
+            try {
+                let forgotten = 0;
+                _studioRunWithRetry(() => {
+                    const tx = db.transaction(() => {
+                        for (const id of ids) {
+                            const snap = db.prepare("SELECT content FROM memories WHERE id = ? LIMIT 1").get(id);
+                            const snapshot = snap ? snap.content ?? null : null;
+                            db.prepare(
+                                "INSERT INTO memory_forget_log (kind, original_id, content_snapshot, reason, source) VALUES (?, ?, ?, ?, 'user')"
+                            ).run("memory", String(id), snapshot, reason || "unspecified");
+                            db.prepare("DELETE FROM memory_embeddings WHERE memory_id = ?").run(id);
+                            db.prepare("DELETE FROM memories WHERE id = ?").run(id);
+                            forgotten++;
+                        }
+                    });
+                    tx();
+                });
+                return { success: true, forgotten };
+            } finally { db.close(); }
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle("memory:studio-forget-trait", async (_, traitKey, reason) => {
+        try {
+            const db = _studioOpenWriteDb();
+            if (!db) return { success: false, error: "No memory database found" };
+            try {
+                _studioRunWithRetry(() => {
+                    const tx = db.transaction(() => {
+                        const snap = db.prepare("SELECT value FROM behavioral_traits WHERE trait_key = ? LIMIT 1").get(traitKey);
+                        const snapshot = snap ? snap.value ?? null : null;
+                        db.prepare(
+                            "INSERT INTO memory_forget_log (kind, original_id, content_snapshot, reason, source) VALUES (?, ?, ?, ?, 'user')"
+                        ).run("trait", String(traitKey), snapshot, reason || "unspecified");
+                        db.prepare("DELETE FROM behavioral_traits WHERE trait_key = ?").run(traitKey);
+                    });
+                    tx();
+                });
+                return { success: true };
+            } finally { db.close(); }
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle("memory:studio-forget-entity", async (_, id, reason, cascade) => {
+        try {
+            const db = _studioOpenWriteDb();
+            if (!db) return { success: false, error: "No memory database found" };
+            try {
+                let relCount = 0;
+                _studioRunWithRetry(() => {
+                    const tx = db.transaction(() => {
+                        const snap = db.prepare("SELECT name FROM entities WHERE id = ? LIMIT 1").get(id);
+                        const snapshot = snap ? snap.name ?? null : null;
+                        if (cascade !== false) {
+                            const r = db.prepare("SELECT COUNT(*) AS c FROM relationships WHERE from_id = ? OR to_id = ?").get(id, id);
+                            relCount = r ? r.c ?? 0 : 0;
+                        }
+                        db.prepare(
+                            "INSERT INTO memory_forget_log (kind, original_id, content_snapshot, reason, source) VALUES (?, ?, ?, ?, 'user')"
+                        ).run("entity", String(id), snapshot, reason || "unspecified");
+                        db.prepare("DELETE FROM entities WHERE id = ?").run(id);
+                    });
+                    tx();
+                });
+                return { success: true, forgotten: 1, relationshipsRemoved: relCount };
+            } finally { db.close(); }
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    // ── Insights ────────────────────────────────────────────────────
+    ipcMain.handle("memory:studio-insights", async () => {
+        try {
+            const db = _studioOpenDb();
+            if (!db) return { success: false, error: "No memory database found" };
+            try {
+                const cards = _safeAll(db,
+                    `SELECT id, kind, title, body, evidence_ids, metric_value, metric_unit, computed_at, window_days
+                     FROM memory_insights
+                     WHERE id IN (SELECT MAX(id) FROM memory_insights GROUP BY kind)
+                     ORDER BY CASE kind
+                         WHEN 'mood' THEN 1
+                         WHEN 'recurring_theme' THEN 2
+                         WHEN 'avoidance' THEN 3
+                         WHEN 'most_discussed' THEN 4
+                         ELSE 5 END`);
+                const parsed = cards.map((r) => {
+                    let evidence = [];
+                    try {
+                        const v = JSON.parse(r.evidence_ids || "[]");
+                        if (Array.isArray(v)) evidence = v.filter(
+                            (e) => e && typeof e === "object" && typeof e.kind === "string" && typeof e.id === "string"
+                        );
+                    } catch { /* corrupt JSON */ }
+                    return {
+                        id: r.id,
+                        kind: r.kind,
+                        title: r.title,
+                        body: r.body,
+                        evidenceIds: evidence,
+                        metricValue: r.metric_value,
+                        metricUnit: r.metric_unit,
+                        computedAt: r.computed_at,
+                        windowDays: r.window_days,
+                    };
+                });
+                return { success: true, insights: parsed };
+            } finally { db.close(); }
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    // SQL-only insight recompute. Mirrors the templated branches of
+    // src/memory/studio-insights.ts but skips the optional LLM theme polish
+    // (the bot's nightly job runs the full version).
+    ipcMain.handle("memory:studio-recompute-insights", async () => {
+        try {
+            const db = _studioOpenWriteDb();
+            if (!db) return { success: false, error: "No memory database found" };
+            try {
+                const windowDays = 7;
+                const POSITIVE = new Set(["happy", "joy", "calm", "excited", "proud", "grateful", "content", "hopeful", "amused"]);
+                const NEGATIVE = new Set(["sad", "angry", "frustrated", "anxious", "tired", "stressed", "scared", "lonely", "disappointed", "overwhelmed"]);
+
+                let generated = 0;
+                _studioRunWithRetry(() => {
+                    const tx = db.transaction(() => {
+                        // Mood
+                        try {
+                            const rows = db.prepare(
+                                `SELECT id, emotion, COALESCE(intensity, 0.5) AS intensity
+                                 FROM emotional_memory
+                                 WHERE timestamp > datetime('now', ?)`,
+                            ).all(`-${windowDays} days`);
+                            if (rows.length >= 2) {
+                                let sum = 0;
+                                const evidence = [];
+                                for (const r of rows) {
+                                    const e = (r.emotion || "").toLowerCase();
+                                    const polarity = POSITIVE.has(e) ? 1 : NEGATIVE.has(e) ? -1 : 0;
+                                    sum += polarity * (r.intensity ?? 0.5);
+                                    if (evidence.length < 6) evidence.push({ kind: "emotion", id: r.id });
+                                }
+                                const valence = sum / rows.length;
+                                let title, body;
+                                if (valence > 0.4) { title = "A bright stretch"; body = `Your week leaned warm — positive notes outnumbered the rough ones across ${rows.length} moments.`; }
+                                else if (valence > 0.1) { title = "Mostly steady"; body = `Tone was even-keeled this week with a slight lift. ${rows.length} emotional notes recorded.`; }
+                                else if (valence > -0.1) { title = "Mixed but balanced"; body = `${rows.length} emotional notes this week — a roughly even split between bright and heavy moments.`; }
+                                else if (valence > -0.4) { title = "Heavier than usual"; body = `The tone tipped toward strain this week across ${rows.length} emotional notes.`; }
+                                else { title = "A hard week"; body = `Most of the week's emotional notes leaned negative (${rows.length} recorded). Worth a check-in.`; }
+                                db.prepare(
+                                    `INSERT INTO memory_insights (kind, title, body, evidence_ids, metric_value, metric_unit, window_days) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                                ).run("mood", title, body, JSON.stringify(evidence), valence, "valence", windowDays);
+                                generated++;
+                            }
+                        } catch { /* mood failed — skip */ }
+
+                        // Recurring theme
+                        try {
+                            const top = db.prepare(
+                                `SELECT category AS token, COUNT(*) AS cnt FROM memories
+                                 WHERE consolidated_into IS NULL AND created_at > datetime('now', ?)
+                                   AND category IS NOT NULL AND category != ''
+                                 GROUP BY category ORDER BY cnt DESC LIMIT 1`,
+                            ).get(`-${windowDays} days`);
+                            if (top) {
+                                const evidence = db.prepare(
+                                    `SELECT id FROM memories
+                                     WHERE consolidated_into IS NULL AND category = ?
+                                       AND created_at > datetime('now', ?)
+                                     ORDER BY (importance * 0.6 + decay_score * 0.4) DESC LIMIT 5`,
+                                ).all(top.token, `-${windowDays} days`).map((r) => ({ kind: "memory", id: String(r.id) }));
+                                db.prepare(
+                                    `INSERT INTO memory_insights (kind, title, body, evidence_ids, metric_value, metric_unit, window_days) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                                ).run(
+                                    "recurring_theme",
+                                    top.token.replace(/_/g, " "),
+                                    `${top.cnt} memories landed under "${top.token}" in the last ${windowDays} days — your most-touched theme.`,
+                                    JSON.stringify(evidence), top.cnt, "count", windowDays,
+                                );
+                                generated++;
+                            }
+                        } catch { /* */ }
+
+                        // Avoidance
+                        try {
+                            const before = db.prepare(
+                                `SELECT category AS token, COUNT(*) AS cnt FROM memories
+                                 WHERE consolidated_into IS NULL
+                                   AND created_at < datetime('now', ?) AND created_at > datetime('now', ?)
+                                   AND category IS NOT NULL AND category != ''
+                                 GROUP BY category HAVING cnt >= 3`,
+                            ).all(`-${windowDays} days`, `-${windowDays * 5} days`);
+                            if (before.length > 0) {
+                                const recent = db.prepare(
+                                    `SELECT category AS token FROM memories
+                                     WHERE consolidated_into IS NULL AND created_at > datetime('now', ?)
+                                       AND category IS NOT NULL`,
+                                ).all(`-${windowDays} days`);
+                                const recentSet = new Set(recent.map((r) => r.token));
+                                const dropped = before.filter((b) => !recentSet.has(b.token)).sort((a, b) => b.cnt - a.cnt);
+                                if (dropped.length > 0) {
+                                    const top = dropped[0];
+                                    db.prepare(
+                                        `INSERT INTO memory_insights (kind, title, body, evidence_ids, metric_value, metric_unit, window_days) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                                    ).run(
+                                        "avoidance",
+                                        top.token.replace(/_/g, " "),
+                                        `You used to log "${top.token}" memories often (${top.cnt} in the prior month) but haven't this week.`,
+                                        "[]", top.cnt, "count", windowDays,
+                                    );
+                                    generated++;
+                                }
+                            }
+                        } catch { /* */ }
+
+                        // Most-discussed
+                        try {
+                            const top = db.prepare(
+                                `SELECT id, name FROM entities
+                                 WHERE last_accessed_at > datetime('now', ?)
+                                 ORDER BY last_accessed_at DESC LIMIT 1`,
+                            ).get(`-${windowDays} days`);
+                            if (top) {
+                                const sample = db.prepare(
+                                    `SELECT id FROM memories
+                                     WHERE (',' || lower(tags) || ',') LIKE ('%,' || lower(?) || ',%')
+                                       AND consolidated_into IS NULL
+                                     ORDER BY accessed_at DESC LIMIT 5`,
+                                ).all(top.name);
+                                const evidence = [
+                                    { kind: "entity", id: String(top.id) },
+                                    ...sample.slice(0, 3).map((s) => ({ kind: "memory", id: String(s.id) })),
+                                ];
+                                db.prepare(
+                                    `INSERT INTO memory_insights (kind, title, body, evidence_ids, metric_value, metric_unit, window_days) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                                ).run(
+                                    "most_discussed",
+                                    top.name,
+                                    sample.length > 0
+                                        ? `${top.name} keeps coming up — surfaced in ${sample.length} recent memories.`
+                                        : `${top.name} was the most-touched person/thing this week.`,
+                                    JSON.stringify(evidence), sample.length, "frequency", windowDays,
+                                );
+                                generated++;
+                            }
+                        } catch { /* */ }
+                    });
+                    tx();
+                });
+                return { success: true, generated };
+            } finally { db.close(); }
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle("memory:studio-forget-log", async (_, limit) => {
+        try {
+            const db = _studioOpenDb();
+            if (!db) return { success: false, error: "No memory database found" };
+            try {
+                const cap = Math.max(1, Math.min(200, limit || 50));
+                const rows = _safeAll(db,
+                    `SELECT id, kind, original_id, content_snapshot, reason, source, forgotten_at
+                     FROM memory_forget_log ORDER BY forgotten_at DESC LIMIT ?`,
+                    [cap]);
+                return { success: true, entries: rows };
             } finally { db.close(); }
         } catch (err) {
             return { success: false, error: err.message };

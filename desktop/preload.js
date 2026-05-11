@@ -21,6 +21,26 @@ contextBridge.exposeInMainWorld("atlas", {
     getMemoryData: () => ipcRenderer.invoke("bot:memory-data"),
     deleteTrait: (key) => ipcRenderer.invoke("bot:delete-trait", key),
 
+    // ── Memory Studio ─────────────────────────
+    studio: {
+        graph: (opts) => ipcRenderer.invoke("memory:studio-graph", opts),
+        search: (query, opts) => ipcRenderer.invoke("memory:studio-search", query, opts),
+        getNode: (kind, id) => ipcRenderer.invoke("memory:studio-get-node", kind, id),
+        connections: (kind, id) => ipcRenderer.invoke("memory:studio-connections", kind, id),
+        you: () => ipcRenderer.invoke("memory:studio-you"),
+        stats: () => ipcRenderer.invoke("memory:studio-stats"),
+        updateMemory: (id, fields) => ipcRenderer.invoke("memory:studio-update-memory", id, fields),
+        setImportance: (id, value) => ipcRenderer.invoke("memory:studio-set-importance", id, value),
+        pinMemory: (id, pinned) => ipcRenderer.invoke("memory:studio-pin-memory", id, pinned),
+        forgetMemory: (id, reason) => ipcRenderer.invoke("memory:studio-forget-memory", id, reason),
+        bulkForget: (ids, reason) => ipcRenderer.invoke("memory:studio-bulk-forget", ids, reason),
+        forgetTrait: (key, reason) => ipcRenderer.invoke("memory:studio-forget-trait", key, reason),
+        forgetEntity: (id, reason, cascade) => ipcRenderer.invoke("memory:studio-forget-entity", id, reason, cascade),
+        forgetLog: (limit) => ipcRenderer.invoke("memory:studio-forget-log", limit),
+        insights: () => ipcRenderer.invoke("memory:studio-insights"),
+        recomputeInsights: () => ipcRenderer.invoke("memory:studio-recompute-insights"),
+    },
+
     // ── Setup ─────────────────────────────────
     saveCredentials: (creds) => ipcRenderer.invoke("setup:save-credentials", creds),
     saveProfile: (profile) => ipcRenderer.invoke("setup:save-profile", profile),

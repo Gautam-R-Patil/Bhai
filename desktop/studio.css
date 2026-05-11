@@ -1,0 +1,754 @@
+/* Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved. */
+/* This software is proprietary. Copying or reuse is prohibited.            */
+
+/* ═══════════════════════════════════════════════
+   Memory Studio
+   Tokens-only — every value resolves through the
+   shared CSS custom properties in styles.css so
+   theme switches propagate without re-styling.
+   ═══════════════════════════════════════════════ */
+
+#tab-memory.tab-content {
+    display: none;
+    flex-direction: column;
+    gap: var(--space-md);
+    /* tab-header brings its own 20/24/12 padding — don't double it. */
+    padding: 0 var(--space-lg) var(--space-lg);
+    overflow-y: auto;
+    overflow-x: hidden;
+    height: 100%;
+    min-height: 0;
+}
+
+#tab-memory.tab-content.active {
+    display: flex;
+}
+
+#tab-memory .tab-header {
+    padding-left: 0;
+    padding-right: 0;
+    gap: var(--space-md);
+    flex-wrap: wrap;
+}
+
+#tab-memory .tab-title {
+    white-space: nowrap;
+    flex: 0 0 auto;
+}
+
+#tab-memory .tab-header .btn {
+    white-space: nowrap;
+    /* Match the rest of the panel's small action buttons. */
+    padding: 6px 12px;
+    font-size: 12px;
+    min-height: 0;
+}
+
+#tab-memory .tab-header > div {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    flex: 0 1 auto;
+}
+
+.studio-search-card {
+    padding: var(--space-md) var(--space-lg);
+    margin-bottom: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.studio-search-card .clean-input {
+    width: 100%;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text-primary);
+    font-size: 14px;
+    padding: 4px 0;
+}
+
+.studio-search-card .clean-input::placeholder {
+    color: var(--text-muted);
+}
+
+.studio-filters {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.studio-chip {
+    background: var(--glass-input);
+    border: var(--glass-border);
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    line-height: 1.2;
+}
+
+.studio-chip:hover {
+    background: var(--glass-hover);
+}
+
+.studio-chip.active {
+    background: var(--accent-tint);
+    color: var(--accent-primary);
+    border-color: var(--accent-ring);
+}
+
+.studio-chip input[type="checkbox"] {
+    width: 12px;
+    height: 12px;
+    accent-color: var(--accent-primary);
+}
+
+.studio-body {
+    flex: 1 1 auto;
+    display: block;
+    position: relative;
+    min-height: 480px;
+    overflow: hidden;
+}
+
+/* Wide viewport: canvas shifts left when the detail panel is open so the
+   two don't overlap. Below 1100px, the detail floats over the canvas. */
+@media (min-width: 1101px) {
+    .studio-body[data-detail-open="true"] .studio-canvas-card {
+        margin-right: calc(340px + var(--space-md));
+        transition: margin-right 220ms ease;
+    }
+    .studio-body .studio-canvas-card {
+        transition: margin-right 220ms ease;
+    }
+}
+
+.studio-canvas-card {
+    padding: 0;
+    margin-bottom: 0;
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    min-height: 480px;
+    height: 100%;
+    width: 100%;
+}
+
+.studio-canvas-card #studioGraph {
+    flex: 1;
+    width: 100%;
+    height: 100%;
+    min-height: 480px;
+    display: block;
+}
+
+.studio-canvas-card svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+.studio-canvas-toolbar {
+    position: absolute;
+    top: var(--space-md);
+    right: var(--space-md);
+    display: flex;
+    gap: var(--space-sm);
+    align-items: center;
+    z-index: 2;
+}
+
+.studio-pill {
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: var(--glass-border);
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    box-shadow: var(--shadow-glass);
+}
+
+.studio-zoom-controls {
+    display: flex;
+    gap: 4px;
+}
+
+.studio-zoom-controls .btn-icon {
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: var(--glass-border);
+    border-radius: var(--radius-sm);
+    width: 28px;
+    height: 28px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.studio-zoom-controls .btn-icon:hover {
+    background: var(--glass-hover);
+    color: var(--accent-primary);
+}
+
+.studio-legend {
+    position: absolute;
+    bottom: var(--space-md);
+    left: var(--space-md);
+    display: flex;
+    gap: var(--space-md);
+    flex-wrap: wrap;
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: var(--glass-border);
+    border-radius: var(--radius-sm);
+    padding: 6px 10px;
+    font-size: 10px;
+    color: var(--text-secondary);
+    box-shadow: var(--shadow-glass);
+    z-index: 2;
+}
+
+.studio-legend .legend-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 4px;
+    vertical-align: middle;
+}
+
+.studio-detail {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(340px, 92vw);
+    padding: var(--space-md);
+    margin-bottom: 0;
+    overflow: auto;
+    transform: translateX(calc(100% + 32px));
+    opacity: 0;
+    pointer-events: none;
+    transition: transform 220ms ease, opacity 220ms ease;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    z-index: 5;
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.25);
+}
+
+.studio-detail[data-open="true"] {
+    transform: translateX(0);
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.studio-detail-meta {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.studio-detail-close {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 2px 6px;
+    font-size: 14px;
+    line-height: 1;
+    border-radius: var(--radius-sm);
+}
+
+.studio-detail-close:hover {
+    color: var(--accent-primary);
+    background: var(--accent-tint);
+}
+
+.studio-detail-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: -0.3px;
+    line-height: 1.3;
+    word-break: break-word;
+}
+
+.studio-detail-body {
+    background: var(--glass-input);
+    border: var(--glass-border);
+    border-radius: var(--radius-md);
+    padding: var(--space-sm) var(--space-md);
+    font-size: 13px;
+    color: var(--text-primary);
+    line-height: 1.5;
+    word-break: break-word;
+    white-space: pre-wrap;
+}
+
+.studio-detail-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    margin-top: var(--space-xs);
+}
+
+.studio-detail-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    font-weight: 600;
+}
+
+.studio-detail-tag {
+    background: var(--accent-tint);
+    color: var(--accent-primary);
+    border-radius: 999px;
+    padding: 3px 9px;
+    font-size: 10px;
+    font-weight: 600;
+}
+
+.studio-conn-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.studio-conn-chip {
+    background: var(--glass-input);
+    border: var(--glass-border);
+    border-radius: var(--radius-sm);
+    padding: 4px 8px;
+    font-size: 10px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    transition: background 0.15s ease;
+}
+
+.studio-conn-chip:hover {
+    background: var(--glass-hover);
+    color: var(--accent-primary);
+}
+
+.studio-conn-dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+}
+
+.studio-detail-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: var(--space-sm);
+}
+
+.studio-detail-actions .btn {
+    padding: 6px 11px;
+    font-size: 11px;
+    min-width: 0;
+}
+
+.studio-detail-actions .btn.danger {
+    color: var(--accent-danger);
+}
+
+.studio-edit-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    margin-top: var(--space-sm);
+}
+
+.studio-edit-form textarea,
+.studio-edit-form input[type="text"] {
+    width: 100%;
+    background: var(--glass-input);
+    border: var(--glass-border);
+    border-radius: var(--radius-md);
+    padding: 8px 10px;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-family: inherit;
+    line-height: 1.5;
+    outline: none;
+    resize: vertical;
+}
+
+.studio-edit-form textarea:focus,
+.studio-edit-form input[type="text"]:focus {
+    background: var(--glass-input-focus);
+    border-color: var(--accent-ring);
+}
+
+.studio-edit-form textarea {
+    min-height: 110px;
+}
+
+.studio-edit-importance {
+    width: 100%;
+    accent-color: var(--accent-primary);
+}
+
+.studio-edit-actions {
+    display: flex;
+    gap: 6px;
+    justify-content: flex-end;
+}
+
+.studio-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    z-index: var(--z-modal, 1000);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-lg);
+}
+
+.studio-modal {
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: var(--glass-border-strong);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-glass-lg);
+    padding: var(--space-lg);
+    max-width: 420px;
+    width: 100%;
+    color: var(--text-primary);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.studio-modal-title {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+}
+
+.studio-modal-body {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.studio-modal-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 4px;
+}
+
+.studio-modal-option {
+    background: var(--glass-input);
+    border: var(--glass-border);
+    border-radius: 999px;
+    padding: 6px 12px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.studio-modal-option:hover { background: var(--glass-hover); }
+
+.studio-modal-option.active {
+    background: var(--accent-tint);
+    color: var(--accent-primary);
+    border-color: var(--accent-ring);
+}
+
+.studio-modal-actions {
+    display: flex;
+    gap: 6px;
+    justify-content: flex-end;
+    margin-top: var(--space-sm);
+}
+
+/* Toolbar "View deleted" pane */
+.studio-deleted-pane {
+    background: var(--glass-input);
+    border: var(--glass-border);
+    border-radius: var(--radius-md);
+    padding: var(--space-sm) var(--space-md);
+    margin-top: var(--space-sm);
+    max-height: 200px;
+    overflow-y: auto;
+    font-size: 11px;
+    color: var(--text-secondary);
+    display: none;
+}
+
+.studio-deleted-pane[data-open="true"] { display: block; }
+
+.studio-deleted-row {
+    padding: 4px 0;
+    border-bottom: 1px solid var(--glass-border);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.studio-deleted-row:last-child { border-bottom: none; }
+
+.studio-deleted-meta {
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.studio-insights {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--space-sm);
+    flex-shrink: 0;
+}
+
+@media (max-width: 1100px) {
+    .studio-insights {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+.studio-insight-card {
+    padding: var(--space-sm) var(--space-md);
+    margin-bottom: 0;
+    cursor: default;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.studio-insight-card[data-clickable="true"] {
+    cursor: pointer;
+}
+
+.studio-insight-card[data-clickable="true"]:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-glass-lg);
+}
+
+.studio-insight-label {
+    font-size: 10px;
+    color: var(--accent-primary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 700;
+}
+
+.studio-insight-value {
+    font-size: 14px;
+    color: var(--text-primary);
+    font-weight: 600;
+    margin-top: 4px;
+    line-height: 1.3;
+}
+
+.studio-insight-detail {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.studio-empty {
+    color: var(--text-muted);
+    font-size: 12px;
+    padding: var(--space-md);
+    text-align: center;
+}
+
+/* Graph node rendering ─────────────────────────────────────────── */
+
+.studio-graph-node {
+    cursor: pointer;
+    transition: filter 0.15s ease;
+}
+
+.studio-graph-node:hover {
+    filter: brightness(1.15);
+}
+
+.studio-graph-node:hover .studio-node-glow {
+    opacity: 0.6;
+}
+
+.studio-graph-node.selected circle.studio-node-core {
+    stroke: var(--accent-primary);
+    stroke-width: 2.5px;
+}
+
+.studio-graph-node.faded {
+    opacity: 0.18;
+}
+
+.studio-graph-node.dim circle.studio-node-core {
+    opacity: 0.55;
+}
+
+/* Every node carries a soft glow at rest — the canvas should feel alive
+   even when nothing is firing. Active nodes pulse harder and brighter. */
+.studio-node-glow {
+    opacity: 0.22;
+    pointer-events: none;
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: studio-breathe 5.4s ease-in-out infinite;
+    will-change: opacity, transform;
+}
+
+.studio-graph-node.active .studio-node-glow {
+    opacity: 0.55;
+    animation: studio-pulse 2.6s ease-in-out infinite;
+}
+
+.studio-graph-node.pinned circle.studio-node-core {
+    stroke: var(--text-primary);
+    stroke-width: 2px;
+    stroke-dasharray: 2 2;
+}
+
+.studio-graph-node.anchor circle.studio-node-core {
+    stroke: var(--accent-primary);
+    stroke-width: 2px;
+    stroke-dasharray: 4 2;
+}
+
+.studio-graph-node.anchor .studio-node-glow {
+    opacity: 0.4;
+    animation-duration: 3.6s;
+}
+
+@keyframes studio-breathe {
+    0%, 100% { opacity: 0.18; transform: scale(1); }
+    50%      { opacity: 0.34; transform: scale(1.07); }
+}
+
+@keyframes studio-pulse {
+    0%, 100% { opacity: 0.45; transform: scale(1); }
+    50%      { opacity: 0.9;  transform: scale(1.22); }
+}
+
+/* Synaptic firing — an edge briefly lights up while a traveling dot
+   carries an "action potential" from source to target. */
+.studio-graph-edge {
+    transition: stroke-width 0.6s ease, stroke-opacity 0.6s ease;
+}
+
+.studio-graph-edge.firing {
+    stroke-width: 2.6px !important;
+    stroke-opacity: 0.95 !important;
+    filter: drop-shadow(0 0 4px var(--accent-primary));
+}
+
+.studio-synapse {
+    pointer-events: none;
+    fill: var(--accent-primary);
+    filter: drop-shadow(0 0 6px var(--accent-primary));
+}
+
+.studio-graph-edge {
+    fill: none;
+    pointer-events: none;
+}
+
+.studio-graph-edge.kg {
+    stroke: var(--accent-primary);
+}
+
+.studio-graph-edge.mention {
+    stroke: var(--text-muted);
+}
+
+.studio-graph-edge.provenance {
+    stroke: var(--orb-lavender);
+    stroke-dasharray: 4 3;
+}
+
+.studio-graph-edge.similarity {
+    stroke: var(--orb-cobalt);
+}
+
+.studio-graph-edge.faded {
+    opacity: 0.05;
+}
+
+.studio-graph-label {
+    font-size: 10px;
+    font-weight: 500;
+    fill: var(--text-secondary);
+    pointer-events: none;
+    user-select: none;
+    opacity: 0.55;
+    transition: opacity 0.18s ease, fill 0.18s ease;
+}
+
+.studio-graph-label.prominent {
+    opacity: 1;
+    fill: var(--text-primary);
+    font-weight: 600;
+}
+
+.studio-graph-label.faded {
+    opacity: 0.12;
+}
+
+.studio-graph-tooltip {
+    position: absolute;
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: var(--glass-border-strong);
+    border-radius: var(--radius-sm);
+    padding: 6px 10px;
+    font-size: 11px;
+    color: var(--text-primary);
+    box-shadow: var(--shadow-glass-lg);
+    pointer-events: none;
+    z-index: 10;
+    max-width: 240px;
+    line-height: 1.4;
+}
+
+/* Reduce padding on cards used inside studio body so the canvas fills */
+.studio-canvas-card.surface-card {
+    padding: 0;
+}
+
+.studio-detail.surface-card {
+    padding: var(--space-md);
+}

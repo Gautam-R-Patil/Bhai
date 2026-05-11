@@ -225,6 +225,60 @@ export async function initMemoryDB(): Promise<CompatDatabase> {
     } catch {
         /* */
     }
+    // Memory Studio — pinned flag exempts a memory from decay/prune.
+    try {
+        db.run("ALTER TABLE memories ADD COLUMN pinned INTEGER DEFAULT 0");
+    } catch {
+        /* exists */
+    }
+    try {
+        db.run("CREATE INDEX IF NOT EXISTS idx_memories_pinned ON memories(pinned) WHERE pinned = 1");
+    } catch {
+        /* */
+    }
+    // Memory Studio — append-only tombstone log so "forget with reason"
+    // keeps an audit trail without forcing soft-delete filters everywhere.
+    db.run(`
+    CREATE TABLE IF NOT EXISTS memory_forget_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT NOT NULL,
+      original_id TEXT NOT NULL,
+      content_snapshot TEXT,
+      reason TEXT NOT NULL,
+      source TEXT DEFAULT 'user',
+      forgotten_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+    try {
+        db.run("CREATE INDEX IF NOT EXISTS idx_forget_log_kind ON memory_forget_log(kind, forgotten_at)");
+    } catch {
+        /* */
+    }
+    // Memory Studio — AI-derived insight cards. One row per kind per
+    // computation; the renderer reads the latest of each kind.
+    db.run(`
+    CREATE TABLE IF NOT EXISTS memory_insights (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      evidence_ids TEXT NOT NULL DEFAULT '[]',
+      metric_value REAL,
+      metric_unit TEXT,
+      computed_at TEXT DEFAULT (datetime('now')),
+      window_days INTEGER DEFAULT 7
+    )
+  `);
+    try {
+        db.run("CREATE INDEX IF NOT EXISTS idx_insights_computed ON memory_insights(computed_at DESC)");
+    } catch {
+        /* */
+    }
+    try {
+        db.run("CREATE INDEX IF NOT EXISTS idx_insights_kind ON memory_insights(kind, computed_at DESC)");
+    } catch {
+        /* */
+    }
 
     // ── Embeddings table (for semantic/vector search) ──
     db.run(`
@@ -1917,9 +1971,155 @@ export function listMemories(category?: string, limit = 20): MemoryRecord[] {
 }
 
 export function forgetMemory(id: number): boolean {
+    return forgetMemoryWithReason(id, "unspecified", "system");
+}
+
+// ── Memory Studio: edit / pin / forget ────────────────────────────────
+// All writes go through these so the desktop main process and the bot
+// share one source of truth for the SQL.
+
+export function updateMemory(
+    id: number,
+    fields: Partial<{ content: string; category: string; tags: string; importance: number }>,
+): { ok: boolean; error?: string } {
     if (!db) throw new Error("Memory DB not initialized");
-    db.run("DELETE FROM memories WHERE id = ?", [id]);
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    if (typeof fields.content === "string") {
+        sets.push("content = ?");
+        params.push(fields.content);
+    }
+    if (typeof fields.category === "string") {
+        sets.push("category = ?");
+        params.push(fields.category);
+    }
+    if (typeof fields.tags === "string") {
+        sets.push("tags = ?");
+        params.push(fields.tags);
+    }
+    if (typeof fields.importance === "number") {
+        sets.push("importance = ?");
+        params.push(Math.max(1, Math.min(10, Math.round(fields.importance))));
+    }
+    if (sets.length === 0) return { ok: false, error: "no fields to update" };
+
+    try {
+        beginTransaction();
+        db.run(`UPDATE memories SET ${sets.join(", ")} WHERE id = ?`, [...params, id]);
+        // If content changed, the embedding is stale — drop it. The HNSW
+        // index rebuilds from DB on next bot boot.
+        if (typeof fields.content === "string") {
+            db.run("DELETE FROM memory_embeddings WHERE memory_id = ?", [id]);
+        }
+        commitTransaction();
+        return { ok: true };
+    } catch (err) {
+        rollbackTransaction();
+        return { ok: false, error: (err as Error).message };
+    }
+}
+
+export function setImportance(id: number, importance: number): boolean {
+    if (!db) throw new Error("Memory DB not initialized");
+    const v = Math.max(1, Math.min(10, Math.round(importance)));
+    db.run("UPDATE memories SET importance = ? WHERE id = ?", [v, id]);
     return true;
+}
+
+export function setMemoryPinned(id: number, pinned: boolean): boolean {
+    if (!db) throw new Error("Memory DB not initialized");
+    db.run("UPDATE memories SET pinned = ? WHERE id = ?", [pinned ? 1 : 0, id]);
+    return true;
+}
+
+export function forgetMemoryWithReason(
+    id: number,
+    reason: string,
+    source: "user" | "system" = "user",
+): boolean {
+    if (!db) throw new Error("Memory DB not initialized");
+    try {
+        beginTransaction();
+        // Snapshot for the tombstone audit trail.
+        const snapResult = db.exec("SELECT content FROM memories WHERE id = ? LIMIT 1", [id]);
+        const snapshot =
+            snapResult.length > 0 && snapResult[0].values.length > 0
+                ? (snapResult[0].values[0]?.[0] as string | null) ?? null
+                : null;
+        db.run(
+            "INSERT INTO memory_forget_log (kind, original_id, content_snapshot, reason, source) VALUES (?, ?, ?, ?, ?)",
+            ["memory", String(id), snapshot, reason || "unspecified", source],
+        );
+        // Hard delete + cleanup the embedding row (no FK cascade exists).
+        db.run("DELETE FROM memory_embeddings WHERE memory_id = ?", [id]);
+        db.run("DELETE FROM memories WHERE id = ?", [id]);
+        commitTransaction();
+        return true;
+    } catch (err) {
+        rollbackTransaction();
+        throw err;
+    }
+}
+
+export function bulkForget(
+    ids: number[],
+    reason: string,
+    source: "user" | "system" = "user",
+): { forgotten: number } {
+    if (!db) throw new Error("Memory DB not initialized");
+    let count = 0;
+    try {
+        beginTransaction();
+        for (const id of ids) {
+            const snapResult = db.exec("SELECT content FROM memories WHERE id = ? LIMIT 1", [id]);
+            const snapshot =
+                snapResult.length > 0 && snapResult[0].values.length > 0
+                    ? (snapResult[0].values[0]?.[0] as string | null) ?? null
+                    : null;
+            db.run(
+                "INSERT INTO memory_forget_log (kind, original_id, content_snapshot, reason, source) VALUES (?, ?, ?, ?, ?)",
+                ["memory", String(id), snapshot, reason || "unspecified", source],
+            );
+            db.run("DELETE FROM memory_embeddings WHERE memory_id = ?", [id]);
+            db.run("DELETE FROM memories WHERE id = ?", [id]);
+            count++;
+        }
+        commitTransaction();
+    } catch (err) {
+        rollbackTransaction();
+        throw err;
+    }
+    return { forgotten: count };
+}
+
+export function forgetEntity(
+    id: number,
+    reason: string,
+    cascade = true,
+): { forgotten: number; relationshipsRemoved: number } {
+    if (!db) throw new Error("Memory DB not initialized");
+    let relCount = 0;
+    try {
+        beginTransaction();
+        const snap = db.exec("SELECT name FROM entities WHERE id = ? LIMIT 1", [id]);
+        const snapshot =
+            snap.length > 0 && snap[0].values.length > 0 ? (snap[0].values[0]?.[0] as string | null) ?? null : null;
+        if (cascade) {
+            // FK cascade is set; counting first for the report.
+            const r = db.exec("SELECT COUNT(*) FROM relationships WHERE from_id = ? OR to_id = ?", [id, id]);
+            relCount = r.length > 0 && r[0].values.length > 0 ? ((r[0].values[0]?.[0] as number) ?? 0) : 0;
+        }
+        db.run(
+            "INSERT INTO memory_forget_log (kind, original_id, content_snapshot, reason, source) VALUES (?, ?, ?, ?, 'user')",
+            ["entity", String(id), snapshot, reason || "unspecified"],
+        );
+        db.run("DELETE FROM entities WHERE id = ?", [id]);
+        commitTransaction();
+        return { forgotten: 1, relationshipsRemoved: relCount };
+    } catch (err) {
+        rollbackTransaction();
+        throw err;
+    }
 }
 
 export function getMemoryStats(): { total: number; categories: Record<string, number> } {

@@ -431,7 +431,7 @@ export async function runDreamReplay(llm: LLMClient): Promise<void> {
                     for (const sr of surpriseResults) {
                         if (sr.isSurprising) {
                             kgDb.run(
-                                "UPDATE memories SET importance = ?, decay_score = decay_score * ? WHERE id = ?",
+                                "UPDATE memories SET importance = ?, decay_score = decay_score * ? WHERE id = ? AND COALESCE(pinned, 0) = 0",
                                 [Math.round(sr.newImportance), sr.decayMultiplier, sr.memoryId]
                             );
                             surpriseUpdates++;
@@ -465,6 +465,15 @@ export async function runDreamReplay(llm: LLMClient): Promise<void> {
 
         // ── 5f. Persist HNSW index ──
         try { getHNSWIndex().persist(); } catch { /* non-fatal */ }
+
+        // ── 5g. Memory Studio insights (mood, theme, avoidance, most-discussed) ──
+        try {
+            const { runStudioInsights } = await import("./studio-insights.js");
+            const r = await runStudioInsights(llm, 7);
+            console.log(`[MEMORY][REPLAY] 🪞 Generated ${r.generated} studio insights`);
+        } catch (err) {
+            console.error("[MEMORY][REPLAY] Studio insights failed (non-fatal):", err);
+        }
 
         // ── 6. Narrative compression (every 30 days) ──
         await generateNarrativeCompression(llm);
