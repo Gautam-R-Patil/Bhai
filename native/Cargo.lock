@@ -65,6 +65,7 @@ dependencies = [
  "scrypt",
  "serde",
  "serde_json",
+ "sha2",
  "simsimd",
  "wide",
 ]

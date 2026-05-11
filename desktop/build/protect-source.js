@@ -145,14 +145,17 @@ function obfuscateFile(filePath) {
         const code = fs.readFileSync(filePath, "utf8");
         if (code.length < 100 || code.includes("_0x")) return false;
 
-        // Try up to 3 times — the obfuscator with controlFlowFlattening
-        // occasionally produces invalid JS. Parse-check via `node --check`
-        // (which handles ESM import/export unlike vm.Script) before writing,
-        // so a bad roll doesn't ship.
+        // Try up to 8 times — the obfuscator with controlFlowFlattening
+        // occasionally produces invalid JS. The bundle has grown large
+        // enough that 3 rolls can occasionally all be bad; 8 is well
+        // within the time budget (each attempt is ~2-4s) and dramatically
+        // reduces flake. Parse-check via `node --check` (which handles
+        // ESM import/export unlike vm.Script) before writing, so a bad
+        // roll doesn't ship.
         const { spawnSync } = require("node:child_process");
         const tmpDir = require("node:os").tmpdir();
         let lastErr = null;
-        for (let attempt = 1; attempt <= 3; attempt++) {
+        for (let attempt = 1; attempt <= 8; attempt++) {
             const obfuscated = JavaScriptObfuscator.obfuscate(code, OBFUSCATION_OPTIONS);
             let protectedCode = obfuscated.getObfuscatedCode();
             protectedCode = additionalScramble(protectedCode);
@@ -172,8 +175,8 @@ function obfuscateFile(filePath) {
             if (attempt > 1) console.log(`[PROTECT] ✓ Succeeded on attempt ${attempt}`);
             return true;
         }
-        console.error(`[PROTECT] ✗ ${path.basename(filePath)} obfuscation failed after 3 attempts. Last error: ${lastErr?.message}`);
-        throw new Error(`Obfuscation of ${path.basename(filePath)} failed parse-check 3x — aborting build (was shipping broken bundle before this guard).`);
+        console.error(`[PROTECT] ✗ ${path.basename(filePath)} obfuscation failed after 8 attempts. Last error: ${lastErr?.message}`);
+        throw new Error(`Obfuscation of ${path.basename(filePath)} failed parse-check 8x — aborting build (was shipping broken bundle before this guard).`);
     } catch (err) {
         console.log(`[PROTECT] Obfuscation failed for ${path.basename(filePath)}: ${err.message}`);
         throw err;  // Propagate — do NOT ship an un-obfuscated or broken bundle.
