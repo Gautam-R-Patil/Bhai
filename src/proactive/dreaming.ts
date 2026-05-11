@@ -301,13 +301,22 @@ async function runDreaming(llm: LLMClient, recentContext: string): Promise<void>
                         const { appendSelfEditAudit, _recordSelfEditActuation } =
                             await import("./dreaming-self-edit.js");
                         const { remember } = await import("../memory/sqlite.js");
+                        const { sanitizeUntrustedContent } = await import("../agent/system-reminders.js");
                         await appendSelfEditAudit(edit);
                         try {
+                            // Importance is capped at 6 (was 8). Anything ≥7 promotes
+                            // to core memory and is auto-injected at iteration 1 of
+                            // every future turn — that's a memory-poisoning surface
+                            // for self-edits derived from failure-pattern recall.
+                            // Also strip any literal <system-reminder> tags from the
+                            // lesson body so a poisoned recalled memory can't ride
+                            // into the prompt as forged runtime instruction.
+                            const lessonText = sanitizeUntrustedContent(_recordSelfEditActuation(edit));
                             remember(
-                                _recordSelfEditActuation(edit),
+                                lessonText,
                                 "self-lesson",
                                 "self-edit,dreaming",
-                                8,
+                                6,
                                 "reflection",
                             );
                             console.log(

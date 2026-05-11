@@ -91,7 +91,7 @@ pub fn get_milestone_message(tool_name: String, args_json: String) -> Option<Str
     match tool_name.as_str() {
         "browser_navigate" => {
             let url = args.get("url").and_then(|v| v.as_str()).unwrap_or("");
-            let truncated = if url.len() > 60 { &url[..60] } else { url };
+            let truncated = safe_truncate(url, 60);
             Some(format!("\u{1F310} Opening {}...", truncated))
         }
         "web_search" => {
@@ -100,7 +100,7 @@ pub fn get_milestone_message(tool_name: String, args_json: String) -> Option<Str
         }
         "shell_exec" => {
             let command = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
-            let truncated = if command.len() > 50 { &command[..50] } else { command };
+            let truncated = safe_truncate(command, 50);
             Some(format!("\u{2699}\u{FE0F} Running command: {}", truncated))
         }
         "browser_scan" => Some("\u{1F50D} Scanning the active browser page DOM...".into()),
@@ -120,7 +120,7 @@ pub fn get_milestone_message(tool_name: String, args_json: String) -> Option<Str
         }
         "memory_store" => {
             let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
-            let truncated = if content.len() > 40 { &content[..40] } else { content };
+            let truncated = safe_truncate(content, 40);
             Some(format!("\u{1F9E0} Remembering: \"{}\"", truncated))
         }
         _ => None,
@@ -135,7 +135,7 @@ pub fn get_error_message(tool_name: String, result: String) -> Option<String> {
         Err(_) => return None,
     };
     if let Some(err) = parsed.get("error").and_then(|v| v.as_str()) {
-        let truncated = if err.len() > 80 { &err[..80] } else { err };
+        let truncated = safe_truncate(err, 80);
         Some(format!("\u{26A0}\u{FE0F} {} failed: {}. Trying another approach...", tool_name, truncated))
     } else {
         None

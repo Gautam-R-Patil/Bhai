@@ -209,7 +209,12 @@ export function initOverlayChat(llm: LLMClient): void {
             res.end(JSON.stringify({ publicKey: key }));
 
         // ── A2A (Agent-to-Agent) protocol endpoints ──
+        // No wildcard CORS: the agent card at /.well-known/agent.json is
+        // public but we don't allow cross-origin browser POSTs; mutating
+        // routes require ATLAS_A2A_TOKEN. Without that token in env, only
+        // /.well-known/agent.json works.
         } else if (isA2ARoute(url.pathname)) {
+            const authHeader = (req.headers["authorization"] as string | undefined) || null;
             if (req.method === "POST") {
                 // Read body for POST requests
                 let body = "";
@@ -220,11 +225,8 @@ export function initOverlayChat(llm: LLMClient): void {
                         res.end(JSON.stringify({ error: "Agent not ready" }));
                         return;
                     }
-                    const result = handleA2ARequest(req.method!, url.pathname, body, llmClient);
-                    res.writeHead(result.status, {
-                        "Content-Type": result.contentType,
-                        "Access-Control-Allow-Origin": "*",
-                    });
+                    const result = handleA2ARequest(req.method!, url.pathname, body, llmClient, authHeader);
+                    res.writeHead(result.status, { "Content-Type": result.contentType });
                     res.end(result.body);
                 });
                 return; // Don't fall through -- body is read async
@@ -234,11 +236,8 @@ export function initOverlayChat(llm: LLMClient): void {
                     res.end(JSON.stringify({ error: "Agent not ready" }));
                     return;
                 }
-                const result = handleA2ARequest(req.method || "GET", url.pathname, null, llmClient);
-                res.writeHead(result.status, {
-                    "Content-Type": result.contentType,
-                    "Access-Control-Allow-Origin": "*",
-                });
+                const result = handleA2ARequest(req.method || "GET", url.pathname, null, llmClient, authHeader);
+                res.writeHead(result.status, { "Content-Type": result.contentType });
                 res.end(result.body);
             }
 

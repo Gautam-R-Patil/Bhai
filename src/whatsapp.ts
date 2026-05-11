@@ -18,6 +18,7 @@ import qrcode from "qrcode-terminal";
 import { basename as pathBasename, join } from "node:path";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
 import pino from "pino";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { LLMClient } from "./llm.js";
@@ -467,6 +468,37 @@ function enrichWithQuotedContext(message: WAMessage, text: string): string {
  * Extract media attachments from a WAMessage for passing to the agent.
  * Handles images, voice notes, videos, and documents with media content.
  */
+// Hard cap on inbound WhatsApp media size to keep `downloadMediaMessage`
+// (which returns the entire body in memory) from OOM'ing the bot. WhatsApp
+// allows documents up to 2GB; we accept up to 25 MB and reject the rest.
+const WA_MAX_MEDIA_BYTES = 25 * 1024 * 1024;
+
+function tooLarge(fileLength: unknown): boolean {
+    if (fileLength == null) return false;
+    if (typeof fileLength === "bigint") {
+        // Newer Baileys versions return BigInt for fileLength.
+        return fileLength > BigInt(WA_MAX_MEDIA_BYTES);
+    }
+    if (typeof fileLength === "number") {
+        return Number.isFinite(fileLength) ? fileLength > WA_MAX_MEDIA_BYTES : true;
+    }
+    if (typeof fileLength === "object" && fileLength && "low" in (fileLength as any)) {
+        // Long-int representation from older Baileys: { low, high, unsigned }.
+        const low = Number((fileLength as any).low) >>> 0;
+        const high = Number((fileLength as any).high) >>> 0;
+        const n = high * 0x100000000 + low;
+        return n > WA_MAX_MEDIA_BYTES;
+    }
+    if (typeof fileLength === "string") {
+        const n = Number(fileLength);
+        // Coercion failure → fail closed (treat as too-large) instead of
+        // silently bypassing the cap on malformed input.
+        return Number.isFinite(n) ? n > WA_MAX_MEDIA_BYTES : true;
+    }
+    // Unknown shape → fail closed.
+    return true;
+}
+
 async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachment[]; enrichedText: string | null }> {
     const msg = message.message;
     if (!msg) return { media: [], enrichedText: null };
@@ -474,6 +506,29 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
     const contentType = getContentType(msg);
     const media: MediaAttachment[] = [];
     let enrichedText: string | null = null;
+
+    // Pre-check size on every message-type that carries a fileLength field.
+    // We reject before `downloadMediaMessage` because that function reads
+    // the entire encrypted body into RAM regardless of size. Includes the
+    // documentWithCaptionMessage wrapper that nests a real documentMessage
+    // inside — Baileys re-wraps captioned docs and the unwrapped path
+    // carries its own fileLength.
+    const sizeFields: Array<unknown> = [
+        msg.imageMessage?.fileLength,
+        msg.videoMessage?.fileLength,
+        msg.audioMessage?.fileLength,
+        msg.documentMessage?.fileLength,
+        msg.stickerMessage?.fileLength,
+        (msg as any).documentWithCaptionMessage?.message?.documentMessage?.fileLength,
+    ];
+    for (const f of sizeFields) {
+        if (tooLarge(f)) {
+            return {
+                media: [],
+                enrichedText: `[The user sent media larger than the ${WA_MAX_MEDIA_BYTES / 1024 / 1024} MB limit and it was not downloaded. Tell them to send something smaller.]`,
+            };
+        }
+    }
 
     try {
         if (contentType === "imageMessage" && msg.imageMessage) {
@@ -485,7 +540,7 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
             const mediaDir = join(tmpdir(), "atlas_media");
             await fs.mkdir(mediaDir, { recursive: true });
             const ext = mimeType.split("/")[1] || "jpg";
-            const tmpFilePath = join(mediaDir, `whatsapp_${Date.now()}.${ext}`);
+            const tmpFilePath = join(mediaDir, `whatsapp_${randomUUID()}.${ext}`);
             await fs.writeFile(tmpFilePath, buffer);
 
             media.push({ type: "image", base64, mimeType });
@@ -500,7 +555,7 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
 
             const mediaDir = join(tmpdir(), "atlas_media");
             await fs.mkdir(mediaDir, { recursive: true });
-            const tmpFilePath = join(mediaDir, `whatsapp_video_${Date.now()}.mp4`);
+            const tmpFilePath = join(mediaDir, `whatsapp_video_${randomUUID()}.mp4`);
             await fs.writeFile(tmpFilePath, buffer);
 
             media.push({ type: "video", base64, mimeType });
@@ -514,7 +569,7 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
             await fs.mkdir(mediaDir, { recursive: true });
             const isVoiceNote = msg.audioMessage.ptt === true;
             const ext = isVoiceNote ? "ogg" : (msg.audioMessage.mimetype?.split("/")[1]?.split(";")[0] || "ogg");
-            const tmpFilePath = join(mediaDir, `whatsapp_audio_${Date.now()}.${ext}`);
+            const tmpFilePath = join(mediaDir, `whatsapp_audio_${randomUUID()}.${ext}`);
             await fs.writeFile(tmpFilePath, buffer);
 
             if (isVoiceNote) {
@@ -543,7 +598,7 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
             await fs.mkdir(mediaDir, { recursive: true });
             const isAnimated = msg.stickerMessage.isAnimated;
             const ext = isAnimated ? "webp" : "webp";
-            const tmpFilePath = join(mediaDir, `whatsapp_sticker_${Date.now()}.${ext}`);
+            const tmpFilePath = join(mediaDir, `whatsapp_sticker_${randomUUID()}.${ext}`);
             await fs.writeFile(tmpFilePath, buffer);
             media.push({ type: "image", base64: buffer.toString("base64"), mimeType: "image/webp" });
             enrichedText = `User sent a ${isAnimated ? "animated " : ""}sticker.\n\n[SYSTEM NOTE: Sticker saved to: ${tmpFilePath}. Respond with text as normal — do NOT send a sticker back unless the user explicitly asks for one.]`;
@@ -593,7 +648,7 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
             const mediaDir = join(tmpdir(), "atlas_media");
             await fs.mkdir(mediaDir, { recursive: true });
             const ext = fileName.includes(".") ? fileName.split(".").pop()! : "bin";
-            const tmpFilePath = join(mediaDir, `whatsapp_doc_${Date.now()}.${ext}`);
+            const tmpFilePath = join(mediaDir, `whatsapp_doc_${randomUUID()}.${ext}`);
             await fs.writeFile(tmpFilePath, buffer);
 
             const caption = docMsg.caption || `User sent a document: ${fileName}`;

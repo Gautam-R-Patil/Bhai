@@ -59,15 +59,27 @@ pub fn generate_bridge_token() -> String {
     state.token_created_at = now;
     state.authenticated = false;
 
-    // Derive an encryption key from the token for optional message-level encryption
-    let mut key = [0u8; 32];
-    let token_bytes = token.as_bytes();
-    for (i, &b) in token_bytes.iter().enumerate() {
-        key[i % 32] ^= b;
-    }
-    state.encryption_key = Some(key);
+    // Derive an encryption key from the token using SHA-256. The previous
+    // implementation XOR-folded the 64-byte hex string into a 32-byte buffer
+    // via i % 32, which collapses key entropy from ~256 bits down to roughly
+    // the per-byte entropy of hex (~24 effective bits) because key[j] ends
+    // up = token[j] ^ token[j+32]. SHA-256 of the token bytes preserves the
+    // full ~128-bit security margin.
+    state.encryption_key = Some(derive_bridge_key(token.as_bytes()));
 
     token
+}
+
+/// Derive the AES-256 message-encryption key from token bytes via SHA-256.
+fn derive_bridge_key(token_bytes: &[u8]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(b"atlas-chrome-bridge-key/v1|");
+    hasher.update(token_bytes);
+    let digest = hasher.finalize();
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&digest);
+    out
 }
 
 /// Set the bridge token (used when loading from disk to sync Rust state).
@@ -85,13 +97,7 @@ pub fn set_bridge_token(token: String) {
     state.token_created_at = now;
     state.authenticated = false;
 
-    // Derive encryption key (same as generate)
-    let mut key = [0u8; 32];
-    let token_bytes = token.as_bytes();
-    for (i, &b) in token_bytes.iter().enumerate() {
-        key[i % 32] ^= b;
-    }
-    state.encryption_key = Some(key);
+    state.encryption_key = Some(derive_bridge_key(token.as_bytes()));
 }
 
 /// Validate a token against the stored one. Returns true if valid.

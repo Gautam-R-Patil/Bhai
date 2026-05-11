@@ -3,7 +3,11 @@
 // See LICENSE.md for details.
 
 import { checkAccountStatus, getKnownCreditBalance, getSessionCreditStats } from "./account-guard.js";
-import { injectSystemReminder } from "./agent/system-reminders.js";
+import {
+    injectSystemReminder,
+    sanitizeUntrustedContent,
+    SYSTEM_REMINDER_EXPLANATION,
+} from "./agent/system-reminders.js";
 import {
     recordFailure as cbRecordFailure,
     recordNoProgress as cbRecordNoProgress,
@@ -917,11 +921,16 @@ async function _runAgentBody(
         }
     };
 
+    // Strip any literal <system-reminder> tags from user input — those tags
+    // are reserved for ATLAS runtime instructions and must not be forgeable
+    // by attacker-controlled message text.
+    const safeUserMessage = sanitizeUntrustedContent(userMessage);
+
     // Build user message — multimodal if media attached
     if (media && media.length > 0) {
         const content: Array<Record<string, unknown>> = [];
-        if (userMessage) {
-            content.push({ type: "text", text: userMessage });
+        if (safeUserMessage) {
+            content.push({ type: "text", text: safeUserMessage });
         }
         for (const m of media) {
             if (m.type === "audio") {
@@ -958,7 +967,7 @@ async function _runAgentBody(
             console.warn("[AGENT] Multimodal memory storage failed (non-fatal):", (mmErr as Error).message);
         }
     } else {
-        workingHistory.push({ role: "user", content: userMessage });
+        workingHistory.push({ role: "user", content: safeUserMessage });
     }
 
     // Hard cap: prevent conversationHistory from growing unbounded (memory leak prevention)
@@ -1892,8 +1901,12 @@ STRATEGY: Execute in as few tool calls as possible.
                 activeInjection = (activeInjection || "") + casualNudge;
             }
 
-            // Record user turn in session buffer
-            appendTurn("user", userMessage);
+            // Record user turn in session buffer. Use the sanitized text —
+            // raw user content can carry literal <system-reminder> tags that
+            // would otherwise re-emerge in the next turn's session-summary
+            // injection (and into overnight dream-replay), defeating the
+            // boundary sanitizer.
+            appendTurn("user", safeUserMessage);
             trackSessionForAnticipation();
         }
 
@@ -1974,9 +1987,16 @@ STRATEGY: Execute in as few tool calls as possible.
         const fencedInjection = activeInjection
             ? (await import("./context-scrubber.js")).fenceMemoryContext(activeInjection)
             : "";
-        let iterationMessages = fencedInjection
-            ? [{ role: "system" as const, content: fencedInjection }, ...messages]
-            : [...messages];
+        // Lead with the system-reminder semantics so the model knows that
+        // <system-reminder> tags are trusted runtime instruction (we strip
+        // them from user input at the boundary; without this prelude, a
+        // model could be coaxed by injection-shaped text into honoring fake
+        // reminders that slipped through some upstream sanitizer gap).
+        let iterationMessages: ChatCompletionMessageParam[] = [
+            { role: "system" as const, content: SYSTEM_REMINDER_EXPLANATION },
+        ];
+        if (fencedInjection) iterationMessages.push({ role: "system" as const, content: fencedInjection });
+        iterationMessages.push(...messages);
 
         // ── Channel Context Injection ──
         // Inform the LLM which channel the message came from, who is speaking, and what channels are active

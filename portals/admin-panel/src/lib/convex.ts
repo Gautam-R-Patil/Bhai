@@ -90,8 +90,15 @@ function adminBaseUrl(): string {
 }
 
 function adminKey(): string {
-  const key = process.env.NEXT_PUBLIC_ATLAS_ADMIN_KEY;
-  if (!key) throw new Error("ATLAS admin key missing (NEXT_PUBLIC_ATLAS_ADMIN_KEY).");
+  // ATLAS_ADMIN_KEY is intentionally NOT NEXT_PUBLIC_*. Next.js inlines any
+  // NEXT_PUBLIC_* variable into every client bundle at build time — even
+  // when the only on-paper consumer is a Server Component, the literal
+  // value lands in browser JS. Reading without the prefix forces the value
+  // to stay server-side; anything that imports this module from a client
+  // boundary will get `undefined` and the throw below makes the regression
+  // loud instead of silently shipping the master key to every browser tab.
+  const key = process.env.ATLAS_ADMIN_KEY;
+  if (!key) throw new Error("ATLAS admin key missing (set ATLAS_ADMIN_KEY in server-side env, NOT NEXT_PUBLIC_*).");
   return key;
 }
 

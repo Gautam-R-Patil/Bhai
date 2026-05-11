@@ -105,7 +105,7 @@ function getRecentMemories(db: Database, daysBack: number): MemoryRow[] {
     // Sanitize daysBack: must be a positive integer to prevent SQL injection
     const safeDays = Math.max(1, Math.min(Math.floor(Number(daysBack) || 1), 365));
     const results = db.exec(
-        `SELECT id, content, importance, accessed_count,
+        `SELECT id, content, importance, access_count,
                 julianday('now') - julianday(created_at) as days_old,
                 COALESCE(importance, 5) / 10.0 as emo_weight,
                 category
@@ -124,7 +124,7 @@ function getRecentMemories(db: Database, daysBack: number): MemoryRow[] {
 
 function getExistingMemories(db: Database, limit: number): MemoryRow[] {
     const results = db.exec(
-        `SELECT id, content, importance, accessed_count,
+        `SELECT id, content, importance, access_count,
                 julianday('now') - julianday(created_at) as days_old,
                 COALESCE(importance, 5) / 10.0 as emo_weight,
                 category
@@ -195,7 +195,7 @@ function applyForgetDecisions(db: Database, ids: number[]): void {
 
 function applyStrengthening(db: Database, ids: number[]): void {
     for (const id of ids) {
-        db.run("UPDATE memories SET importance = MIN(importance + 1, 10), accessed_count = accessed_count + 1 WHERE id = ?", [id]);
+        db.run("UPDATE memories SET importance = MIN(importance + 1, 10), access_count = access_count + 1 WHERE id = ?", [id]);
     }
 }
 

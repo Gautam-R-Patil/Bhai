@@ -2,7 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -17,11 +17,16 @@ import {
     isPathAllowed,
     getPathBlockedReason,
     isDomainAllowed,
+    registerProtectedPath,
 } from "./allowlist.js";
 
-// The module hard-codes this path (see src/security/allowlist.ts PROTECTED_PATHS).
-// Tests reuse it so they're robust against CWD changes on macOS / Linux.
+// PROTECTED_PATHS is populated at runtime by the host (no longer baked
+// into the binary). Tests register the repo root once so the protected-
+// path assertions still hold regardless of where the suite runs from.
 const REPO = "/Users/user/Desktop/ATLAS";
+beforeAll(() => {
+    registerProtectedPath(REPO);
+});
 
 describe("allowlist — codebase self-protection", () => {
     describe("isProtectedPath", () => {

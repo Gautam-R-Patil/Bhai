@@ -163,16 +163,24 @@ async function createSession(otplessUserId: string): Promise<void> {
     _sessionToken = data.token;
     _sessionExpiry = data.expiresAt;
 
-    // Derive shared AES-256 key from server's public key. Use the
-    // version the SERVER picked (it's the authority on what KDF the
-    // derived shared key was generated with). Fall back to the legacy
-    // v1 KDF if the server didn't echo a version — that keeps
-    // compatibility with servers deployed before the HKDF rollout.
+    // Derive shared AES-256 key from server's public key. The client only
+    // honours the latest supported KDF (HKDF v2). v1 (raw SHA256-concat)
+    // is refused outright — `deriveSharedKey` throws if the version isn't
+    // KDF_VERSION_LATEST. This closes a downgrade vector where a coerced
+    // or man-in-the-middled bootstrap response (the bootstrap is plaintext
+    // by necessity — it's establishing the key) could push the client
+    // back onto the weaker KDF. If the server hasn't been redeployed with
+    // HKDF support, every login fails loudly here rather than silently
+    // running on weaker crypto.
     if (data.serverPublicKey) {
-        const serverVersion = isSupportedKdfVersion(data.kdfVersion) ? data.kdfVersion : 1;
-        deriveSharedKey(data.serverPublicKey, serverVersion);
+        if (!isSupportedKdfVersion(data.kdfVersion)) {
+            throw new Error(
+                "Server did not echo kdfVersion in /api/auth/session response — refusing to derive a shared key under an unknown algorithm. Update Convex deploy.",
+            );
+        }
+        deriveSharedKey(data.serverPublicKey, data.kdfVersion);
         console.log(
-            `[Session] E2E encryption established (ECDH + AES-256-GCM, KDF v${serverVersion})`,
+            `[Session] E2E encryption established (ECDH + AES-256-GCM, KDF v${data.kdfVersion})`,
         );
     }
 }

@@ -182,9 +182,13 @@ async function handleMessage(roomId: string, sender: string, body: string): Prom
     // Skip messages from the bot itself
     if (sender === botUserId) return;
 
-    // Skip if room not allowed
-    if (allowedRooms && allowedRooms.size > 0 && !allowedRooms.has(roomId)) {
-        console.log(`[MATRIX] Ignoring message from non-allowed room ${roomId}`);
+    // Skip if room not allowlisted. Fail-CLOSED — without an explicit
+    // MATRIX_ALLOWED_ROOMS env, no room is processed. The invite-acceptance
+    // path was already hardened; a bot that was joined to a room before
+    // the rollout (or via an admin server-join that bypasses invites) must
+    // also be ignored here, otherwise any sender gets `isOwner: true`.
+    if (!allowedRooms || allowedRooms.size === 0 || !allowedRooms.has(roomId)) {
+        console.log(`[MATRIX] Ignoring message from non-allowlisted room ${roomId} (set MATRIX_ALLOWED_ROOMS to enable).`);
         return;
     }
 
@@ -309,12 +313,15 @@ async function syncLoop(): Promise<void> {
                 }
             }
 
-            // Auto-accept room invites
+            // Accept room invites — but ONLY for rooms explicitly allowlisted
+            // via MATRIX_ALLOWED_ROOMS. Auto-joining any inviter's room let
+            // attackers drop the bot into their own room and start running
+            // the agent against arbitrary input.
             const invitedRooms = result.rooms?.invite;
             if (invitedRooms) {
                 for (const roomId of Object.keys(invitedRooms)) {
-                    if (allowedRooms && allowedRooms.size > 0 && !allowedRooms.has(roomId)) {
-                        console.log(`[MATRIX] Ignoring invite to non-allowed room ${roomId}`);
+                    if (!allowedRooms || allowedRooms.size === 0 || !allowedRooms.has(roomId)) {
+                        console.log(`[MATRIX] Ignoring invite to non-allowlisted room ${roomId} (set MATRIX_ALLOWED_ROOMS to enable).`);
                         continue;
                     }
                     try {

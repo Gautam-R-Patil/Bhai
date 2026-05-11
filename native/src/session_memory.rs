@@ -145,8 +145,16 @@ pub fn session_append_turn(role: String, content: String) -> Option<SessionState
     let mut current = CURRENT_SESSION.lock();
     let session = current.as_mut()?;
 
+    // Char-boundary-safe truncation. `&content[..497]` panics whenever the
+    // 497th byte falls inside a multi-byte UTF-8 sequence (any non-ASCII
+    // input can trigger this). With panic = abort in release, that takes
+    // down the entire Node process, so a user message containing emoji
+    // near the truncation point is a remote DoS. Walk back to the nearest
+    // char boundary instead.
     let truncated = if content.len() > 500 {
-        format!("{}...", &content[..497])
+        let mut end = 497;
+        while end > 0 && !content.is_char_boundary(end) { end -= 1; }
+        format!("{}...", &content[..end])
     } else {
         content
     };
@@ -241,11 +249,7 @@ pub fn session_get_short_summary() -> String {
             .iter()
             .map(|t| {
                 let role_label = if t.role == "user" { "User" } else { "AI" };
-                let content_preview = if t.content.len() > 100 {
-                    &t.content[..100]
-                } else {
-                    &t.content
-                };
+                let content_preview = char_safe_truncate(&t.content, 100);
                 format!("{}: {}", role_label, content_preview)
             })
             .collect();
@@ -278,7 +282,14 @@ pub fn session_get_summary() -> String {
 
     if !session.short_summary.is_empty() {
         let summary_preview = if session.short_summary.len() > 300 {
-            format!("...{}", &session.short_summary[session.short_summary.len() - 297..])
+            // Walk FORWARD to a char boundary so the slice start lands on a
+            // valid UTF-8 codepoint edge. Without this, multi-byte chars at
+            // position len-297 panic-abort the host (release uses panic=abort).
+            let mut start = session.short_summary.len() - 297;
+            while start < session.short_summary.len() && !session.short_summary.is_char_boundary(start) {
+                start += 1;
+            }
+            format!("...{}", &session.short_summary[start..])
         } else {
             session.short_summary.clone()
         };
@@ -310,11 +321,7 @@ fn compress_oldest_turns(session: &mut SessionState) {
         .iter()
         .map(|t| {
             let role_label = if t.role == "user" { "User" } else { "AI" };
-            let content_preview = if t.content.len() > 100 {
-                &t.content[..100]
-            } else {
-                &t.content
-            };
+            let content_preview = char_safe_truncate(&t.content, 100);
             format!("{}: {}", role_label, content_preview)
         })
         .collect();
@@ -341,11 +348,7 @@ pub fn heuristic_compress_text(text: String) -> String {
 }
 
 fn heuristic_compress(text: &str) -> String {
-    let trimmed = if text.len() > COMPRESS_SENTENCE_LIMIT {
-        &text[..COMPRESS_SENTENCE_LIMIT]
-    } else {
-        text
-    };
+    let trimmed = char_safe_truncate(text, COMPRESS_SENTENCE_LIMIT);
 
     let last_period = trimmed.rfind('.');
     let last_question = trimmed.rfind('?');
@@ -401,4 +404,11 @@ fn now_ms_f64() -> f64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as f64
+}
+
+fn char_safe_truncate(s: &str, max_len: usize) -> &str {
+    if s.len() <= max_len { return s; }
+    let mut end = max_len;
+    while end > 0 && !s.is_char_boundary(end) { end -= 1; }
+    &s[..end]
 }

@@ -2,7 +2,7 @@
 // Reviews and ratings for store items
 
 import { v } from "convex/values";
-import { query, mutation } from "../_generated/server";
+import { internalQuery as query, internalMutation as mutation } from "../_generated/server";
 
 // ── Queries ────────────────────────────────────────────────────────────────
 

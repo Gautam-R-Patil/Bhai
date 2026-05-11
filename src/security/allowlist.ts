@@ -11,10 +11,33 @@ import path from "node:path";
 
 // ── Codebase Self-Protection ──────────────────
 // The bot must never write, delete, or move its own source files.
+// PROTECTED_PATHS are populated at runtime — empty by default. The host
+// can register installation-specific paths via registerProtectedPath()
+// (e.g. desktop/main.js can pin the bundled bot directory). This avoids
+// shipping a developer-machine path in the binary.
 
-const PROTECTED_PATHS: string[] = [
-    "/Users/user/Desktop/ATLAS",
-];
+const PROTECTED_PATHS: string[] = [];
+
+/**
+ * Register a path that write/delete tools must refuse to touch.
+ * Idempotent — duplicates are ignored.
+ */
+export function registerProtectedPath(p: string): void {
+    if (!p) return;
+    const normalized = path.resolve(p);
+    if (!PROTECTED_PATHS.includes(normalized)) {
+        PROTECTED_PATHS.push(normalized);
+    }
+}
+
+/**
+ * @internal — test isolation only. Clears the registered protected paths
+ * so a test can exercise the empty/disabled state without polluting the
+ * module state for sibling tests.
+ */
+export function _clearProtectedPaths(): void {
+    PROTECTED_PATHS.length = 0;
+}
 
 /**
  * Resolve a path to its real (symlink-followed) absolute form.

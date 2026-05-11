@@ -66,6 +66,8 @@ export type LiveVoiceEventType =
     | "reconnected"
     | "muted"
     | "unmuted"
+    | "screen_share_started"
+    | "screen_share_stopped"
     | "error";
 
 export interface LiveVoiceEvent {

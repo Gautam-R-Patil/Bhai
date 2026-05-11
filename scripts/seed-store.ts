@@ -1,26 +1,50 @@
 #!/usr/bin/env npx tsx
 /**
- * Seed script for A.T.L.A.S Store
+ * Seed script for A.T.L.A.S Store — DISABLED.
  *
- * This script:
- * 1. Creates a test developer account
- * 2. Uploads sample tools to Convex storage
- * 3. Creates store items for each tool
+ * The store backend (convex/store/*.ts) was converted from public
+ * `mutation`/`query` to `internalMutation`/`internalQuery` to close a
+ * critical auth bypass: anyone on the internet could otherwise call
+ * `store/admins:create`, `store/developers:approve`, etc. The change
+ * means `ConvexHttpClient.query/mutation(api.store.X, ...)` no longer
+ * resolves — `api.store.X` is no longer in the public surface.
  *
- * Usage:
- *   npx tsx scripts/seed-store.ts
+ * If you need to (re)seed the store, do one of:
+ *   1. `npx convex run convex/store/items:create '{...}'` (requires the
+ *      Convex deploy key — internal functions are callable via the
+ *      Convex CLI when authenticated as a deploy admin).
+ *   2. Build a one-shot admin HTTP action under /api/admin/seed-store-*
+ *      (gated by ADMIN_API_KEY) that wraps the upserts in a single
+ *      call, then update this script to POST to it with the bearer.
  *
- * Prerequisites:
- *   - Convex backend must be running (npx convex dev)
- *   - CONVEX_URL environment variable set
+ * Until one of those paths lands, running this script is a no-op + an
+ * explanation. Don't silently call the dead public API — fail fast so
+ * the next maintainer notices.
  */
-
+// biome-ignore lint/correctness/noUnusedImports: kept for reference once seed is rewired.
+// @ts-expect-error: api.store.* deliberately gone after the internal-only conversion.
 import { ConvexHttpClient } from "convex/browser";
-import { api } from "../convex/_generated/api";
+// biome-ignore lint/correctness/noUnusedImports: kept for reference once seed is rewired.
 import * as fs from "fs";
+// biome-ignore lint/correctness/noUnusedImports: kept for reference once seed is rewired.
 import * as path from "path";
+// biome-ignore lint/correctness/noUnusedImports: kept for reference once seed is rewired.
 import { createHash } from "crypto";
+// biome-ignore lint/correctness/noUnusedImports: kept for reference once seed is rewired.
 import archiver from "archiver";
+
+console.error(
+  "scripts/seed-store.ts is disabled — the store backend is internal-only after the security audit. " +
+  "See the file header for the migration path. Exiting.",
+);
+process.exit(1);
+
+// ─────────────────────────────────────────────────────────────────────────
+// Original implementation kept below for reference. Do not run as-is — the
+// `api.store.*` path no longer resolves because store functions are internal.
+// ─────────────────────────────────────────────────────────────────────────
+// @ts-nocheck
+import { api } from "../convex/_generated/api";
 
 // Convex client
 const CONVEX_URL = process.env.CONVEX_URL || "https://zany-kudu-607.convex.cloud";

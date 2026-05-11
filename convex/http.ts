@@ -33,39 +33,117 @@ function timingSafeCompare(a: string, b: string): boolean {
 /**
  * Parse request body, decrypting if E2E encryption is active.
  */
+// In-memory sliding-window rid dedup. Convex hosts run as isolates, so
+// state is per-isolate, not cluster-wide; a determined attacker who can
+// route their replay to a different isolate could still get one extra
+// shot. Convex ought to be moving to its own request-deduping layer in
+// the future; until then this catches the bulk of accidental and naive
+// replays. Entries auto-expire after RID_TTL_MS (matches the timestamp
+// window) so the map can't grow unbounded.
+const RID_TTL_MS = 90_000;
+const seenRids = new Map<string, number>();
+
+function checkAndRecordRid(rid: string): boolean {
+  if (typeof rid !== "string" || rid.length === 0) return false;
+  const now = Date.now();
+  // Lazy GC: prune anything older than TTL on every Nth call to keep the
+  // map small without paying GC cost on every request.
+  if (seenRids.size > 1024) {
+    for (const [k, ts] of seenRids) {
+      if (now - ts > RID_TTL_MS) seenRids.delete(k);
+    }
+  }
+  const prev = seenRids.get(rid);
+  if (prev !== undefined && now - prev < RID_TTL_MS) return false;
+  seenRids.set(rid, now);
+  return true;
+}
+
+/**
+ * Compute the AAD a given request envelope is bound to. Mirrors
+ * src/crypto-transport.ts::buildAAD on the client. If the client did
+ * not bind AAD (legacy clients pre-rollout), pass `legacy=true` and the
+ * server will retry decryption with no AAD as a one-time fallback.
+ */
+function buildEnvelopeAad(method: string, urlPath: string, ts: number, rid: string): Uint8Array {
+  return new TextEncoder().encode(`${method.toUpperCase()}|${urlPath}|${ts}|${rid}`);
+}
+
+// WeakMap that lets `buildResponse` learn whether `parseRequestBody` had to
+// fall back to a no-AAD decrypt (i.e. the client is a legacy v1 build that
+// doesn't bind AAD on requests). Without this, asymmetric AAD on responses
+// would break legacy clients while we roll the v2 transport out. The map is
+// keyed by the immutable Request object the runtime hands to each httpAction.
+const _legacyAadByRequest = new WeakMap<Request, true>();
+
 async function parseRequestBody(
   request: Request,
   sharedKey: string | null,
-): Promise<{ body: any; encrypted: boolean }> {
+): Promise<{ body: any; encrypted: boolean; legacyAad: boolean }> {
   const isEncrypted = request.headers.get("X-Encryption") === "ecdh-aes-256-gcm";
 
   if (isEncrypted && sharedKey) {
     const envelope = (await request.json()) as EncryptedEnvelope;
 
-    // Replay protection
+    // Replay protection: time window + rid dedup. The window catches
+    // long-replay attempts; rid dedup catches in-window duplicates that
+    // would otherwise bill credits twice (cf. /api/llm/chat).
     if (!validateTimestamp(envelope.ts)) {
       throw new Error("Request expired (replay protection)");
     }
+    if (!checkAndRecordRid(envelope.rid)) {
+      throw new Error("Request rid already seen (replay rejected)");
+    }
 
-    const plaintext = await decryptRequest(envelope, sharedKey);
-    return { body: JSON.parse(plaintext), encrypted: true };
+    const url = new URL(request.url);
+    const aad = buildEnvelopeAad(request.method, url.pathname, envelope.ts, envelope.rid);
+    let plaintext: string;
+    let legacyAad = false;
+    try {
+      plaintext = await decryptRequest(envelope, sharedKey, aad);
+    } catch (err) {
+      // One-time legacy fallback: if the client didn't bind AAD, the
+      // tag check fails. Retry without AAD so pre-rollout sessions keep
+      // working until they refresh. Marked so the response path also
+      // skips AAD — otherwise legacy clients can encrypt up but not
+      // decrypt down. Logged so we can phase out.
+      console.warn("[E2E] AAD-bound decryption failed, retrying legacy mode:", (err as Error).message);
+      plaintext = await decryptRequest(envelope, sharedKey);
+      legacyAad = true;
+      _legacyAadByRequest.set(request, true);
+    }
+    return { body: JSON.parse(plaintext), encrypted: true, legacyAad };
   }
 
   // Unencrypted fallback
-  return { body: await request.json(), encrypted: false };
+  return { body: await request.json(), encrypted: false, legacyAad: false };
 }
 
 /**
  * Build response, encrypting if the request was encrypted.
+ *
+ * AAD parity with the request: when `request` is supplied AND the client did
+ * NOT use the legacy no-AAD fallback, we bind `${method}|${pathname}|ts|rid`
+ * into the GCM tag. Clients verify the same on receive. Legacy v1 clients
+ * (no request AAD) are auto-detected via the `_legacyAadByRequest` weakmap
+ * and the response also ships AAD-less, matching what they can decrypt.
  */
 async function buildResponse(
   data: any,
   status: number,
   encrypted: boolean,
   sharedKey: string | null,
+  request?: Request,
 ): Promise<Response> {
   if (encrypted && sharedKey) {
-    const envelope = await encryptResponse(JSON.stringify(data), sharedKey);
+    let aadBuilder: ((ts: number, rid: string) => string) | undefined;
+    const isLegacy = request ? _legacyAadByRequest.get(request) === true : false;
+    if (request && !isLegacy) {
+      const url = new URL(request.url);
+      const method = request.method.toUpperCase();
+      aadBuilder = (ts, rid) => `${method}|${url.pathname}|${ts}|${rid}`;
+    }
+    const envelope = await encryptResponse(JSON.stringify(data), sharedKey, aadBuilder);
     return new Response(JSON.stringify(envelope), {
       status,
       headers: {
@@ -447,7 +525,7 @@ http.route({
       }
 
       // 10. Return the OpenRouter response (encrypted if client uses E2E)
-      return await buildResponse(responseData, 200, isEncrypted, account.sharedKey);
+      return await buildResponse(responseData, 200, isEncrypted, account.sharedKey, request);
     } catch (err: any) {
       console.error("[HTTP Proxy] OpenRouter request failed:", err.message);
       return new Response(
@@ -477,7 +555,7 @@ http.route({
       );
     }
 
-    const { otplessUserId, deviceFingerprint, clientPublicKey, email, phone, name } = body;
+    const { otplessUserId, deviceFingerprint, clientPublicKey } = body;
     if (!otplessUserId || typeof otplessUserId !== "string") {
       return new Response(
         JSON.stringify({ error: "otplessUserId is required" }),
@@ -486,13 +564,26 @@ http.route({
     }
 
     try {
-      // Auto-upsert account so clients don't need a deploy key for this
-      await ctx.runMutation(internal.accounts.upsertAccountInternal, {
+      // The account MUST already exist. /api/otpless/validate-token is the
+      // only path that creates accounts — it calls OTPless server-side to
+      // verify the supplied token before upserting. Without this gate,
+      // /api/auth/session was an account-creation primitive: anyone on the
+      // internet could pick any otplessUserId, supply email/phone/name, and
+      // get a working 24h session that could call the LLM proxy and burn
+      // ATLAS-owned provider tokens. We do NOT accept email/phone/name
+      // here anymore — those fields are only honored during validate-token.
+      const existingAccount = await ctx.runQuery(internal.accounts.getByOtplessIdInternal, {
         otplessUserId,
-        email: email || undefined,
-        phone: phone || undefined,
-        name: name || undefined,
       });
+      if (!existingAccount) {
+        return new Response(
+          JSON.stringify({
+            error: "account_not_validated",
+            message: "Validate via POST /api/otpless/validate-token first; /api/auth/session only refreshes ECDH for already-validated identities.",
+          }),
+          { status: 401, headers: { "Content-Type": "application/json" } }
+        );
+      }
 
       // E2E Key Exchange: if client sends a public key, perform ECDH
       let serverPublicKey: string | undefined;
@@ -561,6 +652,7 @@ http.route({
       200,
       request.headers.get("X-Encryption") === "ecdh-aes-256-gcm",
       account.sharedKey,
+      request,
     );
   }),
 });
@@ -593,6 +685,7 @@ http.route({
       200,
       request.headers.get("X-Encryption") === "ecdh-aes-256-gcm",
       account.sharedKey,
+      request,
     );
   }),
 });
@@ -893,6 +986,7 @@ http.route({
         200,
         request.headers.get("X-Encryption") === "ecdh-aes-256-gcm",
         account.sharedKey,
+        request,
       );
     } catch (err: any) {
       return new Response(
@@ -944,6 +1038,7 @@ http.route({
         200,
         request.headers.get("X-Encryption") === "ecdh-aes-256-gcm",
         account.sharedKey,
+        request,
       );
     } catch (err: any) {
       return new Response(
@@ -1211,12 +1306,12 @@ http.route({
     const { query, search_depth, max_results } = body;
 
     if (!query) {
-      return await buildResponse({ error: "query is required" }, 400, encrypted, account.sharedKey);
+      return await buildResponse({ error: "query is required" }, 400, encrypted, account.sharedKey, request);
     }
 
     const tavilyKey = process.env.TAVILY_API_KEY;
     if (!tavilyKey) {
-      return await buildResponse({ error: "Tavily not configured" }, 500, encrypted, account.sharedKey);
+      return await buildResponse({ error: "Tavily not configured" }, 500, encrypted, account.sharedKey, request);
     }
 
     try {
@@ -1234,9 +1329,9 @@ http.route({
       });
 
       const data = await response.json();
-      return await buildResponse(data, response.ok ? 200 : response.status, encrypted, account.sharedKey);
+      return await buildResponse(data, response.ok ? 200 : response.status, encrypted, account.sharedKey, request);
     } catch (err: any) {
-      return await buildResponse({ error: err.message }, 500, encrypted, account.sharedKey);
+      return await buildResponse({ error: err.message }, 500, encrypted, account.sharedKey, request);
     }
   }),
 });
@@ -1258,12 +1353,12 @@ http.route({
     const { query, type, numResults, contents } = body;
 
     if (!query) {
-      return await buildResponse({ error: "query is required" }, 400, encrypted, account.sharedKey);
+      return await buildResponse({ error: "query is required" }, 400, encrypted, account.sharedKey, request);
     }
 
     const exaKey = process.env.EXA_API_KEY;
     if (!exaKey) {
-      return await buildResponse({ error: "Exa not configured" }, 500, encrypted, account.sharedKey);
+      return await buildResponse({ error: "Exa not configured" }, 500, encrypted, account.sharedKey, request);
     }
 
     try {
@@ -1282,9 +1377,9 @@ http.route({
       });
 
       const data = await response.json();
-      return await buildResponse(data, response.ok ? 200 : response.status, encrypted, account.sharedKey);
+      return await buildResponse(data, response.ok ? 200 : response.status, encrypted, account.sharedKey, request);
     } catch (err: any) {
-      return await buildResponse({ error: err.message }, 500, encrypted, account.sharedKey);
+      return await buildResponse({ error: err.message }, 500, encrypted, account.sharedKey, request);
     }
   }),
 });
@@ -1592,6 +1687,7 @@ http.route({
         500,
         isEncrypted,
         account.sharedKey,
+        request,
       );
     }
 
@@ -1611,6 +1707,7 @@ http.route({
           resp.status,
           isEncrypted,
           account.sharedKey,
+          request,
         );
       }
       return await buildResponse(
@@ -1618,6 +1715,7 @@ http.route({
         200,
         isEncrypted,
         account.sharedKey,
+        request,
       );
     } catch (err: any) {
       return await buildResponse(
@@ -1625,6 +1723,7 @@ http.route({
         502,
         isEncrypted,
         account.sharedKey,
+        request,
       );
     }
   }),

@@ -32,6 +32,7 @@ aes-gcm = "0.10"      # AES-256-GCM encryption
 scrypt = "0.11"        # Key derivation
 getrandom = "0.2"      # Crypto-random IV generation
 hex = "0.4"            # Hex encoding/decoding
+sha2 = "0.10"          # SHA-256 (used by chrome-bridge KDF)
 
 # Platform-specific
 [target.'cfg(target_os = "macos")'.dependencies]

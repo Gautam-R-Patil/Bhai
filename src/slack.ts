@@ -25,6 +25,12 @@ const activeThreads = new Set<string>();
  * Initialize the Slack bot. Requires SLACK_BOT_TOKEN and SLACK_APP_TOKEN env vars.
  * Uses Socket Mode so no public URL is needed.
  */
+function parseSlackAllowedUsers(): Set<string> {
+    const raw = process.env.SLACK_ALLOWED_USER_IDS;
+    if (!raw) return new Set();
+    return new Set(raw.split(",").map((s) => s.trim()).filter(Boolean));
+}
+
 export async function initSlack(llm: LLMClient): Promise<void> {
     const botToken = process.env.SLACK_BOT_TOKEN;
     const appToken = process.env.SLACK_APP_TOKEN;
@@ -34,6 +40,13 @@ export async function initSlack(llm: LLMClient): Promise<void> {
         return;
     }
 
+    const allowedUsers = parseSlackAllowedUsers();
+    if (allowedUsers.size === 0) {
+        console.warn("[SLACK] SLACK_ALLOWED_USER_IDS is unset/empty -- Slack will accept NO messages until you populate it. Slack workspaces have hundreds of users; an open whitelist would let any of them drive the agent.");
+    }
+    const isAllowed = (userId: string | undefined | null) =>
+        !!userId && allowedUsers.has(userId);
+
     slackApp = new App({
         token: botToken,
         appToken: appToken,
@@ -42,6 +55,10 @@ export async function initSlack(llm: LLMClient): Promise<void> {
 
     // -- Handle @mentions in channels --
     slackApp.event("app_mention", async ({ event, say }) => {
+        if (!isAllowed(event.user)) {
+            console.log(`[SLACK] Ignored @mention from non-allowlisted user: ${event.user}`);
+            return;
+        }
         const text = stripMention(event.text);
         const threadTs = event.thread_ts || event.ts;
 
@@ -60,6 +77,11 @@ export async function initSlack(llm: LLMClient): Promise<void> {
         const msg = event as unknown as Record<string, unknown>;
         if (msg.channel_type !== "im") return;
         if (msg.bot_id || msg.subtype) return;
+        const userId = msg.user as string | undefined;
+        if (!isAllowed(userId)) {
+            console.log(`[SLACK] Ignored DM from non-allowlisted user: ${userId}`);
+            return;
+        }
 
         const text = (msg.text as string) || "";
         const threadTs = (msg.thread_ts as string) || (msg.ts as string);

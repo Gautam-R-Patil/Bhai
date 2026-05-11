@@ -1224,8 +1224,17 @@ async function handleMediaMessage(
             return;
         }
 
-        // Download file from Telegram (with retry + timeout for flaky networks)
+        // Download file from Telegram (with retry + timeout for flaky networks).
+        // Reject anything bigger than MAX_MEDIA_BYTES at the Telegram metadata
+        // step — without this, an in-memory `arrayBuffer()` of a 1GB document
+        // OOMs the bot process, and Telegram does deliver up to ~2GB to bots
+        // in some configurations.
+        const MAX_MEDIA_BYTES = 25 * 1024 * 1024; // 25 MB
         const file = await bot.api.getFile(fileId);
+        if (typeof file.file_size === "number" && file.file_size > MAX_MEDIA_BYTES) {
+            await ctx.reply(`That file is too large to process (${Math.round(file.file_size / 1024 / 1024)} MB). Limit is ${MAX_MEDIA_BYTES / 1024 / 1024} MB.`);
+            return;
+        }
         const fileUrl = `https://api.telegram.org/file/bot${config.telegramBotToken}/${file.file_path}`;
 
         let buffer: Buffer | null = null;
@@ -1235,7 +1244,13 @@ async function handleMediaMessage(
             try {
                 const response = await fetch(fileUrl, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                // Defence in depth: cap the body even if Telegram reported a small size.
+                const contentLengthHeader = response.headers.get("content-length");
+                if (contentLengthHeader && Number(contentLengthHeader) > MAX_MEDIA_BYTES) {
+                    throw new Error(`Media body too large: ${contentLengthHeader} bytes`);
+                }
                 buffer = Buffer.from(await response.arrayBuffer());
+                if (buffer.length > MAX_MEDIA_BYTES) throw new Error(`Media body too large: ${buffer.length} bytes`);
                 break; // success
             } catch (fetchErr) {
                 console.warn(`  ⚠️ Media download attempt ${attempt}/${MAX_RETRIES} failed:`, (fetchErr as Error).message);
@@ -1248,16 +1263,28 @@ async function handleMediaMessage(
 
         console.log(`  📥 Downloaded ${mediaType}: ${Math.round(downloadedBuffer.length / 1024)}KB`);
 
-        // Save to temporary file so DaVinci/Filmora can use it if requested
+        // Save to temporary file so DaVinci/Filmora can use it if requested.
+        // Use crypto.randomUUID() so the filename can't be predicted by an
+        // attacker who can also write to the same tmpdir (closes a race
+        // where a malicious side-process plants a file at a known name).
+        // Safe extension allowlist — never trust attacker-supplied MIME for
+        // the on-disk extension; we cap to mp3/wav/ogg/m4a/jpg/png/mp4.
         const mediaDir = join(tmpdir(), "atlas_media");
-        await fs.mkdir(mediaDir, { recursive: true });
-        // Use a generic extension, though extracting from mimeType is better
-        const ext = mimeType.split("/")[1] || (mediaType === "image" ? "jpg" : "mp4");
-        const tmpFilePath = join(mediaDir, `telegram_${Date.now()}.${ext}`);
-        await fs.writeFile(tmpFilePath, downloadedBuffer);
-        console.log(`  💾 Saved media to ${tmpFilePath}`);
+        await fs.mkdir(mediaDir, { recursive: true, mode: 0o700 });
+        const safeExt = (() => {
+            const claimed = (mimeType.split("/")[1] || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+            const allowed = new Set(["mp3", "wav", "ogg", "m4a", "aac", "jpg", "jpeg", "png", "gif", "webp", "mp4", "mov", "webm"]);
+            if (allowed.has(claimed)) return claimed;
+            return mediaType === "image" ? "jpg" : "mp4";
+        })();
+        const { randomUUID } = await import("node:crypto");
+        const tmpFilePath = join(mediaDir, `telegram_${randomUUID()}.${safeExt}`);
+        await fs.writeFile(tmpFilePath, downloadedBuffer, { mode: 0o600 });
+        console.log(`  💾 Saved media to atlas_media/...`);
 
-        // Append the file path to the caption so the LLM knows it has a local file
+        // Append the file path to the caption so the LLM knows it has a local file.
+        // (Path leaks to LLM context but only inside trusted system-prompt boundary;
+        // do NOT echo the random filename in any user-facing message.)
         caption += `\n\n[SYSTEM NOTE: This ${mediaType} has been temporarily saved to: ${tmpFilePath}. You can use this absolute path if the user asks you to edit the media in DaVinci Resolve or Filmora.]`;
 
         // Build media attachment
@@ -1347,8 +1374,16 @@ async function handleAudioMessage(
         const mimeType = voice?.mime_type || audio?.mime_type || "audio/ogg";
         const caption = ctx.message?.caption || "";
 
-        // Download audio from Telegram
+        // Download audio from Telegram. Mirror the 25 MB cap from the
+        // image/video path: a single voice/audio note can otherwise be up
+        // to ~50 MB for bots, ~2 GB for documents, and arrayBuffer()
+        // would OOM the bot process before we ever transcribe.
+        const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
         const file = await bot.api.getFile(fileId);
+        if (typeof file.file_size === "number" && file.file_size > MAX_AUDIO_BYTES) {
+            await ctx.reply(`That audio file is too large to process (${Math.round(file.file_size / 1024 / 1024)} MB). Limit is ${MAX_AUDIO_BYTES / 1024 / 1024} MB.`);
+            return;
+        }
         const fileUrl = `https://api.telegram.org/file/bot${config.telegramBotToken}/${file.file_path}`;
 
         let buffer: Buffer | null = null;
@@ -1357,7 +1392,12 @@ async function handleAudioMessage(
             try {
                 const response = await fetch(fileUrl, { signal: AbortSignal.timeout(30_000) });
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const contentLengthHeader = response.headers.get("content-length");
+                if (contentLengthHeader && Number(contentLengthHeader) > MAX_AUDIO_BYTES) {
+                    throw new Error(`Audio body too large: ${contentLengthHeader} bytes`);
+                }
                 buffer = Buffer.from(await response.arrayBuffer());
+                if (buffer.length > MAX_AUDIO_BYTES) throw new Error(`Audio body too large: ${buffer.length} bytes`);
                 break;
             } catch (fetchErr) {
                 console.warn(`  ⚠️ Audio download attempt ${attempt}/${MAX_RETRIES} failed:`, (fetchErr as Error).message);

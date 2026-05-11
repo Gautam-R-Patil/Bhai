@@ -372,11 +372,11 @@ async function registerCommands(clientId: string, token: string): Promise<void> 
 
 // ── Allowed User IDs for Discord ─────────────
 
-function parseDiscordAllowedUsers(): Set<string> | null {
+function parseDiscordAllowedUsers(): Set<string> {
     const raw = process.env.DISCORD_ALLOWED_USER_IDS;
-    if (!raw) return null; // No whitelist = allow all
+    if (!raw) return new Set(); // Fail-CLOSED: unset = allow no one (was previously allow-all, which let any guild member drive the agent).
     const ids = raw.split(",").map(s => s.trim()).filter(Boolean);
-    return ids.length > 0 ? new Set(ids) : null;
+    return new Set(ids);
 }
 
 // ── Init Discord Bot ─────────────────────────
@@ -413,8 +413,9 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
     let taskCounter = 0;
 
     // ── Security: check if user is allowed ──
+    // allowedUsers is always a Set (possibly empty). Empty set = no one
+    // is allowed; the operator must set DISCORD_ALLOWED_USER_IDS explicitly.
     function isAllowed(userId: string): boolean {
-        if (!allowedUsers) return true; // No whitelist = open
         return allowedUsers.has(userId);
     }
 

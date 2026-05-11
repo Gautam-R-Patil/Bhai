@@ -244,11 +244,7 @@ pub fn get_emotional_context_snippet(
 
     for em in recent.iter().take(MAX_INJECTION_ITEMS_EMOTION) {
         if em.intensity > 0.3 {
-            let context_preview = if em.context.len() > 80 {
-                &em.context[..80]
-            } else {
-                &em.context
-            };
+            let context_preview = char_safe_truncate(&em.context, 80);
             parts.push(format!(
                 "- {}: {} ({:.0}%)",
                 em.emotion,
@@ -433,11 +429,7 @@ pub fn generate_anticipation(input: AnticipationInput) -> Option<Anticipation> {
     // Pattern 1: Project launch follow-up
     for ep in &input.recent_milestones {
         if ep.days_ago < 14.0 {
-            let desc_preview = if ep.description.len() > 50 {
-                &ep.description[..50]
-            } else {
-                &ep.description
-            };
+            let desc_preview = char_safe_truncate(&ep.description, 50);
             suggestions.push(Anticipation {
                 suggestion: format!(
                     "Regarding your recent {}: \"{}\" -- want a follow-up action plan or review?",
@@ -463,11 +455,7 @@ pub fn generate_anticipation(input: AnticipationInput) -> Option<Anticipation> {
     // Pattern 3: Struggling user
     for ep in &input.recent_struggles {
         if ep.days_ago < 7.0 {
-            let desc_preview = if ep.description.len() > 40 {
-                &ep.description[..40]
-            } else {
-                &ep.description
-            };
+            let desc_preview = char_safe_truncate(&ep.description, 40);
             suggestions.push(Anticipation {
                 suggestion: format!(
                     "You've been working through \"{}\". Want a fresh approach or alternative strategy?",
@@ -865,4 +853,16 @@ fn now_ms_f64() -> f64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as f64
+}
+
+// Char-boundary-safe slice. With `panic = abort` in release, naive
+// `&s[..N]` slicing aborts the whole Node host whenever N falls inside a
+// multi-byte UTF-8 sequence (any non-ASCII input can trigger it). This
+// helper walks back to the nearest char boundary so user-supplied content
+// containing emoji/CJK never crashes the process.
+fn char_safe_truncate(s: &str, max_len: usize) -> &str {
+    if s.len() <= max_len { return s; }
+    let mut end = max_len;
+    while end > 0 && !s.is_char_boundary(end) { end -= 1; }
+    &s[..end]
 }

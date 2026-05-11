@@ -299,28 +299,51 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
     httpServer = http.createServer((req, res) => {
         // ── Discovery Endpoint ──
         // The extension fetches this on boot to get the token automatically.
+        // CORS is intentionally NOT wildcarded — "localhost is safe" was wrong:
+        // any webpage in the user's browser can fetch http://127.0.0.1:18800/discover
+        // because CORS rules apply to JS not the OS, and ws:// connections are
+        // not gated by CORS at all. To accept a request the caller must come
+        // from a Chrome extension origin (`chrome-extension://...`) — which
+        // is set by the browser, not by JS, and cannot be forged from a tab.
         if (req.method === "GET" && req.url === "/discover") {
+            const origin = (req.headers.origin as string | undefined) || "";
+            const isExtension = origin.startsWith("chrome-extension://");
+            // Sec-Fetch-Site is also browser-set; "none" means a privileged
+            // direct fetch (e.g. background.js startup with no triggering
+            // page), which the extension uses on boot.
+            const fetchSite = (req.headers["sec-fetch-site"] as string | undefined) || "";
+            const isPrivilegedDirect = fetchSite === "none";
+            if (!isExtension && !isPrivilegedDirect) {
+                res.writeHead(403, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ error: "Forbidden — extension origin required" }));
+                return;
+            }
             const discovery = {
                 port,
                 token: bridgeToken,
                 wsUrl: `ws://127.0.0.1:${port}`,
                 pid: process.pid,
             };
-            res.writeHead(200, {
+            const corsHeaders: Record<string, string> = {
                 "Content-Type": "application/json",
-                "Access-Control-Allow-Origin": "*", // localhost is safe
                 "Cache-Control": "no-store",
-            });
+                "Vary": "Origin",
+            };
+            if (isExtension) corsHeaders["Access-Control-Allow-Origin"] = origin;
+            res.writeHead(200, corsHeaders);
             res.end(JSON.stringify(discovery));
             return;
         }
 
-        // CORS preflight for /discover
+        // CORS preflight for /discover — only echo the requesting extension origin.
         if (req.method === "OPTIONS") {
+            const origin = (req.headers.origin as string | undefined) || "";
+            const allowOrigin = origin.startsWith("chrome-extension://") ? origin : "null";
             res.writeHead(204, {
-                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Origin": allowOrigin,
                 "Access-Control-Allow-Methods": "GET",
                 "Access-Control-Allow-Headers": "Content-Type",
+                "Vary": "Origin",
             });
             res.end();
             return;

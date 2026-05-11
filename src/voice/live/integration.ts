@@ -120,11 +120,24 @@ export async function startLiveVoice(
         llm,
     );
 
-    // Log events
+    // Log events + surface screen-share start/stop to the user. We push a
+    // visible notice on the channel/notification surface so people know the
+    // session is uploading screencaps to the live-voice provider every 1.5s.
     session.on("event", (event: any) => {
         if (event.type === "tool_call") {
             const calls = event.data as any[];
             console.log(`[LIVE] Tool calls: ${calls.map((c: any) => c.name).join(", ")}`);
+        }
+        if (event.type === "screen_share_started") {
+            // Side-channel push notification (best-effort, non-fatal).
+            import("../../notifications/push.js")
+                .then(({ sendPushNotification }) => {
+                    sendPushNotification(
+                        "ATLAS is watching your screen",
+                        "Live voice is active and your screen is being shared with the live model. Mute the mic to pause sharing.",
+                    ).catch(() => { /* push optional */ });
+                })
+                .catch(() => { /* notifications module optional */ });
         }
     });
 

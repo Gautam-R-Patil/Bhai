@@ -121,10 +121,17 @@ export async function deriveSharedKey(
 
 /**
  * Encrypt plaintext with AES-256-GCM using the shared key.
+ *
+ * `additionalData` (optional) — callback that, given the chosen ts/rid,
+ * returns an AAD string to bind into the GCM tag. The client must
+ * compute the same AAD on receive or decryption fails. Used to bind the
+ * envelope to its request route so a captured envelope cannot be
+ * replayed against a different endpoint.
  */
 export async function encryptResponse(
   plaintext: string,
-  sharedKeyBase64: string
+  sharedKeyBase64: string,
+  additionalData?: (ts: number, rid: string) => string,
 ): Promise<EncryptedEnvelope> {
   const keyBuf = base64ToBuf(sharedKeyBase64);
   const aesKey = await crypto.subtle.importKey(
@@ -136,10 +143,15 @@ export async function encryptResponse(
   );
 
   const iv = crypto.getRandomValues(new Uint8Array(12)); // 96-bit
+  const ts = Date.now();
+  const rid = randomHex(16);
   const encoded = new TextEncoder().encode(plaintext);
+  const aad = additionalData
+    ? new TextEncoder().encode(additionalData(ts, rid))
+    : undefined;
 
   const ciphertext = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv, tagLength: 128 },
+    { name: "AES-GCM", iv, tagLength: 128, ...(aad ? { additionalData: aad } : {}) },
     aesKey,
     encoded
   );
@@ -153,17 +165,20 @@ export async function encryptResponse(
     iv: bufToBase64(iv),
     ct: bufToBase64(ct),
     tag: bufToBase64(tag),
-    ts: Date.now(),
-    rid: randomHex(16),
+    ts,
+    rid,
   };
 }
 
 /**
  * Decrypt an encrypted envelope with AES-256-GCM.
+ *
+ * `aad` (optional) — must match the AAD bound during encryption.
  */
 export async function decryptRequest(
   envelope: EncryptedEnvelope,
-  sharedKeyBase64: string
+  sharedKeyBase64: string,
+  aad?: Uint8Array,
 ): Promise<string> {
   const keyBuf = base64ToBuf(sharedKeyBase64);
   const aesKey = await crypto.subtle.importKey(
@@ -184,7 +199,7 @@ export async function decryptRequest(
   ctWithTag.set(new Uint8Array(tag), ct.byteLength);
 
   const decrypted = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: new Uint8Array(iv), tagLength: 128 },
+    { name: "AES-GCM", iv: new Uint8Array(iv), tagLength: 128, ...(aad ? { additionalData: aad } : {}) },
     aesKey,
     ctWithTag
   );

@@ -161,9 +161,11 @@ export async function getBrowser(): Promise<BrowserContext> {
             }
         } catch { /* use fallback UA above */ }
 
-        // Stealth args: remove bot fingerprints without bypassCSP (which breaks Playwright internals)
+        // Stealth args: remove bot fingerprints without bypassCSP (which breaks Playwright internals).
+        // Renderer sandbox is INTENTIONALLY left enabled (we no longer pass --no-sandbox) so a single
+        // malicious page-render exploit (V8/Skia/WebGL) cannot escalate to ATLAS host RCE. Set
+        // ATLAS_BROWSER_NO_SANDBOX=true only on Linux containers where userns is unavailable.
         const stealthArgs = [
-            "--no-sandbox",
             "--disable-blink-features=AutomationControlled", // removes navigator.webdriver
             "--disable-infobars",
             "--disable-notifications",               // suppress permission prompts
@@ -176,6 +178,9 @@ export async function getBrowser(): Promise<BrowserContext> {
             "--lang=en-US,en",
             "--accept-lang=en-US,en;q=0.9",
         ];
+        if (process.env.ATLAS_BROWSER_NO_SANDBOX === "true") {
+            stealthArgs.unshift("--no-sandbox");
+        }
 
         // Persistent context — keeps cookies, logins, history across sessions
         browserContext = await pw.chromium.launchPersistentContext(BROWSER_PROFILE_DIR, {

@@ -109,8 +109,12 @@ pub fn build_transcript(history: Vec<TranscriptMessage>) -> String {
         .iter()
         .filter(|m| m.role == "user" || (m.role == "assistant" && !m.content.is_empty()))
         .map(|m| {
+            // Char-boundary-safe slice. Naive `&s[..N]` panic-aborts the
+            // Node host on multi-byte UTF-8 input (release uses panic=abort).
             let content_preview = if m.content.len() > 250 {
-                &m.content[..250]
+                let mut end = 250;
+                while end > 0 && !m.content.is_char_boundary(end) { end -= 1; }
+                &m.content[..end]
             } else {
                 &m.content
             };

@@ -1199,8 +1199,16 @@ fn extract_signals(
 
     let word_count = message.split_whitespace().filter(|w| !w.is_empty()).count();
 
-    // Truncate for regex-heavy analysis — diminishing returns past 300 chars
-    let sample = if message.len() > 300 { &message[..300] } else { message };
+    // Truncate for regex-heavy analysis — diminishing returns past 300 chars.
+    // Walk back to a char boundary so non-ASCII input doesn't panic-abort
+    // the entire Node process under the release `panic = abort` profile.
+    let sample = if message.len() > 300 {
+        let mut end = 300;
+        while end > 0 && !message.is_char_boundary(end) { end -= 1; }
+        &message[..end]
+    } else {
+        message
+    };
 
     // 1. Message length (0-10)
     let message_length = match word_count {

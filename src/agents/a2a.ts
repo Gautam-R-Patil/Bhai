@@ -267,20 +267,56 @@ export async function handleAgentToolCall(
 // ── HTTP Endpoint Handlers ──────────────────────
 
 /**
+ * Constant-time bearer-token check. Returns true when the supplied
+ * Authorization header matches the ATLAS_A2A_TOKEN env var. Returns
+ * false when the token is missing on either side — i.e. without a
+ * configured token, every authenticated route is denied.
+ */
+function authorizeA2A(authHeader: string | null | undefined): boolean {
+    const expected = process.env.ATLAS_A2A_TOKEN;
+    if (!expected || !authHeader) return false;
+    const m = /^Bearer\s+(\S+)\s*$/.exec(authHeader);
+    if (!m) return false;
+    const supplied = m[1];
+    if (supplied.length !== expected.length) return false;
+    let diff = 0;
+    for (let i = 0; i < expected.length; i++) {
+        diff |= expected.charCodeAt(i) ^ supplied.charCodeAt(i);
+    }
+    return diff === 0;
+}
+
+const UNAUTHORIZED = {
+    status: 401,
+    body: JSON.stringify({
+        error: "Unauthorized",
+        message: "A2A mutating routes require Authorization: Bearer <ATLAS_A2A_TOKEN>. Set ATLAS_A2A_TOKEN in env to enable A2A.",
+    }),
+    contentType: "application/json",
+};
+
+/**
  * Handle A2A HTTP requests. Called from the overlay HTTP server.
  * Routes:
- *   GET  /.well-known/agent.json  — Agent Card
- *   POST /a2a/tasks               — Create task
- *   GET  /a2a/tasks/:id           — Get task status
- *   POST /a2a/tasks/:id/cancel    — Cancel task
+ *   GET  /.well-known/agent.json  — Agent Card (PUBLIC, no auth — this is the discovery doc)
+ *   POST /a2a/tasks               — Create task (AUTH)
+ *   GET  /a2a/tasks                — List tasks (AUTH)
+ *   GET  /a2a/tasks/:id           — Get task status (AUTH)
+ *   POST /a2a/tasks/:id/cancel    — Cancel task (AUTH)
+ *
+ * Auth model: ATLAS_A2A_TOKEN env var must be set, and clients must send
+ * `Authorization: Bearer <token>`. Without an env-set token, no mutating
+ * route works — closes the drive-by-RCE primitive where any visited webpage
+ * could POST tasks because the overlay HTTP server listens on 127.0.0.1.
  */
 export function handleA2ARequest(
     method: string,
     pathname: string,
     body: string | null,
     llm: LLMClient,
+    authHeader?: string | null,
 ): { status: number; body: string; contentType: string } {
-    // GET /.well-known/agent.json
+    // GET /.well-known/agent.json — publishes capabilities; no auth required.
     if (pathname === "/.well-known/agent.json" && method === "GET") {
         return {
             status: 200,
@@ -288,6 +324,9 @@ export function handleA2ARequest(
             contentType: "application/json",
         };
     }
+
+    // Every other A2A route mutates or exposes task state — require a bearer.
+    if (!authorizeA2A(authHeader)) return UNAUTHORIZED;
 
     // POST /a2a/tasks — create a new task
     if (pathname === "/a2a/tasks" && method === "POST") {

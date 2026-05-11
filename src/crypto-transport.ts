@@ -41,6 +41,17 @@ export function deriveSharedKey(
 ): void {
     if (!_ecdh) throw new Error("Key pair not generated yet");
 
+    // Refuse legacy KDF v1 client-side. v1 is a SHA256-concat, not a real
+    // KDF; the server still decrypts existing v1 sessions for backward
+    // compat, but the client will only DERIVE under HKDF (v2). A coerced
+    // server (or downgrade attack on the unencrypted /api/auth/session
+    // bootstrap) cannot push us back onto v1.
+    if (version !== KDF_VERSION_LATEST) {
+        throw new Error(
+            `KDF version ${version} refused by client; only v${KDF_VERSION_LATEST} (HKDF-SHA256) is accepted.`,
+        );
+    }
+
     const serverPubKey = Buffer.from(serverPublicKeyBase64, "base64");
     const sharedSecret = _ecdh.computeSecret(serverPubKey);
 
@@ -83,13 +94,37 @@ interface EncryptedEnvelope {
 }
 
 /**
- * Encrypt a plaintext string using AES-256-GCM with the shared key.
+ * Build the AAD (Additional Authenticated Data) for an envelope.
+ *
+ * AAD is unencrypted but cryptographically bound to the ciphertext via the
+ * GCM auth tag — modifying AAD on the wire breaks decryption. We bind the
+ * HTTP method, the URL pathname, and the envelope's ts+rid so that:
+ *   - A captured envelope cannot be replayed against a different route
+ *     (cross-protocol confusion).
+ *   - An on-path attacker who flips ts/rid on the wire (the previous
+ *     90-second replay window relied on these being unauthenticated)
+ *     can no longer get the server to accept the rewritten envelope.
  */
-export function encrypt(plaintext: string): EncryptedEnvelope {
+function buildAAD(method: string, urlPath: string, ts: number, rid: string): Buffer {
+    return Buffer.from(`${method.toUpperCase()}|${urlPath}|${ts}|${rid}`);
+}
+
+/**
+ * Encrypt a plaintext string using AES-256-GCM with the shared key.
+ *
+ * `bindAad` — when provided, becomes Associated Authenticated Data
+ * (RFC 5116). Both peers must compute the same AAD or decryption fails.
+ * Callers should pass `buildAAD(method, urlPath, ts, rid)` derived from
+ * the request being encrypted.
+ */
+export function encrypt(plaintext: string, bindAad?: Buffer): EncryptedEnvelope {
     if (!_sharedKey) throw new Error("E2E encryption not established");
 
     const iv = crypto.randomBytes(12); // 96-bit IV for GCM
+    const ts = Date.now();
+    const rid = crypto.randomBytes(16).toString("hex");
     const cipher = crypto.createCipheriv("aes-256-gcm", _sharedKey, iv);
+    if (bindAad) cipher.setAAD(bindAad);
 
     let encrypted = cipher.update(plaintext, "utf8");
     encrypted = Buffer.concat([encrypted, cipher.final()]);
@@ -99,15 +134,16 @@ export function encrypt(plaintext: string): EncryptedEnvelope {
         iv: iv.toString("base64"),
         ct: encrypted.toString("base64"),
         tag: tag.toString("base64"),
-        ts: Date.now(),
-        rid: crypto.randomBytes(8).toString("hex"),
+        ts,
+        rid,
     };
 }
 
 /**
  * Decrypt an encrypted envelope using AES-256-GCM with the shared key.
+ * `bindAad` must match the AAD used when encrypting.
  */
-export function decrypt(envelope: EncryptedEnvelope): string {
+export function decrypt(envelope: EncryptedEnvelope, bindAad?: Buffer): string {
     if (!_sharedKey) throw new Error("E2E encryption not established");
 
     const iv = Buffer.from(envelope.iv, "base64");
@@ -122,6 +158,7 @@ export function decrypt(envelope: EncryptedEnvelope): string {
     try {
         const decipher = crypto.createDecipheriv("aes-256-gcm", _sharedKey, iv);
         decipher.setAuthTag(tag);
+        if (bindAad) decipher.setAAD(bindAad);
 
         let decrypted = decipher.update(ct);
         decrypted = Buffer.concat([decrypted, decipher.final()]);
@@ -135,25 +172,77 @@ export function decrypt(envelope: EncryptedEnvelope): string {
 // ── Encrypted Fetch ───────────────────────────
 
 /**
- * Drop-in replacement for fetch() that encrypts request bodies
- * and decrypts response bodies using the E2E shared key.
- * Falls back to plain fetch if encryption is not established.
+ * Endpoints that legitimately run BEFORE the shared key is derived.
+ * Plaintext is acceptable on these because they're the ECDH bootstrap
+ * itself. Every other request MUST be encrypted; the previous behaviour
+ * of silently falling back to plaintext let a stale-token race ship
+ * sensitive payloads in the clear under normal HTTPS only.
+ */
+const PRE_E2E_PLAINTEXT_PATHS = new Set([
+    "/api/auth/session",
+    "/api/otpless/validate-token",
+    "/api/auth/refresh",
+]);
+
+function urlPathOf(rawUrl: string): string {
+    try {
+        return new URL(rawUrl).pathname;
+    } catch {
+        // Bare path passed (rare) — best-effort.
+        return rawUrl.replace(/^[a-z]+:\/\/[^/]+/i, "") || "/";
+    }
+}
+
+/**
+ * Drop-in replacement for fetch() that encrypts request bodies and
+ * decrypts response bodies using the E2E shared key.
+ *
+ * Behaviour change vs. earlier versions: when the shared key is missing,
+ * we ONLY allow the call through if the URL path is on the
+ * PRE_E2E_PLAINTEXT_PATHS allowlist. Every other call throws — the
+ * previous silent plaintext fallback meant authenticated, sensitive
+ * traffic could ship in the clear during a session-revocation race.
  */
 export async function encryptedFetch(
     url: string,
     options: RequestInit = {},
 ): Promise<Response> {
-    // If E2E not ready, fall back to plain fetch (with timeout)
+    const method = (options.method || "GET").toUpperCase();
+    const urlPath = urlPathOf(url);
+
     if (!_sharedKey) {
+        if (!PRE_E2E_PLAINTEXT_PATHS.has(urlPath)) {
+            throw new Error(
+                `E2E required for ${method} ${urlPath}; shared key missing. Re-auth before issuing this request.`,
+            );
+        }
         if (!options.signal) options.signal = AbortSignal.timeout(45_000);
         return fetch(url, options);
     }
 
     const headers = new Headers(options.headers);
+    let aad: Buffer | undefined;
 
     // Encrypt request body if present
     if (options.body && typeof options.body === "string") {
-        const envelope = encrypt(options.body);
+        // Pre-allocate ts/rid so we bind the same values into AAD.
+        const ts = Date.now();
+        const rid = crypto.randomBytes(16).toString("hex");
+        aad = buildAAD(method, urlPath, ts, rid);
+        // Inline encrypt with the pre-allocated ts/rid + AAD.
+        const iv = crypto.randomBytes(12);
+        const cipher = crypto.createCipheriv("aes-256-gcm", _sharedKey, iv);
+        cipher.setAAD(aad);
+        let encrypted = cipher.update(options.body as string, "utf8");
+        encrypted = Buffer.concat([encrypted, cipher.final()]);
+        const tag = cipher.getAuthTag();
+        const envelope: EncryptedEnvelope = {
+            iv: iv.toString("base64"),
+            ct: encrypted.toString("base64"),
+            tag: tag.toString("base64"),
+            ts,
+            rid,
+        };
         options.body = JSON.stringify(envelope);
         headers.set("X-Encryption", "ecdh-aes-256-gcm");
         headers.set("Content-Type", "application/json");
@@ -173,9 +262,12 @@ export async function encryptedFetch(
     const responseEncryption = response.headers.get("X-Encryption");
     if (responseEncryption === "ecdh-aes-256-gcm") {
         try {
-            // Decrypt response body
+            // Decrypt response body — bind same AAD shape (the server
+            // echoes ts/rid, but we re-bind to method+urlPath which is
+            // what we control on this side).
             const encryptedBody = await response.json() as EncryptedEnvelope;
-            const decryptedText = decrypt(encryptedBody);
+            const responseAad = buildAAD(method, urlPath, encryptedBody.ts, encryptedBody.rid);
+            const decryptedText = decrypt(encryptedBody, responseAad);
 
             // Return a new Response with decrypted body but same status/headers
             return new Response(decryptedText, {

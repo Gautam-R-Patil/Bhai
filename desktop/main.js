@@ -156,8 +156,23 @@ const CONVEX_API_URL = process.env.CONVEX_URL || `https://${_CONVEX_DEPLOY_NAME}
 const { parseOtplessVerifyResponse, isLegacyUserId } = require("./auth-helpers");
 
 // ── Desktop Session Token Management ─────────────
-// Authenticates the Electron main process with the Convex backend
-// via session tokens — NO deploy key needed.
+// Authenticates the Electron main process with the Convex backend via
+// session tokens — NO deploy key needed.
+//
+// IMPORTANT: This session is **plaintext-over-HTTPS only**. We do NOT
+// derive an ECDH shared key here (no clientPublicKey is sent). Every
+// outbound call from main.js uses bare https.request, never the
+// `encryptedFetch` helper from src/crypto-transport.ts. If you ever wire
+// encryptedFetch from main.js you must FIRST extend this function to
+// generate an ECDH key pair and send `clientPublicKey` so the server
+// derives a shared key for the session — otherwise encryptedFetch will
+// throw on any non-bootstrap path.
+//
+// /api/auth/session also REQUIRES the account to already exist — it no
+// longer auto-upserts. Bootstrap flow: validate-token first (creates the
+// account), then this function refreshes ECDH-less sessions on demand.
+// email/phone/name on the body below are ignored server-side and only
+// kept here as breadcrumbs for legacy callers.
 let _desktopSessionToken = null;
 let _desktopSessionExpiry = 0;
 
@@ -167,27 +182,16 @@ async function getDesktopSessionToken(overrideUserId, overrideInfo) {
     }
 
     let userId = overrideUserId;
-    let email, phone, name;
 
     if (!userId) {
         const session = loadAccountSession();
         if (!session || !session.userId) return null;
         userId = session.userId;
-        email = session.email;
-        phone = session.phone;
-        name = session.name;
-    } else if (overrideInfo) {
-        email = overrideInfo.email;
-        phone = overrideInfo.phone;
-        name = overrideInfo.name;
     }
 
     const https = require("https");
     const bodyStr = JSON.stringify({
         otplessUserId: userId,
-        email: email || undefined,
-        phone: phone || undefined,
-        name: name || undefined,
     });
 
     return new Promise((resolve) => {
@@ -2015,6 +2019,487 @@ function registerIPC() {
                 db.close();
             }
             return { success: true };
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    // ── Memory Studio ────────────────────────────────────────────────
+    // Read-only snapshot APIs for the desktop Memory Studio. Each opens a
+    // fresh better-sqlite3 read-only handle on memory.db and closes it after
+    // the query — short-lived handles are fine for the panel UI cadence and
+    // SQLite WAL mode keeps reads safe alongside the running bot.
+
+    function _studioOpenDb() {
+        const dbPath = path.join(DATA_DIR, "memory.db");
+        if (!fs.existsSync(dbPath)) return null;
+        const Database = require("better-sqlite3");
+        return new Database(dbPath, { readonly: true, fileMustExist: true });
+    }
+
+    const STUDIO_COLOR = {
+        you: "var(--accent-primary)",
+        memory: "var(--orb-cobalt)",
+        entity: "var(--orb-mint)",
+        trait: "var(--orb-amber)",
+        episode: "var(--orb-lavender)",
+        emotion: "var(--orb-peach)",
+        goal: "var(--text-muted)",
+        task_learning: "var(--text-muted)",
+        world_model: "var(--text-muted)",
+        self_state: "var(--text-muted)",
+    };
+
+    function _clamp01(n) {
+        if (!Number.isFinite(n)) return 0;
+        if (n < 0) return 0;
+        if (n > 1) return 1;
+        return n;
+    }
+    function _recencyScore(ts) {
+        if (!ts) return 0;
+        const t = new Date(ts).getTime();
+        if (!Number.isFinite(t)) return 0;
+        const days = (Date.now() - t) / 86_400_000;
+        if (days <= 1) return 1;
+        if (days >= 90) return 0;
+        return _clamp01(1 - days / 90);
+    }
+    function _nodeSize(importance, recency) {
+        return 8 + _clamp01(importance) * 16 + _clamp01(recency) * 6;
+    }
+    function _truncate(text, max = 60) {
+        if (!text) return "";
+        if (text.length <= max) return text;
+        return text.slice(0, max - 1) + "…";
+    }
+    function _parseTags(raw) {
+        if (!raw || typeof raw !== "string") return [];
+        return raw.split(",").map((t) => t.trim()).filter(Boolean);
+    }
+    function _safeJsonArray(raw) {
+        try {
+            const v = JSON.parse(raw);
+            return Array.isArray(v) ? v.map(String) : [];
+        } catch { return []; }
+    }
+    function _safeAll(db, sql, params = []) {
+        try { return db.prepare(sql).all(...params); }
+        catch { return []; }
+    }
+    function _safeGet(db, sql, params = []) {
+        try { return db.prepare(sql).get(...params); }
+        catch { return null; }
+    }
+
+    function _buildStudioGraph(db, opts) {
+        const o = opts || {};
+        const centerOnUser = o.centerOnUser !== false;
+        const includeAdvanced = !!o.includeAdvanced;
+        const windowDays = typeof o.windowDays === "number" ? o.windowDays : 90;
+        const maxNodes = Math.min(Math.max(20, o.maxNodes || 400), 1000);
+        const searchQuery = (o.searchQuery || "").trim();
+
+        const nodes = [];
+        const edges = [];
+        const memIds = new Set();
+        const entIds = new Set();
+
+        if (centerOnUser) {
+            nodes.push({
+                id: "you", kind: "you", label: "You", fullText: "You",
+                importance: 1, recency: 1, size: 30, color: STUDIO_COLOR.you,
+                pinned: true, tags: [], createdAt: new Date().toISOString(),
+            });
+        }
+
+        const windowClause = windowDays ? `AND created_at > datetime('now','-${windowDays} days')` : "";
+
+        // Memories
+        const memBudget = Math.max(40, Math.floor(maxNodes * 0.3));
+        const memRows = searchQuery
+            ? _safeAll(db,
+                `SELECT id, content, category, tags, importance, created_at, accessed_at, access_count, decay_score
+                 FROM memories WHERE consolidated_into IS NULL AND (content LIKE ? OR tags LIKE ?)
+                 ORDER BY (importance * 0.6 + decay_score * 0.4) DESC LIMIT ?`,
+                [`%${searchQuery}%`, `%${searchQuery}%`, memBudget])
+            : _safeAll(db,
+                `SELECT id, content, category, tags, importance, created_at, accessed_at, access_count, decay_score
+                 FROM memories WHERE consolidated_into IS NULL ${windowClause}
+                 ORDER BY (importance * 0.6 + decay_score * 0.4) DESC LIMIT ?`,
+                [memBudget]);
+        for (const r of memRows) {
+            const importance = _clamp01((r.importance ?? 5) / 10);
+            const recency = _recencyScore(r.accessed_at || r.created_at);
+            memIds.add(r.id);
+            nodes.push({
+                id: `mem:${r.id}`, kind: "memory",
+                label: _truncate(r.content), fullText: r.content,
+                importance, recency, size: _nodeSize(importance, recency),
+                color: STUDIO_COLOR.memory, pinned: false,
+                tags: _parseTags(r.tags), category: r.category || undefined,
+                createdAt: r.created_at, accessCount: r.access_count ?? 0,
+                meta: { decayScore: r.decay_score ?? 1 },
+            });
+        }
+
+        // Entities
+        const entBudget = Math.max(20, Math.floor(maxNodes * 0.2));
+        const entRows = searchQuery
+            ? _safeAll(db,
+                `SELECT id, name, type, properties, last_accessed_at, created_at
+                 FROM entities WHERE name LIKE ?
+                 ORDER BY COALESCE(last_accessed_at, created_at) DESC LIMIT ?`,
+                [`%${searchQuery}%`, entBudget])
+            : _safeAll(db,
+                `SELECT id, name, type, properties, last_accessed_at, created_at
+                 FROM entities ORDER BY COALESCE(last_accessed_at, created_at) DESC LIMIT ?`,
+                [entBudget]);
+        for (const r of entRows) {
+            entIds.add(r.id);
+            const recency = _recencyScore(r.last_accessed_at || r.created_at);
+            nodes.push({
+                id: `ent:${r.id}`, kind: "entity",
+                label: _truncate(r.name, 40), fullText: r.name,
+                importance: 0.6, recency, size: _nodeSize(0.6, recency),
+                color: STUDIO_COLOR.entity, pinned: false, tags: [],
+                createdAt: r.created_at, meta: { entityType: r.type },
+            });
+        }
+
+        // Traits
+        const traitRows = searchQuery
+            ? _safeAll(db,
+                `SELECT trait_key, value, confidence, topics, reinforcement_count, last_seen_ts, created_at
+                 FROM behavioral_traits WHERE confidence > 0.3 AND (trait_key LIKE ? OR value LIKE ?)
+                 ORDER BY confidence DESC LIMIT 40`,
+                [`%${searchQuery}%`, `%${searchQuery}%`])
+            : _safeAll(db,
+                `SELECT trait_key, value, confidence, topics, reinforcement_count, last_seen_ts, created_at
+                 FROM behavioral_traits WHERE confidence > 0.3
+                 ORDER BY confidence DESC LIMIT 40`);
+        for (const r of traitRows) {
+            const recency = _recencyScore(r.last_seen_ts || r.created_at);
+            const importance = _clamp01(r.confidence);
+            nodes.push({
+                id: `trait:${r.trait_key}`, kind: "trait",
+                label: r.trait_key.replace(/_/g, " "), fullText: r.value,
+                importance, recency, size: _nodeSize(importance, recency),
+                color: STUDIO_COLOR.trait, pinned: false,
+                tags: r.topics ? _safeJsonArray(r.topics) : [],
+                createdAt: r.created_at,
+                meta: { confidence: r.confidence, reinforcements: r.reinforcement_count ?? 0 },
+            });
+            if (centerOnUser) {
+                edges.push({
+                    source: "you", target: `trait:${r.trait_key}`,
+                    kind: "kg", label: "trait",
+                    strength: _clamp01(r.confidence), weight: r.confidence,
+                });
+            }
+        }
+
+        // Episodes
+        const epiRows = searchQuery
+            ? _safeAll(db,
+                `SELECT id, type, description, importance_score, timestamp
+                 FROM episodic_memory WHERE description LIKE ?
+                 ORDER BY timestamp DESC LIMIT 30`,
+                [`%${searchQuery}%`])
+            : _safeAll(db,
+                `SELECT id, type, description, importance_score, timestamp
+                 FROM episodic_memory ORDER BY timestamp DESC LIMIT 30`);
+        for (const r of epiRows) {
+            const importance = _clamp01(r.importance_score ?? 0.5);
+            const recency = _recencyScore(r.timestamp);
+            nodes.push({
+                id: `epi:${r.id}`, kind: "episode",
+                label: _truncate(r.description, 50), fullText: r.description,
+                importance, recency, size: _nodeSize(importance, recency),
+                color: STUDIO_COLOR.episode, pinned: false,
+                tags: [r.type], createdAt: r.timestamp,
+                meta: { episodeType: r.type },
+            });
+        }
+
+        // Emotions
+        const emoRows = _safeAll(db,
+            `SELECT id, emotion, context, intensity, timestamp
+             FROM emotional_memory WHERE timestamp > datetime('now','-30 days')
+             ORDER BY intensity DESC LIMIT 30`);
+        for (const r of emoRows) {
+            const importance = _clamp01(r.intensity ?? 0.5);
+            const recency = _recencyScore(r.timestamp);
+            nodes.push({
+                id: `emo:${r.id}`, kind: "emotion",
+                label: r.emotion, fullText: `${r.emotion} — ${r.context}`,
+                importance, recency, size: _nodeSize(importance, recency),
+                color: STUDIO_COLOR.emotion, pinned: false, tags: [],
+                createdAt: r.timestamp, meta: { intensity: r.intensity },
+            });
+        }
+
+        // Advanced kinds
+        if (includeAdvanced) {
+            const goalRows = _safeAll(db,
+                `SELECT id, description, deadline, progress, status, created_at
+                 FROM goals WHERE status != 'archived'
+                 ORDER BY created_at DESC LIMIT 20`);
+            for (const r of goalRows) {
+                const recency = _recencyScore(r.created_at);
+                nodes.push({
+                    id: `goal:${r.id}`, kind: "goal",
+                    label: _truncate(r.description, 50), fullText: r.description,
+                    importance: 0.5, recency, size: _nodeSize(0.5, recency),
+                    color: STUDIO_COLOR.goal, pinned: false,
+                    tags: [r.status], createdAt: r.created_at,
+                    meta: { progress: r.progress, deadline: r.deadline, status: r.status },
+                });
+            }
+        }
+
+        // KG edges (entity-entity)
+        if (entIds.size > 0) {
+            const idList = Array.from(entIds);
+            const placeholders = idList.map(() => "?").join(",");
+            const relRows = _safeAll(db,
+                `SELECT from_id, to_id, type, COALESCE(strength, 1.0) AS strength
+                 FROM relationships WHERE invalid_at IS NULL
+                   AND from_id IN (${placeholders}) AND to_id IN (${placeholders})`,
+                [...idList, ...idList]);
+            for (const r of relRows) {
+                edges.push({
+                    source: `ent:${r.from_id}`, target: `ent:${r.to_id}`,
+                    kind: "kg", label: r.type,
+                    strength: _clamp01((r.strength ?? 1) / 2),
+                    weight: r.strength ?? 1,
+                });
+            }
+        }
+
+        // Mention edges (memory→entity via tags)
+        if (memIds.size > 0 && entIds.size > 0) {
+            const entIdList = Array.from(entIds);
+            const memIdList = Array.from(memIds);
+            const entRows2 = _safeAll(db,
+                `SELECT id, name FROM entities WHERE id IN (${entIdList.map(() => "?").join(",")})`,
+                entIdList);
+            const memTags = _safeAll(db,
+                `SELECT id, tags FROM memories WHERE id IN (${memIdList.map(() => "?").join(",")}) AND tags IS NOT NULL AND tags != ''`,
+                memIdList);
+            for (const m of memTags) {
+                const tagList = _parseTags(m.tags).map((t) => t.toLowerCase());
+                if (!tagList.length) continue;
+                for (const e of entRows2) {
+                    if (tagList.includes(e.name.toLowerCase())) {
+                        edges.push({
+                            source: `mem:${m.id}`, target: `ent:${e.id}`,
+                            kind: "mention", strength: 0.3, weight: 1,
+                        });
+                    }
+                }
+            }
+        }
+
+        // Edge cap (4× node count)
+        const edgeCap = nodes.length * 4;
+        if (edges.length > edgeCap) {
+            edges.sort((a, b) => b.weight - a.weight);
+            edges.length = edgeCap;
+        }
+
+        const truncated = nodes.length > maxNodes;
+        if (truncated) nodes.length = maxNodes;
+
+        return {
+            nodes, edges,
+            meta: {
+                centerId: "you",
+                nodeCount: nodes.length,
+                edgeCount: edges.length,
+                truncated,
+                generatedAt: new Date().toISOString(),
+            },
+        };
+    }
+
+    ipcMain.handle("memory:studio-graph", async (_, opts) => {
+        try {
+            const db = _studioOpenDb();
+            if (!db) return { success: false, error: "No memory database found" };
+            try {
+                const graph = _buildStudioGraph(db, opts || {});
+                return { success: true, graph };
+            } finally { db.close(); }
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle("memory:studio-search", async (_, query, opts) => {
+        try {
+            const db = _studioOpenDb();
+            if (!db) return { success: false, error: "No memory database found" };
+            try {
+                const merged = Object.assign({}, opts || {}, { searchQuery: query });
+                const graph = _buildStudioGraph(db, merged);
+                return { success: true, graph };
+            } finally { db.close(); }
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle("memory:studio-get-node", async (_, kind, id) => {
+        try {
+            const db = _studioOpenDb();
+            if (!db) return { success: false, error: "No memory database found" };
+            try {
+                let row = null;
+                if (kind === "memory") {
+                    row = _safeGet(db,
+                        `SELECT id, content, category, tags, importance, created_at, accessed_at, access_count, decay_score, source, scope
+                         FROM memories WHERE id = ?`, [id]);
+                } else if (kind === "entity") {
+                    row = _safeGet(db,
+                        `SELECT id, name, type, properties, created_at, updated_at, last_accessed_at
+                         FROM entities WHERE id = ?`, [id]);
+                } else if (kind === "episode") {
+                    row = _safeGet(db,
+                        `SELECT id, user_id, type, description, importance_score, timestamp
+                         FROM episodic_memory WHERE id = ?`, [id]);
+                } else if (kind === "trait") {
+                    row = _safeGet(db,
+                        `SELECT trait_key, value, confidence, explicit, topics, reinforcement_count, last_seen_ts, created_at
+                         FROM behavioral_traits WHERE trait_key = ?`, [id]);
+                } else if (kind === "emotion") {
+                    row = _safeGet(db,
+                        `SELECT id, user_id, emotion, context, intensity, timestamp
+                         FROM emotional_memory WHERE id = ?`, [id]);
+                } else if (kind === "goal") {
+                    row = _safeGet(db, `SELECT * FROM goals WHERE id = ?`, [id]);
+                }
+                return { success: true, node: row };
+            } finally { db.close(); }
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle("memory:studio-connections", async (_, kind, id) => {
+        try {
+            const db = _studioOpenDb();
+            if (!db) return { success: false, error: "No memory database found" };
+            try {
+                const connections = [];
+                if (kind === "entity") {
+                    const rels = _safeAll(db,
+                        `SELECT r.from_id, r.to_id, r.type, COALESCE(r.strength, 1.0) AS strength,
+                                e1.name AS from_name, e2.name AS to_name
+                         FROM relationships r
+                         LEFT JOIN entities e1 ON r.from_id = e1.id
+                         LEFT JOIN entities e2 ON r.to_id = e2.id
+                         WHERE r.invalid_at IS NULL AND (r.from_id = ? OR r.to_id = ?)
+                         LIMIT 50`, [id, id]);
+                    for (const r of rels) {
+                        const isOut = r.from_id === id;
+                        connections.push({
+                            kind: "entity",
+                            id: isOut ? r.to_id : r.from_id,
+                            name: isOut ? r.to_name : r.from_name,
+                            relation: r.type,
+                            direction: isOut ? "out" : "in",
+                            strength: r.strength,
+                        });
+                    }
+                } else if (kind === "memory") {
+                    const m = _safeGet(db, `SELECT id, tags FROM memories WHERE id = ?`, [id]);
+                    if (m && m.tags) {
+                        const tagList = _parseTags(m.tags).map((t) => t.toLowerCase());
+                        if (tagList.length) {
+                            const placeholders = tagList.map(() => "LOWER(name) = ?").join(" OR ");
+                            const ents = _safeAll(db,
+                                `SELECT id, name, type FROM entities WHERE ${placeholders} LIMIT 25`,
+                                tagList);
+                            for (const e of ents) {
+                                connections.push({
+                                    kind: "entity", id: e.id, name: e.name,
+                                    relation: "mentioned_in", direction: "in",
+                                });
+                            }
+                        }
+                    }
+                }
+                return { success: true, connections };
+            } finally { db.close(); }
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle("memory:studio-you", async () => {
+        try {
+            const db = _studioOpenDb();
+            if (!db) return { success: false, error: "No memory database found" };
+            try {
+                let name = null;
+                const profile = _safeGet(db, `SELECT data FROM user_profiles LIMIT 1`);
+                if (profile && profile.data) {
+                    try {
+                        const parsed = JSON.parse(profile.data);
+                        if (parsed && typeof parsed.name === "string") name = parsed.name;
+                    } catch { /* corrupt profile JSON */ }
+                }
+                const rel = _safeGet(db,
+                    `SELECT trust_score, depth_score, engagement_streak, last_interaction
+                     FROM relationship_state LIMIT 1`);
+                const topTraits = _safeAll(db,
+                    `SELECT trait_key AS key, value, confidence
+                     FROM behavioral_traits WHERE confidence > 0.5
+                     ORDER BY confidence DESC LIMIT 8`);
+                return {
+                    success: true,
+                    you: {
+                        name,
+                        relationship: rel ? {
+                            trustScore: rel.trust_score,
+                            depthScore: rel.depth_score,
+                            engagementStreak: rel.engagement_streak,
+                            lastInteraction: rel.last_interaction,
+                        } : null,
+                        topTraits,
+                    },
+                };
+            } finally { db.close(); }
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle("memory:studio-stats", async () => {
+        try {
+            const db = _studioOpenDb();
+            if (!db) return { success: false, error: "No memory database found" };
+            try {
+                const cnt = (sql) => {
+                    const r = _safeGet(db, sql);
+                    return r && typeof r.c === "number" ? r.c : 0;
+                };
+                const stats = {
+                    memories: cnt("SELECT COUNT(*) AS c FROM memories WHERE consolidated_into IS NULL"),
+                    entities: cnt("SELECT COUNT(*) AS c FROM entities"),
+                    episodes: cnt("SELECT COUNT(*) AS c FROM episodic_memory"),
+                    traits: cnt("SELECT COUNT(*) AS c FROM behavioral_traits WHERE confidence > 0.3"),
+                    emotions: cnt("SELECT COUNT(*) AS c FROM emotional_memory WHERE timestamp > datetime('now','-30 days')"),
+                    categories: {},
+                };
+                const cats = _safeAll(db,
+                    `SELECT category, COUNT(*) AS c FROM memories WHERE consolidated_into IS NULL GROUP BY category`);
+                for (const r of cats) {
+                    stats.categories[r.category || "general"] = r.c;
+                }
+                return { success: true, stats };
+            } finally { db.close(); }
         } catch (err) {
             return { success: false, error: err.message };
         }

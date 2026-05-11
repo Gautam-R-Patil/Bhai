@@ -300,12 +300,20 @@ export class LiveVoiceSession extends EventEmitter {
             // 9. Start screen sharing — gives the model eyes so "click that",
             // "make a PPT", "open Bluetooth settings" work against the real UI.
             // Paused while the mic is muted (privacy).
+            //
+            // We emit a screen_share_started event AND log a prominent
+            // notice so downstream UIs (overlay, panel, tray) can render a
+            // visible "ATLAS is watching your screen" indicator. Without
+            // this signal users had no way to tell that screencaptures
+            // were being uploaded to the live-voice provider every 1.5s.
             if (process.env.ATLAS_LIVE_SCREEN_SHARE !== "false") {
                 try {
                     this.screenShare = startScreenShare(
                         (b64, mime) => this.backend?.sendVideo(b64, mime),
                         () => this.micMuted || this.state !== "active",
                     );
+                    console.log("👁  [LIVE-SESSION] Screen sharing ACTIVE — your screen is being streamed to the live-voice model while the mic is unmuted. Mute the mic to pause.");
+                    this.emitEvent("screen_share_started");
                 } catch (err) {
                     console.warn("[LIVE-SESSION] Screen share failed to start:", (err as Error).message);
                 }
@@ -338,6 +346,8 @@ export class LiveVoiceSession extends EventEmitter {
         if (this.screenShare) {
             stopScreenShare(this.screenShare);
             this.screenShare = null;
+            console.log("[LIVE-SESSION] Screen sharing stopped.");
+            this.emitEvent("screen_share_stopped");
         }
 
         // Kill any in-flight on-device TTS

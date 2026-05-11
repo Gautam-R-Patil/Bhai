@@ -6,9 +6,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://*.convex.cloud https://*.convex.site; frame-ancestors 'none'; object-src 'none'; base-uri 'self';">
     <title>A.T.L.A.S — Control Panel</title>
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="components/components.css">
+    <link rel="stylesheet" href="studio.css">
 </head>
 
 <body>
@@ -1264,31 +1266,42 @@
 
 
             <!-- ═══════════════════════════════ -->
-            <!-- TAB: Memory                    -->
+            <!-- TAB: Memory Studio             -->
             <!-- ═══════════════════════════════ -->
             <div class="tab-content" id="tab-memory">
                 <div class="tab-header">
-                    <h2 class="tab-title">Memory Browser</h2>
+                    <h2 class="tab-title">Memory Studio</h2>
+                    <div style="display:flex;gap:8px">
+                        <button class="btn btn-secondary btn-sm" id="studioAdvancedToggle">Show advanced</button>
+                        <button class="btn btn-primary btn-sm" id="studioRecomputeInsights">Recompute insights</button>
+                    </div>
                 </div>
 
-                <div class="memory-content">
-                    <!-- Relationship State -->
-                    <div class="memory-section surface-card">
-                        <div class="memory-section-title">🤝 Relationship</div>
-                        <div id="relationshipInfo" class="memory-info-text">Loading…</div>
+                <div class="surface-card studio-search-card">
+                    <input class="clean-input" id="studioSearch" placeholder="Search memories, people, episodes…" autocomplete="off" />
+                    <div class="studio-filters">
+                        <button class="studio-chip active" data-filter="memory">Memories</button>
+                        <button class="studio-chip active" data-filter="entity">People &amp; Things</button>
+                        <button class="studio-chip active" data-filter="episode">Episodes</button>
+                        <button class="studio-chip active" data-filter="trait">Traits</button>
+                        <label class="studio-chip"><input type="checkbox" id="studioSimilarity" />Similarity edges</label>
                     </div>
+                </div>
 
-                    <!-- Behavioral Traits -->
-                    <div class="memory-section surface-card">
-                        <div class="memory-section-title">🧠 Behavioral Traits</div>
-                        <div id="traitsList" class="traits-list">Loading…</div>
+                <div class="studio-body">
+                    <div class="surface-card studio-canvas-card">
+                        <div id="studioGraph"></div>
+                        <div class="studio-canvas-toolbar">
+                            <span id="studioNodeCount" class="studio-pill">Loading…</span>
+                            <div class="studio-zoom-controls">
+                                <button class="btn-icon" data-zoom="in" title="Zoom in">+</button>
+                                <button class="btn-icon" data-zoom="out" title="Zoom out">−</button>
+                                <button class="btn-icon" data-zoom="reset" title="Reset view">⟲</button>
+                            </div>
+                        </div>
+                        <div class="studio-legend" id="studioLegend"></div>
                     </div>
-
-                    <!-- Recent Episodes -->
-                    <div class="memory-section surface-card">
-                        <div class="memory-section-title">📒 Recent Episodes</div>
-                        <div id="episodesList" class="episodes-list">Loading…</div>
-                    </div>
+                    <aside class="surface-card studio-detail" id="studioDetail" data-open="false"></aside>
                 </div>
             </div>
 
@@ -1493,7 +1506,13 @@
             navEl.classList.add('active');
 
             if (tabId === 'settings') { loadSettings(); loadPreferences(); }
-            if (tabId === 'memory') loadMemory();
+            if (tabId === 'memory') {
+                if (window.MemoryStudio && typeof window.MemoryStudio.mount === 'function') {
+                    window.MemoryStudio.mount();
+                }
+            } else if (window.MemoryStudio && typeof window.MemoryStudio.pause === 'function') {
+                window.MemoryStudio.pause();
+            }
             if (tabId === 'account') loadAccountInfo();
             if (tabId === 'store') loadStore();
             if (tabId === 'channels') { loadChannelConfig(); loadPrimaryChannel(); }
@@ -2306,93 +2325,8 @@
         }
 
         // ── Memory Browser ────────────────────────────
-
-        async function loadMemory() {
-            try {
-                const data = await atlas.getMemoryData();
-                if (!data || !data.success) {
-                    document.getElementById('traitsList').textContent = 'Bot must be running to view memory.';
-                    document.getElementById('episodesList').textContent = '';
-                    document.getElementById('relationshipInfo').textContent = '';
-                    return;
-                }
-
-                // Relationship
-                const rel = data.relationship;
-                if (rel) {
-                    const trustPct = Math.round(rel.trust_score * 100);
-                    const depthPct = Math.round(rel.depth_score * 100);
-                    document.getElementById('relationshipInfo').innerHTML = `
-                        <div class="rel-meters">
-                            <div class="rel-meter">
-                                <span class="rel-label">Trust</span>
-                                <div class="rel-bar"><div class="rel-fill" style="width:${trustPct}%"></div></div>
-                                <span class="rel-pct">${trustPct}%</span>
-                            </div>
-                            <div class="rel-meter">
-                                <span class="rel-label">Depth</span>
-                                <div class="rel-bar"><div class="rel-fill" style="width:${depthPct}%"></div></div>
-                                <span class="rel-pct">${depthPct}%</span>
-                            </div>
-                            <div class="rel-meter">
-                                <span class="rel-label">Streak</span>
-                                <span class="rel-streak">${rel.engagement_streak} days</span>
-                            </div>
-                        </div>`;
-                } else {
-                    document.getElementById('relationshipInfo').textContent = 'No relationship data yet.';
-                }
-
-                // Traits
-                const traits = data.traits || [];
-                if (traits.length === 0) {
-                    document.getElementById('traitsList').textContent = 'No traits learned yet.';
-                } else {
-                    document.getElementById('traitsList').innerHTML = traits
-                        .sort((a, b) => b.confidence - a.confidence)
-                        .map(t => {
-                            const conf = Math.round(t.confidence * 100);
-                            const key = t.trait_key.replace(/_/g, ' ');
-                            return `<div class="trait-item">
-                                <div class="trait-header">
-                                    <span class="trait-key">${key}</span>
-                                    <button class="trait-delete" onclick="deleteTrait('${t.trait_key}')" title="Delete">×</button>
-                                </div>
-                                <div class="trait-value">${t.value}</div>
-                                <div class="trait-conf-bar"><div class="trait-conf-fill" style="width:${conf}%"></div></div>
-                                <div class="trait-meta">${conf}% · ${t.reinforcement_count}× reinforced</div>
-                            </div>`;
-                        }).join('');
-                }
-
-                // Episodes
-                const episodes = data.episodes || [];
-                if (episodes.length === 0) {
-                    document.getElementById('episodesList').textContent = 'No episodes recorded yet.';
-                } else {
-                    document.getElementById('episodesList').innerHTML = episodes.map(ep => {
-                        const date = new Date(ep.timestamp);
-                        const ago = timeAgo(date);
-                        const imp = ep.importance_score > 0.7 ? '⭐' : ep.importance_score > 0.4 ? '📌' : '';
-                        return `<div class="episode-item">
-                            <div class="episode-desc">${imp} ${ep.description}</div>
-                            <div class="episode-meta">${ep.type} · ${ago}</div>
-                        </div>`;
-                    }).join('');
-                }
-            } catch (err) {
-                document.getElementById('traitsList').textContent = 'Failed to load memory data.';
-            }
-        }
-
-        async function deleteTrait(key) {
-            if (!confirm(`Delete trait "${key.replace(/_/g, ' ')}"?`)) return;
-            try {
-                await atlas.deleteTrait(key);
-                showToast('🗑️ Trait deleted');
-                loadMemory();
-            } catch { showToast('Failed to delete trait'); }
-        }
+        // The Memory tab is rendered by Memory Studio (studio.js); the legacy
+        // loadMemory/deleteTrait helpers were retired alongside the old DOM.
 
         function timeAgo(date) {
             const s = Math.floor((Date.now() - date.getTime()) / 1000);
@@ -3573,6 +3507,10 @@
             return html;
         }
     </script>
+
+    <!-- Memory Studio: vendored D3 v7 + renderer module -->
+    <script src="vendor/d3.v7.min.js"></script>
+    <script src="studio.js"></script>
 
 </body>
 

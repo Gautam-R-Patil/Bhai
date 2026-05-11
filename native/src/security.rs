@@ -15,10 +15,10 @@ use regex::Regex;
 
 lazy_static! {
     /// Protected codebase paths (self-protection).
-    /// The bot must never write/delete its own source files.
-    static ref PROTECTED_PATHS: Mutex<Vec<String>> = Mutex::new(vec![
-        "/Users/user/Desktop/jarvis".to_string(),
-    ]);
+    /// Populated at runtime by JS callers via add_protected_path; we no
+    /// longer ship a developer-machine path in the binary. JS can pin
+    /// the install-time codebase root after boot.
+    static ref PROTECTED_PATHS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
     /// System-destructive command patterns.
     /// ONLY these are blocked — everything else is allowed.

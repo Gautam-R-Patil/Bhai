@@ -2,7 +2,7 @@
 // File storage helpers for the store
 
 import { v } from "convex/values";
-import { mutation, query } from "../_generated/server";
+import { internalQuery as query, internalMutation as mutation } from "../_generated/server";
 
 // ── Queries ────────────────────────────────────────────────────────────────
 

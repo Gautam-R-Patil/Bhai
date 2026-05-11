@@ -93,6 +93,32 @@ setProductHuntLLM(llm);       // Inject into Product Hunt launch module
 // ── Initialize Subsystems ─────────────────────
 
 async function boot() {
+    // ── Codebase self-protection ──
+    // Pin the bot's own source tree as a protected path. Write/delete tools
+    // refuse to touch anything under it; absent a registered path the
+    // protection silently no-ops (PROTECTED_PATHS is empty by default
+    // because we no longer ship a developer-machine path in the binary).
+    try {
+        const { registerProtectedPath } = await import("./security/allowlist.js");
+        const { fileURLToPath } = await import("node:url");
+        const path = await import("node:path");
+        // Resolve up from dist/index.js (or src/index.ts in dev) to the bot root.
+        const here = path.dirname(fileURLToPath(import.meta.url));
+        const botRoot = path.resolve(here, "..");
+        registerProtectedPath(botRoot);
+        registerProtectedPath(process.cwd());
+        // Mirror to native Rust state if the helper is exported.
+        try {
+            const native: any = await import("../native/index.js" as string);
+            if (typeof native?.addProtectedPath === "function") {
+                native.addProtectedPath(botRoot);
+                native.addProtectedPath(process.cwd());
+            }
+        } catch { /* native helper optional */ }
+    } catch (err) {
+        console.warn("[BOOT] registerProtectedPath skipped:", (err as Error).message);
+    }
+
     // ── Session (must run first — creates auth token for all Convex calls) ──
     // Retry up to 3 times with backoff for transient network failures
     let sessionOk = false;
