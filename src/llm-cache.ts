@@ -16,15 +16,35 @@ import type { ChatCompletion } from "openai/resources/chat/completions.js";
 
 const MAX_CACHE_SIZE = 200;        // Maximum cached entries (LRU eviction)
 const CACHE_TTL_MS = 10 * 60_000;  // 10 minutes TTL — long enough for coherent multi-turn sessions; short enough to avoid stale facts.
-// Cosine similarity threshold for cache hit. Research (arXiv 2504.02268, 2411.05276)
-// shows a bimodal distribution on semantic caches: genuine duplicates cluster ≥0.95,
-// unrelated ≤0.85, danger zone is 0.88-0.94. Previous 0.88 sat in the danger zone
-// and caused "looks similar but different answer needed" false positives. 0.92 is
-// the production default for factual workloads; follow-ups ("and the next one?")
-// DON'T cluster above 0.92 because they share fewer distinctive tokens.
-const SIMILARITY_THRESHOLD = Number(process.env.ATLAS_LLM_CACHE_THRESHOLD) || 0.92;
-const MIN_QUERY_LENGTH = 10;       // Don't cache very short queries
+// Cosine similarity threshold for cache hit. 0.92 produced false positives on
+// repeated short utterances ("??", "is it done?", follow-ups) where the literal
+// embedding is identical or near-identical but the *conversational context* is
+// completely different. 0.97 is conservative — only near-exact duplicates hit.
+const SIMILARITY_THRESHOLD = Number(process.env.ATLAS_LLM_CACHE_THRESHOLD) || 0.97;
+const MIN_QUERY_LENGTH = 20;       // Skip short queries — "ok", "??", "hi", "is it done?" are context-dependent
 const MAX_QUERY_LENGTH = 500;      // Don't cache very long queries (too contextual)
+
+// Generic short utterances that must never hit the cache regardless of length —
+// they're conversation-context-dependent ("yes" to one question vs. another).
+const NEVER_CACHE_PATTERNS: RegExp[] = [
+    /^\s*(yes|no|y|n|ok|okay|sure|nope|yep|yeah|nah)\s*[?!.]*\s*$/i,
+    /^\s*(thanks|thank\s+you|ty|thx|cool|nice|great|awesome)\s*[?!.]*\s*$/i,
+    /^\s*(hi|hello|hey|sup|yo|hola|hii|heya)\s*[?!.]*\s*$/i,
+    /^\s*\?+\s*$/,                                    // "??", "???"
+    /^\s*(what|huh|wat|wut)\s*[?!.]*\s*$/i,
+    /^\s*(is\s+it\s+done|are\s+you\s+done|done\?)\s*[?!.]*\s*$/i,
+    /^\s*(any\s+update|update\?|status\?|progress\?)\s*[?!.]*\s*$/i,
+    /^\s*(continue|go\s+on|proceed|next)\s*[?!.]*\s*$/i,
+];
+
+function isContextDependentQuery(text: string): boolean {
+    const trimmed = text.trim();
+    if (trimmed.length < MIN_QUERY_LENGTH) return true;
+    for (const pat of NEVER_CACHE_PATTERNS) {
+        if (pat.test(trimmed)) return true;
+    }
+    return false;
+}
 
 // ── Cache Entry ──────────────────────────────
 
@@ -38,6 +58,10 @@ interface CacheEntry {
     // response shaped for {memory, web_search} can leak into a prompt
     // that only has {memory} and vice versa.
     toolSignature: string;
+    // Hash of the recent conversation state (last few assistant/tool turns).
+    // Two identical user messages in different contexts ("??", "is it done?")
+    // must NOT share a cache hit. Empty string means no context partitioning.
+    contextHash: string;
     createdAt: number;
     hitCount: number;
 }
@@ -86,16 +110,19 @@ async function getEmbedModule() {
 
 /**
  * Check cache for a similar query. Returns cached response or null.
+ *
+ * @param contextHash Optional hash of recent conversation state. Two identical
+ *   user messages in different contexts must not share a cache hit.
  */
 export async function getCachedResponse(
     queryText: string,
     model: string,
     toolSignature: string = "",
+    contextHash: string = "",
 ): Promise<ChatCompletion | null> {
-    // Skip caching for very short or very long queries
-    if (queryText.length < MIN_QUERY_LENGTH || queryText.length > MAX_QUERY_LENGTH) {
-        return null;
-    }
+    // Reject context-dependent short utterances ("??", "ok", "is it done?")
+    if (isContextDependentQuery(queryText)) return null;
+    if (queryText.length > MAX_QUERY_LENGTH) return null;
 
     const embed = await getEmbedModule();
     if (!embed) return null;
@@ -128,6 +155,9 @@ export async function getCachedResponse(
         // response shapes — a tool-call-absent answer from 2 tools ago is
         // unsafe to return if this request has 50 tools available.
         if (entry.toolSignature !== toolSignature) continue;
+        // Must share conversation context. "??" in one conversation is not
+        // the same query as "??" in another, even with similarity 1.000.
+        if (entry.contextHash !== contextHash) continue;
 
         const similarity = embed.cosineSimilarity(queryEmbedding, entry.queryEmbedding);
         if (similarity > bestSimilarity && similarity >= SIMILARITY_THRESHOLD) {
@@ -157,6 +187,7 @@ export function cacheResponse(
     model: string,
     response: ChatCompletion,
     toolSignature: string = "",
+    contextHash: string = "",
 ): void {
     // Don't cache responses with tool calls
     const choice = response.choices?.[0];
@@ -167,8 +198,9 @@ export function cacheResponse(
     // Don't cache empty responses
     if (!choice.message?.content || choice.message.content.length < 10) return;
 
-    // Don't cache if query is too short/long
-    if (queryText.length < MIN_QUERY_LENGTH || queryText.length > MAX_QUERY_LENGTH) return;
+    // Skip context-dependent short utterances and over-length queries
+    if (isContextDependentQuery(queryText)) return;
+    if (queryText.length > MAX_QUERY_LENGTH) return;
 
     // Need an embedding
     if (!queryEmbedding) return;
@@ -197,6 +229,7 @@ export function cacheResponse(
         response,
         model,
         toolSignature,
+        contextHash,
         createdAt: Date.now(),
         hitCount: 0,
     });
@@ -206,7 +239,7 @@ export function cacheResponse(
  * Embed a query for later caching. Call before the LLM request.
  */
 export async function embedQuery(queryText: string): Promise<Float32Array | null> {
-    if (queryText.length < MIN_QUERY_LENGTH || queryText.length > MAX_QUERY_LENGTH) return null;
+    if (isContextDependentQuery(queryText) || queryText.length > MAX_QUERY_LENGTH) return null;
     const embed = await getEmbedModule();
     if (!embed) return null;
     try {

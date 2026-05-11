@@ -62,23 +62,33 @@ interface EngineHealth {
     consecutiveFailures: number;
     lastFailure: number;
     disabled: boolean;
+    /** Counter is capped here so log messages don't escalate to "29 consecutive failures". */
+    backoffLogged: boolean;
 }
 
 const engineHealth = new Map<EngineName, EngineHealth>();
+const MAX_TRACKED_FAILURES = ENGINE_MAX_CONSECUTIVE_FAILURES + 5;
 
 function markFailure(engine: EngineName): void {
-    const h = engineHealth.get(engine) || { consecutiveFailures: 0, lastFailure: 0, disabled: false };
-    h.consecutiveFailures++;
+    const h = engineHealth.get(engine) || { consecutiveFailures: 0, lastFailure: 0, disabled: false, backoffLogged: false };
+    // Cap the counter — beyond MAX, exponential backoff is already at the
+    // 5-minute ceiling so further increments don't change behavior, they
+    // just spam the log with "29 consecutive failures" each time the
+    // engine wakes up, fails, and goes back to sleep.
+    if (h.consecutiveFailures < MAX_TRACKED_FAILURES) {
+        h.consecutiveFailures++;
+    }
     h.lastFailure = Date.now();
-    // Don't permanently disable — exponential backoff in isAvailable() handles throttling
-    if (h.consecutiveFailures >= ENGINE_MAX_CONSECUTIVE_FAILURES) {
+    // Log once per backoff entry, not on every retry attempt.
+    if (h.consecutiveFailures >= ENGINE_MAX_CONSECUTIVE_FAILURES && !h.backoffLogged) {
         console.log(`[RESEARCH] ⚠️ Engine "${engine}" backing off after ${h.consecutiveFailures} consecutive failures`);
+        h.backoffLogged = true;
     }
     engineHealth.set(engine, h);
 }
 
 function markSuccess(engine: EngineName): void {
-    engineHealth.set(engine, { consecutiveFailures: 0, lastFailure: 0, disabled: false });
+    engineHealth.set(engine, { consecutiveFailures: 0, lastFailure: 0, disabled: false, backoffLogged: false });
 }
 
 function isAvailable(engine: EngineName): boolean {

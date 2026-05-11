@@ -187,6 +187,25 @@ Findings are stored in memory — you can answer follow-up questions about the r
         const topic = input.topic as string;
         if (!topic) return JSON.stringify({ error: "Missing 'topic' parameter" });
 
+        // Cap concurrent running research jobs. The agent has a tendency to
+        // kick off N parallel deep_research calls when the user sends rapid
+        // follow-up messages — each one is a 15-minute, 200-source, multi-MB
+        // job. 3 concurrent is plenty (and matches what the rest of the
+        // system can pipe back to the user without spamming).
+        const MAX_CONCURRENT_RESEARCH = Number(process.env.ATLAS_MAX_CONCURRENT_RESEARCH) || 3;
+        let runningCount = 0;
+        for (const r of activeResearches.values()) {
+            if (r.status === "running") runningCount++;
+        }
+        if (runningCount >= MAX_CONCURRENT_RESEARCH) {
+            return JSON.stringify({
+                error: `Already ${runningCount} deep research task${runningCount === 1 ? "" : "s"} running (cap: ${MAX_CONCURRENT_RESEARCH}). Wait for one to finish or call cancel_deep_research before starting another.`,
+                running_research_ids: Array.from(activeResearches.values())
+                    .filter(r => r.status === "running")
+                    .map(r => ({ id: r.id, topic: r.topic.substring(0, 80) })),
+            });
+        }
+
         const profileName = (input.profile as string) || "standard";
         const profile = PROFILES[profileName] || PROFILES.standard;
 

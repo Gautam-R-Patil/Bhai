@@ -13,6 +13,41 @@ import type {
     ChatCompletionTool,
     ChatCompletion,
 } from "openai/resources/chat/completions.js";
+import { createHash } from "node:crypto";
+
+/**
+ * Hash the recent conversation turns AFTER the last user message so cached
+ * responses don't leak across different conversational states. Without this,
+ * two identical user messages ("??", "is it done?") in different contexts
+ * collide on a 1.0-similarity cache hit and return the same response.
+ */
+function buildContextHash(messages: ChatCompletionMessageParam[]): string {
+    // Find the last user message; everything before it is the prior context.
+    let lastUserIdx = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === "user") { lastUserIdx = i; break; }
+    }
+    if (lastUserIdx <= 0) return "";
+
+    // Take the last 3 non-system turns BEFORE the user message — enough to
+    // distinguish "is it done?" between different long-running tasks without
+    // making the key so granular that nothing ever hits.
+    const prior = messages.slice(0, lastUserIdx).filter(m => m.role !== "system").slice(-3);
+    if (prior.length === 0) return "";
+
+    const fingerprint = prior.map(m => {
+        const role = m.role;
+        const content = typeof m.content === "string"
+            ? m.content
+            : Array.isArray(m.content)
+                ? m.content.map(c => (c as { text?: string }).text ?? "").join("")
+                : "";
+        // First 200 chars per turn is enough to fingerprint distinct contexts.
+        return `${role}:${content.substring(0, 200)}`;
+    }).join("|");
+
+    return createHash("sha256").update(fingerprint).digest("hex").substring(0, 12);
+}
 
 // ── Types ────────────────────────────────────────
 
@@ -83,6 +118,7 @@ export function createCacheMiddleware(): LLMMiddleware {
         // we still pass it through so the cache module's signature-aware
         // lookup path stays correct if the gate ever relaxes.
         const toolSignature = "";
+        const contextHash = buildContextHash(params.messages);
 
         try {
             const { getCachedResponse, embedQuery } = await import("./llm-cache.js");
@@ -91,7 +127,7 @@ export function createCacheMiddleware(): LLMMiddleware {
 
             if (queryText) {
                 const model = params._resolvedModel || params.modelOverride || "default";
-                const cached = await getCachedResponse(queryText, model, toolSignature);
+                const cached = await getCachedResponse(queryText, model, toolSignature, contextHash);
                 if (cached) return cached;
                 queryEmbedding = await embedQuery(queryText);
             }
@@ -111,7 +147,7 @@ export function createCacheMiddleware(): LLMMiddleware {
                 const lastUserMsg = [...params.messages].reverse().find(m => m.role === "user");
                 const queryText = typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
                 const model = params._resolvedModel || params.modelOverride || "default";
-                cacheResponse(queryText, queryEmbedding, model, response, toolSignature);
+                cacheResponse(queryText, queryEmbedding, model, response, toolSignature, contextHash);
             } catch { /* cache module not available */ }
         }
 

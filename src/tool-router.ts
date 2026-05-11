@@ -479,7 +479,11 @@ interface IntentClassification {
 
 const intentCache: Map<string, { result: IntentClassification; timestamp: number }> = new Map();
 const INTENT_CACHE_TTL_MS = 120_000; // 2 minutes
-const LLM_CLASSIFIER_TIMEOUT_MS = 8000; // 8s — Convex proxy adds ~2s latency to Haiku calls
+// 12s — under load via Convex proxy, Haiku regularly takes 9-15s. The previous
+// 8s value caused near-100% timeout-fallback during busy sessions, which then
+// dumped the request into the keyword/embedding fallback that returns garbage
+// 1.00-everywhere scores. Better to wait the extra 4s and get a real answer.
+const LLM_CLASSIFIER_TIMEOUT_MS = Number(process.env.ATLAS_TOOL_ROUTER_TIMEOUT_MS) || 12000;
 
 async function classifyWithLLM(
     message: string,
@@ -1073,7 +1077,13 @@ async function classifyToolNeeds(
             const messageEmbedding = await getCachedMessageEmbedding(message);
 
             for (const [name, embedding] of categoryEmbeddings.entries()) {
-                const similarity = cosineSimilarity(messageEmbedding, embedding);
+                // Clamp to [0, 1] — `cosineSimilarity` is a fast dot product
+                // that assumes pre-normalized vectors; floating-point drift
+                // and rare un-normalized inputs can push the value slightly
+                // above 1.0 or below 0, which then breaks downstream
+                // thresholds and produces "everything at 1.00" logs.
+                const raw = cosineSimilarity(messageEmbedding, embedding);
+                const similarity = Math.max(0, Math.min(1, raw));
                 const current = scoreMap.get(name) || 0;
                 scoreMap.set(name, Math.max(current, similarity));
             }
@@ -1132,6 +1142,7 @@ function structuralClassify(message: string): { category: string; score: number 
     // mandatories. Old stub returned just {core, memory}, which forced the
     // agent to fire `request_tools` every time — wasted LLM round-trip.
     const msgTokens = new Set(tokenize(message));
+    const msgSize = Math.max(1, msgTokens.size);
     const scores: Array<{ category: string; score: number }> = [];
     for (const [name, cat] of Object.entries(CATEGORIES)) {
         let hits = 0;
@@ -1148,8 +1159,12 @@ function structuralClassify(message: string): { category: string; score: number 
             }
         }
         for (const t of toolTokens) if (msgTokens.has(t)) hits++;
-        // Normalize to a soft [0, 1] score so downstream thresholds work.
-        const score = hits === 0 ? 0 : Math.min(1, 0.2 + hits * 0.15);
+        // Normalize against message size so verbose / context-padded messages
+        // don't saturate every category at 1.0. Previous formula
+        // (Math.min(1, 0.2 + hits * 0.15)) hit the cap at 6 hits, which is
+        // trivial for a long agent-context message — it produced
+        // "file_system:1.00 coding:1.00 browser:1.00 ..." simultaneously.
+        const score = hits === 0 ? 0 : Math.min(0.9, 0.15 + Math.min(1, hits / msgSize) * 0.75);
         if (score > 0) scores.push({ category: name, score });
         if (cat.alwaysInclude && score === 0) scores.push({ category: name, score: 0.3 });
     }

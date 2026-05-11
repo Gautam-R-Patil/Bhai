@@ -14,6 +14,22 @@ import { z } from "zod";
 const toolSchemas = new Map<string, z.ZodType>();
 
 /**
+ * Number that accepts string-or-number from LLM tool calls but rejects
+ * other types (booleans, arrays, objects). LLMs frequently emit "10"
+ * instead of 10 — `z.coerce.number()` would also coerce `true`/`false`,
+ * which is semantically wrong for fields like num_results.
+ */
+function llmNumber(): z.ZodType<number> {
+    return z.preprocess((val) => {
+        if (typeof val === "number") return val;
+        if (typeof val === "string" && val.trim() !== "" && Number.isFinite(Number(val))) {
+            return Number(val);
+        }
+        return val; // pass through; .number() below will reject
+    }, z.number());
+}
+
+/**
  * Register a Zod schema for a given tool name.
  * If a schema already exists for the tool, it is replaced.
  */
@@ -176,8 +192,8 @@ registerToolSchema("shell_exec", shellExecSchema);
 
 const readSchema = z.object({
     file_path: z.string().describe("Absolute or relative file path to read"),
-    offset: z.number().optional().describe("1-based line to start reading from"),
-    limit: z.number().optional().describe("Max lines to read (default 2000)"),
+    offset: llmNumber().optional().describe("1-based line to start reading from"),
+    limit: llmNumber().optional().describe("Max lines to read (default 2000)"),
     pages: z.string().optional().describe("Page range for PDFs, e.g. '1-5'"),
 });
 registerToolSchema("read", readSchema);
@@ -228,13 +244,15 @@ registerToolSchema("glob", globSchema);
 
 const webSearchSchema = z.object({
     query: z.string().describe("Search query"),
-    num_results: z.number().int().min(1).max(15).optional().describe("Number of results to return (1-15)"),
+    // Coerce — LLMs sometimes emit "10" instead of 10. Without coercion,
+    // every string-typed call fails validation and burns an iteration.
+    num_results: llmNumber().pipe(z.number().int().min(1).max(15)).optional().describe("Number of results to return (1-15)"),
 });
 registerToolSchema("web_search", webSearchSchema);
 
 const memoryStoreSchema = z.object({
     content: z.string().min(1).describe("Content to store in memory"),
     category: z.string().optional().describe("Memory category (e.g., 'fact', 'preference', 'task')"),
-    importance: z.number().min(1).max(10).optional().describe("Importance score (1-10)"),
+    importance: llmNumber().pipe(z.number().min(1).max(10)).optional().describe("Importance score (1-10)"),
 });
 registerToolSchema("memory_store", memoryStoreSchema);

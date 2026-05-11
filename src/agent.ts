@@ -682,10 +682,11 @@ async function executeToolCallsBatch(
 
     const results: ToolCallResult[] = [];
 
-    // Fire deferrable tools in background (don't await — synthetic results returned immediately)
+    // Fire deferrable tools in background (don't await — synthetic results returned immediately).
+    // executeAndProcessToolCall logs its own "🔧 Tool call: X" line, so we don't duplicate it here.
+    // We just mark in the completion log that this was the deferred path.
     const deferredResults: ToolCallResult[] = [];
     for (const tc of deferrableCalls) {
-        console.log(`  🔧 Tool call: ${tc.function.name} (deferred)`, tc.function.arguments?.substring(0, 200));
         // Track the promise to prevent unhandled rejections
         const promise = executeAndProcessToolCall(tc, ctx.onToolRequest, ctx.userMessage, ctx.toolAllowlist, ctx.channelContext)
             .then((r) => {
@@ -885,10 +886,18 @@ async function _runAgentBody(
     // The full tagged message is still sent to the LLM for context.
     const rawUserMessage = userMessage.replace(/\n*\[SOURCE:.*\]$/s, "").trim();
 
+    // Strip [Replying to your earlier message: "..."] prefix that telegram.ts
+    // injects when the user swipes-to-reply. Without this, goal detection sees
+    // the bracketed prefix as the user's actual message and creates a "goal"
+    // whose description literally starts with `[Replying to your earlier ...`.
+    const userIntentText = rawUserMessage
+        .replace(/^\[Replying to your earlier message:[\s\S]*?\]\s*/i, "")
+        .trim() || rawUserMessage;
+
 
     // ── Goal detection: check if user mentioned a goal ──
     try {
-        const detectedGoal = detectGoalFromMessage(rawUserMessage);
+        const detectedGoal = detectGoalFromMessage(userIntentText);
         if (detectedGoal) {
             createGoal(detectedGoal.description, detectedGoal.deadline ?? undefined);
             console.log(`  🎯 Goal detected: "${detectedGoal.description}"`);
@@ -2540,9 +2549,17 @@ PLAN:`,
             // ── Decision: should we nudge? ──
             // Only nudge if the agent made very few tool calls (< 6) AND none of the
             // bail-out signals fired AND the user's message looks like a real task.
-            // If the agent made 3+ tool calls and gave a substantial response (>80 chars),
-            // it likely completed its work — don't waste an iteration nudging.
-            const hasSubstantialResponse = responseText.length > 80 && totalToolCalls >= 3;
+            // Two thresholds for "substantial response": with 3+ tool calls a short
+            // 80-char wrap-up is enough; with 2 tool calls we need 200+ chars (the
+            // agent really wrote a meaningful answer, not "checking..."); a 600+
+            // char response is always considered substantial regardless of tool
+            // count — the previous logic was nudging the agent even after it had
+            // written 1800-token comprehensive answers because it had only made
+            // 2 tool calls.
+            const hasSubstantialResponse =
+                (responseText.length > 80 && totalToolCalls >= 3) ||
+                (responseText.length > 200 && totalToolCalls >= 2) ||
+                responseText.length > 600;
             const shouldNudge =
                 totalToolCalls > 0 &&
                 totalToolCalls < 6 &&
@@ -2637,7 +2654,13 @@ PLAN:`,
                     }
                     const rawText = finalChoice.message.content || "";
                     const text = sanitizeAgentResponse(rawText) || "(empty response)";
-                    // Retry if final model produced empty response after tool calls
+                    // Retry if final model produced empty response after tool calls.
+                    // BUT: if the prompt is already huge (>40K tokens), retrying the
+                    // same prompt at the same model produces the same empty response
+                    // — that's context-overflow / model exhaustion, not a transient
+                    // glitch. Prune the conversation history before retrying so we
+                    // don't burn another 57K-token call to get 3 tokens back.
+                    const promptTokens = (finalResponse.usage?.prompt_tokens ?? 0);
                     if (
                         text === "(empty response)" &&
                         lastToolCalls &&
@@ -2646,12 +2669,24 @@ PLAN:`,
                     ) {
                         emptyResponseRetries++;
                         console.log(
-                            `  🔄 Empty response from final model after tool calls — retry ${emptyResponseRetries}/${MAX_EMPTY_RETRIES}`,
+                            `  🔄 Empty response from final model after tool calls — retry ${emptyResponseRetries}/${MAX_EMPTY_RETRIES} (prompt=${promptTokens} tokens)`,
                         );
+                        // If the prompt is overflowing, drop early tool-result
+                        // messages to make room before the retry. Without this
+                        // the retry hits the same context-overflow path.
+                        if (promptTokens > 40_000 && messages.length > 12) {
+                            const keepFirst = 2; // system + initial user
+                            const keepLast = 8;   // recent tool results + user message
+                            const dropped = messages.length - keepFirst - keepLast;
+                            if (dropped > 0) {
+                                messages.splice(keepFirst, dropped);
+                                console.log(`  ✂️ Pruned ${dropped} mid-conversation messages to recover from overflow`);
+                            }
+                        }
                         messages.push({ role: "assistant", content: "" });
                         messages.push({
                             role: "user",
-                            content: "You produced an empty response. Please provide a meaningful reply to the user.",
+                            content: "You produced an empty response. Please provide a concise meaningful reply to the user based on what you've already done.",
                         });
                         lastToolCalls = undefined;
                         continue;
