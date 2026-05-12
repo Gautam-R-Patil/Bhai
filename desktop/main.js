@@ -3834,6 +3834,10 @@ function registerIPC() {
     ipcMain.handle("update:check", async () => {
         if (IS_DEV) return { available: false, isDev: true };
         try {
+            // Guarantee the feed URL is set before electron-updater fetches.
+            // Without this, a fresh install with no app-update.yml falls back
+            // to the default GitHub provider and 404s on a stale repo.
+            configureAutoUpdater();
             const result = await autoUpdater.checkForUpdates();
             return { available: !!result?.updateInfo, version: result?.updateInfo?.version };
         } catch (err) {
@@ -5277,6 +5281,15 @@ let isQuitting = false;
 app.whenReady().then(async () => {
     // Run v1 → v2 migration before anything reads SETUP_FLAG or prefs.json.
     await runV2Migration();
+
+    // Configure the auto-updater feed URL once at startup. Some launch paths
+    // (native menu shortcuts, scheduled checks) call autoUpdater directly
+    // without going through our wrappers; without setFeedURL the library
+    // falls back to its default GitHub provider, which 404s. Fail-open if
+    // configuration throws — the IPC wrappers also call this defensively.
+    try { if (!IS_DEV) configureAutoUpdater(); } catch (err) {
+        console.error("[Updater] Initial configure failed:", err.message);
+    }
 
     // Windows: set AppUserModelID for Action Center notification grouping
     if (process.platform === "win32") {
