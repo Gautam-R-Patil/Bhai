@@ -347,8 +347,29 @@ Most entries default to the feature ON; set to `"true"` (or the named sentinel) 
 - `ATLAS_PROACTIVE_DISABLE_CHANNELS=csv` — silence specific channels (e.g. `telegram,whatsapp`)
 - `ATLAS_PROACTIVE_SHADOW` — shadow mode: compose + log proactive messages but never deliver
 - `ATLAS_PROACTIVE_DEBUG=false` — suppress `🔔 [proactive]` debug logs (on by default)
-- `ATLAS_NATIVE_SPREADING` — opt-IN (off by default); routes SAN BFS through `native/spreading.rs`. Bench (`scripts/bench-native.ts`) shows JSON+FFI overhead dominates on typical <50-node induced graphs; enable only with large recall fan-out.
+- `ATLAS_NATIVE_SPREADING` — opt-IN (off by default); routes SAN BFS through `native/spreading.rs`. Bench shows FFI dominates BFS at the ≤150-node production ceiling — both JSON and typed-napi variants tested and lost (see Rust-expansion section below). Enable only with workloads that have large recall fan-out (>1000-node induced graphs).
 - `ATLAS_NO_NATIVE_SANITIZER` — disables the native `sanitizeSecrets`/`containsSecrets` impl in `native/secrets_sanitizer.rs`. Default is native ON — bench (`scripts/bench-native.ts`) shows native at 1.44x–2.00x of TS across 50B–100KB inputs after the sequential-per-pattern `Cow<&str>` rewrite (zero allocation on no-match passes). Force TS fallback for debugging or when the native binary is unavailable.
+
+### Rust expansion — empirical lessons (May 2026)
+
+The original "push more code to Rust" plan (see `prancy-painting-reef.md`) assumed `more Rust = more speed`. The actual measurements told a tighter story; this section captures it so future contributors don't re-run failed experiments.
+
+**Where Rust wins (ship the port):**
+- **Multi-pattern regex sweeps over KB-scale inputs.** The sanitizer fires 23 patterns over shell outputs that range from 1KB to 100KB+. V8's regex engine can't deduplicate scanning across patterns; Rust with sequential `regex::find_iter` + `Cow<&str>` zero-alloc-on-no-match wins 1.44×–2.00× across all input sizes. See `native/src/secrets_sanitizer.rs` for the shape: pattern ordering is load-bearing for parity (sequential, NOT alternation), and the lookahead is emulated with a post-match prefix check to avoid `fancy-regex`.
+
+**Where Rust loses (don't bother porting):**
+- **Anything Node has hardware-accelerated.** `node:crypto`'s SHA-256 uses OpenSSL with SHA-NI/ARMv8-crypto extensions. Rust's `sha2` crate is software-only and 2–4× SLOWER. Rust's `blake3` (SIMD-accelerated) ties at best on M-series. Codebase-merkle hashing experiment (May 2026) confirmed this — reverted entirely.
+- **Small per-call inputs across an FFI boundary.** napi-rs FFI crossing costs ~500ns–3μs per call. For modules where TS already runs in 1–15μs per call (json-extract, smart-truncate, smartChunkMessage on typical messages, markdownToTelegramHtml), the FFI tax is a meaningful fraction of total time. Net result: Rust is a wash or slower.
+- **Graph BFS at small scales.** Spreading-activation BFS over ≤150-node induced graphs (the production ceiling) loses 5×–300×+ to TS because the FFI cost dominates the actual BFS work. Both JSON-string and typed-napi adjacency variants tested; typed was actually ~15% SLOWER (per-property marshalling > serde on small maps). `nativeSpreadActivationBfsTyped` retained as a parity-tested but unused entry point in case future workloads change the crossover.
+- **Already-fast file I/O + regex.** repo-map's full scan of the ATLAS repo (~1000 files, regex symbol extraction) completes in 38ms in TS thanks to OS file cache + V8 JIT. Rayon-parallelized Rust would shave ~25ms — not worth a 587-line port.
+
+**The rule going forward.** Before porting a module to Rust, time the TS impl on production-representative input. Only port when **(a) the TS impl is genuinely slow** (>>100μs per call AND on a hot path) AND **(b) Rust has a structural advantage** (multi-pattern scanning Node can't share-state across, or parallelism Node's single-thread can't match). If either condition fails, the FFI tax + maintenance cost makes the port a net negative.
+
+**Caveat — perf rule only.** This is the perf-driven port decision. Correctness or safety wins (e.g. the tree-sitter 0.22 multi-grammar bug, fixable either by porting to the Rust `tree-sitter` crate or by upgrading once the upstream Node binding is patched) are separately justified and don't need to meet the speed criteria above.
+
+**Rollout pattern.** New native ports ship with a kill-switch defaulting to OPT-IN (off) so production behavior is unchanged on day 1. After `scripts/bench-native.ts` shows a measured win across representative inputs AND the parity test passes byte-identical against the TS reference, flip the kill-switch default to ON (rename `ATLAS_NATIVE_X` → `ATLAS_NO_NATIVE_X`). The sanitizer arc — commit `c2fab4f` (opt-in default-off) → `883a594` (default-ON after the `Cow<&str>` rewrite) — is the canonical example.
+
+The `scripts/bench-native.ts` harness lives to enforce this: every native module ships with a per-case bench AND an in-process parity vitest test (`*.parity.test.ts`) that runs both impls on every `npm test`. The `bench-native.ts --parity-check` mode is the larger reference battery — run it manually before flipping the kill-switch default.
 
 ## Key Patterns
 
