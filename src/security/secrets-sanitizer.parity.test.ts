@@ -78,8 +78,26 @@ const REFERENCE_INPUTS: Array<{ name: string; input: string }> = [
         input: 'DB_PASSWORD="mysecretpassword" CLIENT_SECRET=abc123xyz456',
     },
     {
-        name: "env-var-already-redacted (lookahead guard)",
+        name: "env-var-already-redacted (lookahead guard, unquoted)",
         input: "TOKEN=[REDACTED:GITHUB_TOKEN] PASSWORD=actualsecret12345",
+    },
+    // Pass 1 redacts `ghp_...` inside the quotes, leaving
+    // `PASSWORD="[REDACTED:GITHUB_TOKEN]"`. The TS lookahead `(?!\[REDACTED:)`
+    // fires at the position right after `=`, sees `"` (not `[`), passes —
+    // and the quoted-value alternative re-redacts the whole quoted span as
+    // ENV_VAR_SECRET. The Rust post-filter must NOT block this; only the
+    // unquoted `[REDACTED:` immediate-after-`=` form should be skipped.
+    {
+        name: "env-var-quoted-redacted (double-quoted, lookahead passes)",
+        input: `PASSWORD="ghp_${"A".repeat(36)}"`,
+    },
+    {
+        name: "env-var-quoted-redacted (single-quoted, lookahead passes)",
+        input: `SECRET='ghp_${"B".repeat(36)}'`,
+    },
+    {
+        name: "env-var-direct-quoted-redacted (already-redacted inside quotes)",
+        input: 'SECRET="[REDACTED:GITHUB_TOKEN]"',
     },
     {
         name: "multi-secret",
@@ -112,6 +130,20 @@ const REFERENCE_INPUTS: Array<{ name: string; input: string }> = [
         // string forces the table to demonstrate ordering.
         name: "ordering: anthropic and openai keys coexist",
         input: `anthropic: sk-ant-api01-${"a".repeat(80)} and openai: sk-proj-${"b".repeat(80)} end`,
+    },
+    {
+        // The canonical contained-pattern case: BEARER_TOKEN's alphabet
+        // includes every char of a JWT body, so a naïve single-alternation
+        // approach would let BEARER_TOKEN swallow the entire JWT span. TS
+        // runs JWT (index 21) before BEARER_TOKEN (index 22), redacts the
+        // JWT first, and BEARER_TOKEN then fails because `[` is not in its
+        // alphabet. Expected output: `Authorization: Bearer [REDACTED:JWT]`.
+        // This fixture was added after a real bug where the Rust port used
+        // a single alternation regex and produced `[REDACTED:BEARER_TOKEN]`
+        // — see secrets_sanitizer.rs module docstring for the back-story.
+        name: "ordering: bearer-wrapped JWT redacts as JWT not BEARER",
+        input:
+            "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
     },
 ];
 

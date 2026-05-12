@@ -3054,14 +3054,19 @@ export interface SanitizeResultNapi {
   totalRedactions: number
 }
 /**
- * Scan `input` for all 22 well-known secret formats; replace each match with
- * a typed `[REDACTED:NAME]` marker. Returns the sanitized string plus a
- * per-type hit count (JSON-encoded to keep the napi ABI flat).
+ * Scan `input` for all 24 well-known secret formats (23 standard + ENV_VAR_SECRET)
+ * and replace each match with a typed `[REDACTED:NAME]` marker. Returns the
+ * sanitized string plus a per-type hit count (JSON-encoded to keep the napi
+ * ABI flat).
  */
 export declare function sanitizeSecrets(input: string): SanitizeResultNapi
 /**
- * Cheap probe: does `input` contain ANY secret pattern? No allocation of a
- * new string; bails out on first hit.
+ * Cheap probe: does `input` contain ANY secret pattern? Bails out on first
+ * hit; no output string allocated.
+ *
+ * For ENV_VAR_SECRET we have to walk matches (not just is_match) because a
+ * match whose value is `[REDACTED:...]` doesn't actually count as a secret
+ * per the TS semantics. Short-circuits on the first non-redacted match.
  */
 export declare function containsSecrets(input: string): boolean
 /** Get the native module version */

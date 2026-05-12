@@ -41,16 +41,12 @@ export interface SanitizeResult {
     totalRedactions: number;
 }
 
-// Native sanitizer is OPT-IN: set ATLAS_NATIVE_SANITIZER=true to enable.
-// Bench (scripts/bench-native.ts) shows the Rust path is consistently
-// 5-10x SLOWER than TS across all input sizes. Root cause: the current Rust
-// impl does 22 sequential regex passes with a fresh String allocation per
-// pattern; V8's JIT'd regex engine plus its native string slicing wins handily.
-//
-// FOLLOW-UP: switch to `regex::RegexSet` (single-pass multi-pattern match) +
-// in-place buffer reuse to eliminate the N-allocation overhead. Then re-bench
-// and if native wins, flip this to opt-OUT (default ON).
-const NATIVE_ENABLED = process.env.ATLAS_NATIVE_SANITIZER === "true";
+// Native sanitizer is DEFAULT ON. Set ATLAS_NO_NATIVE_SANITIZER=true to force
+// the TS fallback (e.g. for debugging or on a platform without the binary).
+// Bench (scripts/bench-native.ts) shows native at 1.44x–2.00x of TS on inputs
+// from 50B to 100KB after the sequential per-pattern Cow<&str> rewrite —
+// zero allocation on no-match passes, one allocation per pattern that fires.
+const NATIVE_DISABLED = process.env.ATLAS_NO_NATIVE_SANITIZER === "true";
 
 interface Pattern {
     name: string;
@@ -254,19 +250,18 @@ export function _sanitizeSecretsTs(input: string): SanitizeResult {
  * Scan `input` for well-known secret formats and replace each match with a
  * typed marker like `[REDACTED:ANTHROPIC_API_KEY]`.
  *
- * Opt-in to the native Rust impl by setting `ATLAS_NATIVE_SANITIZER=true`.
- * Default routes to the TS impl because bench (`scripts/bench-native.ts`)
- * shows the current Rust path is 5-10x slower than V8's JIT'd regex on the
- * shell-output sizes we see in production. The native and TS paths are
- * byte-identical (35 parity tests in `secrets-sanitizer.parity.test.ts`);
- * falls back to TS on any native exception.
+ * Routes through the native Rust impl by default — bench shows native at
+ * 1.44x–2.00x of TS across input sizes from 50B to 100KB. Force the TS
+ * fallback with `ATLAS_NO_NATIVE_SANITIZER=true` (debugging / missing binary).
+ * Native and TS paths are byte-identical (39 parity tests in
+ * `secrets-sanitizer.parity.test.ts`); falls back to TS on any native error.
  */
 export function sanitizeSecrets(input: string): SanitizeResult {
     if (!input) {
         return { sanitized: input, redactionsByType: {}, totalRedactions: 0 };
     }
 
-    if (NATIVE_ENABLED) {
+    if (!NATIVE_DISABLED) {
         try {
             const r = nativeSanitizeSecrets(input);
             if (r) {
@@ -302,7 +297,7 @@ export function _containsSecretsTs(input: string): boolean {
 
 export function containsSecrets(input: string): boolean {
     if (!input) return false;
-    if (NATIVE_ENABLED) {
+    if (!NATIVE_DISABLED) {
         try {
             const r = nativeContainsSecrets(input);
             if (r !== null) return r;
