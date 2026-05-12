@@ -14,6 +14,7 @@ import type * as credit_cost from "../credit_cost.js";
 import type * as crypto from "../crypto.js";
 import type * as http from "../http.js";
 import type * as observability from "../observability.js";
+import type * as otpless from "../otpless.js";
 import type * as sessions from "../sessions.js";
 import type * as store_admins from "../store/admins.js";
 import type * as store_developers from "../store/developers.js";
@@ -37,6 +38,7 @@ declare const fullApi: ApiFromModules<{
   crypto: typeof crypto;
   http: typeof http;
   observability: typeof observability;
+  otpless: typeof otpless;
   sessions: typeof sessions;
   "store/admins": typeof store_admins;
   "store/developers": typeof store_developers;

@@ -118,17 +118,7 @@ Acts as API key proxy, auth layer, and store backend — LLM API keys never reac
 - `convex/store/` — Store CRUD operations: `items.ts`, `submissions.ts`, `developers.ts`, `storage.ts`, `admins.ts`, `installs.ts`, `reviews.ts`
 
 ### Native Rust Layer (`native/src/` — 49 .rs files)
-SIMD-accelerated vector operations (~15-20x speedup) via napi-rs. Built with `opt-level=3`, LTO, `panic=abort`, stripped binaries. Key dependencies: `wide` (SIMD), `simsimd` (similarity), `rayon` (parallelism), `aes-gcm` (encryption). Key modules grouped by role:
-- **Core / infra**: `lib.rs` (napi-rs entry point), `agent_core.rs`, `vector.rs`, `batch.rs`, `security.rs`
-- **Routing & classification**: `model_router.rs`, `tool_router.rs`, `tool_analytics.rs`, `query_classifier.rs`, `context_pruning.rs`
-- **Memory backbone**: `memory_state.rs`, `memory_tiers.rs`, `session_memory.rs`, `knowledge_graph.rs`, `spreading.rs`, `hnsw.rs`, `temporal_cache.rs`, `consolidation.rs`, `reflection_core.rs`
-- **Memory gating & associative**: `hopfield.rs`, `working_memory.rs`, `sleep_gate.rs`, `surprise_gate.rs`, `traits_engine.rs`, `task_learnings.rs`
-- **Agent orchestration**: `swarm.rs`, `mesh.rs`, `sub_agent.rs`, `long_task.rs`
-- **Reasoning engines**: `metacognition.rs`, `active_inference.rs`, `mcts_engine.rs`, `logic_engine.rs`, `prompt_evaluator.rs`, `pattern_speculator.rs`, `process_reward.rs`
-- **Predictive models**: `world_model.rs`, `user_model.rs`, `credibility_model.rs`
-- **Proactive counterparts**: `inner_thoughts.rs`, `goal_engine.rs`, `notification_tracker.rs`, `habit_detector.rs`
-- **Specialized scoring/analysis**: `skill_scorer.rs`, `info_gain.rs`, `citation_graph.rs`, `research_engine.rs`
-- **Integration**: `chrome_bridge.rs` (Chrome extension bridge)
+SIMD-accelerated vector operations (~15-20x speedup) via napi-rs. Built with `opt-level=3`, LTO, `panic=abort`, stripped binaries. Key dependencies: `wide` (SIMD), `simsimd` (similarity), `rayon` (parallelism), `aes-gcm` (encryption). Modules mirror their TS counterparts in `src/` (routing, memory, orchestration, reasoning, predictive, proactive); `lib.rs` is the napi-rs entry, `chrome_bridge.rs` is the extension bridge. Run `ls native/src/` for the full inventory.
 
 ### Agent Orchestration (`src/agents/` — 30 files)
 Four-tier execution model for tasks of increasing complexity, with extensive reliability, optimization, and self-improvement layers:
