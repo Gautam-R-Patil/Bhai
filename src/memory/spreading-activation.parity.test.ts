@@ -15,7 +15,8 @@ interface Rel {
 function bfsBoth(seeds: Array<{ entityId: number; energy: number; via: string }>, adjacency: Record<number, Rel[]>) {
     const tsResult = __testOnlyBfsWithAdjacency(seeds, adjacency, "ts");
     const nativeResult = __testOnlyBfsWithAdjacency(seeds, adjacency, "native");
-    return { tsResult, nativeResult };
+    const nativeTypedResult = __testOnlyBfsWithAdjacency(seeds, adjacency, "native-typed");
+    return { tsResult, nativeResult, nativeTypedResult };
 }
 
 function assertParity(
@@ -24,6 +25,21 @@ function assertParity(
 ) {
     const failures = checkParity(ts, native);
     expect(failures, failures ? JSON.stringify(failures, null, 2) : undefined).toBeNull();
+}
+
+/**
+ * Cross-check TS vs both native paths (JSON adjacency and typed napi). The
+ * typed path is not used by production but is exercised here so it can't
+ * silently rot. See `spread_activation_bfs_typed` in `native/src/spreading.rs`
+ * for the rationale.
+ */
+function assertAllPathsParity(
+    ts: ReturnType<typeof __testOnlyBfsWithAdjacency>,
+    native: ReturnType<typeof __testOnlyBfsWithAdjacency>,
+    nativeTyped: ReturnType<typeof __testOnlyBfsWithAdjacency>,
+) {
+    assertParity(ts, native);
+    assertParity(ts, nativeTyped);
 }
 
 // Direct unit tests for the checkParity comparator. These do NOT exercise
@@ -116,8 +132,8 @@ describe("Spreading-activation BFS parity (Phase 0)", () => {
     }
 
     it("empty adjacency returns no expanded results", () => {
-        const { tsResult, nativeResult } = bfsBoth([{ entityId: 1, energy: 0.9, via: "seed" }], {});
-        assertParity(tsResult, nativeResult);
+        const { tsResult, nativeResult, nativeTypedResult } = bfsBoth([{ entityId: 1, energy: 0.9, via: "seed" }], {});
+        assertAllPathsParity(tsResult, nativeResult, nativeTypedResult);
         expect(tsResult).toHaveLength(0);
     });
 
@@ -125,8 +141,8 @@ describe("Spreading-activation BFS parity (Phase 0)", () => {
         const adjacency: Record<number, Rel[]> = {
             1: [{ entityId: 2, entityName: "neighbor", weight: 0.8 }],
         };
-        const { tsResult, nativeResult } = bfsBoth([{ entityId: 1, energy: 1.0, via: "seed" }], adjacency);
-        assertParity(tsResult, nativeResult);
+        const { tsResult, nativeResult, nativeTypedResult } = bfsBoth([{ entityId: 1, energy: 1.0, via: "seed" }], adjacency);
+        assertAllPathsParity(tsResult, nativeResult, nativeTypedResult);
         expect(tsResult).toHaveLength(1);
         expect(tsResult[0].memoryId).toBe(2);
         expect(tsResult[0].hops).toBe(1);
@@ -137,8 +153,8 @@ describe("Spreading-activation BFS parity (Phase 0)", () => {
         const adjacency: Record<number, Rel[]> = {
             1: [{ entityId: 2, entityName: "weak", weight: 0.1 }],
         };
-        const { tsResult, nativeResult } = bfsBoth([{ entityId: 1, energy: 0.5, via: "seed" }], adjacency);
-        assertParity(tsResult, nativeResult);
+        const { tsResult, nativeResult, nativeTypedResult } = bfsBoth([{ entityId: 1, energy: 0.5, via: "seed" }], adjacency);
+        assertAllPathsParity(tsResult, nativeResult, nativeTypedResult);
         expect(tsResult).toHaveLength(0);
     });
 
@@ -148,8 +164,8 @@ describe("Spreading-activation BFS parity (Phase 0)", () => {
             edges.push({ entityId: 100 + i, entityName: `edge${i}`, weight: 1.0 - i * 0.05 });
         }
         const adjacency: Record<number, Rel[]> = { 1: edges };
-        const { tsResult, nativeResult } = bfsBoth([{ entityId: 1, energy: 1.0, via: "seed" }], adjacency);
-        assertParity(tsResult, nativeResult);
+        const { tsResult, nativeResult, nativeTypedResult } = bfsBoth([{ entityId: 1, energy: 1.0, via: "seed" }], adjacency);
+        assertAllPathsParity(tsResult, nativeResult, nativeTypedResult);
         expect(tsResult.length).toBeLessThanOrEqual(5);
     });
 
@@ -160,8 +176,8 @@ describe("Spreading-activation BFS parity (Phase 0)", () => {
             3: [{ entityId: 4, entityName: "hop3", weight: 1.0 }],
             4: [{ entityId: 5, entityName: "hop4-should-not-reach", weight: 1.0 }],
         };
-        const { tsResult, nativeResult } = bfsBoth([{ entityId: 1, energy: 1.0, via: "seed" }], adjacency);
-        assertParity(tsResult, nativeResult);
+        const { tsResult, nativeResult, nativeTypedResult } = bfsBoth([{ entityId: 1, energy: 1.0, via: "seed" }], adjacency);
+        assertAllPathsParity(tsResult, nativeResult, nativeTypedResult);
         const ids = tsResult.map((r) => r.memoryId).sort();
         expect(ids).toContain(2);
         expect(ids).toContain(3);
@@ -178,8 +194,8 @@ describe("Spreading-activation BFS parity (Phase 0)", () => {
             2: [{ entityId: 4, entityName: "via-a", weight: 0.9 }],
             3: [{ entityId: 4, entityName: "via-b", weight: 0.9 }],
         };
-        const { tsResult, nativeResult } = bfsBoth([{ entityId: 1, energy: 1.0, via: "seed" }], adjacency);
-        assertParity(tsResult, nativeResult);
+        const { tsResult, nativeResult, nativeTypedResult } = bfsBoth([{ entityId: 1, energy: 1.0, via: "seed" }], adjacency);
+        assertAllPathsParity(tsResult, nativeResult, nativeTypedResult);
         const node4 = tsResult.find((r) => r.memoryId === 4);
         expect(node4).toBeDefined();
     });
@@ -204,8 +220,8 @@ describe("Spreading-activation BFS parity (Phase 0)", () => {
             { entityId: 1, energy: 1.0, via: "s1" },
             { entityId: 25, energy: 0.8, via: "s25" },
         ];
-        const { tsResult, nativeResult } = bfsBoth(seeds, adjacency);
-        assertParity(tsResult, nativeResult);
+        const { tsResult, nativeResult, nativeTypedResult } = bfsBoth(seeds, adjacency);
+        assertAllPathsParity(tsResult, nativeResult, nativeTypedResult);
     });
 
     it("large graph respects MAX_ACTIVATED_NODES=150", () => {
@@ -218,8 +234,8 @@ describe("Spreading-activation BFS parity (Phase 0)", () => {
             }
             adjacency[i] = edges;
         }
-        const { tsResult, nativeResult } = bfsBoth([{ entityId: 1, energy: 1.0, via: "s" }], adjacency);
-        assertParity(tsResult, nativeResult);
+        const { tsResult, nativeResult, nativeTypedResult } = bfsBoth([{ entityId: 1, energy: 1.0, via: "s" }], adjacency);
+        assertAllPathsParity(tsResult, nativeResult, nativeTypedResult);
         expect(tsResult.length).toBeLessThan(150);
     });
 });

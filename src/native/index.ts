@@ -39,9 +39,24 @@ interface NativeModule {
     quantizeToInt8(vec: Float32Array): Int8Array;
     dequantizeFromInt8(vec: Int8Array, minVal: number, maxVal: number): Float32Array;
     spreadActivationBfs?(seedEntities: NativeSeedEntity[], adjacencyJson: string): NativeActivationResult[];
+    spreadActivationBfsTyped?(
+        seedEntities: NativeSeedEntity[],
+        adjacency: NativeSpreadAdjacencyEntry[],
+    ): NativeActivationResult[];
     dedupActivationResults?(results: NativeActivationResult[]): NativeActivationResult[];
     sanitizeSecrets?(input: string): NativeSanitizeResult;
     containsSecrets?(input: string): boolean;
+}
+
+export interface NativeEntityRelation {
+    entityId: number;
+    entityName: string;
+    weight: number;
+}
+
+export interface NativeSpreadAdjacencyEntry {
+    entityId: number;
+    relations: NativeEntityRelation[];
 }
 
 export interface NativeSanitizeResult {
@@ -297,6 +312,9 @@ export function cosineDistance(a: Float32Array, b: Float32Array): number {
  * Native BFS spreading activation through a pre-fetched adjacency graph.
  * Returns null if native is unavailable so the caller can fall back to TS.
  * Adjacency format: `{ "<entityId>": [{ entityId, entityName, weight }, ...] }`
+ *
+ * Used by the production TS wrapper. The typed-napi alternative was tried
+ * in Phase 0-PERF and found ~15% slower — see `nativeSpreadActivationBfsTyped`.
  */
 export function nativeSpreadActivationBfs(
     seedEntities: NativeSeedEntity[],
@@ -304,6 +322,26 @@ export function nativeSpreadActivationBfs(
 ): NativeActivationResult[] | null {
     if (!useNative || !nativeModule?.spreadActivationBfs) return null;
     return nativeModule.spreadActivationBfs(seedEntities, adjacencyJson);
+}
+
+/**
+ * Native BFS spreading activation, typed-napi variant — passes the adjacency
+ * as a typed array of `{ entityId, relations }` records instead of a JSON
+ * string. Phase 0-PERF bench showed this was ~15% SLOWER than the JSON
+ * variant on production graph sizes (per-property napi marshalling costs
+ * more than `JSON.stringify` + `serde_json::from_str` for ≤150-node maps).
+ *
+ * Not used by the production TS wrapper. Exercised by the
+ * `__testOnlyBfsWithAdjacency` parity test under the `"native-typed"` mode
+ * so it stays byte-identical to the JSON path, and retained for a future
+ * >1000-node workload that may flip the crossover.
+ */
+export function nativeSpreadActivationBfsTyped(
+    seedEntities: NativeSeedEntity[],
+    adjacency: NativeSpreadAdjacencyEntry[],
+): NativeActivationResult[] | null {
+    if (!useNative || !nativeModule?.spreadActivationBfsTyped) return null;
+    return nativeModule.spreadActivationBfsTyped(seedEntities, adjacency);
 }
 
 // ── Secrets Sanitizer (Phase 1.1) ────────────────

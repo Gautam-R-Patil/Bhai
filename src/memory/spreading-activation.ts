@@ -13,7 +13,13 @@
  * Bounded: MAX_BRANCH_FACTOR=5 per node, MAX_ACTIVATED_NODES=150 total.
  */
 
-import { type NativeActivationResult, type NativeSeedEntity, nativeSpreadActivationBfs } from "../native/index.js";
+import {
+    type NativeActivationResult,
+    type NativeSeedEntity,
+    type NativeSpreadAdjacencyEntry,
+    nativeSpreadActivationBfs,
+    nativeSpreadActivationBfsTyped,
+} from "../native/index.js";
 import { getKnowledgeGraphDB, getRelationships } from "./knowledge-graph.js";
 import type { Database } from "./sqlite.js";
 
@@ -26,18 +32,24 @@ const DECAY_PER_HOP = 0.7; // Energy decays by 30% per hop
 const ACTIVATION_THRESHOLD = 0.15; // Minimum activation to keep
 const SAN_WEIGHT = 0.3; // Blend weight: final = direct + SAN_WEIGHT × activation
 
-// Native spreading-BFS is OPT-IN, not default. The Rust BFS itself is faster,
-// but FFI overhead + JSON serialization of the adjacency map dominate runtime
-// on the typical seed counts and graph sizes we see in production (<10 seeds,
-// <50-node induced graphs). Bench (scripts/bench-native.ts) shows native is
-// ~17x slower per call at 50 nodes. Set `ATLAS_NATIVE_SPREADING=true` to
-// enable on workloads with large recall fan-out where Rust would amortize.
+// Native spreading-BFS is OPT-IN, not default. The Rust BFS itself is faster
+// than the TS loop, but the FFI marshalling cost dominates the actual BFS
+// work on the typical seed counts and graph sizes we see in production
+// (<10 seeds, <50-node induced graphs). Bench (scripts/bench-native.ts)
+// shows native at 5×–300×+ slower per call, with the gap WIDENING as graph
+// size grows because more nodes mean more JS↔Rust property crossings.
 //
-// FOLLOW-UP: the perf cliff is JSON serialization, not the BFS itself. To flip
-// the default to native, expose a `spreadActivationBfsTyped(seeds, adjacency:
-// HashMap<i64, Vec<EntityRelation>>)` napi function that takes typed arrays
-// directly via the FFI ABI (no JSON round-trip). Then re-bench, and if native
-// wins on production-sized graphs, flip this to opt-OUT.
+// EXPERIMENT (Phase 0-PERF, see commit history): we also tried a typed napi
+// `spreadActivationBfsTyped(seeds, adjacency: AdjacencyEntry[])` variant to
+// skip the JSON round-trip. Result: typed was actually ~15% SLOWER than the
+// JSON path because napi per-property object marshalling (300+ JS-property
+// reads for a 50-node graph) is more expensive than `JSON.stringify` +
+// `serde_json::from_str` on the same data. Both Rust-side functions remain
+// available; the TS wrapper uses the JSON variant. The honest takeaway:
+// graph BFS at ATLAS's working sizes does not fit the native-wins profile
+// (CPU work per marshalled byte is too low — V8 inlines tight BFS loops
+// extremely well, and there's no SIMD win available for pointer-chasing).
+// If/when a workload with >1000-node induced graphs appears, re-bench.
 const NATIVE_ENABLED = process.env.ATLAS_NATIVE_SPREADING === "true";
 
 // ── Types ─────────────────────────────────────
@@ -333,15 +345,6 @@ function bfsTs(
 }
 
 /**
- * Pre-fetch a bounded slice of the entity graph reachable from `seedEntities`
- * within MAX_HOPS, MAX_BRANCH_FACTOR per node, MAX_ACTIVATED_NODES total.
- * Returns a JSON object suitable for the Rust BFS adjacency input.
- *
- * The walk here intentionally does NOT apply the energy/threshold gating —
- * those are the Rust BFS's job. We only enumerate which entities the BFS
- * could possibly visit, so the adjacency map is complete enough.
- */
-/**
  * Two distinct paths into Rust have different naming requirements:
  *   - Typed napi structs (e.g. `NativeSeedEntity`, passed as a function
  *     argument) auto-rename camelCase ↔ snake_case at the FFI ABI boundary.
@@ -350,7 +353,6 @@ function bfsTs(
  *     `serde_json::from_str` against `EntityRelation { entity_id, ... }`)
  *     are NOT auto-renamed; serde reads the field names verbatim.
  *     Use snake_case TS-side or serde returns empty.
- * That's why `NativeSeedEntity` is camelCase but `RustRel` is snake_case.
  */
 interface RustRel {
     entity_id: number;
@@ -366,6 +368,15 @@ function toRustRels(rels: SortedRel[]): RustRel[] {
     }));
 }
 
+/**
+ * Pre-fetch a bounded slice of the entity graph reachable from `seedEntities`
+ * within MAX_HOPS, MAX_BRANCH_FACTOR per node, MAX_ACTIVATED_NODES total.
+ * Returns a JSON object suitable for the Rust BFS adjacency input.
+ *
+ * The walk here intentionally does NOT apply the energy/threshold gating —
+ * those are the Rust BFS's job. We only enumerate which entities the BFS
+ * could possibly visit, so the adjacency map is complete enough.
+ */
 function buildAdjacencyJson(
     seedEntities: Map<number, { energy: number; via: string }>,
     kgDb: ReturnType<typeof getKnowledgeGraphDB>,
@@ -454,20 +465,26 @@ function runBfs(
 // ── Test-only exports (parity testing) ──────────
 
 /**
- * Run the BFS (native or TS) against an in-memory adjacency map.
- * Bypasses SQLite — used by parity tests to verify byte-identical output
- * between the Rust BFS and the TypeScript fallback on a controlled graph.
+ * Run the BFS (native-json, native-typed, or TS) against an in-memory
+ * adjacency map. Bypasses SQLite — used by parity tests to verify
+ * byte-identical output between every Rust entry point and the TypeScript
+ * fallback on a controlled graph.
+ *
+ * The `native-typed` arm covers `spread_activation_bfs_typed` in Rust which
+ * is NOT used by production (see Phase 0-PERF note near `NATIVE_ENABLED`).
+ * Keeping it in the parity matrix means the typed entry point gets exercised
+ * on every CI run, so it can't silently rot.
  */
 export function __testOnlyBfsWithAdjacency(
     seeds: Array<{ entityId: number; energy: number; via: string }>,
     adjacency: Record<number, SortedRel[]>,
-    mode: "native" | "ts",
+    mode: "native" | "native-typed" | "ts",
 ): ActivationResult[] {
     const activated = new Map<number, ActivatedNode>();
     const seedMap = new Map<number, { energy: number; via: string }>();
     for (const s of seeds) seedMap.set(s.entityId, { energy: s.energy, via: s.via });
 
-    if (mode === "native") {
+    if (mode === "native" || mode === "native-typed") {
         const seedArr: NativeSeedEntity[] = seeds.map((s) => ({
             entityId: s.entityId,
             energy: s.energy,
@@ -476,12 +493,21 @@ export function __testOnlyBfsWithAdjacency(
         for (const s of seeds) {
             activated.set(s.entityId, { entityId: s.entityId, energy: s.energy, hops: 0, via: s.via });
         }
-        const rustAdjacency: Record<string, RustRel[]> = {};
-        for (const [k, v] of Object.entries(adjacency)) {
-            rustAdjacency[k] = toRustRels(v);
+
+        let results: NativeActivationResult[] | null;
+        if (mode === "native-typed") {
+            const typed: NativeSpreadAdjacencyEntry[] = Object.entries(adjacency).map(
+                ([k, v]) => ({ entityId: Number(k), relations: v }),
+            );
+            results = nativeSpreadActivationBfsTyped(seedArr, typed);
+        } else {
+            const rustAdjacency: Record<string, RustRel[]> = {};
+            for (const [k, v] of Object.entries(adjacency)) {
+                rustAdjacency[k] = toRustRels(v);
+            }
+            const adjacencyJson = JSON.stringify(rustAdjacency);
+            results = nativeSpreadActivationBfs(seedArr, adjacencyJson);
         }
-        const adjacencyJson = JSON.stringify(rustAdjacency);
-        const results = nativeSpreadActivationBfs(seedArr, adjacencyJson);
         if (!results) {
             throw new Error("native BFS unavailable — cannot run parity test in 'native' mode");
         }

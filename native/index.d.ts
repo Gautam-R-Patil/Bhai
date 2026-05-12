@@ -489,14 +489,41 @@ export interface FusedScore {
   score: number
 }
 /**
+ * One adjacency-map entry: an entity ID plus its outgoing edges. Used by
+ * `spread_activation_bfs_typed` to skip the JSON round-trip that the
+ * `_json` variant uses. JS passes an array of these, the Rust side
+ * collects them into a HashMap once.
+ */
+export interface SpreadAdjacencyEntry {
+  entityId: number
+  relations: Array<EntityRelation>
+}
+/**
  * Run BFS spreading activation from seed entities through a graph.
  * The relationship lookups happen in JS; this function performs the BFS logic.
  * `seed_entities`: initial entities with energy and label
- * `get_relations_json`: JSON array of EntityRelation arrays, one per entity_id queried in order
+ * `adjacency_json`: JSON object `{ "entity_id": [ {entity_id, entity_name, weight}, ... ] }`
  *
- * This version takes the full adjacency as a pre-fetched map for efficiency.
+ * This is the default entry point used by the TS wrapper. The Phase 0-PERF
+ * experiment hypothesized that JSON parsing was the bottleneck and tried
+ * `spread_activation_bfs_typed` to skip it; bench showed the typed variant
+ * was actually ~15% SLOWER (per-property napi marshalling > serde on small
+ * adjacency maps). The real bottleneck is the FFI crossing itself.
  */
 export declare function spreadActivationBfs(seedEntities: Array<SeedEntity>, adjacencyJson: string): Array<ActivationResult>
+/**
+ * Same as `spread_activation_bfs` but takes the adjacency as a typed array
+ * of `{ entity_id, relations }` records, skipping the JSON round-trip.
+ *
+ * Bench (Phase 0-PERF) showed this was ~15% SLOWER than the `_json` variant
+ * at 50 nodes — per-property napi marshalling (300+ JS-property reads on a
+ * 50-node × 5-edge graph) costs more than `serde_json::from_str` on the
+ * same data. Not used by the production TS wrapper; exercised by the
+ * `__testOnlyBfsWithAdjacency` parity test under the `"native-typed"` mode
+ * so it can't silently rot, and retained on the chance a future >1000-node
+ * workload changes the crossover.
+ */
+export declare function spreadActivationBfsTyped(seedEntities: Array<SeedEntity>, adjacency: Array<SpreadAdjacencyEntry>): Array<ActivationResult>
 /** Deduplicate activation results, keeping highest score per memory_id */
 export declare function dedupActivationResults(results: Array<ActivationResult>): Array<ActivationResult>
 /** Merge SAN results into fused scores */

@@ -55,6 +55,17 @@ pub struct FusedScore {
     pub score: f64,
 }
 
+/// One adjacency-map entry: an entity ID plus its outgoing edges. Used by
+/// `spread_activation_bfs_typed` to skip the JSON round-trip that the
+/// `_json` variant uses. JS passes an array of these, the Rust side
+/// collects them into a HashMap once.
+#[napi(object)]
+#[derive(Clone)]
+pub struct SpreadAdjacencyEntry {
+    pub entity_id: i64,
+    pub relations: Vec<EntityRelation>,
+}
+
 // ── Internal Node ──────────────────────────────────
 
 struct ActivatedNode {
@@ -66,27 +77,18 @@ struct ActivatedNode {
 
 // ── Core BFS Spreading Activation ──────────────────
 
-/// Run BFS spreading activation from seed entities through a graph.
-/// The relationship lookups happen in JS; this function performs the BFS logic.
-/// `seed_entities`: initial entities with energy and label
-/// `get_relations_json`: JSON array of EntityRelation arrays, one per entity_id queried in order
-///
-/// This version takes the full adjacency as a pre-fetched map for efficiency.
-#[napi]
-pub fn spread_activation_bfs(
-    seed_entities: Vec<SeedEntity>,
-    adjacency_json: String,
-) -> Vec<ActivationResult> {
-    // adjacency_json: { "entity_id": [ {entity_id, entity_name, weight}, ... ] }
-    let adjacency: HashMap<i64, Vec<EntityRelation>> =
-        serde_json::from_str(&adjacency_json).unwrap_or_default();
-
+/// Core BFS spreading-activation algorithm. Operates on a pre-built
+/// adjacency `HashMap`; the two public napi entry points (`_json` and
+/// `_typed`) differ only in how they obtain that map. Pulled out to keep
+/// the algorithm in one place and let perf reviews focus on the marshalling
+/// boundary, not the BFS itself.
+fn run_bfs(seed_entities: &[SeedEntity], adjacency: HashMap<i64, Vec<EntityRelation>>) -> Vec<ActivationResult> {
     let mut activated: HashMap<i64, ActivatedNode> = HashMap::new();
     let mut queue: VecDeque<ActivatedNode> = VecDeque::new();
     let mut total_activated: usize = 0;
 
     // Initialize with seeds
-    for se in &seed_entities {
+    for se in seed_entities {
         let node = ActivatedNode {
             entity_id: se.entity_id,
             energy: se.energy,
@@ -176,6 +178,46 @@ pub fn spread_activation_bfs(
     });
 
     results
+}
+
+/// Run BFS spreading activation from seed entities through a graph.
+/// The relationship lookups happen in JS; this function performs the BFS logic.
+/// `seed_entities`: initial entities with energy and label
+/// `adjacency_json`: JSON object `{ "entity_id": [ {entity_id, entity_name, weight}, ... ] }`
+///
+/// This is the default entry point used by the TS wrapper. The Phase 0-PERF
+/// experiment hypothesized that JSON parsing was the bottleneck and tried
+/// `spread_activation_bfs_typed` to skip it; bench showed the typed variant
+/// was actually ~15% SLOWER (per-property napi marshalling > serde on small
+/// adjacency maps). The real bottleneck is the FFI crossing itself.
+#[napi]
+pub fn spread_activation_bfs(
+    seed_entities: Vec<SeedEntity>,
+    adjacency_json: String,
+) -> Vec<ActivationResult> {
+    let adjacency: HashMap<i64, Vec<EntityRelation>> =
+        serde_json::from_str(&adjacency_json).unwrap_or_default();
+    run_bfs(&seed_entities, adjacency)
+}
+
+/// Same as `spread_activation_bfs` but takes the adjacency as a typed array
+/// of `{ entity_id, relations }` records, skipping the JSON round-trip.
+///
+/// Bench (Phase 0-PERF) showed this was ~15% SLOWER than the `_json` variant
+/// at 50 nodes — per-property napi marshalling (300+ JS-property reads on a
+/// 50-node × 5-edge graph) costs more than `serde_json::from_str` on the
+/// same data. Not used by the production TS wrapper; exercised by the
+/// `__testOnlyBfsWithAdjacency` parity test under the `"native-typed"` mode
+/// so it can't silently rot, and retained on the chance a future >1000-node
+/// workload changes the crossover.
+#[napi]
+pub fn spread_activation_bfs_typed(
+    seed_entities: Vec<SeedEntity>,
+    adjacency: Vec<SpreadAdjacencyEntry>,
+) -> Vec<ActivationResult> {
+    let map: HashMap<i64, Vec<EntityRelation>> =
+        adjacency.into_iter().map(|e| (e.entity_id, e.relations)).collect();
+    run_bfs(&seed_entities, map)
 }
 
 /// Deduplicate activation results, keeping highest score per memory_id
