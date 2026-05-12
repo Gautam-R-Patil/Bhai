@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { getScreenDimensions, scaleImageToScreen } from "../screen/screen-dimensions.js";
 import type { ToolDefinition } from "./get-current-time.js";
 import { captureScreenshot, getScreenResolution } from "./platform.js";
 import { getTelegramContext } from "./send-file.js";
@@ -161,8 +162,9 @@ export const linuxOsScreenshot: ToolDefinition = {
         const tmpJpg = join(tmpdir(), `atlas_screen_${Date.now()}.jpg`);
 
         try {
-            // Get screen resolution
-            const screen = await getScreenResolution();
+            // Get dims for the focused monitor (multi-monitor aware).
+            const dims = await getScreenDimensions({ focusedWindow: true, force: true });
+            const screen = { width: dims.width, height: dims.height };
             lastScreenWidth = screen.width;
             lastScreenHeight = screen.height;
 
@@ -181,10 +183,14 @@ export const linuxOsScreenshot: ToolDefinition = {
             const projectRoot = join(__dirname, "..", "..");
             const gridScript = join(projectRoot, "scripts", "grid_overlay.py");
             try {
-                await execFileAsync("python3", [gridScript, tmpPng, tmpJpg, "200"], { timeout: 5000 });
+                await execFileAsync("python3", [gridScript, tmpPng, tmpJpg, "200", String(screen.width)], {
+                    timeout: 5000,
+                });
             } catch {
                 try {
-                    await execFileAsync("python", [gridScript, tmpPng, tmpJpg, "200"], { timeout: 5000 });
+                    await execFileAsync("python", [gridScript, tmpPng, tmpJpg, "200", String(screen.width)], {
+                        timeout: 5000,
+                    });
                 } catch {
                     // Fallback: convert to JPEG via ImageMagick
                     try {
@@ -292,14 +298,15 @@ export const linuxOsClick: ToolDefinition = {
         const action = (input.action as string) || "click";
         const useRaw = input.raw as boolean;
 
-        let x = rawX;
-        let y = rawY;
-        if (!useRaw && lastScreenWidth > 0) {
-            const RESIZE_WIDTH = 1920;
-            const scaleFactor = lastScreenWidth / RESIZE_WIDTH;
-            x = Math.round(rawX * scaleFactor);
-            y = Math.round(rawY * scaleFactor);
-            console.log(`  [CLICK] image(${rawX},${rawY}) -> screen(${x},${y}) [scale=${scaleFactor.toFixed(3)}]`);
+        const dims = await getScreenDimensions({ focusedWindow: true });
+        const RESIZE_WIDTH = 1920;
+        const scaled = scaleImageToScreen({ rawX, rawY, imageWidth: RESIZE_WIDTH, dims, raw: useRaw });
+        const x = scaled.x;
+        const y = scaled.y;
+        if (!useRaw) {
+            console.log(
+                `  [CLICK] image(${rawX},${rawY}) -> screen(${x},${y}) [scale=${scaled.scaleFactor} monitor=${dims.monitorId} origin=(${dims.originX},${dims.originY})]`,
+            );
         }
 
         try {

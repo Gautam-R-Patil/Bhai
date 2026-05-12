@@ -3,15 +3,15 @@
 // See LICENSE.md for details.
 
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { promises as fs } from "node:fs";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { existsSync, promises as fs, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import { hideOverlayForAgent, showOverlayForAgent } from "../overlay/overlay-chat.js";
+import { getScreenDimensions, percentageToScreen, scaleImageToScreen } from "../screen/screen-dimensions.js";
 import type { ToolDefinition } from "./get-current-time.js";
 import { getTelegramContext } from "./send-file.js";
-import { hideOverlayForAgent, showOverlayForAgent } from "../overlay/overlay-chat.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -23,7 +23,9 @@ const execFileAsync = promisify(execFile);
 const MAX_OUTPUT = 10000;
 const DEFAULT_TIMEOUT = 30000; // 30s
 
-// Screen calibration: store actual screen dimensions so os_click can auto-scale from screenshot coords
+// Legacy module-level cache. Kept for backwards compatibility with code that
+// reads it directly (e.g. os_scan / quickAccessibilityRefresh). The authoritative
+// source is getScreenDimensions() — these vars are best-effort snapshots only.
 let lastScreenWidth = 0;
 let lastScreenHeight = 0;
 
@@ -55,7 +57,7 @@ interface ScanElement {
     label: number;
     text: string;
     role: string;
-    x: number;  // screen logical coords
+    x: number; // screen logical coords
     y: number;
     w: number;
     h: number;
@@ -72,18 +74,20 @@ export const appleScript: ToolDefinition = {
         type: "function",
         function: {
             name: "apple_script",
-            description: "Execute raw AppleScript on macOS. Use for controlling native apps. IMPORTANT: To LAUNCH/ACTIVATE apps, ALWAYS use: do shell script \"open -a 'AppName'\" — NEVER use 'tell application X to activate' as it may resolve to the wrong binary. After launching, you can use 'tell application' for commands.",
+            description:
+                "Execute raw AppleScript on macOS. Use for controlling native apps. IMPORTANT: To LAUNCH/ACTIVATE apps, ALWAYS use: do shell script \"open -a 'AppName'\" — NEVER use 'tell application X to activate' as it may resolve to the wrong binary. After launching, you can use 'tell application' for commands.",
             parameters: {
                 type: "object",
                 properties: {
                     script: {
                         type: "string",
-                        description: "The multi-line AppleScript or JXA script to execute. Do NOT escape quotes, just write the raw script."
+                        description:
+                            "The multi-line AppleScript or JXA script to execute. Do NOT escape quotes, just write the raw script.",
                     },
                     language: {
                         type: "string",
                         enum: ["AppleScript", "JavaScript"],
-                        description: "The language of the script (default: AppleScript). Use JavaScript for JXA."
+                        description: "The language of the script (default: AppleScript). Use JavaScript for JXA.",
                     },
                     timeout: { type: "number", description: "Timeout in ms (default 30000)" },
                 },
@@ -109,7 +113,7 @@ export const appleScript: ToolDefinition = {
             /tell\s+application\s+['"]?(google\s+chrome|safari|firefox|microsoft\s+edge|arc|chromium|brave)['"]?/i,
             /open\s+['"]?https?:\/\//i,
         ];
-        if (BROWSER_PATTERNS.some(p => p.test(script))) {
+        if (BROWSER_PATTERNS.some((p) => p.test(script))) {
             return JSON.stringify({
                 error: "BLOCKED: Do NOT open native browser apps for web tasks. The browser_* tools have their own built-in Playwright browser. Use browser_navigate with the URL directly instead.",
                 fix: "Call browser_navigate with the target URL — no need to open Chrome or any other browser first.",
@@ -132,7 +136,7 @@ export const appleScript: ToolDefinition = {
             });
 
             // Cleanup the temp file
-            await fs.unlink(tmpFile).catch(() => { });
+            await fs.unlink(tmpFile).catch(() => {});
 
             const output = (stdout || "").substring(0, MAX_OUTPUT);
             const errors = (stderr || "").substring(0, MAX_OUTPUT);
@@ -145,7 +149,7 @@ export const appleScript: ToolDefinition = {
             });
         } catch (err) {
             // Ensure cleanup happens even on execution error
-            await fs.unlink(tmpFile).catch(() => { });
+            await fs.unlink(tmpFile).catch(() => {});
 
             const error = err as { message?: string; code?: number; killed?: boolean };
             return JSON.stringify({
@@ -165,7 +169,8 @@ export const osScreenshot: ToolDefinition = {
         type: "function",
         function: {
             name: "os_screenshot",
-            description: "Takes a screenshot of the current macOS screen. Returns the image, which app is focused, screen resolution, and coordinate mapping info. ALWAYS take a screenshot after os_click or os_type to verify your action worked.",
+            description:
+                "Takes a screenshot of the current macOS screen. Returns the image, which app is focused, screen resolution, and coordinate mapping info. ALWAYS take a screenshot after os_click or os_type to verify your action worked.",
             parameters: {
                 type: "object",
                 properties: {},
@@ -183,33 +188,18 @@ export const osScreenshot: ToolDefinition = {
         const tmpJpg = join(tmpdir(), `atlas_screen_${Date.now()}.jpg`);
 
         try {
-            // Get logical screen resolution (points, not pixels)
-            let screenWidth = 1440;
-            let screenHeight = 900;
-            try {
-                const { stdout: spOut } = await execFileAsync("osascript", ["-l", "JavaScript", "-e",
-                    'ObjC.import("AppKit"); var f = $.NSScreen.mainScreen.frame; `${f.size.width},${f.size.height}`'
-                ], { timeout: 3000 });
-                const [w, h] = spOut.trim().split(",").map(Number);
-                if (w > 0 && h > 0) { screenWidth = w; screenHeight = h; }
-            } catch {
-                try {
-                    const { stdout: resOut } = await execFileAsync("osascript", ["-e",
-                        'tell application "Finder" to get bounds of window of desktop'], { timeout: 3000 });
-                    const parts = resOut.trim().split(", ");
-                    if (parts.length >= 4) {
-                        screenWidth = parseInt(parts[2]) || 1440;
-                        screenHeight = parseInt(parts[3]) || 900;
-                    }
-                } catch { /* use defaults */ }
-            }
+            // Get dimensions of the screen containing the focused window (multi-monitor aware).
+            // Falls back to primary if AX permission isn't granted.
+            const dims = await getScreenDimensions({ focusedWindow: true, force: true });
+            const screenWidth = dims.width;
+            const screenHeight = dims.height;
 
             lastScreenWidth = screenWidth;
             lastScreenHeight = screenHeight;
 
             // Hide overlay so it doesn't appear in the screenshot
             hideOverlayForAgent();
-            await new Promise(r => setTimeout(r, 100)); // Wait for opacity transition
+            await new Promise((r) => setTimeout(r, 100)); // Wait for opacity transition
 
             // Capture screenshot (Retina: captures at 2x pixel density)
             await execFileAsync("screencapture", ["-x", tmpPng], { timeout: 10000 });
@@ -221,34 +211,46 @@ export const osScreenshot: ToolDefinition = {
             const RESIZE_WIDTH = 1280;
             try {
                 await execFileAsync("sips", ["--resampleWidth", String(RESIZE_WIDTH), tmpPng], { timeout: 5000 });
-            } catch { /* proceed with raw */ }
+            } catch {
+                /* proceed with raw */
+            }
 
             // Add coordinate grid overlay using Python + Pillow for accurate LLM coordinate picking
             // __dirname points to src/tools or dist/tools, so go up 2 levels to project root
             const projectRoot = join(__dirname, "..", "..");
             const gridScript = join(projectRoot, "scripts", "grid_overlay.py");
             try {
-                await execFileAsync("python3", [gridScript, tmpPng, tmpJpg, "160"], { timeout: 5000 });
+                // Pass screen width so the grid renders labels in SCREEN-space coords.
+                // The LLM then reads the labels and emits clicks the runtime applies 1:1.
+                await execFileAsync("python3", [gridScript, tmpPng, tmpJpg, "160", String(screenWidth)], {
+                    timeout: 5000,
+                });
             } catch {
                 // Fallback: convert to JPEG without grid
                 try {
-                    await execFileAsync("sips", [
-                        "-s", "format", "jpeg", "-s", "formatOptions", "85",
-                        tmpPng, "--out", tmpJpg
-                    ], { timeout: 3000 });
-                } catch { /* use PNG */ }
+                    await execFileAsync(
+                        "sips",
+                        ["-s", "format", "jpeg", "-s", "formatOptions", "85", tmpPng, "--out", tmpJpg],
+                        { timeout: 3000 },
+                    );
+                } catch {
+                    /* use PNG */
+                }
             }
 
             // Read whichever file we produced
-            const finalFile = await fs.access(tmpJpg).then(() => tmpJpg).catch(() => tmpPng);
+            const finalFile = await fs
+                .access(tmpJpg)
+                .then(() => tmpJpg)
+                .catch(() => tmpPng);
             const buffer = await fs.readFile(finalFile);
             _lastScreenshotBuffer = buffer; // Store for caching and diff
             const base64 = buffer.toString("base64");
-            const mimeType = finalFile.endsWith('.jpg') ? 'image/jpeg' : 'image/png';
+            const mimeType = finalFile.endsWith(".jpg") ? "image/jpeg" : "image/png";
 
             // Cleanup
-            await fs.unlink(tmpPng).catch(() => { });
-            await fs.unlink(tmpJpg).catch(() => { });
+            await fs.unlink(tmpPng).catch(() => {});
+            await fs.unlink(tmpJpg).catch(() => {});
 
             // Scale factor: maps image coordinates to logical screen points
             const scaleFactor = screenWidth / RESIZE_WIDTH;
@@ -256,11 +258,15 @@ export const osScreenshot: ToolDefinition = {
             // Get frontmost app info
             let frontmostApp = "unknown";
             try {
-                const { stdout: appOut } = await execFileAsync("osascript", ["-e",
-                    'tell application "System Events" to get name of first process whose frontmost is true'
-                ], { timeout: 2000 });
+                const { stdout: appOut } = await execFileAsync(
+                    "osascript",
+                    ["-e", 'tell application "System Events" to get name of first process whose frontmost is true'],
+                    { timeout: 2000 },
+                );
                 frontmostApp = appOut.trim();
-            } catch { /* ignore */ }
+            } catch {
+                /* ignore */
+            }
 
             return JSON.stringify({
                 success: true,
@@ -270,12 +276,12 @@ export const osScreenshot: ToolDefinition = {
                 image_width: RESIZE_WIDTH,
                 scale_factor: Math.round(scaleFactor * 1000) / 1000,
                 frontmost_app: frontmostApp,
-                tip: `Image is ${RESIZE_WIDTH}px wide with a coordinate GRID overlay. Use the grid lines and labels to pick PRECISE x,y coordinates. Pass them to os_click — auto-scaled to screen. ALWAYS verify with another screenshot after clicking. Prefer os_scan + os_click_element for more reliable element-based clicking.`
+                tip: `Image is ${RESIZE_WIDTH}px wide with a coordinate GRID overlay. Use the grid lines and labels to pick PRECISE x,y coordinates. Pass them to os_click — auto-scaled to screen. ALWAYS verify with another screenshot after clicking. Prefer os_scan + os_click_element for more reliable element-based clicking.`,
             });
         } catch (err) {
             showOverlayForAgent(); // Ensure overlay comes back on error
-            await fs.unlink(tmpPng).catch(() => { });
-            await fs.unlink(tmpJpg).catch(() => { });
+            await fs.unlink(tmpPng).catch(() => {});
+            await fs.unlink(tmpJpg).catch(() => {});
 
             const error = err as { message?: string };
             return JSON.stringify({
@@ -300,7 +306,8 @@ function computeScreenDiff(before: Buffer, after: Buffer): number {
 
     for (let i = 0; i < minLen; i += step) {
         totalSampled++;
-        if (Math.abs(before[i] - after[i]) > 10) { // threshold: ignore compression artifacts
+        if (Math.abs(before[i] - after[i]) > 10) {
+            // threshold: ignore compression artifacts
             diffCount++;
         }
     }
@@ -315,7 +322,8 @@ export const osClick: ToolDefinition = {
         type: "function",
         function: {
             name: "os_click",
-            description: "Click, double-click, right-click, or move the mouse on macOS. Pass x,y coordinates as you see them in the os_screenshot image — they are auto-scaled to actual screen resolution.",
+            description:
+                "Click, double-click, right-click, or move the mouse on macOS. Pass x,y coordinates as you see them in the os_screenshot image — they are auto-scaled to actual screen resolution.",
             parameters: {
                 type: "object",
                 properties: {
@@ -324,9 +332,12 @@ export const osClick: ToolDefinition = {
                     action: {
                         type: "string",
                         enum: ["click", "double_click", "right_click", "move"],
-                        description: "Mouse action (default: click)"
+                        description: "Mouse action (default: click)",
                     },
-                    raw: { type: "boolean", description: "If true, treat x/y as raw screen pixels without scaling (default: false)" },
+                    raw: {
+                        type: "boolean",
+                        description: "If true, treat x/y as raw screen pixels without scaling (default: false)",
+                    },
                 },
                 required: ["x", "y"],
             },
@@ -343,15 +354,17 @@ export const osClick: ToolDefinition = {
         const action = (input.action as string) || "click";
         const useRaw = input.raw as boolean;
 
-        // Auto-scale from screenshot coordinates (1280px wide) to logical screen points
-        let x = rawX;
-        let y = rawY;
-        if (!useRaw && lastScreenWidth > 0) {
-            const RESIZE_WIDTH = 1280;
-            const scaleFactor = lastScreenWidth / RESIZE_WIDTH;
-            x = Math.round(rawX * scaleFactor);
-            y = Math.round(rawY * scaleFactor);
-            console.log(`  🖱️  Click: image(${rawX},${rawY}) → screen(${x},${y}) [scale=${scaleFactor.toFixed(3)}]`);
+        // Always probe current screen dims (multi-monitor + stale-cache safe).
+        // The helper caches for 500ms so consecutive clicks don't re-probe.
+        const dims = await getScreenDimensions({ focusedWindow: true });
+        const RESIZE_WIDTH = 1280;
+        const scaled = scaleImageToScreen({ rawX, rawY, imageWidth: RESIZE_WIDTH, dims, raw: useRaw });
+        const x = scaled.x;
+        const y = scaled.y;
+        if (!useRaw) {
+            console.log(
+                `  🖱️  Click: image(${rawX},${rawY}) → screen(${x},${y}) [scale=${scaled.scaleFactor} monitor=${dims.monitorId} origin=(${dims.originX},${dims.originY})]`,
+            );
         }
 
         // Use JXA with CoreGraphics CGEvent for native mouse control
@@ -428,7 +441,7 @@ $.CGEventPost($.kCGHIDEventTap, up);
         try {
             await fs.writeFile(tmpFile, eventScript, "utf-8");
             const { stdout } = await execFileAsync("osascript", ["-l", "JavaScript", tmpFile], { timeout: 5000 });
-            await fs.unlink(tmpFile).catch(() => { });
+            await fs.unlink(tmpFile).catch(() => {});
 
             const response: Record<string, unknown> = {
                 success: true,
@@ -443,23 +456,26 @@ $.CGEventPost($.kCGHIDEventTap, up);
             try {
                 if (_lastScreenshotBuffer) {
                     const beforeBuf = _lastScreenshotBuffer;
-                    await new Promise(r => setTimeout(r, 500));
+                    await new Promise((r) => setTimeout(r, 500));
                     const tmpDiffPng = join(tmpdir(), `atlas_diff_${Date.now()}.png`);
                     await execFileAsync("screencapture", ["-x", tmpDiffPng], { timeout: 8000 });
                     const afterBuf = await fs.readFile(tmpDiffPng);
-                    await fs.unlink(tmpDiffPng).catch(() => { });
+                    await fs.unlink(tmpDiffPng).catch(() => {});
                     const diff = computeScreenDiff(beforeBuf, afterBuf);
                     response.screen_changed = diff > 0.05;
                     response.diff_percent = Math.round(diff * 100);
                     if (diff < 0.01) {
-                        response.warning = "Click may not have had an effect. Verify with os_screenshot or os_visual_verify.";
+                        response.warning =
+                            "Click may not have had an effect. Verify with os_screenshot or os_visual_verify.";
                     }
                 }
-            } catch { /* diff check is non-blocking — ignore errors */ }
+            } catch {
+                /* diff check is non-blocking — ignore errors */
+            }
 
             return JSON.stringify(response);
         } catch (err) {
-            await fs.unlink(tmpFile).catch(() => { });
+            await fs.unlink(tmpFile).catch(() => {});
             const error = err as { message?: string };
             return JSON.stringify({ success: false, error: error.message || "Mouse action failed" });
         }
@@ -473,13 +489,22 @@ export const osType: ToolDefinition = {
         type: "function",
         function: {
             name: "os_type",
-            description: "Type text or press keys/hotkeys at the OS level using System Events. Works on ANY focused application. Use for typing into native apps, pressing shortcuts (Cmd+C, Cmd+V, etc.).",
+            description:
+                "Type text or press keys/hotkeys at the OS level using System Events. Works on ANY focused application. Use for typing into native apps, pressing shortcuts (Cmd+C, Cmd+V, etc.).",
             parameters: {
                 type: "object",
                 properties: {
                     text: { type: "string", description: "Text to type (types character by character)" },
-                    key: { type: "string", description: "Special key to press: return, tab, escape, delete, space, up, down, left, right, f1-f12" },
-                    combo: { type: "string", description: "Hotkey combo like 'command+c', 'command+shift+s', 'option+tab'. Use + to separate modifiers and key." },
+                    key: {
+                        type: "string",
+                        description:
+                            "Special key to press: return, tab, escape, delete, space, up, down, left, right, f1-f12",
+                    },
+                    combo: {
+                        type: "string",
+                        description:
+                            "Hotkey combo like 'command+c', 'command+shift+s', 'option+tab'. Use + to separate modifiers and key.",
+                    },
                     delay_ms: { type: "number", description: "Delay in ms after action (default: 200)" },
                 },
                 required: [],
@@ -498,7 +523,10 @@ export const osType: ToolDefinition = {
 
         if (input.combo) {
             // Parse combo like "command+shift+s"
-            const parts = (input.combo as string).toLowerCase().split("+").map(s => s.trim());
+            const parts = (input.combo as string)
+                .toLowerCase()
+                .split("+")
+                .map((s) => s.trim());
             const key = parts.pop() || "";
             const modifiers: string[] = [];
             for (const mod of parts) {
@@ -510,8 +538,27 @@ export const osType: ToolDefinition = {
             const modStr = modifiers.length > 0 ? ` using {${modifiers.join(", ")}}` : "";
 
             // Check if key is a special key name or a character
-            const specialKeys = ["return", "tab", "escape", "delete", "space", "up arrow", "down arrow", "left arrow", "right arrow"];
-            const mappedKey = key === "up" ? "up arrow" : key === "down" ? "down arrow" : key === "left" ? "left arrow" : key === "right" ? "right arrow" : key;
+            const specialKeys = [
+                "return",
+                "tab",
+                "escape",
+                "delete",
+                "space",
+                "up arrow",
+                "down arrow",
+                "left arrow",
+                "right arrow",
+            ];
+            const mappedKey =
+                key === "up"
+                    ? "up arrow"
+                    : key === "down"
+                      ? "down arrow"
+                      : key === "left"
+                        ? "left arrow"
+                        : key === "right"
+                          ? "right arrow"
+                          : key;
 
             if (specialKeys.includes(mappedKey)) {
                 script = `tell application "System Events"\n  key code ${getKeyCode(mappedKey)}${modStr}\nend tell\ndelay ${delaySec}`;
@@ -520,12 +567,26 @@ export const osType: ToolDefinition = {
             }
         } else if (input.key) {
             const key = (input.key as string).toLowerCase();
-            const mappedKey = key === "up" ? "up arrow" : key === "down" ? "down arrow" : key === "left" ? "left arrow" : key === "right" ? "right arrow" : key;
+            const mappedKey =
+                key === "up"
+                    ? "up arrow"
+                    : key === "down"
+                      ? "down arrow"
+                      : key === "left"
+                        ? "left arrow"
+                        : key === "right"
+                          ? "right arrow"
+                          : key;
             script = `tell application "System Events"\n  key code ${getKeyCode(mappedKey)}\nend tell\ndelay ${delaySec}`;
         } else if (input.text) {
             // Use clipboard method for reliability (handles Unicode, emoji, special chars)
             const textToType = input.text as string;
-            const escapedForAS = textToType.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t");
+            const escapedForAS = textToType
+                .replace(/\\/g, "\\\\")
+                .replace(/"/g, '\\"')
+                .replace(/\n/g, "\\n")
+                .replace(/\r/g, "\\r")
+                .replace(/\t/g, "\\t");
             script = `
 -- Save current clipboard
 set oldClipboard to ""
@@ -553,7 +614,7 @@ delay ${delaySec}`;
             try {
                 await fs.writeFile(tmpFileClip, script, "utf-8");
                 const { stdout, stderr } = await execFileAsync("osascript", [tmpFileClip], { timeout: 10000 });
-                await fs.unlink(tmpFileClip).catch(() => { });
+                await fs.unlink(tmpFileClip).catch(() => {});
                 return JSON.stringify({
                     success: true,
                     typed: textToType,
@@ -562,7 +623,7 @@ delay ${delaySec}`;
                     stderr: (stderr || "").substring(0, 500),
                 });
             } catch (clipErr) {
-                await fs.unlink(tmpFileClip).catch(() => { });
+                await fs.unlink(tmpFileClip).catch(() => {});
                 // Fallback: use keystroke method
                 console.log(`  ⌨️  [OS-TYPE] Clipboard method failed, falling back to keystroke`);
                 const keystrokeEscaped = textToType.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -576,7 +637,7 @@ delay ${delaySec}`;
         try {
             await fs.writeFile(tmpFile, script, "utf-8");
             const { stdout, stderr } = await execFileAsync("osascript", [tmpFile], { timeout: 10000 });
-            await fs.unlink(tmpFile).catch(() => { });
+            await fs.unlink(tmpFile).catch(() => {});
             return JSON.stringify({
                 success: true,
                 typed: input.text || input.key || input.combo,
@@ -584,7 +645,7 @@ delay ${delaySec}`;
                 stderr: (stderr || "").substring(0, 500),
             });
         } catch (err) {
-            await fs.unlink(tmpFile).catch(() => { });
+            await fs.unlink(tmpFile).catch(() => {});
             const error = err as { message?: string };
             return JSON.stringify({ success: false, error: error.message || "Keyboard action failed" });
         }
@@ -594,12 +655,27 @@ delay ${delaySec}`;
 // Key code mapping for macOS special keys
 function getKeyCode(key: string): number {
     const codes: Record<string, number> = {
-        "return": 36, "tab": 48, "escape": 53, "delete": 51,
-        "space": 49, "up arrow": 126, "down arrow": 125,
-        "left arrow": 123, "right arrow": 124,
-        "f1": 122, "f2": 120, "f3": 99, "f4": 118,
-        "f5": 96, "f6": 97, "f7": 98, "f8": 100,
-        "f9": 101, "f10": 109, "f11": 103, "f12": 111,
+        return: 36,
+        tab: 48,
+        escape: 53,
+        delete: 51,
+        space: 49,
+        "up arrow": 126,
+        "down arrow": 125,
+        "left arrow": 123,
+        "right arrow": 124,
+        f1: 122,
+        f2: 120,
+        f3: 99,
+        f4: 118,
+        f5: 96,
+        f6: 97,
+        f7: 98,
+        f8: 100,
+        f9: 101,
+        f10: 109,
+        f11: 103,
+        f12: 111,
     };
     return codes[key] ?? 36; // default to Return
 }
@@ -607,15 +683,15 @@ function getKeyCode(key: string): number {
 // ── OCR Helpers ───────────────────────────────
 // Levenshtein distance for fuzzy text matching
 function levenshtein(a: string, b: string): number {
-    const m = a.length, n = b.length;
+    const m = a.length,
+        n = b.length;
     const dp: number[][] = Array.from({ length: m + 1 }, (_, i) =>
-        Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0))
+        Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)),
     );
     for (let i = 1; i <= m; i++) {
         for (let j = 1; j <= n; j++) {
-            dp[i][j] = a[i - 1] === b[j - 1]
-                ? dp[i - 1][j - 1]
-                : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+            dp[i][j] =
+                a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
         }
     }
     return dp[m][n];
@@ -623,7 +699,8 @@ function levenshtein(a: string, b: string): number {
 
 // Similarity score [0.0 – 1.0]
 function similarity(a: string, b: string): number {
-    const al = a.toLowerCase(), bl = b.toLowerCase();
+    const al = a.toLowerCase(),
+        bl = b.toLowerCase();
     if (al === bl) return 1.0;
     if (bl.includes(al) || al.includes(bl)) return 0.9;
     const dist = levenshtein(al, bl);
@@ -651,11 +728,15 @@ interface OcrResult {
 }
 
 /** Run the Swift OCR script on a given screenshot (or fresh capture if null). */
-async function runOcr(screenshotPath: string | null, mode: "fast" | "accurate" = "accurate", screenshotBuffer?: Buffer): Promise<OcrResult | null> {
+async function runOcr(
+    screenshotPath: string | null,
+    mode: "fast" | "accurate" = "accurate",
+    screenshotBuffer?: Buffer,
+): Promise<OcrResult | null> {
     // Check cache
     if (screenshotBuffer) {
         const hash = computeScreenshotHash(screenshotBuffer);
-        if (_ocrCache && _ocrCache.hash === hash && (Date.now() - _ocrCache.timestamp) < OCR_CACHE_TTL_MS) {
+        if (_ocrCache && _ocrCache.hash === hash && Date.now() - _ocrCache.timestamp < OCR_CACHE_TTL_MS) {
             return _ocrCache.result;
         }
     }
@@ -691,7 +772,11 @@ async function runOcr(screenshotPath: string | null, mode: "fast" | "accurate" =
 }
 
 /** Find best-matching OCR element for a given label. Returns null if none found above threshold. */
-function findBestMatch(elements: OcrElement[], label: string, threshold = 0.45): { element: OcrElement; score: number } | null {
+function findBestMatch(
+    elements: OcrElement[],
+    label: string,
+    threshold = 0.45,
+): { element: OcrElement; score: number } | null {
     let best: { element: OcrElement; score: number } | null = null;
     const labelLower = label.toLowerCase();
 
@@ -735,19 +820,25 @@ $.CGEventPost($.kCGHIDEventTap, up);
     try {
         await fs.writeFile(tmpFile, eventScript, "utf-8");
         await execFileAsync("osascript", ["-l", "JavaScript", tmpFile], { timeout: 5000 });
-        await fs.unlink(tmpFile).catch(() => { });
+        await fs.unlink(tmpFile).catch(() => {});
         return true;
     } catch {
-        await fs.unlink(tmpFile).catch(() => { });
+        await fs.unlink(tmpFile).catch(() => {});
         return false;
     }
 }
 
 // ── Accessibility Elements Helper ────────────
 
-async function getAccessibilityElements(): Promise<Array<{name: string; role: string; x: number; y: number; w: number; h: number}>> {
+async function getAccessibilityElements(): Promise<
+    Array<{ name: string; role: string; x: number; y: number; w: number; h: number }>
+> {
     try {
-        const { stdout } = await execFileAsync("osascript", ["-e", `
+        const { stdout } = await execFileAsync(
+            "osascript",
+            [
+                "-e",
+                `
             tell application "System Events"
                 set frontApp to first process whose frontmost is true
                 set appName to name of frontApp
@@ -771,9 +862,12 @@ async function getAccessibilityElements(): Promise<Array<{name: string; role: st
                     return output
                 end try
             end tell
-        `], { timeout: 5000 });
+        `,
+            ],
+            { timeout: 5000 },
+        );
 
-        const elements: Array<{name: string; role: string; x: number; y: number; w: number; h: number}> = [];
+        const elements: Array<{ name: string; role: string; x: number; y: number; w: number; h: number }> = [];
         for (const line of stdout.split("\n")) {
             const parts = line.split("|||");
             if (parts.length >= 6) {
@@ -827,7 +921,8 @@ export const osNav: ToolDefinition = {
         type: "function",
         function: {
             name: "os_nav",
-            description: "Fast, lightweight screen element list using accessibility (no screenshot). Returns numbered list of all interactive elements (buttons, text fields, links, etc.) in the frontmost app. Use os_click_element with text= to click by text match (preferred) or label= for label number. 10x faster than os_scan — prefer this for native macOS apps. Fall back to os_scan only for visual layout understanding or web content.",
+            description:
+                "Fast, lightweight screen element list using accessibility (no screenshot). Returns numbered list of all interactive elements (buttons, text fields, links, etc.) in the frontmost app. Use os_click_element with text= to click by text match (preferred) or label= for label number. 10x faster than os_scan — prefer this for native macOS apps. Fall back to os_scan only for visual layout understanding or web content.",
             parameters: {
                 type: "object",
                 properties: {
@@ -856,7 +951,11 @@ export const osNav: ToolDefinition = {
             }
 
             // Query accessibility tree with role filtering for interactive elements
-            const { stdout } = await execFileAsync("osascript", ["-e", `
+            const { stdout } = await execFileAsync(
+                "osascript",
+                [
+                    "-e",
+                    `
                 tell application "System Events"
                     set frontProc to ${appTarget}
                     set appName to name of frontProc
@@ -898,7 +997,10 @@ export const osNav: ToolDefinition = {
                         return output
                     end try
                 end tell
-            `], { timeout: 5000 });
+            `,
+                ],
+                { timeout: 5000 },
+            );
 
             // Parse results
             const lines = stdout.split("\n").filter(Boolean);
@@ -921,7 +1023,8 @@ export const osNav: ToolDefinition = {
                         role: parts[0].trim().replace("AX", ""),
                         x: x + Math.round(w / 2),
                         y: y + Math.round(h / 2),
-                        w, h,
+                        w,
+                        h,
                     });
                 }
             }
@@ -931,9 +1034,9 @@ export const osNav: ToolDefinition = {
             _scanTimestamp = Date.now();
 
             // Build compact text summary
-            const summary = elements.map(el =>
-                `[${el.label}] (${el.role}) "${el.text}" at (${el.x},${el.y})`
-            ).join("\n");
+            const summary = elements
+                .map((el) => `[${el.label}] (${el.role}) "${el.text}" at (${el.x},${el.y})`)
+                .join("\n");
 
             const elapsed = Date.now() - startTime;
 
@@ -958,30 +1061,36 @@ export const osOcrClick: ToolDefinition = {
         type: "function",
         function: {
             name: "os_ocr_click",
-            description: "PREFERRED click method for native Mac apps. Finds a UI element by its visible text label using OCR (Vision framework), then clicks it. Includes an automatic retry loop with coordinate jitter + visual verification. Use this instead of manually reading coordinates from os_screenshot whenever a clickable element has readable text.",
+            description:
+                "PREFERRED click method for native Mac apps. Finds a UI element by its visible text label using OCR (Vision framework), then clicks it. Includes an automatic retry loop with coordinate jitter + visual verification. Use this instead of manually reading coordinates from os_screenshot whenever a clickable element has readable text.",
             parameters: {
                 type: "object",
                 properties: {
                     label: {
                         type: "string",
-                        description: "The visible text of the element to click (e.g. 'Send', 'Desktop', 'Open', 'Cancel'). Fuzzy matched — partial text is fine.",
+                        description:
+                            "The visible text of the element to click (e.g. 'Send', 'Desktop', 'Open', 'Cancel'). Fuzzy matched — partial text is fine.",
                     },
                     max_attempts: {
                         type: "number",
-                        description: "Max retry attempts if click fails (default: 3). Each retry uses a slightly different coordinate offset.",
+                        description:
+                            "Max retry attempts if click fails (default: 3). Each retry uses a slightly different coordinate offset.",
                     },
                     verify_appears: {
                         type: "string",
-                        description: "Optional: text that should APPEAR on screen after a successful click (e.g. 'Saving...'). Used to confirm success.",
+                        description:
+                            "Optional: text that should APPEAR on screen after a successful click (e.g. 'Saving...'). Used to confirm success.",
                     },
                     verify_gone: {
                         type: "boolean",
-                        description: "If true, confirms success by checking that the original label text is no longer visible after clicking (e.g. a Submit button disappearing). Default: false.",
+                        description:
+                            "If true, confirms success by checking that the original label text is no longer visible after clicking (e.g. a Submit button disappearing). Default: false.",
                     },
                     ocr_mode: {
                         type: "string",
                         enum: ["accurate", "fast"],
-                        description: "OCR recognition mode (default: fast). Automatically escalates to accurate if fast finds no match.",
+                        description:
+                            "OCR recognition mode (default: fast). Automatically escalates to accurate if fast finds no match.",
                     },
                 },
                 required: ["label"],
@@ -998,7 +1107,7 @@ export const osOcrClick: ToolDefinition = {
         const maxAttempts = (input.max_attempts as number) || 3;
         const verifyAppears = input.verify_appears as string | undefined;
         const verifyGone = (input.verify_gone as boolean) || false;
-        let ocrMode = ((input.ocr_mode as string) || "fast") as "fast" | "accurate";
+        const ocrMode = ((input.ocr_mode as string) || "fast") as "fast" | "accurate";
 
         let lastElementCount = 0;
 
@@ -1021,12 +1130,19 @@ export const osOcrClick: ToolDefinition = {
                 await execFileAsync("screencapture", ["-x", tmpPng], { timeout: 8000 });
                 capBuffer = await fs.readFile(tmpPng);
             } catch (err) {
-                attemptLog.push({ attempt, matched_text: null, score: null, x: null, y: null, outcome: "screenshot_failed" });
+                attemptLog.push({
+                    attempt,
+                    matched_text: null,
+                    score: null,
+                    x: null,
+                    y: null,
+                    outcome: "screenshot_failed",
+                });
                 continue;
             }
 
             // Escalate to accurate on later retries
-            const effectiveMode = attempt >= 1 ? "accurate" as const : ocrMode;
+            const effectiveMode = attempt >= 1 ? ("accurate" as const) : ocrMode;
 
             let ocrResult = await runOcr(tmpPng, effectiveMode, capBuffer);
 
@@ -1036,13 +1152,13 @@ export const osOcrClick: ToolDefinition = {
             }
 
             if (!ocrResult || ocrResult.elements.length === 0) {
-                await fs.unlink(tmpPng).catch(() => { });
+                await fs.unlink(tmpPng).catch(() => {});
 
                 // Attempt 3: Accessibility tree fallback when OCR finds nothing
                 if (attempt === maxAttempts - 1) {
                     const axElements = await getAccessibilityElements();
                     if (axElements.length > 0) {
-                        let bestAxMatch: typeof axElements[0] | null = null;
+                        let bestAxMatch: (typeof axElements)[0] | null = null;
                         let bestAxScore = 0;
                         for (const ax of axElements) {
                             if (ax.name) {
@@ -1056,10 +1172,19 @@ export const osOcrClick: ToolDefinition = {
                         if (bestAxMatch && bestAxScore >= 0.5) {
                             const axClickX = bestAxMatch.x + Math.round(bestAxMatch.w / 2);
                             const axClickY = bestAxMatch.y + Math.round(bestAxMatch.h / 2);
-                            console.log(`  🎯 [OCR-CLICK] Accessibility fallback: "${bestAxMatch.name}" (score=${bestAxScore.toFixed(2)}) → screen(${axClickX}, ${axClickY})`);
+                            console.log(
+                                `  🎯 [OCR-CLICK] Accessibility fallback: "${bestAxMatch.name}" (score=${bestAxScore.toFixed(2)}) → screen(${axClickX}, ${axClickY})`,
+                            );
                             const axClicked = await nativeClick(axClickX, axClickY);
                             if (axClicked) {
-                                attemptLog.push({ attempt, matched_text: bestAxMatch.name, score: bestAxScore, x: axClickX, y: axClickY, outcome: "success_accessibility_fallback" });
+                                attemptLog.push({
+                                    attempt,
+                                    matched_text: bestAxMatch.name,
+                                    score: bestAxScore,
+                                    x: axClickX,
+                                    y: axClickY,
+                                    outcome: "success_accessibility_fallback",
+                                });
                                 return JSON.stringify({
                                     success: true,
                                     matched_text: bestAxMatch.name,
@@ -1076,9 +1201,16 @@ export const osOcrClick: ToolDefinition = {
                     }
                 }
 
-                attemptLog.push({ attempt, matched_text: null, score: null, x: null, y: null, outcome: "ocr_failed_no_elements" });
+                attemptLog.push({
+                    attempt,
+                    matched_text: null,
+                    score: null,
+                    x: null,
+                    y: null,
+                    outcome: "ocr_failed_no_elements",
+                });
                 // Wait a moment for UI to settle before retry
-                await new Promise(r => setTimeout(r, 600));
+                await new Promise((r) => setTimeout(r, 600));
                 continue;
             }
 
@@ -1098,14 +1230,14 @@ export const osOcrClick: ToolDefinition = {
             }
 
             // Clean up screenshot temp file after all OCR passes
-            await fs.unlink(tmpPng).catch(() => { });
+            await fs.unlink(tmpPng).catch(() => {});
 
             if (!match) {
                 // Attempt 3: Accessibility tree fallback when OCR match fails
                 if (attempt === maxAttempts - 1) {
                     const axElements = await getAccessibilityElements();
                     if (axElements.length > 0) {
-                        let bestAxMatch: typeof axElements[0] | null = null;
+                        let bestAxMatch: (typeof axElements)[0] | null = null;
                         let bestAxScore = 0;
                         for (const ax of axElements) {
                             if (ax.name) {
@@ -1119,10 +1251,19 @@ export const osOcrClick: ToolDefinition = {
                         if (bestAxMatch && bestAxScore >= 0.5) {
                             const axClickX = bestAxMatch.x + Math.round(bestAxMatch.w / 2);
                             const axClickY = bestAxMatch.y + Math.round(bestAxMatch.h / 2);
-                            console.log(`  🎯 [OCR-CLICK] Accessibility fallback: "${bestAxMatch.name}" (score=${bestAxScore.toFixed(2)}) → screen(${axClickX}, ${axClickY})`);
+                            console.log(
+                                `  🎯 [OCR-CLICK] Accessibility fallback: "${bestAxMatch.name}" (score=${bestAxScore.toFixed(2)}) → screen(${axClickX}, ${axClickY})`,
+                            );
                             const axClicked = await nativeClick(axClickX, axClickY);
                             if (axClicked) {
-                                attemptLog.push({ attempt, matched_text: bestAxMatch.name, score: bestAxScore, x: axClickX, y: axClickY, outcome: "success_accessibility_fallback" });
+                                attemptLog.push({
+                                    attempt,
+                                    matched_text: bestAxMatch.name,
+                                    score: bestAxScore,
+                                    x: axClickX,
+                                    y: axClickY,
+                                    outcome: "success_accessibility_fallback",
+                                });
                                 return JSON.stringify({
                                     success: true,
                                     matched_text: bestAxMatch.name,
@@ -1139,8 +1280,15 @@ export const osOcrClick: ToolDefinition = {
                     }
                 }
 
-                attemptLog.push({ attempt, matched_text: null, score: null, x: null, y: null, outcome: `no_match_above_threshold (${ocrResult.elements.length} elements scanned)` });
-                await new Promise(r => setTimeout(r, 600));
+                attemptLog.push({
+                    attempt,
+                    matched_text: null,
+                    score: null,
+                    x: null,
+                    y: null,
+                    outcome: `no_match_above_threshold (${ocrResult.elements.length} elements scanned)`,
+                });
+                await new Promise((r) => setTimeout(r, 600));
                 continue;
             }
 
@@ -1148,17 +1296,26 @@ export const osOcrClick: ToolDefinition = {
             const clickX = Math.round(match.element.cx_screen);
             const clickY = Math.round(match.element.cy_screen);
 
-            console.log(`  🎯 [OCR-CLICK] Matched "${match.element.text}" (score=${match.score.toFixed(2)}, conf=${match.element.confidence.toFixed(2)}) → screen(${clickX}, ${clickY})`);
+            console.log(
+                `  🎯 [OCR-CLICK] Matched "${match.element.text}" (score=${match.score.toFixed(2)}, conf=${match.element.confidence.toFixed(2)}) → screen(${clickX}, ${clickY})`,
+            );
 
             // Step 4: Click
             const clicked = await nativeClick(clickX, clickY);
             if (!clicked) {
-                attemptLog.push({ attempt, matched_text: match.element.text, score: match.score, x: clickX, y: clickY, outcome: "click_event_failed" });
+                attemptLog.push({
+                    attempt,
+                    matched_text: match.element.text,
+                    score: match.score,
+                    x: clickX,
+                    y: clickY,
+                    outcome: "click_event_failed",
+                });
                 continue;
             }
 
             // Step 5: Wait for UI to react
-            await new Promise(r => setTimeout(r, 500));
+            await new Promise((r) => setTimeout(r, 500));
 
             // Step 6: Visual verification
             let verificationOutcome = "not_checked";
@@ -1168,14 +1325,21 @@ export const osOcrClick: ToolDefinition = {
                     await execFileAsync("screencapture", ["-x", tmpVerify], { timeout: 8000 });
                     const verifyBuf = await fs.readFile(tmpVerify);
                     const verifyOcr = await runOcr(tmpVerify, "fast", verifyBuf);
-                    await fs.unlink(tmpVerify).catch(() => { });
+                    await fs.unlink(tmpVerify).catch(() => {});
 
                     if (verifyOcr) {
                         if (verifyAppears) {
                             const found = findBestMatch(verifyOcr.elements, verifyAppears, 0.6);
                             if (found) {
                                 verificationOutcome = `verified_appears: "${found.element.text}" (score=${found.score.toFixed(2)})`;
-                                attemptLog.push({ attempt, matched_text: match.element.text, score: match.score, x: clickX, y: clickY, outcome: "success_verified" });
+                                attemptLog.push({
+                                    attempt,
+                                    matched_text: match.element.text,
+                                    score: match.score,
+                                    x: clickX,
+                                    y: clickY,
+                                    outcome: "success_verified",
+                                });
                                 return JSON.stringify({
                                     success: true,
                                     matched_text: match.element.text,
@@ -1195,7 +1359,14 @@ export const osOcrClick: ToolDefinition = {
                             const stillThere = findBestMatch(verifyOcr.elements, label, 0.7);
                             if (!stillThere) {
                                 verificationOutcome = `verified_gone: "${label}" no longer on screen`;
-                                attemptLog.push({ attempt, matched_text: match.element.text, score: match.score, x: clickX, y: clickY, outcome: "success_verified_gone" });
+                                attemptLog.push({
+                                    attempt,
+                                    matched_text: match.element.text,
+                                    score: match.score,
+                                    x: clickX,
+                                    y: clickY,
+                                    outcome: "success_verified_gone",
+                                });
                                 return JSON.stringify({
                                     success: true,
                                     matched_text: match.element.text,
@@ -1216,13 +1387,27 @@ export const osOcrClick: ToolDefinition = {
                 }
 
                 // Verification said it didn't work — retry
-                attemptLog.push({ attempt, matched_text: match.element.text, score: match.score, x: clickX, y: clickY, outcome: verificationOutcome });
-                await new Promise(r => setTimeout(r, 400));
+                attemptLog.push({
+                    attempt,
+                    matched_text: match.element.text,
+                    score: match.score,
+                    x: clickX,
+                    y: clickY,
+                    outcome: verificationOutcome,
+                });
+                await new Promise((r) => setTimeout(r, 400));
                 continue;
             }
 
             // No verification requested — trust the click succeeded
-            attemptLog.push({ attempt, matched_text: match.element.text, score: match.score, x: clickX, y: clickY, outcome: "clicked_no_verify" });
+            attemptLog.push({
+                attempt,
+                matched_text: match.element.text,
+                score: match.score,
+                x: clickX,
+                y: clickY,
+                outcome: "clicked_no_verify",
+            });
             return JSON.stringify({
                 success: true,
                 matched_text: match.element.text,
@@ -1254,21 +1439,25 @@ export const osVisualVerify: ToolDefinition = {
         type: "function",
         function: {
             name: "os_visual_verify",
-            description: "Visually verify task completion by checking if specific text is visible on screen — or has disappeared. Use this at the END of any OS task to confirm success before reporting back to the user. Much faster than os_screenshot + manual inspection.",
+            description:
+                "Visually verify task completion by checking if specific text is visible on screen — or has disappeared. Use this at the END of any OS task to confirm success before reporting back to the user. Much faster than os_screenshot + manual inspection.",
             parameters: {
                 type: "object",
                 properties: {
                     expect_text: {
                         type: "string",
-                        description: "Text that should be VISIBLE on screen for the task to be considered complete (e.g. 'Message sent', 'File saved', 'Desktop').",
+                        description:
+                            "Text that should be VISIBLE on screen for the task to be considered complete (e.g. 'Message sent', 'File saved', 'Desktop').",
                     },
                     expect_gone: {
                         type: "string",
-                        description: "Text that should NO LONGER be visible for the task to be complete (e.g. 'Sending...', 'Loading').",
+                        description:
+                            "Text that should NO LONGER be visible for the task to be complete (e.g. 'Sending...', 'Loading').",
                     },
                     description: {
                         type: "string",
-                        description: "Human-readable description of what you are verifying (e.g. 'Confirm message was sent in WhatsApp').",
+                        description:
+                            "Human-readable description of what you are verifying (e.g. 'Confirm message was sent in WhatsApp').",
                     },
                 },
                 required: [],
@@ -1300,7 +1489,7 @@ export const osVisualVerify: ToolDefinition = {
         }
 
         const ocrResult = await runOcr(tmpPng, "fast", verifyBuffer);
-        await fs.unlink(tmpPng).catch(() => { });
+        await fs.unlink(tmpPng).catch(() => {});
 
         if (!ocrResult) {
             return JSON.stringify({ success: false, error: "OCR failed during verification." });
@@ -1354,7 +1543,8 @@ export const osContext: ToolDefinition = {
         type: "function",
         function: {
             name: "os_context",
-            description: "Get current OS context: which app is focused, window title, and screen resolution. Use this BEFORE os_type or os_click to verify the correct app is in focus. Very fast (no screenshot).",
+            description:
+                "Get current OS context: which app is focused, window title, and screen resolution. Use this BEFORE os_type or os_click to verify the correct app is in focus. Very fast (no screenshot).",
             parameters: {
                 type: "object",
                 properties: {},
@@ -1388,25 +1578,19 @@ return frontApp & "|" & frontAppId & "|" & winTitle`;
         try {
             await fs.writeFile(tmpFile, script, "utf-8");
             const { stdout } = await execFileAsync("osascript", [tmpFile], { timeout: 3000 });
-            await fs.unlink(tmpFile).catch(() => { });
+            await fs.unlink(tmpFile).catch(() => {});
 
             const parts = stdout.trim().split("|");
             const appName = parts[0] || "unknown";
             const bundleId = parts[1] || "";
             const windowTitle = parts[2] || "";
 
-            // Get screen resolution
-            let screenWidth = lastScreenWidth || 1440;
-            let screenHeight = lastScreenHeight || 900;
-            if (!lastScreenWidth) {
-                try {
-                    const { stdout: resOut } = await execFileAsync("osascript", ["-l", "JavaScript", "-e",
-                        'ObjC.import("AppKit"); var f = $.NSScreen.mainScreen.frame; `${f.size.width},${f.size.height}`'
-                    ], { timeout: 2000 });
-                    const [w, h] = resOut.trim().split(",").map(Number);
-                    if (w > 0 && h > 0) { screenWidth = w; screenHeight = h; lastScreenWidth = w; lastScreenHeight = h; }
-                } catch { /* use defaults */ }
-            }
+            // Get screen resolution via the multi-monitor-aware helper (cached, fresh, focused-window aware).
+            const _ctxDims = await getScreenDimensions({ focusedWindow: true });
+            const screenWidth = _ctxDims.width;
+            const screenHeight = _ctxDims.height;
+            lastScreenWidth = screenWidth;
+            lastScreenHeight = screenHeight;
 
             return JSON.stringify({
                 success: true,
@@ -1416,7 +1600,7 @@ return frontApp & "|" & frontAppId & "|" & winTitle`;
                 screen: { width: screenWidth, height: screenHeight },
             });
         } catch (err) {
-            await fs.unlink(tmpFile).catch(() => { });
+            await fs.unlink(tmpFile).catch(() => {});
             const error = err as { message?: string };
             return JSON.stringify({ success: false, error: error.message || "Failed to get OS context" });
         }
@@ -1430,13 +1614,15 @@ export const setBrightness: ToolDefinition = {
         type: "function",
         function: {
             name: "set_brightness",
-            description: "Set the macOS display brightness to a specific level. Much more reliable than simulating brightness keys via AppleScript.",
+            description:
+                "Set the macOS display brightness to a specific level. Much more reliable than simulating brightness keys via AppleScript.",
             parameters: {
                 type: "object",
                 properties: {
                     level: {
                         type: "number",
-                        description: "Brightness level from 0 (completely dark) to 100 (maximum brightness). Example: 50 for half brightness, 0 for screen off, 100 for full brightness.",
+                        description:
+                            "Brightness level from 0 (completely dark) to 100 (maximum brightness). Example: 50 for half brightness, 0 for screen off, 100 for full brightness.",
                     },
                 },
                 required: ["level"],
@@ -1453,7 +1639,6 @@ export const setBrightness: ToolDefinition = {
         // Clamp to 0–100 and convert to 0.0–1.0
         const clamped = Math.max(0, Math.min(100, rawLevel));
         const fraction = clamped / 100;
-
 
         // Fallback chain: brightness CLI tool → CoreDisplay JXA → key simulation
         try {
@@ -1481,7 +1666,7 @@ $.CoreDisplay_Display_SetUserBrightness(CGDirectDisplayID, ${fraction});
                 const tmpFile = join(tmpdir(), `atlas_brightness_${Date.now()}.js`);
                 await fs.writeFile(tmpFile, jxaScript, "utf-8");
                 await execFileAsync("osascript", ["-l", "JavaScript", tmpFile], { timeout: 5000 });
-                await fs.unlink(tmpFile).catch(() => { });
+                await fs.unlink(tmpFile).catch(() => {});
                 return JSON.stringify({
                     success: true,
                     brightness: clamped,
@@ -1492,7 +1677,7 @@ $.CoreDisplay_Display_SetUserBrightness(CGDirectDisplayID, ${fraction});
                 // Last resort: simulate key presses (less precise but always works)
                 // Key code 144 = brightness down, 145 = brightness up (F1/F2 without fn)
                 // Press brightness down 16 times to reach 0, then up the right number
-                const stepsUp = Math.round(clamped / 100 * 16);
+                const stepsUp = Math.round((clamped / 100) * 16);
                 const keyScript = `tell application "System Events"
     -- First go to 0 (key code 144 = brightness down / F1)
     repeat 16 times
@@ -1507,7 +1692,7 @@ end tell`;
                 try {
                     await fs.writeFile(tmpFile, keyScript, "utf-8");
                     await execFileAsync("osascript", [tmpFile], { timeout: 15000 });
-                    await fs.unlink(tmpFile).catch(() => { });
+                    await fs.unlink(tmpFile).catch(() => {});
                     return JSON.stringify({
                         success: true,
                         brightness: clamped,
@@ -1516,7 +1701,7 @@ end tell`;
                         note: "Used key simulation — brightness may not be exact. Install 'brightness' CLI (brew install brightness) for precise control.",
                     });
                 } catch (err) {
-                    await fs.unlink(tmpFile).catch(() => { });
+                    await fs.unlink(tmpFile).catch(() => {});
                     const error = err as { message?: string };
                     return JSON.stringify({ success: false, error: error.message || "Failed to set brightness" });
                 }
@@ -1532,11 +1717,15 @@ export const sendScreenshot: ToolDefinition = {
         type: "function",
         function: {
             name: "send_screenshot",
-            description: "Capture a screenshot of the current macOS screen and send it directly to the user on Telegram. This is an all-in-one tool — do NOT use shell_exec + send_file separately. Always use this when the user asks to see their screen.",
+            description:
+                "Capture a screenshot of the current macOS screen and send it directly to the user on Telegram. This is an all-in-one tool — do NOT use shell_exec + send_file separately. Always use this when the user asks to see their screen.",
             parameters: {
                 type: "object",
                 properties: {
-                    caption: { type: "string", description: "Optional caption to send with the screenshot (default: 'Here is your screen')" },
+                    caption: {
+                        type: "string",
+                        description: "Optional caption to send with the screenshot (default: 'Here is your screen')",
+                    },
                 },
                 required: [],
             },
@@ -1563,12 +1752,14 @@ export const sendScreenshot: ToolDefinition = {
 
             // Step 2: Verify the file was created
             if (!existsSync(tmpPng)) {
-                return JSON.stringify({ error: "Screenshot capture failed — file was not created. Check screen recording permissions in System Settings > Privacy & Security > Screen Recording." });
+                return JSON.stringify({
+                    error: "Screenshot capture failed — file was not created. Check screen recording permissions in System Settings > Privacy & Security > Screen Recording.",
+                });
             }
 
             const stats = statSync(tmpPng);
             if (stats.size === 0) {
-                await fs.unlink(tmpPng).catch(() => { });
+                await fs.unlink(tmpPng).catch(() => {});
                 return JSON.stringify({ error: "Screenshot capture produced an empty file." });
             }
 
@@ -1579,7 +1770,7 @@ export const sendScreenshot: ToolDefinition = {
             await bot.api.sendPhoto(chatId, inputFile, { caption });
 
             // Step 4: Cleanup
-            await fs.unlink(tmpPng).catch(() => { });
+            await fs.unlink(tmpPng).catch(() => {});
 
             return JSON.stringify({
                 success: true,
@@ -1587,7 +1778,7 @@ export const sendScreenshot: ToolDefinition = {
                 size_kb: Math.round(stats.size / 1024),
             });
         } catch (err) {
-            await fs.unlink(tmpPng).catch(() => { });
+            await fs.unlink(tmpPng).catch(() => {});
             const error = err as { message?: string };
             return JSON.stringify({
                 success: false,
@@ -1605,19 +1796,27 @@ export const osAccessibilityTree: ToolDefinition = {
         type: "function",
         function: {
             name: "os_accessibility_tree",
-            description: "Get the accessibility tree of the focused macOS application. Returns structured UI elements with names, roles, and positions — more reliable than OCR for native apps. Use this to understand the UI of desktop apps before clicking.",
+            description:
+                "Get the accessibility tree of the focused macOS application. Returns structured UI elements with names, roles, and positions — more reliable than OCR for native apps. Use this to understand the UI of desktop apps before clicking.",
             parameters: {
                 type: "object",
                 properties: {
-                    app_name: { type: "string", description: "Optional: specific app name to inspect. If not provided, uses the frontmost app." },
-                    max_depth: { type: "number", description: "Max tree depth to traverse (default: 3). Higher values give more detail but more output." },
+                    app_name: {
+                        type: "string",
+                        description: "Optional: specific app name to inspect. If not provided, uses the frontmost app.",
+                    },
+                    max_depth: {
+                        type: "number",
+                        description:
+                            "Max tree depth to traverse (default: 3). Higher values give more detail but more output.",
+                    },
                 },
                 required: [],
             },
         },
     },
     async handler(input) {
-        const appName = input.app_name as string || "";
+        const appName = (input.app_name as string) || "";
         const maxDepth = (input.max_depth as number) || 3;
 
         const appTarget = appName
@@ -1696,7 +1895,8 @@ export const osScan: ToolDefinition = {
         type: "function",
         function: {
             name: "os_scan",
-            description: "Scans the current screen and identifies all interactive elements with numbered labels. Returns a labeled screenshot and element list. Use os_click_element with a label number to click. This is the PREFERRED way to interact with macOS apps — much more reliable than coordinate-based clicking.",
+            description:
+                "Scans the current screen and identifies all interactive elements with numbered labels. Returns a labeled screenshot and element list. Use os_click_element with a label number to click. This is the PREFERRED way to interact with macOS apps — much more reliable than coordinate-based clicking.",
             parameters: {
                 type: "object",
                 properties: {},
@@ -1714,22 +1914,17 @@ export const osScan: ToolDefinition = {
             const tmpPng = join(tmpdir(), `atlas-scan-${Date.now()}.png`);
             const tmpJpg = join(tmpdir(), `atlas-scan-${Date.now()}.jpg`);
 
-            // 1. Get screen dimensions
-            let screenWidth = 1440, screenHeight = 900;
-            try {
-                const { stdout: resOut } = await execFileAsync("osascript", ["-l", "JavaScript", "-e",
-                    'ObjC.import("AppKit"); var f = $.NSScreen.mainScreen.frame; JSON.stringify({w: f.size.width, h: f.size.height})'],
-                    { timeout: 3000 });
-                const dim = JSON.parse(resOut.trim());
-                if (dim.w > 0 && dim.h > 0) { screenWidth = dim.w; screenHeight = dim.h; }
-            } catch { /* use defaults */ }
+            // 1. Get screen dimensions for the focused monitor (multi-monitor aware).
+            const dims = await getScreenDimensions({ focusedWindow: true, force: true });
+            const screenWidth = dims.width;
+            const screenHeight = dims.height;
 
             lastScreenWidth = screenWidth;
             lastScreenHeight = screenHeight;
 
             // 2. Hide overlay, capture screenshot
             hideOverlayForAgent();
-            await new Promise(r => setTimeout(r, 100));
+            await new Promise((r) => setTimeout(r, 100));
             await execFileAsync("screencapture", ["-x", tmpPng], { timeout: 10000 });
             showOverlayForAgent();
 
@@ -1737,13 +1932,12 @@ export const osScan: ToolDefinition = {
             const RESIZE_WIDTH = 1280;
             try {
                 await execFileAsync("sips", ["--resampleWidth", String(RESIZE_WIDTH), tmpPng], { timeout: 5000 });
-            } catch { /* proceed with raw */ }
+            } catch {
+                /* proceed with raw */
+            }
 
             // 4. Run OCR (accurate mode for reliable text) + accessibility in parallel
-            const [ocrResult, axElements] = await Promise.all([
-                runOcr(tmpPng, "accurate"),
-                getAccessibilityElements(),
-            ]);
+            const [ocrResult, axElements] = await Promise.all([runOcr(tmpPng, "accurate"), getAccessibilityElements()]);
 
             // 5. Merge OCR elements + accessibility elements
             const mergedElements: ScanElement[] = [];
@@ -1771,8 +1965,8 @@ export const osScan: ToolDefinition = {
             for (const ax of axElements) {
                 if (!ax.name || ax.name.length === 0) continue;
                 // Check if this overlaps with an existing OCR element (within 15px)
-                const overlaps = mergedElements.some(m =>
-                    Math.abs(m.x - (ax.x + ax.w / 2)) < 15 && Math.abs(m.y - (ax.y + ax.h / 2)) < 15
+                const overlaps = mergedElements.some(
+                    (m) => Math.abs(m.x - (ax.x + ax.w / 2)) < 15 && Math.abs(m.y - (ax.y + ax.h / 2)) < 15,
                 );
                 if (!overlaps) {
                     mergedElements.push({
@@ -1786,8 +1980,8 @@ export const osScan: ToolDefinition = {
                     });
                 } else {
                     // Enrich existing OCR element with role info
-                    const match = mergedElements.find(m =>
-                        Math.abs(m.x - (ax.x + ax.w / 2)) < 15 && Math.abs(m.y - (ax.y + ax.h / 2)) < 15
+                    const match = mergedElements.find(
+                        (m) => Math.abs(m.x - (ax.x + ax.w / 2)) < 15 && Math.abs(m.y - (ax.y + ax.h / 2)) < 15,
                     );
                     if (match && match.role === "text") {
                         match.role = ax.role.replace("AX", "");
@@ -1798,7 +1992,7 @@ export const osScan: ToolDefinition = {
             // 6. Generate SoM overlay
             const elementsJson = join(tmpdir(), `atlas-scan-elements-${Date.now()}.json`);
             // Convert screen coords to image coords for the overlay
-            const imageElements = mergedElements.map(el => ({
+            const imageElements = mergedElements.map((el) => ({
                 label: el.label,
                 text: el.text,
                 x: Math.round(el.x / scaleFactor),
@@ -1815,15 +2009,24 @@ export const osScan: ToolDefinition = {
             } catch {
                 // Fallback: convert without overlay
                 try {
-                    await execFileAsync("sips", ["-s", "format", "jpeg", "-s", "formatOptions", "85", tmpPng, "--out", tmpJpg], { timeout: 3000 });
-                } catch { /* use PNG */ }
+                    await execFileAsync(
+                        "sips",
+                        ["-s", "format", "jpeg", "-s", "formatOptions", "85", tmpPng, "--out", tmpJpg],
+                        { timeout: 3000 },
+                    );
+                } catch {
+                    /* use PNG */
+                }
             }
 
             // 7. Read result
-            const finalFile = await fs.access(tmpJpg).then(() => tmpJpg).catch(() => tmpPng);
+            const finalFile = await fs
+                .access(tmpJpg)
+                .then(() => tmpJpg)
+                .catch(() => tmpPng);
             const buffer = await fs.readFile(finalFile);
             const base64 = buffer.toString("base64");
-            const mimeType = finalFile.endsWith('.jpg') ? 'image/jpeg' : 'image/png';
+            const mimeType = finalFile.endsWith(".jpg") ? "image/jpeg" : "image/png";
 
             // 8. Cache elements
             _scanElements = mergedElements;
@@ -1835,9 +2038,10 @@ export const osScan: ToolDefinition = {
             await fs.unlink(elementsJson).catch(() => {});
 
             // 10. Build element summary for LLM
-            const elementSummary = mergedElements.slice(0, 50).map(el =>
-                `[${el.label}] ${el.role !== "text" ? `(${el.role}) ` : ""}${el.text}`
-            ).join("\n");
+            const elementSummary = mergedElements
+                .slice(0, 50)
+                .map((el) => `[${el.label}] ${el.role !== "text" ? `(${el.role}) ` : ""}${el.text}`)
+                .join("\n");
 
             return JSON.stringify({
                 success: true,
@@ -1845,7 +2049,7 @@ export const osScan: ToolDefinition = {
                 mime_type: mimeType,
                 element_count: mergedElements.length,
                 elements: elementSummary,
-                tip: "Use os_click_element with a label number to click any element. Example: os_click_element label=5"
+                tip: "Use os_click_element with a label number to click any element. Example: os_click_element label=5",
             });
         } catch (err) {
             showOverlayForAgent(); // Ensure overlay comes back on error
@@ -1861,13 +2065,22 @@ export const osClickElement: ToolDefinition = {
         type: "function",
         function: {
             name: "os_click_element",
-            description: "Click an element from os_scan or os_nav. You can click by LABEL NUMBER or by TEXT MATCH (preferred — more reliable). Text match finds the element whose text contains your query. Run os_scan or os_nav first.",
+            description:
+                "Click an element from os_scan or os_nav. You can click by LABEL NUMBER or by TEXT MATCH (preferred — more reliable). Text match finds the element whose text contains your query. Run os_scan or os_nav first.",
             parameters: {
                 type: "object",
                 properties: {
                     label: { type: "number", description: "Element label number from os_scan/os_nav" },
-                    text: { type: "string", description: "Text to search for in elements (e.g., 'Perfect', 'Send', 'amma'). Finds best matching element. MORE RELIABLE than label numbers." },
-                    action: { type: "string", enum: ["click", "double_click", "right_click"], description: "Click type (default: click)" },
+                    text: {
+                        type: "string",
+                        description:
+                            "Text to search for in elements (e.g., 'Perfect', 'Send', 'amma'). Finds best matching element. MORE RELIABLE than label numbers.",
+                    },
+                    action: {
+                        type: "string",
+                        enum: ["click", "double_click", "right_click"],
+                        description: "Click type (default: click)",
+                    },
                 },
                 required: [],
             },
@@ -1884,7 +2097,10 @@ export const osClickElement: ToolDefinition = {
         const action = (input.action as string) || "click";
 
         if (!labelInput && !textSearch) {
-            return JSON.stringify({ success: false, error: "Provide 'label' (number) or 'text' (string to search for)." });
+            return JSON.stringify({
+                success: false,
+                error: "Provide 'label' (number) or 'text' (string to search for).",
+            });
         }
 
         // Parse label if provided
@@ -1901,7 +2117,10 @@ export const osClickElement: ToolDefinition = {
             try {
                 await quickAccessibilityRefresh();
             } catch (err) {
-                return JSON.stringify({ success: false, error: `Element map refresh failed: ${(err as Error).message}. Run os_scan manually.` });
+                return JSON.stringify({
+                    success: false,
+                    error: `Element map refresh failed: ${(err as Error).message}. Run os_scan manually.`,
+                });
             }
         }
 
@@ -1912,14 +2131,16 @@ export const osClickElement: ToolDefinition = {
             // TEXT-BASED SEARCH — programmatic matching, 100% reliable
             const query = textSearch.toLowerCase();
             // Exact match first
-            resolvedElement = _scanElements.find(el => el.text.toLowerCase() === query);
+            resolvedElement = _scanElements.find((el) => el.text.toLowerCase() === query);
             // Substring match
             if (!resolvedElement) {
-                resolvedElement = _scanElements.find(el => el.text.toLowerCase().includes(query));
+                resolvedElement = _scanElements.find((el) => el.text.toLowerCase().includes(query));
             }
             // Reverse substring (query contains element text)
             if (!resolvedElement) {
-                resolvedElement = _scanElements.find(el => query.includes(el.text.toLowerCase()) && el.text.length > 2);
+                resolvedElement = _scanElements.find(
+                    (el) => query.includes(el.text.toLowerCase()) && el.text.length > 2,
+                );
             }
             // Fuzzy: find closest match by shared words
             if (!resolvedElement) {
@@ -1927,7 +2148,7 @@ export const osClickElement: ToolDefinition = {
                 let bestScore = 0;
                 for (const el of _scanElements) {
                     const elLower = el.text.toLowerCase();
-                    const matchedWords = queryWords.filter(w => elLower.includes(w));
+                    const matchedWords = queryWords.filter((w) => elLower.includes(w));
                     const score = matchedWords.length / queryWords.length;
                     if (score > bestScore && score >= 0.5) {
                         bestScore = score;
@@ -1940,35 +2161,46 @@ export const osClickElement: ToolDefinition = {
                 // Auto-refresh and retry once
                 try {
                     await quickAccessibilityRefresh();
-                    resolvedElement = _scanElements.find(el => el.text.toLowerCase().includes(query));
+                    resolvedElement = _scanElements.find((el) => el.text.toLowerCase().includes(query));
                     if (!resolvedElement) {
-                        resolvedElement = _scanElements.find(el => query.includes(el.text.toLowerCase()) && el.text.length > 2);
+                        resolvedElement = _scanElements.find(
+                            (el) => query.includes(el.text.toLowerCase()) && el.text.length > 2,
+                        );
                     }
-                } catch { /* fall through to error */ }
+                } catch {
+                    /* fall through to error */
+                }
             }
 
             if (!resolvedElement) {
-                const available = _scanElements.slice(0, 20).map(e => `"${e.text}"`).join(", ");
+                const available = _scanElements
+                    .slice(0, 20)
+                    .map((e) => `"${e.text}"`)
+                    .join(", ");
                 return JSON.stringify({
                     success: false,
                     error: `No element matching "${textSearch}" found. Available: ${available}. Try os_nav or os_scan to refresh, or use a different search text.`,
                 });
             }
-            console.log(`  🎯 os_click_element: Text match "${textSearch}" → [${resolvedElement.label}] "${resolvedElement.text}" at (${resolvedElement.x},${resolvedElement.y})`);
+            console.log(
+                `  🎯 os_click_element: Text match "${textSearch}" → [${resolvedElement.label}] "${resolvedElement.text}" at (${resolvedElement.x},${resolvedElement.y})`,
+            );
         } else if (label !== undefined) {
             // LABEL-BASED LOOKUP
-            resolvedElement = _scanElements.find(el => el.label === label);
+            resolvedElement = _scanElements.find((el) => el.label === label);
             if (!resolvedElement) {
                 // Auto-refresh once
                 try {
                     await quickAccessibilityRefresh();
-                    resolvedElement = _scanElements.find(el => el.label === label);
-                } catch { /* ignore */ }
+                    resolvedElement = _scanElements.find((el) => el.label === label);
+                } catch {
+                    /* ignore */
+                }
             }
             if (!resolvedElement) {
                 return JSON.stringify({
                     success: false,
-                    error: `Label ${label} not found. Available: ${_scanElements.map(e => e.label).join(", ")}. Use text= parameter for more reliable matching.`,
+                    error: `Label ${label} not found. Available: ${_scanElements.map((e) => e.label).join(", ")}. Use text= parameter for more reliable matching.`,
                 });
             }
         }
@@ -1981,25 +2213,34 @@ export const osClickElement: ToolDefinition = {
             let effectiveAction = action;
             if (action === "click" && el.role === "text") {
                 try {
-                    const frontApp = await execFileAsync("osascript", ["-e",
-                        'tell application "System Events" to return name of first process whose frontmost is true'
-                    ], { timeout: 2000 });
+                    const frontApp = await execFileAsync(
+                        "osascript",
+                        [
+                            "-e",
+                            'tell application "System Events" to return name of first process whose frontmost is true',
+                        ],
+                        { timeout: 2000 },
+                    );
                     const appName = frontApp.stdout.trim().toLowerCase();
                     const doubleClickApps = ["spotify", "music", "finder", "itunes", "vlc", "vox"];
-                    if (doubleClickApps.some(a => appName.includes(a))) {
+                    if (doubleClickApps.some((a) => appName.includes(a))) {
                         effectiveAction = "double_click";
                         console.log(`  🖱️ os_click_element: Auto-upgraded to double-click (${appName} list item)`);
                     }
-                } catch { /* keep single click */ }
+                } catch {
+                    /* keep single click */
+                }
             }
 
-            const clickType = effectiveAction === "double_click" ? "double" : effectiveAction === "right_click" ? "right" : "click";
+            const clickType =
+                effectiveAction === "double_click" ? "double" : effectiveAction === "right_click" ? "right" : "click";
             // Generate the JXA click script using screen coordinates directly
             const jxa = `
 ObjC.import('CoreGraphics');
 var pt = $.CGPointMake(${el.x}, ${el.y});
-${clickType === "double"
-    ? `var move = $.CGEventCreateMouseEvent(null, $.kCGEventMouseMoved, pt, $.kCGMouseButtonLeft);
+${
+    clickType === "double"
+        ? `var move = $.CGEventCreateMouseEvent(null, $.kCGEventMouseMoved, pt, $.kCGMouseButtonLeft);
 $.CGEventPost($.kCGHIDEventTap, move);
 delay(0.05);
 var down1 = $.CGEventCreateMouseEvent(null, $.kCGEventLeftMouseDown, pt, $.kCGMouseButtonLeft);
@@ -2017,8 +2258,8 @@ delay(0.05);
 var up2 = $.CGEventCreateMouseEvent(null, $.kCGEventLeftMouseUp, pt, $.kCGMouseButtonLeft);
 $.CGEventSetIntegerValueField(up2, $.kCGMouseEventClickState, 2);
 $.CGEventPost($.kCGHIDEventTap, up2);`
-    : clickType === "right"
-    ? `var move = $.CGEventCreateMouseEvent(null, $.kCGEventMouseMoved, pt, $.kCGMouseButtonRight);
+        : clickType === "right"
+          ? `var move = $.CGEventCreateMouseEvent(null, $.kCGEventMouseMoved, pt, $.kCGMouseButtonRight);
 $.CGEventPost($.kCGHIDEventTap, move);
 delay(0.05);
 var down = $.CGEventCreateMouseEvent(null, $.kCGEventRightMouseDown, pt, $.kCGMouseButtonRight);
@@ -2026,7 +2267,7 @@ $.CGEventPost($.kCGHIDEventTap, down);
 delay(0.05);
 var up = $.CGEventCreateMouseEvent(null, $.kCGEventRightMouseUp, pt, $.kCGMouseButtonRight);
 $.CGEventPost($.kCGHIDEventTap, up);`
-    : `var move = $.CGEventCreateMouseEvent(null, $.kCGEventMouseMoved, pt, $.kCGMouseButtonLeft);
+          : `var move = $.CGEventCreateMouseEvent(null, $.kCGEventMouseMoved, pt, $.kCGMouseButtonLeft);
 $.CGEventPost($.kCGHIDEventTap, move);
 delay(0.05);
 var down = $.CGEventCreateMouseEvent(null, $.kCGEventLeftMouseDown, pt, $.kCGMouseButtonLeft);
@@ -2053,19 +2294,22 @@ $.CGEventPost($.kCGHIDEventTap, up);`
             try {
                 if (_lastScreenshotBuffer) {
                     const beforeBuf = _lastScreenshotBuffer;
-                    await new Promise(r => setTimeout(r, 500));
+                    await new Promise((r) => setTimeout(r, 500));
                     const tmpDiffPng = join(tmpdir(), `atlas_diff_elem_${Date.now()}.png`);
                     await execFileAsync("screencapture", ["-x", tmpDiffPng], { timeout: 8000 });
                     const afterBuf = await fs.readFile(tmpDiffPng);
-                    await fs.unlink(tmpDiffPng).catch(() => { });
+                    await fs.unlink(tmpDiffPng).catch(() => {});
                     const diff = computeScreenDiff(beforeBuf, afterBuf);
                     response.screen_changed = diff > 0.05;
                     response.diff_percent = Math.round(diff * 100);
                     if (diff < 0.01) {
-                        response.warning = "Click may not have had an effect. Verify with os_screenshot or os_visual_verify.";
+                        response.warning =
+                            "Click may not have had an effect. Verify with os_screenshot or os_visual_verify.";
                     }
                 }
-            } catch { /* diff check is non-blocking — ignore errors */ }
+            } catch {
+                /* diff check is non-blocking — ignore errors */
+            }
 
             return JSON.stringify(response);
         } catch (err) {
@@ -2081,7 +2325,8 @@ export const osMultiAction: ToolDefinition = {
         type: "function",
         function: {
             name: "os_multi_action",
-            description: "Execute multiple OS actions in sequence (click, type, key, wait, verify). Reduces round-trips. Use this for common sequences like click→type→enter.",
+            description:
+                "Execute multiple OS actions in sequence (click, type, key, wait, verify). Reduces round-trips. Use this for common sequences like click→type→enter.",
             parameters: {
                 type: "object",
                 properties: {
@@ -2091,12 +2336,31 @@ export const osMultiAction: ToolDefinition = {
                         items: {
                             type: "object",
                             properties: {
-                                action: { type: "string", enum: ["click", "click_label", "type", "key", "combo", "wait", "screenshot", "verify"], description: "Action type" },
+                                action: {
+                                    type: "string",
+                                    enum: [
+                                        "click",
+                                        "click_label",
+                                        "type",
+                                        "key",
+                                        "combo",
+                                        "wait",
+                                        "screenshot",
+                                        "verify",
+                                    ],
+                                    description: "Action type",
+                                },
                                 x: { type: "number", description: "X coord (for click)" },
                                 y: { type: "number", description: "Y coord (for click)" },
                                 label: { type: "number", description: "Element label from os_scan (for click_label)" },
-                                text: { type: "string", description: "Text to type (for type) or expected text (for verify)" },
-                                key: { type: "string", description: "Key name (for key) or combo like 'command+s' (for combo)" },
+                                text: {
+                                    type: "string",
+                                    description: "Text to type (for type) or expected text (for verify)",
+                                },
+                                key: {
+                                    type: "string",
+                                    description: "Key name (for key) or combo like 'command+s' (for combo)",
+                                },
                                 ms: { type: "number", description: "Milliseconds to wait (for wait, default 500)" },
                             },
                             required: ["action"],
@@ -2120,7 +2384,13 @@ export const osMultiAction: ToolDefinition = {
         // Handle actions as JSON string (LLM often stringifies arrays) or direct array
         let rawActions = args.actions || [];
         if (typeof rawActions === "string") {
-            try { rawActions = JSON.parse(rawActions); } catch { return JSON.stringify({ error: `Failed to parse actions JSON: ${(rawActions as string).substring(0, 100)}` }); }
+            try {
+                rawActions = JSON.parse(rawActions);
+            } catch {
+                return JSON.stringify({
+                    error: `Failed to parse actions JSON: ${(rawActions as string).substring(0, 100)}`,
+                });
+            }
         }
         const actions = (Array.isArray(rawActions) ? rawActions : []).slice(0, maxActions);
         const results: Array<{ action: string; ok: boolean; error?: string; detail?: any }> = [];
@@ -2129,35 +2399,52 @@ export const osMultiAction: ToolDefinition = {
             try {
                 switch (act.action) {
                     case "click": {
-                        // Use same scaling as os_click
+                        // Use the multi-monitor-aware helper (matches os_click). Adds monitor-origin
+                        // offset + clamping that the previous bare lastScreenWidth read silently lost.
                         const RESIZE_WIDTH = 1280;
-                        const scaleFactor = (lastScreenWidth || 1440) / RESIZE_WIDTH;
-                        const sx = Math.round((act.x || 0) * scaleFactor);
-                        const sy = Math.round((act.y || 0) * scaleFactor);
+                        const dims = await getScreenDimensions({ focusedWindow: true });
+                        const scaled = scaleImageToScreen({ rawX: act.x || 0, rawY: act.y || 0, imageWidth: RESIZE_WIDTH, dims });
+                        const sx = scaled.x;
+                        const sy = scaled.y;
                         const jxa = `ObjC.import('CoreGraphics');var pt=$.CGPointMake(${sx},${sy});var m=$.CGEventCreateMouseEvent(null,$.kCGEventMouseMoved,pt,0);$.CGEventPost($.kCGHIDEventTap,m);delay(0.05);var d=$.CGEventCreateMouseEvent(null,$.kCGEventLeftMouseDown,pt,0);$.CGEventPost($.kCGHIDEventTap,d);delay(0.05);var u=$.CGEventCreateMouseEvent(null,$.kCGEventLeftMouseUp,pt,0);$.CGEventPost($.kCGHIDEventTap,u);`;
                         await execFileAsync("osascript", ["-l", "JavaScript", "-e", jxa], { timeout: 5000 });
-                        results.push({ action: "click", ok: true, detail: { x: act.x, y: act.y } });
+                        results.push({ action: "click", ok: true, detail: { x: act.x, y: act.y, screen_x: sx, screen_y: sy } });
                         break;
                     }
                     case "click_label": {
                         // Auto-refresh scan if expired
-                        if (!_scanElements.length || (Date.now() - _scanTimestamp) > SCAN_CACHE_TTL_MS) {
-                            try { await osScan.handler({}); } catch { /* fallthrough to error below */ }
+                        if (!_scanElements.length || Date.now() - _scanTimestamp > SCAN_CACHE_TTL_MS) {
+                            try {
+                                await osScan.handler({});
+                            } catch {
+                                /* fallthrough to error below */
+                            }
                         }
-                        const element = _scanElements.find(el => el.label === act.label);
+                        const element = _scanElements.find((el) => el.label === act.label);
                         if (!element) {
-                            results.push({ action: "click_label", ok: false, error: `Label ${act.label} not found after refresh` });
+                            results.push({
+                                action: "click_label",
+                                ok: false,
+                                error: `Label ${act.label} not found after refresh`,
+                            });
                             if (stopOnError) return JSON.stringify({ results, stopped_early: true });
                             break;
                         }
                         const jxa = `ObjC.import('CoreGraphics');var pt=$.CGPointMake(${element.x},${element.y});var m=$.CGEventCreateMouseEvent(null,$.kCGEventMouseMoved,pt,0);$.CGEventPost($.kCGHIDEventTap,m);delay(0.05);var d=$.CGEventCreateMouseEvent(null,$.kCGEventLeftMouseDown,pt,0);$.CGEventPost($.kCGHIDEventTap,d);delay(0.05);var u=$.CGEventCreateMouseEvent(null,$.kCGEventLeftMouseUp,pt,0);$.CGEventPost($.kCGHIDEventTap,u);`;
                         await execFileAsync("osascript", ["-l", "JavaScript", "-e", jxa], { timeout: 5000 });
-                        results.push({ action: "click_label", ok: true, detail: { label: act.label, text: element.text } });
+                        results.push({
+                            action: "click_label",
+                            ok: true,
+                            detail: { label: act.label, text: element.text },
+                        });
                         break;
                     }
                     case "type": {
                         // Use clipboard method for reliability
-                        const escaped = (act.text || "").replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+                        const escaped = (act.text || "")
+                            .replace(/\\/g, "\\\\")
+                            .replace(/"/g, '\\"')
+                            .replace(/\n/g, "\\n");
                         const script = `set the clipboard to "${escaped}"\ntell application "System Events" to keystroke "v" using command down`;
                         await execFileAsync("osascript", ["-e", script], { timeout: 5000 });
                         results.push({ action: "type", ok: true, detail: { text: act.text } });
@@ -2193,9 +2480,18 @@ export const osMultiAction: ToolDefinition = {
 
                         // Map common key names to key codes
                         const keyCodes: Record<string, number> = {
-                            return: 36, enter: 36, tab: 48, escape: 53, esc: 53,
-                            delete: 51, backspace: 51, space: 49,
-                            up: 126, down: 125, left: 123, right: 124,
+                            return: 36,
+                            enter: 36,
+                            tab: 48,
+                            escape: 53,
+                            esc: 53,
+                            delete: 51,
+                            backspace: 51,
+                            space: 49,
+                            up: 126,
+                            down: 125,
+                            left: 123,
+                            right: 124,
                         };
                         const code = keyCodes[keyInput];
                         if (code !== undefined) {
@@ -2206,7 +2502,11 @@ export const osMultiAction: ToolDefinition = {
                             const script = `tell application "System Events" to keystroke "${keyInput}"`;
                             await execFileAsync("osascript", ["-e", script], { timeout: 3000 });
                         } else {
-                            results.push({ action: "key", ok: false, error: `Unknown key: "${keyInput}". Use: return, tab, escape, delete, space, up, down, left, right, or single characters.` });
+                            results.push({
+                                action: "key",
+                                ok: false,
+                                error: `Unknown key: "${keyInput}". Use: return, tab, escape, delete, space, up, down, left, right, or single characters.`,
+                            });
                             if (stopOnError) return JSON.stringify({ results, stopped_early: true });
                             break;
                         }
@@ -2223,7 +2523,7 @@ export const osMultiAction: ToolDefinition = {
                         break;
                     }
                     case "wait": {
-                        await new Promise(r => setTimeout(r, Math.min(act.ms || 500, 5000)));
+                        await new Promise((r) => setTimeout(r, Math.min(act.ms || 500, 5000)));
                         results.push({ action: "wait", ok: true, detail: { ms: act.ms || 500 } });
                         break;
                     }
@@ -2243,9 +2543,12 @@ export const osMultiAction: ToolDefinition = {
                         await execFileAsync("screencapture", ["-x", tmp], { timeout: 8000 });
                         const ocrResult = await runOcr(tmp, "fast");
                         await fs.unlink(tmp).catch(() => {});
-                        const found = ocrResult && (ocrResult as any).elements?.some((el: any) =>
-                            similarity((act.text || "").toLowerCase(), (el.text || "").toLowerCase()) >= 0.6
-                        );
+                        const found =
+                            ocrResult &&
+                            (ocrResult as any).elements?.some(
+                                (el: any) =>
+                                    similarity((act.text || "").toLowerCase(), (el.text || "").toLowerCase()) >= 0.6,
+                            );
                         results.push({ action: "verify", ok: !!found, detail: { expected: act.text, found } });
                         if (!found && stopOnError) return JSON.stringify({ results, stopped_early: true });
                         break;
@@ -2260,7 +2563,7 @@ export const osMultiAction: ToolDefinition = {
             }
         }
 
-        return JSON.stringify({ success: results.every(r => r.ok), results });
+        return JSON.stringify({ success: results.every((r) => r.ok), results });
     },
 };
 
@@ -2271,7 +2574,8 @@ export const osZoomRegion: ToolDefinition = {
         type: "function",
         function: {
             name: "os_zoom_region",
-            description: "Zoom into a region of the last screenshot for detailed inspection. Useful for small icons, dense toolbars, or crowded menus. Pass coordinates from the last screenshot.",
+            description:
+                "Zoom into a region of the last screenshot for detailed inspection. Useful for small icons, dense toolbars, or crowded menus. Pass coordinates from the last screenshot.",
             parameters: {
                 type: "object",
                 properties: {
@@ -2293,7 +2597,10 @@ export const osZoomRegion: ToolDefinition = {
         const args = input as { x: number; y: number; width: number; height: number };
 
         if (!_lastScreenshotBuffer) {
-            return JSON.stringify({ success: false, error: "No screenshot available. Take a screenshot first with os_screenshot or os_scan." });
+            return JSON.stringify({
+                success: false,
+                error: "No screenshot available. Take a screenshot first with os_screenshot or os_scan.",
+            });
         }
 
         try {
@@ -2334,7 +2641,7 @@ print(f"{zoomed.width}x{zoomed.height}")
                 mime_type: "image/jpeg",
                 region: { x: args.x, y: args.y, width: args.width, height: args.height },
                 zoomed_size: stdout.trim(),
-                tip: "This is a 2x zoomed view of the selected region. Use os_click with the ORIGINAL screenshot coordinates (not zoomed coordinates) to interact."
+                tip: "This is a 2x zoomed view of the selected region. Use os_click with the ORIGINAL screenshot coordinates (not zoomed coordinates) to interact.",
             });
         } catch (err) {
             return JSON.stringify({ success: false, error: (err as Error).message });
@@ -2345,47 +2652,111 @@ print(f"{zoomed.width}x{zoomed.height}")
 // ── Keyboard Shortcut Database ───────────────
 
 const APP_SHORTCUTS: Record<string, Record<string, string>> = {
-    "Finder": {
-        "New window": "Cmd+N", "New folder": "Cmd+Shift+N", "Go to folder": "Cmd+Shift+G",
-        "Search": "Cmd+F", "Info": "Cmd+I", "Delete": "Cmd+Delete", "Empty trash": "Cmd+Shift+Delete",
-        "Copy": "Cmd+C", "Paste": "Cmd+V", "Select all": "Cmd+A", "Undo": "Cmd+Z",
+    Finder: {
+        "New window": "Cmd+N",
+        "New folder": "Cmd+Shift+N",
+        "Go to folder": "Cmd+Shift+G",
+        Search: "Cmd+F",
+        Info: "Cmd+I",
+        Delete: "Cmd+Delete",
+        "Empty trash": "Cmd+Shift+Delete",
+        Copy: "Cmd+C",
+        Paste: "Cmd+V",
+        "Select all": "Cmd+A",
+        Undo: "Cmd+Z",
     },
-    "Terminal": {
-        "New tab": "Cmd+T", "New window": "Cmd+N", "Clear": "Cmd+K", "Close tab": "Cmd+W",
-        "Copy": "Cmd+C", "Paste": "Cmd+V", "Find": "Cmd+F", "Split pane": "Cmd+D",
+    Terminal: {
+        "New tab": "Cmd+T",
+        "New window": "Cmd+N",
+        Clear: "Cmd+K",
+        "Close tab": "Cmd+W",
+        Copy: "Cmd+C",
+        Paste: "Cmd+V",
+        Find: "Cmd+F",
+        "Split pane": "Cmd+D",
     },
     "Visual Studio Code": {
-        "Command palette": "Cmd+Shift+P", "Quick open": "Cmd+P", "Toggle terminal": "Ctrl+`",
-        "Find": "Cmd+F", "Replace": "Cmd+H", "Find in files": "Cmd+Shift+F",
-        "Go to line": "Ctrl+G", "Go to definition": "F12", "Peek definition": "Alt+F12",
-        "Toggle sidebar": "Cmd+B", "New file": "Cmd+N", "Save": "Cmd+S", "Save all": "Cmd+Alt+S",
-        "Close tab": "Cmd+W", "Split editor": "Cmd+\\", "Toggle comment": "Cmd+/",
-        "Format document": "Shift+Alt+F", "Rename symbol": "F2", "Undo": "Cmd+Z", "Redo": "Cmd+Shift+Z",
+        "Command palette": "Cmd+Shift+P",
+        "Quick open": "Cmd+P",
+        "Toggle terminal": "Ctrl+`",
+        Find: "Cmd+F",
+        Replace: "Cmd+H",
+        "Find in files": "Cmd+Shift+F",
+        "Go to line": "Ctrl+G",
+        "Go to definition": "F12",
+        "Peek definition": "Alt+F12",
+        "Toggle sidebar": "Cmd+B",
+        "New file": "Cmd+N",
+        Save: "Cmd+S",
+        "Save all": "Cmd+Alt+S",
+        "Close tab": "Cmd+W",
+        "Split editor": "Cmd+\\",
+        "Toggle comment": "Cmd+/",
+        "Format document": "Shift+Alt+F",
+        "Rename symbol": "F2",
+        Undo: "Cmd+Z",
+        Redo: "Cmd+Shift+Z",
     },
-    "Chrome": {
-        "New tab": "Cmd+T", "Close tab": "Cmd+W", "Reopen tab": "Cmd+Shift+T",
-        "Next tab": "Ctrl+Tab", "Prev tab": "Ctrl+Shift+Tab", "Address bar": "Cmd+L",
-        "Find": "Cmd+F", "Refresh": "Cmd+R", "Hard refresh": "Cmd+Shift+R",
-        "Dev tools": "Cmd+Alt+I", "Bookmarks": "Cmd+Shift+B", "History": "Cmd+Y",
-        "New window": "Cmd+N", "Incognito": "Cmd+Shift+N", "Zoom in": "Cmd++", "Zoom out": "Cmd+-",
+    Chrome: {
+        "New tab": "Cmd+T",
+        "Close tab": "Cmd+W",
+        "Reopen tab": "Cmd+Shift+T",
+        "Next tab": "Ctrl+Tab",
+        "Prev tab": "Ctrl+Shift+Tab",
+        "Address bar": "Cmd+L",
+        Find: "Cmd+F",
+        Refresh: "Cmd+R",
+        "Hard refresh": "Cmd+Shift+R",
+        "Dev tools": "Cmd+Alt+I",
+        Bookmarks: "Cmd+Shift+B",
+        History: "Cmd+Y",
+        "New window": "Cmd+N",
+        Incognito: "Cmd+Shift+N",
+        "Zoom in": "Cmd++",
+        "Zoom out": "Cmd+-",
     },
-    "Safari": {
-        "New tab": "Cmd+T", "Close tab": "Cmd+W", "Address bar": "Cmd+L",
-        "Find": "Cmd+F", "Refresh": "Cmd+R", "Back": "Cmd+[", "Forward": "Cmd+]",
-        "Dev tools": "Cmd+Alt+I", "Private window": "Cmd+Shift+N",
+    Safari: {
+        "New tab": "Cmd+T",
+        "Close tab": "Cmd+W",
+        "Address bar": "Cmd+L",
+        Find: "Cmd+F",
+        Refresh: "Cmd+R",
+        Back: "Cmd+[",
+        Forward: "Cmd+]",
+        "Dev tools": "Cmd+Alt+I",
+        "Private window": "Cmd+Shift+N",
     },
-    "Notes": {
-        "New note": "Cmd+N", "Bold": "Cmd+B", "Italic": "Cmd+I", "Underline": "Cmd+U",
-        "Find": "Cmd+F", "Checklist": "Cmd+Shift+L", "Table": "Cmd+Alt+T",
+    Notes: {
+        "New note": "Cmd+N",
+        Bold: "Cmd+B",
+        Italic: "Cmd+I",
+        Underline: "Cmd+U",
+        Find: "Cmd+F",
+        Checklist: "Cmd+Shift+L",
+        Table: "Cmd+Alt+T",
     },
-    "Global": {
-        "Spotlight": "Cmd+Space", "Force quit": "Cmd+Alt+Esc", "Screenshot": "Cmd+Shift+3",
-        "Screenshot area": "Cmd+Shift+4", "Screenshot window": "Cmd+Shift+4 then Space",
-        "Lock screen": "Cmd+Ctrl+Q", "Mission control": "Ctrl+Up", "Show desktop": "F11",
-        "Switch app": "Cmd+Tab", "Quit app": "Cmd+Q", "Close window": "Cmd+W",
-        "Minimize": "Cmd+M", "Full screen": "Cmd+Ctrl+F", "Preferences": "Cmd+,",
-        "Cut": "Cmd+X", "Copy": "Cmd+C", "Paste": "Cmd+V", "Undo": "Cmd+Z", "Redo": "Cmd+Shift+Z",
-        "Select all": "Cmd+A", "Find": "Cmd+F",
+    Global: {
+        Spotlight: "Cmd+Space",
+        "Force quit": "Cmd+Alt+Esc",
+        Screenshot: "Cmd+Shift+3",
+        "Screenshot area": "Cmd+Shift+4",
+        "Screenshot window": "Cmd+Shift+4 then Space",
+        "Lock screen": "Cmd+Ctrl+Q",
+        "Mission control": "Ctrl+Up",
+        "Show desktop": "F11",
+        "Switch app": "Cmd+Tab",
+        "Quit app": "Cmd+Q",
+        "Close window": "Cmd+W",
+        Minimize: "Cmd+M",
+        "Full screen": "Cmd+Ctrl+F",
+        Preferences: "Cmd+,",
+        Cut: "Cmd+X",
+        Copy: "Cmd+C",
+        Paste: "Cmd+V",
+        Undo: "Cmd+Z",
+        Redo: "Cmd+Shift+Z",
+        "Select all": "Cmd+A",
+        Find: "Cmd+F",
     },
 };
 
@@ -2394,11 +2765,16 @@ export const osKeyboardShortcuts: ToolDefinition = {
         type: "function",
         function: {
             name: "os_keyboard_shortcuts",
-            description: "Get keyboard shortcuts for a macOS application. Using shortcuts is 5-10x faster than navigating menus or clicking buttons. Always check shortcuts before resorting to mouse-based navigation.",
+            description:
+                "Get keyboard shortcuts for a macOS application. Using shortcuts is 5-10x faster than navigating menus or clicking buttons. Always check shortcuts before resorting to mouse-based navigation.",
             parameters: {
                 type: "object",
                 properties: {
-                    app_name: { type: "string", description: "App to get shortcuts for (e.g., 'Visual Studio Code', 'Chrome', 'Finder'). Use 'Global' for system-wide shortcuts." },
+                    app_name: {
+                        type: "string",
+                        description:
+                            "App to get shortcuts for (e.g., 'Visual Studio Code', 'Chrome', 'Finder'). Use 'Global' for system-wide shortcuts.",
+                    },
                 },
                 required: ["app_name"],
             },

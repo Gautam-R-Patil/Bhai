@@ -102,6 +102,11 @@ desktop/hostinger-upload/
 !src/language.test.ts
 !src/utils/uuid.test.ts
 !src/utils/system-resources.test.ts
+!src/screen/__tests__/
+!src/screen/__tests__/screen-dimensions.test.ts
+!src/screen/__tests__/computer-action.test.ts
+!src/agents/__tests__/
+!src/agents/__tests__/computer-use-agent.test.ts
 !src/utils/win-shell.test.ts
 !src/utils/platform-capabilities.test.ts
 !src/commands/index.test.ts

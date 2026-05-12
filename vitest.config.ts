@@ -24,6 +24,7 @@ export default defineConfig({
             "src/prompts/**/*.test.ts",
             "src/skills/**/*.test.ts",
             "src/voice/**/*.test.ts",
+            "src/screen/**/*.test.ts",
             "convex/**/*.test.ts",
         ],
         environment: "node",

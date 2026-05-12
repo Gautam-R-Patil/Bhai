@@ -14,25 +14,35 @@
  * Outperforms monolithic approaches by 58% on long-horizon tasks.
  */
 
-import type { LLMClient, ChatCompletionMessageParam } from "../llm.js";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { ChatCompletionMessageParam, LLMClient } from "../llm.js";
+import { getScreenDimensions, percentageToScreen } from "../screen/screen-dimensions.js";
 
 // ── Types ─────────────────────────────────────
 
 export interface ScreenState {
-    screenshot?: string;         // Base64 encoded screenshot
-    ocrText?: string;            // OCR-extracted text
-    activeWindow?: string;       // Active window title
+    screenshot?: string; // Base64 encoded screenshot
+    ocrText?: string; // OCR-extracted text
+    activeWindow?: string; // Active window title
     mousePosition?: { x: number; y: number };
     screenSize?: { width: number; height: number };
-    interactiveElements?: Array<{ label: number; text: string; type: string; bounds: { x: number; y: number; w: number; h: number } }>;
+    interactiveElements?: Array<{
+        label: number;
+        text: string;
+        type: string;
+        bounds: { x: number; y: number; w: number; h: number };
+    }>;
 }
 
 export interface DesktopAction {
     type: "click" | "type" | "key" | "scroll" | "move" | "screenshot" | "wait" | "launch";
     x?: number;
     y?: number;
+    // Optional percentage coordinates in [0,1] — resolved to pixel coords at execute time.
+    // Phase 1 preferred path: resolution-independent, no Retina/multi-monitor bugs.
+    percentX?: number;
+    percentY?: number;
     text?: string;
     key?: string;
     direction?: "up" | "down";
@@ -88,141 +98,245 @@ If the task requires information you can't see on screen, say "NEED_SCREENSHOT" 
     try {
         const response = await llm.chat({
             messages,
-            systemPrompt: "You are a desktop automation manager. Plan precise low-level actions. Be specific about coordinates and targets.",
+            systemPrompt:
+                "You are a desktop automation manager. Plan precise low-level actions. Be specific about coordinates and targets.",
         });
 
         const content = response.choices?.[0]?.message?.content || "";
         return content
             .split("\n")
-            .filter(line => /^\d+\./.test(line.trim()))
-            .map(line => line.replace(/^\d+\.\s*/, "").trim())
-            .filter(s => s.length > 3);
+            .filter((line) => /^\d+\./.test(line.trim()))
+            .map((line) => line.replace(/^\d+\.\s*/, "").trim())
+            .filter((s) => s.length > 3);
     } catch {
         return [];
     }
 }
 
 /**
- * Parse a natural language action into a structured DesktopAction.
+ * Parse a natural-language plan step into a structured DesktopAction.
+ *
+ * Recognizes (in priority order):
+ *   1. JSON action blob: `{"action":"click","x":412,"y":318}` or `{"action":"click","percentX":0.42,"percentY":0.18}`
+ *   2. Percentage coords: `(50%, 30%)`, `at 0.42, 0.18`, `at x=50% y=30%`
+ *   3. Pixel coords: `(x:412, y:318)`, `(412, 318)`, `at 412, 318`, `at x=412 y=318`, `coordinates 412 318`
+ *   4. Text-target click: `click on Save button`
+ *   5. Type / press / scroll / launch / screenshot / wait
+ *
+ * Defaults to `{ type: "type", text: step }` only when no other intent is detected.
  */
 export function parseAction(step: string): DesktopAction {
-    const lower = step.toLowerCase();
+    const trimmed = step.trim();
 
-    // Click with coordinates
-    const clickMatch = step.match(/click.*?\(x:?\s*(\d+),?\s*y:?\s*(\d+)\)/i);
-    if (clickMatch) {
-        return { type: "click", x: parseInt(clickMatch[1]), y: parseInt(clickMatch[2]) };
+    // 1. Structured JSON (most reliable when the LLM follows the schema).
+    const jsonResult = tryParseJsonAction(trimmed);
+    if (jsonResult) return jsonResult;
+
+    const lower = trimmed.toLowerCase();
+
+    // 2 + 3. Coordinate-bearing intents: click/move/scroll-to.
+    const coords = extractCoordinates(trimmed);
+    if (coords) {
+        const intent = detectClickIntent(lower);
+        if (intent) return { type: intent, ...coords };
     }
 
-    // Click on text
-    if (lower.includes("click")) {
-        return { type: "click", text: step.replace(/click\s+(on\s+)?/i, "").trim() };
+    // 4. Click by text label.
+    if (/\bclick\b/i.test(lower) || /\btap\b/i.test(lower)) {
+        const text = trimmed
+            .replace(/^(please\s+)?(click|tap)\s+(on\s+|the\s+|on the\s+)?/i, "")
+            .replace(/\s+(button|link|icon|element|item)\s*$/i, "")
+            .trim();
+        if (text) return { type: "click", text };
     }
 
-    // Type text
-    const typeMatch = step.match(/type\s+"([^"]+)"|type\s+(.+)/i);
-    if (typeMatch) {
-        return { type: "type", text: typeMatch[1] || typeMatch[2]?.trim() };
+    // 5a. Type text — supports quoted, single-quoted, and bare-tail variants.
+    const typeQuoted = trimmed.match(/(?:^|\b)type\s+(?:the\s+text\s+)?["“]([^"”]+)["”]/i);
+    if (typeQuoted) return { type: "type", text: typeQuoted[1] };
+    const typeSingle = trimmed.match(/(?:^|\b)type\s+(?:the\s+text\s+)?'([^']+)'/i);
+    if (typeSingle) return { type: "type", text: typeSingle[1] };
+    const typeBare = trimmed.match(/(?:^|\b)type\s+(.+?)(?:\s+(?:then|and|press)\s|$)/i);
+    if (typeBare) return { type: "type", text: typeBare[1].trim() };
+    const enterText = trimmed.match(/(?:^|\b)enter\s+(?:the\s+text\s+)?["“]([^"”]+)["”]/i);
+    if (enterText) return { type: "type", text: enterText[1] };
+
+    // 5b. Key press / hotkey.
+    const keyMatch = trimmed.match(/(?:^|\b)(?:press|hit)\s+(?:the\s+)?(.+?)(?:\s+key)?$/i);
+    if (keyMatch) return { type: "key", key: keyMatch[1].trim() };
+
+    // 5c. Scroll.
+    if (/\bscroll\b/i.test(lower)) {
+        const direction = /\b(up|upward)\b/i.test(lower) ? "up" : "down";
+        return { type: "scroll", direction };
     }
 
-    // Key press
-    const keyMatch = step.match(/press\s+(.+)/i);
-    if (keyMatch) {
-        return { type: "key", key: keyMatch[1].trim() };
+    // 5d. Launch / open app.
+    const launchMatch = trimmed.match(/(?:^|\b)(?:open|launch|start)\s+(?:the\s+)?(.+?)(?:\s+app)?$/i);
+    if (launchMatch && !/\bbrowser_/i.test(lower)) {
+        const app = launchMatch[1].trim();
+        if (app.length > 0 && app.length < 50) return { type: "launch", app };
     }
 
-    // Scroll
-    if (lower.includes("scroll")) {
-        return { type: "scroll", direction: lower.includes("up") ? "up" : "down" };
-    }
-
-    // Launch app
-    const launchMatch = step.match(/open\s+(.+)|launch\s+(.+)/i);
-    if (launchMatch) {
-        return { type: "launch", app: (launchMatch[1] || launchMatch[2]).trim() };
-    }
-
-    // Screenshot
-    if (lower.includes("screenshot") || lower.includes("need_screenshot")) {
+    // 5e. Screenshot.
+    if (/\b(screenshot|capture\s+screen|need_screenshot)\b/i.test(lower)) {
         return { type: "screenshot" };
     }
 
-    // Wait
-    if (lower.includes("wait")) {
-        return { type: "wait", delay: 1000 };
+    // 5f. Wait.
+    if (/\bwait\b/i.test(lower)) {
+        const ms = trimmed.match(/(\d+)\s*(?:ms|millisecond)/i);
+        const s = trimmed.match(/(\d+(?:\.\d+)?)\s*(?:s\b|sec(?:ond)?s?)/i);
+        let delay = 1000;
+        if (ms) delay = parseInt(ms[1], 10);
+        else if (s) delay = Math.round(parseFloat(s[1]) * 1000);
+        return { type: "wait", delay };
     }
 
-    // Default: treat as text to type
-    return { type: "type", text: step };
+    // 6. Default: fall back to typing the text. This is intentionally last-resort —
+    // earlier code reached this far on common LLM phrasings, which was the
+    // root-cause of "agent randomly types instead of clicking" bugs.
+    return { type: "type", text: trimmed };
+}
+
+function tryParseJsonAction(text: string): DesktopAction | null {
+    const m = text.match(/\{[\s\S]*?"action"\s*:\s*"[^"]+"[\s\S]*?\}/);
+    if (!m) return null;
+    try {
+        const obj = JSON.parse(m[0]) as Record<string, unknown>;
+        const act = String(obj.action || "").toLowerCase();
+        const out: DesktopAction = { type: "screenshot" };
+        if (act === "click" || act === "tap") out.type = "click";
+        else if (act === "double_click" || act === "doubleclick") out.type = "click";
+        else if (act === "right_click" || act === "rightclick") out.type = "click";
+        else if (act === "move") out.type = "move";
+        else if (act === "type" || act === "write") out.type = "type";
+        else if (act === "key" || act === "press" || act === "keypress") out.type = "key";
+        else if (act === "scroll") out.type = "scroll";
+        else if (act === "launch" || act === "open") out.type = "launch";
+        else if (act === "screenshot" || act === "capture") out.type = "screenshot";
+        else if (act === "wait") out.type = "wait";
+        else return null;
+        if (typeof obj.x === "number") out.x = obj.x;
+        if (typeof obj.y === "number") out.y = obj.y;
+        if (typeof obj.percentX === "number") out.percentX = obj.percentX;
+        if (typeof obj.percentY === "number") out.percentY = obj.percentY;
+        if (typeof obj.text === "string") out.text = obj.text;
+        if (typeof obj.key === "string") out.key = obj.key;
+        if (typeof obj.app === "string") out.app = obj.app;
+        if (typeof obj.delay === "number") out.delay = obj.delay;
+        const dir = obj.direction;
+        if (dir === "up" || dir === "down") out.direction = dir;
+        return out;
+    } catch {
+        return null;
+    }
+}
+
+function extractCoordinates(step: string): { x?: number; y?: number; percentX?: number; percentY?: number } | null {
+    // Percentage coords: (50%, 30%) or x=50% y=30% or 0.42, 0.18
+    const pctParen = step.match(/\(\s*(\d+(?:\.\d+)?)\s*%\s*,\s*(\d+(?:\.\d+)?)\s*%\s*\)/);
+    if (pctParen) return { percentX: parseFloat(pctParen[1]) / 100, percentY: parseFloat(pctParen[2]) / 100 };
+    const pctEq = step.match(/x\s*=\s*(\d+(?:\.\d+)?)\s*%\s*[, ]\s*y\s*=\s*(\d+(?:\.\d+)?)\s*%/i);
+    if (pctEq) return { percentX: parseFloat(pctEq[1]) / 100, percentY: parseFloat(pctEq[2]) / 100 };
+    // Normalized 0..1 floats: (0.42, 0.18)
+    const normParen = step.match(/\(\s*(0\.\d+)\s*,\s*(0\.\d+)\s*\)/);
+    if (normParen) return { percentX: parseFloat(normParen[1]), percentY: parseFloat(normParen[2]) };
+
+    // Pixel coords — multiple forms.
+    const pxLabeled = step.match(/\(\s*x\s*:?=?\s*(-?\d+)\s*,?\s*y\s*:?=?\s*(-?\d+)\s*\)/i);
+    if (pxLabeled) return { x: parseInt(pxLabeled[1], 10), y: parseInt(pxLabeled[2], 10) };
+    const pxEq = step.match(/x\s*=\s*(-?\d+)\s*[, ]\s*y\s*=\s*(-?\d+)/i);
+    if (pxEq) return { x: parseInt(pxEq[1], 10), y: parseInt(pxEq[2], 10) };
+    const pxAt = step.match(/(?:at|coords?|coordinates?|position)\s+\(?\s*(-?\d{1,5})\s*[,\s]\s*(-?\d{1,5})\s*\)?/i);
+    if (pxAt) return { x: parseInt(pxAt[1], 10), y: parseInt(pxAt[2], 10) };
+    const pxParen = step.match(/\(\s*(-?\d{1,5})\s*,\s*(-?\d{1,5})\s*\)/);
+    if (pxParen) return { x: parseInt(pxParen[1], 10), y: parseInt(pxParen[2], 10) };
+    return null;
+}
+
+function detectClickIntent(lower: string): "click" | "move" | null {
+    if (/\b(click|tap|press)\b/.test(lower)) return "click";
+    if (/\b(move|hover)\b/.test(lower)) return "move";
+    return null;
 }
 
 // ── Worker: Execute Actions ───────────────────
 
 /**
- * Execute a desktop action using AppleScript/cliclick.
+ * Execute a desktop action.
+ *
+ * Resolves percentage coords → pixel coords via the multi-monitor-aware
+ * getScreenDimensions() helper. Uses clipboard-paste for typing (Unicode-safe,
+ * fast, matches the reliability of the canonical os_type tool).
+ *
  * Returns whether the action succeeded.
  */
 export async function executeDesktopAction(action: DesktopAction): Promise<boolean> {
-    const { execFile } = require("node:child_process");
-    const { promisify } = require("node:util");
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
     const exec = promisify(execFile);
 
     try {
         switch (action.type) {
             case "click":
-                if (action.x !== undefined && action.y !== undefined) {
-                    // Use cliclick for precise coordinate clicks
-                    await exec("cliclick", ["c:" + action.x + "," + action.y]);
+            case "move": {
+                const resolved = await resolveCoordinates(action);
+                if (resolved) {
+                    const haveCliclick = await commandExists("cliclick");
+                    if (action.type === "move") {
+                        if (haveCliclick) await exec("cliclick", [`m:${resolved.x},${resolved.y}`]);
+                        else await nativeMouseMoveJxa(resolved.x, resolved.y);
+                    } else {
+                        if (haveCliclick) await exec("cliclick", [`c:${resolved.x},${resolved.y}`]);
+                        else await nativeClickJxa(resolved.x, resolved.y);
+                    }
                 } else if (action.text) {
-                    // Use AppleScript to find and click by text
-                    await exec("osascript", ["-e",
-                        `tell application "System Events" to click (first UI element whose name contains "${action.text.replace(/"/g, '\\"')}")`
+                    // Click by text — use canonical accessibility-first path.
+                    await exec("osascript", [
+                        "-e",
+                        `tell application "System Events" to click (first UI element whose name contains "${escapeApplescript(action.text)}")`,
                     ]);
+                } else {
+                    return false;
                 }
                 return true;
+            }
 
             case "type":
                 if (action.text) {
-                    await exec("osascript", ["-e",
-                        `tell application "System Events" to keystroke "${action.text.replace(/"/g, '\\"')}"`
-                    ]);
+                    await pasteText(action.text);
                 }
                 return true;
 
             case "key":
                 if (action.key) {
-                    const keyMap: Record<string, string> = {
-                        "enter": "return", "tab": "tab", "escape": "escape",
-                        "backspace": "delete", "space": "space",
-                    };
-                    const key = keyMap[action.key.toLowerCase()] || action.key;
-                    await exec("osascript", ["-e",
-                        `tell application "System Events" to key code ${key === "return" ? "36" : "0"}`
-                    ]);
+                    await pressKey(action.key);
                 }
                 return true;
 
-            case "scroll":
-                const scrollAmount = action.direction === "up" ? -5 : 5;
-                await exec("osascript", ["-e",
-                    `tell application "System Events" to scroll area 1 of front window by ${scrollAmount}`
+            case "scroll": {
+                const amount = action.direction === "up" ? -5 : 5;
+                await exec("osascript", [
+                    "-e",
+                    `tell application "System Events" to scroll area 1 of front window by ${amount}`,
                 ]);
                 return true;
+            }
 
             case "launch":
                 if (action.app) {
                     await exec("open", ["-a", action.app]);
-                    await new Promise(r => setTimeout(r, 1000));
+                    await new Promise((r) => setTimeout(r, 1000));
                 }
                 return true;
 
             case "screenshot":
-                // Take screenshot to temp file for vision analysis
                 await exec("screencapture", ["-x", path.join(tmpdir(), "atlas-screen.png")]);
                 return true;
 
             case "wait":
-                await new Promise(r => setTimeout(r, action.delay || 1000));
+                // Cap wait at 30s to prevent an LLM-supplied huge delay from stalling the loop.
+                await new Promise((r) => setTimeout(r, Math.max(0, Math.min(30_000, action.delay || 1000))));
                 return true;
 
             default:
@@ -231,6 +345,178 @@ export async function executeDesktopAction(action: DesktopAction): Promise<boole
     } catch (err) {
         console.warn(`[COMPUTER-USE] Action failed:`, (err as Error).message);
         return false;
+    }
+}
+
+async function resolveCoordinates(action: DesktopAction): Promise<{ x: number; y: number } | null> {
+    // Percentage path: resolution-independent, multi-monitor aware.
+    if (typeof action.percentX === "number" && typeof action.percentY === "number") {
+        const dims = await getScreenDimensions({ focusedWindow: true });
+        return percentageToScreen({ percentX: action.percentX, percentY: action.percentY, dims });
+    }
+    // Pixel path: trust the agent's coords (already in screen space at this layer).
+    if (typeof action.x === "number" && typeof action.y === "number") {
+        return { x: Math.round(action.x), y: Math.round(action.y) };
+    }
+    return null;
+}
+
+// Cache `which <cmd>` lookups at module scope. `commandExists` was previously called
+// per-click; caching turns N forks into one. The cache lives for the process lifetime —
+// users who install/remove cliclick mid-session must restart, which is acceptable.
+const _commandCache = new Map<string, Promise<boolean>>();
+async function commandExists(cmd: string): Promise<boolean> {
+    if (process.platform !== "darwin" && process.platform !== "linux") return false;
+    const cached = _commandCache.get(cmd);
+    if (cached) return cached;
+    const probe = (async () => {
+        try {
+            const { execFile } = await import("node:child_process");
+            const { promisify } = await import("node:util");
+            const exec = promisify(execFile);
+            await exec("which", [cmd], { timeout: 1000 });
+            return true;
+        } catch {
+            return false;
+        }
+    })();
+    _commandCache.set(cmd, probe);
+    return probe;
+}
+
+async function nativeClickJxa(x: number, y: number): Promise<void> {
+    if (process.platform !== "darwin") return;
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const exec = promisify(execFile);
+    const script = `
+ObjC.import('CoreGraphics');
+var point = $.CGPointMake(${x}, ${y});
+$.CGEventPost($.kCGHIDEventTap, $.CGEventCreateMouseEvent(null, $.kCGEventMouseMoved, point, $.kCGMouseButtonLeft));
+delay(0.05);
+$.CGEventPost($.kCGHIDEventTap, $.CGEventCreateMouseEvent(null, $.kCGEventLeftMouseDown, point, $.kCGMouseButtonLeft));
+delay(0.05);
+$.CGEventPost($.kCGHIDEventTap, $.CGEventCreateMouseEvent(null, $.kCGEventLeftMouseUp, point, $.kCGMouseButtonLeft));
+"clicked"`;
+    await exec("osascript", ["-l", "JavaScript", "-e", script], { timeout: 5000 });
+}
+
+async function nativeMouseMoveJxa(x: number, y: number): Promise<void> {
+    if (process.platform !== "darwin") return;
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const exec = promisify(execFile);
+    const script = `
+ObjC.import('CoreGraphics');
+$.CGEventPost($.kCGHIDEventTap, $.CGEventCreateMouseEvent(null, $.kCGEventMouseMoved, $.CGPointMake(${x}, ${y}), $.kCGMouseButtonLeft));
+"moved"`;
+    await exec("osascript", ["-l", "JavaScript", "-e", script], { timeout: 5000 });
+}
+
+/**
+ * Escape text for SAFE embedding into an AppleScript double-quoted string literal.
+ * Handles every char that can break out of the string context or terminate a statement
+ * (newline / CR are osascript statement separators). Also filters Unicode line/paragraph
+ * separators that some osascript versions treat as line breaks.
+ */
+function escapeApplescript(text: string): string {
+    return text
+        .replace(/\\/g, "\\\\")
+        .replace(/"/g, '\\"')
+        .replace(/\n/g, "\\n")
+        .replace(/\r/g, "\\r")
+        .replace(/\t/g, "\\t")
+        .replace(/[\u2028\u2029\x00]/g, "");
+}
+
+/**
+ * Type text via clipboard-paste (Unicode + emoji-safe; faster than per-char keystroke).
+ * Saves and restores the user's clipboard around the paste.
+ * Mirrors the strategy used in os_type to keep both code paths consistent.
+ */
+async function pasteText(text: string): Promise<void> {
+    if (process.platform !== "darwin") return;
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const exec = promisify(execFile);
+    const escaped = escapeApplescript(text).replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t");
+    const script = `
+set oldClipboard to ""
+try
+    set oldClipboard to the clipboard as text
+end try
+set the clipboard to "${escaped}"
+tell application "System Events"
+    keystroke "v" using command down
+end tell
+delay 0.3
+try
+    set the clipboard to oldClipboard
+end try`;
+    await exec("osascript", ["-e", script], { timeout: 10000 });
+}
+
+async function pressKey(key: string): Promise<void> {
+    if (process.platform !== "darwin") return;
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const exec = promisify(execFile);
+    const lower = key.toLowerCase();
+    const keyCodes: Record<string, number> = {
+        return: 36,
+        enter: 36,
+        tab: 48,
+        escape: 53,
+        esc: 53,
+        delete: 51,
+        backspace: 51,
+        space: 49,
+        up: 126,
+        down: 125,
+        left: 123,
+        right: 124,
+        f1: 122,
+        f2: 120,
+        f3: 99,
+        f4: 118,
+        f5: 96,
+        f6: 97,
+        f7: 98,
+        f8: 100,
+        f9: 101,
+        f10: 109,
+        f11: 103,
+        f12: 111,
+    };
+    // Handle hotkey combos like "command+s" or "ctrl+c"
+    if (lower.includes("+")) {
+        const parts = lower.split("+").map((p) => p.trim());
+        const target = parts.pop() || "";
+        const mods: string[] = [];
+        for (const m of parts) {
+            if (m === "command" || m === "cmd") mods.push("command down");
+            else if (m === "shift") mods.push("shift down");
+            else if (m === "option" || m === "alt") mods.push("option down");
+            else if (m === "control" || m === "ctrl") mods.push("control down");
+        }
+        const modStr = mods.length ? ` using {${mods.join(", ")}}` : "";
+        if (target in keyCodes) {
+            await exec("osascript", [
+                "-e",
+                `tell application "System Events" to key code ${keyCodes[target]}${modStr}`,
+            ]);
+        } else {
+            await exec("osascript", [
+                "-e",
+                `tell application "System Events" to keystroke "${escapeApplescript(target)}"${modStr}`,
+            ]);
+        }
+        return;
+    }
+    if (lower in keyCodes) {
+        await exec("osascript", ["-e", `tell application "System Events" to key code ${keyCodes[lower]}`]);
+    } else {
+        await exec("osascript", ["-e", `tell application "System Events" to keystroke "${escapeApplescript(key)}"`]);
     }
 }
 
@@ -248,8 +534,9 @@ function describeScreen(state: ScreenState): string {
     }
 
     if (state.interactiveElements && state.interactiveElements.length > 0) {
-        const elements = state.interactiveElements.slice(0, 30)
-            .map(e => `  [${e.label}] ${e.type}: "${e.text}" at (${e.bounds.x},${e.bounds.y})`)
+        const elements = state.interactiveElements
+            .slice(0, 30)
+            .map((e) => `  [${e.label}] ${e.type}: "${e.text}" at (${e.bounds.x},${e.bounds.y})`)
             .join("\n");
         parts.push(`Interactive elements:\n${elements}`);
     }
@@ -284,10 +571,16 @@ export async function executeComputerUseTask(
         return { success: false, actionsExecuted: [], finalState: "No plan generated", stepsUsed: 0 };
     }
 
-    // Execute each step
+    // Execute each step with post-action verification.
     for (const step of plan.slice(0, maxSteps)) {
         stepsUsed++;
         const action = parseAction(step);
+
+        // Capture a "before" screenshot for diff-based verification of click/key actions.
+        const needsVerify = action.type === "click" || action.type === "key" || action.type === "type";
+        let beforeBuf: Buffer | null = null;
+        if (needsVerify) beforeBuf = await captureScreenForDiff();
+
         const success = await executeDesktopAction(action);
         actions.push(action);
 
@@ -301,8 +594,23 @@ export async function executeComputerUseTask(
             };
         }
 
-        // Brief pause between actions
-        await new Promise(r => setTimeout(r, 300));
+        // Settle delay — Anthropic recommends 2.0s for stable UI after actions.
+        // We use 800ms as a middle ground: long enough for most UI to repaint, short enough to stay interactive.
+        await new Promise((r) => setTimeout(r, action.type === "click" ? 800 : 300));
+
+        // Best-effort verification: if the screen didn't change at all after a click,
+        // log a warning (the model can inspect this on the next iteration).
+        if (needsVerify && beforeBuf) {
+            const afterBuf = await captureScreenForDiff();
+            if (afterBuf) {
+                const diff = computeScreenDiff(beforeBuf, afterBuf);
+                if (diff < 0.005 && action.type === "click") {
+                    console.warn(
+                        `[COMPUTER-USE] Step ${stepsUsed} (${action.type}) produced no visible change (diff=${(diff * 100).toFixed(2)}%) — click may have missed.`,
+                    );
+                }
+            }
+        }
     }
 
     return {
@@ -315,14 +623,61 @@ export async function executeComputerUseTask(
 
 async function getActiveWindow(): Promise<string> {
     try {
-        const { execFile } = require("node:child_process");
-        const { promisify } = require("node:util");
+        const { execFile } = await import("node:child_process");
+        const { promisify } = await import("node:util");
         const exec = promisify(execFile);
-        const { stdout } = await exec("osascript", ["-e",
-            'tell application "System Events" to get name of first process whose frontmost is true'
+        const { stdout } = await exec("osascript", [
+            "-e",
+            'tell application "System Events" to get name of first process whose frontmost is true',
         ]);
         return stdout.trim();
     } catch {
         return "unknown";
     }
+}
+
+/** Capture a small screenshot used only for diff-based action verification. */
+async function captureScreenForDiff(): Promise<Buffer | null> {
+    if (process.platform !== "darwin") return null;
+    let tmp: string | null = null;
+    try {
+        const { execFile } = await import("node:child_process");
+        const { promisify } = await import("node:util");
+        const { readFile, unlink, open } = await import("node:fs/promises");
+        const exec = promisify(execFile);
+        tmp = path.join(tmpdir(), `atlas_verify_${Date.now()}_${Math.floor(Math.random() * 1e6)}.png`);
+        // Pre-create the file with 0o600 so screencapture (which preserves existing-file mode)
+        // doesn't leave a world-readable PNG of the user's desktop in /tmp.
+        const handle = await open(tmp, "w", 0o600);
+        await handle.close();
+        await exec("screencapture", ["-x", tmp], { timeout: 5000 });
+        const buf = await readFile(tmp);
+        unlink(tmp).catch(() => {});
+        return buf;
+    } catch {
+        if (tmp) {
+            try {
+                const { unlink } = await import("node:fs/promises");
+                await unlink(tmp);
+            } catch {
+                /* best-effort */
+            }
+        }
+        return null;
+    }
+}
+
+/** Pixel-sampled diff (0.0 = identical, 1.0 = completely different). */
+function computeScreenDiff(before: Buffer, after: Buffer): number {
+    const samples = 500;
+    const minLen = Math.min(before.length, after.length);
+    if (minLen < samples) return 1.0;
+    const step = Math.max(1, Math.floor(minLen / samples));
+    let diffCount = 0;
+    let total = 0;
+    for (let i = 0; i < minLen; i += step) {
+        total++;
+        if (Math.abs(before[i] - after[i]) > 10) diffCount++;
+    }
+    return total > 0 ? diffCount / total : 1.0;
 }
