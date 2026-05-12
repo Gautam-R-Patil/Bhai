@@ -9,10 +9,20 @@ license = "Proprietary"
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+# Default build excludes voice/VAD because libfvad needs a C compiler (cc-rs +
+# clang/gcc/MSVC) which adds ~30-60s to clean builds. Builds that want native
+# barge-in detection opt in: `napi build --features vad`.
+default = []
+vad = ["webrtc-vad"]
+
 [dependencies]
 # NAPI-RS for Node.js bindings
 napi = { version = "2", features = ["napi9"] }
 napi-derive = "2"
+
+# Voice activity detection (Phase 3) — gated behind `vad` feature.
+webrtc-vad = { version = "0.4", optional = true }
 
 # SIMD-accelerated operations
 wide = "0.7"          # Portable SIMD abstractions

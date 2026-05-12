@@ -66,6 +66,9 @@ mod browser_guard;
 mod harness_optimizer;
 mod secrets_sanitizer;
 
+#[cfg(feature = "vad")]
+mod pcm_vad;
+
 use napi_derive::napi;
 
 // Re-export all public functions
@@ -130,6 +133,9 @@ pub use ip_guard::*;
 pub use browser_guard::*;
 pub use harness_optimizer::*;
 pub use secrets_sanitizer::*;
+
+#[cfg(feature = "vad")]
+pub use pcm_vad::*;
 
 /// Get the native module version
 #[napi]

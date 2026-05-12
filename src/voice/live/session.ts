@@ -27,6 +27,7 @@ import { getLightMemoryRefresh, detectMemoryVerb } from "./memory-bridge.js";
 import { startScreenShare, stopScreenShare } from "./screen-share.js";
 import { TranscriptSpeaker } from "./transcript-speaker.js";
 import { getAck, startAckBankWarmup, isAckBankReady } from "./ack-bank.js";
+import { nativeVadAnyFrame16Khz } from "../../native/index.js";
 
 // ── Session State ────────────────────────────────
 
@@ -37,6 +38,41 @@ type SessionState = "idle" | "connecting" | "active" | "stopping";
 // around 200-600, room noise at 100-200, intentional speech at 1500+. Pick
 // 1200 as a starting floor; env-overrideable for tuning in the field.
 const BARGE_IN_RMS_THRESHOLD = Number(process.env.ATLAS_BARGE_IN_RMS) || 1200;
+
+// libfvad-backed barge-in gate. Opt-IN: set `ATLAS_NATIVE_VAD=true` AND build
+// the native module with the `vad` cargo feature (`napi build --features vad`)
+// to enable. The RMS threshold above is a crude amplitude gate that
+// false-positives on background noise / music; libfvad classifies the actual
+// signal spectrum. Aggressiveness 2 is the sensible default — mode 3 (very
+// aggressive) cuts even legitimate quiet speech.
+//
+// When enabled but native is missing the function (build without `vad` feature),
+// the gate transparently falls back to RMS. No hard failure.
+const NATIVE_VAD_ENABLED = process.env.ATLAS_NATIVE_VAD === "true";
+const VAD_AGGRESSIVENESS = (() => {
+    const n = Number(process.env.ATLAS_VAD_MODE);
+    if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0 || n > 3) return 2;
+    return n;
+})();
+
+// One-shot warnings for the silent-fallback cases — printed once per process
+// per reason so a misconfigured ATLAS_NATIVE_VAD doesn't waste debugging time.
+const _vadWarnedReasons = new Set<string>();
+function warnVadFallbackOnce(reason: "missing-feature" | "frame-shape", err?: unknown): void {
+    if (_vadWarnedReasons.has(reason)) return;
+    _vadWarnedReasons.add(reason);
+    if (reason === "missing-feature") {
+        console.warn(
+            "[LIVE-SESSION] ATLAS_NATIVE_VAD=true but native binary lacks `vad` feature — falling back to RMS. " +
+                "Rebuild with `cd native && npx napi build --features vad --release`.",
+        );
+    } else {
+        console.warn(
+            "[LIVE-SESSION] Native VAD threw on a mic frame; falling back to RMS:",
+            err instanceof Error ? err.message : String(err),
+        );
+    }
+}
 
 function computePcmRms(buf: Buffer): number {
     if (buf.length < 2) return 0;
@@ -401,6 +437,38 @@ export class LiveVoiceSession extends EventEmitter {
 
     // ── Backend Selection ─────────────────────────
 
+    /**
+     * Hybrid-mode barge-in gate. While Kokoro is speaking through the speaker
+     * (no AEC on the sox path), the mic picks up our own voice. We must
+     * forward the mic ONLY when the user is genuinely speaking, otherwise we
+     * feedback-loop the AI's own words back through STT.
+     *
+     * Two strategies, picked at runtime:
+     *   1. libfvad (when ATLAS_NATIVE_VAD=true AND the native module was
+     *      built with the `vad` cargo feature): spectrum-aware, ignores
+     *      background noise / music far better than RMS.
+     *   2. RMS threshold (default and fallback): cheap amplitude gate. Loud
+     *      bleed-through and any sustained noise above ~1200 RMS passes.
+     *
+     * `pcm` is 100ms (3200 bytes) of 16kHz mono i16 from mic-capture. For
+     * libfvad, that's 5 × 20ms sub-frames; we return true if ANY sub-frame
+     * is classified as speech (early-exit on first hit).
+     */
+    private passesBargeInGate(pcm: Buffer): boolean {
+        if (NATIVE_VAD_ENABLED) {
+            try {
+                const r = nativeVadAnyFrame16Khz(pcm, VAD_AGGRESSIVENESS);
+                if (r !== null) return r;
+                // native unavailable (module built without `vad` feature) → fall through
+                warnVadFallbackOnce("missing-feature");
+            } catch (err) {
+                // bad frame shape → fall through to RMS, don't crash the mic loop
+                warnVadFallbackOnce("frame-shape", err);
+            }
+        }
+        return computePcmRms(pcm) >= BARGE_IN_RMS_THRESHOLD;
+    }
+
     private selectBackend(): LiveVoiceBackend {
         const { backend, keys } = this.config;
 
@@ -445,7 +513,7 @@ export class LiveVoiceSession extends EventEmitter {
             // tune BARGE_IN_RMS_THRESHOLD.
             if (this.speaker.isSpeaking()) {
                 if (!this.hybridMode) return;               // native: hard gate
-                if (computePcmRms(pcm) < BARGE_IN_RMS_THRESHOLD) return;
+                if (!this.passesBargeInGate(pcm)) return;
             }
             this.backend.sendAudio(pcm);
         });

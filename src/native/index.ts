@@ -46,6 +46,8 @@ interface NativeModule {
     dedupActivationResults?(results: NativeActivationResult[]): NativeActivationResult[];
     sanitizeSecrets?(input: string): NativeSanitizeResult;
     containsSecrets?(input: string): boolean;
+    isSpeechFrame16Khz?(pcm: Buffer, aggressiveness: number): boolean;
+    anySpeechFrame16Khz?(pcm: Buffer, aggressiveness: number): boolean;
 }
 
 export interface NativeEntityRelation {
@@ -359,4 +361,30 @@ export function nativeSanitizeSecrets(input: string): NativeSanitizeResult | nul
 export function nativeContainsSecrets(input: string): boolean | null {
     if (!useNative || !nativeModule?.containsSecrets) return null;
     return nativeModule.containsSecrets(input);
+}
+
+// ── PCM Voice Activity Detection (Phase 3) ────────
+
+/**
+ * libfvad-backed speech detector for a single 10/20/30 ms 16 kHz mono i16
+ * PCM frame (320 / 640 / 960 bytes). Returns null if native is unavailable
+ * OR the native module wasn't built with the `vad` cargo feature. Throws on
+ * bad frame length (caller bug).
+ *
+ * `aggressiveness` 0-3 (0=quality / 3=very aggressive — fewer false positives,
+ * more false negatives). Mode 2 is the sensible default for barge-in.
+ */
+export function nativeVadFrame16Khz(pcm: Buffer, aggressiveness: number): boolean | null {
+    if (!useNative || !nativeModule?.isSpeechFrame16Khz) return null;
+    return nativeModule.isSpeechFrame16Khz(pcm, aggressiveness);
+}
+
+/**
+ * Same as `nativeVadFrame16Khz` but takes a multi-frame chunk (any multiple
+ * of 640 bytes; 20 ms × 16 kHz × 2 bytes) and returns true on the first
+ * speech sub-frame. Designed for ATLAS's 100 ms (3200-byte) mic chunks.
+ */
+export function nativeVadAnyFrame16Khz(pcm: Buffer, aggressiveness: number): boolean | null {
+    if (!useNative || !nativeModule?.anySpeechFrame16Khz) return null;
+    return nativeModule.anySpeechFrame16Khz(pcm, aggressiveness);
 }

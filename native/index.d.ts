@@ -3096,6 +3096,29 @@ export declare function sanitizeSecrets(input: string): SanitizeResultNapi
  * per the TS semantics. Short-circuits on the first non-redacted match.
  */
 export declare function containsSecrets(input: string): boolean
+/**
+ * Classify a single 10/20/30ms frame of 16kHz mono i16 PCM as speech or not.
+ *
+ * `pcm` must be a `Buffer` of exactly 320 (10ms), 640 (20ms), or 960 (30ms)
+ * bytes — i.e. 160/320/480 i16 samples little-endian. Any other length
+ * throws. `aggressiveness` is 0-3.
+ *
+ * We instantiate a fresh `Vad` per call. libfvad's state is small (~hundreds
+ * of bytes) and per-call construction lets the JS caller change modes
+ * dynamically without holding a handle. The construction cost is ~1-5μs
+ * per call which is negligible at 50Hz (frame rate).
+ */
+export declare function isSpeechFrame16Khz(pcm: Buffer, aggressiveness: number): boolean
+/**
+ * Convenience: scan a longer 16kHz PCM chunk by splitting it into 20ms
+ * sub-frames and returning true if ANY sub-frame is classified as speech.
+ * `pcm` may be any length that's a multiple of 640 bytes (20ms × 16kHz × 2
+ * bytes/sample). The 100ms mic chunks ATLAS uses are 3200 bytes = 5 frames.
+ *
+ * Returning early on the first speech-positive frame minimizes per-chunk
+ * cost in the common silent-chunk case.
+ */
+export declare function anySpeechFrame16Khz(pcm: Buffer, aggressiveness: number): boolean
 /** Get the native module version */
 export declare function getVersion(): string
 /** Check if SIMD is available on this platform */
