@@ -2,10 +2,10 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import type { ToolDefinition } from "./get-current-time.js";
-import { getSessionToken } from "../session.js";
 import { getConvexSiteUrl } from "../config/keys.js";
 import { encryptedFetch } from "../crypto-transport.js";
+import { getSessionToken } from "../session.js";
+import type { ToolDefinition } from "./get-current-time.js";
 
 // ── Web Search Tool ───────────────────────────
 // Lightweight, fetch-only search. NO Playwright, NO headless browser.
@@ -58,7 +58,12 @@ async function searchDDGLite(query: string): Promise<SearchResult[]> {
         const snippets: string[] = [];
         let match;
         while ((match = snippetPattern.exec(html)) !== null) {
-            snippets.push(match[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
+            snippets.push(
+                match[1]
+                    .replace(/<[^>]+>/g, " ")
+                    .replace(/\s+/g, " ")
+                    .trim(),
+            );
         }
 
         let i = 0;
@@ -68,7 +73,9 @@ async function searchDDGLite(query: string): Promise<SearchResult[]> {
 
             // Decode DDG redirect URL
             if (resultUrl.includes("uddg=")) {
-                try { resultUrl = decodeURIComponent(resultUrl.split("uddg=")[1].split("&")[0]); } catch { }
+                try {
+                    resultUrl = decodeURIComponent(resultUrl.split("uddg=")[1].split("&")[0]);
+                } catch {}
             }
 
             if (title.length > 3 && resultUrl.startsWith("http")) {
@@ -89,7 +96,9 @@ async function searchDDGLite(query: string): Promise<SearchResult[]> {
                 let resultUrl = match[1];
                 const title = match[2].replace(/<[^>]+>/g, "").trim();
                 if (resultUrl.includes("uddg=")) {
-                    try { resultUrl = decodeURIComponent(resultUrl.split("uddg=")[1].split("&")[0]); } catch { }
+                    try {
+                        resultUrl = decodeURIComponent(resultUrl.split("uddg=")[1].split("&")[0]);
+                    } catch {}
                 }
                 if (title.length > 3 && resultUrl.startsWith("http")) {
                     results.push({ url: resultUrl, title, snippet: snippets[i] || "" });
@@ -115,7 +124,7 @@ async function searchBraveLite(query: string): Promise<SearchResult[]> {
         const response = await fetch(url, {
             headers: {
                 "User-Agent": randomUA(),
-                "Accept": "text/html,application/xhtml+xml",
+                Accept: "text/html,application/xhtml+xml",
                 "Accept-Language": "en-US,en;q=0.9",
             },
             redirect: "follow",
@@ -135,17 +144,24 @@ async function searchBraveLite(query: string): Promise<SearchResult[]> {
         let match;
         while ((match = snippetPattern.exec(html)) !== null && results.length < 15) {
             const url = match[1];
-            let content = match[2];
+            const content = match[2];
 
-            let titleMatch = content.match(/<div[^>]*class="[^"]*title[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
-            let title = titleMatch ? titleMatch[1].replace(/<[^>]+>/g, '').trim() : content.replace(/<[^>]+>/g, '').trim();
+            const titleMatch = content.match(/<div[^>]*class="[^"]*title[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+            const title = titleMatch
+                ? titleMatch[1].replace(/<[^>]+>/g, "").trim()
+                : content.replace(/<[^>]+>/g, "").trim();
 
-            if (url.startsWith('http') && !url.includes('brave.com') && title.length > 5 && !seenUrls.has(url)) {
+            if (url.startsWith("http") && !url.includes("brave.com") && title.length > 5 && !seenUrls.has(url)) {
                 seenUrls.add(url);
 
                 const afterLink = html.substring(match.index + match[0].length, match.index + match[0].length + 1500);
-                let snippetMatch = afterLink.match(/<div[^>]*class="[^"]*content[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
-                let snippet = snippetMatch ? snippetMatch[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim() : "";
+                const snippetMatch = afterLink.match(/<div[^>]*class="[^"]*content[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+                const snippet = snippetMatch
+                    ? snippetMatch[1]
+                          .replace(/<[^>]+>/g, "")
+                          .replace(/\s+/g, " ")
+                          .trim()
+                    : "";
 
                 if (snippet.length > 10) {
                     results.push({ url, title, snippet: snippet.substring(0, 300) });
@@ -170,7 +186,7 @@ async function searchGoogleLite(query: string): Promise<SearchResult[]> {
         const response = await fetch(url, {
             headers: {
                 "User-Agent": randomUA(),
-                "Accept": "text/html,application/xhtml+xml",
+                Accept: "text/html,application/xhtml+xml",
                 "Accept-Language": "en-US,en;q=0.9",
             },
             redirect: "follow",
@@ -212,18 +228,22 @@ async function searchTavilyLite(query: string): Promise<SearchResult[]> {
         if (!sessionToken) return [];
         const response = await encryptedFetch(`${getConvexSiteUrl()}/api/search/tavily`, {
             method: "POST",
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${sessionToken}` },
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${sessionToken}` },
             body: JSON.stringify({ query, search_depth: "basic", max_results: 10 }),
             signal: AbortSignal.timeout(8000),
         });
         if (!response.ok) return [];
-        const data = await response.json() as any;
-        return (data.results || []).map((r: any) => ({
-            url: r.url,
-            title: r.title || "",
-            snippet: (r.content || "").substring(0, 300),
-        })).filter((r: SearchResult) => r.url && r.title);
-    } catch { return []; }
+        const data = (await response.json()) as any;
+        return (data.results || [])
+            .map((r: any) => ({
+                url: r.url,
+                title: r.title || "",
+                snippet: (r.content || "").substring(0, 300),
+            }))
+            .filter((r: SearchResult) => r.url && r.title);
+    } catch {
+        return [];
+    }
 }
 
 // ── Exa Search (proxied via Convex) ─────────
@@ -234,18 +254,27 @@ async function searchExaLite(query: string): Promise<SearchResult[]> {
         if (!sessionToken) return [];
         const response = await encryptedFetch(`${getConvexSiteUrl()}/api/search/exa`, {
             method: "POST",
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${sessionToken}` },
-            body: JSON.stringify({ query, type: "auto", numResults: 10, contents: { highlights: { maxCharacters: 200 } } }),
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${sessionToken}` },
+            body: JSON.stringify({
+                query,
+                type: "auto",
+                numResults: 10,
+                contents: { highlights: { maxCharacters: 200 } },
+            }),
             signal: AbortSignal.timeout(8000),
         });
         if (!response.ok) return [];
-        const data = await response.json() as any;
-        return (data.results || []).map((r: any) => ({
-            url: r.url,
-            title: r.title || "",
-            snippet: (r.highlights?.[0] || "").substring(0, 300),
-        })).filter((r: SearchResult) => r.url && r.title);
-    } catch { return []; }
+        const data = (await response.json()) as any;
+        return (data.results || [])
+            .map((r: any) => ({
+                url: r.url,
+                title: r.title || "",
+                snippet: (r.highlights?.[0] || "").substring(0, 300),
+            }))
+            .filter((r: SearchResult) => r.url && r.title);
+    } catch {
+        return [];
+    }
 }
 
 // ── Bing Search (fetch-only) ────────────────
@@ -253,7 +282,11 @@ async function searchExaLite(query: string): Promise<SearchResult[]> {
 async function searchBingLite(query: string): Promise<SearchResult[]> {
     try {
         const response = await fetch(`https://www.bing.com/search?q=${encodeURIComponent(query)}&count=10`, {
-            headers: { "User-Agent": randomUA(), "Accept": "text/html,application/xhtml+xml", "Accept-Language": "en-US,en;q=0.9" },
+            headers: {
+                "User-Agent": randomUA(),
+                Accept: "text/html,application/xhtml+xml",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
             redirect: "follow",
             signal: AbortSignal.timeout(8000),
         });
@@ -285,11 +318,18 @@ async function searchBingLite(query: string): Promise<SearchResult[]> {
             seenUrls.add(url);
 
             const snippetM = block.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
-            const snippet = snippetM ? snippetM[1].replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").trim() : "";
+            const snippet = snippetM
+                ? snippetM[1]
+                      .replace(/<[^>]+>/g, "")
+                      .replace(/&nbsp;/g, " ")
+                      .trim()
+                : "";
             results.push({ url, title, snippet: snippet.substring(0, 300) });
         }
         return results;
-    } catch { return []; }
+    } catch {
+        return [];
+    }
 }
 
 // ── Lightweight multi-engine (fetch-only, parallel) ───────────
@@ -340,7 +380,8 @@ export const webSearch: ToolDefinition = {
         type: "function",
         function: {
             name: "web_search",
-            description: "Search the web for information. Uses multiple search engines (Google, Brave, DuckDuckGo) with automatic fallback. Returns top results with titles, snippets, and URLs. This is a FAST, lightweight search — no browser is launched.",
+            description:
+                "Search the web for information. Uses multiple search engines (Google, Brave, DuckDuckGo) with automatic fallback. Returns top results with titles, snippets, and URLs. This is a FAST, lightweight search — no browser is launched.",
             parameters: {
                 type: "object",
                 properties: {

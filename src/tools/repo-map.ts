@@ -8,15 +8,28 @@
 // Generates a concise map of functions, classes, interfaces, types, and
 // exports for each source file — token-budgeted for LLM context injection.
 
-import type { ToolDefinition } from "./get-current-time.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type { ToolDefinition } from "./get-current-time.js";
 
 // ── Types ─────────────────────────────────────
 
 export interface CodeSymbol {
     name: string;
-    type: "function" | "class" | "method" | "interface" | "type" | "export" | "import" | "variable" | "enum" | "struct" | "trait" | "module" | "constant";
+    type:
+        | "function"
+        | "class"
+        | "method"
+        | "interface"
+        | "type"
+        | "export"
+        | "import"
+        | "variable"
+        | "enum"
+        | "struct"
+        | "trait"
+        | "module"
+        | "constant";
     line: number;
     file: string;
 }
@@ -38,7 +51,22 @@ export interface RepoMapOptions {
 
 // ── Language Detection ─────────────────────────
 
-type Language = "typescript" | "javascript" | "python" | "rust" | "go" | "java" | "c" | "cpp" | "csharp" | "ruby" | "swift" | "kotlin" | "php" | "shell" | "lua";
+type Language =
+    | "typescript"
+    | "javascript"
+    | "python"
+    | "rust"
+    | "go"
+    | "java"
+    | "c"
+    | "cpp"
+    | "csharp"
+    | "ruby"
+    | "swift"
+    | "kotlin"
+    | "php"
+    | "shell"
+    | "lua";
 
 const EXTENSION_MAP: Record<string, Language> = {
     ".ts": "typescript",
@@ -89,82 +117,97 @@ interface PatternDef {
 
 const PATTERNS: Record<Language, PatternDef[]> = {
     typescript: [
-        { regex: /^(?:export\s+)?(?:async\s+)?function\s+(\w+)/,            type: "function" },
-        { regex: /^(?:export\s+)?(?:abstract\s+)?class\s+(\w+)/,            type: "class" },
-        { regex: /^(?:export\s+)?interface\s+(\w+)/,                         type: "interface" },
-        { regex: /^(?:export\s+)?type\s+(\w+)\s*[=<]/,                      type: "type" },
-        { regex: /^(?:export\s+)?enum\s+(\w+)/,                             type: "enum" },
-        { regex: /^(?:export\s+)?const\s+(\w+)\s*[=:]/,                     type: "variable" },
-        { regex: /^(?:export\s+)?(?:let|var)\s+(\w+)\s*[=:]/,               type: "variable" },
+        { regex: /^(?:export\s+)?(?:async\s+)?function\s+(\w+)/, type: "function" },
+        { regex: /^(?:export\s+)?(?:abstract\s+)?class\s+(\w+)/, type: "class" },
+        { regex: /^(?:export\s+)?interface\s+(\w+)/, type: "interface" },
+        { regex: /^(?:export\s+)?type\s+(\w+)\s*[=<]/, type: "type" },
+        { regex: /^(?:export\s+)?enum\s+(\w+)/, type: "enum" },
+        { regex: /^(?:export\s+)?const\s+(\w+)\s*[=:]/, type: "variable" },
+        { regex: /^(?:export\s+)?(?:let|var)\s+(\w+)\s*[=:]/, type: "variable" },
         { regex: /^\s+(?:async\s+)?(\w+)\s*\([^)]*\)\s*(?::\s*[^{]+)?\s*\{/, type: "method" },
         { regex: /^\s+(?:public|private|protected)\s+(?:static\s+)?(?:async\s+)?(\w+)\s*[(<]/, type: "method" },
     ],
     javascript: [
-        { regex: /^(?:export\s+)?(?:async\s+)?function\s+(\w+)/,            type: "function" },
-        { regex: /^(?:export\s+)?class\s+(\w+)/,                            type: "class" },
-        { regex: /^(?:export\s+)?const\s+(\w+)\s*=/,                        type: "variable" },
-        { regex: /^(?:export\s+)?(?:let|var)\s+(\w+)\s*=/,                  type: "variable" },
-        { regex: /^\s+(?:async\s+)?(\w+)\s*\([^)]*\)\s*\{/,                type: "method" },
-        { regex: /^module\.exports\s*=\s*\{/,                               type: "export" },
+        { regex: /^(?:export\s+)?(?:async\s+)?function\s+(\w+)/, type: "function" },
+        { regex: /^(?:export\s+)?class\s+(\w+)/, type: "class" },
+        { regex: /^(?:export\s+)?const\s+(\w+)\s*=/, type: "variable" },
+        { regex: /^(?:export\s+)?(?:let|var)\s+(\w+)\s*=/, type: "variable" },
+        { regex: /^\s+(?:async\s+)?(\w+)\s*\([^)]*\)\s*\{/, type: "method" },
+        { regex: /^module\.exports\s*=\s*\{/, type: "export" },
     ],
     python: [
-        { regex: /^(?:async\s+)?def\s+(\w+)/,                               type: "function" },
-        { regex: /^class\s+(\w+)/,                                          type: "class" },
-        { regex: /^\s{4}(?:async\s+)?def\s+(\w+)/,                          type: "method" },
-        { regex: /^([A-Z][A-Z_0-9]+)\s*=/,                                  type: "constant" },
+        { regex: /^(?:async\s+)?def\s+(\w+)/, type: "function" },
+        { regex: /^class\s+(\w+)/, type: "class" },
+        { regex: /^\s{4}(?:async\s+)?def\s+(\w+)/, type: "method" },
+        { regex: /^([A-Z][A-Z_0-9]+)\s*=/, type: "constant" },
     ],
     rust: [
-        { regex: /^(?:pub(?:\(crate\))?\s+)?(?:async\s+)?fn\s+(\w+)/,      type: "function" },
-        { regex: /^(?:pub(?:\(crate\))?\s+)?struct\s+(\w+)/,                type: "struct" },
-        { regex: /^(?:pub(?:\(crate\))?\s+)?enum\s+(\w+)/,                  type: "enum" },
-        { regex: /^(?:pub(?:\(crate\))?\s+)?trait\s+(\w+)/,                 type: "trait" },
-        { regex: /^(?:pub(?:\(crate\))?\s+)?type\s+(\w+)/,                  type: "type" },
-        { regex: /^(?:pub(?:\(crate\))?\s+)?mod\s+(\w+)/,                   type: "module" },
-        { regex: /^\s+(?:pub(?:\(crate\))?\s+)?(?:async\s+)?fn\s+(\w+)/,   type: "method" },
-        { regex: /^(?:pub(?:\(crate\))?\s+)?const\s+(\w+)/,                 type: "constant" },
-        { regex: /^(?:pub(?:\(crate\))?\s+)?static\s+(\w+)/,                type: "variable" },
+        { regex: /^(?:pub(?:\(crate\))?\s+)?(?:async\s+)?fn\s+(\w+)/, type: "function" },
+        { regex: /^(?:pub(?:\(crate\))?\s+)?struct\s+(\w+)/, type: "struct" },
+        { regex: /^(?:pub(?:\(crate\))?\s+)?enum\s+(\w+)/, type: "enum" },
+        { regex: /^(?:pub(?:\(crate\))?\s+)?trait\s+(\w+)/, type: "trait" },
+        { regex: /^(?:pub(?:\(crate\))?\s+)?type\s+(\w+)/, type: "type" },
+        { regex: /^(?:pub(?:\(crate\))?\s+)?mod\s+(\w+)/, type: "module" },
+        { regex: /^\s+(?:pub(?:\(crate\))?\s+)?(?:async\s+)?fn\s+(\w+)/, type: "method" },
+        { regex: /^(?:pub(?:\(crate\))?\s+)?const\s+(\w+)/, type: "constant" },
+        { regex: /^(?:pub(?:\(crate\))?\s+)?static\s+(\w+)/, type: "variable" },
     ],
     go: [
-        { regex: /^func\s+(\w+)/,                                           type: "function" },
-        { regex: /^func\s+\(\w+\s+\*?\w+\)\s+(\w+)/,                       type: "method" },
-        { regex: /^type\s+(\w+)\s+struct/,                                  type: "struct" },
-        { regex: /^type\s+(\w+)\s+interface/,                               type: "interface" },
-        { regex: /^type\s+(\w+)\s+/,                                        type: "type" },
-        { regex: /^var\s+(\w+)\s+/,                                         type: "variable" },
-        { regex: /^const\s+(\w+)\s+/,                                       type: "constant" },
+        { regex: /^func\s+(\w+)/, type: "function" },
+        { regex: /^func\s+\(\w+\s+\*?\w+\)\s+(\w+)/, type: "method" },
+        { regex: /^type\s+(\w+)\s+struct/, type: "struct" },
+        { regex: /^type\s+(\w+)\s+interface/, type: "interface" },
+        { regex: /^type\s+(\w+)\s+/, type: "type" },
+        { regex: /^var\s+(\w+)\s+/, type: "variable" },
+        { regex: /^const\s+(\w+)\s+/, type: "constant" },
     ],
     java: [
         { regex: /^\s*(?:public|private|protected)\s+(?:static\s+)?(?:final\s+)?class\s+(\w+)/, type: "class" },
         { regex: /^\s*(?:public|private|protected)\s+(?:static\s+)?interface\s+(\w+)/, type: "interface" },
         { regex: /^\s*(?:public|private|protected)\s+(?:static\s+)?enum\s+(\w+)/, type: "enum" },
-        { regex: /^\s*(?:public|private|protected)\s+(?:static\s+)?(?:synchronized\s+)?(?:final\s+)?(?:[\w<>\[\],\s]+)\s+(\w+)\s*\(/, type: "method" },
+        {
+            regex: /^\s*(?:public|private|protected)\s+(?:static\s+)?(?:synchronized\s+)?(?:final\s+)?(?:[\w<>[\],\s]+)\s+(\w+)\s*\(/,
+            type: "method",
+        },
     ],
     c: [
-        { regex: /^(?:static\s+)?(?:inline\s+)?(?:const\s+)?(?:unsigned\s+)?(?:void|int|char|float|double|long|short|size_t|bool|\w+_t|\w+\s*\*)\s+(\w+)\s*\(/, type: "function" },
-        { regex: /^typedef\s+struct\s+(?:\w+\s+)?{/,                        type: "struct" },
-        { regex: /^struct\s+(\w+)\s*\{/,                                    type: "struct" },
-        { regex: /^typedef\s+enum\s+(?:\w+\s+)?{/,                          type: "enum" },
-        { regex: /^#define\s+(\w+)/,                                        type: "constant" },
+        {
+            regex: /^(?:static\s+)?(?:inline\s+)?(?:const\s+)?(?:unsigned\s+)?(?:void|int|char|float|double|long|short|size_t|bool|\w+_t|\w+\s*\*)\s+(\w+)\s*\(/,
+            type: "function",
+        },
+        { regex: /^typedef\s+struct\s+(?:\w+\s+)?{/, type: "struct" },
+        { regex: /^struct\s+(\w+)\s*\{/, type: "struct" },
+        { regex: /^typedef\s+enum\s+(?:\w+\s+)?{/, type: "enum" },
+        { regex: /^#define\s+(\w+)/, type: "constant" },
     ],
     cpp: [
-        { regex: /^(?:virtual\s+)?(?:static\s+)?(?:inline\s+)?(?:const\s+)?(?:[\w:]+(?:<[^>]*>)?[\s*&]+)(\w+)\s*\(/, type: "function" },
-        { regex: /^(?:template\s*<[^>]*>\s*)?class\s+(\w+)/,                type: "class" },
-        { regex: /^(?:template\s*<[^>]*>\s*)?struct\s+(\w+)/,               type: "struct" },
-        { regex: /^namespace\s+(\w+)/,                                      type: "module" },
-        { regex: /^enum\s+(?:class\s+)?(\w+)/,                              type: "enum" },
+        {
+            regex: /^(?:virtual\s+)?(?:static\s+)?(?:inline\s+)?(?:const\s+)?(?:[\w:]+(?:<[^>]*>)?[\s*&]+)(\w+)\s*\(/,
+            type: "function",
+        },
+        { regex: /^(?:template\s*<[^>]*>\s*)?class\s+(\w+)/, type: "class" },
+        { regex: /^(?:template\s*<[^>]*>\s*)?struct\s+(\w+)/, type: "struct" },
+        { regex: /^namespace\s+(\w+)/, type: "module" },
+        { regex: /^enum\s+(?:class\s+)?(\w+)/, type: "enum" },
     ],
     csharp: [
-        { regex: /^\s*(?:public|private|protected|internal)\s+(?:static\s+)?(?:partial\s+)?class\s+(\w+)/, type: "class" },
+        {
+            regex: /^\s*(?:public|private|protected|internal)\s+(?:static\s+)?(?:partial\s+)?class\s+(\w+)/,
+            type: "class",
+        },
         { regex: /^\s*(?:public|private|protected|internal)\s+(?:static\s+)?interface\s+(\w+)/, type: "interface" },
         { regex: /^\s*(?:public|private|protected|internal)\s+(?:static\s+)?enum\s+(\w+)/, type: "enum" },
-        { regex: /^\s*(?:public|private|protected|internal)\s+(?:static\s+)?(?:async\s+)?(?:[\w<>\[\]]+)\s+(\w+)\s*\(/, type: "method" },
-        { regex: /^namespace\s+(\w+)/,                                      type: "module" },
+        {
+            regex: /^\s*(?:public|private|protected|internal)\s+(?:static\s+)?(?:async\s+)?(?:[\w<>[\]]+)\s+(\w+)\s*\(/,
+            type: "method",
+        },
+        { regex: /^namespace\s+(\w+)/, type: "module" },
     ],
     ruby: [
-        { regex: /^\s*def\s+(?:self\.)?(\w+)/,                              type: "function" },
-        { regex: /^\s*class\s+(\w+)/,                                       type: "class" },
-        { regex: /^\s*module\s+(\w+)/,                                      type: "module" },
-        { regex: /^\s*([A-Z][A-Z_0-9]+)\s*=/,                               type: "constant" },
+        { regex: /^\s*def\s+(?:self\.)?(\w+)/, type: "function" },
+        { regex: /^\s*class\s+(\w+)/, type: "class" },
+        { regex: /^\s*module\s+(\w+)/, type: "module" },
+        { regex: /^\s*([A-Z][A-Z_0-9]+)\s*=/, type: "constant" },
     ],
     swift: [
         { regex: /^\s*(?:public\s+|private\s+|internal\s+|open\s+)?func\s+(\w+)/, type: "function" },
@@ -175,28 +218,31 @@ const PATTERNS: Record<Language, PatternDef[]> = {
     ],
     kotlin: [
         { regex: /^\s*(?:public\s+|private\s+|internal\s+|protected\s+)?(?:suspend\s+)?fun\s+(\w+)/, type: "function" },
-        { regex: /^\s*(?:public\s+|private\s+|internal\s+|protected\s+)?(?:data\s+|sealed\s+|abstract\s+)?class\s+(\w+)/, type: "class" },
+        {
+            regex: /^\s*(?:public\s+|private\s+|internal\s+|protected\s+)?(?:data\s+|sealed\s+|abstract\s+)?class\s+(\w+)/,
+            type: "class",
+        },
         { regex: /^\s*(?:public\s+|private\s+|internal\s+|protected\s+)?interface\s+(\w+)/, type: "interface" },
         { regex: /^\s*(?:public\s+|private\s+|internal\s+|protected\s+)?enum\s+class\s+(\w+)/, type: "enum" },
         { regex: /^\s*(?:public\s+|private\s+|internal\s+|protected\s+)?object\s+(\w+)/, type: "class" },
     ],
     php: [
         { regex: /^\s*(?:public\s+|private\s+|protected\s+)?(?:static\s+)?function\s+(\w+)/, type: "function" },
-        { regex: /^\s*(?:abstract\s+|final\s+)?class\s+(\w+)/,              type: "class" },
-        { regex: /^\s*interface\s+(\w+)/,                                    type: "interface" },
-        { regex: /^\s*trait\s+(\w+)/,                                        type: "trait" },
-        { regex: /^\s*enum\s+(\w+)/,                                        type: "enum" },
+        { regex: /^\s*(?:abstract\s+|final\s+)?class\s+(\w+)/, type: "class" },
+        { regex: /^\s*interface\s+(\w+)/, type: "interface" },
+        { regex: /^\s*trait\s+(\w+)/, type: "trait" },
+        { regex: /^\s*enum\s+(\w+)/, type: "enum" },
     ],
     shell: [
-        { regex: /^(\w+)\s*\(\)\s*\{/,                                      type: "function" },
-        { regex: /^function\s+(\w+)/,                                        type: "function" },
-        { regex: /^readonly\s+(\w+)=/,                                       type: "constant" },
-        { regex: /^export\s+(\w+)=/,                                         type: "variable" },
+        { regex: /^(\w+)\s*\(\)\s*\{/, type: "function" },
+        { regex: /^function\s+(\w+)/, type: "function" },
+        { regex: /^readonly\s+(\w+)=/, type: "constant" },
+        { regex: /^export\s+(\w+)=/, type: "variable" },
     ],
     lua: [
-        { regex: /^(?:local\s+)?function\s+(\w[\w.]*)/,                     type: "function" },
-        { regex: /^(\w+)\s*=\s*function/,                                    type: "function" },
-        { regex: /^local\s+(\w+)\s*=\s*\{/,                                 type: "variable" },
+        { regex: /^(?:local\s+)?function\s+(\w[\w.]*)/, type: "function" },
+        { regex: /^(\w+)\s*=\s*function/, type: "function" },
+        { regex: /^local\s+(\w+)\s*=\s*\{/, type: "variable" },
     ],
 };
 
@@ -227,11 +273,11 @@ function parseGitignore(gitignorePath: string): IgnoreRules {
 
             // Convert gitignore glob to regex
             let regexStr = line
-                .replace(/[.+^${}()|[\]\\]/g, "\\$&")  // escape regex specials (except * and ?)
-                .replace(/\*\*/g, "{{GLOBSTAR}}")        // temp placeholder
-                .replace(/\*/g, "[^/]*")                 // single * = anything except /
-                .replace(/\?/g, "[^/]")                  // ? = single char except /
-                .replace(/\{\{GLOBSTAR\}\}/g, ".*");     // ** = anything including /
+                .replace(/[.+^${}()|[\]\\]/g, "\\$&") // escape regex specials (except * and ?)
+                .replace(/\*\*/g, "{{GLOBSTAR}}") // temp placeholder
+                .replace(/\*/g, "[^/]*") // single * = anything except /
+                .replace(/\?/g, "[^/]") // ? = single char except /
+                .replace(/\{\{GLOBSTAR\}\}/g, ".*"); // ** = anything including /
 
             // If the pattern doesn't start with /, match in any subdirectory
             if (!line.startsWith("/")) {
@@ -268,17 +314,47 @@ function isIgnored(relativePath: string, rules: IgnoreRules): boolean {
 // ── Always-Ignored Directories ────────────────
 
 const ALWAYS_SKIP_DIRS = new Set([
-    "node_modules", ".git", ".svn", ".hg", "__pycache__", ".tox",
-    ".pytest_cache", ".mypy_cache", ".ruff_cache", "venv", ".venv",
-    "env", ".env", "dist", "build", "out", "target", ".next",
-    ".nuxt", ".output", "coverage", ".cache", ".parcel-cache",
-    ".turbo", ".angular", "vendor", "Pods",
-    ".idea", ".vscode", ".vs",
+    "node_modules",
+    ".git",
+    ".svn",
+    ".hg",
+    "__pycache__",
+    ".tox",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "venv",
+    ".venv",
+    "env",
+    ".env",
+    "dist",
+    "build",
+    "out",
+    "target",
+    ".next",
+    ".nuxt",
+    ".output",
+    "coverage",
+    ".cache",
+    ".parcel-cache",
+    ".turbo",
+    ".angular",
+    "vendor",
+    "Pods",
+    ".idea",
+    ".vscode",
+    ".vs",
 ]);
 
 const ALWAYS_SKIP_FILES = new Set([
-    "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb",
-    "Cargo.lock", "Gemfile.lock", "poetry.lock", "composer.lock",
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "bun.lockb",
+    "Cargo.lock",
+    "Gemfile.lock",
+    "poetry.lock",
+    "composer.lock",
     "go.sum",
 ]);
 
@@ -298,10 +374,23 @@ function extractSymbols(filePath: string, content: string, language: Language): 
             if (match && match[1]) {
                 // Skip common false positives
                 const name = match[1];
-                if (name === "if" || name === "else" || name === "for" || name === "while" ||
-                    name === "switch" || name === "case" || name === "try" || name === "catch" ||
-                    name === "return" || name === "throw" || name === "new" || name === "delete" ||
-                    name === "typeof" || name === "instanceof" || name === "constructor" && type === "method") {
+                if (
+                    name === "if" ||
+                    name === "else" ||
+                    name === "for" ||
+                    name === "while" ||
+                    name === "switch" ||
+                    name === "case" ||
+                    name === "try" ||
+                    name === "catch" ||
+                    name === "return" ||
+                    name === "throw" ||
+                    name === "new" ||
+                    name === "delete" ||
+                    name === "typeof" ||
+                    name === "instanceof" ||
+                    (name === "constructor" && type === "method")
+                ) {
                     continue;
                 }
                 symbols.push({ name, type, line: i + 1, file: filePath });
@@ -314,11 +403,7 @@ function extractSymbols(filePath: string, content: string, language: Language): 
 
 // ── Directory Walker ──────────────────────────
 
-function walkDirectory(
-    rootDir: string,
-    ignoreRules: IgnoreRules,
-    options: RepoMapOptions,
-): string[] {
+function walkDirectory(rootDir: string, ignoreRules: IgnoreRules, options: RepoMapOptions): string[] {
     const files: string[] = [];
     const maxFiles = options.maxFiles ?? 500;
     const includePatterns = options.includePatterns;
@@ -369,7 +454,7 @@ function walkDirectory(
 
                 // Include pattern check (suffix match)
                 if (includePatterns && includePatterns.length > 0) {
-                    const matches = includePatterns.some(p => {
+                    const matches = includePatterns.some((p) => {
                         const pattern = p.startsWith("*") ? p.slice(1) : p;
                         return entry.name.endsWith(pattern) || relativePath.includes(pattern);
                     });
@@ -378,7 +463,7 @@ function walkDirectory(
 
                 // Exclude pattern check (substring match)
                 if (excludePatterns && excludePatterns.length > 0) {
-                    const excluded = excludePatterns.some(p => {
+                    const excluded = excludePatterns.some((p) => {
                         const pattern = p.startsWith("*") ? p.slice(1) : p;
                         return entry.name.includes(pattern) || relativePath.includes(pattern);
                     });
@@ -403,15 +488,10 @@ function estimateTokens(text: string): number {
 
 // ── Repo Map Generation ───────────────────────
 
-export async function generateRepoMap(
-    rootDir: string,
-    options: RepoMapOptions = {},
-): Promise<string> {
+export async function generateRepoMap(rootDir: string, options: RepoMapOptions = {}): Promise<string> {
     const maxTokens = options.maxTokens ?? 4000;
     const maxSymbolsPerFile = options.maxSymbolsPerFile;
-    const priorityFiles = new Set(
-        (options.priorityFiles ?? []).map(f => path.resolve(rootDir, f)),
-    );
+    const priorityFiles = new Set((options.priorityFiles ?? []).map((f) => path.resolve(rootDir, f)));
 
     // Parse .gitignore
     const gitignorePath = path.join(rootDir, ".gitignore");
@@ -469,8 +549,10 @@ export async function generateRepoMap(
         // Build file section
         const sectionLines: string[] = [`${relative}:`];
         for (const sym of symbols) {
-            const label = sym.type === "method" ? `  ${sym.type} ${sym.name} (line ${sym.line})`
-                : `  ${sym.type} ${sym.name} (line ${sym.line})`;
+            const label =
+                sym.type === "method"
+                    ? `  ${sym.type} ${sym.name} (line ${sym.line})`
+                    : `  ${sym.type} ${sym.name} (line ${sym.line})`;
             sectionLines.push(label);
         }
         sectionLines.push(""); // blank line between files
@@ -512,11 +594,13 @@ Output is token-budgeted to fit in LLM context — prioritizes files mentioned i
                 properties: {
                     path: {
                         type: "string",
-                        description: "Root directory of the repository to map. Defaults to the current working directory.",
+                        description:
+                            "Root directory of the repository to map. Defaults to the current working directory.",
                     },
                     max_tokens: {
                         type: "number",
-                        description: "Maximum output tokens (default 4000). Increase for larger codebases, decrease for tighter budgets.",
+                        description:
+                            "Maximum output tokens (default 4000). Increase for larger codebases, decrease for tighter budgets.",
                     },
                     max_files: {
                         type: "number",
@@ -525,7 +609,8 @@ Output is token-budgeted to fit in LLM context — prioritizes files mentioned i
                     include_patterns: {
                         type: "array",
                         items: { type: "string" },
-                        description: "Only include files matching these patterns (e.g., ['*.ts', '*.py']). If empty, includes all supported languages.",
+                        description:
+                            "Only include files matching these patterns (e.g., ['*.ts', '*.py']). If empty, includes all supported languages.",
                     },
                     exclude_patterns: {
                         type: "array",
@@ -535,7 +620,8 @@ Output is token-budgeted to fit in LLM context — prioritizes files mentioned i
                     priority_files: {
                         type: "array",
                         items: { type: "string" },
-                        description: "Files to prioritize in the output (shown first, never truncated). Use relative paths from the repo root.",
+                        description:
+                            "Files to prioritize in the output (shown first, never truncated). Use relative paths from the repo root.",
                     },
                     max_symbols_per_file: {
                         type: "number",

@@ -2,25 +2,11 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-type JsonValue =
-    | null
-    | boolean
-    | number
-    | string
-    | JsonValue[]
-    | { [key: string]: JsonValue };
+type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
 type SchemaObject = { [key: string]: JsonValue };
 
-const PRIMITIVE_TYPE_NAMES = new Set([
-    "object",
-    "string",
-    "number",
-    "integer",
-    "boolean",
-    "array",
-    "null",
-]);
+const PRIMITIVE_TYPE_NAMES = new Set(["object", "string", "number", "integer", "boolean", "array", "null"]);
 
 function deepCopy<T>(value: T): T {
     if (value === null || typeof value !== "object") return value;
@@ -48,15 +34,10 @@ export interface StripNullableUnionsOptions {
  * Safe on non-dict/non-array inputs (returned unchanged). Does NOT deep-copy
  * the input — callers that need a fresh tree should wrap with `deepCopy`.
  */
-export function stripNullableUnions(
-    schema: unknown,
-    options: StripNullableUnionsOptions = {},
-): unknown {
+export function stripNullableUnions(schema: unknown, options: StripNullableUnionsOptions = {}): unknown {
     const keepHint = options.keepNullableHint ?? true;
     if (Array.isArray(schema)) {
-        return schema.map((item) =>
-            stripNullableUnions(item, { keepNullableHint: keepHint }),
-        );
+        return schema.map((item) => stripNullableUnions(item, { keepNullableHint: keepHint }));
     }
     if (schema === null || typeof schema !== "object") return schema;
 
@@ -82,18 +63,11 @@ export function stripNullableUnions(
         if (nonNull.length === 1 && nonNull.length !== variants.length) {
             const sole = nonNull[0];
             const replacement: SchemaObject =
-                sole !== null && typeof sole === "object" && !Array.isArray(sole)
-                    ? { ...(sole as SchemaObject) }
-                    : {};
+                sole !== null && typeof sole === "object" && !Array.isArray(sole) ? { ...(sole as SchemaObject) } : {};
             if (keepHint && replacement.nullable === undefined) {
                 replacement.nullable = true;
             }
-            for (const metaKey of [
-                "title",
-                "description",
-                "default",
-                "examples",
-            ] as const) {
+            for (const metaKey of ["title", "description", "default", "examples"] as const) {
                 if (metaKey in stripped && !(metaKey in replacement)) {
                     replacement[metaKey] = stripped[metaKey];
                 }
@@ -110,18 +84,14 @@ function sanitizeNode(node: unknown, path: string): JsonValue {
     // Bare-string schema value → wrap as { type: X } (or empty object for "object")
     if (typeof node === "string") {
         if (PRIMITIVE_TYPE_NAMES.has(node)) {
-            return node === "object"
-                ? { type: "object", properties: {} }
-                : { type: node };
+            return node === "object" ? { type: "object", properties: {} } : { type: node };
         }
         // Stray non-type string at a schema position → permissive empty object
         return { type: "object", properties: {} };
     }
 
     if (Array.isArray(node)) {
-        return node.map((item, i) =>
-            sanitizeNode(item, `${path}[${i}]`),
-        ) as JsonValue[];
+        return node.map((item, i) => sanitizeNode(item, `${path}[${i}]`)) as JsonValue[];
     }
 
     if (node === null || typeof node !== "object") {
@@ -142,9 +112,7 @@ function sanitizeNode(node: unknown, path: string): JsonValue {
                 }
                 continue;
             }
-            const firstStr = value.find(
-                (t): t is string => typeof t === "string" && t !== "null",
-            );
+            const firstStr = value.find((t): t is string => typeof t === "string" && t !== "null");
             if (firstStr !== undefined) {
                 out.type = firstStr;
                 continue;
@@ -155,17 +123,13 @@ function sanitizeNode(node: unknown, path: string): JsonValue {
 
         // Recurse into object-of-schemas shapes
         if (
-            (key === "properties" ||
-                key === "$defs" ||
-                key === "definitions") &&
+            (key === "properties" || key === "$defs" || key === "definitions") &&
             value !== null &&
             typeof value === "object" &&
             !Array.isArray(value)
         ) {
             const inner: SchemaObject = {};
-            for (const [subK, subV] of Object.entries(
-                value as SchemaObject,
-            )) {
+            for (const [subK, subV] of Object.entries(value as SchemaObject)) {
                 inner[subK] = sanitizeNode(subV, `${path}.${key}.${subK}`);
             }
             out[key] = inner;
@@ -181,13 +145,8 @@ function sanitizeNode(node: unknown, path: string): JsonValue {
             continue;
         }
 
-        if (
-            (key === "anyOf" || key === "oneOf" || key === "allOf") &&
-            Array.isArray(value)
-        ) {
-            out[key] = value.map((item, i) =>
-                sanitizeNode(item, `${path}.${key}[${i}]`),
-            );
+        if ((key === "anyOf" || key === "oneOf" || key === "allOf") && Array.isArray(value)) {
+            out[key] = value.map((item, i) => sanitizeNode(item, `${path}.${key}[${i}]`));
             continue;
         }
 
@@ -202,8 +161,7 @@ function sanitizeNode(node: unknown, path: string): JsonValue {
         if (
             value !== null &&
             typeof value === "object" &&
-            (Array.isArray(value) ||
-                Object.getPrototypeOf(value) === Object.prototype)
+            (Array.isArray(value) || Object.getPrototypeOf(value) === Object.prototype)
         ) {
             out[key] = sanitizeNode(value, `${path}.${key}`);
         } else {
@@ -214,20 +172,15 @@ function sanitizeNode(node: unknown, path: string): JsonValue {
     // Object nodes without properties: inject empty properties dict.
     if (
         out.type === "object" &&
-        !(out.properties !== null &&
-            typeof out.properties === "object" &&
-            !Array.isArray(out.properties))
+        !(out.properties !== null && typeof out.properties === "object" && !Array.isArray(out.properties))
     ) {
         out.properties = {};
     }
 
     // Prune required entries that don't exist in properties
     if (out.type === "object" && Array.isArray(out.required)) {
-        const propsObj =
-            (out.properties as Record<string, unknown> | undefined) ?? {};
-        const valid = (out.required as unknown[]).filter(
-            (r) => typeof r === "string" && r in propsObj,
-        ) as string[];
+        const propsObj = (out.properties as Record<string, unknown> | undefined) ?? {};
+        const valid = (out.required as unknown[]).filter((r) => typeof r === "string" && r in propsObj) as string[];
         if (valid.length === 0) {
             delete out.required;
         } else if (valid.length !== (out.required as unknown[]).length) {
@@ -253,9 +206,7 @@ export interface ToolSchemaShape {
  * Sanitize the parameter schemas on a list of OpenAI-format tools. Returns a
  * deep-copied list so callers can mutate freely.
  */
-export function sanitizeToolSchemas<T extends ToolSchemaShape>(
-    tools: T[] | undefined,
-): T[] | undefined {
+export function sanitizeToolSchemas<T extends ToolSchemaShape>(tools: T[] | undefined): T[] | undefined {
     if (!tools) return tools;
     if (!Array.isArray(tools) || tools.length === 0) return tools;
     return tools.map((t) => sanitizeSingleTool(t));
@@ -275,20 +226,12 @@ function sanitizeSingleTool<T extends ToolSchemaShape>(tool: T): T {
     const name = typeof fn.name === "string" ? fn.name : "<tool>";
     let sanitized = sanitizeNode(params, name);
     // Guarantee top-level is an object with properties
-    if (
-        sanitized === null ||
-        typeof sanitized !== "object" ||
-        Array.isArray(sanitized)
-    ) {
+    if (sanitized === null || typeof sanitized !== "object" || Array.isArray(sanitized)) {
         sanitized = { type: "object", properties: {} };
     } else {
         const s = sanitized as SchemaObject;
         if (s.type !== "object") s.type = "object";
-        if (
-            s.properties === null ||
-            typeof s.properties !== "object" ||
-            Array.isArray(s.properties)
-        ) {
+        if (s.properties === null || typeof s.properties !== "object" || Array.isArray(s.properties)) {
             s.properties = {};
         }
     }

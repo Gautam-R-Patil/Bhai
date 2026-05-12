@@ -131,10 +131,11 @@ export const osVisualize: ToolDefinition = {
                 success: true,
                 element_count: result.elements.length,
                 image_size: { width: result.imageWidth, height: result.imageHeight },
+                image_width: result.imageWidth,
                 model: result.model,
                 elapsed_ms: result.elapsedMs,
                 elements: summary,
-                tip: "Use os_click with x,y from the center field, or pair with os_ground for a smarter pick.",
+                tip: `Click via os_computer_action with action='click', coordSystem='image', imageWidth=${result.imageWidth}, coord=[center.x, center.y]. The 'image' coordSystem auto-scales to current screen — avoids Retina/multi-monitor coord bugs.`,
             });
         } finally {
             await resolved.cleanup();
@@ -210,10 +211,14 @@ export const osGround: ToolDefinition = {
                 reasoning: result.reasoning,
                 model: result.model,
                 elapsed_ms: result.elapsedMs,
+                // CRITICAL: x/y are in image-pixel space. The legacy os_click assumes the LLM is
+                // looking at a 1280px-wide image, so passing UI-TARS coords (from the un-resized
+                // screenshot) directly to os_click misses by 50%+ on Retina. Tell the agent to
+                // use the structured action with coordSystem='image' instead.
                 tip:
                     result.confidence >= 0.7
-                        ? "High confidence — safe to os_click with these coords."
-                        : "Low confidence — consider os_inspect for native apps OR verify with os_screenshot after click.",
+                        ? "High confidence. Click via os_computer_action with action='click', coordSystem='image', imageWidth=<width of the screenshot you passed>, coord=[x, y]. Use the screenshot's actual width — auto-scales to screen."
+                        : "Low confidence — consider os_inspect for native apps (cross-OS AX path is more accurate when available) OR re-screenshot and try again.",
             });
         } finally {
             await resolved.cleanup();

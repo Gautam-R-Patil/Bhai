@@ -3,17 +3,17 @@
 // All implementation is in src/research/*.ts
 
 export {
-    deepResearch,
-    checkDeepResearch,
     cancelDeepResearch,
-    setDeepResearchLLM,
-    setDeepResearchProgress,
+    checkDeepResearch,
     clearDeepResearchProgress,
-    setDeepResearchNotifier,
-    setOverlayResearchProgress,
     clearOverlayResearchProgress,
-    initDeepResearch,
+    deepResearch,
     getResearchStatusSnippet,
+    initDeepResearch,
     multiEngineSearch,
     type SearchResult,
+    setDeepResearchLLM,
+    setDeepResearchNotifier,
+    setDeepResearchProgress,
+    setOverlayResearchProgress,
 } from "../research/index.js";

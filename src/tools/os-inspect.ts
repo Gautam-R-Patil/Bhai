@@ -75,6 +75,8 @@ export const osInspect: ToolDefinition = {
         try {
             const dump = await dumpAccessibilityTree({ pid: pid || undefined, depth });
             if (dump.error) {
+                // Invalidate stale cache so subsequent os_click_id can't use post-revoke coords.
+                _lastInspect = null;
                 return JSON.stringify({
                     success: false,
                     error: dump.error,

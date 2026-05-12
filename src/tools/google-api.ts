@@ -6,16 +6,15 @@
 // OAuth2 authentication + Google Calendar + Gmail
 // Supports multiple Google accounts simultaneously.
 
-import { google, type calendar_v3 } from "googleapis";
-import { OAuth2Client } from "google-auth-library";
-import { promises as fs } from "node:fs";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
-import { createServer, type Server } from "node:http";
 import { execFile } from "node:child_process";
+import { existsSync, promises as fs, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
+import { join } from "node:path";
 import { promisify } from "node:util";
-import type { ToolDefinition } from "./get-current-time.js";
+import { OAuth2Client } from "google-auth-library";
+import { type calendar_v3, google } from "googleapis";
 import { getTimezone } from "../location/index.js";
+import type { ToolDefinition } from "./get-current-time.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -59,7 +58,11 @@ function loadCredentials(): { client_id: string; client_secret: string; redirect
         // Fallback: bundled credentials in app resources (read-only but valid for reading)
         join(process.cwd(), "data", "google-credentials.json"),
         // Windows uses USERPROFILE instead of HOME
-        join(process.env.HOME || process.env.USERPROFILE || "", "Downloads", "client_secret_1066050169128-uuqbnjq9v4n0pfc0q8ienabmoj3cnbhb.apps.googleusercontent.com.json"),
+        join(
+            process.env.HOME || process.env.USERPROFILE || "",
+            "Downloads",
+            "client_secret_1066050169128-uuqbnjq9v4n0pfc0q8ienabmoj3cnbhb.apps.googleusercontent.com.json",
+        ),
         join(process.env.HOME || process.env.USERPROFILE || "", "Downloads", "google-credentials.json"),
     ];
 
@@ -76,7 +79,9 @@ function loadCredentials(): { client_id: string; client_secret: string; redirect
                     }
                     return creds;
                 }
-            } catch { /* invalid file */ }
+            } catch {
+                /* invalid file */
+            }
         }
     }
     return null;
@@ -97,7 +102,11 @@ function createOAuth2Client(): OAuth2Client | null {
         // Persist — find the matching account and save
         for (const [, acc] of accounts) {
             if (acc.client === client) {
-                try { writeFileSync(acc.tokenPath, JSON.stringify(merged, null, 2)); } catch { /* */ }
+                try {
+                    writeFileSync(acc.tokenPath, JSON.stringify(merged, null, 2));
+                } catch {
+                    /* */
+                }
                 break;
             }
         }
@@ -124,9 +133,13 @@ export function loadSavedAccounts(): void {
                 client.setCredentials(tokens);
                 accounts.set(email, { email, tokenPath, client });
                 console.log(`📧 Google account loaded: ${email}`);
-            } catch { /* skip invalid token files */ }
+            } catch {
+                /* skip invalid token files */
+            }
         }
-    } catch { /* no saved accounts */ }
+    } catch {
+        /* no saved accounts */
+    }
 }
 
 /**
@@ -135,7 +148,6 @@ export function loadSavedAccounts(): void {
 export function getConnectedAccounts(): string[] {
     return Array.from(accounts.keys());
 }
-
 
 // ═══════════════════════════════════════════════
 // OAuth Callback Server
@@ -150,15 +162,22 @@ let activeCallbackServer: Server | null = null;
 function startOAuthCallbackServer(): Promise<{ success: boolean; email?: string; error?: string }> {
     // Kill any existing server
     if (activeCallbackServer) {
-        try { activeCallbackServer.close(); } catch { /* */ }
+        try {
+            activeCallbackServer.close();
+        } catch {
+            /* */
+        }
         activeCallbackServer = null;
     }
 
     return new Promise((resolve) => {
-        const timeout = setTimeout(() => {
-            cleanup();
-            resolve({ success: false, error: "OAuth timed out after 5 minutes." });
-        }, 5 * 60 * 1000);
+        const timeout = setTimeout(
+            () => {
+                cleanup();
+                resolve({ success: false, error: "OAuth timed out after 5 minutes." });
+            },
+            5 * 60 * 1000,
+        );
 
         const cleanup = () => {
             clearTimeout(timeout);
@@ -202,7 +221,9 @@ function startOAuthCallbackServer(): Promise<{ success: boolean; email?: string;
 
             if (!code) {
                 res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-                res.end(`<html><body style="font-family:system-ui;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#1a1a2e;color:#e0e0e0"><div style="text-align:center"><h2>⏳ Waiting for authorization...</h2></div></body></html>`);
+                res.end(
+                    `<html><body style="font-family:system-ui;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#1a1a2e;color:#e0e0e0"><div style="text-align:center"><h2>⏳ Waiting for authorization...</h2></div></body></html>`,
+                );
                 return;
             }
 
@@ -248,14 +269,16 @@ export const googleAccounts: ToolDefinition = {
         type: "function",
         function: {
             name: "google_accounts",
-            description: "Manage connected Google accounts. Add new accounts via OAuth, list connected accounts, or remove an account.",
+            description:
+                "Manage connected Google accounts. Add new accounts via OAuth, list connected accounts, or remove an account.",
             parameters: {
                 type: "object",
                 properties: {
                     action: {
                         type: "string",
                         enum: ["add", "complete", "list", "remove"],
-                        description: "Action: 'add' = start OAuth flow, 'complete' = finish OAuth with auth code, 'list' = show accounts, 'remove' = disconnect account",
+                        description:
+                            "Action: 'add' = start OAuth flow, 'complete' = finish OAuth with auth code, 'list' = show accounts, 'remove' = disconnect account",
                     },
                     email: {
                         type: "string",
@@ -281,7 +304,10 @@ export const googleAccounts: ToolDefinition = {
                     success: true,
                     count: emails.length,
                     accounts: emails,
-                    note: emails.length === 0 ? "No Google accounts connected. Use action='add' to connect one." : undefined,
+                    note:
+                        emails.length === 0
+                            ? "No Google accounts connected. Use action='add' to connect one."
+                            : undefined,
                 });
             }
 
@@ -303,7 +329,7 @@ export const googleAccounts: ToolDefinition = {
                 const authPromise = startOAuthCallbackServer();
 
                 // Open browser for auth
-                await execFileAsync("open", [authUrl], { timeout: 5000 }).catch(() => { });
+                await execFileAsync("open", [authUrl], { timeout: 5000 }).catch(() => {});
 
                 // Wait for the callback (up to 5 min)
                 const result = await authPromise;
@@ -332,7 +358,7 @@ export const googleAccounts: ToolDefinition = {
                 if (!account) return JSON.stringify({ error: `Account not found: ${email}` });
 
                 // Delete token file and remove from map
-                await fs.unlink(account.tokenPath).catch(() => { });
+                await fs.unlink(account.tokenPath).catch(() => {});
                 accounts.delete(email);
                 return JSON.stringify({ success: true, removed: email });
             }
@@ -382,12 +408,12 @@ export async function completeGoogleAuth(code: string): Promise<{ success: boole
         let email = "unknown";
         if (tokens.id_token) {
             try {
-                const payload = JSON.parse(
-                    Buffer.from(tokens.id_token.split(".")[1], "base64").toString("utf-8")
-                );
+                const payload = JSON.parse(Buffer.from(tokens.id_token.split(".")[1], "base64").toString("utf-8"));
                 if (payload.email) email = payload.email;
                 console.log(`🔐 Email from id_token: ${email}`);
-            } catch { /* failed to decode JWT */ }
+            } catch {
+                /* failed to decode JWT */
+            }
         }
 
         // Fall back to userinfo API if id_token didn't have email
@@ -426,14 +452,16 @@ export const googleCalendarTool: ToolDefinition = {
         type: "function",
         function: {
             name: "google_calendar",
-            description: "Interact with Google Calendar. List events, create events, check availability. Supports multiple accounts.",
+            description:
+                "Interact with Google Calendar. List events, create events, check availability. Supports multiple accounts.",
             parameters: {
                 type: "object",
                 properties: {
                     action: {
                         type: "string",
                         enum: ["today", "list", "create", "upcoming"],
-                        description: "Action: 'today' = today's events, 'list' = events for specific date (requires date param), 'create' = new event, 'upcoming' = next 5 events. Note: use 'list' not 'list_events'.",
+                        description:
+                            "Action: 'today' = today's events, 'list' = events for specific date (requires date param), 'create' = new event, 'upcoming' = next 5 events. Note: use 'list' not 'list_events'.",
                     },
                     account: {
                         type: "string",
@@ -461,7 +489,7 @@ export const googleCalendarTool: ToolDefinition = {
         try {
             // For read actions, query all accounts or specific one
             const accountsToQuery = targetAccount
-                ? [accounts.get(targetAccount)].filter(Boolean) as GoogleAccount[]
+                ? ([accounts.get(targetAccount)].filter(Boolean) as GoogleAccount[])
                 : Array.from(accounts.values());
 
             if (accountsToQuery.length === 0) {
@@ -471,13 +499,17 @@ export const googleCalendarTool: ToolDefinition = {
             }
 
             // Accept common LLM hallucinations as aliases
-            const normalizedAction = action === "list_events" ? "list"
-                : action === "get_events" ? "list"
-                : action === "check" ? "today"
-                : action;
+            const normalizedAction =
+                action === "list_events"
+                    ? "list"
+                    : action === "get_events"
+                      ? "list"
+                      : action === "check"
+                        ? "today"
+                        : action;
 
             if (normalizedAction === "today" || normalizedAction === "list" || normalizedAction === "upcoming") {
-            const action = normalizedAction; // shadow for rest of block
+                const action = normalizedAction; // shadow for rest of block
                 let timeMin: string;
                 let timeMax: string;
 
@@ -485,16 +517,25 @@ export const googleCalendarTool: ToolDefinition = {
                     timeMin = new Date().toISOString();
                     timeMax = new Date(Date.now() + 7 * 86400000).toISOString();
                 } else {
-                    const dateStr = action === "today"
-                        ? new Date().toLocaleDateString("en-CA", { timeZone: getTimezone() })
-                        : (input.date as string || new Date().toLocaleDateString("en-CA", { timeZone: getTimezone() }));
+                    const dateStr =
+                        action === "today"
+                            ? new Date().toLocaleDateString("en-CA", { timeZone: getTimezone() })
+                            : (input.date as string) ||
+                              new Date().toLocaleDateString("en-CA", { timeZone: getTimezone() });
                     const dayStart = new Date(`${dateStr}T00:00:00+05:30`);
                     const dayEnd = new Date(`${dateStr}T23:59:59+05:30`);
                     timeMin = dayStart.toISOString();
                     timeMax = dayEnd.toISOString();
                 }
 
-                const allEvents: Array<{ account: string; title: string; start: string; end: string; location: string; description: string }> = [];
+                const allEvents: Array<{
+                    account: string;
+                    title: string;
+                    start: string;
+                    end: string;
+                    location: string;
+                    description: string;
+                }> = [];
 
                 for (const acc of accountsToQuery) {
                     try {
@@ -522,7 +563,10 @@ export const googleCalendarTool: ToolDefinition = {
                         allEvents.push({
                             account: acc.email,
                             title: `[Error: ${(err as Error).message}]`,
-                            start: "", end: "", location: "", description: "",
+                            start: "",
+                            end: "",
+                            location: "",
+                            description: "",
                         });
                     }
                 }
@@ -554,10 +598,13 @@ export const googleCalendarTool: ToolDefinition = {
 
                 const event: calendar_v3.Schema$Event = {
                     summary: title,
-                    description: input.description as string || undefined,
-                    location: input.location as string || undefined,
+                    description: (input.description as string) || undefined,
+                    location: (input.location as string) || undefined,
                     start: { dateTime: startTime, timeZone: getTimezone() },
-                    end: { dateTime: endTime || new Date(new Date(startTime).getTime() + 3600000).toISOString(), timeZone: getTimezone() },
+                    end: {
+                        dateTime: endTime || new Date(new Date(startTime).getTime() + 3600000).toISOString(),
+                        timeZone: getTimezone(),
+                    },
                 };
 
                 const created = await calendar.events.insert({
@@ -586,18 +633,16 @@ export const googleCalendarTool: ToolDefinition = {
     },
 };
 
-export async function listCalendarEventsRaw(params: {
-    timeMin: string;
-    timeMax: string;
-    maxResults?: number;
-}): Promise<Array<{
-    id: string;
-    summary: string;
-    start: { dateTime?: string; date?: string };
-    end: { dateTime?: string; date?: string };
-    location?: string;
-    attendees?: Array<{ email?: string }>;
-}>> {
+export async function listCalendarEventsRaw(params: { timeMin: string; timeMax: string; maxResults?: number }): Promise<
+    Array<{
+        id: string;
+        summary: string;
+        start: { dateTime?: string; date?: string };
+        end: { dateTime?: string; date?: string };
+        location?: string;
+        attendees?: Array<{ email?: string }>;
+    }>
+> {
     const accountsToQuery = Array.from(accounts.values());
     const allEvents: any[] = [];
     for (const acc of accountsToQuery) {
@@ -637,14 +682,16 @@ export const gmailTool: ToolDefinition = {
         type: "function",
         function: {
             name: "gmail",
-            description: "Interact with Gmail. List unread emails, read specific emails, search, send, and reply. Supports multiple accounts.",
+            description:
+                "Interact with Gmail. List unread emails, read specific emails, search, send, and reply. Supports multiple accounts.",
             parameters: {
                 type: "object",
                 properties: {
                     action: {
                         type: "string",
                         enum: ["unread", "read", "search", "send", "reply"],
-                        description: "Action: 'unread' = list unread, 'read' = read specific email, 'search' = search emails, 'send' = compose and send, 'reply' = reply to email",
+                        description:
+                            "Action: 'unread' = list unread, 'read' = read specific email, 'search' = search emails, 'send' = compose and send, 'reply' = reply to email",
                     },
                     account: {
                         type: "string",
@@ -669,7 +716,7 @@ export const gmailTool: ToolDefinition = {
 
         try {
             const accountsToQuery = targetAccount
-                ? [accounts.get(targetAccount)].filter(Boolean) as GoogleAccount[]
+                ? ([accounts.get(targetAccount)].filter(Boolean) as GoogleAccount[])
                 : Array.from(accounts.values());
 
             if (accountsToQuery.length === 0) {
@@ -679,7 +726,14 @@ export const gmailTool: ToolDefinition = {
             }
 
             if (action === "unread") {
-                const allMessages: Array<{ account: string; id: string; subject: string; from: string; date: string; snippet: string }> = [];
+                const allMessages: Array<{
+                    account: string;
+                    id: string;
+                    subject: string;
+                    from: string;
+                    date: string;
+                    snippet: string;
+                }> = [];
 
                 for (const acc of accountsToQuery) {
                     try {
@@ -702,9 +756,9 @@ export const gmailTool: ToolDefinition = {
                             allMessages.push({
                                 account: acc.email,
                                 id: msg.id!,
-                                subject: headers.find(h => h.name === "Subject")?.value || "(no subject)",
-                                from: headers.find(h => h.name === "From")?.value || "",
-                                date: headers.find(h => h.name === "Date")?.value || "",
+                                subject: headers.find((h) => h.name === "Subject")?.value || "(no subject)",
+                                from: headers.find((h) => h.name === "From")?.value || "",
+                                date: headers.find((h) => h.name === "Date")?.value || "",
                                 snippet: detail.data.snippet || "",
                             });
                         }
@@ -713,7 +767,9 @@ export const gmailTool: ToolDefinition = {
                             account: acc.email,
                             id: "error",
                             subject: `[Error: ${(err as Error).message}]`,
-                            from: "", date: "", snippet: "",
+                            from: "",
+                            date: "",
+                            snippet: "",
                         });
                     }
                 }
@@ -748,7 +804,7 @@ export const gmailTool: ToolDefinition = {
                         if (payload?.body?.data) {
                             body = Buffer.from(payload.body.data, "base64").toString("utf-8");
                         } else if (payload?.parts) {
-                            const textPart = payload.parts.find(p => p.mimeType === "text/plain");
+                            const textPart = payload.parts.find((p) => p.mimeType === "text/plain");
                             if (textPart?.body?.data) {
                                 body = Buffer.from(textPart.body.data, "base64").toString("utf-8");
                             }
@@ -758,14 +814,16 @@ export const gmailTool: ToolDefinition = {
                             success: true,
                             action: "read",
                             account: acc.email,
-                            subject: headers.find(h => h.name === "Subject")?.value || "",
-                            from: headers.find(h => h.name === "From")?.value || "",
-                            to: headers.find(h => h.name === "To")?.value || "",
-                            date: headers.find(h => h.name === "Date")?.value || "",
+                            subject: headers.find((h) => h.name === "Subject")?.value || "",
+                            from: headers.find((h) => h.name === "From")?.value || "",
+                            to: headers.find((h) => h.name === "To")?.value || "",
+                            date: headers.find((h) => h.name === "Date")?.value || "",
                             body: body.substring(0, 3000), // Truncate for context window
                             labels: detail.data.labelIds,
                         });
-                    } catch { /* not found in this account */ }
+                    } catch {
+                        /* not found in this account */
+                    }
                 }
 
                 return JSON.stringify({ error: `Message ${messageId} not found in any connected account.` });
@@ -775,7 +833,14 @@ export const gmailTool: ToolDefinition = {
                 const query = input.query as string;
                 if (!query) return JSON.stringify({ error: "Provide 'query' for search." });
 
-                const allResults: Array<{ account: string; id: string; subject: string; from: string; date: string; snippet: string }> = [];
+                const allResults: Array<{
+                    account: string;
+                    id: string;
+                    subject: string;
+                    from: string;
+                    date: string;
+                    snippet: string;
+                }> = [];
 
                 for (const acc of accountsToQuery) {
                     try {
@@ -798,9 +863,9 @@ export const gmailTool: ToolDefinition = {
                             allResults.push({
                                 account: acc.email,
                                 id: msg.id!,
-                                subject: headers.find(h => h.name === "Subject")?.value || "(no subject)",
-                                from: headers.find(h => h.name === "From")?.value || "",
-                                date: headers.find(h => h.name === "Date")?.value || "",
+                                subject: headers.find((h) => h.name === "Subject")?.value || "(no subject)",
+                                from: headers.find((h) => h.name === "From")?.value || "",
+                                date: headers.find((h) => h.name === "Date")?.value || "",
                                 snippet: detail.data.snippet || "",
                             });
                         }
@@ -809,12 +874,20 @@ export const gmailTool: ToolDefinition = {
                             account: acc.email,
                             id: "error",
                             subject: `[Error: ${(err as Error).message}]`,
-                            from: "", date: "", snippet: "",
+                            from: "",
+                            date: "",
+                            snippet: "",
                         });
                     }
                 }
 
-                return JSON.stringify({ success: true, action: "search", query, count: allResults.length, results: allResults });
+                return JSON.stringify({
+                    success: true,
+                    action: "search",
+                    query,
+                    count: allResults.length,
+                    results: allResults,
+                });
             }
 
             if (action === "send") {
@@ -829,14 +902,16 @@ export const gmailTool: ToolDefinition = {
                 if (!acc) return JSON.stringify({ error: "No account available for sending." });
 
                 const gmail = google.gmail({ version: "v1", auth: acc.client });
-                const raw = Buffer.from([
-                    `From: ${acc.email}`,
-                    `To: ${to}`,
-                    `Subject: ${subject}`,
-                    `Content-Type: text/plain; charset=utf-8`,
-                    "",
-                    body,
-                ].join("\r\n")).toString("base64url");
+                const raw = Buffer.from(
+                    [
+                        `From: ${acc.email}`,
+                        `To: ${to}`,
+                        `Subject: ${subject}`,
+                        `Content-Type: text/plain; charset=utf-8`,
+                        "",
+                        body,
+                    ].join("\r\n"),
+                ).toString("base64url");
 
                 await gmail.users.messages.send({
                     userId: "me",
@@ -863,22 +938,24 @@ export const gmailTool: ToolDefinition = {
                         });
 
                         const headers = original.data.payload?.headers || [];
-                        const from = headers.find(h => h.name === "From")?.value || "";
-                        const subject = headers.find(h => h.name === "Subject")?.value || "";
+                        const from = headers.find((h) => h.name === "From")?.value || "";
+                        const subject = headers.find((h) => h.name === "Subject")?.value || "";
                         const replyTo = from;
                         const reSubject = subject.startsWith("Re:") ? subject : `Re: ${subject}`;
-                        const msgIdHeader = headers.find(h => h.name === "Message-ID")?.value || "";
+                        const msgIdHeader = headers.find((h) => h.name === "Message-ID")?.value || "";
 
-                        const raw = Buffer.from([
-                            `From: ${acc.email}`,
-                            `To: ${replyTo}`,
-                            `Subject: ${reSubject}`,
-                            `In-Reply-To: ${msgIdHeader}`,
-                            `References: ${msgIdHeader}`,
-                            `Content-Type: text/plain; charset=utf-8`,
-                            "",
-                            body,
-                        ].join("\r\n")).toString("base64url");
+                        const raw = Buffer.from(
+                            [
+                                `From: ${acc.email}`,
+                                `To: ${replyTo}`,
+                                `Subject: ${reSubject}`,
+                                `In-Reply-To: ${msgIdHeader}`,
+                                `References: ${msgIdHeader}`,
+                                `Content-Type: text/plain; charset=utf-8`,
+                                "",
+                                body,
+                            ].join("\r\n"),
+                        ).toString("base64url");
 
                         await gmail.users.messages.send({
                             userId: "me",
@@ -895,7 +972,9 @@ export const gmailTool: ToolDefinition = {
                             to: replyTo,
                             subject: reSubject,
                         });
-                    } catch { /* not found in this account */ }
+                    } catch {
+                        /* not found in this account */
+                    }
                 }
 
                 return JSON.stringify({ error: `Message ${messageId} not found in any connected account.` });
@@ -912,15 +991,14 @@ export const gmailTool: ToolDefinition = {
 // Raw export: Google Tasks
 // ═══════════════════════════════════════════════
 
-export async function listGoogleTasksRaw(params: {
-    showCompleted?: boolean;
-    dueMax?: string;
-}): Promise<Array<{
-    id: string;
-    title: string;
-    due?: string;
-    status: "needsAction" | "completed";
-}>> {
+export async function listGoogleTasksRaw(params: { showCompleted?: boolean; dueMax?: string }): Promise<
+    Array<{
+        id: string;
+        title: string;
+        due?: string;
+        status: "needsAction" | "completed";
+    }>
+> {
     const accountsToQuery = Array.from(accounts.values());
     const allTasks: any[] = [];
     for (const acc of accountsToQuery) {
@@ -951,14 +1029,16 @@ export async function listGoogleTasksRaw(params: {
 // Raw export: Gmail stale emails + engaged senders
 // ═══════════════════════════════════════════════
 
-export async function listStaleEmailsRaw(): Promise<Array<{
-    id: string;
-    from: string;
-    subject: string;
-    received_ms: number;
-    is_important: boolean;
-    thread_msg_count: number;
-}>> {
+export async function listStaleEmailsRaw(): Promise<
+    Array<{
+        id: string;
+        from: string;
+        subject: string;
+        received_ms: number;
+        is_important: boolean;
+        thread_msg_count: number;
+    }>
+> {
     const accountsToQuery = Array.from(accounts.values());
     const all: any[] = [];
     for (const acc of accountsToQuery) {
@@ -979,9 +1059,9 @@ export async function listStaleEmailsRaw(): Promise<Array<{
                     metadataHeaders: ["From", "Subject", "Date"],
                 });
                 const headers = meta.data.payload?.headers ?? [];
-                const fromHdr = headers.find(h => h.name?.toLowerCase() === "from")?.value ?? "";
-                const subjHdr = headers.find(h => h.name?.toLowerCase() === "subject")?.value ?? "";
-                const dateHdr = headers.find(h => h.name?.toLowerCase() === "date")?.value ?? "";
+                const fromHdr = headers.find((h) => h.name?.toLowerCase() === "from")?.value ?? "";
+                const subjHdr = headers.find((h) => h.name?.toLowerCase() === "subject")?.value ?? "";
+                const dateHdr = headers.find((h) => h.name?.toLowerCase() === "date")?.value ?? "";
                 const labels = meta.data.labelIds ?? [];
                 all.push({
                     id: m.id,
@@ -1020,7 +1100,7 @@ export async function getEngagedSenders(): Promise<string[]> {
                         format: "metadata",
                         metadataHeaders: ["To"],
                     });
-                    const to = meta.data.payload?.headers?.find(h => h.name?.toLowerCase() === "to")?.value ?? "";
+                    const to = meta.data.payload?.headers?.find((h) => h.name?.toLowerCase() === "to")?.value ?? "";
                     const emails = to.match(/[\w.+-]+@[\w-]+\.[\w.-]+/g) ?? [];
                     for (const e of emails) senders.add(e.toLowerCase());
                 } catch {

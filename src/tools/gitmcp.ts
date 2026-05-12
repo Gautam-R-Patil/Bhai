@@ -2,11 +2,8 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
+import { connectGitMCPServer, getGitMCPEndpoint } from "../mcp/gitmcp-bridge.js";
 import type { ToolDefinition } from "./get-current-time.js";
-import {
-    getGitMCPEndpoint,
-    connectGitMCPServer,
-} from "../mcp/gitmcp-bridge.js";
 
 export const gitmcpDocs: ToolDefinition = {
     schema: {
@@ -20,8 +17,7 @@ export const gitmcpDocs: ToolDefinition = {
                 properties: {
                     repoUrl: {
                         type: "string",
-                        description:
-                            "Full GitHub repository URL (e.g. 'https://github.com/anthropics/claude-code').",
+                        description: "Full GitHub repository URL (e.g. 'https://github.com/anthropics/claude-code').",
                     },
                     probe: {
                         type: "boolean",

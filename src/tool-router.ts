@@ -238,10 +238,19 @@ const CATEGORIES: Record<string, CategoryDef> = {
     },
     os_control: {
         description:
-            "Controlling the computer's operating system, taking screenshots of the desktop, clicking on screen elements by coordinates or OCR text, typing into OS applications, interacting with native desktop apps, visual verification of UI elements, screen capture, mouse control, keyboard input automation, macOS Automator, AppleScript, PowerShell automation, accessibility tree inspection, keyboard shortcuts for apps, fast accessibility-based navigation, hierarchical computer use for complex multi-step desktop automation tasks.",
+            "Controlling the computer's operating system, taking screenshots of the desktop, clicking on screen elements by coordinates or OCR text or accessibility-tree id, typing into OS applications, interacting with native desktop apps, visual verification of UI elements, screen capture, mouse control, keyboard input automation, macOS Automator, AppleScript, PowerShell automation, accessibility tree inspection, fast cross-OS element lookup, structured single-action OS calls with percentage coords, GUI grounding via local vision models (OmniParser, UI-TARS), keyboard shortcuts for apps, hierarchical computer use for complex multi-step desktop automation tasks.",
         tools: [
+            // ── Phase 2 (preferred): cross-OS AX-based element inspection + click-by-id ──
+            "os_inspect",
+            "os_click_id",
+            // ── Phase 1: structured single-action API with percentage coords (cross-OS) ──
+            "os_computer_action",
+            // ── Phase 3: vision grounding when AX is empty (Canvas apps, etc.) ──
+            "os_visualize",
+            "os_ground",
+            // ── Legacy macOS path (still useful for AppleScript-specific tasks) ──
             "os_nav",
-            "os_click_element", // Primary: fast accessibility-based interaction
+            "os_click_element",
             "apple_script",
             "os_screenshot",
             "os_click",

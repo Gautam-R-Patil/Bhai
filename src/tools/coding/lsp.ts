@@ -20,8 +20,8 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { pathToFileURL } from "node:url";
-import type { ToolDefinition } from "../get-current-time.js";
 import { getPathBlockedReason, isPathAllowed } from "../../security/allowlist.js";
+import type { ToolDefinition } from "../get-current-time.js";
 import { binaryExists as probeBinary } from "./binary-exists.js";
 
 // ── Types ─────────────────────────────────────
@@ -155,7 +155,9 @@ function findWorkspaceRoot(startPath: string, indicators: string[]): string {
     let dir = path.resolve(startPath);
     try {
         if (statSync(dir).isFile()) dir = path.dirname(dir);
-    } catch { /* keep given path */ }
+    } catch {
+        /* keep given path */
+    }
 
     for (let depth = 0; depth < 30; depth++) {
         for (const ind of indicators) {
@@ -241,11 +243,7 @@ function dispatchIncoming(session: Session, message: Record<string, unknown>): v
 
 // ── Request primitives ────────────────────────
 
-function sendRequest<T = unknown>(
-    session: Session,
-    method: string,
-    params: unknown,
-): Promise<T> {
+function sendRequest<T = unknown>(session: Session, method: string, params: unknown): Promise<T> {
     return new Promise<T>((resolve, reject) => {
         if (session.dead) return reject(new Error("LSP session is not running"));
         const id = session.nextId++;
@@ -282,8 +280,16 @@ function killSession(session: Session, reason: string): void {
         p.reject(new Error(`LSP session ended: ${reason}`));
         session.pending.delete(id);
     }
-    try { session.child.stdin.end(); } catch { /* */ }
-    try { session.child.kill("SIGTERM"); } catch { /* */ }
+    try {
+        session.child.stdin.end();
+    } catch {
+        /* */
+    }
+    try {
+        session.child.kill("SIGTERM");
+    } catch {
+        /* */
+    }
     if (session.idleTimer) clearTimeout(session.idleTimer);
     const key = sessionKey(session.rootPath, session.language);
     sessions.delete(key);
@@ -328,7 +334,9 @@ async function getOrCreateSession(rootPath: string, language: Language): Promise
 
     child.stdout.on("data", (chunk: Buffer) => {
         session!.buffer = Buffer.concat([session!.buffer, chunk]);
-        try { tryParseBuffer(session!); } catch (err) {
+        try {
+            tryParseBuffer(session!);
+        } catch (err) {
             console.warn(`[LSP] Parse error: ${(err as Error).message}`);
         }
     });
@@ -464,11 +472,31 @@ interface SymbolSummary {
 }
 
 const SYMBOL_KIND_NAMES: Record<number, string> = {
-    1: "File", 2: "Module", 3: "Namespace", 4: "Package", 5: "Class",
-    6: "Method", 7: "Property", 8: "Field", 9: "Constructor", 10: "Enum",
-    11: "Interface", 12: "Function", 13: "Variable", 14: "Constant", 15: "String",
-    16: "Number", 17: "Boolean", 18: "Array", 19: "Object", 20: "Key",
-    21: "Null", 22: "EnumMember", 23: "Struct", 24: "Event", 25: "Operator",
+    1: "File",
+    2: "Module",
+    3: "Namespace",
+    4: "Package",
+    5: "Class",
+    6: "Method",
+    7: "Property",
+    8: "Field",
+    9: "Constructor",
+    10: "Enum",
+    11: "Interface",
+    12: "Function",
+    13: "Variable",
+    14: "Constant",
+    15: "String",
+    16: "Number",
+    17: "Boolean",
+    18: "Array",
+    19: "Object",
+    20: "Key",
+    21: "Null",
+    22: "EnumMember",
+    23: "Struct",
+    24: "Event",
+    25: "Operator",
     26: "TypeParameter",
 };
 
@@ -524,7 +552,14 @@ export const lsp: ToolDefinition = {
                 properties: {
                     operation: {
                         type: "string",
-                        enum: ["goToDefinition", "findReferences", "hover", "documentSymbol", "workspaceSymbol", "getDiagnostics"],
+                        enum: [
+                            "goToDefinition",
+                            "findReferences",
+                            "hover",
+                            "documentSymbol",
+                            "workspaceSymbol",
+                            "getDiagnostics",
+                        ],
                     },
                     file_path: {
                         type: "string",
@@ -544,7 +579,8 @@ export const lsp: ToolDefinition = {
                     },
                     workspace_root: {
                         type: "string",
-                        description: "Optional workspace root. Auto-detected from file_path via project markers (tsconfig.json, Cargo.toml, etc.) if omitted.",
+                        description:
+                            "Optional workspace root. Auto-detected from file_path via project markers (tsconfig.json, Cargo.toml, etc.) if omitted.",
                     },
                 },
                 required: ["operation"],
@@ -668,10 +704,7 @@ export const lsp: ToolDefinition = {
 
             if (op === "hover") {
                 const result = await sendRequest<{
-                    contents?:
-                        | string
-                        | { value?: string }
-                        | Array<string | { value?: string; language?: string }>;
+                    contents?: string | { value?: string } | Array<string | { value?: string; language?: string }>;
                 }>(session, "textDocument/hover", {
                     textDocument: { uri },
                     position,
@@ -711,10 +744,15 @@ export const lsp: ToolDefinition = {
                     line: (d.range.start.line ?? 0) + 1,
                     character: (d.range.start.character ?? 0) + 1,
                     severity:
-                        d.severity === 1 ? "error" :
-                        d.severity === 2 ? "warning" :
-                        d.severity === 3 ? "info" :
-                        d.severity === 4 ? "hint" : "unknown",
+                        d.severity === 1
+                            ? "error"
+                            : d.severity === 2
+                              ? "warning"
+                              : d.severity === 3
+                                ? "info"
+                                : d.severity === 4
+                                  ? "hint"
+                                  : "unknown",
                     source: d.source,
                     code: d.code,
                     message: d.message,
@@ -746,8 +784,12 @@ function shutdownAll(): void {
 }
 
 process.once("exit", shutdownAll);
-process.once("SIGINT", () => { shutdownAll(); });
-process.once("SIGTERM", () => { shutdownAll(); });
+process.once("SIGINT", () => {
+    shutdownAll();
+});
+process.once("SIGTERM", () => {
+    shutdownAll();
+});
 
 /** For diagnostics and tests. */
 export function _getActiveSessionCount(): number {

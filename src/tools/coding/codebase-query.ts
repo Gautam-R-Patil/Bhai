@@ -467,7 +467,12 @@ Requires the index to exist. If not, returns { success: false } with a hint to r
                         error: `No symbol definitions found at or before ${file}:${line}. Is the file indexed at 'calls' depth? Re-run codebase_index build with ATLAS_INDEX_DEPTH=calls.`,
                     });
                 }
-                const graph = egoGraph(g.db, seeds.map((s) => s.id), depth, 80);
+                const graph = egoGraph(
+                    g.db,
+                    seeds.map((s) => s.id),
+                    depth,
+                    80,
+                );
                 return JSON.stringify({
                     success: true,
                     seed: { file, line, enclosing: seeds[0] },

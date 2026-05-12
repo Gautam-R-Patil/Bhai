@@ -18,10 +18,7 @@ function coerceErrorMessage(message: unknown): string {
  * Build an error-shaped tool result. The `error` field is always a string,
  * preserved even if `extra` accidentally contains an `error` key.
  */
-export function toolError(
-    message: unknown,
-    extra?: Record<string, unknown>,
-): string {
+export function toolError(message: unknown, extra?: Record<string, unknown>): string {
     const payload: Record<string, unknown> = { ...(extra ?? {}) };
     payload.error = coerceErrorMessage(message);
     return JSON.stringify(payload);
@@ -33,11 +30,7 @@ export function toolError(
  * is always a JSON object (callers can assume `typeof parsed === "object"`).
  */
 export function toolSuccess(data: unknown): string {
-    if (
-        data !== null &&
-        typeof data === "object" &&
-        !Array.isArray(data)
-    ) {
+    if (data !== null && typeof data === "object" && !Array.isArray(data)) {
         return JSON.stringify(data);
     }
     return JSON.stringify({ result: data });
@@ -51,9 +44,7 @@ export type ToolResultVariant =
     | { ok: false; error: unknown; extra?: Record<string, unknown> };
 
 export function toolResult(variant: ToolResultVariant): string {
-    return variant.ok
-        ? toolSuccess(variant.data)
-        : toolError(variant.error, variant.extra);
+    return variant.ok ? toolSuccess(variant.data) : toolError(variant.error, variant.extra);
 }
 
 /**
@@ -66,9 +57,7 @@ export function isErrorResultString(raw: unknown): boolean {
     try {
         const parsed = JSON.parse(raw);
         return (
-            parsed !== null &&
-            typeof parsed === "object" &&
-            typeof (parsed as { error?: unknown }).error === "string"
+            parsed !== null && typeof parsed === "object" && typeof (parsed as { error?: unknown }).error === "string"
         );
     } catch {
         return false;

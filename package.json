@@ -7,7 +7,7 @@
   "author": "XAGI Labs Private Limited",
   "type": "module",
   "scripts": {
-    "predev": "npm run build:location 2>/dev/null || true",
+    "predev": "(npm run build:location && npm run build:ax) 2>/dev/null || true",
     "dev": "tsx --watch src/index.ts",
     "build": "node node_modules/typescript/bin/tsc -p tsconfig.prod.json",
     "postbuild": "node scripts/postbuild-copy-assets.mjs",

@@ -10,20 +10,20 @@
 // linux  → xdotool/xclip/scrot/xdg-open/xprintidle
 
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { promises as fs } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import {
-    IS_MAC,
-    IS_WIN,
-    IS_LINUX,
     captureScreenshot,
     clipboardRead,
     clipboardWrite,
-    nativeOpen,
     getFrontmostApp,
     getScreenResolution,
+    IS_LINUX,
+    IS_MAC,
+    IS_WIN,
+    nativeOpen,
     runPowerShellInline,
 } from "./platform.js";
 
@@ -86,15 +86,22 @@ export async function openUrl(url: string): Promise<void> {
 export async function getActiveWindow(): Promise<{ app: string; title: string }> {
     if (IS_MAC) {
         try {
-            const { stdout: appName } = await execFileAsync("osascript", ["-e",
-                'tell application "System Events" to get name of first process whose frontmost is true'
-            ], { timeout: 2000 });
+            const { stdout: appName } = await execFileAsync(
+                "osascript",
+                ["-e", 'tell application "System Events" to get name of first process whose frontmost is true'],
+                { timeout: 2000 },
+            );
 
             let title = "";
             try {
-                const { stdout: winTitle } = await execFileAsync("osascript", ["-e",
-                    'tell application "System Events" to get name of front window of first process whose frontmost is true'
-                ], { timeout: 2000 });
+                const { stdout: winTitle } = await execFileAsync(
+                    "osascript",
+                    [
+                        "-e",
+                        'tell application "System Events" to get name of front window of first process whose frontmost is true',
+                    ],
+                    { timeout: 2000 },
+                );
                 title = winTitle.trim();
             } catch {
                 // Some apps don't expose window title via AppleScript
@@ -108,7 +115,8 @@ export async function getActiveWindow(): Promise<{ app: string; title: string }>
 
     if (IS_WIN) {
         try {
-            const result = await runPowerShellInline(`
+            const result = await runPowerShellInline(
+                `
 Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; using System.Text; public class WinAPI { [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count); [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId); }'
 $hwnd = [WinAPI]::GetForegroundWindow()
 $sb = New-Object System.Text.StringBuilder(256)
@@ -119,7 +127,9 @@ $pid = 0
 $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
 $appName = if ($proc) { $proc.ProcessName } else { "unknown" }
 "$appName|||$title"
-            `.trim(), 5000);
+            `.trim(),
+                5000,
+            );
 
             const [app, title] = result.split("|||");
             return { app: (app || "unknown").trim(), title: (title || "").trim() };
@@ -131,21 +141,19 @@ $appName = if ($proc) { $proc.ProcessName } else { "unknown" }
     // Linux
     if (IS_LINUX) {
         try {
-            const { stdout: windowName } = await execFileAsync("xdotool", [
-                "getactivewindow", "getwindowname"
-            ], { timeout: 3000 });
+            const { stdout: windowName } = await execFileAsync("xdotool", ["getactivewindow", "getwindowname"], {
+                timeout: 3000,
+            });
 
             // Try to get the process name via xdotool + /proc
             let app = "unknown";
             try {
-                const { stdout: pidStr } = await execFileAsync("xdotool", [
-                    "getactivewindow", "getwindowpid"
-                ], { timeout: 2000 });
+                const { stdout: pidStr } = await execFileAsync("xdotool", ["getactivewindow", "getwindowpid"], {
+                    timeout: 2000,
+                });
                 const pid = pidStr.trim();
                 if (pid) {
-                    const { stdout: comm } = await execFileAsync("ps", [
-                        "-p", pid, "-o", "comm="
-                    ], { timeout: 2000 });
+                    const { stdout: comm } = await execFileAsync("ps", ["-p", pid, "-o", "comm="], { timeout: 2000 });
                     app = comm.trim() || "unknown";
                 }
             } catch {
@@ -156,9 +164,11 @@ $appName = if ($proc) { $proc.ProcessName } else { "unknown" }
         } catch {
             // Wayland fallback: try swaymsg or wlrctl
             try {
-                const { stdout } = await execFileAsync("bash", ["-c",
-                    `swaymsg -t get_tree | grep -o '"name":"[^"]*"' | head -1 | sed 's/"name":"\\(.*\\)"/\\1/'`
-                ], { timeout: 3000 });
+                const { stdout } = await execFileAsync(
+                    "bash",
+                    ["-c", `swaymsg -t get_tree | grep -o '"name":"[^"]*"' | head -1 | sed 's/"name":"\\(.*\\)"/\\1/'`],
+                    { timeout: 3000 },
+                );
                 return { app: "unknown", title: stdout.trim() };
             } catch {
                 return { app: "unknown", title: "" };
@@ -178,24 +188,27 @@ $appName = if ($proc) { $proc.ProcessName } else { "unknown" }
 export async function getUserIdleSeconds(): Promise<number> {
     if (IS_MAC) {
         try {
-            const { stdout } = await execFileAsync("ioreg", [
-                "-c", "IOHIDSystem", "-d", "4"
-            ], { timeout: 5000 });
+            const { stdout } = await execFileAsync("ioreg", ["-c", "IOHIDSystem", "-d", "4"], { timeout: 5000 });
             const match = stdout.match(/HIDIdleTime.*?=\s*(\d+)/);
             if (match) {
                 // HIDIdleTime is in nanoseconds
                 return Math.floor(parseInt(match[1]) / 1_000_000_000);
             }
-        } catch { /* fallback */ }
+        } catch {
+            /* fallback */
+        }
         return 0;
     }
 
     if (IS_WIN) {
         try {
-            const result = await runPowerShellInline(`
+            const result = await runPowerShellInline(
+                `
 Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public struct LASTINPUTINFO { public uint cbSize; public uint dwTime; } public class IdleTime { [DllImport("user32.dll")] public static extern bool GetLastInputInfo(ref LASTINPUTINFO plii); public static uint GetIdleMs() { LASTINPUTINFO lii = new LASTINPUTINFO(); lii.cbSize = (uint)Marshal.SizeOf(typeof(LASTINPUTINFO)); GetLastInputInfo(ref lii); return ((uint)Environment.TickCount - lii.dwTime); } }'
 [Math]::Floor([IdleTime]::GetIdleMs() / 1000)
-            `.trim(), 5000);
+            `.trim(),
+                5000,
+            );
             return parseInt(result) || 0;
         } catch {
             return 0;
@@ -225,9 +238,9 @@ Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; pu
 // ── System Info ─────────────────────────────────
 
 interface SystemInfoResult {
-    battery: number;     // 0-100, -1 if no battery
-    wifi: string;        // SSID or "disconnected" or "unknown"
-    volume: number;      // 0-100
+    battery: number; // 0-100, -1 if no battery
+    wifi: string; // SSID or "disconnected" or "unknown"
+    volume: number; // 0-100
 }
 
 /**
@@ -243,14 +256,16 @@ export async function getSystemInfo(): Promise<SystemInfoResult> {
             const { stdout } = await execFileAsync("pmset", ["-g", "batt"], { timeout: 3000 });
             const match = stdout.match(/(\d+)%/);
             if (match) result.battery = parseInt(match[1]);
-        } catch { /* no battery info */ }
+        } catch {
+            /* no battery info */
+        }
 
         // WiFi
         try {
             const { stdout } = await execFileAsync(
                 "/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport",
                 ["-I"],
-                { timeout: 3000 }
+                { timeout: 3000 },
             );
             const ssidMatch = stdout.match(/\bSSID:\s*(.+)/);
             if (ssidMatch) {
@@ -261,9 +276,9 @@ export async function getSystemInfo(): Promise<SystemInfoResult> {
         } catch {
             // Newer macOS: try wdutil or system_profiler
             try {
-                const { stdout } = await execFileAsync("networksetup", [
-                    "-getairportnetwork", "en0"
-                ], { timeout: 3000 });
+                const { stdout } = await execFileAsync("networksetup", ["-getairportnetwork", "en0"], {
+                    timeout: 3000,
+                });
                 const m = stdout.match(/Current Wi-Fi Network:\s*(.+)/);
                 result.wifi = m ? m[1].trim() : "disconnected";
             } catch {
@@ -273,11 +288,13 @@ export async function getSystemInfo(): Promise<SystemInfoResult> {
 
         // Volume
         try {
-            const { stdout } = await execFileAsync("osascript", ["-e",
-                "output volume of (get volume settings)"
-            ], { timeout: 2000 });
+            const { stdout } = await execFileAsync("osascript", ["-e", "output volume of (get volume settings)"], {
+                timeout: 2000,
+            });
             result.volume = parseInt(stdout.trim()) || 50;
-        } catch { /* default */ }
+        } catch {
+            /* default */
+        }
 
         return result;
     }
@@ -288,17 +305,20 @@ export async function getSystemInfo(): Promise<SystemInfoResult> {
         // Battery
         try {
             const battResult = await runPowerShellInline(
-                `(Get-CimInstance Win32_Battery).EstimatedChargeRemaining`, 3000
+                `(Get-CimInstance Win32_Battery).EstimatedChargeRemaining`,
+                3000,
             );
             const val = parseInt(battResult);
             result.battery = isNaN(val) ? -1 : val;
-        } catch { /* no battery */ }
+        } catch {
+            /* no battery */
+        }
 
         // WiFi
         try {
             const wifiResult = await runPowerShellInline(
                 `(netsh wlan show interfaces | Select-String 'SSID' | Select-Object -First 1).ToString().Split(':')[1].Trim()`,
-                3000
+                3000,
             );
             result.wifi = wifiResult || "disconnected";
         } catch {
@@ -309,7 +329,7 @@ export async function getSystemInfo(): Promise<SystemInfoResult> {
         try {
             const volResult = await runPowerShellInline(
                 `try { $vol = [int]((& nircmd.exe getvolume '') 2>&1); $vol } catch { 50 }`,
-                3000
+                3000,
             );
             result.volume = parseInt(volResult) || 50;
         } catch {
@@ -325,15 +345,11 @@ export async function getSystemInfo(): Promise<SystemInfoResult> {
 
         // Battery: read from /sys
         try {
-            const capacity = await fs.readFile(
-                "/sys/class/power_supply/BAT0/capacity", "utf-8"
-            );
+            const capacity = await fs.readFile("/sys/class/power_supply/BAT0/capacity", "utf-8");
             result.battery = parseInt(capacity.trim());
         } catch {
             try {
-                const capacity = await fs.readFile(
-                    "/sys/class/power_supply/BAT1/capacity", "utf-8"
-                );
+                const capacity = await fs.readFile("/sys/class/power_supply/BAT1/capacity", "utf-8");
                 result.battery = parseInt(capacity.trim());
             } catch {
                 // No battery or different path
@@ -342,10 +358,10 @@ export async function getSystemInfo(): Promise<SystemInfoResult> {
 
         // WiFi: nmcli or iwgetid
         try {
-            const { stdout } = await execFileAsync("nmcli", [
-                "-t", "-f", "active,ssid", "dev", "wifi"
-            ], { timeout: 3000 });
-            const activeLine = stdout.split("\n").find(l => l.startsWith("yes:"));
+            const { stdout } = await execFileAsync("nmcli", ["-t", "-f", "active,ssid", "dev", "wifi"], {
+                timeout: 3000,
+            });
+            const activeLine = stdout.split("\n").find((l) => l.startsWith("yes:"));
             if (activeLine) {
                 result.wifi = activeLine.split(":")[1] || "disconnected";
             } else {
@@ -362,19 +378,17 @@ export async function getSystemInfo(): Promise<SystemInfoResult> {
 
         // Volume: pactl or amixer
         try {
-            const { stdout } = await execFileAsync("pactl", [
-                "get-sink-volume", "@DEFAULT_SINK@"
-            ], { timeout: 3000 });
+            const { stdout } = await execFileAsync("pactl", ["get-sink-volume", "@DEFAULT_SINK@"], { timeout: 3000 });
             const match = stdout.match(/(\d+)%/);
             if (match) result.volume = parseInt(match[1]);
         } catch {
             try {
-                const { stdout } = await execFileAsync("amixer", [
-                    "get", "Master"
-                ], { timeout: 3000 });
+                const { stdout } = await execFileAsync("amixer", ["get", "Master"], { timeout: 3000 });
                 const match = stdout.match(/\[(\d+)%\]/);
                 if (match) result.volume = parseInt(match[1]);
-            } catch { /* default */ }
+            } catch {
+                /* default */
+            }
         }
 
         return result;
@@ -402,16 +416,19 @@ export async function getScreenRes(): Promise<{ width: number; height: number }>
  */
 export async function showNotification(title: string, body: string): Promise<void> {
     if (IS_MAC) {
-        await execFileAsync("osascript", ["-e",
-            `display notification "${body.replace(/"/g, '\\"')}" with title "${title.replace(/"/g, '\\"')}"`
-        ], { timeout: 3000 });
+        await execFileAsync(
+            "osascript",
+            ["-e", `display notification "${body.replace(/"/g, '\\"')}" with title "${title.replace(/"/g, '\\"')}"`],
+            { timeout: 3000 },
+        );
         return;
     }
 
     if (IS_WIN) {
         const escaped_title = title.replace(/'/g, "''");
         const escaped_body = body.replace(/'/g, "''");
-        await runPowerShellInline(`
+        await runPowerShellInline(
+            `
 Add-Type -AssemblyName System.Windows.Forms
 $n = New-Object System.Windows.Forms.NotifyIcon
 $n.Icon = [System.Drawing.SystemIcons]::Information
@@ -419,7 +436,9 @@ $n.Visible = $true
 $n.ShowBalloonTip(5000, '${escaped_title}', '${escaped_body}', [System.Windows.Forms.ToolTipIcon]::Info)
 Start-Sleep -Seconds 1
 $n.Dispose()
-        `.trim(), 10000);
+        `.trim(),
+            10000,
+        );
         return;
     }
 
@@ -440,9 +459,11 @@ $n.Dispose()
  */
 export async function lockScreen(): Promise<void> {
     if (IS_MAC) {
-        await execFileAsync("osascript", ["-e",
-            'tell application "System Events" to keystroke "q" using {command down, control down}'
-        ], { timeout: 3000 });
+        await execFileAsync(
+            "osascript",
+            ["-e", 'tell application "System Events" to keystroke "q" using {command down, control down}'],
+            { timeout: 3000 },
+        );
         return;
     }
 
@@ -464,9 +485,7 @@ export async function lockScreen(): Promise<void> {
             try {
                 await execFileAsync(cmd, [...args], { timeout: 3000 });
                 return;
-            } catch {
-                continue;
-            }
+            } catch {}
         }
     }
 }

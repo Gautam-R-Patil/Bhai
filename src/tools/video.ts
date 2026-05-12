@@ -3,10 +3,10 @@
 // See LICENSE.md for details.
 
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { promises as fs } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import type { ToolDefinition } from "./get-current-time.js";
 
 const execFileAsync = promisify(execFile);
@@ -21,17 +21,20 @@ export const davinciScript: ToolDefinition = {
         type: "function",
         function: {
             name: "davinci_script",
-            description: "Execute a Python 3 script inside the DaVinci Resolve Studio API environment. Ensure DaVinci Resolve is open before running this. Use this to import media, cut timelines, apply effects, and export videos natively.",
+            description:
+                "Execute a Python 3 script inside the DaVinci Resolve Studio API environment. Ensure DaVinci Resolve is open before running this. Use this to import media, cut timelines, apply effects, and export videos natively.",
             parameters: {
                 type: "object",
                 properties: {
                     script: {
                         type: "string",
-                        description: "The complete Python script using the 'DaVinciResolveScript'/'import DaVinciResolveScript as dvr_script' module.",
+                        description:
+                            "The complete Python script using the 'DaVinciResolveScript'/'import DaVinciResolveScript as dvr_script' module.",
                     },
                     timeout: {
                         type: "number",
-                        description: "Timeout in milliseconds (default: 300000 ms = 5 minutes). Increase if doing heavy rendering.",
+                        description:
+                            "Timeout in milliseconds (default: 300000 ms = 5 minutes). Increase if doing heavy rendering.",
                     },
                 },
                 required: ["script"],
@@ -51,7 +54,8 @@ export const davinciScript: ToolDefinition = {
         const env = {
             ...process.env,
             RESOLVE_SCRIPT_API: "/Library/Application Support/Blackmagic Design/DaVinci Resolve/Developer/Scripting",
-            RESOLVE_SCRIPT_LIB: "/Applications/DaVinci Resolve/DaVinci Resolve.app/Contents/Libraries/Fusion/fusionscript.so",
+            RESOLVE_SCRIPT_LIB:
+                "/Applications/DaVinci Resolve/DaVinci Resolve.app/Contents/Libraries/Fusion/fusionscript.so",
             PYTHONPATH: `${process.env.PYTHONPATH || ""}:/Library/Application Support/Blackmagic Design/DaVinci Resolve/Developer/Scripting/Modules/`,
         };
 
@@ -67,7 +71,7 @@ export const davinciScript: ToolDefinition = {
                 maxBuffer: 5 * 1024 * 1024,
             });
 
-            await fs.unlink(tmpFile).catch(() => { });
+            await fs.unlink(tmpFile).catch(() => {});
 
             return JSON.stringify({
                 success: true,
@@ -76,9 +80,15 @@ export const davinciScript: ToolDefinition = {
                 truncated: (stdout || "").length > MAX_OUTPUT,
             });
         } catch (err) {
-            await fs.unlink(tmpFile).catch(() => { });
+            await fs.unlink(tmpFile).catch(() => {});
 
-            const error = err as { message?: string; code?: number; killed?: boolean; stdout?: string; stderr?: string };
+            const error = err as {
+                message?: string;
+                code?: number;
+                killed?: boolean;
+                stdout?: string;
+                stderr?: string;
+            };
             return JSON.stringify({
                 success: false,
                 error: error.message || "DaVinci Resolve script failed",

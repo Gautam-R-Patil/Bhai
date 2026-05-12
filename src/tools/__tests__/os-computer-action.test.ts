@@ -1,6 +1,6 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { osComputerAction } from "../os-computer-action.js";
 
 describe("os_computer_action — input validation (no OS dispatch)", () => {
@@ -27,7 +27,9 @@ describe("os_computer_action — input validation (no OS dispatch)", () => {
     });
 
     it("rejects click with invalid button", async () => {
-        const result = JSON.parse(await osComputerAction.handler({ action: "click", coord: [0.5, 0.5], button: "explode" } as any));
+        const result = JSON.parse(
+            await osComputerAction.handler({ action: "click", coord: [0.5, 0.5], button: "explode" } as any),
+        );
         expect(result.success).toBe(false);
     });
 

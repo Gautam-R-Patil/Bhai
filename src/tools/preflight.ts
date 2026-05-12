@@ -18,8 +18,8 @@
 // the tool still does its own validation. A preflight *fail* is strong
 // evidence the call would fail.
 
-import { existsSync, accessSync, constants as fsC } from "node:fs";
-import { isAbsolute, dirname } from "node:path";
+import { accessSync, existsSync, constants as fsC } from "node:fs";
+import { dirname, isAbsolute } from "node:path";
 
 export interface PreflightHint {
     /** Why the tool call would fail. Passed back to the LLM as an error hint. */
@@ -110,7 +110,9 @@ export function preflight(toolName: string, args: Record<string, unknown>): Pref
         if (toolName === "lsp") {
             const fp = pickStringArg(args, ["filePath", "file_path", "path"]);
             if (fp) {
-                try { accessSync(fp, fsC.R_OK); } catch {
+                try {
+                    accessSync(fp, fsC.R_OK);
+                } catch {
                     return { reason: `LSP file unreadable or missing: ${fp}` };
                 }
             }
@@ -136,17 +138,16 @@ function pickStringArg(args: Record<string, unknown>, keys: string[]): string | 
 // Tools that require absolute paths. Extended per-tool schema tightening;
 // Read tool requires absolute in particular.
 const REQUIRES_ABSOLUTE_PATH: ReadonlySet<string> = new Set([
-    "read", "edit", "write", "append_file", "notebook_edit", "delete_file",
+    "read",
+    "edit",
+    "write",
+    "append_file",
+    "notebook_edit",
+    "delete_file",
 ]);
 
-const READS_EXISTING_FILE: ReadonlySet<string> = new Set([
-    "read", "edit", "notebook_edit",
-]);
+const READS_EXISTING_FILE: ReadonlySet<string> = new Set(["read", "edit", "notebook_edit"]);
 
-const WRITES_FILE: ReadonlySet<string> = new Set([
-    "write", "append_file",
-]);
+const WRITES_FILE: ReadonlySet<string> = new Set(["write", "append_file"]);
 
-const REQUIRES_URL: ReadonlySet<string> = new Set([
-    "browser_navigate", "web_asset_download", "browser_batch_fetch",
-]);
+const REQUIRES_URL: ReadonlySet<string> = new Set(["browser_navigate", "web_asset_download", "browser_batch_fetch"]);

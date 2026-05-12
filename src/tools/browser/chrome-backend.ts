@@ -8,8 +8,8 @@
 // The agent interacts directly with the user's tabs — no headless browser needed.
 
 import type { BrowserBackend, BrowserPageInfo } from "./browser-backend.js";
-import type { InteractiveElement, TabInfo, ClickOptions } from "./types.js";
-import { sendBridgeCommand, getActiveExtensionTab, getExtensionTabs } from "./chrome-bridge.js";
+import { getActiveExtensionTab, getExtensionTabs, sendBridgeCommand } from "./chrome-bridge.js";
+import type { ClickOptions, InteractiveElement, TabInfo } from "./types.js";
 
 // ── ChromePageProxy ──────────────────────────
 // Mimics the Playwright Page API surface so existing tool handlers
@@ -40,7 +40,7 @@ export class ChromePageProxy {
         await sendBridgeCommand("navigate", { url, timeout: opts?.timeout }, opts?.timeout || 30000);
         this._url = url;
         // Wait for page to settle
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise((resolve) => setTimeout(resolve, 500));
         // Re-fetch actual URL (may have redirected)
         const tab = await getActiveExtensionTab();
         if (tab) {
@@ -53,7 +53,7 @@ export class ChromePageProxy {
         let code: string;
         if (typeof fn === "function") {
             // Serialize function and args for remote execution
-            code = `(${fn.toString()})(${args.map(a => JSON.stringify(a)).join(", ")})`;
+            code = `(${fn.toString()})(${args.map((a) => JSON.stringify(a)).join(", ")})`;
         } else {
             code = fn;
         }
@@ -67,12 +67,12 @@ export class ChromePageProxy {
     }
 
     async waitForTimeout(ms: number): Promise<void> {
-        await new Promise(resolve => setTimeout(resolve, ms));
+        await new Promise((resolve) => setTimeout(resolve, ms));
     }
 
     async waitForLoadState(_state?: string, _opts?: { timeout?: number }): Promise<void> {
         // The Chrome extension handles page load natively
-        await new Promise(resolve => setTimeout(resolve, 300));
+        await new Promise((resolve) => setTimeout(resolve, 300));
     }
 
     // Navigation
@@ -108,7 +108,8 @@ export class ChromePageProxy {
             }
             // Simulate interpolated movement — needed for CSS :hover transitions.
             // Get the last known position (approximation: start from page center if unknown).
-            const startX = 640, startY = 400;
+            const startX = 640,
+                startY = 400;
             for (let i = 1; i <= steps; i++) {
                 const ix = Math.round(startX + (x - startX) * (i / steps));
                 const iy = Math.round(startY + (y - startY) * (i / steps));
@@ -133,10 +134,10 @@ export class ChromePageProxy {
     };
 
     async screenshot(opts?: { type?: string; quality?: number; fullPage?: boolean }): Promise<Buffer> {
-        const result = await sendBridgeCommand("screenshot", {
+        const result = (await sendBridgeCommand("screenshot", {
             format: opts?.type || "jpeg",
             quality: opts?.quality || 55,
-        }) as { base64: string };
+        })) as { base64: string };
         return Buffer.from(result.base64, "base64");
     }
 
@@ -161,9 +162,7 @@ export class ChromePageProxy {
         const exact = opts?.exact ?? false;
         const escaped = text.replace(/'/g, "\\'");
         // Use XPath to find elements by text content
-        const xpath = exact
-            ? `//*[text()='${escaped}']`
-            : `//*[contains(text(),'${escaped}')]`;
+        const xpath = exact ? `//*[text()='${escaped}']` : `//*[contains(text(),'${escaped}')]`;
         return new ChromeLocatorProxy(`xpath=${xpath}`);
     }
 
@@ -177,7 +176,9 @@ export class ChromePageProxy {
     }
 
     getByLabel(text: string): ChromeLocatorProxy {
-        return new ChromeLocatorProxy(`[aria-label="${text}"], label:has-text("${text}") + input, label:has-text("${text}") + select`);
+        return new ChromeLocatorProxy(
+            `[aria-label="${text}"], label:has-text("${text}") + input, label:has-text("${text}") + select`,
+        );
     }
 
     async selectOption(selector: string, value: string | string[]): Promise<void> {
@@ -187,14 +188,14 @@ export class ChromePageProxy {
 
     // Element query shorthand ($ operator)
     async $(selector: string): Promise<ChromeLocatorProxy | null> {
-        const result = await sendBridgeCommand("execute_js", {
+        const result = (await sendBridgeCommand("execute_js", {
             code: `(() => {
                 const el = document.querySelector(${JSON.stringify(selector)});
                 if (!el) return null;
                 const rect = el.getBoundingClientRect();
                 return { x: rect.left + rect.width/2, y: rect.top + rect.height/2, found: true };
-            })()`
-        }) as { x: number; y: number; found: boolean } | null;
+            })()`,
+        })) as { x: number; y: number; found: boolean } | null;
         if (!result || !result.found) return null;
         return new ChromeLocatorProxy(selector);
     }
@@ -246,8 +247,10 @@ class ChromeLocatorProxy {
             })()`;
         }
 
-        const result = await sendBridgeCommand("execute_js", { code }, 10000) as {
-            x: number; y: number; found: boolean;
+        const result = (await sendBridgeCommand("execute_js", { code }, 10000)) as {
+            x: number;
+            y: number;
+            found: boolean;
         };
         return result || { found: false, x: 0, y: 0 };
     }
@@ -269,13 +272,13 @@ class ChromeLocatorProxy {
         if (!el.found) throw new Error(`Element not found: ${this.selector}`);
         // Click to focus, then type
         await sendBridgeCommand("click_at", { x: el.x, y: el.y });
-        await new Promise(r => setTimeout(r, 100));
+        await new Promise((r) => setTimeout(r, 100));
         // Clear existing value first
         await sendBridgeCommand("execute_js", {
             code: `(() => {
                 const el = document.querySelector(${JSON.stringify(this.selector)});
                 if (el) { el.value = ''; el.dispatchEvent(new Event('input', {bubbles:true})); }
-            })()`
+            })()`,
         });
         await sendBridgeCommand("type_text", { text });
     }
@@ -291,8 +294,11 @@ class ChromeLocatorProxy {
             const rect = el.getBoundingClientRect();
             return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
         })()`;
-        return await sendBridgeCommand("execute_js", { code }, 5000) as {
-            x: number; y: number; width: number; height: number;
+        return (await sendBridgeCommand("execute_js", { code }, 5000)) as {
+            x: number;
+            y: number;
+            width: number;
+            height: number;
         } | null;
     }
 
@@ -301,7 +307,7 @@ class ChromeLocatorProxy {
             const el = document.querySelector(${JSON.stringify(this.selector)});
             return el ? el.textContent : null;
         })()`;
-        return await sendBridgeCommand("execute_js", { code }, 5000) as string | null;
+        return (await sendBridgeCommand("execute_js", { code }, 5000)) as string | null;
     }
 
     async innerText(): Promise<string> {
@@ -309,7 +315,7 @@ class ChromeLocatorProxy {
             const el = document.querySelector(${JSON.stringify(this.selector)});
             return el ? el.innerText : '';
         })()`;
-        return (await sendBridgeCommand("execute_js", { code }, 5000) as string) || "";
+        return ((await sendBridgeCommand("execute_js", { code }, 5000)) as string) || "";
     }
 
     async isVisible(): Promise<boolean> {
@@ -319,7 +325,7 @@ class ChromeLocatorProxy {
             const style = window.getComputedStyle(el);
             return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
         })()`;
-        return (await sendBridgeCommand("execute_js", { code }, 5000) as boolean) || false;
+        return ((await sendBridgeCommand("execute_js", { code }, 5000)) as boolean) || false;
     }
 
     async scrollIntoViewIfNeeded(): Promise<void> {
@@ -327,7 +333,7 @@ class ChromeLocatorProxy {
             code: `(() => {
                 const el = document.querySelector(${JSON.stringify(this.selector)});
                 if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-            })()`
+            })()`,
         });
     }
 
@@ -341,7 +347,9 @@ class ChromeLocatorProxy {
         // File upload through Chrome extension is limited
         // We can trigger the file input click but can't programmatically set files
         // due to browser security restrictions
-        throw new Error("File upload is not supported in Chrome extension mode. Switch to Playwright mode with browser_set_mode('playwright') for file uploads.");
+        throw new Error(
+            "File upload is not supported in Chrome extension mode. Switch to Playwright mode with browser_set_mode('playwright') for file uploads.",
+        );
     }
 
     async hover(): Promise<void> {
@@ -355,7 +363,7 @@ class ChromeLocatorProxy {
             code: `(() => {
                 const el = document.querySelector(${JSON.stringify(this.selector)});
                 if (el && el.focus) el.focus();
-            })()`
+            })()`,
         });
     }
 
@@ -381,7 +389,10 @@ export class ChromeExtensionBackend implements BrowserBackend {
 
     // ── Navigation ──
 
-    async navigate(url: string, opts?: { newTab?: boolean; waitFor?: string; timeout?: number }): Promise<{ title: string; url: string }> {
+    async navigate(
+        url: string,
+        opts?: { newTab?: boolean; waitFor?: string; timeout?: number },
+    ): Promise<{ title: string; url: string }> {
         const timeout = opts?.timeout || 30000;
 
         if (opts?.newTab) {
@@ -391,13 +402,19 @@ export class ChromeExtensionBackend implements BrowserBackend {
         }
 
         // Wait for page to settle
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise((resolve) => setTimeout(resolve, 500));
 
         if (opts?.waitFor) {
-            await sendBridgeCommand("wait_for", {
-                selector: opts.waitFor,
-                timeout: 10000,
-            }, 12000).catch(() => { /* non-fatal */ });
+            await sendBridgeCommand(
+                "wait_for",
+                {
+                    selector: opts.waitFor,
+                    timeout: 10000,
+                },
+                12000,
+            ).catch(() => {
+                /* non-fatal */
+            });
         }
 
         const tab = await getActiveExtensionTab();
@@ -418,7 +435,7 @@ export class ChromeExtensionBackend implements BrowserBackend {
 
     async waitForReady(timeoutMs = 3000): Promise<void> {
         // Chrome handles page loading natively — give it a moment to stabilize
-        await new Promise(resolve => setTimeout(resolve, Math.min(timeoutMs, 800)));
+        await new Promise((resolve) => setTimeout(resolve, Math.min(timeoutMs, 800)));
     }
 
     // ── Page / Tab Access ──
@@ -433,7 +450,7 @@ export class ChromeExtensionBackend implements BrowserBackend {
 
     async getAllTabs(): Promise<TabInfo[]> {
         const tabs = await getExtensionTabs();
-        return tabs.map(t => ({
+        return tabs.map((t) => ({
             index: t.index,
             title: t.title,
             url: t.url,
@@ -472,7 +489,7 @@ export class ChromeExtensionBackend implements BrowserBackend {
     // ── Element Scanning ──
 
     async scanElements(forceRefresh = false): Promise<InteractiveElement[]> {
-        const result = await sendBridgeCommand("scan_elements", { forceRefresh }, 15000) as {
+        const result = (await sendBridgeCommand("scan_elements", { forceRefresh }, 15000)) as {
             elements: Array<{
                 label: number;
                 x: number;
@@ -511,7 +528,7 @@ export class ChromeExtensionBackend implements BrowserBackend {
         // Wait after click (like Playwright mode)
         const waitMs = opts?.waitAfterMs ?? 1000;
         if (waitMs > 0) {
-            await new Promise(resolve => setTimeout(resolve, waitMs));
+            await new Promise((resolve) => setTimeout(resolve, waitMs));
         }
     }
 
@@ -532,7 +549,8 @@ export class ChromeExtensionBackend implements BrowserBackend {
             await sendBridgeCommand("hover", { x, y });
             return;
         }
-        const startX = 640, startY = 400;
+        const startX = 640,
+            startY = 400;
         for (let i = 1; i <= steps; i++) {
             const ix = Math.round(startX + (x - startX) * (i / steps));
             const iy = Math.round(startY + (y - startY) * (i / steps));
@@ -551,10 +569,10 @@ export class ChromeExtensionBackend implements BrowserBackend {
     }
 
     async screenshot(opts?: { quality?: number; fullPage?: boolean }): Promise<Buffer> {
-        const result = await sendBridgeCommand("screenshot", {
+        const result = (await sendBridgeCommand("screenshot", {
             format: "jpeg",
             quality: opts?.quality || 55,
-        }) as { base64: string };
+        })) as { base64: string };
         return Buffer.from(result.base64, "base64");
     }
 
@@ -573,24 +591,36 @@ export class ChromeExtensionBackend implements BrowserBackend {
      *  Much faster than per-character key dispatch. Focus element first via evaluate. */
     async nativeType(text: string): Promise<void> {
         // First focus the active element if needed, then insert text in one shot
-        await sendBridgeCommand("execute_js", {
-            code: `(function(){const a=document.activeElement; if(a&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA'||a.isContentEditable)){a.focus();}})()`,
-        }, 3000).catch(() => {});
+        await sendBridgeCommand(
+            "execute_js",
+            {
+                code: `(function(){const a=document.activeElement; if(a&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA'||a.isContentEditable)){a.focus();}})()`,
+            },
+            3000,
+        ).catch(() => {});
         await sendBridgeCommand("cdp", { method: "Input.insertText", params: { text } }, 5000);
     }
 
     /** setFileInput via DOM.setFileInputFiles — Chrome reads from filesystem, no base64. */
     async setFileInput(paths: string[], selector: string): Promise<void> {
         // Get backendNodeId for the selector
-        const domResult = await sendBridgeCommand("execute_js", {
-            code: `(function(){const el=document.querySelector(${JSON.stringify(selector)});return el?Array.from(el.getAttributeNames()).reduce((a,k)=>{a[k]=el.getAttribute(k);return a;},{}):null;})()`,
-        }, 5000) as Record<string, string> | null;
+        const domResult = (await sendBridgeCommand(
+            "execute_js",
+            {
+                code: `(function(){const el=document.querySelector(${JSON.stringify(selector)});return el?Array.from(el.getAttributeNames()).reduce((a,k)=>{a[k]=el.getAttribute(k);return a;},{}):null;})()`,
+            },
+            5000,
+        )) as Record<string, string> | null;
         if (!domResult) throw new Error(`setFileInput: element not found: ${selector}`);
         // Use CDP DOM.setFileInputFiles
-        await sendBridgeCommand("cdp", {
-            method: "DOM.setFileInputFiles",
-            params: { files: paths, selector },
-        }, 10000);
+        await sendBridgeCommand(
+            "cdp",
+            {
+                method: "DOM.setFileInputFiles",
+                params: { files: paths, selector },
+            },
+            10000,
+        );
     }
 
     // ── Playwright-specific (not available in Chrome mode) ──

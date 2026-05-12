@@ -2,7 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { isTriviallyDirectExecutable } from "./swarm-gate.js";
 
 describe("isTriviallyDirectExecutable — swarm direct-execute gate", () => {

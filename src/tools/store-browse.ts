@@ -2,21 +2,11 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import type { ToolDefinition } from "./get-current-time.js";
 import * as storeClient from "../store/client.js";
-import type {
-    StoreItemType,
-    StoreItemCategory,
-} from "../store/types.js";
+import type { StoreItemCategory, StoreItemType } from "../store/types.js";
+import type { ToolDefinition } from "./get-current-time.js";
 
-type Op =
-    | "search"
-    | "list"
-    | "info"
-    | "featured"
-    | "trending"
-    | "categories"
-    | "installed";
+type Op = "search" | "list" | "info" | "featured" | "trending" | "categories" | "installed";
 
 const VALID_TYPES = new Set(["skill", "mcp", "tool"]);
 
@@ -89,15 +79,7 @@ export const storeBrowse: ToolDefinition = {
                 properties: {
                     op: {
                         type: "string",
-                        enum: [
-                            "search",
-                            "list",
-                            "info",
-                            "featured",
-                            "trending",
-                            "categories",
-                            "installed",
-                        ],
+                        enum: ["search", "list", "info", "featured", "trending", "categories", "installed"],
                         description:
                             "Which read operation to run. search needs query. info needs slug. featured/trending/categories/installed take no args other than optional limit.",
                     },

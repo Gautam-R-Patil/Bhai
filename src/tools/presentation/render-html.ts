@@ -5,8 +5,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getPresentationsDir } from "../../config/paths.js";
-import type { PresentationOutline, Slide, Theme } from "./types.js";
 import { getTheme } from "./themes.js";
+import type { PresentationOutline, Slide, Theme } from "./types.js";
 
 // Self-contained Reveal.js from CDN (one-file HTML).
 // For strict offline output we'd bundle reveal locally — deferred.
@@ -25,8 +25,7 @@ function embedImage(imagePath: string): string | null {
         if (!fs.existsSync(imagePath)) return null;
         const buf = fs.readFileSync(imagePath);
         const ext = path.extname(imagePath).slice(1).toLowerCase() || "png";
-        const mime = ext === "jpg" || ext === "jpeg" ? "image/jpeg"
-            : ext === "webp" ? "image/webp" : "image/png";
+        const mime = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : ext === "webp" ? "image/webp" : "image/png";
         return `data:${mime};base64,${buf.toString("base64")}`;
     } catch {
         return null;
@@ -53,10 +52,14 @@ function slideHtml(slide: Slide, theme: Theme): string {
 </section>`;
 
         case "content": {
-            const bullets = (slide.bullets ?? []).slice(0, 4)
-                .map((b) => `<li>${escapeHtml(b)}</li>`).join("");
+            const bullets = (slide.bullets ?? [])
+                .slice(0, 4)
+                .map((b) => `<li>${escapeHtml(b)}</li>`)
+                .join("");
             const body = slide.body ? `<p>${escapeHtml(slide.body)}</p>` : "";
-            const img = imgDataUri ? `<img class="side" src="${imgDataUri}" alt="${escapeHtml(slide.imagePrompt ?? title)}"/>` : "";
+            const img = imgDataUri
+                ? `<img class="side" src="${imgDataUri}" alt="${escapeHtml(slide.imagePrompt ?? title)}"/>`
+                : "";
             return `
 <section>
   <h2>${title}</h2>
@@ -68,9 +71,10 @@ function slideHtml(slide: Slide, theme: Theme): string {
         }
 
         case "two-column": {
-            const cols = (slide.columns ?? []).slice(0, 2).map((c) =>
-                `<div class="col"><h3>${escapeHtml(c.heading)}</h3><p>${escapeHtml(c.body)}</p></div>`,
-            ).join("");
+            const cols = (slide.columns ?? [])
+                .slice(0, 2)
+                .map((c) => `<div class="col"><h3>${escapeHtml(c.heading)}</h3><p>${escapeHtml(c.body)}</p></div>`)
+                .join("");
             return `
 <section>
   <h2>${title}</h2>
@@ -81,9 +85,13 @@ function slideHtml(slide: Slide, theme: Theme): string {
         case "bento-3":
         case "bento-4": {
             const n = slide.archetype === "bento-3" ? 3 : 4;
-            const cards = (slide.columns ?? []).slice(0, n).map((c) =>
-                `<div class="bento-card"><h3>${escapeHtml(c.heading)}</h3><p>${escapeHtml(c.body)}</p></div>`,
-            ).join("");
+            const cards = (slide.columns ?? [])
+                .slice(0, n)
+                .map(
+                    (c) =>
+                        `<div class="bento-card"><h3>${escapeHtml(c.heading)}</h3><p>${escapeHtml(c.body)}</p></div>`,
+                )
+                .join("");
             const gridCls = n === 3 ? "bento-3" : "bento-4";
             return `
 <section>
@@ -117,9 +125,12 @@ function slideHtml(slide: Slide, theme: Theme): string {
             }
             const c = slide.chart;
             const header = `<tr><th></th>${c.categories.map((cat) => `<th>${escapeHtml(cat)}</th>`).join("")}</tr>`;
-            const rows = c.series.map((s) =>
-                `<tr><td><strong>${escapeHtml(s.name)}</strong></td>${s.values.map((v) => `<td>${v}</td>`).join("")}</tr>`,
-            ).join("");
+            const rows = c.series
+                .map(
+                    (s) =>
+                        `<tr><td><strong>${escapeHtml(s.name)}</strong></td>${s.values.map((v) => `<td>${v}</td>`).join("")}</tr>`,
+                )
+                .join("");
             return `
 <section>
   <h2>${title}</h2>
@@ -130,9 +141,9 @@ function slideHtml(slide: Slide, theme: Theme): string {
         case "comparison-table": {
             if (!slide.table) return `<section><h2>${title}</h2></section>`;
             const header = `<tr>${slide.table.headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("")}</tr>`;
-            const rows = slide.table.rows.map((r) =>
-                `<tr>${r.map((c) => `<td>${escapeHtml(c)}</td>`).join("")}</tr>`,
-            ).join("");
+            const rows = slide.table.rows
+                .map((r) => `<tr>${r.map((c) => `<td>${escapeHtml(c)}</td>`).join("")}</tr>`)
+                .join("");
             return `
 <section>
   <h2>${title}</h2>
@@ -142,9 +153,13 @@ function slideHtml(slide: Slide, theme: Theme): string {
 
         case "process-steps":
         case "timeline": {
-            const steps = (slide.steps ?? []).slice(0, 5).map((s, i) =>
-                `<div class="step"><div class="step-num">${i + 1}</div><h3>${escapeHtml(s.label)}</h3>${s.detail ? `<p>${escapeHtml(s.detail)}</p>` : ""}</div>`,
-            ).join("");
+            const steps = (slide.steps ?? [])
+                .slice(0, 5)
+                .map(
+                    (s, i) =>
+                        `<div class="step"><div class="step-num">${i + 1}</div><h3>${escapeHtml(s.label)}</h3>${s.detail ? `<p>${escapeHtml(s.detail)}</p>` : ""}</div>`,
+                )
+                .join("");
             return `
 <section>
   <h2>${title}</h2>
@@ -254,7 +269,10 @@ export async function renderHtml(
 
 function makeHtmlOutputPath(outline: PresentationOutline): string {
     const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    const safe = outline.title.slice(0, 50).replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+    const safe = outline.title
+        .slice(0, 50)
+        .replace(/[^a-zA-Z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "");
     const name = safe || "presentation";
     return path.join(getPresentationsDir(), `${name}_${ts}.html`);
 }

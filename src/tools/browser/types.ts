@@ -16,7 +16,17 @@ export type ElementHandle = any;
 /**
  * Represents an interactive element found during DOM scan
  */
-export type EditorType = "monaco" | "codemirror5" | "codemirror6" | "ace" | "quill" | "tinymce" | "prosemirror" | "tiptap" | "slate" | "draftjs";
+export type EditorType =
+    | "monaco"
+    | "codemirror5"
+    | "codemirror6"
+    | "ace"
+    | "quill"
+    | "tinymce"
+    | "prosemirror"
+    | "tiptap"
+    | "slate"
+    | "draftjs";
 
 export interface InteractiveElement {
     label: number;
@@ -59,8 +69,8 @@ export interface FrameScanResult {
 export interface PageScanResult {
     url: string;
     title: string;
-    accessibilityTree: string;       // Compact semantic view from Playwright a11y API
-    elements: InteractiveElement[];   // DOM-based element list (fallback)
+    accessibilityTree: string; // Compact semantic view from Playwright a11y API
+    elements: InteractiveElement[]; // DOM-based element list (fallback)
     text?: string;
 }
 

@@ -11,9 +11,9 @@
  * Reads Chrome/Safari profile data and injects into Playwright context.
  */
 
+import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -52,7 +52,7 @@ function getChromeProfilePath(): string {
                   path.join(home, "Library", "Application Support", "Google", "Chrome", "Profile 1"),
                   path.join(home, ".config", "google-chrome", "Default"),
               ];
-    return possibilities.find(p => fs.existsSync(p)) || possibilities[0];
+    return possibilities.find((p) => fs.existsSync(p)) || possibilities[0];
 }
 
 // ── Cookie Extraction ─────────────────────────
@@ -112,10 +112,14 @@ export async function syncProfile(targetDir: string): Promise<{
 
     // Sync key files (skip large cache files)
     const filesToSync = [
-        "Cookies", "Cookies-journal",
-        "Login Data", "Login Data-journal",
-        "Web Data", "Web Data-journal",
-        "Preferences", "Secure Preferences",
+        "Cookies",
+        "Cookies-journal",
+        "Login Data",
+        "Login Data-journal",
+        "Web Data",
+        "Web Data-journal",
+        "Preferences",
+        "Secure Preferences",
         "Bookmarks",
     ];
 
@@ -140,7 +144,9 @@ export async function syncProfile(targetDir: string): Promise<{
         try {
             await execFileAsync("cp", ["-r", lsDir, lsDst]);
             synced++;
-        } catch { /* */ }
+        } catch {
+            /* */
+        }
     }
 
     console.log(`[PROFILE-SYNC] Synced ${synced} profile files from Chrome`);

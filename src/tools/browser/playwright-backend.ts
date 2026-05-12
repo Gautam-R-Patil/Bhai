@@ -15,7 +15,7 @@
 // abstraction layer existed).
 
 import type { BrowserBackend, BrowserPageInfo } from "./browser-backend.js";
-import type { InteractiveElement, TabInfo, ClickOptions } from "./types.js";
+import type { ClickOptions, InteractiveElement, TabInfo } from "./types.js";
 
 export class PlaywrightPassthroughBackend implements BrowserBackend {
     readonly mode = "playwright" as const;

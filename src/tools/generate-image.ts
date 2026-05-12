@@ -2,14 +2,14 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import type { ToolDefinition } from "./get-current-time.js";
 import fs from "node:fs";
 import path from "node:path";
-import { getTelegramContext } from "./send-file.js";
-import { getSessionToken } from "../session.js";
 import { getConvexSiteUrl } from "../config/keys.js";
-import { encryptedFetch } from "../crypto-transport.js";
 import { getImagesDir } from "../config/paths.js";
+import { encryptedFetch } from "../crypto-transport.js";
+import { getSessionToken } from "../session.js";
+import type { ToolDefinition } from "./get-current-time.js";
+import { getTelegramContext } from "./send-file.js";
 
 // ── Image Generation Model ───────────────────
 const IMAGE_MODEL = "openai/gpt-5-image";
@@ -21,17 +21,20 @@ export const generateImage: ToolDefinition = {
         type: "function",
         function: {
             name: "generate_image",
-            description: "Generate an image from a text prompt using AI (GPT-5 Image). Use this when the user asks you to CREATE, GENERATE, MAKE, DRAW, or DESIGN an image. Do NOT use web_search to find images — use this tool instead. The generated image is saved locally and auto-sent to the user.",
+            description:
+                "Generate an image from a text prompt using AI (GPT-5 Image). Use this when the user asks you to CREATE, GENERATE, MAKE, DRAW, or DESIGN an image. Do NOT use web_search to find images — use this tool instead. The generated image is saved locally and auto-sent to the user.",
             parameters: {
                 type: "object",
                 properties: {
                     prompt: {
                         type: "string",
-                        description: "Detailed description of the image to generate. Be specific about style, colors, composition, mood, etc.",
+                        description:
+                            "Detailed description of the image to generate. Be specific about style, colors, composition, mood, etc.",
                     },
                     filename: {
                         type: "string",
-                        description: "Optional filename for the generated image (without extension). Defaults to 'generated_image'.",
+                        description:
+                            "Optional filename for the generated image (without extension). Defaults to 'generated_image'.",
                     },
                 },
                 required: ["prompt"],
@@ -62,7 +65,7 @@ export const generateImage: ToolDefinition = {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
-                    "Authorization": `Bearer ${sessionToken}`,
+                    Authorization: `Bearer ${sessionToken}`,
                 },
                 body: JSON.stringify({
                     model: IMAGE_MODEL,
@@ -79,7 +82,9 @@ export const generateImage: ToolDefinition = {
             if (!response.ok) {
                 const errBody = await response.text();
                 console.error(`  ❌ OpenRouter returned ${response.status}: ${errBody.substring(0, 500)}`);
-                return JSON.stringify({ error: `Image generation API error: ${response.status} — ${errBody.substring(0, 200)}` });
+                return JSON.stringify({
+                    error: `Image generation API error: ${response.status} — ${errBody.substring(0, 200)}`,
+                });
             }
 
             // Get raw response text first for full debugging
@@ -90,7 +95,10 @@ export const generateImage: ToolDefinition = {
             try {
                 data = JSON.parse(rawText);
             } catch {
-                return JSON.stringify({ error: "Failed to parse API response as JSON.", raw: rawText.substring(0, 300) });
+                return JSON.stringify({
+                    error: "Failed to parse API response as JSON.",
+                    raw: rawText.substring(0, 300),
+                });
             }
 
             // Log full structure
@@ -105,12 +113,17 @@ export const generateImage: ToolDefinition = {
             const msg = choice.message as Record<string, unknown> | undefined;
             if (!msg) {
                 console.log(`  📦 Choice keys: ${JSON.stringify(Object.keys(choice))}`);
-                return JSON.stringify({ error: "No message in choice.", raw: JSON.stringify(choice).substring(0, 500) });
+                return JSON.stringify({
+                    error: "No message in choice.",
+                    raw: JSON.stringify(choice).substring(0, 500),
+                });
             }
 
             console.log(`  📦 Message keys: ${JSON.stringify(Object.keys(msg))}`);
             const content = msg.content;
-            console.log(`  📦 Content type: ${typeof content}, isArray: ${Array.isArray(content)}, isNull: ${content === null}`);
+            console.log(
+                `  📦 Content type: ${typeof content}, isArray: ${Array.isArray(content)}, isNull: ${content === null}`,
+            );
 
             if (content !== null && content !== undefined) {
                 console.log(`  📦 Content preview: ${JSON.stringify(content).substring(0, 300)}`);
@@ -261,8 +274,12 @@ export const generateImage: ToolDefinition = {
             }
 
             // Save the image to ATLAS workspace Images folder
-            const ext = mimeType.includes("jpeg") || mimeType.includes("jpg") ? "jpg"
-                : mimeType.includes("webp") ? "webp" : "png";
+            const ext =
+                mimeType.includes("jpeg") || mimeType.includes("jpg")
+                    ? "jpg"
+                    : mimeType.includes("webp")
+                      ? "webp"
+                      : "png";
             const imageDir = getImagesDir();
 
             const sanitizedName = filename.replace(/[^a-zA-Z0-9_-]/g, "_");

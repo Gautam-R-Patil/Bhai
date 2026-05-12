@@ -4,9 +4,14 @@
 
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+
+// ESM-safe require via createRequire — `require` is not defined in compiled ESM output
+// (only available in tsx dev mode). Found via DEEP R3 review.
+const _esmRequire = createRequire(import.meta.url);
 
 const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
@@ -257,10 +262,14 @@ export function flattenInteractive(dump: AxDump): AxFlatElement[] {
     return flattenInteractiveJs(dump);
 }
 
+// Match the Rust walker's MAX_WALK_DEPTH=64 to prevent stack-overflow on adversarial JSON.
+const MAX_WALK_DEPTH = 64;
+
 function flattenInteractiveJs(dump: AxDump): AxFlatElement[] {
     const out: AxFlatElement[] = [];
     let id = 1;
     function walk(node: AxNode, path: number[], depth: number) {
+        if (depth > MAX_WALK_DEPTH) return;
         if (isInteractiveRole(node.role) && node.w > 0 && node.h > 0) {
             const label = (node.label || "").trim();
             const value = (node.value || "").trim();
@@ -296,10 +305,7 @@ function loadNative(): typeof _native {
     if (_nativeLoaded) return _native;
     _nativeLoaded = true;
     try {
-        const { createRequire } = require("node:module");
-        const r = createRequire(import.meta.url);
-        const path = require("node:path");
-        _native = r(path.join(process.cwd(), "native", "index.js"));
+        _native = _esmRequire(join(process.cwd(), "native", "index.js"));
         return _native;
     } catch {
         return null;

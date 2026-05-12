@@ -7,8 +7,8 @@
 // All browser tools call through this layer so the agent can seamlessly
 // switch between headless Playwright and the user's real Chrome.
 
-import type { InteractiveElement, TabInfo, ClickOptions, BrowserMode } from "./types.js";
 import { isExtensionConnected, waitForExtensionConnection } from "./chrome-bridge.js";
+import type { BrowserMode, ClickOptions, InteractiveElement, TabInfo } from "./types.js";
 
 // ── BrowserBackend Interface ─────────────────
 
@@ -16,7 +16,10 @@ export interface BrowserBackend {
     readonly mode: BrowserMode;
 
     // ── Navigation ──
-    navigate(url: string, opts?: { newTab?: boolean; waitFor?: string; timeout?: number }): Promise<{ title: string; url: string }>;
+    navigate(
+        url: string,
+        opts?: { newTab?: boolean; waitFor?: string; timeout?: number },
+    ): Promise<{ title: string; url: string }>;
     goBack(): Promise<void>;
     waitForReady(timeoutMs?: number): Promise<void>;
 

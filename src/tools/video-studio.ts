@@ -162,9 +162,7 @@ function validateFfmpegArgs(args: string[]): { ok: boolean; reason?: string } {
         const isWin = process.platform === "win32";
         const norm = (s: string) => (isWin ? s.toLowerCase() : s);
         const allowed = [...tmpPrefixes, dataVideoProjects].map(norm);
-        const matched = [...candidates].some((c) =>
-            allowed.some((prefix) => norm(c).startsWith(prefix)),
-        );
+        const matched = [...candidates].some((c) => allowed.some((prefix) => norm(c).startsWith(prefix)));
         if (!matched) {
             return {
                 ok: false,

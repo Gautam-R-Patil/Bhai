@@ -2,9 +2,15 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import { remember, recall, listMemories, forgetMemory, getMemoryStats } from "../memory/sqlite.js";
-import { getIdentityProfile, updateIdentityProfile, addProject, addGoal, exportIdentitySnapshot } from "../memory/identity.js";
-import { reinforceTrait, getAllTraits, exportTraitsSnapshot } from "../memory/traits.js";
+import {
+    addGoal,
+    addProject,
+    exportIdentitySnapshot,
+    getIdentityProfile,
+    updateIdentityProfile,
+} from "../memory/identity.js";
+import { forgetMemory, getMemoryStats, listMemories, recall, remember } from "../memory/sqlite.js";
+import { exportTraitsSnapshot, getAllTraits, reinforceTrait } from "../memory/traits.js";
 import type { ToolDefinition } from "./get-current-time.js";
 
 // ── Memory Tools for LLM ──────────────────────
@@ -14,12 +20,16 @@ export const memoryStore: ToolDefinition = {
         type: "function",
         function: {
             name: "memory_store",
-            description: "Store a fact, preference, or important information in persistent memory. Use this when the user shares something worth remembering.",
+            description:
+                "Store a fact, preference, or important information in persistent memory. Use this when the user shares something worth remembering.",
             parameters: {
                 type: "object",
                 properties: {
                     content: { type: "string", description: "The information to remember" },
-                    category: { type: "string", description: "Category: general, preference, fact, person, task, note" },
+                    category: {
+                        type: "string",
+                        description: "Category: general, preference, fact, person, task, note",
+                    },
                     tags: { type: "string", description: "Comma-separated tags for easier retrieval" },
                     importance: { type: "number", description: "1-10 importance level (default 5)" },
                 },
@@ -37,7 +47,7 @@ export const memoryStore: ToolDefinition = {
             (input.tags as string) || "",
             imp,
             "user",
-            useSmartWrite
+            useSmartWrite,
         );
         return JSON.stringify({ success: true, id, message: "Memory stored." });
     },
@@ -48,7 +58,8 @@ export const memorySearch: ToolDefinition = {
         type: "function",
         function: {
             name: "memory_search",
-            description: "Search persistent memory for stored facts, preferences, or context. Use this to recall previously stored information.",
+            description:
+                "Search persistent memory for stored facts, preferences, or context. Use this to recall previously stored information.",
             parameters: {
                 type: "object",
                 properties: {
@@ -116,7 +127,8 @@ export const identityView: ToolDefinition = {
         type: "function",
         function: {
             name: "identity_view",
-            description: "View the user's stored identity profile (name, email, location, role, projects, preferences). Use this to check what you already know about the user.",
+            description:
+                "View the user's stored identity profile (name, email, location, role, projects, preferences). Use this to check what you already know about the user.",
             parameters: {
                 type: "object",
                 properties: {},
@@ -135,7 +147,8 @@ export const identityUpdate: ToolDefinition = {
         type: "function",
         function: {
             name: "identity_update",
-            description: "Update the user's identity profile when they share personal information (email, name, location, role, company, projects, preferences). Call this PROACTIVELY when the user mentions these details.",
+            description:
+                "Update the user's identity profile when they share personal information (email, name, location, role, company, projects, preferences). Call this PROACTIVELY when the user mentions these details.",
             parameters: {
                 type: "object",
                 properties: {
@@ -147,7 +160,10 @@ export const identityUpdate: ToolDefinition = {
                     project: { type: "string", description: "A project name to ADD to the user's project list" },
                     goal: { type: "string", description: "An important goal to ADD to the user's goals" },
                     communication_style: { type: "string", description: "direct, detailed, casual, formal, etc." },
-                    detail_level: { type: "string", description: "high, medium, low — how much detail the user prefers" },
+                    detail_level: {
+                        type: "string",
+                        description: "high, medium, low — how much detail the user prefers",
+                    },
                 },
                 required: [],
             },
@@ -191,21 +207,33 @@ export const traitUpdate: ToolDefinition = {
         type: "function",
         function: {
             name: "trait_update",
-            description: "Record a behavioral trait you've observed about the user (e.g., 'likes_detailed_answers: true', 'risk_tolerance: high'). Call this when you notice consistent patterns. Per-session caps apply (max 5 updates per session).",
+            description:
+                "Record a behavioral trait you've observed about the user (e.g., 'likes_detailed_answers: true', 'risk_tolerance: high'). Call this when you notice consistent patterns. Per-session caps apply (max 5 updates per session).",
             parameters: {
                 type: "object",
                 properties: {
-                    trait_key: { type: "string", description: "Snake_case trait name, e.g. likes_detailed_answers, prefers_execution_over_theory, risk_tolerance" },
+                    trait_key: {
+                        type: "string",
+                        description:
+                            "Snake_case trait name, e.g. likes_detailed_answers, prefers_execution_over_theory, risk_tolerance",
+                    },
                     value: { type: "string", description: "Trait value, e.g. 'true', 'high', 'direct'" },
-                    explicit: { type: "boolean", description: "true if user directly stated this (e.g., 'I prefer detailed answers'), false if inferred from behavior" },
-                    topics: { type: "string", description: "Comma-separated related topics, e.g. 'coding,design,architecture'" },
+                    explicit: {
+                        type: "boolean",
+                        description:
+                            "true if user directly stated this (e.g., 'I prefer detailed answers'), false if inferred from behavior",
+                    },
+                    topics: {
+                        type: "string",
+                        description: "Comma-separated related topics, e.g. 'coding,design,architecture'",
+                    },
                 },
                 required: ["trait_key", "value"],
             },
         },
     },
     async handler(input) {
-        const topics = input.topics ? (input.topics as string).split(",").map(t => t.trim()) : [];
+        const topics = input.topics ? (input.topics as string).split(",").map((t) => t.trim()) : [];
         const trait = reinforceTrait(input.trait_key as string, input.value as string, {
             explicit: (input.explicit as boolean) ?? false,
             topics,
@@ -213,7 +241,11 @@ export const traitUpdate: ToolDefinition = {
         if (!trait) {
             return JSON.stringify({ success: false, message: "Per-session cap reached — trait update skipped." });
         }
-        return JSON.stringify({ success: true, trait, message: `Trait reinforced: ${trait.trait_key} = ${trait.value} (confidence: ${Math.round(trait.confidence * 100)}%)` });
+        return JSON.stringify({
+            success: true,
+            trait,
+            message: `Trait reinforced: ${trait.trait_key} = ${trait.value} (confidence: ${Math.round(trait.confidence * 100)}%)`,
+        });
     },
 };
 
@@ -243,7 +275,8 @@ export const memorySnapshot: ToolDefinition = {
         type: "function",
         function: {
             name: "memory_snapshot",
-            description: "Export the full user memory state: identity profile, all behavioral traits with confidence scores and reinforcement counts. Useful for diagnostics and debugging.",
+            description:
+                "Export the full user memory state: identity profile, all behavioral traits with confidence scores and reinforcement counts. Useful for diagnostics and debugging.",
             parameters: {
                 type: "object",
                 properties: {},

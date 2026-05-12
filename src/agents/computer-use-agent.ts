@@ -451,7 +451,9 @@ async function pasteText(text: string): Promise<void> {
     const { execFile } = await import("node:child_process");
     const { promisify } = await import("node:util");
     const exec = promisify(execFile);
-    const escaped = escapeApplescript(text).replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t");
+    // escapeApplescript already handles \n / \r / \t (added in P0 review fixes).
+    // Do NOT re-escape — the legacy double-pass garbled multi-line text into \\\\n sequences.
+    const escaped = escapeApplescript(text);
     const script = `
 set oldClipboard to ""
 try

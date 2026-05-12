@@ -80,7 +80,7 @@ export class ProgressTracker {
         const lines: string[] = [];
         lines.push(`📋 **${this.title}**\n`);
 
-        const completedCount = this.steps.filter(s => s.status === "done").length;
+        const completedCount = this.steps.filter((s) => s.status === "done").length;
         const totalCount = this.steps.length;
         const percent = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
 
@@ -94,10 +94,18 @@ export class ProgressTracker {
         for (const step of this.steps) {
             let icon: string;
             switch (step.status) {
-                case "pending": icon = "⬜"; break;
-                case "running": icon = "🔄"; break;
-                case "done": icon = "✅"; break;
-                case "error": icon = "❌"; break;
+                case "pending":
+                    icon = "⬜";
+                    break;
+                case "running":
+                    icon = "🔄";
+                    break;
+                case "done":
+                    icon = "✅";
+                    break;
+                case "error":
+                    icon = "❌";
+                    break;
             }
             let line = `${icon} ${step.label}`;
             if (step.status === "running" && step.startedAt) {
@@ -109,7 +117,7 @@ export class ProgressTracker {
         }
 
         // ETA
-        const doneSteps = this.steps.filter(s => s.status === "done" && s.startedAt && s.completedAt);
+        const doneSteps = this.steps.filter((s) => s.status === "done" && s.startedAt && s.completedAt);
         if (doneSteps.length >= 2 && completedCount < totalCount) {
             const avgMs = doneSteps.reduce((sum, s) => sum + (s.completedAt! - s.startedAt!), 0) / doneSteps.length;
             const remaining = totalCount - completedCount;
@@ -130,7 +138,9 @@ export class ProgressTracker {
         this.lastUpdateTime = now;
         try {
             await this.onUpdate(this.formatMessage());
-        } catch { /* don't let progress errors break execution */ }
+        } catch {
+            /* don't let progress errors break execution */
+        }
     }
 
     /** Force-send final update (bypasses throttle) */
@@ -195,7 +205,7 @@ export function queueTasks(descriptions: string[]): QueuedTask[] {
 
     // Auto-start processing if not already running
     if (!isProcessingQueue && taskExecutor) {
-        processQueue().catch(err => console.error("[QUEUE] Processing error:", err));
+        processQueue().catch((err) => console.error("[QUEUE] Processing error:", err));
     }
 
     return added;
@@ -204,17 +214,23 @@ export function queueTasks(descriptions: string[]): QueuedTask[] {
 /**
  * Get current queue status.
  */
-export function getQueueStatus(): { total: number; pending: number; running: string | null; completed: number; tasks: QueuedTask[] } {
-    const pending = taskQueue.filter(t => t.status === "pending").length;
-    const running = taskQueue.find(t => t.status === "running");
-    const completed = taskQueue.filter(t => t.status === "done" || t.status === "error").length;
+export function getQueueStatus(): {
+    total: number;
+    pending: number;
+    running: string | null;
+    completed: number;
+    tasks: QueuedTask[];
+} {
+    const pending = taskQueue.filter((t) => t.status === "pending").length;
+    const running = taskQueue.find((t) => t.status === "running");
+    const completed = taskQueue.filter((t) => t.status === "done" || t.status === "error").length;
 
     return {
         total: taskQueue.length,
         pending,
         running: running?.description || null,
         completed,
-        tasks: taskQueue.map(t => ({ ...t })),
+        tasks: taskQueue.map((t) => ({ ...t })),
     };
 }
 
@@ -237,7 +253,7 @@ export function cancelQueue(): { cancelled: number } {
  * Clear completed / errored tasks from the queue.
  */
 export function clearCompletedTasks(): void {
-    const active = taskQueue.filter(t => t.status === "pending" || t.status === "running");
+    const active = taskQueue.filter((t) => t.status === "pending" || t.status === "running");
     taskQueue.length = 0;
     taskQueue.push(...active);
 }
@@ -254,10 +270,18 @@ function formatQueueStatus(): string {
         const task = taskQueue[i];
         let icon: string;
         switch (task.status) {
-            case "pending": icon = "⬜"; break;
-            case "running": icon = "🔄"; break;
-            case "done": icon = "✅"; break;
-            case "error": icon = "❌"; break;
+            case "pending":
+                icon = "⬜";
+                break;
+            case "running":
+                icon = "🔄";
+                break;
+            case "done":
+                icon = "✅";
+                break;
+            case "error":
+                icon = "❌";
+                break;
         }
         const desc = task.description.length > 60 ? task.description.substring(0, 57) + "..." : task.description;
         let line = `${icon} ${i + 1}. ${desc}`;
@@ -281,7 +305,7 @@ async function processQueue(): Promise<void> {
 
     try {
         while (true) {
-            const nextTask = taskQueue.find(t => t.status === "pending");
+            const nextTask = taskQueue.find((t) => t.status === "pending");
             if (!nextTask) break;
 
             nextTask.status = "running";
@@ -291,11 +315,13 @@ async function processQueue(): Promise<void> {
             if (queueProgressCallback) {
                 try {
                     await queueProgressCallback(formatQueueStatus());
-                } catch { /* */ }
+                } catch {
+                    /* */
+                }
             }
 
             try {
-                const result = await taskExecutor(nextTask, queueProgressCallback || (async () => { }));
+                const result = await taskExecutor(nextTask, queueProgressCallback || (async () => {}));
                 nextTask.status = "done";
                 nextTask.result = result;
                 nextTask.completedAt = Date.now();
@@ -310,7 +336,9 @@ async function processQueue(): Promise<void> {
         if (queueProgressCallback) {
             try {
                 await queueProgressCallback(formatQueueStatus() + "\n\n✅ All tasks complete!");
-            } catch { /* */ }
+            } catch {
+                /* */
+            }
         }
     } finally {
         isProcessingQueue = false;
@@ -333,7 +361,8 @@ export const taskQueueTool: ToolDefinition = {
                     action: {
                         type: "string",
                         enum: ["add", "status", "cancel", "clear"],
-                        description: "Action: 'add' = queue new tasks, 'status' = check queue, 'cancel' = cancel pending, 'clear' = remove completed",
+                        description:
+                            "Action: 'add' = queue new tasks, 'status' = check queue, 'cancel' = cancel pending, 'clear' = remove completed",
                     },
                     tasks: {
                         type: "array",
@@ -358,8 +387,10 @@ export const taskQueueTool: ToolDefinition = {
             return JSON.stringify({
                 success: true,
                 queued: added.length,
-                tasks: added.map(t => ({ id: t.id, description: t.description })),
-                note: taskExecutor ? "Tasks will execute sequentially." : "No executor wired — tasks are queued but won't auto-execute yet.",
+                tasks: added.map((t) => ({ id: t.id, description: t.description })),
+                note: taskExecutor
+                    ? "Tasks will execute sequentially."
+                    : "No executor wired — tasks are queued but won't auto-execute yet.",
             });
         }
 

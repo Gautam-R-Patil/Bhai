@@ -335,7 +335,9 @@ export const scaffoldProject: ToolDefinition = {
             return JSON.stringify({ error: reason });
         }
         if (!existsSync(parentDir)) {
-            try { mkdirSync(parentDir, { recursive: true }); } catch {
+            try {
+                mkdirSync(parentDir, { recursive: true });
+            } catch {
                 return JSON.stringify({ error: `Could not create parent dir: ${parentDir}` });
             }
         }

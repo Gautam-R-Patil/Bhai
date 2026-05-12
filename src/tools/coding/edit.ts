@@ -266,13 +266,13 @@ export const edit: ToolDefinition = {
         // UIs can warn the user and so the agent itself can decide whether
         // to proceed or backtrack on the next iteration.
         let confidence = 1.0;
-        if (!lspHint && isLspWorthy(filePath)) confidence -= 0.1;          // pre-edit signal missing
+        if (!lspHint && isLspWorthy(filePath)) confidence -= 0.1; // pre-edit signal missing
         if (lspWasReached && postEditErrorCount > 0) {
-            confidence -= Math.min(0.5, 0.2 + postEditErrorCount * 0.05);  // type/parse errors after edit
+            confidence -= Math.min(0.5, 0.2 + postEditErrorCount * 0.05); // type/parse errors after edit
         }
-        if (!lspWasReached && isLspWorthy(filePath)) confidence -= 0.05;   // couldn't verify
-        if (oldStr.length > 1500) confidence -= 0.05;                      // very long context — brittle
-        if (replaceAll && occurrences > 3) confidence -= 0.05;             // wide blast radius
+        if (!lspWasReached && isLspWorthy(filePath)) confidence -= 0.05; // couldn't verify
+        if (oldStr.length > 1500) confidence -= 0.05; // very long context — brittle
+        if (replaceAll && occurrences > 3) confidence -= 0.05; // wide blast radius
         confidence = Math.max(0, Math.min(1, confidence));
 
         return JSON.stringify({

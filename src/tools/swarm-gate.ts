@@ -20,9 +20,12 @@ export function isTriviallyDirectExecutable(task: string): boolean {
     const taskLower = task.toLowerCase().trim();
     const wordCount = taskLower.split(/\s+/).filter(Boolean).length;
     if (wordCount >= 8) return false;
-    const hasMultiClauseMarker = /\b(?:and also|then also|also,|additionally|meanwhile|in parallel|simultaneously|after that)\b/i.test(task);
+    const hasMultiClauseMarker =
+        /\b(?:and also|then also|also,|additionally|meanwhile|in parallel|simultaneously|after that)\b/i.test(task);
     if (hasMultiClauseMarker) return false;
-    const verbMatches = taskLower.match(/\b(?:research|search|find|write|create|build|send|check|schedule|open|play|install|download|upload|summarize|analyze|generate|refactor|debug|fix)\b/g);
+    const verbMatches = taskLower.match(
+        /\b(?:research|search|find|write|create|build|send|check|schedule|open|play|install|download|upload|summarize|analyze|generate|refactor|debug|fix)\b/g,
+    );
     if (verbMatches && verbMatches.length > 1) return false;
     return true;
 }

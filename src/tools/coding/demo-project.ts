@@ -163,7 +163,8 @@ export const demoProjectTool: ToolDefinition = {
                 properties: {
                     project_dir: {
                         type: "string",
-                        description: "Absolute path to the project root (the dir containing package.json / Cargo.toml / etc.).",
+                        description:
+                            "Absolute path to the project root (the dir containing package.json / Cargo.toml / etc.).",
                     },
                     wait_ms: {
                         type: "number",
@@ -207,7 +208,12 @@ export const demoProjectTool: ToolDefinition = {
                 cwd: dir,
                 name: `demo-${path.basename(dir)}`,
             });
-            const parsed = JSON.parse(String(raw)) as { success?: boolean; pid?: number; process_id?: string; error?: string };
+            const parsed = JSON.parse(String(raw)) as {
+                success?: boolean;
+                pid?: number;
+                process_id?: string;
+                error?: string;
+            };
             if (!parsed.success) launchError = parsed.error ?? "shell_exec_background did not return success";
             pid = parsed.pid ?? parsed.process_id ?? null;
         } catch (err) {

@@ -5,173 +5,177 @@
 // ── Browser Module Entry Point ───────────────────
 // Re-exports all browser tools and utilities
 
-// Export types
-export type {
-    PlaywrightModule,
-    BrowserContext,
-    Page,
-    ElementHandle,
-    InteractiveElement,
-    ElementCache,
-    FrameScanResult,
-    PageScanResult,
-    BrowserConfig,
-    ChromeTabInfo,
-    ChromeBridgeCommand,
-    ChromeBridgeResponse,
-    ChromeBridgeEvent,
-    TabInfo,
-    ClickOptions,
-    BrowserMode
-} from "./types.js";
-
-// Export core utilities
+export type { CachedAction, CachedActionStep } from "./action-cache.js";
+// Export action cache
 export {
-    getBrowser,
-    getActivePage,
-    getInteractiveElements,
-    getAccessibilityTree,
-    scanPage,
-    waitForPageReady,
-    withRetry,
-    setLastElementMap,
-    getLastElementMap,
-    buildElementsText,
-    setActivePageIndex,
-    getActivePageIndex,
-    invalidateCache,
-    CLICK_INDICATOR_JS,
-    SCROLL_INDICATOR_JS,
-    ATLAS_HUD_JS,
-    SCAN_FRAME_JS,
-    GET_FORM_STATE_JS,
-    SCROLL_TO_ELEMENT_JS,
-    AUTO_SCROLL_JS,
-    NETWORK_REQUESTS_JS,
-} from "./core.js";
-
-// Export navigation tools
-export {
-    browserNavigate,
-    browserScan,
-    browserBack,
-    browserSwitchTab,
-    browserClose
-} from "./navigation.js";
-
-// Export interaction tools
-export {
-    browserClickAt,
-    browserClick,
-    browserRightClick,
-    browserHoldClick,
-    browserDrag,
-    browserScroll,
-    browserType,
-    browserHover,
-    browserKeyboard,
-    browserScrollElement
-} from "./interaction.js";
-
-// Export extraction tools
-export {
-    browserAnalyze,
-    browserRunJs,
-    browserWait,
-    browserSelect,
-    browserExtract,
-    browserUploadFile,
-    browserSaveStrategy,
-    browserRecallStrategy,
-    browserReplayActions,
-    browserCacheActions
-} from "./extraction.js";
-
-// Export video control tool
-export { browserVideoControl } from "./video-control.js";
-
-// Export CAPTCHA handler
-export { browserHandleCaptcha, detectCaptcha, handleCaptchaIfPresent } from "./captcha.js";
-
-// Export popup guard utilities
-export { dismissCookieBanner, dismissOverlayModals, attachPopupGuard } from "./popup-guard.js";
-
-// Export OpenCLI-inspired advanced tools
-export {
-    browserBatchFetch, browserAutoScroll, browserNetworkRequests, browserFormState,
-    browserScrollToElement, browserInterceptStart, browserInterceptRead,
-    browserExtractArticle, browserConnectElectron, browserWaitForSelector,
-    openCliTools,
-} from "./opencli-tools.js";
-
-// Export native browser acceleration + IP protection wrapper
-export {
-    scoreElementCandidates,
-    getVideoPlayerState, setVideoPlayerState, invalidateVideoState,
-    checkBrowserRateLimit, recordBrowserAction, detectActionLoop, resetActionLoop,
-    getHoverHint, recordHoverSuccess, recordHoverFailure,
-    validateJsCode, obfuscateInjectedVariable, rewriteInternalVars,
-    signBrowserAction, verifyBrowserAction, getActionAuditTail,
-    getModuleFingerprint, isNativeBrowserAvailable,
-} from "./native-browser.js";
-
+    cacheActions,
+    getActionCacheStats,
+    getCachedActions,
+    initActionCache,
+    markActionFailed,
+    replayActions,
+    shouldReplayActions,
+} from "./action-cache.js";
 // Export advanced tools
 export {
-    browserParallelTabs,
+    browserMultiAction,
     browserParallelActions,
-    browserMultiAction
+    browserParallelTabs,
 } from "./advanced.js";
-
-// Export Chrome bridge
-export {
-    initChromeBridge,
-    isExtensionConnected,
-    waitForExtensionConnection,
-    getExtensionStatus,
-    getExtensionTabs,
-    getActiveExtensionTab,
-    sendBridgeCommand,
-    closeChromeBridge,
-    onExtensionEvent,
-    getBridgeStats,
-    getBridgeToken,
-    rotateBridgeToken
-} from "./chrome-bridge.js";
-
+export type { BrowserBackend, BrowserPageInfo } from "./browser-backend.js";
 // Export backend manager
 export {
     getActiveBackend,
-    setPreferredMode,
-    resolveBackend,
     getCurrentMode,
-    switchToPlaywright,
-    switchToChromeExtension,
-    resetBackend,
+    registerChromeBackend,
     registerPlaywrightBackend,
-    registerChromeBackend
+    resetBackend,
+    resolveBackend,
+    setPreferredMode,
+    switchToChromeExtension,
+    switchToPlaywright,
 } from "./browser-backend.js";
-export type { BrowserBackend, BrowserPageInfo } from "./browser-backend.js";
-
+// Export CAPTCHA handler
+export { browserHandleCaptcha, detectCaptcha, handleCaptchaIfPresent } from "./captcha.js";
 // Export Chrome backend
 export { ChromeExtensionBackend, ChromePageProxy } from "./chrome-backend.js";
+// Export Chrome bridge
+export {
+    closeChromeBridge,
+    getActiveExtensionTab,
+    getBridgeStats,
+    getBridgeToken,
+    getExtensionStatus,
+    getExtensionTabs,
+    initChromeBridge,
+    isExtensionConnected,
+    onExtensionEvent,
+    rotateBridgeToken,
+    sendBridgeCommand,
+    waitForExtensionConnection,
+} from "./chrome-bridge.js";
+// Export core utilities
+export {
+    ATLAS_HUD_JS,
+    AUTO_SCROLL_JS,
+    buildElementsText,
+    CLICK_INDICATOR_JS,
+    GET_FORM_STATE_JS,
+    getAccessibilityTree,
+    getActivePage,
+    getActivePageIndex,
+    getBrowser,
+    getInteractiveElements,
+    getLastElementMap,
+    invalidateCache,
+    NETWORK_REQUESTS_JS,
+    SCAN_FRAME_JS,
+    SCROLL_INDICATOR_JS,
+    SCROLL_TO_ELEMENT_JS,
+    scanPage,
+    setActivePageIndex,
+    setLastElementMap,
+    waitForPageReady,
+    withRetry,
+} from "./core.js";
+// Export extraction tools
+export {
+    browserAnalyze,
+    browserCacheActions,
+    browserExtract,
+    browserRecallStrategy,
+    browserReplayActions,
+    browserRunJs,
+    browserSaveStrategy,
+    browserSelect,
+    browserUploadFile,
+    browserWait,
+} from "./extraction.js";
+// Export interaction tools
+export {
+    browserClick,
+    browserClickAt,
+    browserDrag,
+    browserHoldClick,
+    browserHover,
+    browserKeyboard,
+    browserRightClick,
+    browserScroll,
+    browserScrollElement,
+    browserType,
+} from "./interaction.js";
+// Export mode tools
+export { browserChromeStatus, browserSetMode } from "./mode-tools.js";
+// Export native browser acceleration + IP protection wrapper
+export {
+    checkBrowserRateLimit,
+    detectActionLoop,
+    getActionAuditTail,
+    getHoverHint,
+    getModuleFingerprint,
+    getVideoPlayerState,
+    invalidateVideoState,
+    isNativeBrowserAvailable,
+    obfuscateInjectedVariable,
+    recordBrowserAction,
+    recordHoverFailure,
+    recordHoverSuccess,
+    resetActionLoop,
+    rewriteInternalVars,
+    scoreElementCandidates,
+    setVideoPlayerState,
+    signBrowserAction,
+    validateJsCode,
+    verifyBrowserAction,
+} from "./native-browser.js";
+// Export navigation tools
+export {
+    browserBack,
+    browserClose,
+    browserNavigate,
+    browserScan,
+    browserSwitchTab,
+} from "./navigation.js";
+// Export OpenCLI-inspired advanced tools
+export {
+    browserAutoScroll,
+    browserBatchFetch,
+    browserConnectElectron,
+    browserExtractArticle,
+    browserFormState,
+    browserInterceptRead,
+    browserInterceptStart,
+    browserNetworkRequests,
+    browserScrollToElement,
+    browserWaitForSelector,
+    openCliTools,
+} from "./opencli-tools.js";
 
 // Export Playwright passthrough backend
 export { PlaywrightPassthroughBackend } from "./playwright-backend.js";
-
-// Export action cache
-export {
-    initActionCache,
-    getCachedActions,
-    shouldReplayActions,
-    cacheActions,
-    markActionFailed,
-    replayActions,
-    getActionCacheStats
-} from "./action-cache.js";
-export type { CachedAction, CachedActionStep } from "./action-cache.js";
-
-// Export mode tools
-export { browserSetMode, browserChromeStatus } from "./mode-tools.js";
+// Export popup guard utilities
+export { attachPopupGuard, dismissCookieBanner, dismissOverlayModals } from "./popup-guard.js";
+// Export types
+export type {
+    BrowserConfig,
+    BrowserContext,
+    BrowserMode,
+    ChromeBridgeCommand,
+    ChromeBridgeEvent,
+    ChromeBridgeResponse,
+    ChromeTabInfo,
+    ClickOptions,
+    ElementCache,
+    ElementHandle,
+    FrameScanResult,
+    InteractiveElement,
+    Page,
+    PageScanResult,
+    PlaywrightModule,
+    TabInfo,
+} from "./types.js";
+// Export video control tool
+export { browserVideoControl } from "./video-control.js";
 
 // ── Browser Cleanup Function ────────────────────
 
@@ -195,14 +199,42 @@ export async function closeBrowser(): Promise<void> {
 
 // ── Default Export: All Tool Definitions ────────
 
-import { browserNavigate, browserScan, browserBack, browserSwitchTab, browserClose as browserCloseTool } from "./navigation.js";
-import { browserClickAt, browserClick, browserRightClick, browserHoldClick, browserDrag, browserScroll, browserType, browserHover, browserKeyboard, browserScrollElement } from "./interaction.js";
-import { browserAnalyze, browserRunJs, browserWait, browserSelect, browserExtract, browserUploadFile, browserSaveStrategy, browserRecallStrategy, browserReplayActions, browserCacheActions } from "./extraction.js";
-import { browserParallelTabs, browserParallelActions, browserMultiAction } from "./advanced.js";
-import { browserSetMode, browserChromeStatus } from "./mode-tools.js";
-import { browserVideoControl } from "./video-control.js";
+import { browserMultiAction, browserParallelActions, browserParallelTabs } from "./advanced.js";
 import { browserHandleCaptcha } from "./captcha.js";
+import {
+    browserAnalyze,
+    browserCacheActions,
+    browserExtract,
+    browserRecallStrategy,
+    browserReplayActions,
+    browserRunJs,
+    browserSaveStrategy,
+    browserSelect,
+    browserUploadFile,
+    browserWait,
+} from "./extraction.js";
+import {
+    browserClick,
+    browserClickAt,
+    browserDrag,
+    browserHoldClick,
+    browserHover,
+    browserKeyboard,
+    browserRightClick,
+    browserScroll,
+    browserScrollElement,
+    browserType,
+} from "./interaction.js";
+import { browserChromeStatus, browserSetMode } from "./mode-tools.js";
+import {
+    browserBack,
+    browserClose as browserCloseTool,
+    browserNavigate,
+    browserScan,
+    browserSwitchTab,
+} from "./navigation.js";
 import { openCliTools } from "./opencli-tools.js";
+import { browserVideoControl } from "./video-control.js";
 
 export const browserTools = [
     // Navigation

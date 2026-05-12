@@ -29,15 +29,26 @@ const execFileAsync = promisify(execFile);
 /** Reject screenshot paths outside known-safe directories (defence against arbitrary file read). */
 function isSafeScreenshotPath(p: string): boolean {
     const abs = resolve(p);
+    const cwd = resolve("");
+    // Reject filesystem-root and unreasonably short paths from the allowlist —
+    // ATLAS_WORKSPACE="/" would otherwise let every absolute path pass startsWith.
+    const isMeaningfulDir = (d: string): boolean => {
+        if (!d || d === cwd) return false;
+        if (d === "/" || d === "\\" || /^[A-Za-z]:\\?$/.test(d)) return false;
+        if (d.length < 4) return false;
+        return true;
+    };
     const allowedDirs = [
         resolve(tmpdir()),
+        "/tmp", // common shorthand for the per-user system tmp
+        "/private/tmp", // macOS canonical (os.tmpdir() returns /var/folders/...)
         resolve(process.env.HOME || "", "Desktop", "A.T.L.A.S Files"),
         resolve(process.env.HOME || "", "Documents", "A.T.L.A.S Files"),
         resolve(process.env.HOME || "", "A.T.L.A.S Files"),
         resolve(process.env.HOME || "", "Library", "Caches", "atlas"),
-        resolve(process.env.ATLAS_WORKSPACE || ""),
-    ].filter((d) => d && d !== resolve(""));
-    return allowedDirs.some((d) => abs === d || abs.startsWith(d + "/") || abs.startsWith(d + "\\"));
+        process.env.ATLAS_WORKSPACE ? resolve(process.env.ATLAS_WORKSPACE) : "",
+    ].filter(isMeaningfulDir);
+    return allowedDirs.some((d) => abs === d || abs.startsWith(`${d}/`) || abs.startsWith(`${d}\\`));
 }
 
 export interface UITarsGroundingResult {
@@ -226,7 +237,7 @@ export async function isUITarsAvailable(
                 if (!m.name) return false;
                 if (m.name === model) return true;
                 // Allow `ui-tars` (without tag) to match any `ui-tars:*`
-                if (!model.includes(":") && m.name.startsWith(model + ":")) return true;
+                if (!model.includes(":") && m.name.startsWith(`${model}:`)) return true;
                 // Allow `ui-tars:7b` to match `ui-tars` (model without tag stored as :latest)
                 if (model.endsWith(":latest") && m.name === model.replace(":latest", "")) return true;
                 return false;

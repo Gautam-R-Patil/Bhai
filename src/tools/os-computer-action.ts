@@ -325,7 +325,11 @@ async function dispatchDrag(points: Array<{ x: number; y: number }>): Promise<vo
     }
     // Windows drag — for Phase 1 we fall through to consecutive moves; a proper SendInput-based
     // drag is in Phase 2's cross-OS AX/IO layer.
-    throw new Error("drag not yet implemented for Windows in os_computer_action");
+    // Windows drag: SendInput-based implementation deferred. For now, error explicitly so
+    // the agent can route to a different tool (e.g. PowerShell SendInput script).
+    throw new Error(
+        "drag_not_supported_windows:not yet implemented in os_computer_action — use powershell_script with SendInput, or perform a click + manual move sequence",
+    );
 }
 
 async function dispatchScroll(x: number, y: number, dx: number, dy: number): Promise<void> {
@@ -348,8 +352,10 @@ async function dispatchScroll(x: number, y: number, dx: number, dy: number): Pro
             });
             const ticks = Math.max(1, Math.abs(Math.round(dy / 40)));
             for (let i = 0; i < ticks; i++) {
-                // ydotool: 4 = up, 5 = down (xdotool-compatible button numbers)
-                await execFileAsync("ydotool", ["click", dy > 0 ? "0xC1" : "0xC0"], { timeout: 2000 }).catch(() => {});
+                // ydotool wheel buttons: "4" = up, "5" = down (xdotool-compatible button numbers).
+                // 0xC0/0xC1 are USB HID mouse-button codes — wrong tool for the job, would fire
+                // left/right CLICK instead of scrolling. Found via DEEP R2 review.
+                await execFileAsync("ydotool", ["click", dy > 0 ? "5" : "4"], { timeout: 2000 }).catch(() => {});
             }
             return;
         }

@@ -15,18 +15,18 @@ import type { Page } from "./types.js";
 // ── Types ────────────────────────────────────
 
 export interface CachedActionStep {
-    selector: string;   // CSS selector or atlas label ref (e.g. "[data-atlas-id='...']")
-    action: string;     // "click" | "type" | "select" | "scroll" | "hover" | "press_key"
-    value?: string;     // Text to type, option to select, key to press, etc.
+    selector: string; // CSS selector or atlas label ref (e.g. "[data-atlas-id='...']")
+    action: string; // "click" | "type" | "select" | "scroll" | "hover" | "press_key"
+    value?: string; // Text to type, option to select, key to press, etc.
 }
 
 export interface CachedAction {
-    url: string;        // URL pattern: domain + pathname (no query params / hash)
+    url: string; // URL pattern: domain + pathname (no query params / hash)
     actions: CachedActionStep[];
-    lastUsed: number;   // epoch ms
+    lastUsed: number; // epoch ms
     successCount: number;
     failCount: number;
-    createdAt: number;  // epoch ms
+    createdAt: number; // epoch ms
 }
 
 interface ActionCacheStore {
@@ -36,13 +36,10 @@ interface ActionCacheStore {
 
 // ── Constants ────────────────────────────────
 
-const STORE_PATH = path.join(
-    process.env.ATLAS_DATA_DIR || path.resolve("data"),
-    "browser-action-cache.json"
-);
+const STORE_PATH = path.join(process.env.ATLAS_DATA_DIR || path.resolve("data"), "browser-action-cache.json");
 const MAX_ENTRIES = 200;
-const FAIL_THRESHOLD = 3;          // Delete entry after this many consecutive failures
-const MIN_SUCCESS_RATE = 0.70;     // 70% success rate required to attempt replay
+const FAIL_THRESHOLD = 3; // Delete entry after this many consecutive failures
+const MIN_SUCCESS_RATE = 0.7; // 70% success rate required to attempt replay
 const STALE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 let store: ActionCacheStore = { version: 1, entries: [] };
@@ -78,7 +75,7 @@ function saveStore(): void {
 function pruneStaleEntries(): void {
     const now = Date.now();
     const before = store.entries.length;
-    store.entries = store.entries.filter(e => {
+    store.entries = store.entries.filter((e) => {
         // Remove entries older than STALE_MS with low success
         if (now - e.lastUsed > STALE_MS && getSuccessRate(e) < MIN_SUCCESS_RATE) return false;
         // Remove entries that have exceeded the fail threshold
@@ -127,7 +124,7 @@ function getSuccessRate(entry: CachedAction): number {
  */
 export function getCachedActions(url: string): CachedAction | null {
     const pattern = normalizeUrl(url);
-    const entry = store.entries.find(e => e.url === pattern);
+    const entry = store.entries.find((e) => e.url === pattern);
     if (!entry) return null;
 
     // Don't return entries that have exceeded the fail threshold
@@ -153,7 +150,7 @@ export function cacheActions(url: string, actions: CachedActionStep[]): void {
     const pattern = normalizeUrl(url);
     const now = Date.now();
 
-    const existing = store.entries.find(e => e.url === pattern);
+    const existing = store.entries.find((e) => e.url === pattern);
     if (existing) {
         existing.actions = actions;
         existing.lastUsed = now;
@@ -187,15 +184,17 @@ export function cacheActions(url: string, actions: CachedActionStep[]): void {
  */
 export function markActionFailed(url: string): void {
     const pattern = normalizeUrl(url);
-    const entry = store.entries.find(e => e.url === pattern);
+    const entry = store.entries.find((e) => e.url === pattern);
     if (!entry) return;
 
     entry.failCount++;
 
     // Self-healing: if failures exceed threshold, purge the entry entirely
     if (entry.failCount >= FAIL_THRESHOLD) {
-        store.entries = store.entries.filter(e => e.url !== pattern);
-        console.log(`  🔄 [action-cache] Purged stale cache for ${pattern} (${FAIL_THRESHOLD}+ failures — self-healing)`);
+        store.entries = store.entries.filter((e) => e.url !== pattern);
+        console.log(
+            `  🔄 [action-cache] Purged stale cache for ${pattern} (${FAIL_THRESHOLD}+ failures — self-healing)`,
+        );
     }
 
     saveStore();
@@ -277,7 +276,9 @@ export async function replayActions(page: Page, cached: CachedAction): Promise<b
                 }
             }
         } catch (err) {
-            console.log(`  ⚠️ [action-cache] Replay step failed: ${step.action} on "${step.selector}" — ${(err as Error).message}`);
+            console.log(
+                `  ⚠️ [action-cache] Replay step failed: ${step.action} on "${step.selector}" — ${(err as Error).message}`,
+            );
             markActionFailed(url || cached.url);
             return false;
         }
@@ -285,7 +286,7 @@ export async function replayActions(page: Page, cached: CachedAction): Promise<b
 
     // All steps succeeded — update the cache entry
     const pattern = normalizeUrl(url || cached.url);
-    const entry = store.entries.find(e => e.url === pattern);
+    const entry = store.entries.find((e) => e.url === pattern);
     if (entry) {
         entry.lastUsed = Date.now();
         entry.successCount++;
@@ -300,8 +301,8 @@ export async function replayActions(page: Page, cached: CachedAction): Promise<b
  * Get stats about the action cache (for diagnostics).
  */
 export function getActionCacheStats(): { total: number; healthyCount: number; degradedCount: number } {
-    const healthy = store.entries.filter(e => getSuccessRate(e) >= MIN_SUCCESS_RATE);
-    const degraded = store.entries.filter(e => getSuccessRate(e) < MIN_SUCCESS_RATE && e.failCount < FAIL_THRESHOLD);
+    const healthy = store.entries.filter((e) => getSuccessRate(e) >= MIN_SUCCESS_RATE);
+    const degraded = store.entries.filter((e) => getSuccessRate(e) < MIN_SUCCESS_RATE && e.failCount < FAIL_THRESHOLD);
     return {
         total: store.entries.length,
         healthyCount: healthy.length,

@@ -13,9 +13,9 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { checkWritePathInApprovalMode } from "../../agents/plan-mode.js";
 import { getPathBlockedReason, isPathAllowed, isProtectedPath } from "../../security/allowlist.js";
 import { auditLog } from "../../security/audit-log.js";
-import { checkWritePathInApprovalMode } from "../../agents/plan-mode.js";
 import { logToolAction } from "../../utils/debug-log.js";
 import type { ToolDefinition } from "../get-current-time.js";
 import { hashContent, hasRegistryEntry, recordRead, wasRead } from "./read-registry.js";

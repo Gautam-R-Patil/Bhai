@@ -3,10 +3,10 @@
 // See LICENSE.md for details.
 
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { promises as fs } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import type { ToolDefinition } from "./get-current-time.js";
 
 const execFileAsync = promisify(execFile);
@@ -23,17 +23,20 @@ export const blenderScript: ToolDefinition = {
         type: "function",
         function: {
             name: "blender_script",
-            description: "Execute a Python script in a headless Blender instance. Use this to procedurally generate 3D models, scenes, and renders using the bpy API.",
+            description:
+                "Execute a Python script in a headless Blender instance. Use this to procedurally generate 3D models, scenes, and renders using the bpy API.",
             parameters: {
                 type: "object",
                 properties: {
                     script: {
                         type: "string",
-                        description: "The complete, valid Python script using the 'bpy' module to execute inside Blender.",
+                        description:
+                            "The complete, valid Python script using the 'bpy' module to execute inside Blender.",
                     },
                     timeout: {
                         type: "number",
-                        description: "Timeout in milliseconds (default: 120000 ms = 2 minutes). Increase this for complex renders.",
+                        description:
+                            "Timeout in milliseconds (default: 120000 ms = 2 minutes). Increase this for complex renders.",
                     },
                 },
                 required: ["script"],
@@ -43,7 +46,9 @@ export const blenderScript: ToolDefinition = {
 
     async handler(input) {
         if (process.platform !== "darwin") {
-            return JSON.stringify({ error: "Currently, blender_script tool assumes macOS path (/Applications/Blender.app/Contents/MacOS/Blender)." });
+            return JSON.stringify({
+                error: "Currently, blender_script tool assumes macOS path (/Applications/Blender.app/Contents/MacOS/Blender).",
+            });
         }
 
         const script = input.script as string;
@@ -54,7 +59,9 @@ export const blenderScript: ToolDefinition = {
         try {
             await fs.access(blenderPath);
         } catch {
-            return JSON.stringify({ error: `Blender not found at ${blenderPath}. Please ensure Blender is installed in the Applications folder.` });
+            return JSON.stringify({
+                error: `Blender not found at ${blenderPath}. Please ensure Blender is installed in the Applications folder.`,
+            });
         }
 
         // Create a temporary python file
@@ -70,7 +77,7 @@ export const blenderScript: ToolDefinition = {
             });
 
             // Cleanup
-            await fs.unlink(tmpFile).catch(() => { });
+            await fs.unlink(tmpFile).catch(() => {});
 
             const output = (stdout || "").substring(0, MAX_OUTPUT);
             const errors = (stderr || "").substring(0, MAX_OUTPUT);
@@ -83,7 +90,7 @@ export const blenderScript: ToolDefinition = {
             });
         } catch (err) {
             // Cleanup on error
-            await fs.unlink(tmpFile).catch(() => { });
+            await fs.unlink(tmpFile).catch(() => {});
 
             const error = err as { message?: string; code?: number; killed?: boolean };
             return JSON.stringify({

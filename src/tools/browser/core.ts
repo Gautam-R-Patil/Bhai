@@ -6,20 +6,20 @@
 // Shared browser state, element scanning, and utilities
 
 import fs from "node:fs";
-import path from "node:path";
-import { tmpdir } from "node:os";
 import { createRequire as _createRequire } from "node:module";
-import type {
-    PlaywrightModule,
-    BrowserContext,
-    Page,
-    InteractiveElement,
-    ElementCache,
-    PageScanResult
-} from "./types.js";
-import { getCurrentMode, getActiveBackend } from "./browser-backend.js";
-import { ChromePageProxy, ChromeExtensionBackend } from "./chrome-backend.js";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { runOCR } from "../../models/local-ocr.js";
+import { getActiveBackend, getCurrentMode } from "./browser-backend.js";
+import { type ChromeExtensionBackend, ChromePageProxy } from "./chrome-backend.js";
+import type {
+    BrowserContext,
+    ElementCache,
+    InteractiveElement,
+    Page,
+    PageScanResult,
+    PlaywrightModule,
+} from "./types.js";
 
 // ── Browser State ─────────────────────────────
 
@@ -55,10 +55,14 @@ function _scheduleIdleClose(): void {
         if (!browserContext) return;
         const ctx = browserContext;
         browserContext = null;
-        ctx.close().catch(() => { /* already closed or detached */ });
+        ctx.close().catch(() => {
+            /* already closed or detached */
+        });
         elementCache = null;
         lastElementMap = [];
-        console.log(`  💤 Browser idle ${Math.round(_idleCloseEnabled / 60_000)}min → closed (will relaunch on next browser tool)`);
+        console.log(
+            `  💤 Browser idle ${Math.round(_idleCloseEnabled / 60_000)}min → closed (will relaunch on next browser tool)`,
+        );
     }, _idleCloseEnabled);
     // Don't keep the bot process alive solely to schedule a close.
     _idleCloseTimer.unref?.();
@@ -119,25 +123,32 @@ export function setLastElementMap(elements: InteractiveElement[]): void {
 
 // Helper: Generate the condensed readable text list from the current element map
 // Rust-based element compressor (lazy-loaded, falls back to plain format)
-let _nativeCompressElements: ((els: unknown[], maxText?: number | null, maxEls?: number | null) => string) | null = null;
+let _nativeCompressElements: ((els: unknown[], maxText?: number | null, maxEls?: number | null) => string) | null =
+    null;
 let _nativeGetStealthScript: ((seed: number) => string) | null = null;
 try {
     const _req = _createRequire(import.meta.url);
     const _nm = _req(path.resolve("native", "index.js")) as Record<string, unknown>;
     if (typeof _nm.compressElementsForLlm === "function") {
-        _nativeCompressElements = _nm.compressElementsForLlm as ((els: unknown[], maxText?: number | null, maxEls?: number | null) => string);
+        _nativeCompressElements = _nm.compressElementsForLlm as (
+            els: unknown[],
+            maxText?: number | null,
+            maxEls?: number | null,
+        ) => string;
     }
     if (typeof _nm.getStealthInitScript === "function") {
-        _nativeGetStealthScript = _nm.getStealthInitScript as ((seed: number) => string);
+        _nativeGetStealthScript = _nm.getStealthInitScript as (seed: number) => string;
     }
-} catch { /* native unavailable — JS fallbacks used */ }
+} catch {
+    /* native unavailable — JS fallbacks used */
+}
 
 export function buildElementsText(): string {
     if (lastElementMap.length === 0) return "No interactive elements.";
     // Use Rust compressor: deduplicates, groups repeats, truncates — ~30-50% fewer tokens
     if (_nativeCompressElements) {
         try {
-            const input = lastElementMap.map(e => ({
+            const input = lastElementMap.map((e) => ({
                 label: e.label,
                 tag: e.tag,
                 text: e.text ?? "",
@@ -149,15 +160,19 @@ export function buildElementsText(): string {
                 editorType: e.editorType ?? null,
             }));
             return _nativeCompressElements(input, 40, 80);
-        } catch { /* fall through */ }
+        } catch {
+            /* fall through */
+        }
     }
     // JS fallback — use OpenCLI [N]<tag>text format
-    return lastElementMap.map(e => {
-        if (e.editorType) return `[${e.label}]<code-editor:${e.editorType}>`;
-        if (e.isOCRElement) return `[${e.label}]<ocr>${e.text}`;
-        const t = (e.text ?? "").substring(0, 40);
-        return t ? `[${e.label}]<${e.tag}>${t}` : `[${e.label}]<${e.tag}>`;
-    }).join('\n');
+    return lastElementMap
+        .map((e) => {
+            if (e.editorType) return `[${e.label}]<code-editor:${e.editorType}>`;
+            if (e.isOCRElement) return `[${e.label}]<ocr>${e.text}`;
+            const t = (e.text ?? "").substring(0, 40);
+            return t ? `[${e.label}]<${e.tag}>${t}` : `[${e.label}]<${e.tag}>`;
+        })
+        .join("\n");
 }
 
 // ── Browser Initialization ────────────────────
@@ -192,9 +207,10 @@ export async function getBrowser(): Promise<BrowserContext> {
             fs.mkdirSync(BROWSER_PROFILE_DIR, { recursive: true });
         }
         // Rust-generated realistic user-agent (session-stable, varies daily)
-        let ua = process.platform === "win32"
-            ? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-            : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+        let ua =
+            process.platform === "win32"
+                ? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
         try {
             const { createRequire } = await import("node:module");
             const req = createRequire(import.meta.url);
@@ -203,7 +219,9 @@ export async function getBrowser(): Promise<BrowserContext> {
                 const fn = nm.getStealthUserAgent as (platform: string, seed: number) => string;
                 ua = fn(process.platform, Math.floor(Date.now() / 86_400_000) % 65536);
             }
-        } catch { /* use fallback UA above */ }
+        } catch {
+            /* use fallback UA above */
+        }
 
         // Stealth args: remove bot fingerprints without bypassCSP (which breaks Playwright internals).
         // Renderer sandbox is INTENTIONALLY left enabled (we no longer pass --no-sandbox) so a single
@@ -212,8 +230,8 @@ export async function getBrowser(): Promise<BrowserContext> {
         const stealthArgs = [
             "--disable-blink-features=AutomationControlled", // removes navigator.webdriver
             "--disable-infobars",
-            "--disable-notifications",               // suppress permission prompts
-            "--disable-dev-shm-usage",               // stability on Linux/Windows
+            "--disable-notifications", // suppress permission prompts
+            "--disable-dev-shm-usage", // stability on Linux/Windows
             "--disable-background-timer-throttling",
             "--disable-renderer-backgrounding",
             "--disable-ipc-flooding-protection",
@@ -270,14 +288,18 @@ export async function getBrowser(): Promise<BrowserContext> {
             await browserContext.route("**/segment.io/**", abort);
             await browserContext.route("**/amplitude.com/**", abort);
             console.log("  🚫 Browser: blocked fonts, analytics, ads, tracking for faster page loads");
-        } catch { /* route setup non-fatal */ }
+        } catch {
+            /* route setup non-fatal */
+        }
 
         // Attach popup/overlay guard — auto-dismisses cookie banners and modals on every page
         try {
             const { attachPopupGuard } = await import("./popup-guard.js");
             attachPopupGuard(browserContext);
             console.log("  🛡️  Popup guard: cookie banners + modal auto-dismiss enabled");
-        } catch { /* non-fatal */ }
+        } catch {
+            /* non-fatal */
+        }
 
         return browserContext!;
     })();
@@ -312,7 +334,7 @@ export async function getActivePage(): Promise<Page> {
     const backend = await getActiveBackend();
 
     if (backend.mode === "chrome") {
-        return await (backend as ChromeExtensionBackend).getPageProxy() as unknown as Page;
+        return (await (backend as ChromeExtensionBackend).getPageProxy()) as unknown as Page;
     }
 
     // Playwright mode
@@ -523,7 +545,7 @@ export const ATLAS_HUD_JS = `
 // Strategy: domcontentloaded → framework hydration signal → DOM stability.
 export async function waitForPageReady(page: Page, timeoutMs = 2500): Promise<void> {
     if (getCurrentMode() === "chrome") {
-        await new Promise(resolve => setTimeout(resolve, Math.min(timeoutMs, 600)));
+        await new Promise((resolve) => setTimeout(resolve, Math.min(timeoutMs, 600)));
         return;
     }
 
@@ -532,7 +554,9 @@ export async function waitForPageReady(page: Page, timeoutMs = 2500): Promise<vo
     // Step 1: domcontentloaded — HTML parsed, synchronous scripts done
     try {
         await page.waitForLoadState("domcontentloaded", { timeout: Math.min(timeoutMs, 2000) });
-    } catch { /* continue even on timeout */ }
+    } catch {
+        /* continue even on timeout */
+    }
 
     if (Date.now() >= deadline) return;
 
@@ -542,17 +566,22 @@ export async function waitForPageReady(page: Page, timeoutMs = 2500): Promise<vo
             () => {
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const w = window as any;
-                const isNext  = typeof w.__NEXT_DATA__ !== "undefined";
-                const isVue   = typeof w.__vue_app__ !== "undefined";
-                const isNuxt  = typeof w.__NUXT__ !== "undefined";
-                const root    = document.getElementById("root") || document.getElementById("__next") || document.getElementById("app");
-                const isReact = root ? Object.keys(root).some(k => k.startsWith("__reactFiber")) : false;
+                const isNext = typeof w.__NEXT_DATA__ !== "undefined";
+                const isVue = typeof w.__vue_app__ !== "undefined";
+                const isNuxt = typeof w.__NUXT__ !== "undefined";
+                const root =
+                    document.getElementById("root") ||
+                    document.getElementById("__next") ||
+                    document.getElementById("app");
+                const isReact = root ? Object.keys(root).some((k) => k.startsWith("__reactFiber")) : false;
                 if (isNext || isVue || isNuxt || isReact) return document.readyState === "complete";
                 return document.readyState !== "loading";
             },
-            { timeout: Math.min(deadline - Date.now(), 2500), polling: 150 }
+            { timeout: Math.min(deadline - Date.now(), 2500), polling: 150 },
         );
-    } catch { /* framework not detected or timed out — continue */ }
+    } catch {
+        /* framework not detected or timed out — continue */
+    }
 
     if (Date.now() >= deadline) return;
 
@@ -564,29 +593,48 @@ export async function waitForPageReady(page: Page, timeoutMs = 2500): Promise<vo
     if (stabilityBudget > 600) {
         const QUIET_MS = Math.min(350, stabilityBudget / 3);
         try {
-            await page.evaluate((maxMs: number, quietMs: number) => {
-                return new Promise<string>((resolve) => {
-                    let timer: ReturnType<typeof setTimeout> | null = null;
-                    const cap = setTimeout(() => { obs.disconnect(); resolve('capped'); }, maxMs);
-                    const obs = new MutationObserver(() => {
-                        if (timer) clearTimeout(timer);
-                        timer = setTimeout(() => { clearTimeout(cap); obs.disconnect(); resolve('quiet'); }, quietMs);
-                    });
-                    obs.observe(document.documentElement, { childList: true, subtree: true, attributes: false });
-                    // Start quiet timer immediately — resolve if nothing changes
-                    timer = setTimeout(() => { clearTimeout(cap); obs.disconnect(); resolve('quiet'); }, quietMs);
-                });
-            }, stabilityBudget, QUIET_MS).catch(() => {}); // non-fatal
-        } catch { /* stability budget exhausted — page is usable */ }
+            await page
+                .evaluate(
+                    (maxMs: number, quietMs: number) => {
+                        return new Promise<string>((resolve) => {
+                            let timer: ReturnType<typeof setTimeout> | null = null;
+                            const cap = setTimeout(() => {
+                                obs.disconnect();
+                                resolve("capped");
+                            }, maxMs);
+                            const obs = new MutationObserver(() => {
+                                if (timer) clearTimeout(timer);
+                                timer = setTimeout(() => {
+                                    clearTimeout(cap);
+                                    obs.disconnect();
+                                    resolve("quiet");
+                                }, quietMs);
+                            });
+                            obs.observe(document.documentElement, {
+                                childList: true,
+                                subtree: true,
+                                attributes: false,
+                            });
+                            // Start quiet timer immediately — resolve if nothing changes
+                            timer = setTimeout(() => {
+                                clearTimeout(cap);
+                                obs.disconnect();
+                                resolve("quiet");
+                            }, quietMs);
+                        });
+                    },
+                    stabilityBudget,
+                    QUIET_MS,
+                )
+                .catch(() => {}); // non-fatal
+        } catch {
+            /* stability budget exhausted — page is usable */
+        }
     }
 }
 
 // ── Retry Helper for flaky operations ──────────
-export async function withRetry<T>(
-    operation: () => Promise<T>,
-    maxRetries = 2,
-    delayMs = 300
-): Promise<T> {
+export async function withRetry<T>(operation: () => Promise<T>, maxRetries = 2, delayMs = 300): Promise<T> {
     let lastError: Error | null = null;
     for (let i = 0; i <= maxRetries; i++) {
         try {
@@ -594,7 +642,7 @@ export async function withRetry<T>(
         } catch (err) {
             lastError = err as Error;
             if (i < maxRetries) {
-                await new Promise(resolve => setTimeout(resolve, delayMs));
+                await new Promise((resolve) => setTimeout(resolve, delayMs));
             }
         }
     }
@@ -992,8 +1040,12 @@ export const SCAN_FRAME_JS = `function scanFrame() {
 // ── Batch dispose handles asynchronously ───────
 async function batchDisposeHandles(elements: InteractiveElement[]): Promise<void> {
     const disposePromises = elements
-        .filter(el => el.handle && typeof el.handle.dispose === 'function')
-        .map(el => el.handle.dispose().catch((err: Error) => { console.warn("[BROWSER] Handle disposal failed:", err.message); }));
+        .filter((el) => el.handle && typeof el.handle.dispose === "function")
+        .map((el) =>
+            el.handle.dispose().catch((err: Error) => {
+                console.warn("[BROWSER] Handle disposal failed:", err.message);
+            }),
+        );
 
     // Don't await all individually — let them run in parallel
     if (disposePromises.length > 0) {
@@ -1014,12 +1066,16 @@ async function ocrFallbackScan(page: Page): Promise<InteractiveElement[]> {
         const ocrResult = await runOCR(tmpPath);
 
         // Clean up temp file
-        try { fs.unlinkSync(tmpPath); } catch { /* */ }
+        try {
+            fs.unlinkSync(tmpPath);
+        } catch {
+            /* */
+        }
 
         if (!ocrResult.regions || ocrResult.regions.length === 0) return [];
 
         return ocrResult.regions
-            .filter(r => r.bounds.width > 20 && r.bounds.height > 10 && r.text.trim().length > 0)
+            .filter((r) => r.bounds.width > 20 && r.bounds.height > 10 && r.text.trim().length > 0)
             .slice(0, 50) // Cap OCR elements
             .map((r, i) => ({
                 label: i + 1, // Will be reassigned by caller
@@ -1046,7 +1102,7 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
         const backend = await getActiveBackend();
         const elements = await backend.scanElements(forceRefresh);
         lastElementMap = elements;
-        const url = (typeof page.url === "function") ? page.url() : "";
+        const url = typeof page.url === "function" ? page.url() : "";
         if (url) cacheElements(url, elements);
         console.log(`  🔍 Chrome extension: scanned ${elements.length} interactive elements`);
 
@@ -1063,7 +1119,9 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
             }
         }
 
-        console.log(`  ⏱️ Scan completed in ${Date.now() - scanStart}ms (${elements.length} elements${elements.some(e => e.editorType) ? ', editors detected' : ''}${elements.some(e => e.isOCRElement) ? ', OCR fallback used' : ''})`);
+        console.log(
+            `  ⏱️ Scan completed in ${Date.now() - scanStart}ms (${elements.length} elements${elements.some((e) => e.editorType) ? ", editors detected" : ""}${elements.some((e) => e.isOCRElement) ? ", OCR fallback used" : ""})`,
+        );
         return elements;
     }
 
@@ -1072,7 +1130,9 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
 
     // ── Smart Cache Check ──
     if (!forceRefresh && shouldUseCachedElements(currentUrl) && lastElementMap.length > 0) {
-        console.log(`  ⚡ Using cached elements (${lastElementMap.length} elements, cache age: ${Date.now() - (elementCache?.timestamp || 0)}ms)`);
+        console.log(
+            `  ⚡ Using cached elements (${lastElementMap.length} elements, cache age: ${Date.now() - (elementCache?.timestamp || 0)}ms)`,
+        );
         return lastElementMap;
     }
 
@@ -1084,15 +1144,29 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
     // Uses Playwright's internal incrementalAriaSnapshot via the browser's
     // native accessibility engine — bypasses eval scope entirely.
     // ═══════════════════════════════════════════════
-    let ariaElements: InteractiveElement[] = [];
+    const ariaElements: InteractiveElement[] = [];
     let ariaParsedCount = 0; // track how many were parsed (vs resolved) to detect low-resolution pages
     try {
         const yaml = await page.locator("body").ariaSnapshot({ timeout: 1200 });
         if (yaml && yaml.trim().length > 10) {
             const INTERACTIVE_ROLES = new Set([
-                "button", "link", "textbox", "searchbox", "combobox", "listbox",
-                "checkbox", "radio", "tab", "menuitem", "menuitemcheckbox", "menuitemradio",
-                "option", "switch", "slider", "spinbutton", "treeitem",
+                "button",
+                "link",
+                "textbox",
+                "searchbox",
+                "combobox",
+                "listbox",
+                "checkbox",
+                "radio",
+                "tab",
+                "menuitem",
+                "menuitemcheckbox",
+                "menuitemradio",
+                "option",
+                "switch",
+                "slider",
+                "spinbutton",
+                "treeitem",
             ]);
 
             // Parse YAML into (role, name, ref) tuples — works with and without [ref=] annotations
@@ -1104,7 +1178,7 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
                 if (!m) return;
                 const role = m[1].toLowerCase();
                 if (!INTERACTIVE_ROLES.has(role)) return;
-                const ref = (/\[ref=([\w\d]+)\]/.exec(line)?.[1]) ?? "";
+                const ref = /\[ref=([\w\d]+)\]/.exec(line)?.[1] ?? "";
                 parsed.push({ role, name: m[2], ref, idx });
             });
             ariaParsedCount = parsed.length;
@@ -1114,7 +1188,8 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
             // (80 elements × 4 tryBox variants = 320 concurrent CDP protocol messages).
             // Each batch is still fully parallel internally; 4 batches of 20 is the right balance.
             const BATCH = 20;
-            const vw = 1280, vh = 800; // viewport dimensions
+            const vw = 1280,
+                vh = 800; // viewport dimensions
             for (let i = 0; i < Math.min(parsed.length, 80); i += BATCH) {
                 const batch = parsed.slice(i, i + BATCH);
                 const boxes = await Promise.all(
@@ -1125,13 +1200,21 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
                                 const loc = page.getByRole(roleType, { name: p.name, exact });
                                 const target = visibleOnly ? loc.filter({ visible: true }).first() : loc.first();
                                 const box = await target.boundingBox({ timeout: 300 }).catch(() => null);
-                                if (box && box.width > 2 && box.height > 2 &&
-                                    box.x > -200 && box.y > -200 &&
-                                    box.x < vw + 200 && box.y < vh + 200) {
+                                if (
+                                    box &&
+                                    box.width > 2 &&
+                                    box.height > 2 &&
+                                    box.x > -200 &&
+                                    box.y > -200 &&
+                                    box.x < vw + 200 &&
+                                    box.y < vh + 200
+                                ) {
                                     return box;
                                 }
                                 return null;
-                            } catch { return null; }
+                            } catch {
+                                return null;
+                            }
                         };
                         // Race all 4 variants in parallel — first non-null wins (~300ms vs 1.6s sequential)
                         const raceResults = await Promise.all([
@@ -1140,22 +1223,36 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
                             tryBox(false, true),
                             tryBox(false, false),
                         ]);
-                        let box = raceResults.find(b => b !== null) ?? null;
+                        let box = raceResults.find((b) => b !== null) ?? null;
                         // Fallback for long-named elements (e.g. Amazon product links):
                         // getByRole with full 80-char title fails; try short prefix match instead.
-                        if (!box && (p.role === 'link' || p.role === 'button') && p.name.length > 5) {
+                        if (!box && (p.role === "link" || p.role === "button") && p.name.length > 5) {
                             try {
                                 const shortName = p.name.substring(0, 25);
-                                const fallbackLoc = page.locator(p.role === 'link' ? 'a' : 'button')
+                                const fallbackLoc = page
+                                    .locator(p.role === "link" ? "a" : "button")
                                     .filter({ hasText: shortName });
-                                const fb = await fallbackLoc.first().boundingBox({ timeout: 400 }).catch(() => null);
-                                if (fb && fb.width > 2 && fb.height > 2 && fb.x > -200 && fb.y > -200 && fb.x < vw + 200 && fb.y < vh + 200) {
+                                const fb = await fallbackLoc
+                                    .first()
+                                    .boundingBox({ timeout: 400 })
+                                    .catch(() => null);
+                                if (
+                                    fb &&
+                                    fb.width > 2 &&
+                                    fb.height > 2 &&
+                                    fb.x > -200 &&
+                                    fb.y > -200 &&
+                                    fb.x < vw + 200 &&
+                                    fb.y < vh + 200
+                                ) {
                                     box = fb;
                                 }
-                            } catch { /* ignore */ }
+                            } catch {
+                                /* ignore */
+                            }
                         }
                         return box ? { p, box } : null;
-                    })
+                    }),
                 );
                 for (const result of boxes) {
                     if (!result) continue;
@@ -1173,10 +1270,14 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
             }
 
             if (ariaElements.length > 0) {
-                console.log(`  🌳 ariaSnapshot: ${ariaElements.length}/${parsed.length} interactive elements (${Date.now() - scanStart}ms)`);
+                console.log(
+                    `  🌳 ariaSnapshot: ${ariaElements.length}/${parsed.length} interactive elements (${Date.now() - scanStart}ms)`,
+                );
             }
         }
-    } catch { /* ariaSnapshot unavailable or page not ready — fall through to SCAN_FRAME_JS */ }
+    } catch {
+        /* ariaSnapshot unavailable or page not ready — fall through to SCAN_FRAME_JS */
+    }
 
     // ═══════════════════════════════════════════════
     // FALLBACK / SUPPLEMENT: SCAN_FRAME_JS across all frames
@@ -1188,14 +1289,27 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
     // Low-resolution: ariaSnapshot parsed many elements but resolved very few.
     // This indicates getByRole matching failure (e.g. Amazon: 274 parsed, 8 resolved).
     // Trigger SCAN_FRAME_JS to supplement with DOM-based candidates.
-    const ariaResolutionPoor = ariaParsedCount > 20 && ariaElements.length < 15 && ariaElements.length < ariaParsedCount * 0.25;
+    const ariaResolutionPoor =
+        ariaParsedCount > 20 && ariaElements.length < 15 && ariaElements.length < ariaParsedCount * 0.25;
     const allFrames = page.frames(); // hoisted — also used for handle fetching below
-    let legacyCandidates: Array<{ x: number; y: number; tag: string; text: string; score: number; atlasId: string; frameIndex: number; editorType?: string }> = [];
+    let legacyCandidates: Array<{
+        x: number;
+        y: number;
+        tag: string;
+        text: string;
+        score: number;
+        atlasId: string;
+        frameIndex: number;
+        editorType?: string;
+    }> = [];
     if (ariaElements.length < 3 || ariaResolutionPoor) {
         const frameScanPromises = allFrames.map(async (frame: Page, fi: number) => {
             try {
                 const frameCandidates = await frame.evaluate(`(${SCAN_FRAME_JS})()`);
-                return (frameCandidates as Array<InteractiveElement & { score: number }>).map(c => ({ ...c, frameIndex: fi }));
+                return (frameCandidates as Array<InteractiveElement & { score: number }>).map((c) => ({
+                    ...c,
+                    frameIndex: fi,
+                }));
             } catch (err) {
                 if (ariaElements.length === 0) {
                     console.warn(`  ⚠️ Frame ${fi} scan failed: ${(err as Error).message}`);
@@ -1210,22 +1324,31 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
     // Merge strategy: if SCAN_FRAME_JS ran and has more results, use it as base
     // and prepend ariaSnapshot results (which have better semantic labels).
     // Otherwise use whichever returned more elements.
-    let allCandidates: Array<{ x: number; y: number; tag: string; text: string; score: number; atlasId: string; frameIndex: number; editorType?: string }>;
+    let allCandidates: Array<{
+        x: number;
+        y: number;
+        tag: string;
+        text: string;
+        score: number;
+        atlasId: string;
+        frameIndex: number;
+        editorType?: string;
+    }>;
     if (legacyCandidates.length > ariaElements.length) {
         // SCAN_FRAME_JS found more — merge: aria first (semantic priority), then legacy
-        const ariaCoords = new Set(ariaElements.map(e => `${e.x},${e.y}`));
-        const deduped = legacyCandidates.filter(c => !ariaCoords.has(`${c.x},${c.y}`));
-        allCandidates = [
-            ...ariaElements.map(e => ({ ...e, score: 15, frameIndex: 0 })),
-            ...deduped,
-        ];
-        console.log(`  🔍 Scanned ${allFrames.length} frame(s) in parallel, found ${allCandidates.length} interactive elements`);
+        const ariaCoords = new Set(ariaElements.map((e) => `${e.x},${e.y}`));
+        const deduped = legacyCandidates.filter((c) => !ariaCoords.has(`${c.x},${c.y}`));
+        allCandidates = [...ariaElements.map((e) => ({ ...e, score: 15, frameIndex: 0 })), ...deduped];
+        console.log(
+            `  🔍 Scanned ${allFrames.length} frame(s) in parallel, found ${allCandidates.length} interactive elements`,
+        );
     } else {
-        allCandidates = ariaElements.length >= 3
-            ? ariaElements.map(e => ({ ...e, score: 10, frameIndex: 0 }))
-            : legacyCandidates;
+        allCandidates =
+            ariaElements.length >= 3 ? ariaElements.map((e) => ({ ...e, score: 10, frameIndex: 0 })) : legacyCandidates;
         if (ariaElements.length >= 3) {
-            console.log(`  🔍 Scanned ${allFrames.length} frame(s) in parallel, found ${ariaElements.length} interactive elements`);
+            console.log(
+                `  🔍 Scanned ${allFrames.length} frame(s) in parallel, found ${ariaElements.length} interactive elements`,
+            );
         }
     }
 
@@ -1237,7 +1360,7 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
     // De-duplicate across frames by center coordinates (some elements in iframes
     // overlap with main frame elements)
     const seenCoords = new Set<string>();
-    const uniqueCandidates = allCandidates.filter(c => {
+    const uniqueCandidates = allCandidates.filter((c) => {
         const key = `${c.x},${c.y}`;
         if (seenCoords.has(key)) return false;
         seenCoords.add(key);
@@ -1294,11 +1417,13 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
             } catch {
                 return null;
             }
-        })
+        }),
     );
     const resultElements: InteractiveElement[] = handleResults.filter((r): r is InteractiveElement => r !== null);
 
-    console.log(`  🔍 Scanned ${allFrames.length} frame(s) in parallel, found ${resultElements.length} interactive elements`);
+    console.log(
+        `  🔍 Scanned ${allFrames.length} frame(s) in parallel, found ${resultElements.length} interactive elements`,
+    );
 
     // OCR fallback when very few DOM elements found
     if (resultElements.length < 3) {
@@ -1316,12 +1441,20 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
     lastElementMap = resultElements;
 
     // Dispose old handles AFTER new ones are assigned to prevent races
-    setTimeout(() => batchDisposeHandles(oldElements).catch((err: Error) => { console.warn("[BROWSER] Batch handle disposal failed:", err.message); }), 500);
+    setTimeout(
+        () =>
+            batchDisposeHandles(oldElements).catch((err: Error) => {
+                console.warn("[BROWSER] Batch handle disposal failed:", err.message);
+            }),
+        500,
+    );
 
     // Cache the results
     cacheElements(currentUrl, resultElements);
 
-    console.log(`  ⏱️ Scan completed in ${Date.now() - scanStart}ms (${resultElements.length} elements${resultElements.some(e => e.editorType) ? ', editors detected' : ''}${resultElements.some(e => e.isOCRElement) ? ', OCR fallback used' : ''})`);
+    console.log(
+        `  ⏱️ Scan completed in ${Date.now() - scanStart}ms (${resultElements.length} elements${resultElements.some((e) => e.editorType) ? ", editors detected" : ""}${resultElements.some((e) => e.isOCRElement) ? ", OCR fallback used" : ""})`,
+    );
     return resultElements;
 }
 

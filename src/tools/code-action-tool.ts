@@ -15,10 +15,10 @@
 // Both run in a V8 vm sandbox with a `tools` proxy object that routes
 // to the agent's registered tool handlers.
 
-import type { ToolDefinition } from "./get-current-time.js";
-import type { LLMClient } from "../llm.js";
-import { runAndExecuteCodeAction, executeCodeAction } from "../agents/code-action-agent.js";
 import type { ToolExecutor } from "../agents/code-action-agent.js";
+import { executeCodeAction, runAndExecuteCodeAction } from "../agents/code-action-agent.js";
+import type { LLMClient } from "../llm.js";
+import type { ToolDefinition } from "./get-current-time.js";
 
 // ── Injected Dependencies ────────────────────
 
@@ -63,11 +63,13 @@ Returns the generated code, execution output, and success status.`,
                     available_tools: {
                         type: "array",
                         items: { type: "string" },
-                        description: "List of tool function names the code can call (e.g., ['read', 'write', 'shell_exec'])",
+                        description:
+                            "List of tool function names the code can call (e.g., ['read', 'write', 'shell_exec'])",
                     },
                     context: {
                         type: "string",
-                        description: "Optional additional context for the code generation (e.g., prior results, file paths)",
+                        description:
+                            "Optional additional context for the code generation (e.g., prior results, file paths)",
                     },
                 },
                 required: ["task", "available_tools"],
@@ -95,13 +97,7 @@ Returns the generated code, execution output, and success status.`,
         }
 
         try {
-            const result = await runAndExecuteCodeAction(
-                _llm,
-                task,
-                availableTools,
-                _toolExecutor,
-                context,
-            );
+            const result = await runAndExecuteCodeAction(_llm, task, availableTools, _toolExecutor, context);
 
             return JSON.stringify({
                 success: result.success,
@@ -160,16 +156,19 @@ Example:
                 properties: {
                     code: {
                         type: "string",
-                        description: "JavaScript code to execute. Has access to the tools.* object with all registered tools as async functions, console.log(), and standard JS built-ins. Must return a string result.",
+                        description:
+                            "JavaScript code to execute. Has access to the tools.* object with all registered tools as async functions, console.log(), and standard JS built-ins. Must return a string result.",
                     },
                     allowed_tools: {
                         type: "array",
                         items: { type: "string" },
-                        description: "Optional whitelist of tool names the code may call. If omitted, all tools are accessible.",
+                        description:
+                            "Optional whitelist of tool names the code may call. If omitted, all tools are accessible.",
                     },
                     timeout: {
                         type: "number",
-                        description: "Execution timeout in milliseconds (default 120000 = 2 minutes, max 300000 = 5 minutes).",
+                        description:
+                            "Execution timeout in milliseconds (default 120000 = 2 minutes, max 300000 = 5 minutes).",
                     },
                 },
                 required: ["code"],
@@ -179,7 +178,9 @@ Example:
 
     async handler(input) {
         if (!_toolExecutor) {
-            return JSON.stringify({ error: "Code execute not initialized — tool executor not set. This is a boot-time wiring issue." });
+            return JSON.stringify({
+                error: "Code execute not initialized — tool executor not set. This is a boot-time wiring issue.",
+            });
         }
 
         const code = input.code as string;

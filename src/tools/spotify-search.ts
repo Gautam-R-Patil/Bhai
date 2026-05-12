@@ -10,8 +10,8 @@
 // Fails open: any network / auth / rate-limit error returns null so the
 // caller can fall back to the existing spogo-based search.
 
-import { encryptedFetch } from "../crypto-transport.js";
 import { getConvexSiteUrl } from "../config/keys.js";
+import { encryptedFetch } from "../crypto-transport.js";
 import { getSessionToken } from "../session.js";
 
 export interface FastSearchResult {
@@ -45,7 +45,9 @@ async function mintAppToken(): Promise<CachedToken | null> {
         const data = (await resp.json()) as { access_token?: string; expires_in?: number; error?: string };
         if (!resp.ok || !data?.access_token || !data?.expires_in) {
             if (!_loggedEndpointFailure) {
-                console.warn(`[spotify-search] app-token endpoint failed: ${data?.error || resp.status}. Falling back to spogo search.`);
+                console.warn(
+                    `[spotify-search] app-token endpoint failed: ${data?.error || resp.status}. Falling back to spogo search.`,
+                );
                 _loggedEndpointFailure = true;
             }
             return null;
@@ -57,7 +59,9 @@ async function mintAppToken(): Promise<CachedToken | null> {
         };
     } catch (err) {
         if (!_loggedEndpointFailure) {
-            console.warn(`[spotify-search] app-token network error: ${(err as Error).message}. Falling back to spogo search.`);
+            console.warn(
+                `[spotify-search] app-token network error: ${(err as Error).message}. Falling back to spogo search.`,
+            );
             _loggedEndpointFailure = true;
         }
         return null;
@@ -141,7 +145,10 @@ export async function fastSearchTrack(query: string, limit = 10): Promise<FastSe
     const first = data.tracks?.items?.[0];
     if (!first || !first.uri || !first.name) return null;
 
-    const artists = (first.artists || []).map((a) => a.name).filter(Boolean).join(", ");
+    const artists = (first.artists || [])
+        .map((a) => a.name)
+        .filter(Boolean)
+        .join(", ");
     return { uri: first.uri, name: first.name, artists };
 }
 

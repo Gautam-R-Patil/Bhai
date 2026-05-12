@@ -7,27 +7,27 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { addDomainTip, findStrategy, getDomainTips, recordStrategy } from "../browser-memory.js";
 import type { ToolDefinition } from "../get-current-time.js";
-import { recordStrategy, addDomainTip, findStrategy, getDomainTips } from "../browser-memory.js";
+import type { CachedActionStep } from "./action-cache.js";
 import {
+    cacheActions as cacheActionsFn,
+    getActionCacheStats,
+    getCachedActions,
+    markActionFailed,
+    replayActions,
+    shouldReplayActions,
+} from "./action-cache.js";
+import {
+    buildElementsText,
+    getAccessibilityTree,
     getActivePage,
     getInteractiveElements,
-    getAccessibilityTree,
-    setLastElementMap,
     getLastElementMap,
-    buildElementsText,
-    waitForPageReady
+    setLastElementMap,
+    waitForPageReady,
 } from "./core.js";
-import {
-    getCachedActions,
-    shouldReplayActions,
-    cacheActions as cacheActionsFn,
-    replayActions,
-    markActionFailed,
-    getActionCacheStats
-} from "./action-cache.js";
-import type { CachedActionStep } from "./action-cache.js";
-import { validateJsCode, signBrowserAction } from "./native-browser.js";
+import { signBrowserAction, validateJsCode } from "./native-browser.js";
 
 // ═══════════════════════════════════════════════
 // TOOL: Analyze page (smart element detection)
@@ -38,7 +38,8 @@ export const browserAnalyze: ToolDefinition = {
         type: "function",
         function: {
             name: "browser_analyze",
-            description: "Analyze the current page: lists all interactive elements with their positions, text, and bounding boxes so you know where to click.",
+            description:
+                "Analyze the current page: lists all interactive elements with their positions, text, and bounding boxes so you know where to click.",
             parameters: {
                 type: "object",
                 properties: {
@@ -51,45 +52,74 @@ export const browserAnalyze: ToolDefinition = {
     async handler(input) {
         try {
             const page = await getActivePage();
-            const analysis = await page.evaluate((includeText: boolean) => {
-                const r: Record<string, unknown[]> = { buttons: [], links: [], inputs: [], selects: [] };
+            const analysis = await page.evaluate(
+                (includeText: boolean) => {
+                    const r: Record<string, unknown[]> = { buttons: [], links: [], inputs: [], selects: [] };
 
-                document.querySelectorAll("button, [role='button'], input[type='submit']").forEach((el, i) => {
-                    if (i < 25) {
-                        const rect = el.getBoundingClientRect();
-                        const t = (el as HTMLElement).innerText?.trim() || el.getAttribute("aria-label") || "";
-                        if (t && rect.width > 0) r.buttons.push({ text: t.substring(0, 60), x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) });
-                    }
-                });
+                    document.querySelectorAll("button, [role='button'], input[type='submit']").forEach((el, i) => {
+                        if (i < 25) {
+                            const rect = el.getBoundingClientRect();
+                            const t = (el as HTMLElement).innerText?.trim() || el.getAttribute("aria-label") || "";
+                            if (t && rect.width > 0)
+                                r.buttons.push({
+                                    text: t.substring(0, 60),
+                                    x: Math.round(rect.x + rect.width / 2),
+                                    y: Math.round(rect.y + rect.height / 2),
+                                });
+                        }
+                    });
 
-                document.querySelectorAll("a[href]").forEach((el, i) => {
-                    if (i < 30) {
-                        const rect = el.getBoundingClientRect();
-                        const t = (el as HTMLElement).innerText?.trim() || "";
-                        if (t && t.length > 1 && rect.width > 0) r.links.push({ text: t.substring(0, 60), href: (el.getAttribute("href") || "").substring(0, 80), x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) });
-                    }
-                });
+                    document.querySelectorAll("a[href]").forEach((el, i) => {
+                        if (i < 30) {
+                            const rect = el.getBoundingClientRect();
+                            const t = (el as HTMLElement).innerText?.trim() || "";
+                            if (t && t.length > 1 && rect.width > 0)
+                                r.links.push({
+                                    text: t.substring(0, 60),
+                                    href: (el.getAttribute("href") || "").substring(0, 80),
+                                    x: Math.round(rect.x + rect.width / 2),
+                                    y: Math.round(rect.y + rect.height / 2),
+                                });
+                        }
+                    });
 
-                document.querySelectorAll("input:not([type='hidden']), textarea").forEach((el, i) => {
-                    if (i < 15) {
-                        const inp = el as HTMLInputElement;
-                        const rect = inp.getBoundingClientRect();
-                        if (rect.width > 0) r.inputs.push({ label: inp.placeholder || inp.getAttribute("aria-label") || inp.name || inp.type, type: inp.type || "text", x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2), value: inp.value?.substring(0, 50) || "" });
-                    }
-                });
+                    document.querySelectorAll("input:not([type='hidden']), textarea").forEach((el, i) => {
+                        if (i < 15) {
+                            const inp = el as HTMLInputElement;
+                            const rect = inp.getBoundingClientRect();
+                            if (rect.width > 0)
+                                r.inputs.push({
+                                    label: inp.placeholder || inp.getAttribute("aria-label") || inp.name || inp.type,
+                                    type: inp.type || "text",
+                                    x: Math.round(rect.x + rect.width / 2),
+                                    y: Math.round(rect.y + rect.height / 2),
+                                    value: inp.value?.substring(0, 50) || "",
+                                });
+                        }
+                    });
 
-                document.querySelectorAll("select").forEach((el, i) => {
-                    if (i < 10) {
-                        const sel = el as HTMLSelectElement;
-                        const rect = sel.getBoundingClientRect();
-                        if (rect.width > 0) r.selects.push({ label: sel.getAttribute("aria-label") || sel.name || "", x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2), options: Array.from(sel.options).slice(0, 8).map((o) => o.text.trim()) });
-                    }
-                });
+                    document.querySelectorAll("select").forEach((el, i) => {
+                        if (i < 10) {
+                            const sel = el as HTMLSelectElement;
+                            const rect = sel.getBoundingClientRect();
+                            if (rect.width > 0)
+                                r.selects.push({
+                                    label: sel.getAttribute("aria-label") || sel.name || "",
+                                    x: Math.round(rect.x + rect.width / 2),
+                                    y: Math.round(rect.y + rect.height / 2),
+                                    options: Array.from(sel.options)
+                                        .slice(0, 8)
+                                        .map((o) => o.text.trim()),
+                                });
+                        }
+                    });
 
-                const info: Record<string, unknown> = { title: document.title, url: window.location.href, ...r };
-                if (includeText) info.pageText = document.body.innerText.substring(0, 3000);
-                return info;
-            }, (input.include_text as boolean) !== false);
+                    const info: Record<string, unknown> = { title: document.title, url: window.location.href, ...r };
+                    if (includeText) info.pageText = document.body.innerText.substring(0, 3000);
+                    return info;
+                },
+                (input.include_text as boolean) !== false,
+            );
 
             return JSON.stringify(analysis);
         } catch (err) {
@@ -107,7 +137,8 @@ export const browserRunJs: ToolDefinition = {
         type: "function",
         function: {
             name: "browser_run_js",
-            description: "Execute JavaScript in the browser. Use for complex data extraction or direct API control: YouTube Player API (return document.getElementById('movie_player')?.seekTo(300, true)), HTML5 video control (return document.querySelector('video')?.currentTime), reading DOM state, or any interaction that requires JS. Always prefer browser_video_control for video playback tasks — it has automatic fallbacks.",
+            description:
+                "Execute JavaScript in the browser. Use for complex data extraction or direct API control: YouTube Player API (return document.getElementById('movie_player')?.seekTo(300, true)), HTML5 video control (return document.querySelector('video')?.currentTime), reading DOM state, or any interaction that requires JS. Always prefer browser_video_control for video playback tasks — it has automatic fallbacks.",
             parameters: {
                 type: "object",
                 properties: {
@@ -132,7 +163,11 @@ export const browserRunJs: ToolDefinition = {
             const wrappedCode = `(async () => { ${safeCode} })()`;
             const result = await page.evaluate(wrappedCode);
             const output = typeof result === "object" ? JSON.stringify(result, null, 2) : String(result ?? "undefined");
-            return JSON.stringify({ success: true, result: output.substring(0, 15000), truncated: output.length > 15000 });
+            return JSON.stringify({
+                success: true,
+                result: output.substring(0, 15000),
+                truncated: output.length > 15000,
+            });
         } catch (err) {
             return JSON.stringify({ error: `JS failed: ${(err as Error).message}` });
         }
@@ -148,13 +183,24 @@ export const browserWait: ToolDefinition = {
         type: "function",
         function: {
             name: "browser_wait",
-            description: "Wait for page to load or a specific duration. 'timeout' = simple delay. 'load' = DOM ready. 'selector' = element appears. 'opacity' = element reaches visible opacity (e.g. wait for YouTube controls to fade in). Never fails — if timeout is reached, continues anyway.",
+            description:
+                "Wait for page to load or a specific duration. 'timeout' = simple delay. 'load' = DOM ready. 'selector' = element appears. 'opacity' = element reaches visible opacity (e.g. wait for YouTube controls to fade in). Never fails — if timeout is reached, continues anyway.",
             parameters: {
                 type: "object",
                 properties: {
-                    type: { type: "string", description: "'timeout' (wait ms), 'load' (DOM ready), 'selector' (wait for element to appear), 'opacity' (wait for element opacity > threshold — for fade-in animations like video player controls)" },
-                    value: { type: "string", description: "Milliseconds for timeout, CSS selector for selector/opacity types" },
-                    threshold: { type: "number", description: "For 'opacity' type: minimum opacity to consider visible (default: 0.5)" },
+                    type: {
+                        type: "string",
+                        description:
+                            "'timeout' (wait ms), 'load' (DOM ready), 'selector' (wait for element to appear), 'opacity' (wait for element opacity > threshold — for fade-in animations like video player controls)",
+                    },
+                    value: {
+                        type: "string",
+                        description: "Milliseconds for timeout, CSS selector for selector/opacity types",
+                    },
+                    threshold: {
+                        type: "number",
+                        description: "For 'opacity' type: minimum opacity to consider visible (default: 0.5)",
+                    },
                     timeout_ms: { type: "number", description: "Max wait time in ms (default: 15000)" },
                 },
                 required: ["type"],
@@ -170,7 +216,10 @@ export const browserWait: ToolDefinition = {
                 case "selector": {
                     const found = await page.waitForSelector(input.value as string, { timeout }).catch(() => null);
                     if (!found) {
-                        return JSON.stringify({ success: false, error: `Selector "${input.value}" not found within ${timeout}ms timeout` });
+                        return JSON.stringify({
+                            success: false,
+                            error: `Selector "${input.value}" not found within ${timeout}ms timeout`,
+                        });
                     }
                     break;
                 }
@@ -186,14 +235,16 @@ export const browserWait: ToolDefinition = {
                     const sel = input.value as string;
                     const thresh = (input.threshold as number) ?? 0.5;
                     if (sel) {
-                        await page.waitForFunction(
-                            ({ s, t }: { s: string; t: number }) => {
-                                const el = document.querySelector(s);
-                                return el ? parseFloat(window.getComputedStyle(el).opacity) >= t : false;
-                            },
-                            { s: sel, t: thresh },
-                            { timeout, polling: 100 }
-                        ).catch(() => {}); // non-fatal — continue if timed out
+                        await page
+                            .waitForFunction(
+                                ({ s, t }: { s: string; t: number }) => {
+                                    const el = document.querySelector(s);
+                                    return el ? parseFloat(window.getComputedStyle(el).opacity) >= t : false;
+                                },
+                                { s: sel, t: thresh },
+                                { timeout, polling: 100 },
+                            )
+                            .catch(() => {}); // non-fatal — continue if timed out
                     }
                     break;
                 }
@@ -202,9 +253,19 @@ export const browserWait: ToolDefinition = {
             }
             const newElementMap = await getInteractiveElements(page);
             setLastElementMap(newElementMap);
-            return JSON.stringify({ success: true, waited_for: input.type, url: page.url(), title: await page.title(), interactive_elements_text: buildElementsText() });
+            return JSON.stringify({
+                success: true,
+                waited_for: input.type,
+                url: page.url(),
+                title: await page.title(),
+                interactive_elements_text: buildElementsText(),
+            });
         } catch {
-            return JSON.stringify({ success: true, waited_for: input.type, note: "Wait timed out but page should be usable" });
+            return JSON.stringify({
+                success: true,
+                waited_for: input.type,
+                note: "Wait timed out but page should be usable",
+            });
         }
     },
 };
@@ -240,7 +301,11 @@ export const browserSelect: ToolDefinition = {
             if (waitTime > 0) await page.waitForTimeout(waitTime);
             const newElementMap = await getInteractiveElements(page);
             setLastElementMap(newElementMap);
-            return JSON.stringify({ success: true, selected: input.value || input.label, interactive_elements_text: buildElementsText() });
+            return JSON.stringify({
+                success: true,
+                selected: input.value || input.label,
+                interactive_elements_text: buildElementsText(),
+            });
         } catch (err) {
             return JSON.stringify({ error: `Select failed: ${(err as Error).message}` });
         }
@@ -275,12 +340,12 @@ export const browserExtract: ToolDefinition = {
             // Pass selector and attr as parameters — never interpolate user input into eval strings
             const elements = await page.evaluate(
                 ({ sel, at }: { sel: string; at: string }) =>
-                    Array.from(document.querySelectorAll(sel)).slice(0, 50).map(el =>
-                        at === "textContent"
-                            ? (el as HTMLElement).textContent?.trim()
-                            : el.getAttribute(at)
-                    ),
-                { sel: selector, at: attr }
+                    Array.from(document.querySelectorAll(sel))
+                        .slice(0, 50)
+                        .map((el) =>
+                            at === "textContent" ? (el as HTMLElement).textContent?.trim() : el.getAttribute(at),
+                        ),
+                { sel: selector, at: attr },
             );
             return JSON.stringify({ success: true, elements, count: (elements as unknown[]).length });
         } catch (err) {
@@ -298,12 +363,16 @@ export const browserUploadFile: ToolDefinition = {
         type: "function",
         function: {
             name: "browser_upload_file",
-            description: "Upload a file to a website (Gmail attachments, form uploads, etc). Triggers the hidden file input on the page. Use this instead of trying to click file dialogs.",
+            description:
+                "Upload a file to a website (Gmail attachments, form uploads, etc). Triggers the hidden file input on the page. Use this instead of trying to click file dialogs.",
             parameters: {
                 type: "object",
                 properties: {
                     file_path: { type: "string", description: "Absolute path to the file to upload" },
-                    selector: { type: "string", description: "CSS selector for the file input (optional — auto-detects if not provided)" },
+                    selector: {
+                        type: "string",
+                        description: "CSS selector for the file input (optional — auto-detects if not provided)",
+                    },
                 },
                 required: ["file_path"],
             },
@@ -325,14 +394,20 @@ export const browserUploadFile: ToolDefinition = {
                 const fileInputs = page.locator('input[type="file"]');
                 const count = await fileInputs.count();
                 if (count === 0) {
-                    return JSON.stringify({ error: "No file input found on this page. Try clicking the attach/upload button first, then retry." });
+                    return JSON.stringify({
+                        error: "No file input found on this page. Try clicking the attach/upload button first, then retry.",
+                    });
                 }
                 await fileInputs.first().setInputFiles(filePath);
             }
 
             await page.waitForTimeout(1500);
             const fileName = path.basename(filePath);
-            return JSON.stringify({ success: true, uploaded: fileName, tip: "File should now be attached. Run browser_scan to verify." });
+            return JSON.stringify({
+                success: true,
+                uploaded: fileName,
+                tip: "File should now be attached. Run browser_scan to verify.",
+            });
         } catch (err) {
             return JSON.stringify({ error: `Upload failed: ${(err as Error).message}` });
         }
@@ -363,9 +438,21 @@ export const browserSaveStrategy: ToolDefinition = {
     },
     async handler(input) {
         try {
-            let steps: Array<{ tool: string; args: Record<string, unknown>; success: boolean; durationMs: number }> = [];
-            if (input.steps_json) { try { steps = JSON.parse(input.steps_json as string); } catch { /* ignore */ } }
-            const id = recordStrategy(input.task_pattern as string, input.domain as string, steps, input.tips as string);
+            let steps: Array<{ tool: string; args: Record<string, unknown>; success: boolean; durationMs: number }> =
+                [];
+            if (input.steps_json) {
+                try {
+                    steps = JSON.parse(input.steps_json as string);
+                } catch {
+                    /* ignore */
+                }
+            }
+            const id = recordStrategy(
+                input.task_pattern as string,
+                input.domain as string,
+                steps,
+                input.tips as string,
+            );
             if (input.tips) addDomainTip(input.domain as string, input.tips as string);
             return JSON.stringify({ success: true, strategy_id: id });
         } catch (err) {
@@ -399,7 +486,8 @@ export const browserRecallStrategy: ToolDefinition = {
         const tips = input.domain ? getDomainTips(input.domain as string) : [];
         if (!strategy && tips.length === 0) return JSON.stringify({ found: false });
         const result: Record<string, unknown> = { found: !!strategy };
-        if (strategy) result.strategy = { taskPattern: strategy.taskPattern, steps: strategy.steps, tips: strategy.notes };
+        if (strategy)
+            result.strategy = { taskPattern: strategy.taskPattern, steps: strategy.steps, tips: strategy.notes };
         if (tips.length > 0) result.domainTips = tips;
         return JSON.stringify(result);
     },
@@ -414,11 +502,15 @@ export const browserReplayActions: ToolDefinition = {
         type: "function",
         function: {
             name: "browser_replay_actions",
-            description: "Replay a previously cached action sequence on the current page. If cached actions exist for this URL and have a high success rate, this replays them instantly — skipping LLM page analysis for major cost savings. If replay fails, the cache self-heals (degrades the entry) and you should fall back to normal browser_scan + browser_click_at flow.",
+            description:
+                "Replay a previously cached action sequence on the current page. If cached actions exist for this URL and have a high success rate, this replays them instantly — skipping LLM page analysis for major cost savings. If replay fails, the cache self-heals (degrades the entry) and you should fall back to normal browser_scan + browser_click_at flow.",
             parameters: {
                 type: "object",
                 properties: {
-                    url: { type: "string", description: "URL to check cache for (optional — defaults to current page URL)" },
+                    url: {
+                        type: "string",
+                        description: "URL to check cache for (optional — defaults to current page URL)",
+                    },
                 },
                 required: [],
             },
@@ -435,7 +527,11 @@ export const browserReplayActions: ToolDefinition = {
 
             const cached = getCachedActions(url);
             if (!cached) {
-                return JSON.stringify({ success: false, reason: "no_cache", message: "No cached actions for this URL. Use normal browser_scan + click flow." });
+                return JSON.stringify({
+                    success: false,
+                    reason: "no_cache",
+                    message: "No cached actions for this URL. Use normal browser_scan + click flow.",
+                });
             }
 
             if (!shouldReplayActions(cached)) {
@@ -480,7 +576,8 @@ export const browserReplayActions: ToolDefinition = {
                 return JSON.stringify({
                     success: false,
                     reason: "replay_failed",
-                    message: "Cached action replay failed (page may have changed). Cache entry degraded. Fall back to normal browser_scan + click flow.",
+                    message:
+                        "Cached action replay failed (page may have changed). Cache entry degraded. Fall back to normal browser_scan + click flow.",
                     tip: "Use browser_scan to re-analyze the page and proceed manually.",
                 });
             }
@@ -499,13 +596,15 @@ export const browserCacheActions: ToolDefinition = {
         type: "function",
         function: {
             name: "browser_cache_actions",
-            description: "Cache a successful browser action sequence for future replay. Call this after completing a browser task successfully so the same steps can be replayed instantly next time (skipping LLM analysis). The actions will be associated with the current page's URL pattern.",
+            description:
+                "Cache a successful browser action sequence for future replay. Call this after completing a browser task successfully so the same steps can be replayed instantly next time (skipping LLM analysis). The actions will be associated with the current page's URL pattern.",
             parameters: {
                 type: "object",
                 properties: {
                     actions_json: {
                         type: "string",
-                        description: 'JSON array of action steps. Each step: {"selector": "CSS selector", "action": "click|type|select|scroll|hover|press_key", "value": "optional text/key"}',
+                        description:
+                            'JSON array of action steps. Each step: {"selector": "CSS selector", "action": "click|type|select|scroll|hover|press_key", "value": "optional text/key"}',
                     },
                     url: { type: "string", description: "URL to cache for (optional — defaults to current page URL)" },
                 },
@@ -536,11 +635,17 @@ export const browserCacheActions: ToolDefinition = {
             // Validate each action step
             for (const step of actions) {
                 if (!step.selector || !step.action) {
-                    return JSON.stringify({ success: false, error: "Each action must have 'selector' and 'action' fields" });
+                    return JSON.stringify({
+                        success: false,
+                        error: "Each action must have 'selector' and 'action' fields",
+                    });
                 }
                 const validActions = ["click", "type", "select", "scroll", "hover", "press_key"];
                 if (!validActions.includes(step.action)) {
-                    return JSON.stringify({ success: false, error: `Invalid action "${step.action}". Valid: ${validActions.join(", ")}` });
+                    return JSON.stringify({
+                        success: false,
+                        error: `Invalid action "${step.action}". Valid: ${validActions.join(", ")}`,
+                    });
                 }
             }
 
@@ -552,7 +657,8 @@ export const browserCacheActions: ToolDefinition = {
                 cached_for: url,
                 action_count: actions.length,
                 total_cached_urls: stats.total,
-                message: "Actions cached! Next time you visit this URL, browser_replay_actions will replay them instantly.",
+                message:
+                    "Actions cached! Next time you visit this URL, browser_replay_actions will replay them instantly.",
             });
         } catch (err) {
             return JSON.stringify({ error: `Cache failed: ${(err as Error).message}` });
