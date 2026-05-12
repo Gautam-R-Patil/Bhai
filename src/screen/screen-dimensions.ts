@@ -31,6 +31,17 @@ const DEFAULTS: ScreenDimensions = {
     originY: 0,
 };
 
+/**
+ * Returns true when the dims object is the silent-fallback value from a failed
+ * platform probe. Callers that learn from clicks (click-memory, drift-calibration)
+ * MUST refuse to record samples when this is true — otherwise the stored
+ * normalized coords are relative to the made-up 1440x900 instead of the actual
+ * monitor, and every recall on the real monitor lands at the wrong place.
+ */
+export function isFallbackDims(dims: ScreenDimensions): boolean {
+    return dims.monitorId === "fallback";
+}
+
 const CACHE_TTL_MS = 500;
 const PROBE_TIMEOUT_MS = 2500;
 

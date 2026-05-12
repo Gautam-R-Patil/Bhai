@@ -58,6 +58,10 @@ export interface UITarsGroundingResult {
     reasoning?: string;
     elapsedMs: number;
     model: string;
+    /** Pixel width of the screenshot the model saw — callers need this to scale to screen coords. */
+    imageWidth?: number;
+    /** Pixel height of the screenshot the model saw. */
+    imageHeight?: number;
     error?: string;
 }
 
@@ -80,14 +84,24 @@ const DEFAULT_TIMEOUT_MS = 30_000;
  */
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10MB cap on screenshot before base64 encoding
 
-/** Validate Ollama host is a loopback address (SSRF defence). */
-function validateOllamaHost(host: string): { ok: boolean; reason?: string } {
+/**
+ * Validate Ollama host is a loopback address and canonicalize it to bypass
+ * DNS-rewrite SSRF (some hosts remap `localhost` to a non-loopback address).
+ * Returns the canonicalized host string (`127.0.0.1`-rooted) when valid.
+ */
+export function validateOllamaHost(host: string): { ok: boolean; reason?: string; canonical?: string } {
     try {
         const u = new URL(host);
         if (!["127.0.0.1", "::1", "localhost"].includes(u.hostname)) {
             return { ok: false, reason: `non_loopback_host:${u.hostname}` };
         }
-        return { ok: true };
+        if (u.hostname === "0.0.0.0") {
+            return { ok: false, reason: "wildcard_host" };
+        }
+        // Force the URL's hostname to the literal loopback IPv4 — defends against
+        // /etc/hosts rewrites that map `localhost` to a non-loopback address.
+        u.hostname = "127.0.0.1";
+        return { ok: true, canonical: u.toString().replace(/\/$/, "") };
     } catch {
         return { ok: false, reason: "invalid_host_url" };
     }
@@ -105,18 +119,27 @@ export async function groundClick(
 
     const hostCheck = validateOllamaHost(host);
     if (!hostCheck.ok) return errorResult(model, start, hostCheck.reason || "host_rejected");
+    const canonHost = hostCheck.canonical || host;
     if (!isSafeScreenshotPath(screenshotPath)) {
         return errorResult(model, start, "screenshot_path_rejected:must be under tmpdir or ATLAS Files directory");
     }
 
     let base64: string;
+    let imageWidth = 0;
+    let imageHeight = 0;
     try {
         // Size cap BEFORE readFile — a 100MB file would crash a 4GB box during base64 encoding.
         const stat = await fs.stat(screenshotPath);
         if (stat.size > MAX_IMAGE_BYTES) {
             return errorResult(model, start, `image_too_large:${stat.size}_bytes_max_${MAX_IMAGE_BYTES}`);
         }
-        base64 = (await fs.readFile(screenshotPath)).toString("base64");
+        const buf = await fs.readFile(screenshotPath);
+        // PNG IHDR chunk starts at byte 8; width is uint32 BE at offset 16, height at 20.
+        if (buf.length >= 24 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+            imageWidth = buf.readUInt32BE(16);
+            imageHeight = buf.readUInt32BE(20);
+        }
+        base64 = buf.toString("base64");
     } catch (err) {
         return errorResult(model, start, `image_read_failed:${(err as Error).message}`);
     }
@@ -139,7 +162,7 @@ Respond with ONLY a JSON object of the form: {"x": <pixel_x>, "y": <pixel_y>, "c
     try {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
-        const resp = await fetch(`${host}/api/generate`, {
+        const resp = await fetch(`${canonHost}/api/generate`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: requestBody,
@@ -147,6 +170,7 @@ Respond with ONLY a JSON object of the form: {"x": <pixel_x>, "y": <pixel_y>, "c
         });
         clearTimeout(timer);
         if (!resp.ok) {
+            invalidateAvailCacheFor(host, model);
             return errorResult(model, start, `ollama_${resp.status}:${await resp.text().catch(() => "")}`);
         }
         const data = (await resp.json()) as { response?: string };
@@ -154,13 +178,20 @@ Respond with ONLY a JSON object of the form: {"x": <pixel_x>, "y": <pixel_y>, "c
         if (!parsed) {
             return errorResult(model, start, "model_returned_unparseable_response");
         }
-        return { ...parsed, elapsedMs: Date.now() - start, model };
+        return { ...parsed, elapsedMs: Date.now() - start, model, imageWidth, imageHeight };
     } catch (err) {
         const msg = (err as Error).message;
+        // Any transport-level failure invalidates the availability cache so the next
+        // call re-probes instead of pretending Ollama is still alive for up to 60s.
+        invalidateAvailCacheFor(host, model);
         if (msg.includes("ECONNREFUSED")) return errorResult(model, start, "ollama_not_running");
         if (msg.includes("aborted")) return errorResult(model, start, "timeout");
         return errorResult(model, start, msg);
     }
+}
+
+function invalidateAvailCacheFor(host: string, model: string): void {
+    _availCache.delete(`${host}|${model}`);
 }
 
 function errorResult(model: string, start: number, message: string): UITarsGroundingResult {

@@ -72,3 +72,32 @@ describe("parseGroundingResponse", () => {
         expect(r?.y).toBe(500);
     });
 });
+
+describe("validateOllamaHost", () => {
+    it("accepts canonical 127.0.0.1", async () => {
+        const { validateOllamaHost } = await import("../ui-tars.js");
+        const r = validateOllamaHost("http://127.0.0.1:11434");
+        expect(r.ok).toBe(true);
+        expect(r.canonical).toBe("http://127.0.0.1:11434");
+    });
+
+    it("rewrites localhost → 127.0.0.1 (DNS-bypass SSRF defence)", async () => {
+        const { validateOllamaHost } = await import("../ui-tars.js");
+        const r = validateOllamaHost("http://localhost:11434");
+        expect(r.ok).toBe(true);
+        expect(r.canonical).toBe("http://127.0.0.1:11434");
+    });
+
+    it("rejects non-loopback hosts", async () => {
+        const { validateOllamaHost } = await import("../ui-tars.js");
+        expect(validateOllamaHost("http://192.168.1.1:11434").ok).toBe(false);
+        expect(validateOllamaHost("http://169.254.169.254:11434").ok).toBe(false);
+        expect(validateOllamaHost("http://example.com").ok).toBe(false);
+    });
+
+    it("rejects malformed URLs", async () => {
+        const { validateOllamaHost } = await import("../ui-tars.js");
+        expect(validateOllamaHost("not a url").ok).toBe(false);
+        expect(validateOllamaHost("").ok).toBe(false);
+    });
+});

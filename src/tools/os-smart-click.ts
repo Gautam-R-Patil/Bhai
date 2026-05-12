@@ -14,19 +14,23 @@
  * tier automatically based on capability + AX availability.
  */
 
+import { randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { dumpAccessibilityTree } from "../screen/ax-dump.js";
 import { recallClickSite, recordClickMiss, recordClickSuccess } from "../screen/click-memory.js";
 import { applyCalibration, recordCalibrationSample } from "../screen/drift-calibration.js";
 import { classifyOutcome } from "../screen/outcome-classifier.js";
 import { type CascadeTier, findClickTarget, formatCascadeResult } from "../screen/perception-router.js";
-import { getScreenDimensions } from "../screen/screen-dimensions.js";
+import { getScreenDimensions, isFallbackDims } from "../screen/screen-dimensions.js";
 import type { ToolDefinition } from "./get-current-time.js";
 import { osComputerAction } from "./os-computer-action.js";
 
 async function base64ToTempFile(base64: string, ext = "png"): Promise<string> {
-    const tmp = join(tmpdir(), `atlas_smartclick_${Date.now()}_${Math.floor(Math.random() * 1e6)}.${ext}`);
+    // crypto.randomBytes is unpredictable — defends against tmpdir symlink attacks
+    // where an attacker pre-creates a known filename to capture the screenshot.
+    const tmp = join(tmpdir(), `atlas_smartclick_${randomBytes(8).toString("hex")}.${ext}`);
     const buf = Buffer.from(base64.replace(/^data:image\/\w+;base64,/, ""), "base64");
     await fs.writeFile(tmp, buf, { mode: 0o600 });
     return tmp;
@@ -83,13 +87,34 @@ export const osSmartClick: ToolDefinition = {
         const instruction = input.instruction as string;
         const action = (input.action as "click" | "double_click" | "right_click") || "click";
         const surface = input.surface_hint as "native" | "canvas" | "web" | undefined;
-        const appName = (input.app as string) || "unknown";
-        const windowTitle = (input.window_title as string) || "default";
+        let appName = (input.app as string) || "";
+        let windowTitle = (input.window_title as string) || "";
         if (!instruction) return JSON.stringify({ success: false, error: "instruction required" });
+
+        const dims = await getScreenDimensions({ focusedWindow: true });
+        const dimsAreFallback = isFallbackDims(dims);
+
+        // Auto-detect app when caller didn't specify — keying click memory by
+        // `unknown` collapses every site into a single bucket and defeats the cache.
+        // AxDump doesn't currently expose a window title, so window_title falls
+        // back to the app name (still per-app, which is better than per-process).
+        let axDumpHint: Awaited<ReturnType<typeof dumpAccessibilityTree>> | undefined;
+        if (!appName || !windowTitle) {
+            try {
+                axDumpHint = await dumpAccessibilityTree({ depth: 6 });
+                if (axDumpHint && !axDumpHint.error) {
+                    if (!appName) appName = axDumpHint.app || "";
+                    if (!windowTitle) windowTitle = axDumpHint.app || "";
+                }
+            } catch {
+                /* AX unavailable — fall back to placeholders */
+            }
+        }
+        if (!appName) appName = "unknown";
+        if (!windowTitle) windowTitle = "default";
 
         // Step 0 — click-memory recall (Phase 5 tier 0 — bypasses the cascade entirely on hit).
         const site = { app: appName, windowTitle, elementLabel: instruction };
-        const dims = await getScreenDimensions({ focusedWindow: true });
         try {
             // Threshold mirrors DEFAULT_THRESHOLDS.memory in perception-router so the
             // tier-0 stub and the smart-click fast-path treat memory hits identically.
@@ -128,7 +153,15 @@ export const osSmartClick: ToolDefinition = {
             const skipTiers: CascadeTier[] = [];
             if (surface === "canvas") skipTiers.push("ax_exact", "ax_fuzzy");
 
-            const target = await findClickTarget(instruction, { screenshotPath, skipTiers });
+            // Pass screenDims so OmniParser / UI-TARS image-pixel coords are scaled
+            // to screen-absolute coords inside the cascade. Reuse the AX dump if we
+            // already grabbed one for app/window detection.
+            const target = await findClickTarget(instruction, {
+                screenshotPath,
+                skipTiers,
+                screenDims: dims,
+                axDumpHint,
+            });
             if (!target) {
                 return JSON.stringify({
                     success: false,
@@ -153,15 +186,19 @@ export const osSmartClick: ToolDefinition = {
                 });
             }
 
-            // Step 4 — record success to click memory.
+            // Step 4 — record success to click memory (only when dims are real;
+            // recording against fallback 1440x900 dims would normalize against
+            // fake numbers and poison every future recall).
             // NOTE: calibration sample is NOT recorded here — recordCalibrationSample
             // requires the *actual* landing point, which we only learn from outcome
             // classification (reportClickOutcome). Recording (predicted, calibrated)
             // is circular and locks the transform into its current state.
-            try {
-                recordClickSuccess(site, calX - dims.originX, calY - dims.originY, dims.width, dims.height);
-            } catch {
-                /* memory persistence failed — non-fatal */
+            if (!dimsAreFallback) {
+                try {
+                    recordClickSuccess(site, calX - dims.originX, calY - dims.originY, dims.width, dims.height);
+                } catch {
+                    /* memory persistence failed — non-fatal */
+                }
             }
 
             return JSON.stringify({
@@ -191,13 +228,22 @@ async function dispatchClick(
     x: number,
     y: number,
 ): Promise<{ success: boolean; error?: string }> {
-    const result = await osComputerAction.handler({
-        action,
-        coord: [x, y],
-        coordSystem: "screen",
-    });
-    const parsed = JSON.parse(result);
-    return { success: parsed.success ?? false, error: parsed.error };
+    let result: string;
+    try {
+        result = await osComputerAction.handler({
+            action,
+            coord: [x, y],
+            coordSystem: "screen",
+        });
+    } catch (e) {
+        return { success: false, error: `action_dispatch_threw:${(e as Error).message}` };
+    }
+    try {
+        const parsed = JSON.parse(result) as { success?: boolean; error?: string };
+        return { success: parsed.success ?? false, error: parsed.error };
+    } catch {
+        return { success: false, error: "invalid_action_response" };
+    }
 }
 
 /**

@@ -65,15 +65,54 @@ export interface AxDumpOptions {
 
 const DEFAULT_TIMEOUT_MS = 5_000;
 
+/**
+ * Session-level negative cache. When the user has revoked AX permission, every
+ * dumpAccessibilityTree call takes 200-500ms (osascript spin-up + Swift binary
+ * launch) before failing. On a long-running agent that's a permanent tax on
+ * every cascade call. Once we've seen a permission-shaped error, short-circuit
+ * for `AX_NEGATIVE_CACHE_MS` and return the cached failure instantly.
+ *
+ * Cleared by `clearAxFailureCache()` or auto-expires after 5 minutes (gives the
+ * user time to fix permission via System Preferences and try again).
+ */
+const AX_NEGATIVE_CACHE_MS = 5 * 60 * 1000;
+let _axNegativeUntil = 0;
+let _axNegativeReason = "";
+
+function looksLikePermissionError(msg: string): boolean {
+    const lower = msg.toLowerCase();
+    return (
+        lower.includes("not trusted") ||
+        lower.includes("accessibility") ||
+        lower.includes("permission") ||
+        lower.includes("-25204") ||
+        lower.includes("-1719") ||
+        lower.includes("1002")
+    );
+}
+
+export function clearAxFailureCache(): void {
+    _axNegativeUntil = 0;
+    _axNegativeReason = "";
+}
+
 export async function dumpAccessibilityTree(opts: AxDumpOptions = {}): Promise<AxDump> {
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const start = Date.now();
+    if (_axNegativeUntil > Date.now()) {
+        return failureResult(start, "unavailable", `ax_negative_cache:${_axNegativeReason}`);
+    }
     try {
         if (process.platform === "darwin") return appendMeta(await dumpMacOS(opts, timeoutMs), "swift", start);
         if (process.platform === "win32") return appendMeta(await dumpWindows(opts, timeoutMs), "powershell", start);
         if (process.platform === "linux") return appendMeta(await dumpLinux(opts, timeoutMs), "pyatspi", start);
     } catch (err) {
-        return failureResult(start, "unavailable", (err as Error).message);
+        const msg = (err as Error).message;
+        if (looksLikePermissionError(msg)) {
+            _axNegativeUntil = Date.now() + AX_NEGATIVE_CACHE_MS;
+            _axNegativeReason = msg.slice(0, 100);
+        }
+        return failureResult(start, "unavailable", msg);
     }
     return failureResult(start, "unavailable", `unsupported platform: ${process.platform}`);
 }

@@ -31,6 +31,7 @@ import {
 } from "./ax-dump.js";
 import { type CapabilityReport, detectCapabilities } from "./capability-detector.js";
 import { detectElements, findElementByCaption } from "./omniparser.js";
+import { type ScreenDimensions, scaleImageToScreen } from "./screen-dimensions.js";
 import { groundClick, isUITarsAvailable } from "./ui-tars.js";
 
 export type CascadeTier = "memory" | "ax_exact" | "ax_fuzzy" | "omniparser" | "ui_tars" | "cloud_vlm_required";
@@ -64,6 +65,15 @@ export interface CascadeOptions {
     forceProfile?: CapabilityReport["profile"];
     /** AX dump to reuse (avoids re-probing if caller already has one). */
     axDumpHint?: AxDump;
+    /**
+     * Screen dimensions for the monitor the screenshot was captured from.
+     * REQUIRED for OmniParser and UI-TARS tiers — their output coordinates are
+     * in image-pixel space (0..imageWidth) and must be scaled + offset to the
+     * monitor's screen-pixel space before they can be clicked. Without this,
+     * OmniParser/UI-TARS coords would land at the wrong place on any DPI-scaled
+     * display or partial-screen capture.
+     */
+    screenDims?: ScreenDimensions;
 }
 
 const DEFAULT_THRESHOLDS: Record<CascadeTier, number> = {
@@ -171,10 +181,11 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
             if (!result.error && result.elements.length > 0) {
                 const match = findElementByCaption(result.elements, instruction);
                 if (match) {
+                    const screen = toScreenCoords(match.center.x, match.center.y, result.imageWidth, opts.screenDims);
                     return finalize(
                         {
-                            x: match.center.x,
-                            y: match.center.y,
+                            x: screen.x,
+                            y: screen.y,
                             confidence: 0.82,
                             source: "omniparser",
                             matchedElementId: match.id,
@@ -204,10 +215,11 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
                     const grounded = await groundClick(opts.screenshotPath, instruction);
                     elapsed.ui_tars = Date.now() - utStart;
                     if (!grounded.error && grounded.confidence >= thresholds.ui_tars) {
+                        const screen = toScreenCoords(grounded.x, grounded.y, grounded.imageWidth, opts.screenDims);
                         return finalize(
                             {
-                                x: grounded.x,
-                                y: grounded.y,
+                                x: screen.x,
+                                y: screen.y,
                                 confidence: grounded.confidence,
                                 source: "ui_tars",
                                 reasoning: grounded.reasoning,
@@ -254,6 +266,26 @@ function finalize(
         totalMs: Date.now() - ctx.cascadeStart,
         triedTiers: [...ctx.tried],
     };
+}
+
+/**
+ * Convert OmniParser/UI-TARS image-pixel coords to screen-absolute coords.
+ * Falls back to image-pixel coords when screenDims or imageWidth is missing —
+ * the caller will get the wrong click in that case, but this preserves
+ * the existing (broken) behavior so tests + integrators that haven't yet
+ * passed screenDims aren't surprised by a NaN.
+ */
+function toScreenCoords(
+    rawX: number,
+    rawY: number,
+    imageWidth: number | undefined,
+    dims: ScreenDimensions | undefined,
+): { x: number; y: number } {
+    if (!dims || !imageWidth || imageWidth <= 0) {
+        return { x: Math.round(rawX), y: Math.round(rawY) };
+    }
+    const r = scaleImageToScreen({ rawX, rawY, imageWidth, dims });
+    return { x: r.x, y: r.y };
 }
 
 /**
