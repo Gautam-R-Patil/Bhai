@@ -1,38 +1,62 @@
 {
-  "recordedAt": "2026-05-12T11:36:23.258Z",
+  "recordedAt": "2026-05-12T15:48:27.996Z",
   "nodeVersion": "v24.10.0",
   "platform": "darwin-arm64",
   "results": [
     {
-      "module": "spreading",
-      "case": "5-node line",
-      "tsMs": 3.4213749999999976,
-      "nativeMs": 23.158541999999997,
-      "speedup": 0.14773706393088124,
+      "module": "sanitizer",
+      "case": "50B  / 0 secrets (below FFI crossover)",
+      "tsMs": 6.556708,
+      "nativeMs": 23.95337500000001,
+      "speedup": 0.2737279402171927,
       "iterations": 5000
     },
     {
-      "module": "spreading",
-      "case": "50-node dense",
-      "tsMs": 28.961667000000006,
-      "nativeMs": 408.82425,
-      "speedup": 0.0708413627616268,
+      "module": "sanitizer",
+      "case": "150B / 0 secrets (at FFI crossover)",
+      "tsMs": 8.13962500000001,
+      "nativeMs": 42.50495799999999,
+      "speedup": 0.1914982482749427,
       "iterations": 5000
     },
     {
-      "module": "spreading",
-      "case": "150-node dense",
-      "tsMs": 11.7990420000001,
-      "nativeMs": 967.580167,
-      "speedup": 0.012194381822214531,
+      "module": "sanitizer",
+      "case": "1KB  / 0 secrets",
+      "tsMs": 24.360833999999983,
+      "nativeMs": 218.106333,
+      "speedup": 0.11169246516101843,
       "iterations": 5000
     },
     {
-      "module": "spreading",
-      "case": "500-node dense (caps at 150 activated)",
-      "tsMs": 11.610042000000021,
-      "nativeMs": 3115.4324160000006,
-      "speedup": 0.0037266229690536864,
+      "module": "sanitizer",
+      "case": "1KB  / 1 secret",
+      "tsMs": 25.236958000000016,
+      "nativeMs": 226.03887500000002,
+      "speedup": 0.11164875068503156,
+      "iterations": 5000
+    },
+    {
+      "module": "sanitizer",
+      "case": "10KB / 0 secrets",
+      "tsMs": 190.56045799999993,
+      "nativeMs": 2046.356958,
+      "speedup": 0.0931218071485649,
+      "iterations": 5000
+    },
+    {
+      "module": "sanitizer",
+      "case": "10KB / 5 secrets",
+      "tsMs": 208.3637920000001,
+      "nativeMs": 2109.366667,
+      "speedup": 0.09878026199036363,
+      "iterations": 5000
+    },
+    {
+      "module": "sanitizer",
+      "case": "100KB / 10 secrets",
+      "tsMs": 1915.281583,
+      "nativeMs": 20394.137875,
+      "speedup": 0.09391333895745764,
       "iterations": 5000
     }
   ]

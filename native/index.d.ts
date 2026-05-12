@@ -3043,6 +3043,27 @@ export interface GpPrediction {
  * EI formula: (mu - best - 0.01)*Phi(z) + sigma*phi(z) where z = (mu-best-0.01)/sigma.
  */
 export declare function fitAndPredictGp(observationsX: Array<Array<number>>, observationsY: Array<number>, queryX: Array<number>, bestSoFar: number): GpPrediction
+export interface SanitizeResultNapi {
+  sanitized: string
+  /**
+   * JSON-serialized `Record<string, number>` to keep the napi ABI simple.
+   * The TS wrapper deserializes via JSON.parse — round-trip cost is negligible
+   * compared to the sanitizer's regex work.
+   */
+  redactionsByTypeJson: string
+  totalRedactions: number
+}
+/**
+ * Scan `input` for all 22 well-known secret formats; replace each match with
+ * a typed `[REDACTED:NAME]` marker. Returns the sanitized string plus a
+ * per-type hit count (JSON-encoded to keep the napi ABI flat).
+ */
+export declare function sanitizeSecrets(input: string): SanitizeResultNapi
+/**
+ * Cheap probe: does `input` contain ANY secret pattern? No allocation of a
+ * new string; bails out on first hit.
+ */
+export declare function containsSecrets(input: string): boolean
 /** Get the native module version */
 export declare function getVersion(): string
 /** Check if SIMD is available on this platform */

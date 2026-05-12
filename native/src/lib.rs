@@ -64,6 +64,7 @@ mod browser_agent;
 mod ip_guard;
 mod browser_guard;
 mod harness_optimizer;
+mod secrets_sanitizer;
 
 use napi_derive::napi;
 
@@ -128,6 +129,7 @@ pub use browser_agent::*;
 pub use ip_guard::*;
 pub use browser_guard::*;
 pub use harness_optimizer::*;
+pub use secrets_sanitizer::*;
 
 /// Get the native module version
 #[napi]

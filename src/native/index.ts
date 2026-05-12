@@ -40,6 +40,14 @@ interface NativeModule {
     dequantizeFromInt8(vec: Int8Array, minVal: number, maxVal: number): Float32Array;
     spreadActivationBfs?(seedEntities: NativeSeedEntity[], adjacencyJson: string): NativeActivationResult[];
     dedupActivationResults?(results: NativeActivationResult[]): NativeActivationResult[];
+    sanitizeSecrets?(input: string): NativeSanitizeResult;
+    containsSecrets?(input: string): boolean;
+}
+
+export interface NativeSanitizeResult {
+    sanitized: string;
+    redactionsByTypeJson: string;
+    totalRedactions: number;
 }
 
 // ── Load native module ───────────────────────────
@@ -296,4 +304,21 @@ export function nativeSpreadActivationBfs(
 ): NativeActivationResult[] | null {
     if (!useNative || !nativeModule?.spreadActivationBfs) return null;
     return nativeModule.spreadActivationBfs(seedEntities, adjacencyJson);
+}
+
+// ── Secrets Sanitizer (Phase 1.1) ────────────────
+
+/**
+ * Native shell-output secrets sanitizer. Returns null if native is unavailable
+ * so the caller can fall back to the TS implementation.
+ */
+export function nativeSanitizeSecrets(input: string): NativeSanitizeResult | null {
+    if (!useNative || !nativeModule?.sanitizeSecrets) return null;
+    return nativeModule.sanitizeSecrets(input);
+}
+
+/** Native `containsSecrets` probe; returns null if native unavailable. */
+export function nativeContainsSecrets(input: string): boolean | null {
+    if (!useNative || !nativeModule?.containsSecrets) return null;
+    return nativeModule.containsSecrets(input);
 }

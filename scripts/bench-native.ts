@@ -12,7 +12,8 @@ import { writeFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import { __testOnlyBfsWithAdjacency, type ActivationResult } from "../src/memory/spreading-activation.js";
 import { checkParity } from "../src/memory/spreading-activation.parity-helpers.js";
-import { isNativeAvailable } from "../src/native/index.js";
+import { isNativeAvailable, nativeSanitizeSecrets } from "../src/native/index.js";
+import { _sanitizeSecretsTs, type SanitizeResult } from "../src/security/secrets-sanitizer.js";
 
 interface Rel {
     entityId: number;
@@ -159,6 +160,81 @@ function benchSpreading() {
     }
 }
 
+// ── Module: secrets-sanitizer ───────────────────
+
+function buildShellOutput(sizeBytes: number, numSecrets: number): string {
+    const filler =
+        "drwxr-xr-x  5 user  staff   160 Jan  1 12:00 src\n" +
+        "commit a0ac7970e3c8f9b2d4e6 at HEAD\n" +
+        "id=550e8400-e29b-41d4-a716-446655440000\n";
+    const secrets = [
+        "AKIAIOSFODNN7EXAMPLE",
+        `ghp_${"A".repeat(36)}`,
+        `sk_live_${"a".repeat(24)}`,
+        "Authorization: Bearer abc123def456ghi789jkl012mno345pqr678",
+        `key=AIza${"X".repeat(35)}`,
+    ];
+    let out = "";
+    while (out.length < sizeBytes) out += filler;
+    out = out.slice(0, sizeBytes);
+    for (let i = 0; i < numSecrets; i++) {
+        const insertAt = Math.floor((out.length / Math.max(numSecrets, 1)) * i);
+        out = out.slice(0, insertAt) + " " + secrets[i % secrets.length] + " " + out.slice(insertAt);
+    }
+    return out;
+}
+
+const sanitizerParity: ParityFn = (ts, native) => {
+    const tsR = ts as SanitizeResult;
+    const naR = native as SanitizeResult;
+    if (tsR.sanitized !== naR.sanitized) {
+        return `sanitized differs (ts=${tsR.sanitized.length}c native=${naR.sanitized.length}c)`;
+    }
+    if (tsR.totalRedactions !== naR.totalRedactions) {
+        return `totalRedactions ts=${tsR.totalRedactions} native=${naR.totalRedactions}`;
+    }
+    const tsKeys = Object.keys(tsR.redactionsByType).sort();
+    const naKeys = Object.keys(naR.redactionsByType).sort();
+    if (tsKeys.join(",") !== naKeys.join(",")) {
+        return `redactionsByType keys differ: ts=[${tsKeys.join(",")}] native=[${naKeys.join(",")}]`;
+    }
+    for (const k of tsKeys) {
+        if (tsR.redactionsByType[k] !== naR.redactionsByType[k]) {
+            return `${k} count ts=${tsR.redactionsByType[k]} native=${naR.redactionsByType[k]}`;
+        }
+    }
+    return null;
+};
+
+function benchSanitizer() {
+    if (moduleFilter && moduleFilter !== "sanitizer") return;
+
+    const cases: Array<{ name: string; size: number; secrets: number }> = [
+        { name: "50B  / 0 secrets (below FFI crossover)", size: 50, secrets: 0 },
+        { name: "150B / 0 secrets (at FFI crossover)", size: 150, secrets: 0 },
+        { name: "1KB  / 0 secrets", size: 1024, secrets: 0 },
+        { name: "1KB  / 1 secret", size: 1024, secrets: 1 },
+        { name: "10KB / 0 secrets", size: 10240, secrets: 0 },
+        { name: "10KB / 5 secrets", size: 10240, secrets: 5 },
+        { name: "100KB / 10 secrets", size: 102400, secrets: 10 },
+    ];
+
+    for (const c of cases) {
+        const input = buildShellOutput(c.size, c.secrets);
+        const runTs = () => _sanitizeSecretsTs(input);
+        const runNative = () => {
+            const r = nativeSanitizeSecrets(input);
+            if (!r) throw new Error("native unavailable");
+            return {
+                sanitized: r.sanitized,
+                redactionsByType: JSON.parse(r.redactionsByTypeJson) as Record<string, number>,
+                totalRedactions: r.totalRedactions,
+            } as SanitizeResult;
+        };
+        record("sanitizer", c.name, runTs, runNative, sanitizerParity);
+    }
+}
+
 // ── Run ─────────────────────────────────────────
 
 console.log(`Native available: ${isNativeAvailable()}`);
@@ -168,7 +244,8 @@ if (!isNativeAvailable()) {
 }
 
 benchSpreading();
-// Future phases append more modules here (sanitizer, json-extract, …).
+benchSanitizer();
+// Future phases append more modules here (json-extract, smart-truncate, …).
 
 if (!PARITY_ONLY && results.length > 0) {
     const summary = {

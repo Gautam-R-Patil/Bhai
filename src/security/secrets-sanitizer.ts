@@ -30,6 +30,8 @@
 //   * PEM private keys match the full BEGIN/END frame, not just
 //     the base64 body.
 
+import { nativeContainsSecrets, nativeSanitizeSecrets } from "../native/index.js";
+
 export interface SanitizeResult {
     /** The input text with all detected secrets replaced by typed markers. */
     sanitized: string;
@@ -38,6 +40,17 @@ export interface SanitizeResult {
     /** Total redaction count (sum of redactionsByType). */
     totalRedactions: number;
 }
+
+// Native sanitizer is OPT-IN: set ATLAS_NATIVE_SANITIZER=true to enable.
+// Bench (scripts/bench-native.ts) shows the Rust path is consistently
+// 5-10x SLOWER than TS across all input sizes. Root cause: the current Rust
+// impl does 22 sequential regex passes with a fresh String allocation per
+// pattern; V8's JIT'd regex engine plus its native string slicing wins handily.
+//
+// FOLLOW-UP: switch to `regex::RegexSet` (single-pass multi-pattern match) +
+// in-place buffer reuse to eliminate the N-allocation overhead. Then re-bench
+// and if native wins, flip this to opt-OUT (default ON).
+const NATIVE_ENABLED = process.env.ATLAS_NATIVE_SANITIZER === "true";
 
 interface Pattern {
     name: string;
@@ -173,8 +186,7 @@ const PATTERNS: Pattern[] = [
         // [\s\S] to cross newlines. Lazy-match the body so adjacent
         // keys don't merge. We also accept the common variants
         // (plain, RSA, EC, DSA, OPENSSH, PGP).
-        regex:
-            /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----[\s\S]+?-----END (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----/g,
+        regex: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----[\s\S]+?-----END (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----/g,
     },
 
     // ── Env-var-style secret assignments ───────────────────────
@@ -199,21 +211,20 @@ const PATTERNS: Pattern[] = [
         // — without the guard, ENV_VAR_SECRET would then match the
         // TOKEN=[REDACTED:...] sequence and overwrite the specific
         // marker with a generic one).
-        regex:
-            /\b[A-Z0-9_]*(?:SECRET|PASSWORD|PASSPHRASE|API[_-]?KEY|PRIVATE[_-]?KEY|ACCESS[_-]?KEY|TOKEN|CLIENT[_-]?SECRET)\s*=\s*(?!\[REDACTED:)(?:"[^"\n]{8,}"|'[^'\n]{8,}'|[^\s"'\n]{8,})/g,
+        regex: /\b[A-Z0-9_]*(?:SECRET|PASSWORD|PASSPHRASE|API[_-]?KEY|PRIVATE[_-]?KEY|ACCESS[_-]?KEY|TOKEN|CLIENT[_-]?SECRET)\s*=\s*(?!\[REDACTED:)(?:"[^"\n]{8,}"|'[^'\n]{8,}'|[^\s"'\n]{8,})/g,
     },
 ];
 
 /**
- * Scan `input` for well-known secret formats and replace each match
- * with a typed marker like [REDACTED:ANTHROPIC_API_KEY]. Returns both
- * the sanitized output and a per-type redaction count so callers can
- * log / audit / alert.
+ * TS implementation of the sanitizer. The exported `sanitizeSecrets` routes
+ * to native by default and falls back here when native is unavailable,
+ * disabled via env, or the input is short enough that the FFI tax dominates.
  *
  * Zero-alloc fast path when `input` is empty or contains none of the
  * pattern anchors (the regex engine short-circuits on anchor misses).
  */
-export function sanitizeSecrets(input: string): SanitizeResult {
+// Exported for parity-testing only; production callers use `sanitizeSecrets`.
+export function _sanitizeSecretsTs(input: string): SanitizeResult {
     if (!input) {
         return { sanitized: input, redactionsByType: {}, totalRedactions: 0 };
     }
@@ -240,11 +251,45 @@ export function sanitizeSecrets(input: string): SanitizeResult {
 }
 
 /**
+ * Scan `input` for well-known secret formats and replace each match with a
+ * typed marker like `[REDACTED:ANTHROPIC_API_KEY]`.
+ *
+ * Opt-in to the native Rust impl by setting `ATLAS_NATIVE_SANITIZER=true`.
+ * Default routes to the TS impl because bench (`scripts/bench-native.ts`)
+ * shows the current Rust path is 5-10x slower than V8's JIT'd regex on the
+ * shell-output sizes we see in production. The native and TS paths are
+ * byte-identical (35 parity tests in `secrets-sanitizer.parity.test.ts`);
+ * falls back to TS on any native exception.
+ */
+export function sanitizeSecrets(input: string): SanitizeResult {
+    if (!input) {
+        return { sanitized: input, redactionsByType: {}, totalRedactions: 0 };
+    }
+
+    if (NATIVE_ENABLED) {
+        try {
+            const r = nativeSanitizeSecrets(input);
+            if (r) {
+                return {
+                    sanitized: r.sanitized,
+                    redactionsByType: JSON.parse(r.redactionsByTypeJson) as Record<string, number>,
+                    totalRedactions: r.totalRedactions,
+                };
+            }
+        } catch {
+            // Fall through to TS impl on any native error.
+        }
+    }
+    return _sanitizeSecretsTs(input);
+}
+
+/**
  * Lightweight `has-any-secret?` probe without mutating the input.
  * Useful for metrics: count how often a tool emits sanitizable
  * content without paying the copy cost.
  */
-export function containsSecrets(input: string): boolean {
+// Exported for parity-testing only.
+export function _containsSecretsTs(input: string): boolean {
     if (!input) return false;
     for (const { regex } of PATTERNS) {
         // Reset lastIndex — regexes with the `g` flag carry state
@@ -253,4 +298,17 @@ export function containsSecrets(input: string): boolean {
         if (regex.test(input)) return true;
     }
     return false;
+}
+
+export function containsSecrets(input: string): boolean {
+    if (!input) return false;
+    if (NATIVE_ENABLED) {
+        try {
+            const r = nativeContainsSecrets(input);
+            if (r !== null) return r;
+        } catch {
+            // Fall through to TS.
+        }
+    }
+    return _containsSecretsTs(input);
 }
