@@ -18,21 +18,29 @@ describe("findClickTarget — tier gating + fallthrough", () => {
         expect(r).toBeNull();
     });
 
-    it("respects forceProfile=lite (skips ML tiers even with screenshot)", async () => {
-        const r = await findClickTarget("nonsense_query_xyz_no_such_label", {
-            screenshotPath: "/tmp/does_not_exist.png",
-            forceProfile: "lite",
-            skipTiers: ["memory", "ax_exact", "ax_fuzzy"],
-        });
-        expect(r).toBeNull();
-    }, { timeout: 5_000 });
+    it(
+        "respects forceProfile=lite (skips ML tiers even with screenshot)",
+        async () => {
+            const r = await findClickTarget("nonsense_query_xyz_no_such_label", {
+                screenshotPath: "/tmp/does_not_exist.png",
+                forceProfile: "lite",
+                skipTiers: ["memory", "ax_exact", "ax_fuzzy"],
+            });
+            expect(r).toBeNull();
+        },
+        { timeout: 5_000 },
+    );
 
-    it("returns null on impossible query when only AX tiers run", async () => {
-        const r = await findClickTarget("definitely_no_such_label_xyz123_impossible", {
-            skipTiers: ["memory", "ui_tars", "omniparser"],
-        });
-        expect(r).toBeNull();
-    }, { timeout: 10_000 });
+    it(
+        "returns null on impossible query when only AX tiers run",
+        async () => {
+            const r = await findClickTarget("definitely_no_such_label_xyz123_impossible", {
+                skipTiers: ["memory", "ui_tars", "omniparser"],
+            });
+            expect(r).toBeNull();
+        },
+        { timeout: 10_000 },
+    );
 });
 
 describe("formatCascadeResult", () => {

@@ -115,6 +115,9 @@ desktop/hostinger-upload/
 !src/screen/__tests__/ui-tars.test.ts
 !src/screen/__tests__/omniparser.test.ts
 !src/screen/__tests__/perception-router.test.ts
+!src/screen/__tests__/click-memory.test.ts
+!src/screen/__tests__/drift-calibration.test.ts
+!src/screen/__tests__/outcome-classifier.test.ts
 !src/utils/win-shell.test.ts
 !src/utils/platform-capabilities.test.ts
 !src/commands/index.test.ts

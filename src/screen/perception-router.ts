@@ -22,18 +22,18 @@
  * passes to os_computer_action with coordSystem='screen'.
  */
 
-import { type AxDump, type AxFlatElement, dumpAccessibilityTree, findElementByLabel, flattenInteractive } from "./ax-dump.js";
+import {
+    type AxDump,
+    type AxFlatElement,
+    dumpAccessibilityTree,
+    findElementByLabel,
+    flattenInteractive,
+} from "./ax-dump.js";
 import { type CapabilityReport, detectCapabilities } from "./capability-detector.js";
 import { detectElements, findElementByCaption } from "./omniparser.js";
 import { groundClick, isUITarsAvailable } from "./ui-tars.js";
 
-export type CascadeTier =
-    | "memory"
-    | "ax_exact"
-    | "ax_fuzzy"
-    | "omniparser"
-    | "ui_tars"
-    | "cloud_vlm_required";
+export type CascadeTier = "memory" | "ax_exact" | "ax_fuzzy" | "omniparser" | "ui_tars" | "cloud_vlm_required";
 
 export interface ClickTarget {
     x: number;
@@ -79,10 +79,7 @@ const DEFAULT_THRESHOLDS: Record<CascadeTier, number> = {
  * Run the perception cascade. Returns a ClickTarget on success, or null when
  * no tier yields sufficient confidence and the caller must fall back to a cloud VLM.
  */
-export async function findClickTarget(
-    instruction: string,
-    opts: CascadeOptions = {},
-): Promise<ClickTarget | null> {
+export async function findClickTarget(instruction: string, opts: CascadeOptions = {}): Promise<ClickTarget | null> {
     const cascadeStart = Date.now();
     const elapsed: Partial<Record<CascadeTier, number>> = {};
     const tried: CascadeTier[] = [];
@@ -102,31 +99,38 @@ export async function findClickTarget(
         }
     }
 
-    // Tier 2+3: AX exact then fuzzy.
+    // Tier 2+3: AX exact then fuzzy. (Dump runs once; each tier's elapsed is recorded
+    // AFTER the dump so the times reflect actual match-work, not dump cost.)
     let axDump = opts.axDumpHint;
     let axElements: AxFlatElement[] | null = null;
     if (!skip.has("ax_exact") || !skip.has("ax_fuzzy")) {
-        const axStart = Date.now();
         if (!axDump) {
             try {
                 axDump = await dumpAccessibilityTree({ depth: 20 });
-            } catch { /* no AX — skip both tiers */ }
+            } catch {
+                /* no AX — skip both tiers */
+            }
         }
         if (axDump && !axDump.error) {
             axElements = flattenInteractive(axDump);
             if (!skip.has("ax_exact")) {
                 tried.push("ax_exact");
+                const exactStart = Date.now();
                 const exact = findElementByLabel(axElements, instruction, 0.95);
-                elapsed.ax_exact = Date.now() - axStart;
+                elapsed.ax_exact = Date.now() - exactStart; // record even on miss
                 if (exact) {
-                    return finalize({
-                        x: exact.center.x,
-                        y: exact.center.y,
-                        confidence: 0.95,
-                        source: "ax_exact",
-                        matchedElementId: exact.id,
-                        matchedLabel: exact.label,
-                    }, "ax_exact", { tried, elapsed, cascadeStart });
+                    return finalize(
+                        {
+                            x: exact.center.x,
+                            y: exact.center.y,
+                            confidence: 0.95,
+                            source: "ax_exact",
+                            matchedElementId: exact.id,
+                            matchedLabel: exact.label,
+                        },
+                        "ax_exact",
+                        { tried, elapsed, cascadeStart },
+                    );
                 }
             }
             if (!skip.has("ax_fuzzy")) {
@@ -135,14 +139,18 @@ export async function findClickTarget(
                 const fuzzy = findElementByLabel(axElements, instruction, thresholds.ax_fuzzy);
                 elapsed.ax_fuzzy = Date.now() - fuzzyStart;
                 if (fuzzy) {
-                    return finalize({
-                        x: fuzzy.center.x,
-                        y: fuzzy.center.y,
-                        confidence: 0.85,
-                        source: "ax_fuzzy",
-                        matchedElementId: fuzzy.id,
-                        matchedLabel: fuzzy.label,
-                    }, "ax_fuzzy", { tried, elapsed, cascadeStart });
+                    return finalize(
+                        {
+                            x: fuzzy.center.x,
+                            y: fuzzy.center.y,
+                            confidence: 0.85,
+                            source: "ax_fuzzy",
+                            matchedElementId: fuzzy.id,
+                            matchedLabel: fuzzy.label,
+                        },
+                        "ax_fuzzy",
+                        { tried, elapsed, cascadeStart },
+                    );
                 }
             }
         }
@@ -163,14 +171,18 @@ export async function findClickTarget(
             if (!result.error && result.elements.length > 0) {
                 const match = findElementByCaption(result.elements, instruction);
                 if (match) {
-                    return finalize({
-                        x: match.center.x,
-                        y: match.center.y,
-                        confidence: 0.82,
-                        source: "omniparser",
-                        matchedElementId: match.id,
-                        matchedLabel: match.caption,
-                    }, "omniparser", { tried, elapsed, cascadeStart });
+                    return finalize(
+                        {
+                            x: match.center.x,
+                            y: match.center.y,
+                            confidence: 0.82,
+                            source: "omniparser",
+                            matchedElementId: match.id,
+                            matchedLabel: match.caption,
+                        },
+                        "omniparser",
+                        { tried, elapsed, cascadeStart },
+                    );
                 }
             }
         } catch {
@@ -179,38 +191,49 @@ export async function findClickTarget(
     }
 
     // Tier 5: UI-TARS local grounding (Full tier only, requires Ollama).
+    // Short-circuit via capability-detector's deps.ollama check before paying the 3s
+    // TCP-timeout cost on a box where Ollama is never installed.
     if (!skip.has("ui_tars") && profile === "full") {
-        tried.push("ui_tars");
-        const utStart = Date.now();
-        try {
-            const avail = await isUITarsAvailable();
-            if (avail.available) {
-                const grounded = await groundClick(opts.screenshotPath, instruction);
-                elapsed.ui_tars = Date.now() - utStart;
-                if (!grounded.error && grounded.confidence >= thresholds.ui_tars) {
-                    return finalize({
-                        x: grounded.x,
-                        y: grounded.y,
-                        confidence: grounded.confidence,
-                        source: "ui_tars",
-                        reasoning: grounded.reasoning,
-                    }, "ui_tars", { tried, elapsed, cascadeStart });
+        const caps = await detectCapabilities();
+        if (caps.deps.ollama) {
+            tried.push("ui_tars");
+            const utStart = Date.now();
+            try {
+                const avail = await isUITarsAvailable();
+                if (avail.available) {
+                    const grounded = await groundClick(opts.screenshotPath, instruction);
+                    elapsed.ui_tars = Date.now() - utStart;
+                    if (!grounded.error && grounded.confidence >= thresholds.ui_tars) {
+                        return finalize(
+                            {
+                                x: grounded.x,
+                                y: grounded.y,
+                                confidence: grounded.confidence,
+                                source: "ui_tars",
+                                reasoning: grounded.reasoning,
+                            },
+                            "ui_tars",
+                            { tried, elapsed, cascadeStart },
+                        );
+                    }
+                } else {
+                    elapsed.ui_tars = Date.now() - utStart;
                 }
-            } else {
+            } catch {
                 elapsed.ui_tars = Date.now() - utStart;
             }
-        } catch {
-            elapsed.ui_tars = Date.now() - utStart;
         }
     }
 
-    // No tier yielded sufficient confidence. Caller should fall through to cloud VLM.
-    tried.push("cloud_vlm_required");
+    // No tier yielded sufficient confidence — caller falls through to cloud VLM.
+    // Do NOT add cloud_vlm_required to triedTiers (router never actually ran it).
     return null;
 }
 
 /** Phase 5 placeholder: persistent click memory recall. */
-async function tryMemoryRecall(_instruction: string): Promise<Omit<ClickTarget, "elapsedMsByTier" | "totalMs" | "triedTiers"> | null> {
+async function tryMemoryRecall(
+    _instruction: string,
+): Promise<Omit<ClickTarget, "elapsedMsByTier" | "totalMs" | "triedTiers"> | null> {
     // Wired in Phase 5. Always misses for now.
     return null;
 }

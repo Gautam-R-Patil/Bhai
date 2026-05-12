@@ -169,6 +169,7 @@ import { coreMemoryAppend, coreMemoryDelete, coreMemoryRead, coreMemoryReplace }
 import { osComputerAction } from "./os-computer-action.js";
 import { osGround, osVisualize } from "./os-grounding.js";
 import { osClickId, osInspect } from "./os-inspect.js";
+import { osSmartClick } from "./os-smart-click.js";
 import { IS_LINUX, IS_MAC, IS_WIN } from "./platform.js";
 import { platformInfoTool } from "./platform-info.js";
 import { createPresentation, exportPresentation, listPresentations, modifyPresentation } from "./presentation/index.js";
@@ -311,6 +312,11 @@ registry.set(osClickId.schema.function.name, osClickId);
 // Both fail-open if local deps not installed; cascade router falls through to cloud VLM.
 registry.set(osVisualize.schema.function.name, osVisualize);
 registry.set(osGround.schema.function.name, osGround);
+
+// PREFERRED click-by-description tool (Phase 4 cascade + Phase 5 click memory wired together).
+// This is the agent's primary entry point for "click X" tasks — it picks the right tier
+// automatically based on capability + AX availability + memory recall.
+registry.set(osSmartClick.schema.function.name, osSmartClick);
 
 // ── Platform-specific OS tools ────────────────
 if (IS_MAC) {
