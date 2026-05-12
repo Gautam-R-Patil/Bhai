@@ -347,6 +347,7 @@ Each of these defaults to the feature ON; set to `"true"` (or the named sentinel
 - `ATLAS_PROACTIVE_DISABLE_CHANNELS=csv` — silence specific channels (e.g. `telegram,whatsapp`)
 - `ATLAS_PROACTIVE_SHADOW` — shadow mode: compose + log proactive messages but never deliver
 - `ATLAS_PROACTIVE_DEBUG=false` — suppress `🔔 [proactive]` debug logs (on by default)
+- `ATLAS_NATIVE_SPREADING=true` — opt-IN: route SAN BFS through `native/spreading.rs`. Off by default — bench (`scripts/bench-native.ts`) shows JSON+FFI overhead dominates on the typical <50-node induced graphs we see in production. Enable only if profiling a workload with large recall fan-out.
 
 ## Key Patterns
 

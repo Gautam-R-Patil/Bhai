@@ -12,6 +12,19 @@ export interface SimilarityResult {
     score: number;
 }
 
+export interface NativeSeedEntity {
+    entityId: number;
+    energy: number;
+    via: string;
+}
+
+export interface NativeActivationResult {
+    memoryId: number;
+    activationScore: number;
+    hops: number;
+    via: string;
+}
+
 interface NativeModule {
     getVersion(): string;
     hasSimdSupport(): boolean;
@@ -25,7 +38,8 @@ interface NativeModule {
     batchPairwiseSimilarity(vectors: Float32Array[]): number[];
     quantizeToInt8(vec: Float32Array): Int8Array;
     dequantizeFromInt8(vec: Int8Array, minVal: number, maxVal: number): Float32Array;
-    isNativeAvailable: boolean;
+    spreadActivationBfs?(seedEntities: NativeSeedEntity[], adjacencyJson: string): NativeActivationResult[];
+    dedupActivationResults?(results: NativeActivationResult[]): NativeActivationResult[];
 }
 
 // ── Load native module ───────────────────────────
@@ -40,7 +54,10 @@ try {
     // Use synchronous createRequire (static import) — avoids top-level await in bundle
     const require = createRequire(import.meta.url);
     nativeModule = require(nativePath) as NativeModule;
-    useNative = nativeModule?.isNativeAvailable ?? false;
+    // Gate on the canonical napi-exported `getVersion` — the napi-rs generated
+    // index.js does not set an `isNativeAvailable` flag, so a presence check on
+    // a known function is the correct readiness signal.
+    useNative = typeof nativeModule?.getVersion === "function";
 
     if (useNative) {
         console.log(`⚡ Native SIMD v${nativeModule!.getVersion()} loaded`);
@@ -264,4 +281,19 @@ export function dequantizeFromInt8(
  */
 export function cosineDistance(a: Float32Array, b: Float32Array): number {
     return 1 - cosineSimilarity(a, b);
+}
+
+// ── Spreading Activation (Phase 0) ───────────────
+
+/**
+ * Native BFS spreading activation through a pre-fetched adjacency graph.
+ * Returns null if native is unavailable so the caller can fall back to TS.
+ * Adjacency format: `{ "<entityId>": [{ entityId, entityName, weight }, ...] }`
+ */
+export function nativeSpreadActivationBfs(
+    seedEntities: NativeSeedEntity[],
+    adjacencyJson: string,
+): NativeActivationResult[] | null {
+    if (!useNative || !nativeModule?.spreadActivationBfs) return null;
+    return nativeModule.spreadActivationBfs(seedEntities, adjacencyJson);
 }

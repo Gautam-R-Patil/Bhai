@@ -113,6 +113,7 @@ desktop/hostinger-upload/
 !src/agents/circuit-breaker.test.ts
 !src/agents/complexity-classifier.test.ts
 !src/agents/blackboard.test.ts
+!src/memory/spreading-activation.parity.test.ts
 !src/llm-parsers/*.test.ts
 !src/tools/schema-sanitizer.test.ts
 !src/tools/tool-result.test.ts
