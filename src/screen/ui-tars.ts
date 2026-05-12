@@ -20,9 +20,25 @@
 
 import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+
+/** Reject screenshot paths outside known-safe directories (defence against arbitrary file read). */
+function isSafeScreenshotPath(p: string): boolean {
+    const abs = resolve(p);
+    const allowedDirs = [
+        resolve(tmpdir()),
+        resolve(process.env.HOME || "", "Desktop", "A.T.L.A.S Files"),
+        resolve(process.env.HOME || "", "Documents", "A.T.L.A.S Files"),
+        resolve(process.env.HOME || "", "A.T.L.A.S Files"),
+        resolve(process.env.HOME || "", "Library", "Caches", "atlas"),
+        resolve(process.env.ATLAS_WORKSPACE || ""),
+    ].filter((d) => d && d !== resolve(""));
+    return allowedDirs.some((d) => abs === d || abs.startsWith(d + "/") || abs.startsWith(d + "\\"));
+}
 
 export interface UITarsGroundingResult {
     x: number;
@@ -51,6 +67,21 @@ const DEFAULT_TIMEOUT_MS = 30_000;
  * Ground a click instruction against a screenshot using UI-TARS.
  * Returns `error` field when Ollama or the model isn't available.
  */
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10MB cap on screenshot before base64 encoding
+
+/** Validate Ollama host is a loopback address (SSRF defence). */
+function validateOllamaHost(host: string): { ok: boolean; reason?: string } {
+    try {
+        const u = new URL(host);
+        if (!["127.0.0.1", "::1", "localhost"].includes(u.hostname)) {
+            return { ok: false, reason: `non_loopback_host:${u.hostname}` };
+        }
+        return { ok: true };
+    } catch {
+        return { ok: false, reason: "invalid_host_url" };
+    }
+}
+
 export async function groundClick(
     screenshotPath: string,
     instruction: string,
@@ -61,8 +92,19 @@ export async function groundClick(
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const start = Date.now();
 
+    const hostCheck = validateOllamaHost(host);
+    if (!hostCheck.ok) return errorResult(model, start, hostCheck.reason || "host_rejected");
+    if (!isSafeScreenshotPath(screenshotPath)) {
+        return errorResult(model, start, "screenshot_path_rejected:must be under tmpdir or ATLAS Files directory");
+    }
+
     let base64: string;
     try {
+        // Size cap BEFORE readFile — a 100MB file would crash a 4GB box during base64 encoding.
+        const stat = await fs.stat(screenshotPath);
+        if (stat.size > MAX_IMAGE_BYTES) {
+            return errorResult(model, start, `image_too_large:${stat.size}_bytes_max_${MAX_IMAGE_BYTES}`);
+        }
         base64 = (await fs.readFile(screenshotPath)).toString("base64");
     } catch (err) {
         return errorResult(model, start, `image_read_failed:${(err as Error).message}`);
@@ -121,13 +163,16 @@ export function parseGroundingResponse(
     text: string,
 ): { x: number; y: number; confidence: number; reasoning?: string } | null {
     if (!text) return null;
-    // Try to extract a JSON object from the response.
-    const match = text.match(/\{[^{}]*"x"\s*:\s*-?\d+[^{}]*\}/);
-    if (!match) return null;
+    // Use indexOf/lastIndexOf to capture the outermost JSON object — handles
+    // nested braces inside reasoning strings like "the {Save} button".
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    if (start === -1 || end <= start) return null;
     try {
-        const obj = JSON.parse(match[0]) as Record<string, unknown>;
-        const x = typeof obj.x === "number" ? Math.round(obj.x) : null;
-        const y = typeof obj.y === "number" ? Math.round(obj.y) : null;
+        const obj = JSON.parse(text.slice(start, end + 1)) as Record<string, unknown>;
+        // Clamp coords to a sane screen-space range to defend against hallucinated huge ints.
+        const x = typeof obj.x === "number" ? Math.max(-32767, Math.min(32767, Math.round(obj.x))) : null;
+        const y = typeof obj.y === "number" ? Math.max(-32767, Math.min(32767, Math.round(obj.y))) : null;
         if (x === null || y === null) return null;
         const confidence = typeof obj.confidence === "number" ? Math.max(0, Math.min(1, obj.confidence)) : 0.5;
         const reasoning = typeof obj.reasoning === "string" ? obj.reasoning : undefined;
@@ -137,21 +182,62 @@ export function parseGroundingResponse(
     }
 }
 
+// 60s availability cache prevents wasting 3s per call when Ollama is never installed.
+interface AvailCacheEntry {
+    result: { available: boolean; reason?: string; modelTag?: string };
+    expiresAt: number;
+}
+const _availCache = new Map<string, AvailCacheEntry>();
+const AVAIL_CACHE_TTL_MS = 60_000;
+
+export function clearUITarsAvailCache(): void {
+    _availCache.clear();
+}
+
 /**
  * Check whether Ollama is reachable AND has the specified model pulled.
+ * Cached for 60s per (host, model) pair so Lite-tier boxes don't waste 3s per call.
  */
 export async function isUITarsAvailable(
     opts: { model?: string; host?: string } = {},
 ): Promise<{ available: boolean; reason?: string; modelTag?: string }> {
     const model = opts.model || "ui-tars:7b";
     const host = opts.host || process.env.OLLAMA_HOST || "http://127.0.0.1:11434";
+    const cacheKey = `${host}|${model}`;
+    const cached = _availCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached.result;
+
+    const hostCheck = validateOllamaHost(host);
+    if (!hostCheck.ok) {
+        const result = { available: false, reason: hostCheck.reason };
+        _availCache.set(cacheKey, { result, expiresAt: Date.now() + AVAIL_CACHE_TTL_MS });
+        return result;
+    }
+
+    let result: { available: boolean; reason?: string; modelTag?: string };
     try {
         const resp = await fetch(`${host}/api/tags`, { signal: AbortSignal.timeout(3000) });
-        if (!resp.ok) return { available: false, reason: `ollama_${resp.status}` };
-        const data = (await resp.json()) as { models?: Array<{ name?: string }> };
-        const found = (data.models || []).some((m) => m.name === model);
-        return found ? { available: true, modelTag: model } : { available: false, reason: "model_not_pulled" };
+        if (!resp.ok) {
+            result = { available: false, reason: `ollama_${resp.status}` };
+        } else {
+            const data = (await resp.json()) as { models?: Array<{ name?: string }> };
+            // Normalize: "ui-tars" matches "ui-tars:latest" AND "ui-tars:7b" (best-effort prefix).
+            const found = (data.models || []).find((m) => {
+                if (!m.name) return false;
+                if (m.name === model) return true;
+                // Allow `ui-tars` (without tag) to match any `ui-tars:*`
+                if (!model.includes(":") && m.name.startsWith(model + ":")) return true;
+                // Allow `ui-tars:7b` to match `ui-tars` (model without tag stored as :latest)
+                if (model.endsWith(":latest") && m.name === model.replace(":latest", "")) return true;
+                return false;
+            });
+            result = found
+                ? { available: true, modelTag: found.name }
+                : { available: false, reason: "model_not_pulled" };
+        }
     } catch (err) {
-        return { available: false, reason: `ollama_not_running:${(err as Error).message}` };
+        result = { available: false, reason: `ollama_not_running:${(err as Error).message}` };
     }
+    _availCache.set(cacheKey, { result, expiresAt: Date.now() + AVAIL_CACHE_TTL_MS });
+    return result;
 }

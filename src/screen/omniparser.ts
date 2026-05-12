@@ -19,13 +19,31 @@
  */
 
 import { execFile } from "node:child_process";
-import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+/**
+ * Reject screenshot paths outside known-safe directories (tmpdir + ATLAS Files/Screenshots).
+ * Prevents an LLM-supplied path from causing arbitrary file reads via the Python script.
+ */
+function isSafeScreenshotPath(p: string): boolean {
+    const abs = resolve(p);
+    const allowedDirs = [
+        resolve(tmpdir()),
+        resolve(process.env.HOME || "", "Desktop", "A.T.L.A.S Files"),
+        resolve(process.env.HOME || "", "Documents", "A.T.L.A.S Files"),
+        resolve(process.env.HOME || "", "A.T.L.A.S Files"),
+        resolve(process.env.HOME || "", "Library", "Caches", "atlas"),
+        resolve(process.env.ATLAS_WORKSPACE || ""),
+    ].filter((d) => d && d !== resolve(""));
+    return allowedDirs.some((d) => abs === d || abs.startsWith(d + "/") || abs.startsWith(d + "\\"));
+}
 
 export interface OmniParserElement {
     id: number;
@@ -60,6 +78,9 @@ const DEFAULT_TIMEOUT_MS = 30_000;
  * Returns `{ elements: [] }` with `error` field if the tool isn't installed.
  */
 export async function detectElements(screenshotPath: string, opts: OmniParserOptions = {}): Promise<OmniParserResult> {
+    if (!isSafeScreenshotPath(screenshotPath)) {
+        return failureResult(`screenshot_path_rejected:must be under tmpdir or ATLAS Files directory`);
+    }
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const script = join(__dirname, "..", "..", "scripts", "omniparser_detect.py");
     const args = [script, screenshotPath];
@@ -67,8 +88,10 @@ export async function detectElements(screenshotPath: string, opts: OmniParserOpt
     if (opts.maxElements) args.push("--max-elements", String(opts.maxElements));
     if (opts.confThreshold !== undefined) args.push("--conf-threshold", String(opts.confThreshold));
 
+    // Cross-OS python binary picker (Windows ships `python`, others `python3`).
+    const pyBin = process.platform === "win32" ? "python" : "python3";
     try {
-        const { stdout } = await execFileAsync("python3", args, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 });
+        const { stdout } = await execFileAsync(pyBin, args, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 });
         const trimmed = stdout.trim();
         if (trimmed.startsWith("error|")) {
             return failureResult(trimmed.slice("error|".length));
@@ -103,7 +126,9 @@ export async function detectElements(screenshotPath: string, opts: OmniParserOpt
             elapsedMs: parsed.elapsed_ms,
         };
     } catch (err) {
-        return failureResult((err as Error).message);
+        // Capture Python stderr (traceback) instead of generic "Command failed: python3 ..."
+        const e = err as Error & { stderr?: string };
+        return failureResult(e.stderr?.toString().trim() || e.message);
     }
 }
 

@@ -54,9 +54,16 @@ def main() -> None:
         fail("pillow_not_installed")
         return
 
+    # SECURITY: defend against decompression bombs. Default PIL limit is ~178M pixels;
+    # we cap stricter (~20M = 4500x4500, well above any normal screenshot).
+    Image.MAX_IMAGE_PIXELS = 20_000_000
+
     try:
         img = Image.open(args.image).convert("RGB")
         w, h = img.size
+        if w > 7680 or h > 4320:  # 8K ceiling
+            fail(f"image_too_large:{w}x{h}")
+            return
     except Exception as e:
         fail(f"image_load_failed:{e}")
         return
@@ -82,21 +89,16 @@ def main() -> None:
     ]
     model_path = next((p for p in model_paths if p and os.path.exists(p)), None)
     if not model_path:
-        # Fall back to the general YOLOv8n (Ultralytics auto-downloads on first use).
-        # This won't be UI-specific but provides a usable signal.
-        try:
-            model = YOLO("yolov8n.pt")
-            model_name = "yolov8n-general"
-        except Exception as e:
-            fail(f"model_not_cached:{e}")
-            return
-    else:
-        try:
-            model = YOLO(model_path)
-            model_name = "omniparser-yolov8"
-        except Exception as e:
-            fail(f"model_load_failed:{e}")
-            return
+        # Refuse to fall back to general YOLOv8n — it detects cars/people/dogs from COCO,
+        # NOT UI elements. Returning those as "interactive" misleads the agent.
+        fail("omniparser_weights_missing:run `huggingface-cli download microsoft/OmniParser-v2.0 --local-dir ~/.cache/omniparser`")
+        return
+    try:
+        model = YOLO(model_path)
+        model_name = "omniparser-yolov8"
+    except Exception as e:
+        fail(f"model_load_failed:{e}")
+        return
 
     try:
         results = model.predict(args.image, conf=args.conf_threshold, verbose=False)

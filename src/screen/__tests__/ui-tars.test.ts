@@ -9,6 +9,18 @@ describe("parseGroundingResponse", () => {
         expect(r).toEqual({ x: 412, y: 318, confidence: 0.93, reasoning: "the Save button" });
     });
 
+    it("handles braces inside reasoning string (P3 R1 finding)", () => {
+        const r = parseGroundingResponse('{"x": 100, "y": 200, "confidence": 0.9, "reasoning": "the {Save} button"}');
+        expect(r?.x).toBe(100);
+        expect(r?.reasoning).toBe("the {Save} button");
+    });
+
+    it("clamps coords to ±32767 (defence against hallucinated MAX_SAFE_INTEGER)", () => {
+        const r = parseGroundingResponse('{"x": 99999999, "y": -99999999, "confidence": 0.9}');
+        expect(r?.x).toBe(32767);
+        expect(r?.y).toBe(-32767);
+    });
+
     it("extracts JSON from surrounding prose", () => {
         const r = parseGroundingResponse(
             'Looking at the screenshot, the target is clearly the Save button. Here is my answer: {"x": 412, "y": 318, "confidence": 0.95}',
