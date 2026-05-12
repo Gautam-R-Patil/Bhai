@@ -52,20 +52,29 @@ def walk(node, depth: int, max_depth: int, bbox_only: bool):
         label = node.get_name()
     except Exception:
         label = None
-    value = None
-    if not bbox_only:
-        try:
-            ti = node.get_text_iface()
-            if ti:
-                value = slice_value(ti.get_text(0, ti.get_character_count()))
-        except Exception:
-            pass
+    # Collect states FIRST so the password-field check can gate value extraction.
     states = set()
     try:
         for s in node.get_state_set().get_states():
             states.add(s.value_nick)
     except Exception:
         pass
+    is_secure = "protected" in states  # GTK/Qt mark password fields with STATE_PROTECTED
+    value = None
+    if not bbox_only and not is_secure:
+        try:
+            ti = node.get_text_iface()
+            if ti:
+                # SECURITY/PERF: bound the AT-SPI text fetch — never pull more than 300 chars
+                # over the bus even if the source document is megabytes.
+                char_count = ti.get_character_count()
+                end = min(300, char_count) if char_count > 0 else 0
+                if end > 0:
+                    value = slice_value(ti.get_text(0, end))
+        except Exception:
+            pass
+    elif is_secure:
+        value = "[secure]"
 
     out = {
         "role": role,
@@ -95,7 +104,7 @@ def walk(node, depth: int, max_depth: int, bbox_only: bool):
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--pid", type=int, default=0)
-    parser.add_argument("--depth", type=int, default=12)
+    parser.add_argument("--depth", type=int, default=20)  # raised from 12
     parser.add_argument("--bbox-only", action="store_true")
     args = parser.parse_args()
 

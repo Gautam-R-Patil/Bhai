@@ -111,6 +111,8 @@ desktop/hostinger-upload/
 !src/tools/__tests__/os-computer-action.test.ts
 !src/screen/__tests__/capability-detector.test.ts
 !src/screen/__tests__/ax-dump.test.ts
+!src/screen/__tests__/ui-tars.test.ts
+!src/screen/__tests__/omniparser.test.ts
 !src/utils/win-shell.test.ts
 !src/utils/platform-capabilities.test.ts
 !src/commands/index.test.ts
@@ -176,6 +178,7 @@ desktop/hostinger-upload/
 # Compiled Swift helpers (built by npm run build:location / build:ocr)
 scripts/get_location_bin
 scripts/ocr_screen_bin
+scripts/dump_ax_bin
 overlay-app/.build/
 
 # Local TTS eval artifacts + investigation scripts

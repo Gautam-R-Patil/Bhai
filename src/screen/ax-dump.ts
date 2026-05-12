@@ -233,21 +233,25 @@ function isInteractiveRole(role: string | null | undefined): boolean {
  * if the native module isn't present (e.g. fresh checkout without `npm run build:native`).
  */
 export function flattenInteractive(dump: AxDump): AxFlatElement[] {
-    const native = loadNative();
-    if (native?.axFlattenInteractive) {
-        try {
-            // The Rust API accepts JSON strings to avoid per-property napi marshaling on large trees.
-            const dumpJson = JSON.stringify({
-                app: dump.app,
-                pid: dump.pid,
-                trusted: dump.trusted,
-                depth: dump.depth,
-                root: dump.root,
-            });
-            const resultJson = native.axFlattenInteractive(dumpJson);
-            return JSON.parse(resultJson) as AxFlatElement[];
-        } catch {
-            /* fall through to pure-TS */
+    // Kill-switch per CLAUDE.md rollout pattern. JSON round-trip dominates for trees <200 nodes,
+    // so TS is often faster. Default: TS (force opt-in to Rust via ATLAS_NATIVE_AX=true).
+    // Once bench-native.ts shows a measured win across representative inputs, flip the default.
+    if (process.env.ATLAS_NATIVE_AX === "true") {
+        const native = loadNative();
+        if (native?.axFlattenInteractive) {
+            try {
+                const dumpJson = JSON.stringify({
+                    app: dump.app,
+                    pid: dump.pid,
+                    trusted: dump.trusted,
+                    depth: dump.depth,
+                    root: dump.root,
+                });
+                const resultJson = native.axFlattenInteractive(dumpJson);
+                return JSON.parse(resultJson) as AxFlatElement[];
+            } catch {
+                /* fall through to pure-TS */
+            }
         }
     }
     return flattenInteractiveJs(dump);

@@ -99,12 +99,24 @@ export const osInspect: ToolDefinition = {
                 timestamp: Date.now(),
             };
 
+            // SECURITY: summary uses ONLY `label`, never `value`. Text-field contents (which
+            // include passwords, account numbers, etc. if a parent app's AX implementation is
+            // imperfect) stay in the in-process cache for os_click_id disambiguation but never
+            // reach the LLM's prompt context.
             const summary = elements
-                .map(
-                    (e) =>
-                        `[${e.id}] (${e.role}) "${truncate(e.label || e.value, 60)}" at (${e.center.x},${e.center.y})${e.enabled ? "" : " [disabled]"}`,
-                )
+                .map((e) => {
+                    const display = e.label ? truncate(e.label, 60) : `<${e.role.toLowerCase()}>`;
+                    return `[${e.id}] (${e.role}) "${display}" at (${e.center.x},${e.center.y})${e.enabled ? "" : " [disabled]"}`;
+                })
                 .join("\n");
+
+            // Phase 2 finding: empty AT-SPI tree on Linux often means Electron/Chromium without
+            // --force-renderer-accessibility. Surface this as a hint.
+            let hint: string | undefined;
+            if (dump.source === "pyatspi" && all.length === 0) {
+                hint =
+                    "Empty tree — if targeting an Electron/Chromium app (VS Code, Slack, browsers), relaunch with --force-renderer-accessibility for AT-SPI to populate.";
+            }
 
             return JSON.stringify({
                 success: true,
@@ -116,7 +128,8 @@ export const osInspect: ToolDefinition = {
                 total_count: all.length,
                 truncated: all.length > maxElements,
                 elements: summary,
-                tip: `Use os_click_id with id=<number> to click an element. Or query by text: os_click_id with text="<query>". Cache TTL: ${INSPECT_CACHE_TTL_MS}ms.`,
+                hint,
+                tip: `Use os_click_id with id=<number> to click an element. Or query by text: os_click_id with text="<query>". Cache TTL: ${Math.round(INSPECT_CACHE_TTL_MS / 1000)}s.`,
             });
         } catch (err) {
             return JSON.stringify({ success: false, error: (err as Error).message });

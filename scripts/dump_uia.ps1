@@ -12,7 +12,7 @@
 
 param(
     [int]$Pid = 0,
-    [int]$MaxDepth = 12,
+    [int]$MaxDepth = 20,  # raised from 12 — modern apps can be 25-40 deep
     [switch]$BboxOnly
 )
 
@@ -46,8 +46,10 @@ if ($Pid -gt 0) {
         exit 1
     }
 } else {
-    # Frontmost: GetForegroundWindow → ProcessId
-    Add-Type -TypeDefinition @"
+    # Frontmost: GetForegroundWindow → ProcessId. Guard against duplicate Add-Type errors
+    # when run in a long-lived PowerShell session.
+    if (-not ([System.Management.Automation.PSTypeName]'FrontWin').Type) {
+        Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
 public class FrontWin {
@@ -55,14 +57,24 @@ public class FrontWin {
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 }
 "@
+    }
     $hwnd = [FrontWin]::GetForegroundWindow()
+    if ($hwnd -eq [IntPtr]::Zero) {
+        [Console]::Out.Write("error|no_foreground_window`n")
+        exit 1
+    }
     $pidOut = [uint32]0
     [FrontWin]::GetWindowThreadProcessId($hwnd, [ref]$pidOut) | Out-Null
     $pickedPid = [int]$pidOut
     try {
         $appName = (Get-Process -Id $pickedPid).ProcessName
     } catch {}
-    $rootElement = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+    try {
+        $rootElement = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+    } catch {
+        [Console]::Out.Write("error|fromhandle_failed:$($_.Exception.Message)`n")
+        exit 1
+    }
 }
 
 if (-not $rootElement) {
@@ -87,19 +99,28 @@ function Walk-Node($el, [int]$depth) {
         $role = $el.Current.ControlType.ProgrammaticName
         if ($role) { $role = ($role -replace 'ControlType\.', '') }
         $label = Slice-String $el.Current.Name
+        $isPassword = $false
+        try { $isPassword = [bool]$el.Current.IsPassword } catch {}
         $value = $null
         if (-not $BboxOnly) {
-            try {
-                $vp = $el.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
-                if ($vp) { $value = Slice-String $vp.Current.Value }
-            } catch {}
-            if (-not $value) {
-                $value = Slice-String $el.Current.AutomationId
+            if ($isPassword) {
+                # SECURITY: don't expose password contents
+                $value = "[secure]"
+            } else {
+                try {
+                    $vp = $el.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+                    if ($vp) { $value = Slice-String $vp.Current.Value }
+                } catch {}
+                # Note: do NOT fall back to AutomationId — it's a developer-assigned identifier,
+                # not a user-visible value. Putting it in `value` causes false positives in label search.
             }
         }
+        # Capture AutomationId separately so the LLM can reason about it without confusion.
+        $automationId = $null
+        try { $automationId = Slice-String $el.Current.AutomationId } catch {}
         $node = [ordered]@{
             role = $role
-            subrole = $null
+            subrole = $automationId  # repurpose subrole field for AutomationId (was always null on Windows)
             label = $label
             value = $value
             x = [int]$r.X
@@ -136,5 +157,6 @@ $output = [ordered]@{
     depth = $MaxDepth
 }
 
-# ConvertTo-Json with high depth handles deeply nested trees.
-($output | ConvertTo-Json -Compress -Depth 64)
+# ConvertTo-Json: raise depth to 100 to avoid silent truncation on deep app trees
+# (PowerShell stringifies objects past the depth limit to e.g. "System.Collections.Hashtable").
+($output | ConvertTo-Json -Compress -Depth 100)

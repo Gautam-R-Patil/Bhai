@@ -28,7 +28,7 @@ import AppKit
 // ── Args ──────────────────────────────────────────
 
 var targetPid: pid_t = 0
-var maxDepth: Int = 12
+var maxDepth: Int = 20  // raised from 12 — Safari/VS Code can be 25-40 levels deep
 var bboxOnly: Bool = false
 
 let args = Array(CommandLine.arguments.dropFirst())
@@ -151,13 +151,18 @@ func walk(_ el: AXUIElement, depth: Int) -> AXNode {
     var label = axString(el, kAXTitleAttribute) ?? axString(el, kAXDescriptionAttribute)
     if label == nil { label = axString(el, kAXHelpAttribute) }
 
+    // SECURITY: never expose password-field contents. macOS marks them with subrole AXSecureTextField.
+    let isSecure = (subrole == "AXSecureTextField")
+
     var valueStr: String? = nil
-    if !bboxOnly {
+    if !bboxOnly && !isSecure {
         if let v = axString(el, kAXValueAttribute) {
             valueStr = v
         } else if let n = axNumber(el, kAXValueAttribute) {
             valueStr = String(describing: n)
         }
+    } else if isSecure {
+        valueStr = "[secure]"
     }
 
     var kids: [AXNode] = []

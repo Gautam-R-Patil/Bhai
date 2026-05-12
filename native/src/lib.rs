@@ -134,6 +134,7 @@ pub use ip_guard::*;
 pub use browser_guard::*;
 pub use harness_optimizer::*;
 pub use secrets_sanitizer::*;
+pub use ax_walker::*;
 
 #[cfg(feature = "vad")]
 pub use pcm_vad::*;

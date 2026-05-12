@@ -99,6 +99,10 @@ fn is_interactive(role: &Option<String>) -> bool {
     }
 }
 
+// Hard cap to prevent stack overflow on adversarial inputs. The OS helpers cap
+// dump depth at 30, but a malicious caller could hand-craft a deeper JSON tree.
+const MAX_WALK_DEPTH: u32 = 64;
+
 fn flatten_recursive(
     node: &AxNode,
     out: &mut Vec<AxFlatElement>,
@@ -106,6 +110,7 @@ fn flatten_recursive(
     path: &mut Vec<u32>,
     depth: u32,
 ) {
+    if depth > MAX_WALK_DEPTH { return; }
     if is_interactive(&node.role) && node.w > 0 && node.h > 0 {
         let label = node.label.as_deref().unwrap_or("").trim().to_string();
         let value = node.value.as_deref().unwrap_or("").trim().to_string();
