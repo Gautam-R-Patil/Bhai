@@ -89,7 +89,9 @@ export class Observer {
                 debugProactive("observer_tick_err", { err: (err as Error).message })
             );
         }, SWEEP_INTERVAL_MS);
+        this.tickTimer.unref?.();
         this.tuneTimer = setInterval(() => this.tuneSourceWeights(), 60 * 60_000);
+        this.tuneTimer.unref?.();
     }
 
     stop(): void {

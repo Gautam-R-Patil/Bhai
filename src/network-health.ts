@@ -132,6 +132,7 @@ function startRecoveryPolling(): void {
         const newStatus = await performCheck();
         setStatus(newStatus);
     }, RECOVERY_CHECK_INTERVAL_MS);
+    _recoveryTimer.unref?.();
 }
 
 function stopRecoveryPolling(): void {
@@ -154,6 +155,7 @@ export function startNetworkMonitor(): void {
         const newStatus = await performCheck();
         setStatus(newStatus);
     }, CHECK_INTERVAL_MS);
+    _checkTimer.unref?.();
 }
 
 /** Stop the monitor */

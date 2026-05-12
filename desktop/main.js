@@ -140,7 +140,7 @@ const OVERLAY_MAX_HEIGHT = 500;
 const OVERLAY_MARGIN_RIGHT = 16;
 const OVERLAY_MARGIN_TOP = 8;
 const OVERLAY_URL = "http://127.0.0.1:18792";
-const OVERLAY_RESIZE_MS = 300;
+const OVERLAY_RESIZE_MS = 500;
 const OVERLAY_HIDE_DELAY_MS = 260;
 
 // ── Convex deployment selector ─────────────────────────────────────
@@ -316,16 +316,49 @@ function getLogFilePath() {
     return path.join(LOGS_DIR, `atlas-${today}.log`);
 }
 
-function writeToLogFile(message) {
-    try {
-        fs.mkdirSync(LOGS_DIR, { recursive: true });
-        const timestamp = new Date().toISOString();
-        const logLine = `[${timestamp}] ${message}\n`;
-        fs.appendFileSync(getLogFilePath(), logLine);
-    } catch (err) {
-        console.error("Failed to write log:", err.message);
+// Buffered async log writer. Bot stdout fires this on every line (heartbeat,
+// telemetry, tool calls — hundreds of lines during agent activity). Switching
+// from appendFileSync to a 200ms-coalesced async append keeps the Electron
+// main thread free for IPC and the UI. Buffered lines are flushed on
+// before-quit so the user never loses log content on a clean exit.
+let _logDirEnsured = false;
+let _logBuffer = "";
+let _logFlushTimer = null;
+const _LOG_FLUSH_MS = 200;
+
+function _flushLogBuffer() {
+    if (!_logBuffer) return;
+    const data = _logBuffer;
+    _logBuffer = "";
+    if (!_logDirEnsured) {
+        try { fs.mkdirSync(LOGS_DIR, { recursive: true }); _logDirEnsured = true; }
+        catch (err) { console.error("Failed to create log dir:", err.message); return; }
     }
+    fs.appendFile(getLogFilePath(), data, (err) => {
+        if (err) console.error("Failed to write log:", err.message);
+    });
 }
+
+function writeToLogFile(message) {
+    const timestamp = new Date().toISOString();
+    _logBuffer += `[${timestamp}] ${message}\n`;
+    if (_logFlushTimer) return;
+    _logFlushTimer = setTimeout(() => { _logFlushTimer = null; _flushLogBuffer(); }, _LOG_FLUSH_MS);
+}
+
+// On clean shutdown, flush whatever is still buffered. Use sync append here
+// because this is the single moment where blocking is acceptable — the app
+// is exiting anyway.
+app.on("before-quit", () => {
+    if (_logFlushTimer) { clearTimeout(_logFlushTimer); _logFlushTimer = null; }
+    if (_logBuffer) {
+        try {
+            fs.mkdirSync(LOGS_DIR, { recursive: true });
+            fs.appendFileSync(getLogFilePath(), _logBuffer);
+            _logBuffer = "";
+        } catch (err) { console.error("Failed to flush log on exit:", err.message); }
+    }
+});
 
 // ── OAuth callback page ────────────────────────
 // Rendered by the ephemeral localhost:8844 server that catches Google's
@@ -542,18 +575,6 @@ function initProtection() {
             }
         });
     });
-
-    // Detect debugger attachment
-    setInterval(() => {
-        const start = performance.now();
-        // debugger statement takes significantly longer when debugger is attached
-        // This is a timing-based detection
-        const elapsed = performance.now() - start;
-        if (elapsed > 100) {
-            console.error("[SECURITY] Debugger detected. Exiting.");
-            app.quit();
-        }
-    }, 5000);
 
     // Integrity check: verify our ASAR hasn't been tampered with
     const asarPath = path.join(process.resourcesPath, "app.asar");

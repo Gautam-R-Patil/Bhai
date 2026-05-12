@@ -64,7 +64,11 @@
         themeObserver: null,
         paletteCache: {},
         firingTimer: null,
+        lastInteractionAt: 0,
+        idlePaused: false,
     };
+
+    const IDLE_PAUSE_MS = 30_000;
 
     function $(id) {
         return document.getElementById(id);
@@ -1083,14 +1087,62 @@
         if (state.themeObserver) return;
         try {
             const observer = new MutationObserver(() => {
-                _resolvePalette();
+                // Theme change only changes CSS-variable values; node fills
+                // and edge strokes are pulled from those variables. Recolor
+                // in place via the existing selections instead of tearing
+                // down + rebuilding the d3 force simulation, which used to
+                // cost a 100-node O(n²) restart on every theme tick.
+                const palette = _resolvePalette();
                 _renderLegend();
-                if (state.graph) _renderGraph();
+                if (state.gNodes) {
+                    state.gNodes.selectAll("circle.studio-node-core")
+                        .attr("fill", (d) => palette[d.kind] || palette.entity);
+                    state.gNodes.selectAll("circle.studio-node-glow")
+                        .attr("fill", (d) => palette[d.kind] || palette.entity);
+                }
+                if (state.gEdges) {
+                    state.gEdges.selectAll("path")
+                        .attr("stroke", (d) => {
+                            if (d.kind === "kg") return palette.edgeKg;
+                            if (d.kind === "mention") return palette.edgeMention;
+                            if (d.kind === "provenance") return palette.edgeProv;
+                            if (d.kind === "similarity") return palette.edgeSim;
+                            return palette.edgeMention;
+                        });
+                }
             });
             observer.observe(document.body, { attributes: true, attributeFilter: ["class"] });
             observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-theme"] });
             state.themeObserver = observer;
         } catch { /* MutationObserver missing — skip */ }
+    }
+
+    function _bumpInteraction() {
+        state.lastInteractionAt = Date.now();
+        if (state.idlePaused) {
+            state.idlePaused = false;
+        }
+    }
+
+    let _idleCheckTimer = null;
+    function _startIdleWatch() {
+        if (_idleCheckTimer) return;
+        state.lastInteractionAt = Date.now();
+        _idleCheckTimer = setInterval(() => {
+            if (document.hidden) return;
+            const elapsed = Date.now() - state.lastInteractionAt;
+            const shouldPause = elapsed > IDLE_PAUSE_MS;
+            if (shouldPause !== state.idlePaused) {
+                state.idlePaused = shouldPause;
+            }
+        }, 5_000);
+    }
+    function _stopIdleWatch() {
+        if (_idleCheckTimer) {
+            clearInterval(_idleCheckTimer);
+            _idleCheckTimer = null;
+        }
+        state.idlePaused = false;
     }
 
     async function refresh() {
@@ -1111,12 +1163,13 @@
         }
     }
 
-    const MAX_CONCURRENT_FIRINGS = 8;
+    const MAX_CONCURRENT_FIRINGS = 3;
     let activeFirings = 0;
 
     function _fireSynapse() {
         if (!state.gEdges || !state.gSynapse || !state.graph || !window.d3) return;
         if (document.hidden) return;
+        if (state.idlePaused) return;
         if (state.simulation && state.simulation.alpha() > 0.4) return;
         if (activeFirings >= MAX_CONCURRENT_FIRINGS) return;
         const edgePaths = state.gEdges.selectAll("path").nodes();
@@ -1145,6 +1198,13 @@
         const duration = 500 + Math.random() * 450;
         const start = performance.now();
         const step = (now) => {
+            // If the tab/window went hidden mid-flight, abort: getPointAtLength
+            // forces an SVG layout pass on every frame and is wasted off-screen.
+            if (document.hidden || state.idlePaused) {
+                dot.remove();
+                activeFirings = Math.max(0, activeFirings - 1);
+                return;
+            }
             const t = Math.min(1, (now - start) / duration);
             const eased = t * t * (3 - 2 * t);
             const pt = candidate.getPointAtLength(eased * total);
@@ -1160,14 +1220,18 @@
 
     function _startFiring() {
         if (state.firingTimer) return;
-        // Tight cadence: every 180-360 ms try to spawn 1-2 new firings.
-        // Combined with the 8-concurrent cap, the canvas hosts a constant
-        // shimmer of ~4-6 traveling pulses across distributed regions.
+        // Cadence: 600-1200 ms gap, single fires (occasional doubles) capped
+        // at MAX_CONCURRENT_FIRINGS=3. Visual still reads as alive but does
+        // ~70% less SVG geometry work than the original 180-360ms cadence.
         const tick = () => {
-            const gap = 180 + Math.random() * 180;
+            const gap = state.idlePaused
+                ? 5_000
+                : 600 + Math.random() * 600;
             state.firingTimer = setTimeout(() => {
-                const burst = 1 + (Math.random() < 0.45 ? 1 : 0);
-                for (let i = 0; i < burst; i++) _fireSynapse();
+                if (!state.idlePaused) {
+                    const burst = 1 + (Math.random() < 0.15 ? 1 : 0);
+                    for (let i = 0; i < burst; i++) _fireSynapse();
+                }
                 tick();
             }, gap);
         };
@@ -1264,6 +1328,8 @@
         if (state.mounted) {
             // Tab re-activation — resume simulation if it was paused.
             if (state.simulation) state.simulation.alpha(0.3).restart();
+            _bumpInteraction();
+            _startIdleWatch();
             _startFiring();
             await _loadInsights();
             return;
@@ -1275,6 +1341,15 @@
         _watchTheme();
         window.addEventListener("resize", _onResize);
         document.addEventListener("keydown", _onKeydown);
+        // Any pointer/keyboard activity counts as "user is here", which
+        // takes Memory Studio out of idle pause. Listeners are passive.
+        const studioRoot = document.getElementById("tab-memory") || document;
+        studioRoot.addEventListener("mousemove", _bumpInteraction, { passive: true });
+        studioRoot.addEventListener("pointerdown", _bumpInteraction, { passive: true });
+        studioRoot.addEventListener("wheel", _bumpInteraction, { passive: true });
+        studioRoot.addEventListener("keydown", _bumpInteraction, { passive: true });
+        state._studioRoot = studioRoot;
+        _startIdleWatch();
         await refresh();
         await _loadInsights();
         _startFiring();
@@ -1366,6 +1441,7 @@
     function pause() {
         if (state.simulation) state.simulation.stop();
         _stopFiring();
+        _stopIdleWatch();
     }
 
     function destroy() {
@@ -1373,6 +1449,14 @@
         if (state.themeObserver) state.themeObserver.disconnect();
         state.themeObserver = null;
         _stopFiring();
+        _stopIdleWatch();
+        if (state._studioRoot) {
+            state._studioRoot.removeEventListener("mousemove", _bumpInteraction);
+            state._studioRoot.removeEventListener("pointerdown", _bumpInteraction);
+            state._studioRoot.removeEventListener("wheel", _bumpInteraction);
+            state._studioRoot.removeEventListener("keydown", _bumpInteraction);
+            state._studioRoot = null;
+        }
         window.removeEventListener("resize", _onResize);
         document.removeEventListener("keydown", _onKeydown);
         state.simulation = null;

@@ -646,10 +646,12 @@ async function boot() {
 
                     // Periodic expiry sweep (every hour; items older than 7d expire)
                     const EXPIRY_MS = 7 * 24 * 60 * 60_000;
-                    setInterval(() => { manager.expireOlderThan(EXPIRY_MS); }, 60 * 60_000);
+                    const _expireT = setInterval(() => { manager.expireOlderThan(EXPIRY_MS); }, 60 * 60_000);
+                    _expireT.unref?.();
 
                     // Periodic deferred-ready sweep (every minute)
-                    setInterval(() => { manager.readyDeferred(); }, 60_000);
+                    const _readyT = setInterval(() => { manager.readyDeferred(); }, 60_000);
+                    _readyT.unref?.();
                 } else {
                     console.log("[BOOT] InboxManager skipped: no raw DB handle");
                 }
@@ -925,15 +927,17 @@ async function boot() {
                 console.error("[MEMORY][REPLAY] Dream replay failed:", err)
             );
             // Decay runs every 6 hours for cleaner memory
-            setInterval(() => {
+            const _decayT = setInterval(() => {
                 runDailyDecay();
             }, 6 * 60 * 60 * 1000);
+            _decayT.unref?.();
             // Dream replay stays nightly (24h)
-            setInterval(() => {
+            const _replayT = setInterval(() => {
                 runDreamReplay(llm).catch(err =>
                     console.error("[MEMORY][REPLAY] Dream replay failed:", err)
                 );
             }, 24 * 60 * 60 * 1000);
+            _replayT.unref?.();
         }, msUntil);
 
         console.log(`   Decay   : every 6h (next at ${next3am.toLocaleTimeString()})`);

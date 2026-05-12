@@ -28,6 +28,47 @@ let browserContext: BrowserContext = null;
 
 const BROWSER_PROFILE_DIR = path.resolve("data", "browser-profile");
 
+// ── Idle close ────────────────────────────────────
+// A persistent Playwright Chromium context holds 200-500 MB of RAM after
+// any browser-tool call, even if the agent never uses it again. Without an
+// idle-close timer the bot keeps Chromium resident for the full process
+// lifetime. After 30 min of no browser activity, close the context. The
+// profile directory is preserved so cookies/logins survive the close, and
+// the next browser-tool call lazily relaunches via the existing init path
+// — adds ~3s latency to that single first call but releases all RAM in the
+// meantime. ATLAS_BROWSER_IDLE_CLOSE_MS=0 disables.
+const _IDLE_CLOSE_MS_DEFAULT = 30 * 60_000;
+const _idleCloseEnabled = (() => {
+    const raw = process.env.ATLAS_BROWSER_IDLE_CLOSE_MS;
+    if (raw === undefined) return _IDLE_CLOSE_MS_DEFAULT;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) return 0;
+    return n;
+})();
+let _idleCloseTimer: ReturnType<typeof setTimeout> | null = null;
+
+function _scheduleIdleClose(): void {
+    if (!_idleCloseEnabled) return;
+    if (_idleCloseTimer) clearTimeout(_idleCloseTimer);
+    _idleCloseTimer = setTimeout(() => {
+        _idleCloseTimer = null;
+        if (!browserContext) return;
+        const ctx = browserContext;
+        browserContext = null;
+        ctx.close().catch(() => { /* already closed or detached */ });
+        elementCache = null;
+        lastElementMap = [];
+        console.log(`  💤 Browser idle ${Math.round(_idleCloseEnabled / 60_000)}min → closed (will relaunch on next browser tool)`);
+    }, _idleCloseEnabled);
+    // Don't keep the bot process alive solely to schedule a close.
+    _idleCloseTimer.unref?.();
+}
+
+/** Bump the idle-close clock — every browser-tool entry point should call this. */
+export function touchBrowserActivity(): void {
+    if (browserContext) _scheduleIdleClose();
+}
+
 // Global element map from last scan (label → Handle mapping)
 let lastElementMap: InteractiveElement[] = [];
 
@@ -136,7 +177,10 @@ export async function getBrowser(): Promise<BrowserContext> {
         return { pages: () => [], newPage: async () => await getActivePage() } as unknown as BrowserContext;
     }
 
-    if (browserContext) return browserContext;
+    if (browserContext) {
+        _scheduleIdleClose();
+        return browserContext;
+    }
     if (_browserInitPromise) return _browserInitPromise;
 
     _browserInitPromise = (async (): Promise<BrowserContext> => {
@@ -239,7 +283,9 @@ export async function getBrowser(): Promise<BrowserContext> {
     })();
 
     try {
-        return await _browserInitPromise;
+        const ctx = await _browserInitPromise;
+        _scheduleIdleClose();
+        return ctx;
     } catch (err) {
         // Release the lock so a subsequent call can retry the init from
         // scratch. Also null out browserContext — launchPersistentContext
@@ -271,6 +317,7 @@ export async function getActivePage(): Promise<Page> {
 
     // Playwright mode
     const context = await getBrowser();
+    _scheduleIdleClose();
     const pages = context.pages();
     if (pages.length === 0) return await context.newPage();
     const idx = Math.min(activePageIndex, pages.length - 1);

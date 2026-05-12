@@ -222,6 +222,7 @@ function startRefreshTimer(): void {
             console.warn("[Session] Token refresh failed, will re-create on next use");
         }
     }, REFRESH_INTERVAL);
+    _refreshTimer.unref?.();
 }
 
 function stopRefreshTimer(): void {

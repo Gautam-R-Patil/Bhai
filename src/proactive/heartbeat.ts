@@ -312,6 +312,7 @@ export function startHeartbeat(llm: LLMClient, cfg: HeartbeatConfig): void {
             console.error("Heartbeat error:", (err as Error).message);
         }
     }, cfg.intervalMs);
+    heartbeatTimer.unref?.();
 
     console.log(`💓 Heartbeat started (every ${cfg.intervalMs / 1000}s)`);
 }

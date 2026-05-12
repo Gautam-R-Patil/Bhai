@@ -1068,20 +1068,62 @@ function getPlaceholderForApp(app: string): string {
 function startPlaceholderBroadcast(): void {
     if (placeholderInterval) clearInterval(placeholderInterval);
 
+    // Cache the last presence lookup. The broadcast runs every 15s, but
+    // getUserPresence() spawns 3 child processes (ioreg + 2× osascript on
+    // macOS, powershell w/ inline C# compile on Windows) just to learn the
+    // frontmost app. We only need the frontmost app for placeholder text.
+    // - On app-switch: the boundary bus tells us instantly, no spawn needed.
+    // - Otherwise: re-fetch only when the cache is older than 60s.
+    let cachedFrontmost: string | null = null;
+    let cachedAt = 0;
+    const FRONTMOST_TTL_MS = 60_000;
+    let unsubAppSwitch: (() => void) | null = null;
+
+    const sendPlaceholder = (frontmost: string) => {
+        const placeholder = getPlaceholderForApp(frontmost);
+        for (const client of overlayClients) {
+            sendToClient(client, { type: "placeholder", text: placeholder });
+        }
+    };
+
     const broadcast = async () => {
         if (overlayClients.size === 0) return;
+        const fresh = cachedFrontmost && (Date.now() - cachedAt) < FRONTMOST_TTL_MS;
+        if (fresh && cachedFrontmost) {
+            sendPlaceholder(cachedFrontmost);
+            return;
+        }
         try {
             const presence = await getUserPresence();
-            const placeholder = getPlaceholderForApp(presence.frontmostApp);
-            for (const client of overlayClients) {
-                sendToClient(client, { type: "placeholder", text: placeholder });
-            }
+            cachedFrontmost = presence.frontmostApp;
+            cachedAt = Date.now();
+            sendPlaceholder(presence.frontmostApp);
         } catch { /* non-critical */ }
     };
 
-    // Initial broadcast after 2 seconds, then every 15 seconds
+    // Wire to the boundary bus: any reported app_switch updates the cache
+    // from the meta payload (no extra spawn) and re-broadcasts immediately.
+    void (async () => {
+        try {
+            const { globalBoundaryBus } = await import("../proactive/boundary-events.js");
+            unsubAppSwitch = globalBoundaryBus.subscribe((event) => {
+                if (event.kind !== "app_switch") return;
+                const to = (event.meta?.to as string | undefined) ?? null;
+                if (!to) return;
+                cachedFrontmost = to;
+                cachedAt = Date.now();
+                if (overlayClients.size > 0) sendPlaceholder(to);
+            });
+        } catch { /* boundary bus not available — fall back to polling only */ }
+    })();
+
+    // Initial broadcast after 2 seconds, then every 15 seconds (cheap when
+    // cached, only spawns child processes once per minute at most).
     setTimeout(broadcast, 2000);
     placeholderInterval = setInterval(broadcast, 15_000);
+    placeholderInterval.unref?.();
+
+    void unsubAppSwitch; // unsubscribe handle preserved if future stop() needs it
 }
 
 // ── Voice Capture ─────────────────────────────
