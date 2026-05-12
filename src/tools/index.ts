@@ -167,6 +167,7 @@ import {
 } from "./memory-tools.js";
 import { coreMemoryAppend, coreMemoryDelete, coreMemoryRead, coreMemoryReplace } from "./memory-tools-advanced.js";
 import { osComputerAction } from "./os-computer-action.js";
+import { osClickId, osInspect } from "./os-inspect.js";
 import { IS_LINUX, IS_MAC, IS_WIN } from "./platform.js";
 import { platformInfoTool } from "./platform-info.js";
 import { createPresentation, exportPresentation, listPresentations, modifyPresentation } from "./presentation/index.js";
@@ -300,6 +301,10 @@ registry.set(shellExec.schema.function.name, shellExec);
 // Cross-platform structured action tool (Phase 1) — preferred over individual os_click/os_type
 // when emitting complex actions; resolution-independent via percentage coords by default.
 registry.set(osComputerAction.schema.function.name, osComputerAction);
+
+// Cross-OS accessibility tree inspection (Phase 2) — sub-300ms element list, no vision call needed.
+registry.set(osInspect.schema.function.name, osInspect);
+registry.set(osClickId.schema.function.name, osClickId);
 
 // ── Platform-specific OS tools ────────────────
 if (IS_MAC) {

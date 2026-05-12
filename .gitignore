@@ -110,6 +110,7 @@ desktop/hostinger-upload/
 !src/tools/__tests__/
 !src/tools/__tests__/os-computer-action.test.ts
 !src/screen/__tests__/capability-detector.test.ts
+!src/screen/__tests__/ax-dump.test.ts
 !src/utils/win-shell.test.ts
 !src/utils/platform-capabilities.test.ts
 !src/commands/index.test.ts

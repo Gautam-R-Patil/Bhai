@@ -65,6 +65,7 @@ mod ip_guard;
 mod browser_guard;
 mod harness_optimizer;
 mod secrets_sanitizer;
+mod ax_walker;
 
 #[cfg(feature = "vad")]
 mod pcm_vad;
