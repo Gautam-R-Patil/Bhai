@@ -1,12 +1,12 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
-    type ScreenDimensions,
     clampToMonitor,
-    scaleImageToScreen,
-    percentageToScreen,
     clearScreenDimensionsCache,
+    percentageToScreen,
+    type ScreenDimensions,
+    scaleImageToScreen,
 } from "../screen-dimensions.js";
 
 const primary: ScreenDimensions = {
@@ -134,7 +134,10 @@ describe("percentageToScreen", () => {
     });
 
     it("respects monitor origin", () => {
-        expect(percentageToScreen({ percentX: 0.5, percentY: 0.5, dims: secondaryRight })).toEqual({ x: 1440 + 960, y: 540 });
+        expect(percentageToScreen({ percentX: 0.5, percentY: 0.5, dims: secondaryRight })).toEqual({
+            x: 1440 + 960,
+            y: 540,
+        });
         expect(percentageToScreen({ percentX: 0, percentY: 0, dims: secondaryLeft })).toEqual({ x: -1280, y: 0 });
     });
 

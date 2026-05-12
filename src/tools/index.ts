@@ -10,7 +10,6 @@ import { firePostToolUse, firePreToolUse } from "../hooks/index.js";
 import { executeMCPTool, getMCPToolSchemas, isMCPTool } from "../mcp/client.js";
 import { sideloadSkillTool } from "../store/sideload.js";
 import { contactLookupTool, whatsappGroupInfoTool, whatsappSendTool, whatsappStickerTool } from "../whatsapp.js";
-import { askOwnerTool } from "./ask-owner.js";
 import {
     appManager,
     calendarTool,
@@ -21,8 +20,10 @@ import {
     windowManage,
 } from "./app-integrations.js";
 import { appleNotesTool } from "./apple-notes.js";
+import { askOwnerTool } from "./ask-owner.js";
 import { audioVisualize } from "./audio-visualize.js";
 import { blenderScript } from "./blender.js";
+import { brandAudit } from "./brand-audit.js";
 import {
     browserAnalyze,
     browserBack,
@@ -33,6 +34,7 @@ import {
     browserClose,
     browserDrag,
     browserExtract,
+    browserHandleCaptcha,
     browserHoldClick,
     browserHover,
     browserKeyboard,
@@ -53,9 +55,8 @@ import {
     browserSwitchTab,
     browserType,
     browserUploadFile,
-    browserWait,
     browserVideoControl,
-    browserHandleCaptcha,
+    browserWait,
     openCliTools,
 } from "./browser/index.js";
 import { channelSendTool } from "./channel-send.js";
@@ -69,26 +70,29 @@ import { codebaseQueryTool } from "./coding/codebase-query.js";
 import { demoProjectTool } from "./coding/demo-project.js";
 import { approveDesignDocsTool, designDocsTool } from "./coding/design-docs.js";
 import { edit } from "./coding/edit.js";
-import { mdToPdfTool } from "./coding/md-to-pdf.js";
-import { screenRecordTool } from "./coding/screen-record.js";
 import { fixIssue } from "./coding/fix-issue.js";
 import { gitOpTool } from "./coding/git-op.js";
 import { glob } from "./coding/glob.js";
 import { grep } from "./coding/grep.js";
 import { iconSearch } from "./coding/icon-search.js";
 import { lsp } from "./coding/lsp.js";
+import { mdToPdfTool } from "./coding/md-to-pdf.js";
 import { notebookEdit } from "./coding/notebook-edit.js";
 import { enterPlanModeTool, exitPlanModeTool } from "./coding/plan-mode-tools.js";
 import { read } from "./coding/read.js";
 import { scaffoldProject } from "./coding/scaffold-project.js";
+import { screenRecordTool } from "./coding/screen-record.js";
 import { enterSpecModeTool, finalizeSpecTool } from "./coding/spec-mode-tools.js";
 import { stockImageSearch } from "./coding/stock-image-search.js";
 import { testRun } from "./coding/test-run.js";
 import { walkthroughTool } from "./coding/walkthrough.js";
 import { webAssetDownload } from "./coding/web-asset-download.js";
 import { write } from "./coding/write.js";
+import { coldOutreach } from "./cold-outreach.js";
 import { computerUseTool, setComputerUseLLM } from "./computer-use-tool.js";
 import { createTool, listDynamicTools, setRegistryRef } from "./create-tool.js";
+import { credentialSetup } from "./credential-setup.js";
+import { cronTool } from "./cron-tool.js";
 import {
     cancelDeepResearch,
     checkDeepResearch,
@@ -108,11 +112,9 @@ import { compressFiles, fileMetadata, openInApp, runShortcut, screenRecord, tras
 import { deleteFile, listDirectory } from "./files.js";
 import { generateImage } from "./generate-image.js";
 import { getCurrentTime, type ToolDefinition } from "./get-current-time.js";
-import { cronTool } from "./cron-tool.js";
 import { gifSearch } from "./gif-search.js";
 import { githubTool } from "./github-api.js";
 import { gitmcpDocs } from "./gitmcp.js";
-import { storeBrowse } from "./store-browse.js";
 import { gmailTool, googleAccounts, googleCalendarTool } from "./google-api.js";
 import {
     linuxOsClick,
@@ -151,6 +153,7 @@ import {
     sendScreenshot,
     setBrightness,
 } from "./macos.js";
+import { marketingSchedule } from "./marketing-schedule.js";
 import {
     identityUpdate,
     identityView,
@@ -163,22 +166,20 @@ import {
     traitUpdate,
 } from "./memory-tools.js";
 import { coreMemoryAppend, coreMemoryDelete, coreMemoryRead, coreMemoryReplace } from "./memory-tools-advanced.js";
+import { osComputerAction } from "./os-computer-action.js";
 import { IS_LINUX, IS_MAC, IS_WIN } from "./platform.js";
 import { platformInfoTool } from "./platform-info.js";
 import { createPresentation, exportPresentation, listPresentations, modifyPresentation } from "./presentation/index.js";
 import { repoMapTool } from "./repo-map.js";
-import { brandAudit } from "./brand-audit.js";
-import { coldOutreach } from "./cold-outreach.js";
-import { credentialSetup } from "./credential-setup.js";
-import { marketingSchedule } from "./marketing-schedule.js";
 import { cancelTask, listTasks, scheduleTask, setReminder } from "./scheduled.js";
-import { socialPost } from "./social-post.js";
 import { validateToolInput } from "./schema-validator.js";
 import { sendFileTool } from "./send-file.js";
 import { shellExec } from "./shell.js";
 import { shellCheckProcess, shellExecBackground, shellKillProcess, shellWaitProcess } from "./shell-monitor.js";
+import { socialPost } from "./social-post.js";
 import { sonosControl } from "./sonos.js";
 import { spotifyTool } from "./spotify.js";
+import { storeBrowse } from "./store-browse.js";
 import { clearSwarmProgress, setSwarmLLM, setSwarmProgress, swarmTask } from "./swarm-tool.js";
 import {
     bluetoothControl,
@@ -231,6 +232,11 @@ import {
 const STORE_TOOLS_PATH = path.join(homedir(), ".atlas", "store", "tools");
 
 export { setIngestLLM } from "../documents/ingest.js";
+export { setCampaignPlannerLLM } from "../marketing/campaign-planner.js";
+export { setOutreachLLM } from "../marketing/outreach-engine.js";
+export { setProductHuntLLM } from "../marketing/product-hunt.js";
+export { setScriptWriterLLM } from "../marketing/script-writer.js";
+export { setBrandAuditLLM } from "./brand-audit.js";
 export { getActiveChannelSenders, registerChannelSender } from "./channel-send.js";
 export { loadDynamicTools } from "./create-tool.js";
 export { initDocumentTools } from "./document.js";
@@ -257,11 +263,6 @@ export {
     setSwarmLLM,
     setSwarmProgress,
 };
-export { setBrandAuditLLM } from "./brand-audit.js";
-export { setScriptWriterLLM } from "../marketing/script-writer.js";
-export { setCampaignPlannerLLM } from "../marketing/campaign-planner.js";
-export { setOutreachLLM } from "../marketing/outreach-engine.js";
-export { setProductHuntLLM } from "../marketing/product-hunt.js";
 
 // ── Tool Registry ─────────────────────────────
 
@@ -295,6 +296,10 @@ registry.set(coreMemoryDelete.schema.function.name, coreMemoryDelete);
 
 // Shell tool (cross-platform)
 registry.set(shellExec.schema.function.name, shellExec);
+
+// Cross-platform structured action tool (Phase 1) — preferred over individual os_click/os_type
+// when emitting complex actions; resolution-independent via percentage coords by default.
+registry.set(osComputerAction.schema.function.name, osComputerAction);
 
 // ── Platform-specific OS tools ────────────────
 if (IS_MAC) {

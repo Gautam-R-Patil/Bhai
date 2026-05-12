@@ -323,12 +323,28 @@ export const osClick: ToolDefinition = {
         function: {
             name: "os_click",
             description:
-                "Click, double-click, right-click, or move the mouse on macOS. Pass x,y coordinates as you see them in the os_screenshot image — they are auto-scaled to actual screen resolution.",
+                "Click, double-click, right-click, or move the mouse on macOS. PREFERRED: pass percent_x/percent_y in [0..1] (resolution-independent, works on any monitor/DPI). LEGACY: pass x/y image-pixel coords from os_screenshot — they are auto-scaled to actual screen resolution.",
             parameters: {
                 type: "object",
                 properties: {
-                    x: { type: "number", description: "X coordinate from the screenshot image" },
-                    y: { type: "number", description: "Y coordinate from the screenshot image" },
+                    x: {
+                        type: "number",
+                        description: "X coordinate from the screenshot image (legacy — prefer percent_x)",
+                    },
+                    y: {
+                        type: "number",
+                        description: "Y coordinate from the screenshot image (legacy — prefer percent_y)",
+                    },
+                    percent_x: {
+                        type: "number",
+                        description:
+                            "X position as 0..1 fraction of focused-monitor width. PREFERRED — resolution-independent.",
+                    },
+                    percent_y: {
+                        type: "number",
+                        description:
+                            "Y position as 0..1 fraction of focused-monitor height. PREFERRED — resolution-independent.",
+                    },
                     action: {
                         type: "string",
                         enum: ["click", "double_click", "right_click", "move"],
@@ -336,10 +352,11 @@ export const osClick: ToolDefinition = {
                     },
                     raw: {
                         type: "boolean",
-                        description: "If true, treat x/y as raw screen pixels without scaling (default: false)",
+                        description:
+                            "If true, treat x/y as raw screen pixels without scaling (default: false). Ignored when percent_x/percent_y are given.",
                     },
                 },
-                required: ["x", "y"],
+                required: [],
             },
         },
     },
@@ -349,23 +366,52 @@ export const osClick: ToolDefinition = {
             return JSON.stringify({ error: "os_click is only available on macOS." });
         }
 
-        const rawX = input.x as number;
-        const rawY = input.y as number;
         const action = (input.action as string) || "click";
         const useRaw = input.raw as boolean;
+        const pctX = input.percent_x as number | undefined;
+        const pctY = input.percent_y as number | undefined;
+        const rawX = input.x as number | undefined;
+        const rawY = input.y as number | undefined;
 
-        // Always probe current screen dims (multi-monitor + stale-cache safe).
-        // The helper caches for 500ms so consecutive clicks don't re-probe.
-        const dims = await getScreenDimensions({ focusedWindow: true });
-        const RESIZE_WIDTH = 1280;
-        const scaled = scaleImageToScreen({ rawX, rawY, imageWidth: RESIZE_WIDTH, dims, raw: useRaw });
-        const x = scaled.x;
-        const y = scaled.y;
-        if (!useRaw) {
-            console.log(
-                `  🖱️  Click: image(${rawX},${rawY}) → screen(${x},${y}) [scale=${scaled.scaleFactor} monitor=${dims.monitorId} origin=(${dims.originX},${dims.originY})]`,
-            );
+        // Validate: must have either pixel coords or percentage coords
+        const hasPercent = typeof pctX === "number" && typeof pctY === "number";
+        const hasPixel = typeof rawX === "number" && typeof rawY === "number";
+        if (!hasPercent && !hasPixel) {
+            return JSON.stringify({
+                error: "os_click requires either (percent_x, percent_y) [preferred] or (x, y) coordinates.",
+            });
         }
+        if (hasPercent && hasPixel) {
+            return JSON.stringify({
+                error: "os_click: provide EITHER (percent_x, percent_y) OR (x, y), not both — they would conflict.",
+            });
+        }
+
+        const dims = await getScreenDimensions({ focusedWindow: true });
+        let x: number;
+        let y: number;
+        let coordMode: string;
+        if (hasPercent) {
+            const resolved = percentageToScreen({ percentX: pctX, percentY: pctY, dims });
+            x = resolved.x;
+            y = resolved.y;
+            coordMode = "percent";
+        } else {
+            const RESIZE_WIDTH = 1280;
+            const scaled = scaleImageToScreen({
+                rawX: rawX as number,
+                rawY: rawY as number,
+                imageWidth: RESIZE_WIDTH,
+                dims,
+                raw: useRaw,
+            });
+            x = scaled.x;
+            y = scaled.y;
+            coordMode = useRaw ? "raw" : `image(scale=${scaled.scaleFactor})`;
+        }
+        console.log(
+            `  🖱️  Click: ${coordMode}(${hasPercent ? `${pctX},${pctY}` : `${rawX},${rawY}`}) → screen(${x},${y}) [monitor=${dims.monitorId} origin=(${dims.originX},${dims.originY})]`,
+        );
 
         // Use JXA with CoreGraphics CGEvent for native mouse control
         // This is zero-dependency and works with accessibility permissions
@@ -874,10 +920,10 @@ async function getAccessibilityElements(): Promise<
                 elements.push({
                     role: parts[0].trim(),
                     name: parts[1].trim(),
-                    x: parseInt(parts[2]) || 0,
-                    y: parseInt(parts[3]) || 0,
-                    w: parseInt(parts[4]) || 0,
-                    h: parseInt(parts[5]) || 0,
+                    x: parseInt(parts[2], 10) || 0,
+                    y: parseInt(parts[3], 10) || 0,
+                    w: parseInt(parts[4], 10) || 0,
+                    h: parseInt(parts[5], 10) || 0,
                 });
             }
         }
@@ -1013,10 +1059,10 @@ export const osNav: ToolDefinition = {
                 if (parts.length >= 6) {
                     const name = parts[1].trim();
                     if (!name) continue;
-                    const x = parseInt(parts[2]) || 0;
-                    const y = parseInt(parts[3]) || 0;
-                    const w = parseInt(parts[4]) || 0;
-                    const h = parseInt(parts[5]) || 0;
+                    const x = parseInt(parts[2], 10) || 0;
+                    const y = parseInt(parts[3], 10) || 0;
+                    const w = parseInt(parts[4], 10) || 0;
+                    const h = parseInt(parts[5], 10) || 0;
                     elements.push({
                         label: labelCounter++,
                         text: name,
@@ -2107,7 +2153,7 @@ export const osClickElement: ToolDefinition = {
         let label: number | undefined;
         if (labelInput !== undefined) {
             label = typeof labelInput === "string" ? parseInt(labelInput, 10) : (labelInput as number);
-            if (isNaN(label)) label = undefined;
+            if (Number.isNaN(label)) label = undefined;
         }
 
         // Ensure element map is populated — auto-refresh if expired
@@ -2403,12 +2449,21 @@ export const osMultiAction: ToolDefinition = {
                         // offset + clamping that the previous bare lastScreenWidth read silently lost.
                         const RESIZE_WIDTH = 1280;
                         const dims = await getScreenDimensions({ focusedWindow: true });
-                        const scaled = scaleImageToScreen({ rawX: act.x || 0, rawY: act.y || 0, imageWidth: RESIZE_WIDTH, dims });
+                        const scaled = scaleImageToScreen({
+                            rawX: act.x || 0,
+                            rawY: act.y || 0,
+                            imageWidth: RESIZE_WIDTH,
+                            dims,
+                        });
                         const sx = scaled.x;
                         const sy = scaled.y;
                         const jxa = `ObjC.import('CoreGraphics');var pt=$.CGPointMake(${sx},${sy});var m=$.CGEventCreateMouseEvent(null,$.kCGEventMouseMoved,pt,0);$.CGEventPost($.kCGHIDEventTap,m);delay(0.05);var d=$.CGEventCreateMouseEvent(null,$.kCGEventLeftMouseDown,pt,0);$.CGEventPost($.kCGHIDEventTap,d);delay(0.05);var u=$.CGEventCreateMouseEvent(null,$.kCGEventLeftMouseUp,pt,0);$.CGEventPost($.kCGHIDEventTap,u);`;
                         await execFileAsync("osascript", ["-l", "JavaScript", "-e", jxa], { timeout: 5000 });
-                        results.push({ action: "click", ok: true, detail: { x: act.x, y: act.y, screen_x: sx, screen_y: sy } });
+                        results.push({
+                            action: "click",
+                            ok: true,
+                            detail: { x: act.x, y: act.y, screen_x: sx, screen_y: sy },
+                        });
                         break;
                     }
                     case "click_label": {
@@ -2516,7 +2571,7 @@ export const osMultiAction: ToolDefinition = {
                     case "combo": {
                         const parts = (act.key || act.text || "").split("+");
                         const mainKey = parts.pop() || "";
-                        const modifiers = parts.map((m: string) => m.trim() + " down").join(", ");
+                        const modifiers = parts.map((m: string) => `${m.trim()} down`).join(", ");
                         const script = `tell application "System Events"\n    keystroke "${mainKey}" using {${modifiers}}\nend tell`;
                         await execFileAsync("osascript", ["-e", script], { timeout: 3000 });
                         results.push({ action: "combo", ok: true, detail: { combo: act.key } });
@@ -2782,8 +2837,8 @@ export const osKeyboardShortcuts: ToolDefinition = {
     },
     async handler(input) {
         const appName = input.app_name as string;
-        const shortcuts = APP_SHORTCUTS[appName] || APP_SHORTCUTS["Global"];
-        const globalShortcuts = APP_SHORTCUTS["Global"];
+        const shortcuts = APP_SHORTCUTS[appName] || APP_SHORTCUTS.Global;
+        const globalShortcuts = APP_SHORTCUTS.Global;
 
         const result: Record<string, string> = {};
         if (appName !== "Global" && shortcuts !== globalShortcuts) {

@@ -3,9 +3,10 @@
 // See LICENSE.md for details.
 
 import {
-    type ScreenDimensions,
+    clampToMonitor,
     getScreenDimensions,
     percentageToScreen,
+    type ScreenDimensions,
     scaleImageToScreen,
 } from "./screen-dimensions.js";
 
@@ -29,7 +30,12 @@ export interface ComputerActionCommon {
 }
 
 export type ComputerAction =
-    | (ComputerActionCommon & { action: "click"; coord: [number, number]; button?: "left" | "right" | "middle"; modifiers?: ComputerModifier[] })
+    | (ComputerActionCommon & {
+          action: "click";
+          coord: [number, number];
+          button?: "left" | "right" | "middle";
+          modifiers?: ComputerModifier[];
+      })
     | (ComputerActionCommon & { action: "double_click"; coord: [number, number]; button?: "left" | "right" | "middle" })
     | (ComputerActionCommon & { action: "triple_click"; coord: [number, number] })
     | (ComputerActionCommon & { action: "right_click"; coord: [number, number] })
@@ -88,7 +94,15 @@ export function parseComputerAction(input: unknown): ValidationSuccess | Validat
     if (typeof raw.imageWidth === "number" && raw.imageWidth > 0) common.imageWidth = raw.imageWidth;
     if (typeof raw.monitorId === "string") common.monitorId = raw.monitorId;
 
-    const needsCoord = ["click", "double_click", "triple_click", "right_click", "mouse_move", "scroll", "zoom"].includes(action);
+    const needsCoord = [
+        "click",
+        "double_click",
+        "triple_click",
+        "right_click",
+        "mouse_move",
+        "scroll",
+        "zoom",
+    ].includes(action);
     let coord: [number, number] | null = null;
     if (needsCoord) {
         const c = raw.coord;
@@ -101,21 +115,47 @@ export function parseComputerAction(input: unknown): ValidationSuccess | Validat
         }
     }
 
+    // Narrow `coord` for the cases that require it. The `needsCoord` block above
+    // already returned an error if coord was missing — this guard satisfies TS flow.
+    const needsCoordCase = needsCoord && action !== "drag";
+    if (needsCoordCase && !coord) {
+        return { ok: false, error: `Action "${action}" requires coord (internal: should be unreachable)` };
+    }
+
     switch (action) {
         case "click": {
-            const button = (typeof raw.button === "string" ? raw.button.toLowerCase() : "left") as "left" | "right" | "middle";
-            if (button !== "left" && button !== "right" && button !== "middle") return { ok: false, error: `Invalid button: ${button}` };
+            const button = (typeof raw.button === "string" ? raw.button.toLowerCase() : "left") as
+                | "left"
+                | "right"
+                | "middle";
+            if (button !== "left" && button !== "right" && button !== "middle")
+                return { ok: false, error: `Invalid button: ${button}` };
             const modifiers = parseModifiers(raw.modifiers);
-            return { ok: true, action: { action: "click", coord: coord!, button, modifiers, ...common } };
+            return {
+                ok: true,
+                action: { action: "click", coord: coord as [number, number], button, modifiers, ...common },
+            };
         }
         case "double_click":
         case "triple_click":
         case "right_click":
         case "mouse_move":
-            return { ok: true, action: { action: action as "double_click" | "triple_click" | "right_click" | "mouse_move", coord: coord!, ...common } };
+            return {
+                ok: true,
+                action: {
+                    action: action as "double_click" | "triple_click" | "right_click" | "mouse_move",
+                    coord: coord as [number, number],
+                    ...common,
+                },
+            };
         case "drag": {
             const path = raw.path;
-            if (!Array.isArray(path) || path.length < 2) return { ok: false, error: "drag requires path: [[x,y], [x,y], ...] (>=2 points)" };
+            if (!Array.isArray(path) || path.length < 2)
+                return { ok: false, error: "drag requires path: [[x,y], [x,y], ...] (>=2 points)" };
+            // Bound path length — each point spawns an exec call on Linux.
+            const MAX_DRAG_POINTS = 200;
+            if (path.length > MAX_DRAG_POINTS)
+                return { ok: false, error: `drag.path too long (max ${MAX_DRAG_POINTS} points)` };
             const points: Array<[number, number]> = [];
             for (const p of path) {
                 if (!Array.isArray(p) || p.length !== 2 || typeof p[0] !== "number" || typeof p[1] !== "number") {
@@ -126,32 +166,64 @@ export function parseComputerAction(input: unknown): ValidationSuccess | Validat
             return { ok: true, action: { action: "drag", path: points, ...common } };
         }
         case "scroll": {
-            const scrollDy = typeof raw.scrollDy === "number" ? raw.scrollDy : (typeof raw.scrollAmount === "number" ? raw.scrollAmount : 0);
+            const scrollDy =
+                typeof raw.scrollDy === "number"
+                    ? raw.scrollDy
+                    : typeof raw.scrollAmount === "number"
+                      ? raw.scrollAmount
+                      : 0;
             const scrollDx = typeof raw.scrollDx === "number" ? raw.scrollDx : 0;
             if (scrollDx === 0 && scrollDy === 0) return { ok: false, error: "scroll needs scrollDx or scrollDy != 0" };
-            return { ok: true, action: { action: "scroll", coord: coord!, scrollDx, scrollDy, ...common } };
+            // Bound velocity — Linux dispatches O(|dy|) exec calls. Cap at ±10000 px-equivalent.
+            const MAX_SCROLL = 10_000;
+            if (Math.abs(scrollDx) > MAX_SCROLL || Math.abs(scrollDy) > MAX_SCROLL)
+                return { ok: false, error: `scroll velocity too large (max ±${MAX_SCROLL} per axis)` };
+            return {
+                ok: true,
+                action: { action: "scroll", coord: coord as [number, number], scrollDx, scrollDy, ...common },
+            };
         }
         case "type":
-            if (typeof raw.text !== "string" || raw.text.length === 0) return { ok: false, error: "type requires non-empty text" };
+            if (typeof raw.text !== "string" || raw.text.length === 0)
+                return { ok: false, error: "type requires non-empty text" };
+            // Bound text length — pasting MBs blocks osascript / clipboard for seconds.
+            if (raw.text.length > 100_000) return { ok: false, error: "type.text too long (max 100000 chars)" };
             return { ok: true, action: { action: "type", text: raw.text } };
         case "key":
-            if (typeof raw.text !== "string" || raw.text.length === 0) return { ok: false, error: "key requires text (e.g. 'enter', 'ctrl+c')" };
+            if (typeof raw.text !== "string" || raw.text.length === 0)
+                return { ok: false, error: "key requires text (e.g. 'enter', 'ctrl+c')" };
+            if (raw.text.length > 200) return { ok: false, error: "key.text too long (max 200 chars)" };
             return { ok: true, action: { action: "key", text: raw.text } };
         case "hold_key":
-            if (typeof raw.text !== "string" || raw.text.length === 0) return { ok: false, error: "hold_key requires text" };
-            if (typeof raw.durationMs !== "number" || raw.durationMs <= 0) return { ok: false, error: "hold_key requires durationMs > 0" };
+            if (typeof raw.text !== "string" || raw.text.length === 0)
+                return { ok: false, error: "hold_key requires text" };
+            if (raw.text.length > 200) return { ok: false, error: "hold_key.text too long (max 200 chars)" };
+            if (typeof raw.durationMs !== "number" || raw.durationMs <= 0)
+                return { ok: false, error: "hold_key requires durationMs > 0" };
+            // Cap duration to prevent agent from locking input for hours/days.
+            if (raw.durationMs > 60_000) return { ok: false, error: "hold_key.durationMs must be <= 60000" };
             return { ok: true, action: { action: "hold_key", text: raw.text, durationMs: raw.durationMs } };
         case "wait": {
-            const durationMs = typeof raw.durationMs === "number" ? raw.durationMs : (typeof raw.delay === "number" ? raw.delay : 1000);
-            if (durationMs <= 0 || durationMs > 60_000) return { ok: false, error: "wait.durationMs must be in (0, 60000]" };
+            const durationMs =
+                typeof raw.durationMs === "number" ? raw.durationMs : typeof raw.delay === "number" ? raw.delay : 1000;
+            if (durationMs <= 0 || durationMs > 60_000)
+                return { ok: false, error: "wait.durationMs must be in (0, 60000]" };
             return { ok: true, action: { action: "wait", durationMs } };
         }
         case "screenshot":
             return { ok: true, action: { action: "screenshot" } };
         case "zoom": {
             const r = raw.region;
-            if (!Array.isArray(r) || r.length !== 4 || !r.every((v) => typeof v === "number")) return { ok: false, error: "zoom requires region: [x0,y0,x1,y1]" };
-            return { ok: true, action: { action: "zoom", region: [r[0] as number, r[1] as number, r[2] as number, r[3] as number], ...common } };
+            if (!Array.isArray(r) || r.length !== 4 || !r.every((v) => typeof v === "number"))
+                return { ok: false, error: "zoom requires region: [x0,y0,x1,y1]" };
+            return {
+                ok: true,
+                action: {
+                    action: "zoom",
+                    region: [r[0] as number, r[1] as number, r[2] as number, r[3] as number],
+                    ...common,
+                },
+            };
         }
         default:
             return { ok: false, error: `Unknown action: ${action}` };
@@ -163,7 +235,16 @@ function parseModifiers(input: unknown): ComputerModifier[] | undefined {
     const out: ComputerModifier[] = [];
     for (const m of input) {
         const s = String(m).toLowerCase();
-        if (s === "command" || s === "control" || s === "shift" || s === "option" || s === "alt" || s === "ctrl" || s === "cmd" || s === "meta") {
+        if (
+            s === "command" ||
+            s === "control" ||
+            s === "shift" ||
+            s === "option" ||
+            s === "alt" ||
+            s === "ctrl" ||
+            s === "cmd" ||
+            s === "meta"
+        ) {
             out.push(s as ComputerModifier);
         }
     }
@@ -177,7 +258,7 @@ export async function resolveCoord(
     overrideDims?: ScreenDimensions,
 ): Promise<ResolvedCoord> {
     const system = common.coordSystem || "percent";
-    const dims = overrideDims || await getScreenDimensions({ focusedWindow: true });
+    const dims = overrideDims || (await getScreenDimensions({ focusedWindow: true }));
     if (system === "percent") {
         const { x, y } = percentageToScreen({ percentX: coord[0], percentY: coord[1], dims });
         return { x, y, monitorId: dims.monitorId, scaleFactor: 1 };
@@ -187,6 +268,9 @@ export async function resolveCoord(
         const { x, y, scaleFactor } = scaleImageToScreen({ rawX: coord[0], rawY: coord[1], imageWidth, dims });
         return { x, y, monitorId: dims.monitorId, scaleFactor };
     }
-    // screen — passthrough with monitor-origin offset applied if needed
-    return { x: Math.round(coord[0]), y: Math.round(coord[1]), monitorId: dims.monitorId, scaleFactor: 1 };
+    // screen — global CG/display coords, NOT monitor-relative. We clamp to the picked
+    // monitor for defence-in-depth (a Number.MAX_SAFE_INTEGER from a malicious LLM
+    // should not reach CGEventCreateMouseEvent / SetCursorPos).
+    const clamped = clampToMonitor(coord[0], coord[1], dims);
+    return { x: clamped.x, y: clamped.y, monitorId: dims.monitorId, scaleFactor: 1 };
 }

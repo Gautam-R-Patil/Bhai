@@ -85,9 +85,24 @@ describe("parseAction — JSON structured input", () => {
         expect(r).toEqual({ type: "key", key: "enter" });
     });
 
-    it("parses JSON wrapped in surrounding text", () => {
-        const r = parseAction('Step 3: emit {"action":"click","x":100,"y":200} to select Save');
+    it("parses JSON with 'Step N:' prefix", () => {
+        const r = parseAction('Step 3: {"action":"click","x":100,"y":200}');
         expect(r).toEqual({ type: "click", x: 100, y: 200 });
+    });
+
+    it("parses JSON wrapped in code-fence backticks", () => {
+        const r = parseAction('`{"action":"click","x":100,"y":200}`');
+        expect(r).toEqual({ type: "click", x: 100, y: 200 });
+    });
+
+    it("does NOT misparse JSON embedded in surrounding prose (security: dominant-content rule)", () => {
+        // Prior behavior misparsed this as a click. New behavior: falls through to other parsers,
+        // which will treat the leading "Click on item..." as a text-target click.
+        const r = parseAction('Click on item with {"action":"rm"} in its description');
+        expect(r.type).toBe("click");
+        // Should be parsed as click-by-text, NOT as a JSON action with action=rm.
+        expect(r.text).toBeDefined();
+        expect(r.text).not.toBe("rm");
     });
 });
 

@@ -346,6 +346,9 @@ export function percentageToScreen(opts: PercentageInputs): { x: number; y: numb
     const py = Math.max(0, Math.min(1, opts.percentY));
     // Clamp final coord — at percent=1.0 the naive formula yields originX+width which is
     // one past the last valid pixel (max = originX+width-1). Use clampToMonitor.
-    return clampToMonitor(opts.dims.originX + px * opts.dims.width, opts.dims.originY + py * opts.dims.height, opts.dims);
+    return clampToMonitor(
+        opts.dims.originX + px * opts.dims.width,
+        opts.dims.originY + py * opts.dims.height,
+        opts.dims,
+    );
 }
-

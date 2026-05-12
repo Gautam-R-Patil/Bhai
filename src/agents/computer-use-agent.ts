@@ -199,7 +199,16 @@ export function parseAction(step: string): DesktopAction {
 }
 
 function tryParseJsonAction(text: string): DesktopAction | null {
-    const m = text.match(/\{[\s\S]*?"action"\s*:\s*"[^"]+"[\s\S]*?\}/);
+    // Only match if the JSON action blob is the DOMINANT content of the step
+    // (the step is just a JSON object, optionally wrapped in `Step N:` or backticks).
+    // Previously matched anywhere — caused misparses like:
+    //   "Click on item with {action:'rm'} in its description"
+    const trimmed = text
+        .replace(/^Step\s+\d+[:.]?\s*/i, "")
+        .replace(/^`+|`+$/g, "")
+        .trim();
+    if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
+    const m = trimmed.match(/^\{[\s\S]*?"action"\s*:\s*"[^"]+"[\s\S]*?\}$/);
     if (!m) return null;
     try {
         const obj = JSON.parse(m[0]) as Record<string, unknown>;
@@ -420,13 +429,16 @@ $.CGEventPost($.kCGHIDEventTap, $.CGEventCreateMouseEvent(null, $.kCGEventMouseM
  * separators that some osascript versions treat as line breaks.
  */
 function escapeApplescript(text: string): string {
-    return text
-        .replace(/\\/g, "\\\\")
-        .replace(/"/g, '\\"')
-        .replace(/\n/g, "\\n")
-        .replace(/\r/g, "\\r")
-        .replace(/\t/g, "\\t")
-        .replace(/[\u2028\u2029\x00]/g, "");
+    return (
+        text
+            .replace(/\\/g, "\\\\")
+            .replace(/"/g, '\\"')
+            .replace(/\n/g, "\\n")
+            .replace(/\r/g, "\\r")
+            .replace(/\t/g, "\\t")
+            // biome-ignore lint/suspicious/noControlCharactersInRegex: NUL filtered intentionally to prevent osascript injection.
+            .replace(/[\u2028\u2029\x00]/g, "")
+    );
 }
 
 /**

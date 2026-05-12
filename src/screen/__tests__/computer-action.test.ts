@@ -1,6 +1,6 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { parseComputerAction, resolveCoord } from "../computer-action.js";
 import type { ScreenDimensions } from "../screen-dimensions.js";
 
@@ -77,7 +77,14 @@ describe("parseComputerAction — click variants", () => {
 
 describe("parseComputerAction — drag / scroll / type / key / wait", () => {
     it("parses drag with multi-point path", () => {
-        const r = parseComputerAction({ action: "drag", path: [[0, 0], [100, 100], [200, 200]] });
+        const r = parseComputerAction({
+            action: "drag",
+            path: [
+                [0, 0],
+                [100, 100],
+                [200, 200],
+            ],
+        });
         expect(r.ok).toBe(true);
         if (r.ok && r.action.action === "drag") expect(r.action.path.length).toBe(3);
     });

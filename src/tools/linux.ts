@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { getScreenDimensions, scaleImageToScreen } from "../screen/screen-dimensions.js";
+import { getScreenDimensions, percentageToScreen, scaleImageToScreen } from "../screen/screen-dimensions.js";
 import type { ToolDefinition } from "./get-current-time.js";
 import { captureScreenshot, getScreenResolution } from "./platform.js";
 import { getTelegramContext } from "./send-file.js";
@@ -267,12 +267,14 @@ export const linuxOsClick: ToolDefinition = {
         function: {
             name: "os_click",
             description:
-                "Click, double-click, right-click, or move the mouse on Linux. Pass x,y coordinates as you see them in the os_screenshot image — they are auto-scaled to actual screen resolution.",
+                "Click, double-click, right-click, or move the mouse on Linux. PREFERRED: pass percent_x/percent_y in [0..1] (resolution-independent, works on any monitor/DPI). LEGACY: pass x/y image-pixel coords from os_screenshot.",
             parameters: {
                 type: "object",
                 properties: {
-                    x: { type: "number", description: "X coordinate from the screenshot image" },
-                    y: { type: "number", description: "Y coordinate from the screenshot image" },
+                    x: { type: "number", description: "X coordinate from the screenshot image (legacy)" },
+                    y: { type: "number", description: "Y coordinate from the screenshot image (legacy)" },
+                    percent_x: { type: "number", description: "X position as 0..1 fraction. PREFERRED." },
+                    percent_y: { type: "number", description: "Y position as 0..1 fraction. PREFERRED." },
                     action: {
                         type: "string",
                         enum: ["click", "double_click", "right_click", "move"],
@@ -280,10 +282,11 @@ export const linuxOsClick: ToolDefinition = {
                     },
                     raw: {
                         type: "boolean",
-                        description: "If true, treat x/y as raw screen pixels without scaling (default: false)",
+                        description:
+                            "If true, treat x/y as raw screen pixels without scaling. Ignored when percent_x/y are given.",
                     },
                 },
-                required: ["x", "y"],
+                required: [],
             },
         },
     },
@@ -293,21 +296,51 @@ export const linuxOsClick: ToolDefinition = {
             return JSON.stringify({ error: "os_click is only available on Linux." });
         }
 
-        const rawX = input.x as number;
-        const rawY = input.y as number;
         const action = (input.action as string) || "click";
         const useRaw = input.raw as boolean;
+        const pctX = input.percent_x as number | undefined;
+        const pctY = input.percent_y as number | undefined;
+        const rawX = input.x as number | undefined;
+        const rawY = input.y as number | undefined;
+
+        const hasPercent = typeof pctX === "number" && typeof pctY === "number";
+        const hasPixel = typeof rawX === "number" && typeof rawY === "number";
+        if (!hasPercent && !hasPixel) {
+            return JSON.stringify({
+                error: "os_click requires either (percent_x, percent_y) [preferred] or (x, y) coordinates.",
+            });
+        }
+        if (hasPercent && hasPixel) {
+            return JSON.stringify({
+                error: "os_click: provide EITHER (percent_x, percent_y) OR (x, y), not both — they would conflict.",
+            });
+        }
 
         const dims = await getScreenDimensions({ focusedWindow: true });
-        const RESIZE_WIDTH = 1920;
-        const scaled = scaleImageToScreen({ rawX, rawY, imageWidth: RESIZE_WIDTH, dims, raw: useRaw });
-        const x = scaled.x;
-        const y = scaled.y;
-        if (!useRaw) {
-            console.log(
-                `  [CLICK] image(${rawX},${rawY}) -> screen(${x},${y}) [scale=${scaled.scaleFactor} monitor=${dims.monitorId} origin=(${dims.originX},${dims.originY})]`,
-            );
+        let x: number;
+        let y: number;
+        let coordMode: string;
+        if (hasPercent) {
+            const resolved = percentageToScreen({ percentX: pctX, percentY: pctY, dims });
+            x = resolved.x;
+            y = resolved.y;
+            coordMode = "percent";
+        } else {
+            const RESIZE_WIDTH = 1920;
+            const scaled = scaleImageToScreen({
+                rawX: rawX as number,
+                rawY: rawY as number,
+                imageWidth: RESIZE_WIDTH,
+                dims,
+                raw: useRaw,
+            });
+            x = scaled.x;
+            y = scaled.y;
+            coordMode = useRaw ? "raw" : `image(scale=${scaled.scaleFactor})`;
         }
+        console.log(
+            `  [CLICK] ${coordMode}(${hasPercent ? `${pctX},${pctY}` : `${rawX},${rawY}`}) -> screen(${x},${y}) [monitor=${dims.monitorId} origin=(${dims.originX},${dims.originY})]`,
+        );
 
         try {
             if (isWayland()) {
@@ -703,6 +736,7 @@ export const linuxSetBrightness: ToolDefinition = {
             if (device) {
                 const maxBrightness = parseInt(
                     await fs.readFile(join(backlightDir, device, "max_brightness"), "utf-8"),
+                    10,
                 );
                 const target = Math.round((clamped / 100) * maxBrightness);
                 await fs.writeFile(join(backlightDir, device, "brightness"), String(target));
