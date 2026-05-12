@@ -2,7 +2,7 @@
   <img src="./desktop/logo.png" alt="A.T.L.A.S Logo" width="120" />
   <h1>A.T.L.A.S</h1>
   <p><b>Advanced Technology for Logical Autonomous Systems</b></p>
-  <p>v0.2.0 &middot; Autonomous Personal AI Agent &middot; Built by <a href="https://tryatlasagi.com">XAGI Labs</a></p>
+  <p>v0.2.1 &middot; Autonomous Personal AI Agent &middot; Built by <a href="https://tryatlasagi.com">XAGI Labs</a></p>
 </div>
 
 ---
