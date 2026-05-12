@@ -1443,13 +1443,47 @@ function envForChannel(name: string, channel: string): string | undefined {
   return process.env[name];
 }
 
+// Channels in descending stability order. When the client asks for a
+// channel that hasn't been provisioned yet, we fall back to the most-stable
+// channel that IS provisioned. So while only alpha exists, every client —
+// stable, beta, alpha — gets the alpha yml. As soon as beta env vars are
+// set, stable+beta clients flip to beta and alpha clients keep their own.
+const CHANNEL_STABILITY: readonly string[] = ["stable", "beta", "alpha"];
+
+function resolveChannelWithFallback(
+  platform: "mac" | "win",
+  requested: string,
+): string {
+  const P = platform.toUpperCase();
+  const probe = (ch: string) =>
+    !!envForChannel("UPDATE_VERSION", ch) && !!envForChannel(`UPDATE_URL_${P}`, ch);
+  if (probe(requested)) return requested;
+  // The requested channel has no artifacts — find a substitute. Walk
+  // toward less-stable channels first (so when only alpha is provisioned,
+  // a "stable" client gets alpha instead of nothing); then walk back
+  // toward more-stable channels as a last resort.
+  const startIdx = CHANNEL_STABILITY.indexOf(requested);
+  if (startIdx >= 0) {
+    for (let i = startIdx + 1; i < CHANNEL_STABILITY.length; i++) {
+      if (probe(CHANNEL_STABILITY[i])) return CHANNEL_STABILITY[i];
+    }
+    for (let i = startIdx - 1; i >= 0; i--) {
+      if (probe(CHANNEL_STABILITY[i])) return CHANNEL_STABILITY[i];
+    }
+  } else {
+    for (const ch of CHANNEL_STABILITY) if (probe(ch)) return ch;
+  }
+  return requested; // nothing provisioned — caller will return EMPTY_YAML
+}
+
 function buildYaml(opts: {
   platform: "mac" | "win";
   channel: string;
   defaultFilename: string;
 }): string | null {
-  const { platform, channel, defaultFilename } = opts;
+  const { platform, defaultFilename } = opts;
   const P = platform.toUpperCase(); // MAC | WIN
+  const channel = resolveChannelWithFallback(platform, opts.channel);
 
   const version = envForChannel("UPDATE_VERSION", channel);
   const url = envForChannel(`UPDATE_URL_${P}`, channel);
