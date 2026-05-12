@@ -1,38 +1,38 @@
 {
-  "recordedAt": "2026-05-12T11:04:30.158Z",
+  "recordedAt": "2026-05-12T11:36:23.258Z",
   "nodeVersion": "v24.10.0",
   "platform": "darwin-arm64",
   "results": [
     {
       "module": "spreading",
       "case": "5-node line",
-      "tsMs": 3.403209000000004,
-      "nativeMs": 23.12466599999999,
-      "speedup": 0.14716792017666352,
+      "tsMs": 3.4213749999999976,
+      "nativeMs": 23.158541999999997,
+      "speedup": 0.14773706393088124,
       "iterations": 5000
     },
     {
       "module": "spreading",
       "case": "50-node dense",
-      "tsMs": 28.694125,
-      "nativeMs": 405.30512500000003,
-      "speedup": 0.07079635373473256,
+      "tsMs": 28.961667000000006,
+      "nativeMs": 408.82425,
+      "speedup": 0.0708413627616268,
       "iterations": 5000
     },
     {
       "module": "spreading",
       "case": "150-node dense",
-      "tsMs": 11.899499999999989,
-      "nativeMs": 957.9493339999999,
-      "speedup": 0.012421846936635577,
+      "tsMs": 11.7990420000001,
+      "nativeMs": 967.580167,
+      "speedup": 0.012194381822214531,
       "iterations": 5000
     },
     {
       "module": "spreading",
       "case": "500-node dense (caps at 150 activated)",
-      "tsMs": 11.496792000000141,
-      "nativeMs": 3140.7213749999996,
-      "speedup": 0.003660557759600736,
+      "tsMs": 11.610042000000021,
+      "nativeMs": 3115.4324160000006,
+      "speedup": 0.0037266229690536864,
       "iterations": 5000
     }
   ]

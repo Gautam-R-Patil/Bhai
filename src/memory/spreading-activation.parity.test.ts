@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { isNativeAvailable } from "../native/index.js";
 import { __testOnlyBfsWithAdjacency } from "./spreading-activation.js";
+import { checkParity } from "./spreading-activation.parity-helpers.js";
 
 interface Rel {
     entityId: number;
@@ -11,57 +12,102 @@ interface Rel {
     weight: number;
 }
 
-function bfsBoth(
-    seeds: Array<{ entityId: number; energy: number; via: string }>,
-    adjacency: Record<number, Rel[]>,
-) {
+function bfsBoth(seeds: Array<{ entityId: number; energy: number; via: string }>, adjacency: Record<number, Rel[]>) {
     const tsResult = __testOnlyBfsWithAdjacency(seeds, adjacency, "ts");
     const nativeResult = __testOnlyBfsWithAdjacency(seeds, adjacency, "native");
     return { tsResult, nativeResult };
-}
-
-// On graphs with equal-weight competing paths, the BFS expansion order
-// determines which path "wins" the energy race at deep convergence nodes.
-// TS iterates JS object keys in insertion order; Rust iterates HashMap in
-// hasher-randomized order. Tiny per-node energy deltas (bounded by
-// DECAY_PER_HOP^MAX_HOPS × max_weight ≈ 0.7^3 × 0.95 ≈ 0.33) are expected
-// and acceptable — the SAN_WEIGHT=0.3 blend smooths these out in final scores.
-const ENERGY_TOLERANCE = 0.5;
-
-/**
- * Normalize result order before comparison: two BFS runs that produce the
- * same set of (memoryId → score, hops, via) entries are equivalent regardless
- * of iteration order. Equal-score entries can land in any order because the
- * underlying HashMap iteration order is non-deterministic in Rust.
- */
-function normalize(results: ReturnType<typeof __testOnlyBfsWithAdjacency>) {
-    return [...results].sort((a, b) =>
-        a.memoryId !== b.memoryId
-            ? a.memoryId - b.memoryId
-            : a.hops - b.hops,
-    );
 }
 
 function assertParity(
     ts: ReturnType<typeof __testOnlyBfsWithAdjacency>,
     native: ReturnType<typeof __testOnlyBfsWithAdjacency>,
 ) {
-    const tsN = normalize(ts);
-    const nN = normalize(native);
-    expect(nN.length).toBe(tsN.length);
-    for (let i = 0; i < tsN.length; i++) {
-        expect(nN[i].memoryId).toBe(tsN[i].memoryId);
-        expect(nN[i].hops).toBe(tsN[i].hops);
-        expect(Math.abs(nN[i].activationScore - tsN[i].activationScore)).toBeLessThan(
-            ENERGY_TOLERANCE,
-        );
-        // `via` may legitimately differ when a node is reached through equally-strong
-        // multiple paths — the path picked first depends on iteration order.
-        // Confirm both pick a valid `via` (non-empty), don't require equality.
-        expect(typeof nN[i].via).toBe("string");
-        expect(nN[i].via.length).toBeGreaterThan(0);
-    }
+    const failures = checkParity(ts, native);
+    expect(failures, failures ? JSON.stringify(failures, null, 2) : undefined).toBeNull();
 }
+
+// Direct unit tests for the checkParity comparator. These do NOT exercise
+// the BFS — they assert that the comparator itself catches every divergence
+// type it claims to. Without these the --parity-check CI gate could silently
+// false-negate on a comparator bug (off-by-one, wrong operator, missed field).
+describe("checkParity comparator (unit)", () => {
+    // The `via` field is intentionally not validated by the comparator (see
+    // parity-helpers.ts docstring), so the helper sets a fixed via that the
+    // comparator ignores; only the dedicated via-tolerance test below uses
+    // distinct via strings.
+    const seed = (memoryId: number, score: number, hops = 1) => ({
+        memoryId,
+        activationScore: score,
+        hops,
+        via: "via-irrelevant",
+    });
+
+    it("returns null when inputs are byte-identical", () => {
+        const a = [seed(2, 0.5)];
+        const b = [seed(2, 0.5)];
+        expect(checkParity(a, b)).toBeNull();
+    });
+
+    it("catches length mismatch", () => {
+        const failures = checkParity([seed(2, 0.5)], [seed(2, 0.5), seed(3, 0.4)]);
+        expect(failures).toEqual([{ index: -1, field: "length", ts: 1, native: 2 }]);
+    });
+
+    it("catches memoryId mismatch (and reports exactly one failure)", () => {
+        const failures = checkParity([seed(2, 0.5)], [seed(99, 0.5)]);
+        expect(failures).toHaveLength(1);
+        expect(failures?.[0]).toEqual({ index: 0, field: "memoryId", ts: 2, native: 99 });
+    });
+
+    it("catches hops mismatch (and reports exactly one failure)", () => {
+        const failures = checkParity([seed(2, 0.5, 1)], [seed(2, 0.5, 3)]);
+        expect(failures).toHaveLength(1);
+        expect(failures?.[0]).toEqual({ index: 0, field: "hops", ts: 1, native: 3 });
+    });
+
+    // ENERGY_TOLERANCE boundary: comparator uses `>=`, so a delta of exactly
+    // 0.5 must fail and 0.499 must pass. These two cases together pin the
+    // operator so a >/>= mutation is caught.
+    it("catches activationScore at exactly ENERGY_TOLERANCE (>=)", () => {
+        const failures = checkParity([seed(2, 0.5)], [seed(2, 1.0)]); // delta exactly 0.5
+        expect(failures).toHaveLength(1);
+        expect(failures?.[0].field).toBe("activationScore");
+    });
+
+    it("tolerates activationScore just under ENERGY_TOLERANCE", () => {
+        const failures = checkParity([seed(2, 0.5)], [seed(2, 0.999)]); // delta 0.499
+        expect(failures).toBeNull();
+    });
+
+    it("catches activationScore well beyond ENERGY_TOLERANCE", () => {
+        const failures = checkParity([seed(2, 0.5)], [seed(2, 1.5)]); // delta 1.0
+        expect(failures).toHaveLength(1);
+        expect(failures?.[0].field).toBe("activationScore");
+    });
+
+    it("does not flag `via` differences (intentionally tolerated)", () => {
+        const failures = checkParity(
+            [{ memoryId: 2, activationScore: 0.5, hops: 1, via: "via-a" }],
+            [{ memoryId: 2, activationScore: 0.5, hops: 1, via: "via-b" }],
+        );
+        expect(failures).toBeNull();
+    });
+
+    it("normalizes order: same set in different order is parity", () => {
+        const a = [seed(2, 0.5), seed(3, 0.4)];
+        const b = [seed(3, 0.4), seed(2, 0.5)];
+        expect(checkParity(a, b)).toBeNull();
+    });
+
+    // Pins the secondary sort key (hops) for tied memoryIds: same id, two
+    // different hop counts, swapped order. A bug in normalize's tiebreaker
+    // would mismatch them at the same array index and report a hops failure.
+    it("normalizes ties on memoryId by hops as the secondary key", () => {
+        const a = [seed(2, 0.5, 1), seed(2, 0.4, 2)];
+        const b = [seed(2, 0.4, 2), seed(2, 0.5, 1)];
+        expect(checkParity(a, b)).toBeNull();
+    });
+});
 
 describe("Spreading-activation BFS parity (Phase 0)", () => {
     if (!isNativeAvailable()) {
@@ -70,10 +116,7 @@ describe("Spreading-activation BFS parity (Phase 0)", () => {
     }
 
     it("empty adjacency returns no expanded results", () => {
-        const { tsResult, nativeResult } = bfsBoth(
-            [{ entityId: 1, energy: 0.9, via: "seed" }],
-            {},
-        );
+        const { tsResult, nativeResult } = bfsBoth([{ entityId: 1, energy: 0.9, via: "seed" }], {});
         assertParity(tsResult, nativeResult);
         expect(tsResult).toHaveLength(0);
     });
@@ -82,10 +125,7 @@ describe("Spreading-activation BFS parity (Phase 0)", () => {
         const adjacency: Record<number, Rel[]> = {
             1: [{ entityId: 2, entityName: "neighbor", weight: 0.8 }],
         };
-        const { tsResult, nativeResult } = bfsBoth(
-            [{ entityId: 1, energy: 1.0, via: "seed" }],
-            adjacency,
-        );
+        const { tsResult, nativeResult } = bfsBoth([{ entityId: 1, energy: 1.0, via: "seed" }], adjacency);
         assertParity(tsResult, nativeResult);
         expect(tsResult).toHaveLength(1);
         expect(tsResult[0].memoryId).toBe(2);
@@ -97,10 +137,7 @@ describe("Spreading-activation BFS parity (Phase 0)", () => {
         const adjacency: Record<number, Rel[]> = {
             1: [{ entityId: 2, entityName: "weak", weight: 0.1 }],
         };
-        const { tsResult, nativeResult } = bfsBoth(
-            [{ entityId: 1, energy: 0.5, via: "seed" }],
-            adjacency,
-        );
+        const { tsResult, nativeResult } = bfsBoth([{ entityId: 1, energy: 0.5, via: "seed" }], adjacency);
         assertParity(tsResult, nativeResult);
         expect(tsResult).toHaveLength(0);
     });
@@ -111,10 +148,7 @@ describe("Spreading-activation BFS parity (Phase 0)", () => {
             edges.push({ entityId: 100 + i, entityName: `edge${i}`, weight: 1.0 - i * 0.05 });
         }
         const adjacency: Record<number, Rel[]> = { 1: edges };
-        const { tsResult, nativeResult } = bfsBoth(
-            [{ entityId: 1, energy: 1.0, via: "seed" }],
-            adjacency,
-        );
+        const { tsResult, nativeResult } = bfsBoth([{ entityId: 1, energy: 1.0, via: "seed" }], adjacency);
         assertParity(tsResult, nativeResult);
         expect(tsResult.length).toBeLessThanOrEqual(5);
     });
@@ -126,12 +160,9 @@ describe("Spreading-activation BFS parity (Phase 0)", () => {
             3: [{ entityId: 4, entityName: "hop3", weight: 1.0 }],
             4: [{ entityId: 5, entityName: "hop4-should-not-reach", weight: 1.0 }],
         };
-        const { tsResult, nativeResult } = bfsBoth(
-            [{ entityId: 1, energy: 1.0, via: "seed" }],
-            adjacency,
-        );
+        const { tsResult, nativeResult } = bfsBoth([{ entityId: 1, energy: 1.0, via: "seed" }], adjacency);
         assertParity(tsResult, nativeResult);
-        const ids = tsResult.map(r => r.memoryId).sort();
+        const ids = tsResult.map((r) => r.memoryId).sort();
         expect(ids).toContain(2);
         expect(ids).toContain(3);
         expect(ids).toContain(4);
@@ -147,12 +178,9 @@ describe("Spreading-activation BFS parity (Phase 0)", () => {
             2: [{ entityId: 4, entityName: "via-a", weight: 0.9 }],
             3: [{ entityId: 4, entityName: "via-b", weight: 0.9 }],
         };
-        const { tsResult, nativeResult } = bfsBoth(
-            [{ entityId: 1, energy: 1.0, via: "seed" }],
-            adjacency,
-        );
+        const { tsResult, nativeResult } = bfsBoth([{ entityId: 1, energy: 1.0, via: "seed" }], adjacency);
         assertParity(tsResult, nativeResult);
-        const node4 = tsResult.find(r => r.memoryId === 4);
+        const node4 = tsResult.find((r) => r.memoryId === 4);
         expect(node4).toBeDefined();
     });
 
@@ -166,7 +194,7 @@ describe("Spreading-activation BFS parity (Phase 0)", () => {
                     edges.push({
                         entityId: target,
                         entityName: `e${target}`,
-                        weight: 0.6 + (j * 0.1),
+                        weight: 0.6 + j * 0.1,
                     });
                 }
             }
@@ -190,10 +218,7 @@ describe("Spreading-activation BFS parity (Phase 0)", () => {
             }
             adjacency[i] = edges;
         }
-        const { tsResult, nativeResult } = bfsBoth(
-            [{ entityId: 1, energy: 1.0, via: "s" }],
-            adjacency,
-        );
+        const { tsResult, nativeResult } = bfsBoth([{ entityId: 1, energy: 1.0, via: "s" }], adjacency);
         assertParity(tsResult, nativeResult);
         expect(tsResult.length).toBeLessThan(150);
     });

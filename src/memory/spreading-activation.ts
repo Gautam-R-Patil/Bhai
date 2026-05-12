@@ -13,22 +13,18 @@
  * Bounded: MAX_BRANCH_FACTOR=5 per node, MAX_ACTIVATED_NODES=150 total.
  */
 
-import {
-    type NativeActivationResult,
-    type NativeSeedEntity,
-    nativeSpreadActivationBfs,
-} from "../native/index.js";
+import { type NativeActivationResult, type NativeSeedEntity, nativeSpreadActivationBfs } from "../native/index.js";
 import { getKnowledgeGraphDB, getRelationships } from "./knowledge-graph.js";
 import type { Database } from "./sqlite.js";
 
 // ── Constants ─────────────────────────────────
 
-const MAX_BRANCH_FACTOR = 5;     // Top-K strongest edges per node
+const MAX_BRANCH_FACTOR = 5; // Top-K strongest edges per node
 const MAX_ACTIVATED_NODES = 150; // Global budget — stop traversal when hit
-const MAX_HOPS = 3;              // Maximum graph distance from seeds
-const DECAY_PER_HOP = 0.7;      // Energy decays by 30% per hop
+const MAX_HOPS = 3; // Maximum graph distance from seeds
+const DECAY_PER_HOP = 0.7; // Energy decays by 30% per hop
 const ACTIVATION_THRESHOLD = 0.15; // Minimum activation to keep
-const SAN_WEIGHT = 0.3;         // Blend weight: final = direct + SAN_WEIGHT × activation
+const SAN_WEIGHT = 0.3; // Blend weight: final = direct + SAN_WEIGHT × activation
 
 // Native spreading-BFS is OPT-IN, not default. The Rust BFS itself is faster,
 // but FFI overhead + JSON serialization of the adjacency map dominate runtime
@@ -36,6 +32,12 @@ const SAN_WEIGHT = 0.3;         // Blend weight: final = direct + SAN_WEIGHT × 
 // <50-node induced graphs). Bench (scripts/bench-native.ts) shows native is
 // ~17x slower per call at 50 nodes. Set `ATLAS_NATIVE_SPREADING=true` to
 // enable on workloads with large recall fan-out where Rust would amortize.
+//
+// FOLLOW-UP: the perf cliff is JSON serialization, not the BFS itself. To flip
+// the default to native, expose a `spreadActivationBfsTyped(seeds, adjacency:
+// HashMap<i64, Vec<EntityRelation>>)` napi function that takes typed arrays
+// directly via the FFI ABI (no JSON round-trip). Then re-bench, and if native
+// wins on production-sized graphs, flip this to opt-OUT.
 const NATIVE_ENABLED = process.env.ATLAS_NATIVE_SPREADING === "true";
 
 // ── Types ─────────────────────────────────────
@@ -64,10 +66,7 @@ interface ActivatedNode {
  * @param db - The database handle
  * @returns Activated results sorted by activation score descending
  */
-export function spreadActivation(
-    seedScores: Map<number, number>,
-    db: Database | null
-): ActivationResult[] {
+export function spreadActivation(seedScores: Map<number, number>, db: Database | null): ActivationResult[] {
     if (!db || seedScores.size === 0) return [];
 
     const kgDb = getKnowledgeGraphDB();
@@ -81,26 +80,21 @@ export function spreadActivation(
         // Try to find entities related to this memory
         // Using fuzzy matching via entity name lookup
         try {
-            const memoryContent = db.exec(
-                "SELECT content FROM memories WHERE id = ?",
-                [memoryId]
-            );
+            const memoryContent = db.exec("SELECT content FROM memories WHERE id = ?", [memoryId]);
             if (memoryContent.length === 0 || memoryContent[0].values.length === 0) continue;
 
             const content = (memoryContent[0].values[0][0] as string).substring(0, 200);
             // Extract key nouns (words > 4 chars)
-            const keywords = content.toLowerCase()
+            const keywords = content
+                .toLowerCase()
                 .replace(/[^\w\s]/g, " ")
                 .split(/\s+/)
-                .filter(w => w.length > 4);
+                .filter((w) => w.length > 4);
 
             // Find matching entities for top keywords
             const topKeywords = keywords.slice(0, 3);
             for (const kw of topKeywords) {
-                const entities = db.exec(
-                    "SELECT id, name FROM entities WHERE name LIKE ? LIMIT 3",
-                    [`%${kw}%`]
-                );
+                const entities = db.exec("SELECT id, name FROM entities WHERE name LIKE ? LIMIT 3", [`%${kw}%`]);
                 if (entities.length > 0) {
                     for (const row of entities[0].values) {
                         const entityId = row[0] as number;
@@ -112,14 +106,18 @@ export function spreadActivation(
                     }
                 }
             }
-        } catch { /* non-fatal */ }
+        } catch {
+            /* non-fatal */
+        }
     }
 
     if (seedEntities.size === 0) return [];
 
     // ── Phase 2: BFS with bounded branching ──
-    // Native path runs the BFS in Rust for ~3-8x speedup on 50-150 node graphs.
-    // Falls back to TS when native is unavailable or ATLAS_NO_NATIVE_SPREADING=true.
+    // Native path is opt-IN behind ATLAS_NATIVE_SPREADING=true — bench shows
+    // FFI + JSON-serialization overhead dominates BFS savings on the typical
+    // <50-node induced graphs. Falls back to TS when native is unavailable
+    // or the env var is unset.
     const activated = new Map<number, ActivatedNode>();
     runBfs(seedEntities, kgDb, activated);
 
@@ -140,7 +138,7 @@ export function spreadActivation(
                 `SELECT id FROM memories
                  WHERE content LIKE ? AND decay_score > 0.2
                  LIMIT 3`,
-                [`%${entityName}%`]
+                [`%${entityName}%`],
             );
 
             if (memories.length > 0) {
@@ -153,13 +151,15 @@ export function spreadActivation(
                     });
                 }
             }
-        } catch { /* non-fatal */ }
+        } catch {
+            /* non-fatal */
+        }
     }
 
     // ── Phase 4: Also spread through trait co-occurrences ──
     try {
         const traitEdges = db.exec(
-            "SELECT trait_a, trait_b, weight FROM trait_edges WHERE weight > 0.3 ORDER BY weight DESC LIMIT 20"
+            "SELECT trait_a, trait_b, weight FROM trait_edges WHERE weight > 0.3 ORDER BY weight DESC LIMIT 20",
         );
         if (traitEdges.length > 0) {
             // Find memories tagged with correlated traits
@@ -179,12 +179,13 @@ export function spreadActivation(
                          WHERE (content LIKE ? OR content LIKE ? OR tags LIKE ? OR tags LIKE ?)
                          AND decay_score > 0.2
                          LIMIT 2`,
-                        [`%${traitA}%`, `%${traitB}%`, `%${traitA}%`, `%${traitB}%`]
+                        [`%${traitA}%`, `%${traitB}%`, `%${traitA}%`, `%${traitB}%`],
                     );
                     if (related.length > 0) {
                         for (const r of related[0].values) {
                             const memId = r[0] as number;
-                            if (!seedScores.has(memId)) { // Don't duplicate seeds
+                            if (!seedScores.has(memId)) {
+                                // Don't duplicate seeds
                                 results.push({
                                     memoryId: memId,
                                     activationScore: activation,
@@ -197,7 +198,9 @@ export function spreadActivation(
                 }
             }
         }
-    } catch { /* non-fatal */ }
+    } catch {
+        /* non-fatal */
+    }
 
     // Deduplicate and keep highest activation per memory
     const deduped = new Map<number, ActivationResult>();
@@ -209,8 +212,7 @@ export function spreadActivation(
     }
 
     // Sort by activation score descending
-    return Array.from(deduped.values())
-        .sort((a, b) => b.activationScore - a.activationScore);
+    return Array.from(deduped.values()).sort((a, b) => b.activationScore - a.activationScore);
 }
 
 /** Merge SAN results into fused scores */
@@ -218,12 +220,12 @@ export function mergeSANResults(
     fusedScores: Array<{ id: number; score: number }>,
     sanResults: ActivationResult[],
 ): void {
-    const existingIds = new Set(fusedScores.map(f => f.id));
+    const existingIds = new Set(fusedScores.map((f) => f.id));
 
     for (const san of sanResults) {
         if (existingIds.has(san.memoryId)) {
             // Boost existing result
-            const existing = fusedScores.find(f => f.id === san.memoryId);
+            const existing = fusedScores.find((f) => f.id === san.memoryId);
             if (existing) {
                 existing.score += SAN_WEIGHT * san.activationScore;
             }
@@ -251,7 +253,7 @@ function loadSortedRels(kgDb: ReturnType<typeof getKnowledgeGraphDB>, entityId: 
         const rels = getRelationships(kgDb, entityId);
         if (rels.length === 0) return [];
         return rels
-            .map(r => ({
+            .map((r) => ({
                 entityId: r.entity.id,
                 entityName: r.entity.name,
                 weight: (r.relationship.properties as Record<string, number>)?.weight || 0.5,
@@ -263,10 +265,16 @@ function loadSortedRels(kgDb: ReturnType<typeof getKnowledgeGraphDB>, entityId: 
     }
 }
 
-function bfsTs(
+/**
+ * Single source of truth for the TS BFS loop. Both the production path
+ * (bfsTs, which loads relations from the knowledge-graph DB) and the
+ * parity-test path (which loads from an in-memory adjacency map) share this
+ * to ensure the test never silently drifts from the production algorithm.
+ */
+function bfsCore(
     seedEntities: Map<number, { energy: number; via: string }>,
-    kgDb: ReturnType<typeof getKnowledgeGraphDB>,
     activated: Map<number, ActivatedNode>,
+    loadRels: (entityId: number) => SortedRel[],
 ): void {
     const queue: ActivatedNode[] = [];
     let totalActivated = 0;
@@ -288,7 +296,7 @@ function bfsTs(
         if (!current) break;
         if (current.hops >= MAX_HOPS) continue;
 
-        const sortedRels = loadSortedRels(kgDb, current.entityId);
+        const sortedRels = loadRels(current.entityId);
         if (sortedRels.length === 0) continue;
 
         for (const rel of sortedRels) {
@@ -316,6 +324,14 @@ function bfsTs(
     }
 }
 
+function bfsTs(
+    seedEntities: Map<number, { energy: number; via: string }>,
+    kgDb: ReturnType<typeof getKnowledgeGraphDB>,
+    activated: Map<number, ActivatedNode>,
+): void {
+    bfsCore(seedEntities, activated, (entityId) => loadSortedRels(kgDb, entityId));
+}
+
 /**
  * Pre-fetch a bounded slice of the entity graph reachable from `seedEntities`
  * within MAX_HOPS, MAX_BRANCH_FACTOR per node, MAX_ACTIVATED_NODES total.
@@ -326,9 +342,15 @@ function bfsTs(
  * could possibly visit, so the adjacency map is complete enough.
  */
 /**
- * Field names use snake_case to match the Rust serde-deserialized struct
- * (the napi ABI auto-renames to camelCase across FFI, but raw JSON sent via
- * an adjacency_json string is parsed by serde_json directly with Rust names).
+ * Two distinct paths into Rust have different naming requirements:
+ *   - Typed napi structs (e.g. `NativeSeedEntity`, passed as a function
+ *     argument) auto-rename camelCase ↔ snake_case at the FFI ABI boundary.
+ *     Use camelCase TS-side; napi handles the conversion.
+ *   - Raw JSON strings (e.g. `adjacency_json`, parsed inside Rust by
+ *     `serde_json::from_str` against `EntityRelation { entity_id, ... }`)
+ *     are NOT auto-renamed; serde reads the field names verbatim.
+ *     Use snake_case TS-side or serde returns empty.
+ * That's why `NativeSeedEntity` is camelCase but `RustRel` is snake_case.
  */
 interface RustRel {
     entity_id: number;
@@ -337,7 +359,7 @@ interface RustRel {
 }
 
 function toRustRels(rels: SortedRel[]): RustRel[] {
-    return rels.map(r => ({
+    return rels.map((r) => ({
         entity_id: r.entityId,
         entity_name: r.entityName,
         weight: r.weight,
@@ -446,7 +468,7 @@ export function __testOnlyBfsWithAdjacency(
     for (const s of seeds) seedMap.set(s.entityId, { energy: s.energy, via: s.via });
 
     if (mode === "native") {
-        const seedArr: NativeSeedEntity[] = seeds.map(s => ({
+        const seedArr: NativeSeedEntity[] = seeds.map((s) => ({
             entityId: s.entityId,
             energy: s.energy,
             via: s.via,
@@ -472,44 +494,12 @@ export function __testOnlyBfsWithAdjacency(
             });
         }
     } else {
-        const queue: ActivatedNode[] = [];
-        let totalActivated = 0;
-        for (const s of seeds) {
-            const node: ActivatedNode = { entityId: s.entityId, energy: s.energy, hops: 0, via: s.via };
-            activated.set(s.entityId, node);
-            queue.push(node);
-            totalActivated++;
-        }
-        while (totalActivated < MAX_ACTIVATED_NODES) {
-            const current = queue.shift();
-            if (!current) break;
-            if (current.hops >= MAX_HOPS) continue;
-
-            const rels = adjacency[current.entityId] ?? [];
-            const sortedRels = [...rels]
-                .sort((a, b) => b.weight - a.weight)
-                .slice(0, MAX_BRANCH_FACTOR);
-
-            for (const rel of sortedRels) {
-                if (totalActivated >= MAX_ACTIVATED_NODES) break;
-                const neighborEnergy = current.energy * DECAY_PER_HOP * rel.weight;
-                if (neighborEnergy < ACTIVATION_THRESHOLD) continue;
-                const existing = activated.get(rel.entityId);
-                if (existing) {
-                    if (neighborEnergy > existing.energy) existing.energy = neighborEnergy;
-                    continue;
-                }
-                const newNode: ActivatedNode = {
-                    entityId: rel.entityId,
-                    energy: neighborEnergy,
-                    hops: current.hops + 1,
-                    via: rel.entityName,
-                };
-                activated.set(rel.entityId, newNode);
-                queue.push(newNode);
-                totalActivated++;
-            }
-        }
+        // Reuse the production BFS loop with a different relation source —
+        // ensures the test never silently drifts from production semantics.
+        bfsCore(seedMap, activated, (entityId) => {
+            const rels = adjacency[entityId] ?? [];
+            return [...rels].sort((a, b) => b.weight - a.weight).slice(0, MAX_BRANCH_FACTOR);
+        });
     }
 
     const results: ActivationResult[] = [];

@@ -10,7 +10,8 @@
 
 import { writeFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
-import { __testOnlyBfsWithAdjacency } from "../src/memory/spreading-activation.js";
+import { __testOnlyBfsWithAdjacency, type ActivationResult } from "../src/memory/spreading-activation.js";
+import { checkParity } from "../src/memory/spreading-activation.parity-helpers.js";
 import { isNativeAvailable } from "../src/native/index.js";
 
 interface Rel {
@@ -47,16 +48,36 @@ function time(fn: () => unknown, iterations: number): number {
     return performance.now() - start;
 }
 
-function record(module: string, caseName: string, tsFn: () => unknown, nativeFn: () => unknown) {
+/**
+ * Per-module parity callback: takes the TS and native return values and
+ * returns null on parity (within whatever tolerance the module defines)
+ * or a string describing the divergence. Modules MUST supply this if they
+ * want to participate in `--parity-check`; without it, byte-equality JSON
+ * compare is used as a default which is too strict for floating-point work.
+ */
+type ParityFn = (ts: unknown, native: unknown) => string | null;
+
+function record(module: string, caseName: string, tsFn: () => unknown, nativeFn: () => unknown, parityFn?: ParityFn) {
     if (PARITY_ONLY) {
-        const ts = tsFn();
-        const native = nativeFn();
-        const tsJson = JSON.stringify(ts);
-        const nativeJson = JSON.stringify(native);
-        if (tsJson !== nativeJson) {
+        // Each step (tsFn / nativeFn / parityFn) is wrapped so a thrown error
+        // becomes a per-case "DIVERGED" record rather than killing the whole
+        // bench mid-run. CI still sees exit-code 1 (set below); the next case
+        // continues so we keep the per-case context.
+        let failure: string | null;
+        try {
+            const ts = tsFn();
+            const native = nativeFn();
+            failure = parityFn
+                ? parityFn(ts, native)
+                : JSON.stringify(ts) === JSON.stringify(native)
+                  ? null
+                  : "JSON byte-equality mismatch (no parity callback supplied — supply one to allow tolerated divergence)";
+        } catch (err) {
+            failure = `threw during parity check: ${(err as Error)?.message ?? String(err)}`;
+        }
+        if (failure) {
             console.error(`[parity] ${module} / ${caseName} — DIVERGED`);
-            console.error(`  TS:     ${tsJson}`);
-            console.error(`  NATIVE: ${nativeJson}`);
+            console.error(`  ${failure}`);
             process.exitCode = 1;
         } else {
             console.log(`[parity] ${module} / ${caseName} — ok`);
@@ -73,6 +94,11 @@ function record(module: string, caseName: string, tsFn: () => unknown, nativeFn:
             `native=${nativeMs.toFixed(2)}ms speedup=${speedup.toFixed(2)}x`,
     );
 }
+
+const spreadingParity: ParityFn = (ts, native) => {
+    const failures = checkParity(ts as ActivationResult[], native as ActivationResult[]);
+    return failures ? JSON.stringify(failures) : null;
+};
 
 // ── Module: spreading-activation ────────────────
 
@@ -128,6 +154,7 @@ function benchSpreading() {
             c.name,
             () => __testOnlyBfsWithAdjacency(c.seeds, c.adj, "ts"),
             () => __testOnlyBfsWithAdjacency(c.seeds, c.adj, "native"),
+            spreadingParity,
         );
     }
 }

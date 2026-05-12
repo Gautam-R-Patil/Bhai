@@ -319,7 +319,7 @@ Seeded slugs: `identity`, `rules`, `rules-mac`, `rules-windows`, `browsing`, `th
 - Skills loaded from `skills/` (built-in — 12 role markdown files plus 5 Convex-specific skill directories: `convex-create-component`, `convex-migration-helper`, `convex-performance-audit`, `convex-quickstart`, `convex-setup-auth`) and `~/.atlas/store/skills` (user-installed); each role skill is a markdown file with gray-matter frontmatter defining role, triggers, and instructions. Skills are likewise server-side via `system_skills` table.
 
 ### Env Kill-Switches (fail-open knobs for new subsystems)
-Each of these defaults to the feature ON; set to `"true"` (or the named sentinel) to disable. Use `grep -rnE "process\.env\.ATLAS_" src/` to find the call sites before altering behavior.
+Most entries default to the feature ON; set to `"true"` (or the named sentinel) to disable. A few are explicitly opt-IN — those are noted inline (look for "opt-IN" in the description). Use `grep -rnE "process\.env\.ATLAS_" src/` to find the call sites before altering behavior.
 
 - `ATLAS_NO_CODING_ESCALATION` — disables `maybeEscalateForCoding` (coding tasks stay on whatever tier the base router picked)
 - `ATLAS_NO_CODING_THINKING` — disables extended thinking budget on Pro-escalated coding
