@@ -21,11 +21,17 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import BetterSqlite3 from "better-sqlite3";
+import { getDataDir } from "../config/paths.js";
 
 export interface ClickSite {
     app: string;
     windowTitle: string;
     elementLabel: string;
+}
+
+/** Kill-switch — when true, recall returns null and record* are no-ops. */
+function isDisabled(): boolean {
+    return process.env.ATLAS_NO_CLICK_MEMORY === "true";
 }
 
 export interface ClickRecall {
@@ -47,7 +53,7 @@ let _dbPath: string | null = null;
 
 function getDbPath(opts?: ClickMemoryOptions): string {
     if (opts?.dbPath) return opts.dbPath;
-    return join(process.cwd(), "data", "click-memory.db");
+    return join(getDataDir(), "click-memory.db");
 }
 
 export function initClickMemory(opts?: ClickMemoryOptions): BetterSqlite3.Database {
@@ -93,6 +99,7 @@ export function recordClickSuccess(
     screenH: number,
     opts?: ClickMemoryOptions,
 ): void {
+    if (isDisabled()) return;
     if (screenW <= 0 || screenH <= 0) return; // can't normalize
     const db = initClickMemory(opts);
     const xNorm = x / screenW;
@@ -120,19 +127,26 @@ export function recordClickSuccess(
     });
 }
 
-/** Decrement success on a recorded miss; remove the entry when it hits zero. */
+/** Decrement success on a recorded miss; remove the entry when it hits zero. Atomic. */
 export function recordClickMiss(site: ClickSite, opts?: ClickMemoryOptions): void {
+    if (isDisabled()) return;
     const db = initClickMemory(opts);
-    db.prepare(`
+    const updateStmt = db.prepare(`
         UPDATE click_sites
         SET success_count = success_count - 1
         WHERE app = @app AND window_title = @windowTitle AND element_label = @elementLabel
-    `).run(site);
-    db.prepare(`DELETE FROM click_sites WHERE success_count <= 0`).run();
+    `);
+    const deleteStmt = db.prepare(`DELETE FROM click_sites WHERE success_count <= 0`);
+    const tx = db.transaction((s: ClickSite) => {
+        updateStmt.run(s);
+        deleteStmt.run();
+    });
+    tx(site);
 }
 
 /** Look up a previously-clicked site. Returns null if no recent record. */
 export function recallClickSite(site: ClickSite, opts?: ClickMemoryOptions): ClickRecall | null {
+    if (isDisabled()) return null;
     const db = initClickMemory(opts);
     const row = db
         .prepare(`

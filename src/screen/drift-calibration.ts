@@ -24,6 +24,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { getDataDir } from "../config/paths.js";
 
 export interface AffineTransform {
     a: number;
@@ -32,6 +33,16 @@ export interface AffineTransform {
     c: number;
     d: number;
     ty: number;
+}
+
+function isDisabled(): boolean {
+    return process.env.ATLAS_NO_DRIFT_CALIBRATION === "true";
+}
+
+function isFiniteTransform(t: unknown): t is AffineTransform {
+    if (!t || typeof t !== "object") return false;
+    const x = t as Record<string, unknown>;
+    return ["a", "b", "tx", "c", "d", "ty"].every((k) => typeof x[k] === "number" && Number.isFinite(x[k] as number));
 }
 
 interface MonitorSamples {
@@ -55,7 +66,7 @@ let _storePath: string | null = null;
 
 function getStorePath(): string {
     if (_storePath) return _storePath;
-    _storePath = join(process.cwd(), "data", "drift-calibration.json");
+    _storePath = join(getDataDir(), "drift-calibration.json");
     return _storePath;
 }
 
@@ -72,6 +83,25 @@ function loadStore(): DriftStore {
             const raw = readFileSync(path, "utf-8");
             const parsed = JSON.parse(raw) as DriftStore;
             if (parsed.version === STORE_VERSION && parsed.monitors) {
+                // Validate every monitor's transform — drop ones with NaN/Infinity to avoid
+                // propagating corrupt values into applyCalibration.
+                for (const [id, m] of Object.entries(parsed.monitors)) {
+                    if (!isFiniteTransform(m.transform)) {
+                        m.transform = { ...IDENTITY };
+                    }
+                    if (!Array.isArray(m.samples)) {
+                        m.samples = [];
+                    } else {
+                        m.samples = m.samples.filter(
+                            (s) =>
+                                Number.isFinite(s.px) &&
+                                Number.isFinite(s.py) &&
+                                Number.isFinite(s.ax) &&
+                                Number.isFinite(s.ay),
+                        );
+                    }
+                    parsed.monitors[id] = m;
+                }
                 _store = parsed;
                 return _store;
             }
@@ -101,6 +131,18 @@ export function recordCalibrationSample(
     predicted: { x: number; y: number },
     actual: { x: number; y: number },
 ): void {
+    if (isDisabled()) return;
+    // Reject self-poisoning input: predicted == actual teaches the solver nothing
+    // and locks the transform into whatever the current state happens to be.
+    if (
+        !Number.isFinite(predicted.x) ||
+        !Number.isFinite(predicted.y) ||
+        !Number.isFinite(actual.x) ||
+        !Number.isFinite(actual.y)
+    ) {
+        return;
+    }
+    if (predicted.x === actual.x && predicted.y === actual.y) return;
     const store = loadStore();
     if (!store.monitors[monitorId]) {
         store.monitors[monitorId] = { samples: [], transform: { ...IDENTITY }, lastFit: 0 };
@@ -117,16 +159,18 @@ export function recordCalibrationSample(
 
 /** Apply the learned drift correction to a predicted click coordinate. */
 export function applyCalibration(monitorId: string, x: number, y: number): { x: number; y: number } {
+    if (isDisabled() || !Number.isFinite(x) || !Number.isFinite(y)) return { x, y };
     const store = loadStore();
     const m = store.monitors[monitorId];
     if (!m || m.samples.length < MIN_SAMPLES_FOR_FIT) {
         return { x, y };
     }
     const t = m.transform;
-    return {
-        x: Math.round(t.a * x + t.b * y + t.tx),
-        y: Math.round(t.c * x + t.d * y + t.ty),
-    };
+    if (!isFiniteTransform(t)) return { x, y };
+    const nx = t.a * x + t.b * y + t.tx;
+    const ny = t.c * x + t.d * y + t.ty;
+    if (!Number.isFinite(nx) || !Number.isFinite(ny)) return { x, y };
+    return { x: Math.round(nx), y: Math.round(ny) };
 }
 
 /** Get the current transform for a monitor (identity if no samples). */
@@ -178,7 +222,7 @@ export function fitAffine(samples: Array<{ px: number; py: number; ax: number; a
     const abTx = solve3x3(m, [sxu, syu, su]);
     const cdTy = solve3x3(m, [sxv, syv, sv]);
     if (!abTx || !cdTy) return { ...IDENTITY };
-    return {
+    const out: AffineTransform = {
         a: abTx[0],
         b: abTx[1],
         tx: abTx[2],
@@ -186,6 +230,7 @@ export function fitAffine(samples: Array<{ px: number; py: number; ax: number; a
         d: cdTy[1],
         ty: cdTy[2],
     };
+    return isFiniteTransform(out) ? out : { ...IDENTITY };
 }
 
 function solve3x3(m: number[][], b: number[]): number[] | null {
@@ -193,7 +238,11 @@ function solve3x3(m: number[][], b: number[]): number[] | null {
         m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) -
         m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
         m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
-    if (Math.abs(det) < 1e-9) return null;
+    // Relative singularity threshold — pixel-coord least-squares accumulators run
+    // 1e8–1e15 so a fixed 1e-9 is meaningless. Compare against the product of the
+    // diagonal magnitudes which scales with the same units.
+    const scale = Math.max(1, Math.abs(m[0][0]) * Math.abs(m[1][1]) * Math.abs(m[2][2]));
+    if (Math.abs(det) < 1e-6 * scale) return null;
     const detX =
         b[0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) -
         m[0][1] * (b[1] * m[2][2] - m[1][2] * b[2]) +

@@ -230,11 +230,16 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
     return null;
 }
 
-/** Phase 5 placeholder: persistent click memory recall. */
+/**
+ * Permanent stub. Click-memory recall *intentionally* lives in `os_smart_click`
+ * (src/tools/os-smart-click.ts Step 0) and NOT here, because the cascade has no
+ * access to (app, windowTitle, monitor dims) required to key + denormalize a
+ * stored site. Keeping this tier as a tried-but-skipped slot preserves telemetry
+ * shape while avoiding a double-recall path with mismatched confidence thresholds.
+ */
 async function tryMemoryRecall(
     _instruction: string,
 ): Promise<Omit<ClickTarget, "elapsedMsByTier" | "totalMs" | "triedTiers"> | null> {
-    // Wired in Phase 5. Always misses for now.
     return null;
 }
 

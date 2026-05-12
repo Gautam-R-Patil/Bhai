@@ -158,6 +158,81 @@ describe("drift calibration", () => {
     });
 });
 
+describe("defensive guards", () => {
+    beforeEach(() => {
+        setDriftStorePath(TEST_STORE);
+        try {
+            if (existsSync(TEST_STORE)) unlinkSync(TEST_STORE);
+        } catch {
+            /* ignore */
+        }
+    });
+
+    afterEach(() => {
+        try {
+            if (existsSync(TEST_STORE)) unlinkSync(TEST_STORE);
+        } catch {
+            /* ignore */
+        }
+    });
+
+    it("rejects predicted==actual samples (self-poisoning)", () => {
+        // 10 identity samples — these should ALL be dropped, leaving 0 samples →
+        // applyCalibration must still return the input unchanged.
+        for (let i = 0; i < 10; i++) {
+            recordCalibrationSample("mac-0", { x: i * 10, y: i * 7 }, { x: i * 10, y: i * 7 });
+        }
+        const r = applyCalibration("mac-0", 500, 500);
+        expect(r).toEqual({ x: 500, y: 500 });
+    });
+
+    it("rejects non-finite samples", () => {
+        for (let i = 0; i < 10; i++) {
+            recordCalibrationSample("mac-0", { x: Number.NaN, y: i }, { x: i + 5, y: i + 5 });
+            recordCalibrationSample("mac-0", { x: i, y: Number.POSITIVE_INFINITY }, { x: i, y: i + 5 });
+        }
+        const r = applyCalibration("mac-0", 100, 100);
+        expect(r).toEqual({ x: 100, y: 100 });
+    });
+
+    it("applyCalibration returns input when called with non-finite coords", () => {
+        const r = applyCalibration("mac-0", Number.NaN, 100);
+        expect(r.x).toBe(Number.NaN);
+        // NaN propagates intentionally — we still return the input rather than crashing.
+        // The Number.isFinite check on the calibrated output prevents downstream NaN
+        // from a corrupt transform, not from an upstream NaN.
+    });
+
+    it("relative singularity threshold drops degenerate vertical-line samples", () => {
+        // All samples on a vertical line: px is constant. The 3x3 normal-equations
+        // matrix becomes singular, and the fit must fall back to identity.
+        for (let i = 0; i < 10; i++) {
+            recordCalibrationSample("mac-0", { x: 100, y: i * 50 + 10 }, { x: 110, y: i * 50 + 20 });
+        }
+        // With samples on a vertical line, the y-mapping can be learned but the
+        // x-mapping cannot — fitAffine should detect singularity and return identity.
+        // We accept either behavior, but applyCalibration MUST NOT return NaN.
+        const r = applyCalibration("mac-0", 200, 200);
+        expect(Number.isFinite(r.x)).toBe(true);
+        expect(Number.isFinite(r.y)).toBe(true);
+    });
+
+    it("ATLAS_NO_DRIFT_CALIBRATION kill-switch makes everything a no-op", () => {
+        const orig = process.env.ATLAS_NO_DRIFT_CALIBRATION;
+        try {
+            process.env.ATLAS_NO_DRIFT_CALIBRATION = "true";
+            for (let i = 0; i < 10; i++) {
+                recordCalibrationSample("mac-0", { x: i * 10, y: i * 7 }, { x: i * 10 + 50, y: i * 7 + 50 });
+            }
+            const r = applyCalibration("mac-0", 100, 100);
+            expect(r).toEqual({ x: 100, y: 100 });
+        } finally {
+            if (orig === undefined) delete process.env.ATLAS_NO_DRIFT_CALIBRATION;
+            else process.env.ATLAS_NO_DRIFT_CALIBRATION = orig;
+        }
+    });
+});
+
 describe("fitAffine", () => {
     it("returns identity for <3 samples", () => {
         const t = fitAffine([{ px: 0, py: 0, ax: 5, ay: 5 }]);

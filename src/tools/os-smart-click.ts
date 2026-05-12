@@ -91,8 +91,10 @@ export const osSmartClick: ToolDefinition = {
         const site = { app: appName, windowTitle, elementLabel: instruction };
         const dims = await getScreenDimensions({ focusedWindow: true });
         try {
+            // Threshold mirrors DEFAULT_THRESHOLDS.memory in perception-router so the
+            // tier-0 stub and the smart-click fast-path treat memory hits identically.
             const recall = recallClickSite(site);
-            if (recall && recall.confidence >= 0.8) {
+            if (recall && recall.confidence >= 0.9) {
                 let x = Math.round(recall.xNorm * dims.width + dims.originX);
                 let y = Math.round(recall.yNorm * dims.height + dims.originY);
                 // Apply drift calibration if learned for this monitor.
@@ -152,10 +154,12 @@ export const osSmartClick: ToolDefinition = {
             }
 
             // Step 4 — record success to click memory.
+            // NOTE: calibration sample is NOT recorded here — recordCalibrationSample
+            // requires the *actual* landing point, which we only learn from outcome
+            // classification (reportClickOutcome). Recording (predicted, calibrated)
+            // is circular and locks the transform into its current state.
             try {
                 recordClickSuccess(site, calX - dims.originX, calY - dims.originY, dims.width, dims.height);
-                // Record a calibration sample (target was predicted, we know we actually clicked at calX/calY)
-                recordCalibrationSample(dims.monitorId, { x: target.x, y: target.y }, { x: calX, y: calY });
             } catch {
                 /* memory persistence failed — non-fatal */
             }
@@ -198,7 +202,13 @@ async function dispatchClick(
 
 /**
  * After-action telemetry helper. Caller passes before/after screenshots + target;
- * we update click-memory based on the classified outcome.
+ * we update click-memory based on the classified outcome and optionally feed a
+ * (predicted, actual) drift sample when the caller can locate the post-click element.
+ *
+ * `actual` should be the screen-pixel center of the element that visibly responded
+ * to the click (typically a post-verify AX dump or OmniParser re-run after the
+ * action). When omitted, no calibration sample is recorded — recording (predicted,
+ * predicted) is circular and locks the transform.
  */
 export async function reportClickOutcome(
     site: { app: string; windowTitle: string; elementLabel: string },
@@ -207,11 +217,15 @@ export async function reportClickOutcome(
     after: Buffer | null,
     imageWidth: number,
     imageHeight: number,
+    opts?: { monitorId?: string; actual?: { x: number; y: number } },
 ): Promise<ReturnType<typeof classifyOutcome>> {
     const outcome = classifyOutcome(before, after, target.x, target.y, imageWidth, imageHeight);
     try {
         if (outcome.outcome === "no_op" || outcome.outcome === "wrong_target") {
             recordClickMiss(site);
+        } else if (outcome.outcome === "success" && opts?.monitorId && opts.actual) {
+            // Only record a calibration sample when we have a measured landing point.
+            recordCalibrationSample(opts.monitorId, target, opts.actual);
         }
     } catch {
         /* memory persistence failed — non-fatal */

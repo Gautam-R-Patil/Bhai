@@ -103,4 +103,34 @@ describe("click memory", () => {
         const stats = clickMemoryStats(TEST_OPTS);
         expect(stats.totalSites).toBe(0);
     });
+
+    it("recordClickMiss is atomic — update+delete in same transaction", () => {
+        // Record once, then two consecutive misses. The first decrements to 0
+        // and the DELETE in the same transaction must remove the row in one step.
+        recordClickSuccess(SITE, 100, 200, 1000, 1000, TEST_OPTS);
+        recordClickMiss(SITE, TEST_OPTS); // 1 → 0 → DELETE
+        expect(recallClickSite(SITE, TEST_OPTS)).toBeNull();
+        // Second miss on missing row is a no-op (no negative count).
+        recordClickMiss(SITE, TEST_OPTS);
+        expect(clickMemoryStats(TEST_OPTS).totalSites).toBe(0);
+    });
+
+    it("ATLAS_NO_CLICK_MEMORY kill-switch makes everything a no-op", () => {
+        const orig = process.env.ATLAS_NO_CLICK_MEMORY;
+        try {
+            process.env.ATLAS_NO_CLICK_MEMORY = "true";
+            recordClickSuccess(SITE, 100, 200, 1000, 1000, TEST_OPTS);
+            expect(recallClickSite(SITE, TEST_OPTS)).toBeNull();
+            // recordClickMiss is also a no-op under the kill switch.
+            recordClickMiss(SITE, TEST_OPTS);
+            // Pre-populated entries should be unreadable under the kill-switch.
+            process.env.ATLAS_NO_CLICK_MEMORY = "false";
+            recordClickSuccess(SITE, 100, 200, 1000, 1000, TEST_OPTS);
+            process.env.ATLAS_NO_CLICK_MEMORY = "true";
+            expect(recallClickSite(SITE, TEST_OPTS)).toBeNull();
+        } finally {
+            if (orig === undefined) delete process.env.ATLAS_NO_CLICK_MEMORY;
+            else process.env.ATLAS_NO_CLICK_MEMORY = orig;
+        }
+    });
 });

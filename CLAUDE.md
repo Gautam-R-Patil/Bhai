@@ -353,6 +353,8 @@ Most entries default to the feature ON; set to `"true"` (or the named sentinel) 
 - `ATLAS_VAD_MODE` — 0–3 aggressiveness for `ATLAS_NATIVE_VAD` (0=quality / 3=very aggressive, fewer false positives). Default 2.
 - `ATLAS_NATIVE_AX` — opt-IN (off by default); routes AX tree flatten/find through `native/src/ax_walker.rs`. Per the empirical Rust rules, JSON round-trip dominates for trees <200 nodes — TS is often faster. Enable only for AX-heavy workloads where the tree is consistently large. Bench TBD before flipping default ON.
 - `ATLAS_VISION_PROFILE=lite|standard|full` — override the capability-detector's auto-picked vision-nav profile (`src/screen/capability-detector.ts`). Use for testing the tier-specific code paths or forcing Lite on a workstation.
+- `ATLAS_NO_CLICK_MEMORY` — disables persistent click-memory recall/record (`src/screen/click-memory.ts`). On `"true"`, `recallClickSite` returns null and `recordClickSuccess`/`recordClickMiss` are no-ops. Use to rule out a poisoned `data/click-memory.db` as the cause of recurring wrong-target clicks.
+- `ATLAS_NO_DRIFT_CALIBRATION` — disables per-monitor drift correction (`src/screen/drift-calibration.ts`). On `"true"`, `recordCalibrationSample` is a no-op and `applyCalibration` returns input unchanged. Use to confirm whether a bad affine fit is causing systematic offset.
 
 ### Rust expansion — empirical lessons (May 2026)
 
