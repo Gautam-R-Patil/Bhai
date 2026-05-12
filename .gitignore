@@ -109,6 +109,7 @@ desktop/hostinger-upload/
 !src/agents/__tests__/computer-use-agent.test.ts
 !src/tools/__tests__/
 !src/tools/__tests__/os-computer-action.test.ts
+!src/tools/__tests__/os-grounding.test.ts
 !src/screen/__tests__/capability-detector.test.ts
 !src/screen/__tests__/ax-dump.test.ts
 !src/screen/__tests__/ui-tars.test.ts

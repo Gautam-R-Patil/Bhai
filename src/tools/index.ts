@@ -167,6 +167,7 @@ import {
 } from "./memory-tools.js";
 import { coreMemoryAppend, coreMemoryDelete, coreMemoryRead, coreMemoryReplace } from "./memory-tools-advanced.js";
 import { osComputerAction } from "./os-computer-action.js";
+import { osGround, osVisualize } from "./os-grounding.js";
 import { osClickId, osInspect } from "./os-inspect.js";
 import { IS_LINUX, IS_MAC, IS_WIN } from "./platform.js";
 import { platformInfoTool } from "./platform-info.js";
@@ -305,6 +306,11 @@ registry.set(osComputerAction.schema.function.name, osComputerAction);
 // Cross-OS accessibility tree inspection (Phase 2) — sub-300ms element list, no vision call needed.
 registry.set(osInspect.schema.function.name, osInspect);
 registry.set(osClickId.schema.function.name, osClickId);
+
+// Vision grounding (Phase 3) — OmniParser-v2 element detector + UI-TARS grounding model.
+// Both fail-open if local deps not installed; cascade router falls through to cloud VLM.
+registry.set(osVisualize.schema.function.name, osVisualize);
+registry.set(osGround.schema.function.name, osGround);
 
 // ── Platform-specific OS tools ────────────────
 if (IS_MAC) {
