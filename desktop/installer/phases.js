@@ -153,44 +153,41 @@ const P = {
 
     ollama: () => ({
         id: "ollama",
-        label: "Ollama (local model runtime)",
+        label: "Local model runtime",
         idempotent: true,
         async run(ctx, log) {
-            // Check first \u2014 Ollama may already be installed by hand.
+            // Check first \u2014 runtime may already be installed by hand.
             try {
                 await ctx.runCommand("ollama", ["--version"], undefined, () => {});
-                log("Ollama already installed \u2713");
+                log("Local model runtime already installed \u2713");
                 return;
             } catch { /* not installed */ }
-            log("Installing Ollama (~140 MB)...");
+            log("Installing local model runtime (~140 MB)...");
             if (process.platform === "darwin") {
                 try {
                     await ctx.runCommand("brew", ["install", "ollama"], undefined, (l) => { if (l.trim()) log(l); });
-                    log("Ollama via Homebrew \u2713");
+                    log("Installed via Homebrew \u2713");
                 } catch (err) {
-                    // brew not present or install failed \u2014 leave the user a clear next step
-                    throw new Error("Could not install Ollama via brew. Run `brew install ollama` manually, then click Retry. (" + err.message + ")");
+                    throw new Error("Install failed. Run `brew install ollama` manually, then click Retry. (" + err.message + ")");
                 }
             } else if (process.platform === "win32") {
                 try {
                     await ctx.runCommand("winget", ["install", "--id", "Ollama.Ollama", "-e", "--silent"], undefined, (l) => { if (l.trim()) log(l); });
-                    log("Ollama via winget \u2713");
+                    log("Installed via winget \u2713");
                 } catch (err) {
-                    throw new Error("Could not install Ollama via winget. Download from https://ollama.com/download/windows, then click Retry. (" + err.message + ")");
+                    throw new Error("Install failed. Download from https://ollama.com/download/windows, then click Retry. (" + err.message + ")");
                 }
             } else {
-                // Linux: ollama install script
                 try {
                     await ctx.runCommand("sh", ["-c", "curl -fsSL https://ollama.com/install.sh | sh"], undefined, (l) => { if (l.trim()) log(l); });
-                    log("Ollama via install script \u2713");
+                    log("Installed via install script \u2713");
                 } catch (err) {
-                    throw new Error("Could not install Ollama. Visit https://ollama.com/download/linux, then click Retry. (" + err.message + ")");
+                    throw new Error("Install failed. Visit https://ollama.com/download/linux, then click Retry. (" + err.message + ")");
                 }
             }
             // Start the service so the next phase (model pull) can talk to it.
             try {
                 if (process.platform === "darwin" || process.platform === "linux") {
-                    // ollama serve runs in foreground; for setup we just probe `ollama list` which auto-starts it on demand.
                     await ctx.runCommand("ollama", ["list"], undefined, () => {});
                 }
             } catch { /* startup probe is best-effort */ }
@@ -199,7 +196,7 @@ const P = {
 
     uiTarsModel: () => ({
         id: "ui-tars-model",
-        label: "Vision model (UI-TARS 7B, ~4.5 GB)",
+        label: "Vision model (~4.5 GB)",
         idempotent: true,
         async run(ctx, log) {
             // Check if model already pulled \u2014 `ollama list` lists installed models.
@@ -207,18 +204,18 @@ const P = {
                 let listOutput = "";
                 await ctx.runCommand("ollama", ["list"], undefined, (l) => { listOutput += l; });
                 if (listOutput.includes("ui-tars")) {
-                    log("UI-TARS model already pulled \u2713");
+                    log("Vision model already pulled \u2713");
                     return;
                 }
             } catch {
-                throw new Error("Ollama is not running or not installed. Install Ollama first, then click Retry.");
+                throw new Error("Local model runtime is not running or not installed. Install it first, then click Retry.");
             }
-            log("Pulling ui-tars:7b \u2014 this can take 5-15 minutes depending on connection...");
+            log("Pulling vision model \u2014 this can take 5-15 minutes depending on connection...");
             try {
                 await ctx.runCommand("ollama", ["pull", "ui-tars:7b"], undefined, (l) => {
                     if (l.trim()) log(l);
                 });
-                log("UI-TARS model ready \u2713");
+                log("Vision model ready \u2713");
             } catch (err) {
                 throw new Error("Model pull failed. You can retry, or pull manually with `ollama pull ui-tars:7b`. (" + err.message + ")");
             }
@@ -227,7 +224,7 @@ const P = {
 
     omniparserDeps: () => ({
         id: "omniparser-deps",
-        label: "Vision deps (OmniParser, ~500 MB)",
+        label: "Vision deps (~500 MB)",
         idempotent: true,
         async run(ctx, log) {
             // Probe Python first
@@ -237,16 +234,16 @@ const P = {
             } catch {
                 throw new Error("Python is not installed. On macOS: `brew install python`. Then click Retry.");
             }
-            // Check if ultralytics is already importable (fast probe \u2014 failure means we install)
+            // Check if vision deps are already importable (fast probe \u2014 failure means we install)
             let needsInstall = false;
             try {
                 await ctx.runCommand(py, ["-c", "import ultralytics, PIL"], undefined, () => {});
-                log("ultralytics + Pillow already importable \u2713");
+                log("Vision deps already importable \u2713");
             } catch {
                 needsInstall = true;
             }
             if (!needsInstall) return;
-            log("Installing ultralytics + Pillow via pip (~500 MB)...");
+            log("Installing vision deps (~500 MB)...");
             try {
                 await ctx.runCommand(py, ["-m", "pip", "install", "--user", "--quiet", "ultralytics", "Pillow"], undefined, (l) => {
                     if (l.trim()) log(l);

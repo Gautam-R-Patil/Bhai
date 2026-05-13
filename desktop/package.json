@@ -151,6 +151,8 @@
                     "!**/test/**",
                     "!**/tests/**",
                     "!**/__tests__/**",
+                    "playwright/lib/mcp/test/**",
+                    "playwright-core/lib/mcp/test/**",
                     "!**/*.test.js",
                     "!**/*.spec.js",
                     "!**/.github/**",
