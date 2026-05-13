@@ -409,29 +409,33 @@ const P = {
             await ensureDaemonOrThrow();
 
             // Candidate tags in priority order.
-            // (1) Common community Ollama Modelfile uploads — these wrap the
-            //     HF safetensors as Ollama-native GGUF models. Most reliable
-            //     because they're already in the Ollama public registry.
-            // (2) `hf.co/<repo>` direct fetch — Ollama 0.4+ can pull any HF
-            //     model directly. The official ByteDance-Seed/UI-TARS-1.5-7B
-            //     is safetensors (no GGUF), so this only works if Ollama can
-            //     auto-convert (it can for many qwen2_5_vl-class models).
-            // (3) Bare `ui-tars:*` — kept for forward-compat if Ollama ever
-            //     publishes an official tag.
+            // UI-TARS-1.5-7B isn't on Ollama's public registry — the original
+            // ByteDance repo on HF is safetensors only. We pull community-
+            // uploaded GGUF conversions via Ollama 0.4+'s `hf.co/<repo>:<tag>`
+            // integration. mradermacher's repo is the most-respected GGUF
+            // curator for vision models; Q4_K_M is the standard quality/size
+            // sweet spot (~4.7 GB). Fallback candidates cover the rare case
+            // where the primary source is unavailable.
             const CANDIDATES = [
+                "hf.co/mradermacher/UI-TARS-1.5-7B-GGUF:Q4_K_M",
+                "hf.co/Lucy-in-the-Sky/UI-TARS-1.5-7B-Q4_K_M-GGUF:latest",
+                "hf.co/adriabama06/UI-TARS-1.5-7B-Q4_K_M-GGUF:latest",
+                "hf.co/Mungert/UI-TARS-1.5-7B-GGUF:Q4_K_M",
+                // Bare-tag forms in case Ollama ever publishes officially:
                 "ui-tars:1.5-7b",
                 "ui-tars:7b",
-                "hf.co/ByteDance-Seed/UI-TARS-1.5-7B",
             ];
 
             // Check if ANY candidate is already pulled + manifest-valid.
+            // Match characters with regex-escape for the special chars Ollama
+            // tags actually contain (`.`, `:`, `/`, `-`).
             let alreadyHave = null;
             try {
                 let listOutput = "";
                 await ctx.runCommand("ollama", ["list"], undefined, (l) => { listOutput += l; });
                 for (const tag of CANDIDATES) {
-                    // Escape `:` for regex use, anchored by word boundaries.
-                    const re = new RegExp("\\b" + tag.replace(/[.:]/g, "\\$&") + "\\b");
+                    const escaped = tag.replace(/[.+*?^$()|[\]{}\\:/-]/g, "\\$&");
+                    const re = new RegExp("(^|\\s)" + escaped + "(\\s|$)", "i");
                     if (re.test(listOutput)) {
                         try {
                             await ctx.runCommand("ollama", ["show", tag], undefined, () => {});
@@ -468,26 +472,22 @@ const P = {
                 }
             }
             if (!pulled) {
-                // Soft-fail: the bot's perception cascade already falls back
-                // to OmniParser (Standard tier) and cloud-VLM when UI-TARS is
-                // missing. Stranding the entire install on a model that isn't
-                // strictly necessary makes for a worse user experience than
-                // letting them finish setup and install the model later.
-                log("");
-                log("\u26a0\ufe0f  Could not pull vision model from Ollama's public registry.");
-                log("   UI-TARS is the Full-tier OPTIONAL grounding model \u2014 A.T.L.A.S");
-                log("   still works without it (uses cloud vision-LLM as fallback).");
-                log("");
-                log("   To enable it later, run ONE of these manually in Terminal:");
-                for (const t of CANDIDATES) log("     ollama pull " + t);
-                log("");
-                log("   Or import the model from Hugging Face directly:");
-                log("     https://huggingface.co/ByteDance-Seed/UI-TARS-1.5-7B");
-                log("");
-                log("Continuing without vision model \u2014 install will finish normally.");
-                // Return without throwing \u2192 phase marked completed \u2192 install
-                // pipeline advances to data-dir / finalize.
-                return;
+                // Hard-fail: the user explicitly chose the Full tier expecting
+                // a local vision model. Silently degrading to Standard would
+                // misrepresent what was promised. Surface a clear error with
+                // every candidate's failure reason and the manual-recovery path
+                // so the user can Retry after fixing connectivity / disk space.
+                const lines = errors.slice(0, 4).map((e) => "  \u2022 " + e).join("\n");
+                throw new Error(
+                    "Could not pull vision model. Tried " + CANDIDATES.length +
+                    " sources; all failed. Most common cause: no internet, " +
+                    "ollama registry unreachable, or disk space low (model is " +
+                    "~4.7 GB after Q4_K_M quantization).\n\nLast errors:\n" + lines +
+                    "\n\nYou can Retry, or pull manually with:\n  ollama pull " +
+                    CANDIDATES[0] + "\n\nAlternative quality levels (smaller / " +
+                    "larger):\n  hf.co/mradermacher/UI-TARS-1.5-7B-GGUF:Q6_K   (~5.5 GB)" +
+                    "\n  hf.co/mradermacher/UI-TARS-1.5-7B-GGUF:Q8_0   (~8 GB)",
+                );
             }
             log("Vision model ready (" + pulled + ") \u2713");
             persistUiTarsTag(ctx, pulled);

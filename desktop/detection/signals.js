@@ -425,15 +425,27 @@ async function detectVisionDeps(fsMod, execFn, homeDir) {
                 const r = await execFn("ollama list");
                 liveProbeRan = true;
                 const stdout = (r && (r.stdout || "")).toString();
-                const hasTag = /\bui-tars[:-](?:1\.5-)?7b\b/.test(stdout);
-                const isIncomplete = /\bui-tars[:-](?:1\.5-)?7b\b[^\n]*\(incomplete\)/i.test(stdout);
+                // Matches any UI-TARS 7B variant Ollama might list:
+                //   - hf.co/<user>/UI-TARS-1.5-7B-GGUF:Q4_K_M  (canonical install)
+                //   - hf.co/<user>/UI-TARS-1.5-7B-Q4_K_M-GGUF:latest
+                //   - ui-tars:7b / ui-tars:1.5-7b              (legacy / forward-compat)
+                const TAG_RE = /\b(?:hf\.co\/\S+UI-TARS[-\w.]*7B[-\w.]*GGUF\S*|ui-tars[:-](?:1\.5-)?7b)\b/i;
+                const INCOMPLETE_RE = new RegExp(TAG_RE.source + "[^\\n]*\\(incomplete\\)", "i");
+                const hasTag = TAG_RE.test(stdout);
+                const isIncomplete = INCOMPLETE_RE.test(stdout);
                 if (hasTag && !isIncomplete) {
-                    // Double-check with `ollama show` — confirms the manifest is
-                    // readable, not just listed. Cheap (~50ms) and definitive.
-                    try {
-                        await execFn("ollama show ui-tars:7b");
-                        out.uiTarsModel = true;
-                    } catch { /* manifest corrupt — leave false; fallback must NOT override */ }
+                    // Extract the actual tag we matched (whichever variant) and
+                    // ask `ollama show <tag>` for that exact name. Hardcoding
+                    // `ui-tars:7b` here would fail when the installed model is
+                    // `hf.co/mradermacher/UI-TARS-1.5-7B-GGUF:Q4_K_M`.
+                    const match = stdout.match(TAG_RE);
+                    const actualTag = match ? match[0] : null;
+                    if (actualTag) {
+                        try {
+                            await execFn(`ollama show "${actualTag}"`);
+                            out.uiTarsModel = true;
+                        } catch { /* manifest corrupt — leave false */ }
+                    }
                 }
             } catch { /* daemon down — liveProbeRan stays false */ }
         })());
