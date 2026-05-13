@@ -56,6 +56,7 @@ import { initCredibilityModel } from "./research/credibility-model.js";
 import { initLocationService, refreshLocation, onLocationChange } from "./location/index.js";
 import { startNetworkWatcher, stopNetworkWatcher } from "./location/network-watcher.js";
 import { getPlatformCapabilities } from "./utils/platform-capabilities.js";
+import { probeAndLogMacPermissions } from "./utils/macos-permissions.js";
 import { initRegistry } from "./harness/registry.js";
 
 // ── Primary Channel ──────────────────────────
@@ -439,6 +440,12 @@ async function boot() {
     // Warm up platform capability probe (non-blocking)
     if (process.env.ATLAS_SKIP_CAPABILITY_PROBE !== "true") {
         getPlatformCapabilities().catch(err => console.warn("[boot] capability probe failed:", err));
+    }
+
+    // macOS-only — probe Accessibility + Screen Recording for real, with actionable
+    // advice when the user thinks they granted permission but the bot can't actually use it.
+    if (process.platform === "darwin" && process.env.ATLAS_SKIP_PERMISSION_PROBE !== "true") {
+        probeAndLogMacPermissions().catch((err) => console.warn("[boot] permission probe failed:", err));
     }
 
     // Auto-resume any long tasks that were interrupted (async, non-blocking)

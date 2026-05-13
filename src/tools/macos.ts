@@ -1108,7 +1108,7 @@ export const osOcrClick: ToolDefinition = {
         function: {
             name: "os_ocr_click",
             description:
-                "PREFERRED click method for native Mac apps. Finds a UI element by its visible text label using OCR (Vision framework), then clicks it. Includes an automatic retry loop with coordinate jitter + visual verification. Use this instead of manually reading coordinates from os_screenshot whenever a clickable element has readable text.",
+                "LEGACY OCR-based clicker. Prefer `os_smart_click` for click-by-description tasks — it cascades AX → OmniParser → UI-TARS automatically and is faster, more reliable, and learns from prior clicks. Use os_ocr_click only when the agent has already tried os_smart_click and explicitly wants pure-OCR fallback (no AX, no vision grounding). Takes a text label and tries to find it visually in a screen capture.",
             parameters: {
                 type: "object",
                 properties: {
@@ -1942,7 +1942,7 @@ export const osScan: ToolDefinition = {
         function: {
             name: "os_scan",
             description:
-                "Scans the current screen and identifies all interactive elements with numbered labels. Returns a labeled screenshot and element list. Use os_click_element with a label number to click. This is the PREFERRED way to interact with macOS apps — much more reliable than coordinate-based clicking.",
+                "LEGACY screen inspector. For click-by-description tasks, prefer `os_smart_click` (does cascade-perception automatically). Use os_scan only when you need to ENUMERATE all interactive elements with numbered labels — e.g., to give the user a screenshot annotated with what's clickable. Returns a labeled screenshot and element list.",
             parameters: {
                 type: "object",
                 properties: {},
@@ -2112,7 +2112,7 @@ export const osClickElement: ToolDefinition = {
         function: {
             name: "os_click_element",
             description:
-                "Click an element from os_scan or os_nav. You can click by LABEL NUMBER or by TEXT MATCH (preferred — more reliable). Text match finds the element whose text contains your query. Run os_scan or os_nav first.",
+                "LEGACY label-based clicker. Used together with `os_scan` / `os_nav`. For most click-by-description tasks, prefer `os_smart_click` directly (one tool call instead of scan+click). Use os_click_element only when you've already run os_scan and want to click a specific labelled element by its number.",
             parameters: {
                 type: "object",
                 properties: {

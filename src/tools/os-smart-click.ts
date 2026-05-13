@@ -42,7 +42,7 @@ export const osSmartClick: ToolDefinition = {
         function: {
             name: "os_smart_click",
             description:
-                "PREFERRED click-by-description tool. Takes a natural-language instruction (e.g. 'the Save button'), runs the perception cascade (memory → AX → OmniParser → UI-TARS), executes the click, and records the outcome for future fast-path recall. Pass screenshot_base64 from os_screenshot for vision-grounding fallback.",
+                "DEFAULT click-by-description tool — ALWAYS try this FIRST for any 'click <description>' task on the host OS. It cascades automatically: persistent click-memory → Accessibility tree (fast, no screenshot needed) → OmniParser vision → UI-TARS local grounding. One tool call replaces os_scan+os_click_element / os_ocr_click flows. Pass `instruction` in plain English (e.g. 'the Save button in the toolbar', 'Wi-Fi in System Settings'). Pass `screenshot_base64` from os_screenshot only if you want vision-grounding fallback. Records every successful click for future fast-path recall (sub-10ms on repeat). Use os_ocr_click / os_scan only as fallback when this returns cascade_miss.",
             parameters: {
                 type: "object",
                 properties: {
