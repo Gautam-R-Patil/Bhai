@@ -1,4 +1,4 @@
-# Technical Overview — A.T.L.A.S v0.2.0
+# Technical Overview — A.T.L.A.S v0.2.1
 
 > **A.T.L.A.S** (Advanced Technology for Logical Autonomous Systems) is a continuously running personal AI agent built by [XAGI Labs](https://xagilab.com). This document covers how it is built — its architecture, tech stack, key components, and deployment.
 
@@ -18,16 +18,17 @@
    - 3.7 Native Rust Layer
    - 3.8 Convex Backend
    - 3.9 Browser Automation
-   - 3.10 Coding Pipeline
-   - 3.11 Deep Research Engine
-   - 3.12 Proactive Engine
-   - 3.13 Video Studio
-   - 3.14 Meta-Harness Optimizer
-   - 3.15 Voice Subsystem
-   - 3.16 A2A Protocol
-   - 3.17 Communication Channels
-   - 3.18 Desktop App
-   - 3.19 Marketing Brain
+   - 3.10 Vision Navigation
+   - 3.11 Coding Pipeline
+   - 3.12 Deep Research Engine
+   - 3.13 Proactive Engine
+   - 3.14 Video Studio
+   - 3.15 Meta-Harness Optimizer
+   - 3.16 Voice Subsystem
+   - 3.17 A2A Protocol
+   - 3.18 Communication Channels
+   - 3.19 Desktop App
+   - 3.20 Marketing Brain
 4. [Data Flow](#4-data-flow)
 5. [Security Architecture](#5-security-architecture)
 6. [Deployment](#6-deployment)
@@ -51,17 +52,18 @@ ATLAS is a **local-first** autonomous agent. The Node.js process runs on the use
 │  12 parallel memory retrievals → model routing → semantic tool select   │
 │  → LLM call (encrypted) → tool execution → completion check             │
 │  Max 200 iterations · Cascade escalation · Mid-session credit gate      │
-└────┬──────────────┬──────────────┬────────────┬───────────────────────┘
-     │              │              │            │
-┌────▼────┐  ┌──────▼──────┐ ┌────▼────┐ ┌────▼────────┐
-│ Memory  │  │   Agents    │ │  Tools  │ │  Research   │
-│ 39 mod  │  │  30 files   │ │ 100+    │ │  11 files   │
-└────┬────┘  └──────┬──────┘ └────┬────┘ └─────┬───────┘
-     │              │              │             │
-┌────▼──────────────▼──────────────▼─────────────▼───────────────────────┐
-│                    Native Rust Layer  (native/src/, 55 modules)          │
+└─┬──────────┬──────────┬──────────┬──────────┬──────────┬────────────────┘
+  │          │          │          │          │          │
+┌─▼────┐ ┌───▼───┐ ┌────▼────┐ ┌───▼────┐ ┌───▼─────┐ ┌──▼──────┐
+│Memory│ │Agents │ │  Tools  │ │Research│ │Proactive│ │ Screen  │
+│49 mod│ │30+ mod│ │ 120+ t  │ │ 11 mod │ │ 50+ mod │ │ 10 mod  │
+└──────┘ └───────┘ └─────────┘ └────────┘ └─────────┘ └─────────┘
+   │         │          │          │          │           │
+┌──▼─────────▼──────────▼──────────▼──────────▼───────────▼──────────────┐
+│                    Native Rust Layer  (native/src/, 64 modules)          │
 │  SIMD vectors · model router · HNSW search · swarm/mesh · harness       │
 │  browser guard · proactive scheduler · metacognition · MCTS             │
+│  AX walker · secrets sanitizer · pcm-VAD · spreading · query classifier │
 └──────────────────────────────┬──────────────────────────────────────────┘
                                │
 ┌──────────────────────────────▼──────────────────────────────────────────┐
@@ -317,7 +319,7 @@ Each state has an explicit `*_ALLOWED_TOOLS` list in `plan-mode.ts`; `filterTool
 
 ---
 
-### 3.6 Memory System (39 modules)
+### 3.6 Memory System (49 modules)
 
 **Directory:** `src/memory/`
 
@@ -344,6 +346,12 @@ All memory is local SQLite (`data/memory.db`) with WAL journal mode, 64 MB page 
 | `self-evolving.ts` | Synaptic pruning | Strength-based: weak→delete, medium→weaken, strong→strengthen |
 | `task-learnings.ts` | Task strategies | Per-(category, pattern, context) learning; merges on re-encounter |
 | `codebase-index.ts` | Repo sidecar | Per-repo SQLite at `data/codebase-index/{hash}.db`; tree-sitter parse |
+| `studio-graph.ts` + `studio-insights.ts` | Memory Studio | Interactive graph viewer with edit/pin/forget controls + AI-generated insights |
+| `embedding-cache.ts` + `resolve-embedding.ts` | Embedding indirection | Caches expensive embeds; resolves text → vector with provider fallback |
+| `spreading-activation.ts` | Spreading Activation Network | k-hop BFS over the knowledge graph for associative recall boost |
+| `fts5-query.ts` | BM25 search helper | SQLite FTS5 query construction + scoring |
+| `project-memory.ts` | Per-project scoping | Tags memory entries with the active workspace root for project-scoped recall |
+| `anticipation.ts` / `briefing.ts` | Forward-looking context | Upcoming-event scan + morning briefing assembly |
 
 **Retrieval fusion:** Results from multiple sources are blended using RRF (Reciprocal Rank Fusion) + recency exponential decay + importance weights + SAN/Hopfield boost multipliers. A cross-encoder reranker makes the final pass.
 
@@ -385,13 +393,13 @@ All memory is local SQLite (`data/memory.db`) with WAL journal mode, 64 MB page 
 
 ---
 
-### 3.7 Native Rust Layer (55 modules)
+### 3.7 Native Rust Layer (64 modules)
 
 **Directory:** `native/src/`
 
-Built with napi-rs, compiled to platform-specific `.node` binaries. TypeScript loads the binary at runtime; all subsystems fall back to pure-JS implementations if the binary is unavailable.
+Built with napi-rs, compiled to platform-specific `.node` binaries. TypeScript loads the binary at runtime; all subsystems fall back to pure-JS implementations if the binary is unavailable. New ports follow the empirical rule: only port modules where TS is genuinely slow AND Rust has a structural advantage (multi-pattern scanning, large-batch SIMD, true parallelism) — see CLAUDE.md "Rust expansion — empirical lessons" for the canonical worked examples (secrets-sanitizer wins, spreading BFS / SHA-256 / small-tree AX flatten lose).
 
-**Build profile:** `opt-level=3`, LTO enabled, `codegen-units=1`, `panic=abort`, binaries stripped.
+**Build profile:** `opt-level=3`, LTO enabled, `codegen-units=1`, `panic=abort`, binaries stripped. The `vad` cargo feature gates `libfvad` (adds 30–60s to clean builds and a C toolchain dep, so it is opt-in: `napi build --features vad`).
 
 **Module groups:**
 
@@ -399,15 +407,17 @@ Built with napi-rs, compiled to platform-specific `.node` binaries. TypeScript l
 |-------|---------|-------------------|
 | Vector math | `vector.rs`, `batch.rs`, `hnsw.rs` | SIMD dot-product, cosine similarity, ANN search |
 | Routing | `model_router.rs`, `tool_router.rs`, `tool_analytics.rs`, `query_classifier.rs` | Model/tool selection scoring |
-| Memory | `memory_state.rs`, `memory_tiers.rs`, `knowledge_graph.rs`, `hnsw.rs`, `hopfield.rs`, `spreading.rs`, `temporal_cache.rs`, `consolidation.rs`, `sleep_gate.rs`, `surprise_gate.rs`, `reflection_core.rs`, `session_memory.rs`, `working_memory.rs`, `task_learnings.rs`, `traits_engine.rs` | Hot-path memory ops |
+| Memory | `memory_state.rs`, `memory_tiers.rs`, `knowledge_graph.rs`, `hnsw.rs`, `hopfield.rs`, `spreading.rs`, `temporal_cache.rs`, `consolidation.rs`, `context_pruning.rs`, `sleep_gate.rs`, `surprise_gate.rs`, `reflection_core.rs`, `session_memory.rs`, `working_memory.rs`, `task_learnings.rs`, `traits_engine.rs` | Hot-path memory ops |
 | Agents | `agent_core.rs`, `swarm.rs`, `mesh.rs`, `sub_agent.rs`, `long_task.rs` | Orchestration state tracking |
 | Reasoning | `metacognition.rs`, `mcts_engine.rs`, `active_inference.rs`, `logic_engine.rs`, `process_reward.rs`, `pattern_speculator.rs`, `prompt_evaluator.rs` | Inference and planning |
 | World/user models | `world_model.rs`, `user_model.rs`, `credibility_model.rs` | Predictive state |
-| Proactive | `proactive_scheduler.rs`, `proactive_monitor.rs`, `proactive_intent.rs`, `inner_thoughts.rs`, `goal_engine.rs`, `habit_detector.rs`, `notification_tracker.rs` | Intent queue, rate limiting, DND |
+| Proactive | `proactive_scheduler.rs`, `proactive_monitor.rs`, `proactive_intent.rs`, `proactive_calendar.rs`, `proactive_news.rs`, `proactive_stale_email.rs`, `proactive_tasks.rs`, `proactive_weather.rs`, `proactive_source_gate.rs`, `inner_thoughts.rs`, `goal_engine.rs`, `habit_detector.rs`, `notification_tracker.rs` | Intent queue, per-source scoring, rate limiting, DND |
 | Browser | `browser_agent.rs`, `browser_guard.rs`, `chrome_bridge.rs`, `ip_guard.rs` | Element scoring, stealth, CAPTCHA detection |
+| Vision Nav | `ax_walker.rs` (opt-in) | Cross-OS accessibility-tree flatten/find |
+| Voice | `pcm_vad.rs` (cargo feature `vad`, opt-in) | libfvad-backed barge-in detection for hybrid voice |
+| Security | `security.rs`, `secrets_sanitizer.rs` (default-ON) | Encryption helpers + 23-pattern outbound secrets scrubber (1.44–2.00× faster than TS) |
 | Research | `research_engine.rs`, `info_gain.rs`, `citation_graph.rs`, `skill_scorer.rs` | Research acceleration |
 | Harness | `harness_optimizer.rs` | NSGA-II Pareto, GP surrogate, TextGrad scoring |
-| Security | `security.rs` | Encryption helpers |
 
 **Performance numbers** (from `native/README.md`):
 
@@ -569,7 +579,72 @@ The agent calls `set_browser_mode({ mode: "vision" })` when text-only DOM inspec
 
 ---
 
-### 3.10 Coding Pipeline
+### 3.10 Vision Navigation
+
+**Directory:** `src/screen/` (10 files), tools at `src/tools/os-*.ts` + `src/tools/platform*.ts`
+
+Autonomous GUI control without relying on a single cloud VLM. The pipeline runs entirely on the user's machine; only the captioning/grounding models are downloaded on demand, and the orchestrator is plain TypeScript so the agent can debug it like any other subsystem.
+
+#### Capability detection (`capability-detector.ts`)
+
+On boot, ATLAS profiles the host (RAM, free RAM, CPU bench score, GPU class, free disk, online status, deps: python / pip / Ollama / models). The detector picks one of three profiles:
+
+| Profile  | Picked when                                          | Available perception stack            |
+|----------|------------------------------------------------------|---------------------------------------|
+| `lite`   | Low-spec Windows / no GPU / Ollama missing / <8 GB RAM | AX only (`ax-dump.ts`)                |
+| `standard` | Typical laptop ≥8 GB RAM, integrated GPU, Ollama present | AX + OmniParser captions              |
+| `full`   | Apple silicon or discrete GPU + Ollama + UI-TARS model | AX + OmniParser + UI-TARS grounding    |
+
+`ATLAS_VISION_PROFILE=lite|standard|full` overrides the picked tier (useful for testing tier-specific code paths).
+
+#### Tiered Perception Cascade (`perception-router.ts`)
+
+Given a natural-language instruction ("click Send"), the router walks tiers in confidence-gated order:
+
+| # | Tier                          | Typical latency  | Confidence gate |
+|---|-------------------------------|------------------|-----------------|
+| 1 | Click memory recall (DB lookup) | ~5 ms           | ≥ 0.90          |
+| 2 | AX exact-label match           | 50–200 ms        | ≥ 0.95          |
+| 3 | AX fuzzy-label match           | 50–200 ms        | ≥ 0.80          |
+| 4 | OmniParser caption match       | 200–800 ms       | ≥ 0.80 (Standard+) |
+| 5 | UI-TARS grounding              | 400–800 ms       | ≥ 0.70 (Full only) |
+| 6 | Cloud VLM fallback             | 1500–4000 ms     | caller's choice — router returns null |
+
+First tier whose confidence clears its gate wins; remaining tiers are skipped. The router does NOT execute the click — it returns a `ClickTarget` that the caller hands to `os_computer_action` with `coordSystem='screen'`.
+
+#### Click memory (`click-memory.ts`)
+
+Successful clicks (verified by `outcome-classifier.ts` — pre/post screenshot diff) write `{ app, window_title, instruction_hash, x_pct, y_pct, success_count, last_used_at }` to `data/click-memory.db`. On the next visit to the same app/instruction, the perception-router's Tier 1 returns the recalled site in microseconds. Kill-switch: `ATLAS_NO_CLICK_MEMORY=true` makes recall return null and record/forget no-op.
+
+#### Drift calibration (`drift-calibration.ts`)
+
+Per-monitor affine correction. Every confirmed click contributes a sample; once a monitor has ≥10 samples the calibrator fits a 2D affine transform (scale + translation) to correct systematic offset (typical sources: DPI scaling, fractional zoom, multi-monitor coordinate boundary). `applyCalibration(monitorId, x, y)` is called before every click. Kill-switch: `ATLAS_NO_DRIFT_CALIBRATION=true`.
+
+#### Vision models
+
+- **OmniParser** (`omniparser.ts`) — Microsoft icon-detection + caption model. Downloaded on demand to the Ollama cache. Returns `{ bbox, caption, type }` per element.
+- **UI-TARS** (`ui-tars.ts`) — ByteDance vision-language model that grounds free-form instructions to coordinates. Heavy (Full tier only); reserved for fallback.
+
+#### AX walker (`ax-dump.ts`)
+
+Cross-OS accessibility-tree dump:
+- **macOS:** `scripts/dump_ax_bin` (Swift, `AXUIElement` API) — built by `npm run build:ax`
+- **Windows:** UIA `IUIAutomation` via PowerShell helper
+- **Linux:** AT-SPI `gdbus` helper
+
+The TS implementation flattens the tree and finds matches by label. `ATLAS_NATIVE_AX=true` routes through `native/src/ax_walker.rs` for large trees (>200 nodes); the empirical default is TS because JSON marshalling dominates Rust's BFS win on small trees.
+
+#### Primary GUI tool
+
+`os_smart_click` (`src/tools/os-smart-click.ts`) is wired into the tool registry as the agent's primary GUI interaction tool. The tool router prompt explicitly demotes coordinate-based legacy tools in its favor. A boot-time permission probe ensures macOS Accessibility / Windows UIA / Linux AT-SPI access is granted before the agent tries to use it.
+
+#### Wizard integration
+
+The desktop wizard (`desktop/wizard/steps/install.js`) includes a "Vision Intelligence" step that surfaces the capability-detector's profile pick to the user and lets them upgrade (install Ollama + pull OmniParser / UI-TARS models) or downgrade (Lite-only). Dependencies install into an isolated Python venv (PEP 668-safe).
+
+---
+
+### 3.11 Coding Pipeline
 
 **Directory:** `src/tools/coding/`, `src/agents/plan-mode.ts`
 
@@ -599,7 +674,7 @@ Every coding request is classified on the first iteration:
 
 ---
 
-### 3.11 Deep Research Engine
+### 3.12 Deep Research Engine
 
 **Directory:** `src/research/` (11 files)
 
@@ -652,7 +727,7 @@ Each hypothesis gets Bayesian confidence updates based on found evidence, with `
 
 ---
 
-### 3.12 Proactive Engine
+### 3.13 Proactive Engine
 
 **Directory:** `src/proactive/` (28+ files)
 
@@ -706,7 +781,7 @@ Defaults: Telegram = active, WhatsApp = calm, Overlay = ambient, Discord/Slack/M
 
 ---
 
-### 3.13 Video Studio
+### 3.14 Video Studio
 
 **Directory:** `src/video-studio/` (15+ files), `src/tools/video-studio.ts`
 
@@ -757,7 +832,7 @@ A `validateEditPlan()` helper returns `{ ok: true, plan }` or `{ ok: false, erro
 
 ---
 
-### 3.14 Meta-Harness Optimizer
+### 3.15 Meta-Harness Optimizer
 
 **Directory:** `src/harness/` (13 files)
 
@@ -836,33 +911,31 @@ Candidates that fail safety gates are marked `scope-violation` and discarded wit
 **Leaderboard** — `data/harness/runs/<run_id>/indexes/leaderboard.json` tracks the top-10 candidates by composite score, updated after every evaluation. The harness CLI can query the leaderboard to apply the current best config to production.
 
 
-### 3.15 Voice Subsystem
+### 3.16 Voice Subsystem
 
-**Directory:** `src/voice/` (9 files + `live/` subdirectory)
+**Directory:** `src/voice/` (4 top-level files + `live/` subdirectory with ~16 files)
 
-**Talk mode** (`talk-mode.ts`): Enables a continuous voice conversation. Flow: audio → transcribe → `runAgent()` → TTS → play.
+**Transcription** (`transcribe.ts`, `telegram-voice.ts`): Tries in order — OpenAI Whisper or Groq `whisper-large-v3-turbo` → OpenRouter Gemini 2.5 Flash (with `input_audio` content). `transcribeAudio()` and `transcribeBuffer()` variants both supported.
 
-**Transcription** (`transcribe.ts`): Tries in order — OpenAI Whisper or Groq `whisper-large-v3-turbo` → OpenRouter Gemini 2.5 Flash (with `input_audio` content). `transcribeAudio()` and `transcribeBuffer()` variants both supported.
+**TTS** (`tts.ts`, `elevenlabs.ts`): OpenAI `tts-1` (default voice `nova`; also `alloy`, `echo`, `fable`, `onyx`, `shimmer`) and ElevenLabs as paid premium. Output format: Opus. For local-only operation, `voice/live/kokoro-tts.ts` runs Kokoro TTS in-process via `kokoro-js` — zero API cost, fully offline.
 
-**TTS** (`tts.ts`): OpenAI `tts-1` model. Default voice: `nova`. Other voices: `alloy`, `echo`, `fable`, `onyx`, `shimmer`. Output format: Opus.
-
-**Wake word** (`wake-word.ts`): Trigger phrase detection on transcribed text. Current implementation uses substring matching; Picovoice Porcupine or Vosk integration is noted for future full VAD support.
-
-**Live voice mode** (`live/`): Streaming bidirectional voice with tool calling.
+**Live voice mode** (`live/`): Streaming bidirectional voice with tool calling. The subdirectory contains the backend abstractions, audio pipeline (`audio/`), screen-share streaming, transcript speaker, memory bridge, tool bridge, and prompt builder.
 
 | Backend | Protocol | Notes |
 |---------|----------|-------|
-| `gemini-live.ts` | `@google/genai` SDK, `Modality.AUDIO` | Model chain: gemini-2.5-flash-native-audio-latest → preview-12-2025 → preview-09-2025 → 3.1-flash-live-preview (last; currently broken per scripts/test-gemini-live.ts). |
+| `gemini-live.ts` | `@google/genai` SDK, `Modality.AUDIO` | Model chain: gemini-2.5-flash-native-audio-latest → preview-12-2025 → preview-09-2025 → 3.1-flash-live-preview |
 | `openai-realtime.ts` | WebSocket `wss://api.openai.com/v1/realtime` | Model: gpt-4o-realtime-preview |
-| `hybrid-pipeline.ts` | STT → agent → TTS pipeline | Fallback when streaming backends unavailable |
+| `hybrid-pipeline.ts` | STT → agent → TTS pipeline | Fallback when streaming backends unavailable; uses Kokoro TTS for fully local operation |
+
+**Barge-in / VAD:** Hybrid mode uses an RMS-amplitude gate by default. Setting `ATLAS_NATIVE_VAD=true` routes barge-in through `native/src/pcm_vad.rs` (libfvad-backed; requires the native binary built with cargo feature `vad`). Aggressiveness is controlled by `ATLAS_VAD_MODE=0..3` (0 = quality / 3 = very aggressive, fewer false positives; default 2). libfvad classifies the signal spectrum so background noise and music false-positive far less than the RMS gate. Native Gemini Live and OpenAI Realtime backends use server-side VAD and ignore this knob.
 
 Voice-safe tools (allowed during live sessions): `spotify`, `music_control`, `set_volume`, `shell_exec`, `apple_script`, `web_search`, `get_current_time`, `memory_store`, `memory_search`, `schedule_task`, `set_reminder`, `read`, `write`, `send_file`.
 
-Live voice config: `LIVE_VOICE_NAME` (Gemini voices: Aoede/Charon/Kore/Fenrir/Puck; OpenAI: alloy/shimmer/echo), `LIVE_VOICE_BACKEND` (gemini-live/openai-realtime/hybrid).
+Live voice config: `LIVE_VOICE_NAME` (Gemini voices: Aoede/Charon/Kore/Fenrir/Puck; OpenAI: alloy/shimmer/echo), `LIVE_VOICE_BACKEND` (`gemini-live` / `openai-realtime` / `hybrid`).
 
 ---
 
-### 3.16 A2A Protocol
+### 3.17 A2A Protocol
 
 **File:** `src/agents/a2a.ts`
 
@@ -891,7 +964,7 @@ ATLAS implements Google's Agent-to-Agent (A2A) protocol, which enables external 
 
 ---
 
-### 3.17 Communication Channels
+### 3.18 Communication Channels
 
 | Channel | Library | Notes |
 |---------|---------|-------|
@@ -909,7 +982,7 @@ ATLAS implements Google's Agent-to-Agent (A2A) protocol, which enables external 
 
 ---
 
-### 3.18 Desktop App (Electron)
+### 3.19 Desktop App (Electron)
 
 **Directory:** `desktop/`
 
@@ -928,7 +1001,7 @@ Cross-platform Electron app (macOS + Windows) with:
 
 ---
 
-### 3.19 Marketing Brain
+### 3.20 Marketing Brain
 
 **Directory:** `src/marketing/` (20 files)
 
@@ -1290,6 +1363,25 @@ All configuration is via `.env` (copy from `.env.example`).
 | `ATLAS_TOOL_DEBUG=off\|verbose` | Tool breadcrumb verbosity |
 | `ATLAS_POST_SYNTHESIS_BUDGET_MS` | Wall-clock cap for code-critic + multi-critic (default 90000) |
 
+### Optional — Vision Navigation
+
+| Variable | Effect |
+|----------|--------|
+| `ATLAS_VISION_PROFILE=lite\|standard\|full` | Override the capability-detector's auto-picked profile |
+| `ATLAS_NO_CLICK_MEMORY=true` | Disable persistent click-memory recall / record |
+| `ATLAS_NO_DRIFT_CALIBRATION=true` | Disable per-monitor affine drift correction |
+| `ATLAS_NATIVE_AX=true` | Opt-in: route AX tree flatten/find through `native/src/ax_walker.rs` (TS is faster for trees <200 nodes; only flip for AX-heavy workloads) |
+
+### Optional — Native Rust opt-ins / overrides
+
+| Variable | Effect |
+|----------|--------|
+| `ATLAS_NO_NATIVE_SANITIZER=true` | Force TypeScript fallback for outbound secrets scrubbing (default is native — 1.44–2.00× faster) |
+| `ATLAS_NATIVE_VAD=true` | Opt-in: libfvad barge-in for hybrid voice (requires native binary built with cargo feature `vad`; gracefully falls back to RMS gate if missing) |
+| `ATLAS_VAD_MODE=0..3` | libfvad aggressiveness — 0 quality / 3 very aggressive (default 2) |
+| `ATLAS_NATIVE_SPREADING=true` | Opt-in: route SAN BFS through `native/src/spreading.rs` (only wins on >1000-node induced graphs) |
+| `ATLAS_NATIVE_AX=true` | See Vision Navigation table above |
+
 ### Optional — Voice
 
 | Variable | Description |
@@ -1394,6 +1486,9 @@ The environment variables listed below all default to the feature being ON. Sett
 - Architecture injection: `ATLAS_NO_ARCHITECTURE_INJECTION`
 - Repo map injection: `ATLAS_NO_REPO_MAP`
 - Proactive globally: `ATLAS_PROACTIVE_DISABLE`
+- Vision-nav click memory: `ATLAS_NO_CLICK_MEMORY`
+- Vision-nav drift calibration: `ATLAS_NO_DRIFT_CALIBRATION`
+- Native secrets sanitizer: `ATLAS_NO_NATIVE_SANITIZER`
 
 ---
 
@@ -1401,30 +1496,40 @@ The environment variables listed below all default to the feature being ON. Sett
 
 ```
 ATLAS/
-├── src/                        (TypeScript source, ~385 files)
+├── src/                        (TypeScript source, ~650 files incl. tests)
 │   ├── index.ts                (entry point, boot sequence)
 │   ├── agent.ts                (runAgent, core loop)
-│   ├── llm.ts                  (LLM client interface)
+│   ├── llm.ts / llm-middleware.ts / llm-cache.ts / llm-parsers/
 │   ├── crypto-transport.ts     (ECDH + AES-256-GCM)
+│   ├── crypto-kdf.ts / context-scrubber.ts
 │   ├── model-router.ts         (Rust wrapper)
 │   ├── tool-router.ts          (semantic tool selection)
-│   ├── memory/                 (39 files)
+│   ├── memory/                 (49 files + code-parse/ — incl. Memory Studio)
+│   ├── screen/                 (10 files — Vision Navigation: capability detector, perception router, click memory, drift calibration, OmniParser, UI-TARS, AX dump)
 │   ├── agents/                 (30 files — swarm, mesh, long-task, sub-agent, etc.)
-│   ├── tools/                  (~100+ files)
-│   │   ├── browser/            (20 files — dual-backend automation)
-│   │   └── coding/             (25+ files — design docs, LSP, codebase index)
+│   ├── tools/                  (126 files)
+│   │   ├── browser/            (15 files — dual-backend automation)
+│   │   ├── coding/             (25+ files — design docs, LSP, codebase index)
+│   │   └── os-smart-click.ts / os-computer-action.ts / os-grounding.ts / os-inspect.ts / platform.ts
 │   ├── research/               (11 files — deep research engine)
-│   ├── proactive/              (28+ files — heartbeat, dreaming, composer)
-│   ├── harness/                (13 files — Meta-Harness optimizer)
-│   ├── video-studio/           (15+ files — AI video editing)
-│   ├── marketing/              (20 files — Marketing Brain)
-│   ├── voice/                  (9 files + live/ — TTS, STT, live voice)
-│   ├── social/                 (4 files — theory of mind, emotion, pragmatics)
+│   ├── proactive/              (58 files — heartbeat, dreaming, composer, dispatch, inbox, monitors, sources, telemetry)
+│   ├── harness/                (17 files — Meta-Harness optimizer)
+│   ├── video-studio/           (25 files — AI video editing)
+│   ├── marketing/              (29 files — Marketing Brain)
+│   ├── voice/                  (4 files + live/ ~16 — TTS, STT, live voice, Kokoro local TTS)
+│   ├── social/                 (emotion-detector.ts — lexicon + punctuation heuristic)
+│   ├── documents/              (10 files — block-based doc renderer + templates)
+│   ├── location/               (7 files — GPS → Wi-Fi → IP fallback)
 │   ├── planning/               (MCTS, hierarchical)
 │   ├── mcp/                    (Model Context Protocol)
+│   ├── hooks/ cron/            (3 + 3 files — built-in tool hooks, cron schedules)
 │   └── security/               (sandbox, allowlist, secrets)
-├── native/                     (Rust, 55+ modules)
+├── native/                     (Rust, 64 modules)
 │   ├── src/
+│   │   ├── ax_walker.rs        (cross-OS AX flatten/find — opt-in)
+│   │   ├── pcm_vad.rs          (libfvad barge-in — cargo feature `vad`, opt-in)
+│   │   ├── secrets_sanitizer.rs (default-ON, 1.44–2.00× faster than TS)
+│   │   └── … 61 more modules
 │   └── Cargo.toml
 ├── convex/                     (serverless backend)
 │   ├── schema.ts
@@ -1432,16 +1537,20 @@ ATLAS/
 │   ├── crypto.ts
 │   └── store/
 ├── desktop/                    (Electron app)
+│   ├── installer/              (phase runner — Ollama, Python venv, vision deps)
+│   ├── wizard/                 (first-run wizard incl. vision-intelligence tier step)
+│   └── components/ detection/ migration/ hostinger-upload/
 ├── chrome-extension/           (MV3 companion extension)
 ├── overlay-app/                (native macOS Swift app)
 ├── portals/
 │   ├── admin-panel/            (Next.js admin dashboard)
 │   └── developer-portal/       (Next.js developer portal)
-├── skills/                     (built-in markdown skills)
+├── skills/                     (built-in markdown skills + Convex skill dirs)
 ├── prompts/                    (server-side prompt source)
-├── scripts/                    (Swift helpers, seed scripts)
+├── scripts/                    (Swift helpers — OCR, GPS, AX dump — Convex seeds, hotkeys)
 ├── data/                       (runtime state — gitignored)
 │   ├── memories.db             (SQLite, WAL)
+│   ├── click-memory.db         (vision-nav learnt click sites)
 │   ├── codebase-index/
 │   ├── agent-worktrees/
 │   ├── long-tasks/

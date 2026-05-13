@@ -408,13 +408,21 @@ const P = {
 
             await ensureDaemonOrThrow();
 
-            // Candidate tags in priority order. The Ollama registry's canonical
-            // tag for the ByteDance UI-TARS 1.5 release is `ui-tars:1.5-7b`;
-            // bare `ui-tars:7b` may or may not exist depending on when the
-            // registry was last updated. Try the most likely tag first and fall
-            // back. Persist the working tag to .env.enc so the bot's runtime
-            // (src/screen/ui-tars.ts) uses the same one.
-            const CANDIDATES = ["ui-tars:1.5-7b", "ui-tars:7b"];
+            // Candidate tags in priority order.
+            // (1) Common community Ollama Modelfile uploads — these wrap the
+            //     HF safetensors as Ollama-native GGUF models. Most reliable
+            //     because they're already in the Ollama public registry.
+            // (2) `hf.co/<repo>` direct fetch — Ollama 0.4+ can pull any HF
+            //     model directly. The official ByteDance-Seed/UI-TARS-1.5-7B
+            //     is safetensors (no GGUF), so this only works if Ollama can
+            //     auto-convert (it can for many qwen2_5_vl-class models).
+            // (3) Bare `ui-tars:*` — kept for forward-compat if Ollama ever
+            //     publishes an official tag.
+            const CANDIDATES = [
+                "ui-tars:1.5-7b",
+                "ui-tars:7b",
+                "hf.co/ByteDance-Seed/UI-TARS-1.5-7B",
+            ];
 
             // Check if ANY candidate is already pulled + manifest-valid.
             let alreadyHave = null;
@@ -460,12 +468,26 @@ const P = {
                 }
             }
             if (!pulled) {
-                throw new Error(
-                    "Could not pull vision model. Tried " + CANDIDATES.join(", ") +
-                    ". You can retry, or pull manually with one of: " +
-                    CANDIDATES.map((t) => "`ollama pull " + t + "`").join(" / ") +
-                    ". Last errors: " + errors.join(" | "),
-                );
+                // Soft-fail: the bot's perception cascade already falls back
+                // to OmniParser (Standard tier) and cloud-VLM when UI-TARS is
+                // missing. Stranding the entire install on a model that isn't
+                // strictly necessary makes for a worse user experience than
+                // letting them finish setup and install the model later.
+                log("");
+                log("\u26a0\ufe0f  Could not pull vision model from Ollama's public registry.");
+                log("   UI-TARS is the Full-tier OPTIONAL grounding model \u2014 A.T.L.A.S");
+                log("   still works without it (uses cloud vision-LLM as fallback).");
+                log("");
+                log("   To enable it later, run ONE of these manually in Terminal:");
+                for (const t of CANDIDATES) log("     ollama pull " + t);
+                log("");
+                log("   Or import the model from Hugging Face directly:");
+                log("     https://huggingface.co/ByteDance-Seed/UI-TARS-1.5-7B");
+                log("");
+                log("Continuing without vision model \u2014 install will finish normally.");
+                // Return without throwing \u2192 phase marked completed \u2192 install
+                // pipeline advances to data-dir / finalize.
+                return;
             }
             log("Vision model ready (" + pulled + ") \u2713");
             persistUiTarsTag(ctx, pulled);
