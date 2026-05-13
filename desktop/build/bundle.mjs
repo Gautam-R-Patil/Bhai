@@ -26,7 +26,7 @@ export async function bundleBot(distDir, outFile) {
     fs.mkdirSync(path.dirname(outFile), { recursive: true });
 
     // We have TWO files both named `native/index.js`:
-    //   • <repo-root>/native/index.js — the NAPI-generated CJS loader (loads .node binary)
+    //   • <rootForBundle>/native/index.js — the NAPI-generated CJS loader (loads .node binary)
     //   • src/native/index.ts → dist/native/index.js — our TS wrapper with named ESM exports
     // The TS wrapper uses createRequire to load the NAPI loader at runtime. Static
     // imports like `import { nativeContainsSecrets } from "../native/index.js"` from
@@ -37,8 +37,10 @@ export async function bundleBot(distDir, outFile) {
     //
     // The fix: resolve the import path against the importer manually. If it lands on
     // the root NAPI loader, externalize. Otherwise let esbuild bundle the TS wrapper.
-    const rootDir = path.resolve(__dirname, "../..");
-    const rootNativeIndex = path.resolve(rootDir, "native", "index.js");
+    // The root NAPI loader is always at `<distDir>/../native/index.js` — true for
+    // both repo dev-mode (<repo>/dist + <repo>/native) and afterPack mode
+    // (<app>/Contents/Resources/bot/dist + <app>/Contents/Resources/bot/native).
+    const rootNativeIndex = path.resolve(distDir, "..", "native", "index.js");
 
     const result = await esbuild.build({
         entryPoints: [entry],
