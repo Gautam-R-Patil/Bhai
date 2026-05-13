@@ -220,6 +220,16 @@
             const remaining = (100 - newest.percent) / rate;
             etaEl.textContent = formatEta(remaining / 1000);
         }
+        // Staleness timer: when no progress event has arrived for 15s (e.g.
+        // during a long `ollama pull`), reset ETA to "Estimating\u2026" so the user
+        // doesn't see a stale "~1m 20s remaining" frozen for 5 minutes while
+        // the actual download takes much longer than predicted.
+        const etaStalenessTimer = setInterval(function () {
+            if (RATE_SAMPLES.length > 0 &&
+                Date.now() - RATE_SAMPLES[RATE_SAMPLES.length - 1].ts > 15000) {
+                etaEl.textContent = "Estimating\u2026";
+            }
+        }, 5000);
 
         // Hide all pre-flight buttons as soon as the install actually starts streaming
         // progress. Previously the Resume button stayed visible during active progress
@@ -266,6 +276,7 @@
                 if (percent === 100) {
                     etaEl.textContent = "Done \u2713";
                     clearInterval(factTimer);
+                    clearInterval(etaStalenessTimer);
                     setTimeout(function () { window.location.href = "ready-hub.html"; }, 500);
                 }
             });
@@ -313,7 +324,8 @@
             if (typeof atlas.startInstall !== "function") { errEl.textContent = "Install IPC unavailable."; startBtn.disabled = false; return; }
             const workspace = (ctx && ctx.state && ctx.state.workspace && ctx.state.workspace.path) || "";
             try { await handle(await atlas.startInstall({ workspace: workspace })); }
-            catch (err) { errEl.textContent = "Install error: " + (err.message || err); startBtn.disabled = false; }
+            catch (err) { errEl.textContent = "Install error: " + (err.message || err); }
+            finally { startBtn.disabled = false; }
         });
 
         resumeBtn.addEventListener("click", async function () {
@@ -322,7 +334,7 @@
             if (typeof atlas.setupResumeInstall !== "function") { errEl.textContent = "Resume IPC unavailable."; resumeBtn.disabled = false; return; }
             try { await handle(await atlas.setupResumeInstall()); }
             catch (err) { errEl.textContent = "Resume error: " + (err.message || err); }
-            resumeBtn.disabled = false;
+            finally { resumeBtn.disabled = false; }
         });
 
         retryBtn.addEventListener("click", async function () {
@@ -332,7 +344,7 @@
             if (typeof atlas.setupRetryInstallPhase !== "function") { errEl.textContent = "Retry IPC unavailable."; retryBtn.disabled = false; return; }
             try { await handle(await atlas.setupRetryInstallPhase(failedId)); }
             catch (err) { errEl.textContent = "Retry error: " + (err.message || err); }
-            retryBtn.disabled = false;
+            finally { retryBtn.disabled = false; }
         });
     }
 

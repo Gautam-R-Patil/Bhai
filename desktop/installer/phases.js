@@ -10,6 +10,35 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 
+// Spawn the Ollama daemon detached. The bare binary name needs PATH
+// augmentation — Electron's dock-launched PATH on Apple Silicon is
+// /usr/bin:/bin only, which doesn't include /opt/homebrew/bin where the
+// ollama binary lives. Without the env override the spawn ENOENTs silently
+// (stdio: "ignore" eats the error) and the poll loop hits a dead daemon.
+function spawnDaemonDetached(log) {
+    const extraPaths = process.platform === "win32"
+        ? []
+        : ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"];
+    const augmented = process.platform === "win32"
+        ? (process.env.PATH || "")
+        : [...new Set([...extraPaths, ...(process.env.PATH || "").split(":")])].join(":");
+    require("child_process").spawn("ollama", ["serve"], {
+        detached: true,
+        stdio: "ignore",
+        env: { ...process.env, PATH: augmented },
+    }).unref();
+    if (log) log("Spawned `ollama serve` in background");
+}
+
+// Race an awaitable against a setTimeout-based abort. Used to prevent a single
+// hanging subprocess from burning the full poll-budget wall-clock.
+function raceWithTimeout(promise, ms) {
+    return Promise.race([
+        promise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), ms)),
+    ]);
+}
+
 const ALL_PHASE_IDS = [
     "node",
     "playwright-chromium",
@@ -261,40 +290,43 @@ const P = {
             }
             // Start the daemon so the next phase (model pull) can talk to it.
             // `ollama list` alone DOES NOT auto-start the daemon on a fresh
-            // brew install — the user's last setup attempt failed here.
-            // Explicit `brew services start` on macOS / `systemctl start` on
-            // Linux is the canonical way. As a final safety net, spawn
-            // `ollama serve` in the background if neither service-manager
-            // succeeds, then poll until `ollama list` works.
+            // brew install. Explicit service start is the canonical way; the
+            // detached spawn is a last-resort fallback. The poll loop converges
+            // regardless of which path succeeded.
+            log("Waiting for runtime to start...");
             if (process.platform === "darwin") {
                 try {
                     await ctx.runCommand("brew", ["services", "start", "ollama"], undefined, (l) => { if (l.trim()) log(l); });
                     log("Started runtime via brew services ✓");
                 } catch {
-                    // Fall back to detached `ollama serve`
                     try {
-                        require("child_process").spawn("ollama", ["serve"], { detached: true, stdio: "ignore" }).unref();
+                        spawnDaemonDetached(log);
                         log("Started runtime via background spawn");
-                    } catch { /* poll below will catch the failure */ }
+                    } catch { /* poll below will catch */ }
                 }
             } else if (process.platform === "linux") {
+                // Ollama install.sh registers a SYSTEM-level service; --user is the
+                // wrong scope. Try system-level first (no-password sudo may be
+                // configured by the install script); fall back to detached spawn.
                 try {
-                    // systemd on most distros; falls back to background spawn
-                    await ctx.runCommand("systemctl", ["--user", "start", "ollama"], undefined, () => {});
+                    await ctx.runCommand("systemctl", ["start", "ollama"], undefined, () => {});
                 } catch {
-                    try {
-                        require("child_process").spawn("ollama", ["serve"], { detached: true, stdio: "ignore" }).unref();
-                    } catch { /* polled below */ }
+                    try { spawnDaemonDetached(log); } catch { /* polled below */ }
                 }
             }
-            // Poll up to 15s for the daemon to be reachable. Without this,
-            // the next phase races the daemon startup and hits "Local model
-            // runtime is not running" even though we just installed it.
+            // Poll up to 15s for the daemon to be reachable. Wrap each attempt
+            // in a 2-second timeout so a hung `ollama list` can't burn the whole
+            // budget on one call (a partially-started daemon can accept TCP
+            // connections but not respond — runCommand's 10-min default would
+            // block the wall-clock deadline check otherwise).
             const deadline = Date.now() + 15000;
             let daemonUp = false;
             while (Date.now() < deadline) {
                 try {
-                    await ctx.runCommand("ollama", ["list"], undefined, () => {});
+                    await raceWithTimeout(
+                        ctx.runCommand("ollama", ["list"], undefined, () => {}),
+                        2000,
+                    );
                     daemonUp = true;
                     break;
                 } catch {
@@ -321,27 +353,34 @@ const P = {
             // it's truly unreachable.
             async function ensureDaemonOrThrow() {
                 try {
-                    await ctx.runCommand("ollama", ["list"], undefined, () => {});
+                    await raceWithTimeout(ctx.runCommand("ollama", ["list"], undefined, () => {}), 2000);
                     return;
                 } catch { /* daemon not yet reachable */ }
                 log("Runtime not reachable \u2014 attempting to start it...");
                 try {
                     if (process.platform === "darwin") {
                         try { await ctx.runCommand("brew", ["services", "start", "ollama"], undefined, () => {}); } catch { /* try spawn */ }
+                    } else if (process.platform === "linux") {
+                        try { await ctx.runCommand("systemctl", ["start", "ollama"], undefined, () => {}); } catch { /* try spawn */ }
                     }
-                    require("child_process").spawn("ollama", ["serve"], { detached: true, stdio: "ignore" }).unref();
+                    spawnDaemonDetached(log);
                 } catch { /* polling below decides */ }
                 const deadline = Date.now() + 15000;
                 while (Date.now() < deadline) {
                     try {
-                        await ctx.runCommand("ollama", ["list"], undefined, () => {});
+                        await raceWithTimeout(ctx.runCommand("ollama", ["list"], undefined, () => {}), 2000);
                         log("Runtime is reachable \u2713");
                         return;
                     } catch {
                         await new Promise((r) => setTimeout(r, 750));
                     }
                 }
-                throw new Error("Local model runtime did not come up within 15s. Run `brew services start ollama` (mac) or `ollama serve` manually, then click Retry.");
+                const hint = process.platform === "darwin"
+                    ? "Run `brew services start ollama` or `ollama serve` manually"
+                    : process.platform === "win32"
+                        ? "Re-run the Ollama installer from https://ollama.com/download/windows"
+                        : "Run `sudo systemctl start ollama` or `ollama serve` manually";
+                throw new Error("Local model runtime did not come up within 15s. " + hint + ", then click Retry.");
             }
 
             await ensureDaemonOrThrow();
