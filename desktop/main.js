@@ -3366,6 +3366,19 @@ function registerIPC() {
     // Setup: adaptive, resumable install. Builds the phase list from detection,
     // runs each phase sequentially, and writes per-phase markers to
     // data/setup-state.json so a crash mid-install can be resumed.
+    // Resolve options.workspace from the persisted .env.enc so retry/resume
+    // paths preserve the workspace path the wizard captured on the first install.
+    // Without this, ctx.options.workspace is undefined and the workspace phase
+    // silently skips with "No workspace requested".
+    function resolveWorkspaceOptions() {
+        try {
+            const env = loadEnvDecrypted() || "";
+            const wsLine = env.split("\n").find((l) => l.startsWith("ATLAS_WORKSPACE="));
+            if (wsLine) return { workspace: wsLine.slice("ATLAS_WORKSPACE=".length).trim() };
+        } catch { /* ignore */ }
+        return {};
+    }
+
     // Inject the user's persisted choices (vision tier etc) into the detection
     // state so buildPhaseList includes the optional ML-dep phases when warranted.
     // Validates the stored string against the known tier set (a corrupted prefs
@@ -3425,7 +3438,10 @@ function registerIPC() {
             // "complete the install" and walks away with a half-installed app.
             const tail = full.slice(idx);
             const remaining = getResumeList(tail, readSetupState(DATA_DIR));
-            const res = await runPhases(remaining, buildInstallCtx(mainWindow, {}));
+            // Carry forward the workspace path that the wizard captured earlier.
+            // Without this, the workspace phase silently skips ("No workspace
+            // requested — skipping") because ctx.options.workspace is undefined.
+            const res = await runPhases(remaining, buildInstallCtx(mainWindow, resolveWorkspaceOptions()));
             return {
                 success: res.status === "complete",
                 paused: res.status === "paused",
@@ -3445,7 +3461,7 @@ function registerIPC() {
             const state = augmentStateWithChoices(await runDetection(buildDetectionDeps()));
             const full = buildPhaseList(state);
             const remaining = getResumeList(full, readSetupState(DATA_DIR));
-            const res = await runPhases(remaining, buildInstallCtx(mainWindow, {}));
+            const res = await runPhases(remaining, buildInstallCtx(mainWindow, resolveWorkspaceOptions()));
             return {
                 success: res.status === "complete",
                 paused: res.status === "paused",
@@ -3629,10 +3645,26 @@ function registerIPC() {
         const state = await runDetection(buildDetectionDeps());
         // Carry forward any tier choice the user previously made — drives both
         // pre-selection in the vision-tier card UI and conditional phase
-        // building (Ollama / UI-TARS / OmniParser only run on the chosen tier).
+        // building. Apply the same cap-against-hardware logic as
+        // augmentStateWithChoices so a prefs file copied from a more capable
+        // machine doesn't pre-select an unsupported card. Persist the capped
+        // value back so reads from prefs stay in sync with reality.
         try {
             const prefs = store.get("prefs") || {};
-            if (prefs.visionTierChoice) state.visionTierChoice = prefs.visionTierChoice;
+            const stored = prefs.visionTierChoice;
+            const VALID = new Set(["lite", "standard", "full"]);
+            if (stored && VALID.has(stored)) {
+                const TIER_RANK = { lite: 0, standard: 1, full: 2 };
+                const detMax = (state.visionTier && state.visionTier.max) || "lite";
+                const cap = VALID.has(detMax) ? detMax : "lite";
+                if (TIER_RANK[stored] > TIER_RANK[cap]) {
+                    state.visionTierChoice = cap;
+                    prefs.visionTierChoice = cap;
+                    store.set("prefs", prefs);
+                } else {
+                    state.visionTierChoice = stored;
+                }
+            }
         } catch { /* ignore */ }
         return state;
     });

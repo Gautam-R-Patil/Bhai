@@ -136,12 +136,21 @@
             // Standard needs omniparser. Lite needs nothing.
             const fullInstalled = installed.ollama && installed.uiTarsModel && installed.omniparser;
             const standardInstalled = installed.omniparser;
+            // For Full tier with PARTIAL install, show the residual size so the
+            // user understands what's actually queued — not the worst-case 4.5 GB.
+            const visionModelReady = installed.ollama && installed.uiTarsModel;
             if (!canRun) {
                 footer.textContent = "✕ This Mac is not capable for this option — " + whyUnavailable(tier, detected);
                 footer.className += " tier-card__footer--unavailable";
             } else if (tier.id === "full" && fullInstalled) {
                 footer.textContent = "✓ Already installed";
                 footer.className += " tier-card__footer--installed";
+            } else if (tier.id === "full" && visionModelReady && !installed.omniparser) {
+                footer.textContent = "Will download ~500 MB (vision deps only — model already present)";
+                footer.className += " tier-card__footer--neutral";
+            } else if (tier.id === "full" && installed.omniparser && !visionModelReady) {
+                footer.textContent = "Will download ~4.5 GB (model + runtime — deps already present)";
+                footer.className += " tier-card__footer--neutral";
             } else if (tier.id === "standard" && standardInstalled) {
                 footer.textContent = "✓ Already installed";
                 footer.className += " tier-card__footer--installed";

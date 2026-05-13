@@ -122,7 +122,14 @@ const P = {
                 const statePath = path.join(ctx.DATA_DIR, "setup-state.json");
                 if (fs.existsSync(statePath)) {
                     const st = JSON.parse(fs.readFileSync(statePath, "utf8"));
-                    if (st && st["data-dir"] && st["data-dir"].completedAt) isFirstInstall = false;
+                    // Either marker proves a prior install exists. __finalizedAt
+                    // is the stronger signal — if the user ever reached the
+                    // finalize phase, their data MUST be preserved even if the
+                    // data-dir marker somehow got lost (manual edit, partial
+                    // write, schema migration). Belt-and-suspenders.
+                    if (st && ((st["data-dir"] && st["data-dir"].completedAt) || st.__finalizedAt)) {
+                        isFirstInstall = false;
+                    }
                 }
             } catch { /* malformed state → treat as first install */ }
             if (isFirstInstall) {
@@ -214,20 +221,27 @@ const P = {
                 const crypto = require("crypto");
                 const rand = crypto.randomBytes(12).toString("hex");
                 const tmp = path.join(os.tmpdir(), `atlas_ollama_install_${rand}.sh`);
-                // Refuse if a path collision is somehow present (shouldn't happen
-                // with 96-bit random, but defense-in-depth against symlink races).
-                if (fs.existsSync(tmp)) {
-                    throw new Error("Temp path collision; refusing to overwrite " + tmp);
+                // Atomically create the file with O_EXCL — fails if ANY fs entry
+                // (file/symlink/dir) exists at the path. This collapses the TOCTOU
+                // window: even if an attacker plants a symlink in the microsecond
+                // between random generation and the open, openSync(... "wx") fails
+                // on the symlink inode itself. Without this, curl -o would follow
+                // a pre-planted symlink and truncate the target before our post-
+                // download lstat check could fire.
+                try {
+                    const fd = fs.openSync(tmp, "wx", 0o600);
+                    fs.closeSync(fd);
+                } catch (e) {
+                    throw new Error("Could not create temp file (possible symlink attack): " + e.message);
                 }
                 try {
                     log("Downloading install script to " + tmp + "...");
                     await ctx.runCommand("curl", ["-fsSL", "-o", tmp, "https://ollama.com/install.sh"], undefined, (l) => { if (l.trim()) log(l); });
-                    // After curl writes the file, verify it's a regular file (not
-                    // a symlink curl followed). lstat returns info on the link,
-                    // not its target.
+                    // Defense-in-depth: confirm the path is still a regular file
+                    // post-download. Should always pass given the O_EXCL above.
                     const lst = fs.lstatSync(tmp);
                     if (!lst.isFile()) {
-                        throw new Error("Downloaded path is not a regular file (possible TOCTOU): " + tmp);
+                        throw new Error("Downloaded path is not a regular file: " + tmp);
                     }
                     // Audit trail: full SHA-256 so the user can paste-compare
                     // against any published reference. Size sanity check covers
@@ -259,14 +273,23 @@ const P = {
         label: "Vision model (~4.5 GB)",
         idempotent: true,
         async run(ctx, log) {
-            // Check if the EXACT model tag is already pulled. Substring match on
-            // "ui-tars" alone wrongly accepts ui-tars:13b / :72b / future variants.
+            // Check if the EXACT model tag we pull (`ui-tars:7b`) is already
+            // present. The detection regex accepts the 1.5-7b form too, but
+            // here we MUST be strict: if a user has only ui-tars:1.5-7b, the
+            // bot's runtime call `ollama run ui-tars:7b` will fail. We need
+            // the exact tag we're about to pull, nothing else.
             try {
                 let listOutput = "";
                 await ctx.runCommand("ollama", ["list"], undefined, (l) => { listOutput += l; });
-                if (/\bui-tars[:-](?:1\.5-)?7b\b/.test(listOutput)) {
-                    log("Vision model already pulled \u2713");
-                    return;
+                if (/\bui-tars:7b\b/.test(listOutput)) {
+                    // Confirm the manifest is actually readable (not a stale
+                    // entry from an interrupted pull). `ollama show` is the
+                    // canonical truth-source.
+                    try {
+                        await ctx.runCommand("ollama", ["show", "ui-tars:7b"], undefined, () => {});
+                        log("Vision model already pulled \u2713");
+                        return;
+                    } catch { /* manifest corrupt \u2014 fall through to re-pull */ }
                 }
             } catch {
                 throw new Error("Local model runtime is not running or not installed. Install it first, then click Retry.");

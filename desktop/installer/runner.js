@@ -84,10 +84,17 @@ async function runPhases(phaseList, ctx) {
         try {
             await ph.run(ctx, log);
             state[ph.id] = { completedAt: new Date().toISOString(), durationMs: Date.now() - t0 };
-            writeSetupState(ctx.DATA_DIR, state);
+            try { writeSetupState(ctx.DATA_DIR, state); } catch (persistErr) {
+                // Disk full or perms error during marker persist. Log it but
+                // continue — the phase itself succeeded, so we'd rather report
+                // success and lose the marker than fail the whole install.
+                log("Warning: could not persist setup-state.json (" + (persistErr && persistErr.message) + ")");
+            }
         } catch (err) {
             // Persist anything that did complete so a subsequent resume works.
-            writeSetupState(ctx.DATA_DIR, state);
+            // Wrap in try/catch — disk-full here must not double-fault and
+            // produce an unhandled rejection that hides the original error.
+            try { writeSetupState(ctx.DATA_DIR, state); } catch { /* best-effort */ }
             if (ctx.sendProgress) ctx.sendProgress(-1, "Paused at " + ph.label);
             log("ERROR in phase " + ph.id + ": " + (err && err.message ? err.message : String(err)));
             return {

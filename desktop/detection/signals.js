@@ -402,11 +402,16 @@ async function detectVisionDeps(fsMod, execFn, homeDir) {
     } catch { /* ignore */ }
 
     // (2) + (3): UI-TARS model probe + OmniParser probe in PARALLEL.
+    // Track whether the live UI-TARS probe actually reached the daemon. The
+    // offline manifest fallback must ONLY run when the daemon was unreachable —
+    // not when `ollama show` explicitly determined the manifest is corrupt.
+    let liveProbeRan = false;
     const probes = [];
     if (out.ollama && typeof execFn === "function") {
         probes.push((async () => {
             try {
                 const r = await execFn("ollama list");
+                liveProbeRan = true;
                 const stdout = (r && (r.stdout || "")).toString();
                 const hasTag = /\bui-tars[:-](?:1\.5-)?7b\b/.test(stdout);
                 const isIncomplete = /\bui-tars[:-](?:1\.5-)?7b\b[^\n]*\(incomplete\)/i.test(stdout);
@@ -416,9 +421,9 @@ async function detectVisionDeps(fsMod, execFn, homeDir) {
                     try {
                         await execFn("ollama show ui-tars:7b");
                         out.uiTarsModel = true;
-                    } catch { /* manifest corrupt — leave false */ }
+                    } catch { /* manifest corrupt — leave false; fallback must NOT override */ }
                 }
-            } catch { /* daemon down */ }
+            } catch { /* daemon down — liveProbeRan stays false */ }
         })());
     }
     if (typeof execFn === "function") {
@@ -432,10 +437,11 @@ async function detectVisionDeps(fsMod, execFn, homeDir) {
     }
     await Promise.all(probes);
 
-    // (2b) Offline manifest fallback for UI-TARS — covers the case where the
-    // daemon is down but the model files exist on disk. Only runs if the live
-    // probe didn't already set the flag.
-    if (!out.uiTarsModel) {
+    // (2b) Offline manifest fallback for UI-TARS. Only runs when the live
+    // probe didn't reach the daemon (i.e., daemon was down). When the live
+    // probe ran but found the model corrupt or absent, that verdict stands —
+    // overriding it from the filesystem check would mask a broken manifest.
+    if (!out.uiTarsModel && !liveProbeRan) {
         try {
             if (homeDir && fsMod && fsMod.existsSync) {
                 const dir = `${homeDir}/.ollama/models/manifests/registry.ollama.ai/library/ui-tars`;
