@@ -64,7 +64,19 @@ async function detectGoogleTokens(fs, tokenDir) {
     }
 }
 
-function detectOtplessSession(prefs) {
+function detectOtplessSession(prefs, sessionFromFile) {
+    // Two sources of truth, prefer the file-based one. saveAccountSession writes
+    // to <DATA_DIR>/atlas-account.enc; nothing ever writes prefs.account in
+    // electron-store, so reading prefs.account alone makes signin
+    // mis-skip-or-re-prompt depending on which way the bug fires. The caller
+    // passes the decrypted file contents (or null) so this function stays pure.
+    if (sessionFromFile && sessionFromFile.userId && !/^(phone_|google_)/.test(sessionFromFile.userId)) {
+        const out = { signedIn: true };
+        if (sessionFromFile.email) out.email = sessionFromFile.email;
+        if (sessionFromFile.phone) out.phone = sessionFromFile.phone;
+        if (sessionFromFile.name) out.name = sessionFromFile.name;
+        return out;
+    }
     const acct = prefs && prefs.account;
     if (!acct || !acct.signedIn) return { signedIn: false };
     // Falsy expiresAt (0, null, undefined) → treated as "no expiry stored", not "expired at epoch".

@@ -57,7 +57,14 @@ async function runDetection(deps) {
     const isReconfigure = safeSync(() => signals.detectSetupFlag(fs, paths.setupFlag), false);
     const legal = safeSync(() => signals.detectLegalAcceptance(fs, paths.legalAcceptance), { accepted: false });
     const envPresent = safeSync(() => signals.detectEnvPresent(fs, paths.envFile), false);
-    const account = safeSync(() => signals.detectOtplessSession(prefs), { signedIn: false });
+    // Pass through the decrypted account.enc session (if any) so detection
+    // reads from the canonical source (the .enc file written by
+    // finalizeAuth/saveAccountSession). prefs.account in electron-store is
+    // never populated, so relying on it alone would always say "not signed in".
+    const account = safeSync(
+        () => signals.detectOtplessSession(prefs, safeDeps.accountSessionFromFile || null),
+        { signedIn: false },
+    );
     const playwright = safeSync(() => signals.detectPlaywrightChromium(fs, paths.botDir), false);
     let permissions;
     if (platform === "darwin") {

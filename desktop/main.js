@@ -776,11 +776,20 @@ function buildDetectionDeps() {
         whatsappOwners: path.join(app.getPath("userData"), "whatsapp-users", "owners.json"),
     };
 
+    // Decrypt atlas-account.enc here so the detector can read the canonical
+    // signin state. saveAccountSession writes to this file; prefs.account in
+    // electron-store is never populated, so the detector previously always
+    // claimed "not signed in" no matter how many times you signed in.
+    const accountSessionFromFile = (() => {
+        try { return loadAccountSession(); } catch { return null; }
+    })();
+
     return {
         proc: process,
         fs,
         os: osmod,
         systemPreferences,
+        accountSessionFromFile,
         nativeTheme,
         globalShortcut,
         prefs,
