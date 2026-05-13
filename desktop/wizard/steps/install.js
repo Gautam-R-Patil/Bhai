@@ -156,23 +156,27 @@
             return;
         }
 
-        // ── Fun facts — rotate every 7s while install runs ──
+        // ── Fun facts — user-facing benefits, rotate every 7s ──
+        // Pulled from tryatlasagi.com/101-reasons. Stay product-benefit framed
+        // (what the user can do) rather than implementation detail (what tech
+        // powers it). The wizard is the first impression — leaking internals
+        // here positions A.T.L.A.S as a tech demo, not as a useful assistant.
         const FUN_FACTS = [
-            "A.T.L.A.S remembers your conversations across sessions — it learns how you work.",
-            "Memory uses HNSW graphs for nearest-neighbor recall — the same tech Spotify uses for recommendations.",
-            "Tools are chosen by semantic similarity, not keywords — so you can ask for anything in your own words.",
-            "A.T.L.A.S dreams at 3am every night — consolidating the day's learnings into long-term memory.",
-            "The brain runs in Rust — ~15-20x faster than pure JavaScript for the hot paths.",
-            "You can summon A.T.L.A.S anywhere with Alt+Space — even while another app is fullscreen.",
-            "Live voice mode uses sub-second latency with Gemini Live or OpenAI Realtime — you talk, it replies instantly.",
-            "A.T.L.A.S reads your screen when you ask — no screenshots uploaded anywhere, all local.",
-            "It can book flights, draft emails, and run long research tasks in the background — for hours.",
-            "Every action is explained: A.T.L.A.S tells you what it's about to do before doing it.",
-            "Your memory is yours — SQLite on disk, encrypted, never synced to the cloud.",
-            "The wake word is customizable — call it anything from 'Hey Atlas' to 'Yo Jarvis'.",
-            "A.T.L.A.S can talk to you through Telegram, Discord, Slack, WhatsApp, Matrix, or email.",
-            "Errors auto-escalate the model tier — simple tasks stay cheap, hard ones get the big guns.",
-            "You're not locked in — A.T.L.A.S works with Opus, Sonnet, Haiku, GPT, and Gemini.",
+            "A.T.L.A.S remembers your preferences, communication style, and past conversations.",
+            "It automates browser tasks — form-filling, clicking, tab-switching — without you watching.",
+            "It researches across hundreds of sources and gives you a synthesized report, not a pile of links.",
+            "It deploys multiple specialized agents to work on different parts of your task in parallel.",
+            "You can control it entirely through natural voice — no technical syntax to memorize.",
+            "Your data runs locally on your machine and never leaves your device.",
+            "It keeps working even when your computer is closed — finishing tasks while you sleep.",
+            "Reach it from desktop, mobile, Slack, Discord, WhatsApp, or your browser.",
+            "It learns from your workflows and improves its approach based on your patterns.",
+            "It executes complex multi-step processes across different apps in minutes.",
+            "It manages spreadsheets, APIs, terminal commands, and file organization for you.",
+            "Sources come with credibility scores — facts are cross-referenced before you see them.",
+            "It switches languages mid-sentence and auto-detects your preferred one.",
+            "It anticipates what you'll need next and suggests it before you ask.",
+            "Routine Monday-morning tasks — dashboards, email summaries — disappear.",
         ];
         let factIdx = Math.floor(Math.random() * FUN_FACTS.length);
         function rotateFact() {

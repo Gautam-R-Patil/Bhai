@@ -39,6 +39,29 @@ function raceWithTimeout(promise, ms) {
     ]);
 }
 
+// Strip ANSI escape sequences (CSI cursor codes, color codes, mode switches).
+// Ollama's `pull` progress UI emits cursor-control codes that pollute logs and
+// hide the actual error text when a pull fails.
+function stripAnsi(s) {
+    if (s == null) return "";
+    // Match: ESC [ ... <terminator>, ESC ] OSC sequences, and DEC private mode (?)
+    return String(s).replace(/\[[?]?[0-9;]*[a-zA-Z]/g, "")
+        .replace(/\][^]*/g, "")
+        .replace(/\r/g, "");
+}
+
+// Persist the actually-pulled UI-TARS tag to .env.enc so the bot's runtime
+// (src/screen/ui-tars.ts) uses the same tag at inference time. Otherwise the
+// bot would hardcode `ui-tars:7b` even when the install pulled `:1.5-7b`.
+function persistUiTarsTag(ctx, tag) {
+    try {
+        const env = (ctx.loadEnvDecrypted && ctx.loadEnvDecrypted()) || "";
+        const lines = env.split("\n").filter((l) => !l.startsWith("ATLAS_UI_TARS_TAG="));
+        lines.push("ATLAS_UI_TARS_TAG=" + tag);
+        if (ctx.saveEnvEncrypted) ctx.saveEnvEncrypted(lines.filter(Boolean).join("\n"));
+    } catch { /* best-effort */ }
+}
+
 const ALL_PHASE_IDS = [
     "node",
     "playwright-chromium",
@@ -385,34 +408,67 @@ const P = {
 
             await ensureDaemonOrThrow();
 
-            // Check if the EXACT model tag we pull (`ui-tars:7b`) is already
-            // present. The detection regex accepts the 1.5-7b form too, but
-            // here we MUST be strict: if a user has only ui-tars:1.5-7b, the
-            // bot's runtime call `ollama run ui-tars:7b` will fail. We need
-            // the exact tag we're about to pull, nothing else.
+            // Candidate tags in priority order. The Ollama registry's canonical
+            // tag for the ByteDance UI-TARS 1.5 release is `ui-tars:1.5-7b`;
+            // bare `ui-tars:7b` may or may not exist depending on when the
+            // registry was last updated. Try the most likely tag first and fall
+            // back. Persist the working tag to .env.enc so the bot's runtime
+            // (src/screen/ui-tars.ts) uses the same one.
+            const CANDIDATES = ["ui-tars:1.5-7b", "ui-tars:7b"];
+
+            // Check if ANY candidate is already pulled + manifest-valid.
+            let alreadyHave = null;
             try {
                 let listOutput = "";
                 await ctx.runCommand("ollama", ["list"], undefined, (l) => { listOutput += l; });
-                if (/\bui-tars:7b\b/.test(listOutput)) {
-                    try {
-                        await ctx.runCommand("ollama", ["show", "ui-tars:7b"], undefined, () => {});
-                        log("Vision model already pulled \u2713");
-                        return;
-                    } catch { /* manifest corrupt \u2014 fall through to re-pull */ }
+                for (const tag of CANDIDATES) {
+                    // Escape `:` for regex use, anchored by word boundaries.
+                    const re = new RegExp("\\b" + tag.replace(/[.:]/g, "\\$&") + "\\b");
+                    if (re.test(listOutput)) {
+                        try {
+                            await ctx.runCommand("ollama", ["show", tag], undefined, () => {});
+                            alreadyHave = tag;
+                            break;
+                        } catch { /* manifest corrupt \u2014 fall through */ }
+                    }
                 }
             } catch {
-                // Reaching here is rare \u2014 we just confirmed the daemon was up.
                 throw new Error("Local model runtime stopped responding mid-phase. Click Retry.");
             }
-            log("Pulling vision model \u2014 this can take 5-15 minutes depending on connection...");
-            try {
-                await ctx.runCommand("ollama", ["pull", "ui-tars:7b"], undefined, (l) => {
-                    if (l.trim()) log(l);
-                });
-                log("Vision model ready \u2713");
-            } catch (err) {
-                throw new Error("Model pull failed. You can retry, or pull manually with `ollama pull ui-tars:7b`. (" + err.message + ")");
+            if (alreadyHave) {
+                log("Vision model already pulled (" + alreadyHave + ") \u2713");
+                persistUiTarsTag(ctx, alreadyHave);
+                return;
             }
+
+            log("Pulling vision model \u2014 this can take 5-15 minutes depending on connection...");
+            let pulled = null;
+            const errors = [];
+            for (const tag of CANDIDATES) {
+                try {
+                    await ctx.runCommand("ollama", ["pull", tag], undefined, (l) => {
+                        if (l.trim()) log(stripAnsi(l));
+                    });
+                    pulled = tag;
+                    break;
+                } catch (err) {
+                    // Strip ANSI before storing \u2014 ollama emits cursor-control
+                    // codes that mask the actual reason for failure.
+                    const clean = stripAnsi(err && err.message ? err.message : String(err));
+                    errors.push(tag + ": " + clean.slice(0, 200));
+                    log("Tag " + tag + " not available \u2014 trying next...");
+                }
+            }
+            if (!pulled) {
+                throw new Error(
+                    "Could not pull vision model. Tried " + CANDIDATES.join(", ") +
+                    ". You can retry, or pull manually with one of: " +
+                    CANDIDATES.map((t) => "`ollama pull " + t + "`").join(" / ") +
+                    ". Last errors: " + errors.join(" | "),
+                );
+            }
+            log("Vision model ready (" + pulled + ") \u2713");
+            persistUiTarsTag(ctx, pulled);
         },
     }),
 

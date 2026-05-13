@@ -112,7 +112,11 @@ export async function groundClick(
     instruction: string,
     opts: UITarsOptions = {},
 ): Promise<UITarsGroundingResult> {
-    const model = opts.model || "ui-tars:7b";
+    // Honour the wizard's persisted choice — install can pull either
+    // ui-tars:1.5-7b (canonical Ollama 1.5 release) or ui-tars:7b depending
+    // on which tag the registry serves. ATLAS_UI_TARS_TAG is written by
+    // installer/phases.js after a successful pull.
+    const model = opts.model || process.env.ATLAS_UI_TARS_TAG || "ui-tars:1.5-7b";
     const host = opts.host || process.env.OLLAMA_HOST || "http://127.0.0.1:11434";
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const start = Date.now();
@@ -243,7 +247,7 @@ export function clearUITarsAvailCache(): void {
 export async function isUITarsAvailable(
     opts: { model?: string; host?: string } = {},
 ): Promise<{ available: boolean; reason?: string; modelTag?: string }> {
-    const model = opts.model || "ui-tars:7b";
+    const model = opts.model || process.env.ATLAS_UI_TARS_TAG || "ui-tars:1.5-7b";
     const host = opts.host || process.env.OLLAMA_HOST || "http://127.0.0.1:11434";
     const cacheKey = `${host}|${model}`;
     const cached = _availCache.get(cacheKey);
