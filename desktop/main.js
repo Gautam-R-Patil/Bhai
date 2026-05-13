@@ -3366,11 +3366,21 @@ function registerIPC() {
     // Setup: adaptive, resumable install. Builds the phase list from detection,
     // runs each phase sequentially, and writes per-phase markers to
     // data/setup-state.json so a crash mid-install can be resumed.
+    // Inject the user's persisted choices (vision tier etc) into the detection
+    // state so buildPhaseList includes the optional ML-dep phases when warranted.
+    function augmentStateWithChoices(state) {
+        try {
+            const prefs = store.get("prefs") || {};
+            if (prefs.visionTierChoice) state.visionTierChoice = prefs.visionTierChoice;
+        } catch { /* ignore */ }
+        return state;
+    }
+
     ipcMain.handle("setup:install", async (_, options) => {
         const ctx = buildInstallCtx(mainWindow, options);
         try {
             const { runDetection, buildPhaseList, runPhases } = requireInstaller();
-            const state = await runDetection(buildDetectionDeps());
+            const state = augmentStateWithChoices(await runDetection(buildDetectionDeps()));
             const phases = buildPhaseList(state);
             const res = await runPhases(phases, ctx);
             if (res.status === "complete") {
@@ -3395,7 +3405,7 @@ function registerIPC() {
     ipcMain.handle("setup:retry-install-phase", async (_, phaseId) => {
         try {
             const { runDetection, buildPhaseList, runPhases } = requireInstaller();
-            const state = await runDetection(buildDetectionDeps());
+            const state = augmentStateWithChoices(await runDetection(buildDetectionDeps()));
             const full = buildPhaseList(state);
             const phase = full.find((p) => p.id === phaseId);
             if (!phase) return { success: false, error: "Unknown phase: " + phaseId };
@@ -3415,7 +3425,7 @@ function registerIPC() {
     ipcMain.handle("setup:resume-install", async () => {
         try {
             const { runDetection, buildPhaseList, runPhases, getResumeList, readSetupState } = requireInstaller();
-            const state = await runDetection(buildDetectionDeps());
+            const state = augmentStateWithChoices(await runDetection(buildDetectionDeps()));
             const full = buildPhaseList(state);
             const remaining = getResumeList(full, readSetupState(DATA_DIR));
             const res = await runPhases(remaining, buildInstallCtx(mainWindow, {}));
@@ -3599,7 +3609,15 @@ function registerIPC() {
     // Fail-safe: errors and timeouts never abort detection — every probe has a fallback.
     ipcMain.handle("setup:detect", async () => {
         const { runDetection } = requireInstaller();
-        return runDetection(buildDetectionDeps());
+        const state = await runDetection(buildDetectionDeps());
+        // Carry forward any tier choice the user previously made — drives both
+        // pre-selection in the vision-tier card UI and conditional phase
+        // building (Ollama / UI-TARS / OmniParser only run on the chosen tier).
+        try {
+            const prefs = store.get("prefs") || {};
+            if (prefs.visionTierChoice) state.visionTierChoice = prefs.visionTierChoice;
+        } catch { /* ignore */ }
+        return state;
     });
 
     // Setup: re-read the permission map for live polling from the Permissions step of the
@@ -3836,6 +3854,31 @@ function registerIPC() {
             try { saveEnvKVs(envKVsFromPersonalize(next.personalize)); }
             catch (e) { console.warn("[setup:save-personalize] env mirror failed:", e.message); }
             return { success: true, prefs: next };
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    // Setup: persist user's vision-tier choice (lite/standard/full).
+    // The choice is read by buildPhaseList in installer/phases.js to decide
+    // whether to push Ollama / UI-TARS / OmniParser phases into the install run.
+    // Also mirrored into .env.enc as ATLAS_VISION_PROFILE so the bot's
+    // capability-detector respects the user's selection on boot.
+    ipcMain.handle("setup:save-vision-tier", async (_evt, payload) => {
+        try {
+            const tier = (payload && payload.tier) || "lite";
+            if (!["lite", "standard", "full"].includes(tier)) {
+                return { success: false, error: "Invalid tier: " + tier };
+            }
+            const prefs = store.get("prefs") || {};
+            prefs.visionTierChoice = tier;
+            store.set("prefs", prefs);
+            try {
+                saveEnvKVs({ ATLAS_VISION_PROFILE: tier });
+            } catch (e) {
+                console.warn("[setup:save-vision-tier] env mirror failed:", e.message);
+            }
+            return { success: true, tier: tier };
         } catch (err) {
             return { success: false, error: err.message };
         }

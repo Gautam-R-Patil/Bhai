@@ -5,6 +5,7 @@
     const ICON = { pending: "\u25CB", running: "\u25D0", done: "\u2713", failed: "\u2715" };
     const PHASE_IDS = [
         "node", "playwright-chromium", "embedding-model", "sox",
+        "ollama", "ui-tars-model", "omniparser-deps",
         "data-dir", "workspace", "setup-state-finalize",
     ];
     const LABELS = {
@@ -12,6 +13,9 @@
         "playwright-chromium": "Browser engine",
         "embedding-model": "AI model",
         "sox": "Audio toolkit",
+        "ollama": "Ollama runtime",
+        "ui-tars-model": "Vision model (UI-TARS 7B)",
+        "omniparser-deps": "Vision deps (OmniParser)",
         "data-dir": "Data directory",
         "workspace": "Workspace folder",
         "setup-state-finalize": "Finalize",

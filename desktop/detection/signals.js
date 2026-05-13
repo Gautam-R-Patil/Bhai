@@ -339,6 +339,67 @@ function detectPersonalize(prefs, platform) {
     };
 }
 
+/**
+ * Detect the maximum vision-nav tier the system can run.
+ *
+ *   lite     — AX-only.        Works everywhere. ~0 GB extra disk.
+ *   standard — AX + OmniParser. Needs ≥ 8 GB RAM, Python + ~0.5 GB disk.
+ *   full     — AX + OmniParser + UI-TARS-1.5-7B local grounding.
+ *              Needs Apple-silicon or capable GPU + ≥ 12 GB RAM + ~6 GB disk.
+ *
+ * Returns { max, ramGB, gpuClass, platform } so the wizard can grey out cards
+ * the system can't run and show a clear "needs more RAM" hint.
+ */
+function detectVisionTier(osMod, procMod) {
+    try {
+        const totalBytes = (osMod && osMod.totalmem && osMod.totalmem()) || 0;
+        const ramGB = Math.round((totalBytes / (1024 ** 3)) * 10) / 10;
+        const platform = (procMod && procMod.platform) || process.platform;
+        const arch = (procMod && procMod.arch) || process.arch;
+        let gpuClass = "none";
+        if (platform === "darwin" && arch === "arm64") gpuClass = "apple-silicon";
+        else if (platform === "linux" || platform === "win32") gpuClass = "unknown";
+
+        let max = "lite";
+        if (ramGB >= 8) max = "standard";
+        if (ramGB >= 12 && (gpuClass === "apple-silicon" || (gpuClass === "unknown" && ramGB >= 16))) {
+            max = "full";
+        }
+        return { max, ramGB, gpuClass, platform };
+    } catch {
+        return { max: "lite", ramGB: 0, gpuClass: "unknown", platform: process.platform };
+    }
+}
+
+/**
+ * Detect which optional vision-nav deps are already installed so the wizard
+ * doesn't re-download them.
+ */
+function detectVisionDeps(fsMod, _execFn, homeDir) {
+    const out = { ollama: false, uiTarsModel: false, omniparser: false };
+    try {
+        const candidates = [
+            "/opt/homebrew/bin/ollama",
+            "/usr/local/bin/ollama",
+            "/usr/bin/ollama",
+            homeDir ? `${homeDir}\\AppData\\Local\\Programs\\Ollama\\ollama.exe` : null,
+        ].filter(Boolean);
+        for (const c of candidates) {
+            if (fsMod && fsMod.existsSync && fsMod.existsSync(c)) {
+                out.ollama = true;
+                break;
+            }
+        }
+    } catch { /* ignore */ }
+    try {
+        if (homeDir && fsMod && fsMod.existsSync) {
+            const modelDir = `${homeDir}/.ollama/models/manifests/registry.ollama.ai/library/ui-tars`;
+            if (fsMod.existsSync(modelDir)) out.uiTarsModel = true;
+        }
+    } catch { /* ignore */ }
+    return out;
+}
+
 module.exports = {
     detectPlatform,
     detectSetupFlag,
@@ -363,4 +424,6 @@ module.exports = {
     detectEmail,
     detectOsUserName,
     detectPersonalize,
+    detectVisionTier,
+    detectVisionDeps,
 };

@@ -3,7 +3,7 @@
 // Browser: attaches to window.WizardRouter. Main process: required from main.js.
 "use strict";
 
-const ALL_STEPS = ["welcome", "terms", "signin", "profile", "personalize", "permissions", "install"];
+const ALL_STEPS = ["welcome", "terms", "signin", "profile", "personalize", "permissions", "vision-tier", "install"];
 
 // Bump when the legal documents (Terms / Privacy / Acceptable Use / Disclaimer /
 // Refund) materially change. Users whose stored acceptance.version is older
@@ -45,8 +45,24 @@ function getSteps(state) {
         const all = ["accessibility", "screen", "microphone", "location"].every((k) => perms[k] === "granted");
         if (s.isReconfigure || !all) out.push("permissions");
     }
+    // Vision-tier step — always show on first install (and reconfigure) so the
+    // user can opt in to optional ML deps. Skips itself silently if every dep
+    // that the chosen tier would install is already present.
+    if (s.isReconfigure || needsVisionTierChoice(s)) out.push("vision-tier");
     if (s.isReconfigure || needsInstall(s)) out.push("install");
     return { steps: out, header };
+}
+
+function needsVisionTierChoice(s) {
+    // First-install: always show. Otherwise: skip if the user has already
+    // picked a tier and the deps for that tier are installed.
+    if (!s.visionTierChoice) return true;
+    const choice = s.visionTierChoice;
+    const deps = s.visionDeps || {};
+    if (choice === "lite") return false;
+    if (choice === "standard") return !deps.omniparser;
+    if (choice === "full") return !(deps.ollama && deps.uiTarsModel);
+    return true;
 }
 
 function next(i, s) { return (i + 1 < s.length ? i + 1 : -1); }

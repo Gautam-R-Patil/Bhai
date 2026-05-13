@@ -104,6 +104,13 @@ async function runDetection(deps) {
     const matrix   = signals.detectMatrix(envObj);    if (matrix)   channels.matrix   = matrix;
     const email    = signals.detectEmail(envObj);     if (email)    channels.email    = email;
 
+    const visionTier = safeSync(() => signals.detectVisionTier(os, proc), {
+        max: "lite", ramGB: 0, gpuClass: "unknown", platform,
+    });
+    const visionDeps = safeSync(() => signals.detectVisionDeps(fs, execFn, paths.homeDir), {
+        ollama: false, uiTarsModel: false, omniparser: false,
+    });
+
     return {
         platform,
         isReconfigure,
@@ -128,6 +135,9 @@ async function runDetection(deps) {
         hotkey: { current: hotkey, conflicts: hotkeyConflicts },
         theme,
         workspace,
+        // Vision-nav tier detection — drives the vision-tier wizard step.
+        visionTier,
+        visionDeps,
     };
 }
 

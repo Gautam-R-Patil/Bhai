@@ -66,6 +66,7 @@ contextBridge.exposeInMainWorld("atlas", {
     setupWaPairStart: () => ipcRenderer.invoke("setup:wa-pair-start"),
     setupWaPairCancel: () => ipcRenderer.invoke("setup:wa-pair-cancel"),
     setupSavePersonalize: (cfg) => ipcRenderer.invoke("setup:save-personalize", cfg),
+    setupSaveVisionTier: (cfg) => ipcRenderer.invoke("setup:save-vision-tier", cfg),
     setupRetryInstallPhase: (phaseId) => ipcRenderer.invoke("setup:retry-install-phase", phaseId),
     setupResumeInstall: () => ipcRenderer.invoke("setup:resume-install"),
     setupGetSetupState: () => ipcRenderer.invoke("setup:get-state"),
