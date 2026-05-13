@@ -78,7 +78,12 @@ async function runPhases(phaseList, ctx) {
     for (let i = 0; i < total; i++) {
         const ph = phaseList[i];
         if (ctx.sendProgress) {
-            ctx.sendProgress(Math.floor((i / total) * 100), "Running: " + ph.label);
+            // Send the phase ID so the UI doesn't depend on label-string parity.
+            // Old format was "Running: <label>" which broke whenever phases.js
+            // and install.js labels drifted (e.g. "Audio toolkit (sox)" vs
+            // "Audio toolkit") — the UI's reverse-label-lookup silently failed
+            // and the spinner stuck on the previous phase.
+            ctx.sendProgress(Math.floor((i / total) * 100), "Running: id=" + ph.id);
         }
         const t0 = Date.now();
         try {

@@ -190,9 +190,11 @@
         // Full install (Node + Playwright + embedding + data + workspace + finalize)
         // empirically runs 30-90s on cold install, <5s on cached. We compute a
         // rolling estimate from the current progress rate.
-        let installStartMs = 0;
-        let lastPercent = 0;
-        let etaTimer = null;
+        // Sliding-window ETA: only updates on real progress events; deltas over
+        // the last N samples avoid the old bug where a flat-percent long phase
+        // (e.g. 5-minute `ollama pull`) inflated elapsed \u2192 shrank rate \u2192 grew ETA.
+        const RATE_SAMPLES = [];
+        const RATE_WINDOW = 8;
         function formatEta(seconds) {
             if (seconds < 0 || !Number.isFinite(seconds)) return "Estimating\u2026";
             if (seconds < 5) return "Almost done\u2026";
@@ -201,39 +203,68 @@
             const s = Math.round(seconds % 60);
             return "~" + m + "m " + (s < 10 ? "0" : "") + s + "s remaining";
         }
-        function updateEta() {
-            if (installStartMs === 0 || lastPercent <= 1) { etaEl.textContent = "Estimating\u2026"; return; }
-            const elapsed = Date.now() - installStartMs;
-            const rate = lastPercent / elapsed; // percent per ms
-            const remaining = (100 - lastPercent) / rate;
+        function recordProgressAndUpdateEta(percent) {
+            const now = Date.now();
+            RATE_SAMPLES.push({ ts: now, percent: percent });
+            if (RATE_SAMPLES.length > RATE_WINDOW) RATE_SAMPLES.shift();
+            if (RATE_SAMPLES.length < 2 || percent <= 1) {
+                etaEl.textContent = "Estimating\u2026";
+                return;
+            }
+            const oldest = RATE_SAMPLES[0];
+            const newest = RATE_SAMPLES[RATE_SAMPLES.length - 1];
+            const deltaP = newest.percent - oldest.percent;
+            const deltaT = newest.ts - oldest.ts;
+            if (deltaP <= 0 || deltaT <= 0) return; // no forward progress yet \u2014 keep last
+            const rate = deltaP / deltaT;
+            const remaining = (100 - newest.percent) / rate;
             etaEl.textContent = formatEta(remaining / 1000);
         }
 
+        // Hide all pre-flight buttons as soon as the install actually starts streaming
+        // progress. Previously the Resume button stayed visible during active progress
+        // because the original render kept it shown when prior phases existed.
+        function hidePreflightButtons() {
+            startBtn.classList.add("hidden");
+            resumeBtn.classList.add("hidden");
+            retryBtn.classList.add("hidden");
+        }
+
         // Listen for progress + log streams from the main-process runner.
+        // Runner now sends "Running: id=<phase_id>" so the spinner highlights
+        // the active phase by ID \u2014 independent of label-string drift between
+        // phases.js and install.js. The old "Running: <label>" form is kept as
+        // a fallback in case an older runner is in play.
         if (typeof atlas.onInstallProgress === "function") {
             atlas.onInstallProgress(function (payload) {
                 if (!payload) return;
                 const percent = payload.percent;
                 const message = payload.message;
                 if (typeof percent === "number" && percent >= 0) {
-                    if (installStartMs === 0 && percent > 0) installStartMs = Date.now();
-                    lastPercent = percent;
                     bar.style.width = Math.min(100, percent) + "%";
                     percentEl.textContent = Math.round(percent) + "%";
-                    updateEta();
-                    if (!etaTimer) etaTimer = setInterval(updateEta, 1000);
+                    recordProgressAndUpdateEta(percent);
+                    if (percent > 0 && percent < 100) hidePreflightButtons();
                 }
                 if (typeof message === "string") {
-                    const match = message.match(/^Running:\s*(.+)$/);
-                    if (match) {
-                        const label = match[1];
-                        const id = Object.keys(LABELS).find(function (k) { return LABELS[k] === label; });
-                        if (id) renderList(id);
+                    const idMatch = message.match(/^Running:\s*id=(\S+)/);
+                    if (idMatch) {
+                        renderList(idMatch[1]);
+                        hidePreflightButtons();
+                    } else {
+                        const labelMatch = message.match(/^Running:\s*(.+)$/);
+                        if (labelMatch) {
+                            const label = labelMatch[1];
+                            const id = Object.keys(LABELS).find(function (k) { return LABELS[k] === label; });
+                            if (id) {
+                                renderList(id);
+                                hidePreflightButtons();
+                            }
+                        }
                     }
                 }
                 if (percent === 100) {
                     etaEl.textContent = "Done \u2713";
-                    if (etaTimer) { clearInterval(etaTimer); etaTimer = null; }
                     clearInterval(factTimer);
                     setTimeout(function () { window.location.href = "ready-hub.html"; }, 500);
                 }

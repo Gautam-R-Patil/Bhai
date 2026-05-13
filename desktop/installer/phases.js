@@ -259,12 +259,53 @@ const P = {
                     try { fs.unlinkSync(tmp); } catch { /* best-effort cleanup */ }
                 }
             }
-            // Start the service so the next phase (model pull) can talk to it.
-            try {
-                if (process.platform === "darwin" || process.platform === "linux") {
-                    await ctx.runCommand("ollama", ["list"], undefined, () => {});
+            // Start the daemon so the next phase (model pull) can talk to it.
+            // `ollama list` alone DOES NOT auto-start the daemon on a fresh
+            // brew install — the user's last setup attempt failed here.
+            // Explicit `brew services start` on macOS / `systemctl start` on
+            // Linux is the canonical way. As a final safety net, spawn
+            // `ollama serve` in the background if neither service-manager
+            // succeeds, then poll until `ollama list` works.
+            if (process.platform === "darwin") {
+                try {
+                    await ctx.runCommand("brew", ["services", "start", "ollama"], undefined, (l) => { if (l.trim()) log(l); });
+                    log("Started runtime via brew services ✓");
+                } catch {
+                    // Fall back to detached `ollama serve`
+                    try {
+                        require("child_process").spawn("ollama", ["serve"], { detached: true, stdio: "ignore" }).unref();
+                        log("Started runtime via background spawn");
+                    } catch { /* poll below will catch the failure */ }
                 }
-            } catch { /* startup probe is best-effort */ }
+            } else if (process.platform === "linux") {
+                try {
+                    // systemd on most distros; falls back to background spawn
+                    await ctx.runCommand("systemctl", ["--user", "start", "ollama"], undefined, () => {});
+                } catch {
+                    try {
+                        require("child_process").spawn("ollama", ["serve"], { detached: true, stdio: "ignore" }).unref();
+                    } catch { /* polled below */ }
+                }
+            }
+            // Poll up to 15s for the daemon to be reachable. Without this,
+            // the next phase races the daemon startup and hits "Local model
+            // runtime is not running" even though we just installed it.
+            const deadline = Date.now() + 15000;
+            let daemonUp = false;
+            while (Date.now() < deadline) {
+                try {
+                    await ctx.runCommand("ollama", ["list"], undefined, () => {});
+                    daemonUp = true;
+                    break;
+                } catch {
+                    await new Promise((r) => setTimeout(r, 750));
+                }
+            }
+            if (daemonUp) {
+                log("Runtime is reachable ✓");
+            } else {
+                log("Warning: runtime installed but didn't come up within 15s — next phase may need a Retry");
+            }
         },
     }),
 
@@ -273,6 +314,38 @@ const P = {
         label: "Vision model (~4.5 GB)",
         idempotent: true,
         async run(ctx, log) {
+            // Ensure the daemon is reachable before attempting the pull.
+            // The previous phase tries hard to start it, but cold-boot timing
+            // is finicky \u2014 if `ollama list` fails here, give it another shot
+            // by spawning the daemon ourselves + polling, then only fail if
+            // it's truly unreachable.
+            async function ensureDaemonOrThrow() {
+                try {
+                    await ctx.runCommand("ollama", ["list"], undefined, () => {});
+                    return;
+                } catch { /* daemon not yet reachable */ }
+                log("Runtime not reachable \u2014 attempting to start it...");
+                try {
+                    if (process.platform === "darwin") {
+                        try { await ctx.runCommand("brew", ["services", "start", "ollama"], undefined, () => {}); } catch { /* try spawn */ }
+                    }
+                    require("child_process").spawn("ollama", ["serve"], { detached: true, stdio: "ignore" }).unref();
+                } catch { /* polling below decides */ }
+                const deadline = Date.now() + 15000;
+                while (Date.now() < deadline) {
+                    try {
+                        await ctx.runCommand("ollama", ["list"], undefined, () => {});
+                        log("Runtime is reachable \u2713");
+                        return;
+                    } catch {
+                        await new Promise((r) => setTimeout(r, 750));
+                    }
+                }
+                throw new Error("Local model runtime did not come up within 15s. Run `brew services start ollama` (mac) or `ollama serve` manually, then click Retry.");
+            }
+
+            await ensureDaemonOrThrow();
+
             // Check if the EXACT model tag we pull (`ui-tars:7b`) is already
             // present. The detection regex accepts the 1.5-7b form too, but
             // here we MUST be strict: if a user has only ui-tars:1.5-7b, the
@@ -282,9 +355,6 @@ const P = {
                 let listOutput = "";
                 await ctx.runCommand("ollama", ["list"], undefined, (l) => { listOutput += l; });
                 if (/\bui-tars:7b\b/.test(listOutput)) {
-                    // Confirm the manifest is actually readable (not a stale
-                    // entry from an interrupted pull). `ollama show` is the
-                    // canonical truth-source.
                     try {
                         await ctx.runCommand("ollama", ["show", "ui-tars:7b"], undefined, () => {});
                         log("Vision model already pulled \u2713");
@@ -292,7 +362,8 @@ const P = {
                     } catch { /* manifest corrupt \u2014 fall through to re-pull */ }
                 }
             } catch {
-                throw new Error("Local model runtime is not running or not installed. Install it first, then click Retry.");
+                // Reaching here is rare \u2014 we just confirmed the daemon was up.
+                throw new Error("Local model runtime stopped responding mid-phase. Click Retry.");
             }
             log("Pulling vision model \u2014 this can take 5-15 minutes depending on connection...");
             try {
