@@ -456,10 +456,40 @@ const P = {
             log("Pulling vision model \u2014 this can take 5-15 minutes depending on connection...");
             let pulled = null;
             const errors = [];
+
+            // Parse ollama's progress lines for a percent value. Examples:
+            //   "pulling abc123:  21% \u2595\u2588\u2588\u2588\u258f 450 MB/4.7 GB  18 MB/s  3m20s"
+            //   "pulling abc123: 100% \u2595\u2588\u2588\u2588\u2588\u258f 4.7 GB"
+            //   "verifying sha256 digest"
+            //   "writing manifest"
+            // Returns 0..1 or null if no percent in the line.
+            const PCT_RE = /(\d+(?:\.\d+)?)\s*%/;
+            const parsePullPercent = (line) => {
+                const m = PCT_RE.exec(line);
+                if (!m) return null;
+                const v = parseFloat(m[1]);
+                if (!Number.isFinite(v) || v < 0 || v > 100) return null;
+                return v / 100;
+            };
+
             for (const tag of CANDIDATES) {
                 try {
+                    let lastReportedTenth = -1; // throttle sendProgress to 10% steps
                     await ctx.runCommand("ollama", ["pull", tag], undefined, (l) => {
-                        if (l.trim()) log(stripAnsi(l));
+                        const clean = stripAnsi(l);
+                        if (!clean.trim()) return;
+                        log(clean);
+                        // Drive the outer progress bar based on ollama's own
+                        // percent reading. Throttle to 10% increments so the UI
+                        // doesn't redraw 100x per second during the bulk download.
+                        const pct = parsePullPercent(clean);
+                        if (pct !== null && ctx.reportSubProgress) {
+                            const tenth = Math.floor(pct * 10);
+                            if (tenth !== lastReportedTenth) {
+                                lastReportedTenth = tenth;
+                                ctx.reportSubProgress(pct, "Vision model: " + Math.round(pct * 100) + "%");
+                            }
+                        }
                     });
                     pulled = tag;
                     break;

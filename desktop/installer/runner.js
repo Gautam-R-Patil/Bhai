@@ -77,14 +77,27 @@ async function runPhases(phaseList, ctx) {
     };
     for (let i = 0; i < total; i++) {
         const ph = phaseList[i];
+        const phaseStart = Math.floor((i / total) * 100);
+        const phaseEnd = Math.floor(((i + 1) / total) * 100);
         if (ctx.sendProgress) {
             // Send the phase ID so the UI doesn't depend on label-string parity.
             // Old format was "Running: <label>" which broke whenever phases.js
             // and install.js labels drifted (e.g. "Audio toolkit (sox)" vs
             // "Audio toolkit") — the UI's reverse-label-lookup silently failed
             // and the spinner stuck on the previous phase.
-            ctx.sendProgress(Math.floor((i / total) * 100), "Running: id=" + ph.id);
+            ctx.sendProgress(phaseStart, "Running: id=" + ph.id);
         }
+        // Per-phase sub-progress helper. Phases call this to drive the outer
+        // bar during long operations (model pulls, big pip installs). Without
+        // it, the outer bar stays frozen at phaseStart for the entire phase.
+        // `fraction` is 0..1 within the phase; the helper linearly maps it to
+        // the absolute [phaseStart, phaseEnd] range.
+        ctx.reportSubProgress = function (fraction, msg) {
+            if (!ctx.sendProgress) return;
+            const clamped = Math.max(0, Math.min(1, fraction));
+            const abs = Math.floor(phaseStart + (phaseEnd - phaseStart) * clamped);
+            ctx.sendProgress(abs, msg || ("Running: id=" + ph.id));
+        };
         const t0 = Date.now();
         try {
             await ph.run(ctx, log);

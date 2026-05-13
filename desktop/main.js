@@ -5100,13 +5100,25 @@ function runCommand(cmd, args, cwd, onOutput) {
         });
 
         let output = "";
-        proc.stdout?.on("data", (data) => {
-            output += data.toString();
-            if (onOutput) onOutput(data.toString().trim());
-        });
-        proc.stderr?.on("data", (data) => {
-            output += data.toString();
-        });
+        // Forward BOTH stdout and stderr to onOutput. Tools like `ollama pull`
+        // write their progress bar to stderr (typical for download progress so
+        // pipes-to-other-tools stay clean). If we only forward stdout, the
+        // install log shows nothing for the entire 15-minute pull.
+        // Split on \r AND \n because progress bars rewrite the same line.
+        const forwardChunk = (data) => {
+            const s = data.toString();
+            output += s;
+            if (!onOutput) return;
+            // Each \r-separated segment is a re-render of the same line.
+            // Emit each non-empty segment so the latest progress reaches the UI.
+            const parts = s.split(/[\r\n]+/);
+            for (const p of parts) {
+                const trimmed = p.trim();
+                if (trimmed) onOutput(trimmed);
+            }
+        };
+        proc.stdout?.on("data", forwardChunk);
+        proc.stderr?.on("data", forwardChunk);
 
         proc.on("exit", (code) => {
             if (code === 0) resolve(output);
@@ -5115,11 +5127,13 @@ function runCommand(cmd, args, cwd, onOutput) {
 
         proc.on("error", reject);
 
-        // Timeout after 10 minutes
+        // Per-command timeout. The vision-model pull legitimately takes 15-25
+        // minutes on slow connections; 10 minutes was too tight. 45 minutes
+        // is enough for a 5 GB pull at ~2 MB/s.
         setTimeout(() => {
             proc.kill();
-            reject(new Error(`Command '${cmd}' timed out after 10 minutes`));
-        }, 600000);
+            reject(new Error(`Command '${cmd}' timed out after 45 minutes`));
+        }, 45 * 60 * 1000);
     });
 }
 
