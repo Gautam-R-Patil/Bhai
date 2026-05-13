@@ -3368,10 +3368,19 @@ function registerIPC() {
     // data/setup-state.json so a crash mid-install can be resumed.
     // Inject the user's persisted choices (vision tier etc) into the detection
     // state so buildPhaseList includes the optional ML-dep phases when warranted.
+    // Caps the stored choice against the freshly-detected max-supported tier so
+    // a prefs file copied from a more capable machine doesn't install Full-tier
+    // deps on a Lite-spec laptop.
     function augmentStateWithChoices(state) {
         try {
             const prefs = store.get("prefs") || {};
-            if (prefs.visionTierChoice) state.visionTierChoice = prefs.visionTierChoice;
+            const stored = prefs.visionTierChoice;
+            if (!stored) return state;
+            const TIER_RANK = { lite: 0, standard: 1, full: 2 };
+            const max = (state.visionTier && state.visionTier.max) || "lite";
+            const storedRank = TIER_RANK[stored] ?? 0;
+            const maxRank = TIER_RANK[max] ?? 0;
+            state.visionTierChoice = storedRank <= maxRank ? stored : max;
         } catch { /* ignore */ }
         return state;
     }
@@ -4994,7 +5003,12 @@ function runCommand(cmd, args, cwd, onOutput) {
     return new Promise((resolve, reject) => {
         let executable = cmd;
         let spawnEnv = { ...process.env, NODE_ENV: "production" };
-        let shell = true;
+        // shell: false everywhere except Windows. On POSIX we resolve via PATH
+        // without a shell wrapper — safer (no risk that a future caller's
+        // interpolated arg gets re-parsed by /bin/sh). Windows still needs
+        // shell:true so spawn can find .cmd/.bat shims (winget, choco) via
+        // PATHEXT resolution.
+        let shell = process.platform === "win32";
 
         if (cmd === "node" && !IS_DEV) {
             executable = process.execPath;

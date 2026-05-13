@@ -107,9 +107,13 @@ async function runDetection(deps) {
     const visionTier = safeSync(() => signals.detectVisionTier(os, proc), {
         max: "lite", ramGB: 0, gpuClass: "unknown", platform,
     });
-    const visionDeps = safeSync(() => signals.detectVisionDeps(fs, execFn, paths.homeDir), {
-        ollama: false, uiTarsModel: false, omniparser: false,
-    });
+    // Allow up to 3s for the dep probe — `python3 -c "import ultralytics"` can take
+    // ~1s on cold disk, `ollama list` ~200ms; default 500ms is too tight.
+    const visionDeps = await withTimeout(
+        signals.detectVisionDeps(fs, execFn, paths.homeDir),
+        3000,
+        { ollama: false, uiTarsModel: false, omniparser: false },
+    );
 
     return {
         platform,

@@ -18,10 +18,16 @@ const SECRET_PATTERNS = [
     /MATRIX_ACCESS_TOKEN\s*=\s*\S+/gi,
     /EMAIL_PASSWORD\s*=\s*\S+/gi,
     /SLACK_CLIENT_SECRET\s*=\s*\S+/gi,
+    /OLLAMA_API_KEY\s*=\s*\S+/gi,
+    /HF_TOKEN\s*=\s*\S+/gi,
+    /OPENAI_API_KEY\s*=\s*\S+/gi,
+    /ANTHROPIC_API_KEY\s*=\s*\S+/gi,
     // Standalone Telegram bot token shape: <digits>:<35+ base64-url chars>
     /\b\d{8,12}:[A-Za-z0-9_-]{30,}\b/g,
     // "Bot <token>" HTTP header form
     /\b[Bb]ot\s+[A-Za-z0-9._-]{30,}/g,
+    // URL-embedded credentials: https://user:pass@host  (pip --extra-index-url etc)
+    /\bhttps?:\/\/[^:/\s@]+:[^@/\s]+@/g,
 ];
 
 function redactSecrets(line) {
@@ -34,6 +40,9 @@ function redactSecrets(line) {
                 return match.slice(0, eq + 1) + "***";
             }
             if (/^bot\s/i.test(match)) return match.replace(/(\s+).*$/, "$1***");
+            // URL-embedded credentials: keep scheme + host, redact user:pass.
+            const urlAuth = match.match(/^(https?:\/\/)([^:/\s@]+):([^@/\s]+)@/);
+            if (urlAuth) return urlAuth[1] + urlAuth[2] + ":***@";
             return "***";
         });
     }

@@ -373,10 +373,16 @@ function detectVisionTier(osMod, procMod) {
 
 /**
  * Detect which optional vision-nav deps are already installed so the wizard
- * doesn't re-download them.
+ * doesn't re-download them. Async because the OmniParser probe shells out to
+ * `python3 -c "import ultralytics, PIL"` and the UI-TARS probe queries
+ * `ollama list` (covers custom registries that a hardcoded manifest path
+ * misses). `execFn` is the async exec helper from buildDetectionDeps — caller
+ * wraps this in withTimeout so a stuck binary can't stall boot.
  */
-function detectVisionDeps(fsMod, _execFn, homeDir) {
+async function detectVisionDeps(fsMod, execFn, homeDir) {
     const out = { ollama: false, uiTarsModel: false, omniparser: false };
+
+    // (1) Ollama: binary present on disk
     try {
         const candidates = [
             "/opt/homebrew/bin/ollama",
@@ -391,12 +397,42 @@ function detectVisionDeps(fsMod, _execFn, homeDir) {
             }
         }
     } catch { /* ignore */ }
-    try {
-        if (homeDir && fsMod && fsMod.existsSync) {
-            const modelDir = `${homeDir}/.ollama/models/manifests/registry.ollama.ai/library/ui-tars`;
-            if (fsMod.existsSync(modelDir)) out.uiTarsModel = true;
-        }
-    } catch { /* ignore */ }
+
+    // (2) UI-TARS:7b model — must match the EXACT tag we install. The previous
+    // substring check on "ui-tars" wrongly caught :13b/:72b. Prefer `ollama list`
+    // because it works against any registry (custom OLLAMA_HOST etc); fall back
+    // to manifest path on registry.ollama.ai for offline detection.
+    if (out.ollama && typeof execFn === "function") {
+        try {
+            const r = await execFn("ollama list");
+            const stdout = (r && (r.stdout || "")).toString();
+            if (/\bui-tars(?::|-1\.5-)7b\b/.test(stdout)) out.uiTarsModel = true;
+        } catch { /* daemon down or no such command */ }
+    }
+    if (!out.uiTarsModel) {
+        try {
+            if (homeDir && fsMod && fsMod.existsSync) {
+                const dir = `${homeDir}/.ollama/models/manifests/registry.ollama.ai/library/ui-tars`;
+                if (fsMod.existsSync(dir) && fsMod.readdirSync) {
+                    const entries = fsMod.readdirSync(dir);
+                    if (entries.some((e) => e === "7b" || e === "1.5-7b")) out.uiTarsModel = true;
+                }
+            }
+        } catch { /* ignore */ }
+    }
+
+    // (3) OmniParser Python deps — without this probe the wizard re-shows the
+    // vision-tier step on EVERY relaunch after a Standard install because the
+    // choice gate thinks omniparser is missing forever.
+    if (typeof execFn === "function") {
+        try {
+            const py = process.platform === "win32" ? "python" : "python3";
+            // -c args containing double quotes go through the shell intact via execFn.
+            await execFn(`${py} -c "import ultralytics, PIL"`);
+            out.omniparser = true;
+        } catch { /* import failed = not installed */ }
+    }
+
     return out;
 }
 

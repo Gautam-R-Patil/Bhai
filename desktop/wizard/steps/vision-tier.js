@@ -132,13 +132,17 @@
             // "Already installed" badge or "Not available" hint
             const footer = document.createElement("div");
             footer.className = "tier-card__footer";
+            // Full needs ALL three (omniparser + ollama + uiTarsModel).
+            // Standard needs omniparser. Lite needs nothing.
+            const fullInstalled = installed.ollama && installed.uiTarsModel && installed.omniparser;
+            const standardInstalled = installed.omniparser;
             if (!canRun) {
                 footer.textContent = "✕ This Mac is not capable for this option — " + whyUnavailable(tier, detected);
                 footer.className += " tier-card__footer--unavailable";
-            } else if (tier.id === "full" && installed.ollama && installed.uiTarsModel) {
+            } else if (tier.id === "full" && fullInstalled) {
                 footer.textContent = "✓ Already installed";
                 footer.className += " tier-card__footer--installed";
-            } else if (tier.id === "standard" && installed.omniparser) {
+            } else if (tier.id === "standard" && standardInstalled) {
                 footer.textContent = "✓ Already installed";
                 footer.className += " tier-card__footer--installed";
             } else if (tier.id === "lite") {

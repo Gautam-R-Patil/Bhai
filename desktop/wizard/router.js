@@ -54,15 +54,13 @@ function getSteps(state) {
 }
 
 function needsVisionTierChoice(s) {
-    // First-install: always show. Otherwise: skip if the user has already
-    // picked a tier and the deps for that tier are installed.
-    if (!s.visionTierChoice) return true;
-    const choice = s.visionTierChoice;
-    const deps = s.visionDeps || {};
-    if (choice === "lite") return false;
-    if (choice === "standard") return !deps.omniparser;
-    if (choice === "full") return !(deps.ollama && deps.uiTarsModel);
-    return true;
+    // Show the step ONLY when the user hasn't picked a tier yet. Once they
+    // pick, the install step (gated by needsInstall + getResumeList) handles
+    // dep installation — including the case where the user quits mid-install
+    // and relaunches. Re-prompting the user when their dep happens to be
+    // pending creates a UX trap: they may change their mind and orphan the
+    // partially-installed dep.
+    return !s.visionTierChoice;
 }
 
 function next(i, s) { return (i + 1 < s.length ? i + 1 : -1); }

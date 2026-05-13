@@ -178,11 +178,29 @@ const P = {
                     throw new Error("Install failed. Download from https://ollama.com/download/windows, then click Retry. (" + err.message + ")");
                 }
             } else {
+                // Linux path. Refuse to blindly pipe a remote script into a shell \u2014
+                // if ollama.com or DNS is compromised, that would run arbitrary code
+                // as the user. Instead: download to a temp file, log its size +
+                // SHA-256 so the user can audit the log, then execute. The script
+                // itself does the privilege escalation (sudo) on its own.
+                const tmp = path.join(os.tmpdir(), `atlas_ollama_install_${Date.now()}.sh`);
                 try {
-                    await ctx.runCommand("sh", ["-c", "curl -fsSL https://ollama.com/install.sh | sh"], undefined, (l) => { if (l.trim()) log(l); });
+                    log("Downloading install script to " + tmp + "...");
+                    await ctx.runCommand("curl", ["-fsSL", "-o", tmp, "https://ollama.com/install.sh"], undefined, (l) => { if (l.trim()) log(l); });
+                    // Audit trail: size + sha256. User can compare against any
+                    // published checksum or paste into a hash lookup.
+                    const stat = fs.statSync(tmp);
+                    const hash = require("crypto").createHash("sha256").update(fs.readFileSync(tmp)).digest("hex");
+                    log("Script size=" + stat.size + " bytes, sha256=" + hash.slice(0, 16) + "...");
+                    if (stat.size < 1024 || stat.size > 256 * 1024) {
+                        throw new Error("Install script size out of expected range (" + stat.size + " bytes)");
+                    }
+                    await ctx.runCommand("sh", [tmp], undefined, (l) => { if (l.trim()) log(l); });
                     log("Installed via install script \u2713");
                 } catch (err) {
                     throw new Error("Install failed. Visit https://ollama.com/download/linux, then click Retry. (" + err.message + ")");
+                } finally {
+                    try { fs.unlinkSync(tmp); } catch { /* best-effort cleanup */ }
                 }
             }
             // Start the service so the next phase (model pull) can talk to it.
@@ -199,11 +217,12 @@ const P = {
         label: "Vision model (~4.5 GB)",
         idempotent: true,
         async run(ctx, log) {
-            // Check if model already pulled \u2014 `ollama list` lists installed models.
+            // Check if the EXACT model tag is already pulled. Substring match on
+            // "ui-tars" alone wrongly accepts ui-tars:13b / :72b / future variants.
             try {
                 let listOutput = "";
                 await ctx.runCommand("ollama", ["list"], undefined, (l) => { listOutput += l; });
-                if (listOutput.includes("ui-tars")) {
+                if (/\bui-tars(?::|-1\.5-)7b\b/.test(listOutput)) {
                     log("Vision model already pulled \u2713");
                     return;
                 }
