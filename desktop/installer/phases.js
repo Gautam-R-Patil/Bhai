@@ -108,20 +108,47 @@ const P = {
         label: "Data directory",
         idempotent: true,
         async run(ctx, log) {
-            log("Setting up data directory...");
+            // SAFETY: data-dir was historically only meant to run on FIRST install
+            // — it wipes memory.db, hnsw, audit log, browser profile, etc. But
+            // setup:install (as opposed to setup:resume-install) builds the FULL
+            // phase list every time, so a reconfigure / tier-upgrade would nuke
+            // the user's accumulated memories. Detect a prior install via a
+            // setup-state.json marker for THIS phase and SKIP the destructive
+            // block on subsequent runs. The "mkdir if missing" + "copy google
+            // credentials" steps remain idempotent and always run.
             fs.mkdirSync(ctx.DATA_DIR, { recursive: true });
-            const del = ["memory.db", "memory.db-shm", "memory.db-wal", "memory.hnsw.json", "audit.jsonl", "browser-strategies.json", "task-learnings.json"];
-            const clear = ["browser-profile", "google-tokens", "research", "long-tasks", "process-logs"];
-            for (const f of del) {
-                try { fs.unlinkSync(path.join(ctx.DATA_DIR, f)); } catch { /* ignore missing */ }
-            }
-            for (const d of clear) {
-                try { fs.rmSync(path.join(ctx.DATA_DIR, d), { recursive: true, force: true }); } catch { /* ignore */ }
-                fs.mkdirSync(path.join(ctx.DATA_DIR, d), { recursive: true });
+            let isFirstInstall = true;
+            try {
+                const statePath = path.join(ctx.DATA_DIR, "setup-state.json");
+                if (fs.existsSync(statePath)) {
+                    const st = JSON.parse(fs.readFileSync(statePath, "utf8"));
+                    if (st && st["data-dir"] && st["data-dir"].completedAt) isFirstInstall = false;
+                }
+            } catch { /* malformed state → treat as first install */ }
+            if (isFirstInstall) {
+                log("First-time data directory setup...");
+                const del = ["memory.db", "memory.db-shm", "memory.db-wal", "memory.hnsw.json", "audit.jsonl", "browser-strategies.json", "task-learnings.json"];
+                const clear = ["browser-profile", "google-tokens", "research", "long-tasks", "process-logs"];
+                for (const f of del) {
+                    try { fs.unlinkSync(path.join(ctx.DATA_DIR, f)); } catch { /* ignore missing */ }
+                }
+                for (const d of clear) {
+                    try { fs.rmSync(path.join(ctx.DATA_DIR, d), { recursive: true, force: true }); } catch { /* ignore */ }
+                    fs.mkdirSync(path.join(ctx.DATA_DIR, d), { recursive: true });
+                }
+            } else {
+                log("Data directory preserved (existing install) — ensuring required subdirs present...");
+                // Just ensure the empty subdirs exist; don't wipe contents.
+                for (const d of ["browser-profile", "google-tokens", "research", "long-tasks", "process-logs"]) {
+                    fs.mkdirSync(path.join(ctx.DATA_DIR, d), { recursive: true });
+                }
             }
             const bundled = path.join(ctx.BOT_DIR, "data", "google-credentials.json");
-            if (fs.existsSync(bundled)) {
-                fs.copyFileSync(bundled, path.join(ctx.DATA_DIR, "google-credentials.json"));
+            const target = path.join(ctx.DATA_DIR, "google-credentials.json");
+            // Only copy if user-side doesn't already have one — preserves any
+            // creds the user may have manually placed.
+            if (fs.existsSync(bundled) && !fs.existsSync(target)) {
+                fs.copyFileSync(bundled, target);
             }
         },
     }),
@@ -180,20 +207,35 @@ const P = {
             } else {
                 // Linux path. Refuse to blindly pipe a remote script into a shell \u2014
                 // if ollama.com or DNS is compromised, that would run arbitrary code
-                // as the user. Instead: download to a temp file, log its size +
-                // SHA-256 so the user can audit the log, then execute. The script
-                // itself does the privilege escalation (sudo) on its own.
-                const tmp = path.join(os.tmpdir(), `atlas_ollama_install_${Date.now()}.sh`);
+                // as the user. Instead: download to a uniquely-named temp file
+                // (cryptographically random suffix defeats symlink-prediction
+                // attacks on shared /tmp), refuse pre-existing path, log full
+                // SHA-256, then execute. The script does its own sudo.
+                const crypto = require("crypto");
+                const rand = crypto.randomBytes(12).toString("hex");
+                const tmp = path.join(os.tmpdir(), `atlas_ollama_install_${rand}.sh`);
+                // Refuse if a path collision is somehow present (shouldn't happen
+                // with 96-bit random, but defense-in-depth against symlink races).
+                if (fs.existsSync(tmp)) {
+                    throw new Error("Temp path collision; refusing to overwrite " + tmp);
+                }
                 try {
                     log("Downloading install script to " + tmp + "...");
                     await ctx.runCommand("curl", ["-fsSL", "-o", tmp, "https://ollama.com/install.sh"], undefined, (l) => { if (l.trim()) log(l); });
-                    // Audit trail: size + sha256. User can compare against any
-                    // published checksum or paste into a hash lookup.
-                    const stat = fs.statSync(tmp);
-                    const hash = require("crypto").createHash("sha256").update(fs.readFileSync(tmp)).digest("hex");
-                    log("Script size=" + stat.size + " bytes, sha256=" + hash.slice(0, 16) + "...");
-                    if (stat.size < 1024 || stat.size > 256 * 1024) {
-                        throw new Error("Install script size out of expected range (" + stat.size + " bytes)");
+                    // After curl writes the file, verify it's a regular file (not
+                    // a symlink curl followed). lstat returns info on the link,
+                    // not its target.
+                    const lst = fs.lstatSync(tmp);
+                    if (!lst.isFile()) {
+                        throw new Error("Downloaded path is not a regular file (possible TOCTOU): " + tmp);
+                    }
+                    // Audit trail: full SHA-256 so the user can paste-compare
+                    // against any published reference. Size sanity check covers
+                    // gross tampering (captive portal HTML, truncated download).
+                    const hash = crypto.createHash("sha256").update(fs.readFileSync(tmp)).digest("hex");
+                    log("Script size=" + lst.size + " bytes, sha256=" + hash);
+                    if (lst.size < 1024 || lst.size > 64 * 1024) {
+                        throw new Error("Install script size out of expected range (" + lst.size + " bytes)");
                     }
                     await ctx.runCommand("sh", [tmp], undefined, (l) => { if (l.trim()) log(l); });
                     log("Installed via install script \u2713");
@@ -222,7 +264,7 @@ const P = {
             try {
                 let listOutput = "";
                 await ctx.runCommand("ollama", ["list"], undefined, (l) => { listOutput += l; });
-                if (/\bui-tars(?::|-1\.5-)7b\b/.test(listOutput)) {
+                if (/\bui-tars[:-](?:1\.5-)?7b\b/.test(listOutput)) {
                     log("Vision model already pulled \u2713");
                     return;
                 }

@@ -3368,19 +3368,20 @@ function registerIPC() {
     // data/setup-state.json so a crash mid-install can be resumed.
     // Inject the user's persisted choices (vision tier etc) into the detection
     // state so buildPhaseList includes the optional ML-dep phases when warranted.
-    // Caps the stored choice against the freshly-detected max-supported tier so
-    // a prefs file copied from a more capable machine doesn't install Full-tier
-    // deps on a Lite-spec laptop.
+    // Validates the stored string against the known tier set (a corrupted prefs
+    // file with e.g. "ultra" must NOT pass through as-is), then caps it against
+    // the freshly-detected max-supported tier so a prefs file copied from a
+    // more capable machine doesn't install Full-tier deps on a Lite-spec box.
     function augmentStateWithChoices(state) {
         try {
             const prefs = store.get("prefs") || {};
             const stored = prefs.visionTierChoice;
-            if (!stored) return state;
+            const VALID = new Set(["lite", "standard", "full"]);
+            if (!stored || !VALID.has(stored)) return state;
             const TIER_RANK = { lite: 0, standard: 1, full: 2 };
             const max = (state.visionTier && state.visionTier.max) || "lite";
-            const storedRank = TIER_RANK[stored] ?? 0;
-            const maxRank = TIER_RANK[max] ?? 0;
-            state.visionTierChoice = storedRank <= maxRank ? stored : max;
+            const cappedMax = VALID.has(max) ? max : "lite";
+            state.visionTierChoice = TIER_RANK[stored] <= TIER_RANK[cappedMax] ? stored : cappedMax;
         } catch { /* ignore */ }
         return state;
     }
@@ -3413,15 +3414,22 @@ function registerIPC() {
     // (see desktop/components/install-log.js).
     ipcMain.handle("setup:retry-install-phase", async (_, phaseId) => {
         try {
-            const { runDetection, buildPhaseList, runPhases } = requireInstaller();
+            const { runDetection, buildPhaseList, runPhases, getResumeList, readSetupState } = requireInstaller();
             const state = augmentStateWithChoices(await runDetection(buildDetectionDeps()));
             const full = buildPhaseList(state);
-            const phase = full.find((p) => p.id === phaseId);
-            if (!phase) return { success: false, error: "Unknown phase: " + phaseId };
-            const res = await runPhases([phase], buildInstallCtx(mainWindow, {}));
+            const idx = full.findIndex((p) => p.id === phaseId);
+            if (idx < 0) return { success: false, error: "Unknown phase: " + phaseId };
+            // Run the failed phase AND every subsequent phase that isn't already
+            // done. Without this, retry-success leaves the install stuck — phases
+            // after the failed one never auto-run, the user thinks "Retry" =
+            // "complete the install" and walks away with a half-installed app.
+            const tail = full.slice(idx);
+            const remaining = getResumeList(tail, readSetupState(DATA_DIR));
+            const res = await runPhases(remaining, buildInstallCtx(mainWindow, {}));
             return {
                 success: res.status === "complete",
                 paused: res.status === "paused",
+                failedPhase: res.failedPhase,
                 error: res.error && res.error.message,
             };
         } catch (err) {
@@ -4999,10 +5007,38 @@ function downloadAndInstallNode(sendProgress) {
     });
 }
 
+// Augment PATH with common binary locations missing from Electron's stripped
+// dock-launch PATH. brew (Apple Silicon at /opt/homebrew/bin), ollama, python3,
+// and ATLAS-managed tools all live in non-default locations.
+function buildAugmentedPath() {
+    if (process.platform === "win32") return process.env.PATH || "";
+    const extras = [
+        path.join(require("os").homedir(), ".atlas", "bin"),
+        "/opt/homebrew/bin",       // Homebrew (Apple Silicon)
+        "/usr/local/bin",          // Homebrew (Intel) / general
+        "/opt/homebrew/sbin",
+        "/usr/local/sbin",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+    ];
+    const current = (process.env.PATH || "").split(path.delimiter);
+    return [...new Set([...extras, ...current])].join(path.delimiter);
+}
+
 function runCommand(cmd, args, cwd, onOutput) {
     return new Promise((resolve, reject) => {
         let executable = cmd;
-        let spawnEnv = { ...process.env, NODE_ENV: "production" };
+        // Augment PATH so spawn(shell:false) on POSIX can find brew, ollama,
+        // python3 etc. Without this, the macOS dock-launched Electron has only
+        // /usr/bin:/bin in its inherited PATH and every Homebrew binary errors
+        // with ENOENT.
+        let spawnEnv = {
+            ...process.env,
+            NODE_ENV: "production",
+            PATH: buildAugmentedPath(),
+        };
         // shell: false everywhere except Windows. On POSIX we resolve via PATH
         // without a shell wrapper — safer (no risk that a future caller's
         // interpolated arg gets re-parsed by /bin/sh). Windows still needs

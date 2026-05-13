@@ -378,11 +378,14 @@ function detectVisionTier(osMod, procMod) {
  * `ollama list` (covers custom registries that a hardcoded manifest path
  * misses). `execFn` is the async exec helper from buildDetectionDeps — caller
  * wraps this in withTimeout so a stuck binary can't stall boot.
+ *
+ * Subprocess probes run in PARALLEL via Promise.all so a single timeout budget
+ * isn't burned on serial waits (cold-disk python3 import can take 1-2s alone).
  */
 async function detectVisionDeps(fsMod, execFn, homeDir) {
     const out = { ollama: false, uiTarsModel: false, omniparser: false };
 
-    // (1) Ollama: binary present on disk
+    // (1) Ollama: binary present on disk (sync, cheap)
     try {
         const candidates = [
             "/opt/homebrew/bin/ollama",
@@ -398,17 +401,40 @@ async function detectVisionDeps(fsMod, execFn, homeDir) {
         }
     } catch { /* ignore */ }
 
-    // (2) UI-TARS:7b model — must match the EXACT tag we install. The previous
-    // substring check on "ui-tars" wrongly caught :13b/:72b. Prefer `ollama list`
-    // because it works against any registry (custom OLLAMA_HOST etc); fall back
-    // to manifest path on registry.ollama.ai for offline detection.
+    // (2) + (3): UI-TARS model probe + OmniParser probe in PARALLEL.
+    const probes = [];
     if (out.ollama && typeof execFn === "function") {
-        try {
-            const r = await execFn("ollama list");
-            const stdout = (r && (r.stdout || "")).toString();
-            if (/\bui-tars(?::|-1\.5-)7b\b/.test(stdout)) out.uiTarsModel = true;
-        } catch { /* daemon down or no such command */ }
+        probes.push((async () => {
+            try {
+                const r = await execFn("ollama list");
+                const stdout = (r && (r.stdout || "")).toString();
+                const hasTag = /\bui-tars[:-](?:1\.5-)?7b\b/.test(stdout);
+                const isIncomplete = /\bui-tars[:-](?:1\.5-)?7b\b[^\n]*\(incomplete\)/i.test(stdout);
+                if (hasTag && !isIncomplete) {
+                    // Double-check with `ollama show` — confirms the manifest is
+                    // readable, not just listed. Cheap (~50ms) and definitive.
+                    try {
+                        await execFn("ollama show ui-tars:7b");
+                        out.uiTarsModel = true;
+                    } catch { /* manifest corrupt — leave false */ }
+                }
+            } catch { /* daemon down */ }
+        })());
     }
+    if (typeof execFn === "function") {
+        probes.push((async () => {
+            try {
+                const py = process.platform === "win32" ? "python" : "python3";
+                await execFn(`${py} -c "import ultralytics, PIL"`);
+                out.omniparser = true;
+            } catch { /* import failed = not installed */ }
+        })());
+    }
+    await Promise.all(probes);
+
+    // (2b) Offline manifest fallback for UI-TARS — covers the case where the
+    // daemon is down but the model files exist on disk. Only runs if the live
+    // probe didn't already set the flag.
     if (!out.uiTarsModel) {
         try {
             if (homeDir && fsMod && fsMod.existsSync) {
@@ -419,18 +445,6 @@ async function detectVisionDeps(fsMod, execFn, homeDir) {
                 }
             }
         } catch { /* ignore */ }
-    }
-
-    // (3) OmniParser Python deps — without this probe the wizard re-shows the
-    // vision-tier step on EVERY relaunch after a Standard install because the
-    // choice gate thinks omniparser is missing forever.
-    if (typeof execFn === "function") {
-        try {
-            const py = process.platform === "win32" ? "python" : "python3";
-            // -c args containing double quotes go through the shell intact via execFn.
-            await execFn(`${py} -c "import ultralytics, PIL"`);
-            out.omniparser = true;
-        } catch { /* import failed = not installed */ }
     }
 
     return out;
