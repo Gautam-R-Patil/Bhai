@@ -421,30 +421,48 @@ const P = {
         label: "Vision deps (~500 MB)",
         idempotent: true,
         async run(ctx, log) {
-            // Probe Python first
-            const py = process.platform === "win32" ? "python" : "python3";
+            // Probe system Python first \u2014 we need it to build the venv.
+            const sysPy = process.platform === "win32" ? "python" : "python3";
             try {
-                await ctx.runCommand(py, ["--version"], undefined, () => {});
+                await ctx.runCommand(sysPy, ["--version"], undefined, () => {});
             } catch {
                 throw new Error("Python is not installed. On macOS: `brew install python`. Then click Retry.");
             }
-            // Check if vision deps are already importable (fast probe \u2014 failure means we install)
-            let needsInstall = false;
-            try {
-                await ctx.runCommand(py, ["-c", "import ultralytics, PIL"], undefined, () => {});
-                log("Vision deps already importable \u2713");
-            } catch {
-                needsInstall = true;
+            // Build paths to the dedicated venv. We can't use `pip install --user`
+            // anymore: modern Homebrew Python (3.11+) ships PEP 668's
+            // EXTERNALLY-MANAGED marker and refuses system-level installs. A
+            // dedicated venv is the canonical fix \u2014 and lets us pin a known
+            // python interpreter for the bot regardless of the user's PATH.
+            const venvDir = path.join(ctx.DATA_DIR, "python-venv");
+            const venvPy = process.platform === "win32"
+                ? path.join(venvDir, "Scripts", "python.exe")
+                : path.join(venvDir, "bin", "python");
+            // Check if the venv already has the deps importable.
+            if (fs.existsSync(venvPy)) {
+                try {
+                    await ctx.runCommand(venvPy, ["-c", "import ultralytics, PIL"], undefined, () => {});
+                    log("Vision deps already installed in venv \u2713");
+                    return;
+                } catch { /* venv exists but deps missing \u2014 proceed to install */ }
+            } else {
+                log("Creating Python virtual environment...");
+                try {
+                    await ctx.runCommand(sysPy, ["-m", "venv", venvDir], undefined, (l) => { if (l.trim()) log(l); });
+                } catch (err) {
+                    throw new Error("Could not create venv at " + venvDir + ". Ensure `python3 -m venv` works, then click Retry. (" + err.message + ")");
+                }
             }
-            if (!needsInstall) return;
-            log("Installing vision deps (~500 MB)...");
+            log("Installing vision deps into venv (~500 MB)...");
             try {
-                await ctx.runCommand(py, ["-m", "pip", "install", "--user", "--quiet", "ultralytics", "Pillow"], undefined, (l) => {
+                // Use the venv's python directly \u2014 PEP 668 doesn't apply inside
+                // a venv. `--quiet` keeps the install log readable.
+                await ctx.runCommand(venvPy, ["-m", "pip", "install", "--quiet", "--upgrade", "pip"], undefined, () => {});
+                await ctx.runCommand(venvPy, ["-m", "pip", "install", "--quiet", "ultralytics", "Pillow"], undefined, (l) => {
                     if (l.trim()) log(l);
                 });
                 log("Vision deps installed \u2713");
             } catch (err) {
-                throw new Error("pip install failed. You can retry, or install manually: `pip install ultralytics Pillow`. (" + err.message + ")");
+                throw new Error("pip install failed. Retry, or run manually: `" + venvPy + " -m pip install ultralytics Pillow`. (" + err.message + ")");
             }
         },
     }),

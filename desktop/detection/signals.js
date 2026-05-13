@@ -428,11 +428,25 @@ async function detectVisionDeps(fsMod, execFn, homeDir) {
     }
     if (typeof execFn === "function") {
         probes.push((async () => {
-            try {
-                const py = process.platform === "win32" ? "python" : "python3";
-                await execFn(`${py} -c "import ultralytics, PIL"`);
-                out.omniparser = true;
-            } catch { /* import failed = not installed */ }
+            // Prefer the wizard's venv python (~/Library/.../atlas-desktop/python-venv).
+            // PEP 668 forbids system-level pip installs on Homebrew Python 3.11+,
+            // so the wizard puts ultralytics+Pillow in a venv. If the venv path
+            // doesn't exist yet (first install / legacy install), fall through
+            // to system python3 to support users who installed deps manually.
+            const path = require("path");
+            const dataDir = process.env.ATLAS_DATA_DIR || path.resolve("data");
+            const venvPy = process.platform === "win32"
+                ? path.join(dataDir, "python-venv", "Scripts", "python.exe")
+                : path.join(dataDir, "python-venv", "bin", "python");
+            const candidates = [venvPy, process.platform === "win32" ? "python" : "python3"];
+            for (const py of candidates) {
+                try {
+                    if (py !== "python" && py !== "python3" && !(fsMod && fsMod.existsSync && fsMod.existsSync(py))) continue;
+                    await execFn(`"${py}" -c "import ultralytics, PIL"`);
+                    out.omniparser = true;
+                    return;
+                } catch { /* try next */ }
+            }
         })());
     }
     await Promise.all(probes);

@@ -19,10 +19,31 @@
  */
 
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { getDataDir } from "../config/paths.js";
+
+/**
+ * Pick the Python binary the wizard's venv installed deps into, falling back
+ * to the system interpreter. The venv path mirrors the install phase exactly
+ * (`<DATA_DIR>/python-venv/bin/python` on POSIX, `Scripts\\python.exe` on Win).
+ * If the venv doesn't exist (legacy install, manual setup), we fall back to
+ * the system `python3` / `python` so users who installed deps the old way
+ * still work.
+ */
+function resolvePythonBin(): string {
+    try {
+        const dataDir = getDataDir();
+        const venvPython = process.platform === "win32"
+            ? join(dataDir, "python-venv", "Scripts", "python.exe")
+            : join(dataDir, "python-venv", "bin", "python");
+        if (existsSync(venvPython)) return venvPython;
+    } catch { /* fall back to system */ }
+    return process.platform === "win32" ? "python" : "python3";
+}
 
 const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
@@ -99,8 +120,12 @@ export async function detectElements(screenshotPath: string, opts: OmniParserOpt
     if (opts.maxElements) args.push("--max-elements", String(opts.maxElements));
     if (opts.confThreshold !== undefined) args.push("--conf-threshold", String(opts.confThreshold));
 
-    // Cross-OS python binary picker (Windows ships `python`, others `python3`).
-    const pyBin = process.platform === "win32" ? "python" : "python3";
+    // Prefer the dedicated venv created by the setup wizard's omniparser-deps
+    // phase (<DATA_DIR>/python-venv/bin/python). Modern macOS / Homebrew Python
+    // is PEP 668-managed and refuses `pip install` at the system level, so the
+    // wizard installs ultralytics + Pillow into a venv instead. Falls back to
+    // system python3 / python for users who installed deps the old way.
+    const pyBin = resolvePythonBin();
     try {
         const { stdout } = await execFileAsync(pyBin, args, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 });
         const trimmed = stdout.trim();
