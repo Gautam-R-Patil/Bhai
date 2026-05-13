@@ -1,7 +1,7 @@
 # ATLAS Business Model Design
 **Date:** 2026-04-26  
 **Company:** XAGI Labs Private Limited  
-**Product:** A.T.L.A.S v0.2.0 — Autonomous Personal AI Agent  
+**Product:** A.T.L.A.S v0.2.1 — Autonomous Personal AI Agent  
 **Status:** Approved for implementation
 
 ---
