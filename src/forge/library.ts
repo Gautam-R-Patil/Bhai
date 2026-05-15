@@ -239,3 +239,43 @@ export function getToolEmbedding(slug: string): Float32Array | null {
     const row = db.prepare(`SELECT embedding FROM tools WHERE slug = ?`).get(slug) as { embedding: Buffer } | undefined;
     return row ? bufferToEmbedding(row.embedding) : null;
 }
+
+export interface ListToolsOpts {
+    source?: ToolSource;
+    includeArchived?: boolean;
+}
+
+export function listTools(opts: ListToolsOpts = {}): ToolMetadata[] {
+    const db = getLibrary();
+    const conds: string[] = [];
+    const args: any[] = [];
+
+    if (!opts.includeArchived) conds.push("archived_at IS NULL");
+    if (opts.source) { conds.push("source = ?"); args.push(opts.source); }
+
+    const where = conds.length > 0 ? `WHERE ${conds.join(" AND ")}` : "";
+    const rows = db.prepare(`SELECT * FROM tools ${where} ORDER BY slug ASC`).all(...args) as ToolRow[];
+    return rows.map(rowToMetadata);
+}
+
+export interface ToolCounts {
+    total: number;
+    active: number;
+    archived: number;
+    graduated: number;
+    published: number;
+}
+
+export function countTools(): ToolCounts {
+    const db = getLibrary();
+    const row = db.prepare(`
+        SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN archived_at IS NULL AND graduated_at IS NULL AND published_at IS NULL THEN 1 ELSE 0 END) AS active,
+            SUM(CASE WHEN archived_at IS NOT NULL THEN 1 ELSE 0 END) AS archived,
+            SUM(CASE WHEN graduated_at IS NOT NULL AND published_at IS NULL THEN 1 ELSE 0 END) AS graduated,
+            SUM(CASE WHEN published_at IS NOT NULL THEN 1 ELSE 0 END) AS published
+        FROM tools
+    `).get() as { total: number; active: number; archived: number; graduated: number; published: number };
+    return row;
+}
