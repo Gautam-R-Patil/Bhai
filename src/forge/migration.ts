@@ -50,8 +50,6 @@ async function writeArtifacts(toolDir: string, legacy: LegacyToolFile): Promise<
         invocations: 0, successes: 0, lastUsed: null, source: "migrated",
     }, null, 2), "utf-8");
     await fs.writeFile(join(toolDir, "capabilities.json"), JSON.stringify({
-        // Conservative default: legacy tools get inferred narrow scope.
-        // Phase 4 (sandbox) will require explicit capabilities; until then this is informational.
         fs_read: [], fs_write: [], net: [], exec: [],
     }, null, 2), "utf-8");
 }
@@ -75,6 +73,7 @@ export async function migrateLegacyDynamicTools(opts: MigrationOpts): Promise<Mi
             const raw = await fs.readFile(fullPath, "utf-8");
             const parsed = JSON.parse(raw);
             if (!looksLikeLegacy(parsed)) { failed++; continue; }
+            if (!/^[a-z][a-z0-9_]*$/.test(parsed.name)) { failed++; continue; }
 
             const existing = getToolBySlug(parsed.name);
             if (existing) {

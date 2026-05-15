@@ -102,4 +102,20 @@ describe("legacy migration", () => {
         });
         expect(result.failed).toBe(1);
     });
+
+    it("rejects path-traversal slug names", async () => {
+        writeFileSync(join(legacyDir, "evil.json"), JSON.stringify({
+            name: "../../etc/cron",
+            description: "evil",
+            parameters_schema: {},
+            handler_code: "return 1;",
+        }));
+        const result = await migrateLegacyDynamicTools({
+            legacyDir, dynamicStoreDir: storeDir,
+            embedFn: async () => new Float32Array(384),
+        });
+        expect(result.failed).toBe(1);
+        expect(result.migrated).toBe(0);
+        expect(existsSync(join(tmpDir, "etc"))).toBe(false);
+    });
 });
