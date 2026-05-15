@@ -322,3 +322,41 @@ export function countTools(): ToolCounts {
         published: row.published ?? 0,
     };
 }
+
+export interface FTSSearchResult {
+    slug: string;
+    bm25Score: number;
+}
+
+export function searchByFTS(query: string, limit: number = 20): FTSSearchResult[] {
+    const db = getLibrary();
+    // Sanitize: strip quote chars and FTS5 operator punctuation, collapse whitespace.
+    // Then append `*` to each token so `table` matches `tables`, `extract` matches
+    // `extracting`, etc. — important because the unicode61 tokenizer does not stem.
+    const tokens = query
+        .replace(/['"():^*+\-]/g, " ")
+        .split(/\s+/)
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0)
+        .map((t) => `${t}*`);
+    if (tokens.length === 0) return [];
+    const cleaned = tokens.join(" ");
+
+    // bm25() returns negative magnitudes; smaller = better.
+    // Contentless FTS5 (content='') returns NULL for any column except rowid, so
+    // we JOIN on rowid and pull `slug` from the main `tools` table. The two rowids
+    // align because Phase 1's insertTool writes both rows in the same transaction
+    // and we never hard-delete from `tools` (archive is soft via archived_at).
+    const rows = db
+        .prepare(`
+        SELECT tools.slug AS slug, bm25(tools_fts) AS score
+        FROM tools_fts
+        JOIN tools ON tools.rowid = tools_fts.rowid
+        WHERE tools_fts MATCH ? AND tools.archived_at IS NULL
+        ORDER BY score ASC
+        LIMIT ?
+    `)
+        .all(cleaned, limit) as { slug: string; score: number }[];
+
+    return rows.map((r) => ({ slug: r.slug, bm25Score: r.score }));
+}
