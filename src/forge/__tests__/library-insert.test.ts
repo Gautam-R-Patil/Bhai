@@ -44,7 +44,7 @@ describe("library insertion", () => {
         expect(tool!.archivedAt).toBeNull();
     });
 
-    it("inserting duplicate slug throws", () => {
+    it("inserting duplicate slug throws", async () => {
         const insert = () => insertTool({
             slug: "foo",
             description: "foo",
@@ -56,6 +56,11 @@ describe("library insertion", () => {
         });
         insert();
         expect(insert).toThrow();
+        // Verify atomicity: failed second insert did not orphan an FTS row
+        const { getLibrary } = await import("../library.js");
+        const db = getLibrary();
+        const ftsCount = db.prepare(`SELECT COUNT(*) AS n FROM tools_fts`).get() as { n: number };
+        expect(ftsCount.n).toBe(1);
     });
 
     it("getToolBySlug returns null for missing slug", () => {

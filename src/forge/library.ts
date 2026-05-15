@@ -132,7 +132,7 @@ export function getLibrary(): Database.Database {
     return _db;
 }
 
-export interface InsertToolArgs {
+export interface InsertToolOptions {
     slug: string;
     description: string;
     schemaJson: string;
@@ -148,7 +148,11 @@ function embeddingToBuffer(emb: Float32Array): Buffer {
 }
 
 function bufferToEmbedding(buf: Buffer): Float32Array {
-    return new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
+    // Defensive copy: the Float32Array view would alias the Buffer's underlying
+    // ArrayBuffer. Future batch callers might mutate one result and silently
+    // corrupt the other. .slice() returns a new typed array with its own backing.
+    const view = new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
+    return view.slice();
 }
 
 function extractSchemaKeys(schemaJson: string): string {
@@ -159,7 +163,7 @@ function extractSchemaKeys(schemaJson: string): string {
     return "";
 }
 
-export function insertTool(args: InsertToolArgs): void {
+export function insertTool(opts: InsertToolOptions): void {
     const db = getLibrary();
     const insertStmt = db.prepare(`
         INSERT INTO tools (slug, description, schema_json, handler_hash, embedding, source, origin_intent, created_at, updated_at)
@@ -169,11 +173,11 @@ export function insertTool(args: InsertToolArgs): void {
 
     const tx = db.transaction(() => {
         insertStmt.run(
-            args.slug, args.description, args.schemaJson, args.handlerHash,
-            embeddingToBuffer(args.embedding), args.source, args.originIntent ?? null,
-            args.createdAt, args.createdAt,
+            opts.slug, opts.description, opts.schemaJson, opts.handlerHash,
+            embeddingToBuffer(opts.embedding), opts.source, opts.originIntent ?? null,
+            opts.createdAt, opts.createdAt,
         );
-        ftsStmt.run(args.slug, args.description, extractSchemaKeys(args.schemaJson));
+        ftsStmt.run(opts.slug, opts.description, extractSchemaKeys(opts.schemaJson));
     });
     tx();
 }
@@ -199,16 +203,17 @@ function rowToMetadata(row: ToolRow): ToolMetadata {
     else if (row.published_at) state = "published";
     else if (row.graduated_at) state = "graduated";
 
-    const db = getLibrary();
-    const counts = db.prepare(`
-        SELECT COUNT(*) AS total, SUM(success) AS successes
-        FROM executions WHERE slug = ?
-    `).get(row.slug) as { total: number; successes: number | null };
+    let schema: ToolMetadata["schema"];
+    try {
+        schema = JSON.parse(row.schema_json);
+    } catch (e) {
+        throw new Error(`corrupt schema_json for slug "${row.slug}": ${(e as Error).message}`);
+    }
 
     return {
         slug: row.slug,
         description: row.description,
-        schema: JSON.parse(row.schema_json),
+        schema,
         source: row.source as ToolSource,
         originIntent: row.origin_intent,
         createdAt: row.created_at,
@@ -216,8 +221,9 @@ function rowToMetadata(row: ToolRow): ToolMetadata {
         graduatedAt: row.graduated_at,
         publishedAt: row.published_at,
         archivedAt: row.archived_at,
-        invocationCount: counts.total ?? 0,
-        successCount: counts.successes ?? 0,
+        // Phase 1: executions table is empty. Phase 3 reintroduces the real query.
+        invocationCount: 0,
+        successCount: 0,
         lifecycleState: state,
     };
 }
