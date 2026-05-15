@@ -76,8 +76,9 @@ export async function lookupTool(opts: LookupOpts): Promise<LookupHit | null> {
         }
     }
 
-    // Stage 2: BM25 FTS → top-20 candidates
-    const ftsResults = searchByFTS(opts.description, FTS_TOP_N);
+    // Stage 2: BM25 FTS → top-20 candidates. AND-token-mismatch falls back to per-token OR
+    // for recall-biased retrieval — cosine rerank is the precision gate.
+    const ftsResults = ftsCandidates(opts.description);
     if (ftsResults.length === 0) {
         emitForgeEvent({
             event: "lookup_attempted",
@@ -126,4 +127,41 @@ export async function lookupTool(opts: LookupOpts): Promise<LookupHit | null> {
         });
         return null;
     }
+}
+
+// FTS5's default tokenizer joins terms with AND. A query with novel words that aren't
+// in any tool's description fails AND-wise, even when most tokens match. This helper
+// tries AND-FTS first (cheap path); if 0 hits, per-token OR-fans by calling searchByFTS
+// once per token and merging the slug sets. Same pattern as dedup.ts::ftsCandidates.
+function ftsCandidates(description: string): { slug: string; bm25Score: number }[] {
+    const direct = searchByFTS(description, FTS_TOP_N);
+    if (direct.length > 0) return direct;
+
+    // Same sanitization shape as searchByFTS: positive Unicode allowlist, strip reserved keywords.
+    const FTS5_RESERVED = new Set(["AND", "OR", "NOT", "NEAR"]);
+    const tokens = description
+        .replace(/[^\p{L}\p{N}_\s]/gu, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .split(" ")
+        .filter(t => t.length > 0 && !FTS5_RESERVED.has(t.toUpperCase()));
+
+    if (tokens.length === 0) return [];
+
+    // Fan out: query each token alone, merge slug sets, dedupe by slug, cap at FTS_TOP_N.
+    const seen = new Map<string, number>();
+    for (const token of tokens) {
+        if (seen.size >= FTS_TOP_N) break;
+        const hits = searchByFTS(token, FTS_TOP_N);
+        for (const h of hits) {
+            if (!seen.has(h.slug) || h.bm25Score < seen.get(h.slug)!) {
+                seen.set(h.slug, h.bm25Score);
+            }
+            if (seen.size >= FTS_TOP_N) break;
+        }
+    }
+
+    return Array.from(seen.entries())
+        .map(([slug, bm25Score]) => ({ slug, bm25Score }))
+        .sort((a, b) => a.bm25Score - b.bm25Score);
 }

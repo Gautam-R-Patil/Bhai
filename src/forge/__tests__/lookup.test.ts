@@ -154,4 +154,24 @@ describe("forge lookup pipeline", () => {
         expect(hit!.slug).toBe("recover_me");
         expect(hit!.source).toBe("library_embedding");
     });
+
+    it("finds a tool when query has novel tokens not in the indexed description (recall via OR-fan fallback)", async () => {
+        insertTool({
+            slug: "extract_pdf",
+            description: "Extract text from PDF files",
+            schemaJson: "{}", handlerHash: "x", embedding: vector(0),
+            source: "synchronous", createdAt: Date.now(),
+        });
+
+        // Query has "document" — never indexed (description says "files"). AND-FTS misses;
+        // OR-fan fallback catches it via "extract"/"text"/"PDF" matches; cosine clinches it.
+        const hit = await lookupTool({
+            description: "Extract text from a PDF document",
+            embedFn: async () => vector(0),  // cosine = 1.0
+            functionGemmaFn: async () => null,
+        });
+        expect(hit).not.toBeNull();
+        expect(hit!.slug).toBe("extract_pdf");
+        expect(hit!.source).toBe("library_embedding");
+    });
 });
