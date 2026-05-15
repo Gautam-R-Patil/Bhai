@@ -176,6 +176,7 @@ desktop/hostinger-upload/
 !src/forge/__tests__/phase1-smoke.test.ts
 !src/forge/__tests__/library-search-fts.test.ts
 !src/forge/__tests__/library-search-embedding.test.ts
+!src/forge/__tests__/lookup.test.ts
 
 # Compiled Swift helpers (built by npm run build:location / build:ocr)
 scripts/get_location_bin
