@@ -54,4 +54,9 @@ describe("library listing", () => {
         expect(counts.archived).toBe(0);
         expect(counts.graduated).toBe(0);
     });
+
+    it("countTools returns zeros on empty library", () => {
+        const counts = countTools();
+        expect(counts).toEqual({ total: 0, active: 0, archived: 0, graduated: 0, published: 0 });
+    });
 });

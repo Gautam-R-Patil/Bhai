@@ -240,12 +240,12 @@ export function getToolEmbedding(slug: string): Float32Array | null {
     return row ? bufferToEmbedding(row.embedding) : null;
 }
 
-export interface ListToolsOpts {
+export interface ListToolsOptions {
     source?: ToolSource;
     includeArchived?: boolean;
 }
 
-export function listTools(opts: ListToolsOpts = {}): ToolMetadata[] {
+export function listTools(opts: ListToolsOptions = {}): ToolMetadata[] {
     const db = getLibrary();
     const conds: string[] = [];
     const args: any[] = [];
@@ -276,6 +276,12 @@ export function countTools(): ToolCounts {
             SUM(CASE WHEN graduated_at IS NOT NULL AND published_at IS NULL THEN 1 ELSE 0 END) AS graduated,
             SUM(CASE WHEN published_at IS NOT NULL THEN 1 ELSE 0 END) AS published
         FROM tools
-    `).get() as { total: number; active: number; archived: number; graduated: number; published: number };
-    return row;
+    `).get() as { total: number; active: number | null; archived: number | null; graduated: number | null; published: number | null };
+    return {
+        total: row.total,
+        active: row.active ?? 0,
+        archived: row.archived ?? 0,
+        graduated: row.graduated ?? 0,
+        published: row.published ?? 0,
+    };
 }
