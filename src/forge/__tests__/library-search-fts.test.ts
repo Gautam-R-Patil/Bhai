@@ -71,4 +71,42 @@ describe("library FTS search", () => {
         const results = searchByFTS("extract pdf", 10);
         expect(results.map((r) => r.slug)).toEqual(["b"]);
     });
+
+    it("does not crash on FTS5 reserved keywords (AND/OR/NOT)", () => {
+        seed("a", "find and replace text");
+        // "find AND replace" — AND is FTS5 reserved
+        expect(() => searchByFTS("find AND replace", 10)).not.toThrow();
+        expect(() => searchByFTS("OR", 10)).not.toThrow();
+        expect(() => searchByFTS("NOT", 10)).not.toThrow();
+        expect(() => searchByFTS("NEAR", 10)).not.toThrow();
+        // Verify the function returns results (or empty), not throws
+        const r = searchByFTS("find AND replace", 10);
+        expect(Array.isArray(r)).toBe(true);
+    });
+
+    it("does not crash on FTS5-meaningful punctuation", () => {
+        seed("a", "test file");
+        expect(() => searchByFTS("test!bar", 10)).not.toThrow();
+        expect(() => searchByFTS("~~~", 10)).not.toThrow();
+        expect(() => searchByFTS("!@#$%", 10)).not.toThrow();
+        expect(() => searchByFTS("user@example.com", 10)).not.toThrow();
+        expect(() => searchByFTS("foo;bar,baz", 10)).not.toThrow();
+        // None of these should match the seeded "test file" but should return safely
+        const r = searchByFTS("~~~", 10);
+        expect(Array.isArray(r)).toBe(true);
+    });
+
+    it("matches by token prefix (so 'table' finds 'tables')", () => {
+        seed("a", "extract tables from a pdf");
+        const r = searchByFTS("table", 10);
+        expect(r.length).toBeGreaterThan(0);
+        expect(r[0]?.slug).toBe("a");
+    });
+
+    it("does not crash on single-char input", () => {
+        seed("a", "alpha");
+        expect(() => searchByFTS("a", 10)).not.toThrow();
+        const r = searchByFTS("a", 10);
+        expect(Array.isArray(r)).toBe(true);
+    });
 });

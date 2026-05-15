@@ -330,33 +330,43 @@ export interface FTSSearchResult {
 
 export function searchByFTS(query: string, limit: number = 20): FTSSearchResult[] {
     const db = getLibrary();
-    // Sanitize: strip quote chars and FTS5 operator punctuation, collapse whitespace.
-    // Then append `*` to each token so `table` matches `tables`, `extract` matches
-    // `extracting`, etc. — important because the unicode61 tokenizer does not stem.
-    const tokens = query
-        .replace(/['"():^*+\-]/g, " ")
-        .split(/\s+/)
-        .map((t) => t.trim())
+    // Sanitize for FTS5: keep only Unicode letters, digits, underscore, whitespace.
+    // This strips quotes, parens, operators, punctuation in one pass.
+    const cleaned = query.replace(/[^\p{L}\p{N}_\s]/gu, " ").replace(/\s+/g, " ").trim();
+    if (!cleaned) return [];
+
+    // FTS5 reserves AND, OR, NOT, NEAR as operators (uppercase only).
+    // Filter these out — they're either user English (find AND replace) or noise.
+    const FTS5_RESERVED = new Set(["AND", "OR", "NOT", "NEAR"]);
+    const tokens = cleaned
+        .split(" ")
         .filter((t) => t.length > 0)
-        .map((t) => `${t}*`);
+        .filter((t) => !FTS5_RESERVED.has(t.toUpperCase()))
+        .map((t) => `${t}*`); // prefix match for stem-tolerance
     if (tokens.length === 0) return [];
-    const cleaned = tokens.join(" ");
+
+    const matchExpr = tokens.join(" ");
 
     // bm25() returns negative magnitudes; smaller = better.
     // Contentless FTS5 (content='') returns NULL for any column except rowid, so
     // we JOIN on rowid and pull `slug` from the main `tools` table. The two rowids
     // align because Phase 1's insertTool writes both rows in the same transaction
     // and we never hard-delete from `tools` (archive is soft via archived_at).
-    const rows = db
-        .prepare(`
-        SELECT tools.slug AS slug, bm25(tools_fts) AS score
-        FROM tools_fts
-        JOIN tools ON tools.rowid = tools_fts.rowid
-        WHERE tools_fts MATCH ? AND tools.archived_at IS NULL
-        ORDER BY score ASC
-        LIMIT ?
-    `)
-        .all(cleaned, limit) as { slug: string; score: number }[];
-
-    return rows.map((r) => ({ slug: r.slug, bm25Score: r.score }));
+    try {
+        const rows = db
+            .prepare(`
+            SELECT tools.slug AS slug, bm25(tools_fts) AS score
+            FROM tools_fts
+            JOIN tools ON tools.rowid = tools_fts.rowid
+            WHERE tools_fts MATCH ? AND tools.archived_at IS NULL
+            ORDER BY score ASC
+            LIMIT ?
+        `)
+            .all(matchExpr, limit) as { slug: string; score: number }[];
+        return rows.map((r) => ({ slug: r.slug, bm25Score: r.score }));
+    } catch (err) {
+        // Pathological FTS5 input — log and return empty. Search degrades gracefully.
+        console.warn(`[forge] searchByFTS: ${(err as Error).message.slice(0, 100)}`);
+        return [];
+    }
 }
