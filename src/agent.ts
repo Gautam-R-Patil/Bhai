@@ -31,6 +31,12 @@ import {
     planModeReminderBody,
 } from "./agents/plan-mode.js";
 import { offloadIfLarge } from "./agents/tool-output-offload.js";
+import {
+    buildVerifyReminder,
+    newVerifyGateState,
+    recordToolCall as recordToolCallForVerifyGate,
+    shouldForceVerify,
+} from "./agents/verify-before-done.js";
 import type { ChatCompletionMessageParam, LLMClient, ThinkingLevel } from "./llm.js";
 import { MODEL_DISPLAY, MODELS } from "./llm.js";
 import { getLocationSnippet, getTimezone } from "./location/index.js";
@@ -1017,6 +1023,8 @@ async function _runAgentBody(
     let usedBrowserTools = false;
     let lastProgressTime = 0;
     let lastUsedModel: string | undefined; // Track model for credit deduction
+    // Verify-before-done gate — see src/agents/verify-before-done.ts.
+    const verifyGate = newVerifyGateState();
 
     // ── Auto Plan Mode (coding intent only) ──
     // Off by default — opt in with ATLAS_AUTO_PLAN_MODE=true.
@@ -2568,6 +2576,25 @@ PLAN:`,
                 continue;
             }
 
+            // ── Verify-before-done gate ──
+            // If a state-mutating OS tool fired this run but no verifier did,
+            // force one extra iteration with a system reminder. This catches
+            // the "agent claims message-sent without ever checking" failure
+            // mode that no other guard catches (the persistence-nudge fires
+            // on count-of-tool-calls, not on whether the actions were
+            // verified). Capped at one fire per run via verifyGate.nudgedThisRun.
+            // Kill-switch: ATLAS_NO_VERIFY_GATE=true disables.
+            if (shouldForceVerify(verifyGate)) {
+                console.log(
+                    `  🔍 Verify gate: ${verifyGate.lastMutator} mutated UI but no verification ran — forcing one more iteration`,
+                );
+                verifyGate.nudgedThisRun = true;
+                messages.push({ role: "assistant", content: responseText });
+                messages.push({ role: "user", content: buildVerifyReminder(verifyGate) });
+                lastToolCalls = undefined; // bump model selection to PRO for the verify-and-respond turn
+                continue;
+            }
+
             // ── Decision: should we nudge? ──
             // Only nudge if the agent made very few tool calls (< 6) AND none of the
             // bail-out signals fired AND the user's message looks like a real task.
@@ -2662,6 +2689,10 @@ PLAN:`,
                             },
                         );
                         totalToolCalls += batchResults.length;
+                        // Verify-before-done gate — same recording as the main loop site.
+                        for (const r of batchResults) {
+                            recordToolCallForVerifyGate(verifyGate, r.fnName, r.fnArgs || {});
+                        }
                         for (const r of batchResults) {
                             const errorMsg = getErrorMessage(r.fnName, r.result);
                             if (errorMsg) await sendProgress(errorMsg);
@@ -2848,6 +2879,14 @@ PLAN:`,
             },
         );
         totalToolCalls += batchResults.length;
+
+        // Verify-before-done gate — record every tool call against the per-run
+        // bookkeeper. Only successful (or even attempted) mutators flip
+        // osStateMutated; that's the right semantics because a *failed* click
+        // can still leave the UI in a half-changed state we need to verify.
+        for (const r of batchResults) {
+            recordToolCallForVerifyGate(verifyGate, r.fnName, r.fnArgs || {});
+        }
 
         // Circuit breaker: tool calls completed = progress
         const batchHasSuccess = batchResults.some((r) => !r.isError);
