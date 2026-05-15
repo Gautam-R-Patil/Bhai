@@ -166,6 +166,7 @@ desktop/hostinger-upload/
 !src/forge/__tests__/types.test.ts
 !src/forge/__tests__/store-types-extension.test.ts
 !src/forge/__tests__/library-bootstrap.test.ts
+!src/forge/__tests__/library-insert.test.ts
 
 # Compiled Swift helpers (built by npm run build:location / build:ocr)
 scripts/get_location_bin

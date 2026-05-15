@@ -4,6 +4,7 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
+import type { ToolMetadata, ToolLifecycleState, ToolSource } from "./types.js";
 
 const SCHEMA_VERSION = 1;
 
@@ -129,4 +130,106 @@ export function getLibrarySchemaVersion(): number {
 export function getLibrary(): Database.Database {
     if (!_db) throw new Error("library not open");
     return _db;
+}
+
+export interface InsertToolArgs {
+    slug: string;
+    description: string;
+    schemaJson: string;
+    handlerHash: string;
+    embedding: Float32Array;
+    source: ToolSource;
+    originIntent?: string;
+    createdAt: number;
+}
+
+function embeddingToBuffer(emb: Float32Array): Buffer {
+    return Buffer.from(emb.buffer, emb.byteOffset, emb.byteLength);
+}
+
+function bufferToEmbedding(buf: Buffer): Float32Array {
+    return new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
+}
+
+function extractSchemaKeys(schemaJson: string): string {
+    try {
+        const schema = JSON.parse(schemaJson);
+        if (schema?.properties) return Object.keys(schema.properties).join(" ");
+    } catch { /* fall through */ }
+    return "";
+}
+
+export function insertTool(args: InsertToolArgs): void {
+    const db = getLibrary();
+    const insertStmt = db.prepare(`
+        INSERT INTO tools (slug, description, schema_json, handler_hash, embedding, source, origin_intent, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const ftsStmt = db.prepare(`INSERT INTO tools_fts (slug, description, schema_keys) VALUES (?, ?, ?)`);
+
+    const tx = db.transaction(() => {
+        insertStmt.run(
+            args.slug, args.description, args.schemaJson, args.handlerHash,
+            embeddingToBuffer(args.embedding), args.source, args.originIntent ?? null,
+            args.createdAt, args.createdAt,
+        );
+        ftsStmt.run(args.slug, args.description, extractSchemaKeys(args.schemaJson));
+    });
+    tx();
+}
+
+interface ToolRow {
+    slug: string;
+    description: string;
+    schema_json: string;
+    handler_hash: string;
+    embedding: Buffer;
+    source: string;
+    origin_intent: string | null;
+    created_at: number;
+    updated_at: number;
+    graduated_at: number | null;
+    published_at: number | null;
+    archived_at: number | null;
+}
+
+function rowToMetadata(row: ToolRow): ToolMetadata {
+    let state: ToolLifecycleState = "active";
+    if (row.archived_at) state = "archived";
+    else if (row.published_at) state = "published";
+    else if (row.graduated_at) state = "graduated";
+
+    const db = getLibrary();
+    const counts = db.prepare(`
+        SELECT COUNT(*) AS total, SUM(success) AS successes
+        FROM executions WHERE slug = ?
+    `).get(row.slug) as { total: number; successes: number | null };
+
+    return {
+        slug: row.slug,
+        description: row.description,
+        schema: JSON.parse(row.schema_json),
+        source: row.source as ToolSource,
+        originIntent: row.origin_intent,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        graduatedAt: row.graduated_at,
+        publishedAt: row.published_at,
+        archivedAt: row.archived_at,
+        invocationCount: counts.total ?? 0,
+        successCount: counts.successes ?? 0,
+        lifecycleState: state,
+    };
+}
+
+export function getToolBySlug(slug: string): ToolMetadata | null {
+    const db = getLibrary();
+    const row = db.prepare(`SELECT * FROM tools WHERE slug = ?`).get(slug) as ToolRow | undefined;
+    return row ? rowToMetadata(row) : null;
+}
+
+export function getToolEmbedding(slug: string): Float32Array | null {
+    const db = getLibrary();
+    const row = db.prepare(`SELECT embedding FROM tools WHERE slug = ?`).get(slug) as { embedding: Buffer } | undefined;
+    return row ? bufferToEmbedding(row.embedding) : null;
 }
