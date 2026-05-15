@@ -31,15 +31,22 @@ export interface SynthesisRequest {
 
 export type SynthesisResult =
     | { kind: "lookup_hit"; slug: string; reusedFrom: { matchSimilarity: number; source: "function_gemma" | "library_embedding" } }
-    | { kind: "synthesized"; slug: string; attempts: number; testsPasssed: number; testsTotal: number }
+    | { kind: "synthesized"; slug: string; attempts: number; testsPassed: number; testsTotal: number }
     | { kind: "awaiting_approval"; slug: string; capabilitiesRequested: string[] }
     | { kind: "failed"; report: SynthesisFailureReport };
+
+// NOTE: The variants here carry `slug: string` rather than `tool: ToolMetadata` as the
+// orchestrator deep-dive (forge-deep-dives/04-routing-orchestrator.md) sketches. The
+// Phase 1 plan deliberately keeps the result narrow — callers in Phase 2+ resolve the
+// slug to a ToolMetadata via library.getToolBySlug() when they need the full record.
+// This avoids forcing every result producer to construct a ToolMetadata and lets the
+// library remain the single source of truth for tool data.
 
 export interface SynthesisFailureReport {
     requestedName: string;
     description: string;
     attempts: number;
-    finalDiagnose: string;
+    finalDiagnosis: string;
     failureReason: "exhausted_attempts" | "sast_unrecoverable" | "parse_unrecoverable" | "budget_exceeded";
     reportPath: string;       // ~/.atlas/store/dynamic/_failed/<ts>_<slug>.json
 }
@@ -104,3 +111,8 @@ export interface ForgeStats {
     todaySynthesisSuccesses: number;
     todayLookupHits: number;
 }
+
+// NOTE: ForgeStats fields here are the Phase 1 surface. The orchestrator deep-dive
+// describes additional aggregate metrics (successRateAcrossActiveTools, nightly synthesis
+// counts) that depend on data Phases 3-6 will start emitting. Extend this interface as
+// later phases land, keeping field names consistent with what's already shipped.

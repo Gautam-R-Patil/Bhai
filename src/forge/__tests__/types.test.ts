@@ -19,7 +19,7 @@ describe("forge types compile", () => {
         expect(req.source).toBe("synchronous");
     });
 
-    it("SynthesisResult lookup_hit variant has tool field", () => {
+    it("SynthesisResult lookup_hit variant has kind and reusedFrom", () => {
         const result: SynthesisResult = {
             kind: "lookup_hit",
             slug: "extract_pdf",
