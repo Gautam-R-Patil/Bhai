@@ -163,6 +163,7 @@ desktop/hostinger-upload/
 !src/proactive/heartbeat-morning-boundary.test.ts
 !desktop/tests/
 !desktop/tests/auth-helpers.test.js
+!src/forge/__tests__/types.test.ts
 
 # Compiled Swift helpers (built by npm run build:location / build:ocr)
 scripts/get_location_bin
