@@ -183,6 +183,7 @@ desktop/hostinger-upload/
 !src/forge/__tests__/auto-synthesis-queue.test.ts
 !src/forge/__tests__/phase2-smoke.test.ts
 !src/forge/__tests__/synthesis-envelope.test.ts
+!src/forge/__tests__/sandbox-runner.test.ts
 
 # Compiled Swift helpers (built by npm run build:location / build:ocr / build:ax)
 scripts/get_location_bin
