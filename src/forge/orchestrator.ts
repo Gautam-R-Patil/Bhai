@@ -1,7 +1,8 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { closeLibrary, countTools, getToolBySlug, listTools, openLibrary } from "./library.js";
 import { lookupTool as runLookupPipeline } from "./lookup.js";
 import { migrateLegacyDynamicTools } from "./migration.js";
@@ -134,8 +135,49 @@ export async function revokeDynamicTool(_slug: string): Promise<void> {
     throw new Error("forge.revokeDynamicTool: not implemented until phase 4");
 }
 
-export async function queueSynthesisCandidate(_req: SynthesisRequest): Promise<void> {
-    throw new Error("forge.queueSynthesisCandidate: not implemented until phase 3");
+interface PendingQueue {
+    candidates: Array<SynthesisRequest & { queuedAt: number }>;
+    lastUpdated: number;
+}
+
+function pendingPath(): string {
+    return join(atlasHome(), "data", "forge-pending.json");
+}
+
+function loadPending(): PendingQueue {
+    const p = pendingPath();
+    if (!existsSync(p)) return { candidates: [], lastUpdated: 0 };
+    try {
+        return JSON.parse(readFileSync(p, "utf-8"));
+    } catch {
+        return { candidates: [], lastUpdated: 0 };
+    }
+}
+
+function savePending(q: PendingQueue): void {
+    const p = pendingPath();
+    const dir = dirname(p);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    q.lastUpdated = Date.now();
+    writeFileSync(p, JSON.stringify(q, null, 2));
+}
+
+export async function queueSynthesisCandidate(req: SynthesisRequest): Promise<void> {
+    if (!_ready) return;
+    const q = loadPending();
+    if (q.candidates.some((c) => c.description === req.description)) return;
+    q.candidates.push({ ...req, queuedAt: Date.now() });
+    savePending(q);
+}
+
+export function consumeNextPendingCandidate(): SynthesisRequest | null {
+    if (!_ready) return null;
+    const q = loadPending();
+    const next = q.candidates.shift();
+    if (!next) return null;
+    savePending(q);
+    const { queuedAt: _queuedAt, ...req } = next;
+    return req;
 }
 
 export async function runDreamReplaySynthesis(_window: { from: number; to: number }): Promise<unknown> {

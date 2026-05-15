@@ -1619,6 +1619,43 @@ export async function handleToolRequest(request: ToolRequest): Promise<{
     }
 
     if (matchedCategories.length === 0) {
+        // ── FORGE Phase 2: auto-queue synthesis candidate ──
+        // If forge is ready and the kill switch isn't set, queue a synthesis job.
+        // The agent will see the synthesized tool on a subsequent iteration.
+        if (process.env.ATLAS_NO_FORGE_AUTO_SYNTHESIS !== "true") {
+            try {
+                const { queueSynthesisCandidate, isForgeReady } = await import("./forge/orchestrator.js");
+                if (isForgeReady()) {
+                    await queueSynthesisCandidate({
+                        name:
+                            capability
+                                .toLowerCase()
+                                .replace(/[^a-z0-9_]+/g, "_")
+                                .replace(/^_+|_+$/g, "")
+                                .slice(0, 40) || "auto_tool",
+                        description: capability,
+                        parametersSchema: { type: "object", properties: {}, required: [] },
+                        persistent: false,
+                        source: "synchronous",
+                        originIntent: reason,
+                    });
+                    const fallbackCategories = ["tool_creation", "shell", "browser"];
+                    activeRequestedCategories = {
+                        categories: [...new Set([...activeRequestedCategories.categories, ...fallbackCategories])],
+                        lastUsedIteration: currentIteration,
+                    };
+                    return {
+                        categories: fallbackCategories,
+                        response:
+                            `No built-in tool for "${capability}". I've queued a synthesis job — a tool matching this capability will be available on your next iteration once the verifier completes. ` +
+                            `If you need to act sooner: use browser tools for web services, shell_exec for CLI tools, or create_tool to build it now.`,
+                    };
+                }
+            } catch {
+                // Forge unavailable — fall through to existing guidance
+            }
+        }
+
         // No dedicated tool — guide toward auto-creation
         const fallbackCategories = ["tool_creation", "shell", "browser"];
         activeRequestedCategories = {
