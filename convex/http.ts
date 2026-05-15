@@ -163,6 +163,81 @@ async function buildResponse(
 // mapping is unit-testable without a Convex harness.
 import { getCreditCost } from "./credit_cost.js";
 
+// ── Waitlist helpers (per-IP rate limit + CORS + hCaptcha verify) ─────────
+// Isolated subsystem — no coupling to session/credit machinery. Lives next
+// to the existing in-memory rid-dedup map for symmetry; isolate-local
+// counters are fine here because the rate limit is a politeness gate
+// against accidental floods, not a security boundary (hCaptcha is).
+const WAITLIST_IP_WINDOW_MS = 10 * 60_000;
+const WAITLIST_IP_MAX = 5;
+const waitlistIpHits = new Map<string, { count: number; windowStart: number }>();
+
+function checkWaitlistIpRateLimit(ip: string): boolean {
+  if (!ip || ip === "unknown") return true; // can't rate-limit what we can't identify
+  const now = Date.now();
+  const existing = waitlistIpHits.get(ip);
+  if (waitlistIpHits.size > 1024) {
+    for (const [k, v] of waitlistIpHits) {
+      if (now - v.windowStart > WAITLIST_IP_WINDOW_MS) waitlistIpHits.delete(k);
+    }
+  }
+  if (!existing || now - existing.windowStart > WAITLIST_IP_WINDOW_MS) {
+    waitlistIpHits.set(ip, { count: 1, windowStart: now });
+    return true;
+  }
+  if (existing.count >= WAITLIST_IP_MAX) return false;
+  existing.count++;
+  return true;
+}
+
+const WAITLIST_ALLOWED_ORIGIN = "https://tryatlasagi.com";
+
+function waitlistCorsHeaders(origin: string | null): Record<string, string> {
+  const allow = origin === WAITLIST_ALLOWED_ORIGIN ? origin : WAITLIST_ALLOWED_ORIGIN;
+  return {
+    "Access-Control-Allow-Origin": allow,
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Max-Age": "86400",
+    "Vary": "Origin",
+  };
+}
+
+async function verifyHCaptcha(token: string, remoteIp?: string): Promise<boolean> {
+  const secret = process.env.HCAPTCHA_SECRET;
+  // Fail-closed: if the secret isn't configured, reject everything. Loud
+  // failure (every submit returns 403) is preferable to silent insecurity.
+  if (!secret) {
+    console.warn("[waitlist] HCAPTCHA_SECRET not set — submissions will fail until configured");
+    return false;
+  }
+  const body = new URLSearchParams({ secret, response: token });
+  if (remoteIp) body.append("remoteip", remoteIp);
+  try {
+    const resp = await fetch("https://api.hcaptcha.com/siteverify", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    });
+    const data: any = await resp.json().catch(() => null);
+    return !!data?.success;
+  } catch (err: any) {
+    console.error("[waitlist] hCaptcha verify network error:", err?.message);
+    return false;
+  }
+}
+
+function extractClientIp(request: Request): string {
+  return (
+    request.headers.get("CF-Connecting-IP") ||
+    request.headers.get("X-Forwarded-For")?.split(",")[0].trim() ||
+    request.headers.get("X-Real-IP") ||
+    "unknown"
+  );
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 // ── Helper: extract + validate session token ──
 async function validateRequest(
   ctx: any,
@@ -1876,6 +1951,297 @@ http.route({
         .replace(/\n.*$/s, "")
         .trim();
       return new Response(JSON.stringify({ error: clean || "validate failed" }), { status: 401, headers: { "Content-Type": "application/json" } });
+    }
+  }),
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// WAITLIST — Public submit + admin manage
+// ══════════════════════════════════════════════════════════════════════════
+
+// OPTIONS preflight for the public submit endpoint
+http.route({
+  path: "/api/waitlist/submit",
+  method: "OPTIONS",
+  handler: httpAction(async (_ctx, request) => {
+    const origin = request.headers.get("Origin");
+    return new Response(null, { status: 204, headers: waitlistCorsHeaders(origin) });
+  }),
+});
+
+// POST /api/waitlist/submit — PUBLIC. No session auth. hCaptcha + IP gated.
+http.route({
+  path: "/api/waitlist/submit",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const origin = request.headers.get("Origin");
+    const corsHeaders = waitlistCorsHeaders(origin);
+    const jsonHeaders = { ...corsHeaders, "Content-Type": "application/json" };
+
+    if (origin !== WAITLIST_ALLOWED_ORIGIN) {
+      return new Response(
+        JSON.stringify({ error: "Origin not allowed" }),
+        { status: 403, headers: jsonHeaders },
+      );
+    }
+
+    const ip = extractClientIp(request);
+    if (!checkWaitlistIpRateLimit(ip)) {
+      return new Response(
+        JSON.stringify({ error: "Too many submissions. Try again later." }),
+        { status: 429, headers: { ...jsonHeaders, "Retry-After": "600" } },
+      );
+    }
+
+    let body: any;
+    try {
+      body = await request.json();
+    } catch {
+      return new Response(
+        JSON.stringify({ error: "Invalid JSON body" }),
+        { status: 400, headers: jsonHeaders },
+      );
+    }
+
+    const firstName = typeof body.firstName === "string" ? body.firstName.trim() : "";
+    const lastName = typeof body.lastName === "string" ? body.lastName.trim() : "";
+    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+    const role = typeof body.role === "string" ? body.role.trim() : "";
+    const company = typeof body.company === "string" ? body.company.trim() : undefined;
+    const useCase = typeof body.useCase === "string" ? body.useCase.trim() : "";
+    const hcaptchaToken = typeof body.hcaptchaToken === "string" ? body.hcaptchaToken : "";
+
+    if (!firstName || !lastName || !email || !role || !useCase) {
+      return new Response(
+        JSON.stringify({ error: "Missing required fields" }),
+        { status: 400, headers: jsonHeaders },
+      );
+    }
+    if (!EMAIL_RE.test(email) || email.length > 320) {
+      return new Response(
+        JSON.stringify({ error: "Invalid email" }),
+        { status: 400, headers: jsonHeaders },
+      );
+    }
+    if (!hcaptchaToken) {
+      return new Response(
+        JSON.stringify({ error: "Captcha token missing" }),
+        { status: 400, headers: jsonHeaders },
+      );
+    }
+
+    const captchaOk = await verifyHCaptcha(hcaptchaToken, ip);
+    if (!captchaOk) {
+      return new Response(
+        JSON.stringify({ error: "Captcha verification failed" }),
+        { status: 403, headers: jsonHeaders },
+      );
+    }
+
+    // Duplicate guard — return success so the user sees the same UI; ops
+    // gets to see one row, not multiples, for the same person.
+    const existing = await ctx.runQuery(internal.waitlist.getEmailDuplicate, { email });
+    if (existing) {
+      return new Response(
+        JSON.stringify({ ok: true, duplicate: true }),
+        { status: 200, headers: jsonHeaders },
+      );
+    }
+
+    const userAgent = request.headers.get("User-Agent") || undefined;
+    const referrer = request.headers.get("Referer") || undefined;
+
+    const { id } = await ctx.runMutation(internal.waitlist.insertWaitlistEntry, {
+      firstName,
+      lastName,
+      email,
+      role,
+      company: company || undefined,
+      useCase,
+      ipAddress: ip !== "unknown" ? ip : undefined,
+      userAgent,
+      referrer,
+    });
+
+    // Fire-and-forget notification — scheduled so a flaky SMTP can't slow
+    // down or fail the submission response.
+    await ctx.scheduler.runAfter(0, internal.waitlistMailer.sendNewEntryNotification, {
+      entryId: id,
+    });
+
+    return new Response(
+      JSON.stringify({ ok: true, id }),
+      { status: 200, headers: jsonHeaders },
+    );
+  }),
+});
+
+// GET /api/admin/waitlist?status=...&cursor=...&limit=... — admin list
+http.route({
+  path: "/api/admin/waitlist",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authErr = await validateAdminRequest(request);
+    if (authErr) return authErr;
+
+    const url = new URL(request.url);
+    const status = url.searchParams.get("status") || undefined;
+    const limitRaw = url.searchParams.get("limit");
+    const limit = limitRaw ? Number(limitRaw) : undefined;
+    const cursor = url.searchParams.get("cursor") || undefined;
+
+    const result = await ctx.runQuery(internal.waitlist.listWaitlist, {
+      status,
+      limit: Number.isFinite(limit) ? limit : undefined,
+      cursor: cursor ?? null,
+    });
+
+    return new Response(JSON.stringify(result), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
+
+// GET /api/admin/waitlist/stats — admin stats
+http.route({
+  path: "/api/admin/waitlist/stats",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authErr = await validateAdminRequest(request);
+    if (authErr) return authErr;
+
+    const stats = await ctx.runQuery(internal.waitlist.getWaitlistStats, {});
+    return new Response(JSON.stringify({ stats }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
+
+// POST /api/admin/waitlist/update — admin patch status / notes
+http.route({
+  path: "/api/admin/waitlist/update",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authErr = await validateAdminRequest(request);
+    if (authErr) return authErr;
+
+    let body: any;
+    try {
+      body = await request.json();
+    } catch {
+      return new Response(
+        JSON.stringify({ error: "Invalid JSON body" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    const { entryId, status, adminNotes } = body || {};
+    if (!entryId) {
+      return new Response(
+        JSON.stringify({ error: "entryId is required" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    try {
+      const result = await ctx.runMutation(internal.waitlist.updateWaitlistEntry, {
+        entryId,
+        status,
+        adminNotes,
+      });
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch (err: any) {
+      return new Response(
+        JSON.stringify({ error: err?.message || "Update failed" }),
+        { status: 500, headers: { "Content-Type": "application/json" } },
+      );
+    }
+  }),
+});
+
+// POST /api/admin/waitlist/delete — admin remove
+http.route({
+  path: "/api/admin/waitlist/delete",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authErr = await validateAdminRequest(request);
+    if (authErr) return authErr;
+
+    let body: any;
+    try {
+      body = await request.json();
+    } catch {
+      return new Response(
+        JSON.stringify({ error: "Invalid JSON body" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    const { entryId } = body || {};
+    if (!entryId) {
+      return new Response(
+        JSON.stringify({ error: "entryId is required" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    try {
+      const result = await ctx.runMutation(internal.waitlist.deleteWaitlistEntry, { entryId });
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch (err: any) {
+      return new Response(
+        JSON.stringify({ error: err?.message || "Delete failed" }),
+        { status: 500, headers: { "Content-Type": "application/json" } },
+      );
+    }
+  }),
+});
+
+// POST /api/admin/waitlist/import — bulk insert (admin). Idempotent: skips
+// emails that already exist. Use to seed the existing ~7-8 users without
+// resorting to hand-rolled SQL or going through the public hCaptcha flow.
+http.route({
+  path: "/api/admin/waitlist/import",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authErr = await validateAdminRequest(request);
+    if (authErr) return authErr;
+
+    let body: any;
+    try {
+      body = await request.json();
+    } catch {
+      return new Response(
+        JSON.stringify({ error: "Invalid JSON body" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (!Array.isArray(body?.entries) || body.entries.length === 0) {
+      return new Response(
+        JSON.stringify({ error: "entries[] is required" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    try {
+      const result = await ctx.runMutation(internal.waitlist.bulkImportWaitlist, {
+        entries: body.entries,
+      });
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch (err: any) {
+      return new Response(
+        JSON.stringify({ error: err?.message || "Import failed" }),
+        { status: 500, headers: { "Content-Type": "application/json" } },
+      );
     }
   }),
 });
