@@ -3,7 +3,7 @@
 
 // ── Item Types ─────────────────────────────────────────────────────────────
 
-export type StoreItemType = "skill" | "mcp" | "tool";
+export type StoreItemType = "skill" | "mcp" | "tool" | "dynamic";
 
 export type StoreItemStatus = "active" | "deprecated" | "removed";
 
@@ -221,17 +221,25 @@ export type ProgressCallback = (progress: InstallProgress) => void;
 
 // ── Local Install Manifest ─────────────────────────────────────────────────
 
+export interface LocalInstallItem {
+  itemId: string;
+  type: StoreItemType;
+  name: string;
+  version: string;
+  installedAt: number;
+  autoUpdate: boolean;
+  path: string;
+  forgeMeta?: {
+    source: "synchronous" | "dream_replay" | "sideloaded" | "migrated";
+    originIntent?: string;
+    synthesisModelId?: string;
+    verifierAttempts?: number;
+  };
+}
+
 export interface LocalInstallManifest {
   items: {
-    [slug: string]: {
-      itemId: string;
-      type: StoreItemType;
-      name: string;
-      version: string;
-      installedAt: number;
-      autoUpdate: boolean;
-      path: string;
-    };
+    [slug: string]: LocalInstallItem;
   };
   lastUpdated: number;
 }

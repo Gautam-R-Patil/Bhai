@@ -165,3 +165,41 @@ export interface CreditUsageUser {
   creditsRemaining: number;
   activations: number;
 }
+
+// ── Waitlist Types ───────────────────────────────
+
+export type WaitlistStatus = "new" | "contacted" | "accepted" | "rejected";
+
+export interface WaitlistEntry {
+  _id: string;
+  _creationTime: number;
+  firstName: string;
+  lastName: string;
+  email: string;
+  role: string;
+  company?: string;
+  useCase: string;
+  status: WaitlistStatus;
+  adminNotes?: string;
+  ipAddress?: string;
+  userAgent?: string;
+  referrer?: string;
+  submittedAt: number;
+}
+
+export interface WaitlistStats {
+  total: number;
+  new: number;
+  contacted: number;
+  accepted: number;
+  rejected: number;
+  last24h: number;
+  last7d: number;
+  scanCapped?: boolean;
+}
+
+export interface WaitlistListResponse {
+  entries: WaitlistEntry[];
+  isDone: boolean;
+  continueCursor: string | null;
+}

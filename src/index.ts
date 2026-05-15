@@ -50,13 +50,14 @@ import { sendPushNotification, getSubscriptionCount } from "./notifications/push
 import { initAccountGuard, checkAccountStatus } from "./account-guard.js";
 import { initSession, revokeCurrentSession } from "./session.js";
 import { startNetworkMonitor, stopNetworkMonitor, onNetworkStatusChange, getOnlineNotificationMessage } from "./network-health.js";
-import { warmup as warmupEmbeddings, isReady as isEmbeddingsReady } from "./memory/embeddings.js";
+import { warmup as warmupEmbeddings, isReady as isEmbeddingsReady, embedText } from "./memory/embeddings.js";
 import { autoResumeInterruptedTasks } from "./agents/long-task.js";
 import { initCredibilityModel } from "./research/credibility-model.js";
 import { initLocationService, refreshLocation, onLocationChange } from "./location/index.js";
 import { startNetworkWatcher, stopNetworkWatcher } from "./location/network-watcher.js";
 import { getPlatformCapabilities } from "./utils/platform-capabilities.js";
 import { initRegistry } from "./harness/registry.js";
+import { initForge } from "./forge/orchestrator.js";
 
 // ── Primary Channel ──────────────────────────
 const PRIMARY_CHANNEL = process.env.PRIMARY_CHANNEL || "telegram";
@@ -308,6 +309,8 @@ async function boot() {
         initSkillMetadata().catch(e => console.warn("[BOOT] Skills:", (e as Error).message)),
         // Load persisted dynamic tools (created by create_tool with persistent=true)
         loadDynamicTools().catch(e => console.warn("[BOOT] Dynamic tools:", (e as Error).message)),
+        // Skill Forge (Phase 1) — kill switch: ATLAS_NO_FORGE=true
+        initForge({ embedFn: embedText }).catch(e => console.warn("[BOOT] Forge:", (e as Error).message)),
         // Hooks (user + project ~/.atlas/hooks.json and .atlas/hooks.json)
         import("./hooks/index.js").then((mod) => mod.loadHooks())
             .catch(e => console.warn("[BOOT] Hooks:", (e as Error).message)),

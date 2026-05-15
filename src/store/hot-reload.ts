@@ -88,6 +88,11 @@ export async function hotReloadItem(item: StoreItem): Promise<void> {
     case "tool":
       await hotReloadTool(item);
       break;
+    case "dynamic":
+      console.log(`🔥 hot-reload: dynamic tool '${item.slug}' detected (registration in phase 2)`);
+      break;
+    default:
+      console.warn(`🔥 hot-reload: unknown item type '${(item as { type?: string }).type}' for slug '${item.slug}'; ignoring`);
   }
 }
 
@@ -105,6 +110,11 @@ export async function hotUnloadItem(item: StoreItem): Promise<void> {
     case "tool":
       await hotUnloadTool(item);
       break;
+    case "dynamic":
+      console.log(`🔥 hot-unload: dynamic tool '${item.slug}' detected (unregistration in phase 2)`);
+      break;
+    default:
+      console.warn(`🔥 hot-unload: unknown item type '${(item as { type?: string }).type}' for slug '${item.slug}'; ignoring`);
   }
 }
 

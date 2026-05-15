@@ -212,6 +212,19 @@ Dual-backend browser automation. The `BrowserBackend` interface (`browser-backen
 - **Tool intelligence** — Per-tool caching (TTL-based: web_search 2min, read_file 1min, system_info 5min), rate limiting, audit logging, confirmation gates
 - **Dynamic tools** (`create-tool.ts`) — Agent-created tools that persist to `~/.atlas/store/tools` and hot-reload at runtime. Generated handlers run inside a `vm.createContext` sandbox with a restricted require shim.
 
+### Skill Forge (`src/forge/` — Phases 1+2 shipped)
+ATLAS-specific dynamic-tool reliability layer. Phase 1: foundation (SQLite library, manifest, hot-reload). Phase 2: lookup-first short-circuit so `create_tool` reuses existing tools before synthesizing. Kill switches: `ATLAS_NO_FORGE`, `ATLAS_NO_FORGE_LOOKUP`, `ATLAS_NO_FORGE_AUTO_SYNTHESIS`.
+
+Lookup pipeline: FunctionGemma 270M (zero cost when Ollama+model present) → FTS5 BM25 over description+schema_keys → cosine rerank against embeddings (threshold 0.85). Dedup at write time at 0.85 / 0.92 thresholds (warn vs merge).
+
+Public API at `src/forge/orchestrator.ts`:
+- `initForge({ embedFn })` / `isForgeReady()` / `getForgeStats()` — boot + introspection
+- `lookupTool(description, schema)` — Phase 2 lookup, returns `ToolMetadata | null`
+- `queueSynthesisCandidate(req)` / `consumeNextPendingCandidate()` — Phase 2 auto-synthesis queue
+- `synthesizeTool`, `approveDynamicTool`, `runDreamReplaySynthesis` — Phase 3+ stubs
+
+Spec: `docs/superpowers/specs/2026-05-15-forge-tool-creation-overhaul-design.md`. Deep dives in `docs/superpowers/specs/forge-deep-dives/`.
+
 ### Deep Research (`src/research/` — 11 files)
 Background research engine with its own execution loop:
 - `executor.ts` — Research loop (up to 500 sources); `engines.ts` — search provider abstraction; `fetcher.ts` — HTML→text; `scoring.ts` — relevance scoring; `persistence.ts` — saves to `data/research/`
@@ -351,6 +364,9 @@ Most entries default to the feature ON; set to `"true"` (or the named sentinel) 
 - `ATLAS_NO_NATIVE_SANITIZER` — disables the native `sanitizeSecrets`/`containsSecrets` impl in `native/secrets_sanitizer.rs`. Default is native ON — bench (`scripts/bench-native.ts`) shows native at 1.44x–2.00x of TS across 50B–100KB inputs after the sequential-per-pattern `Cow<&str>` rewrite (zero allocation on no-match passes). Force TS fallback for debugging or when the native binary is unavailable.
 - `ATLAS_NATIVE_VAD` — opt-IN (off by default); routes live-voice barge-in detection through libfvad (`native/src/pcm_vad.rs`) instead of the RMS-amplitude gate. **Hybrid-mode only** — native Gemini Live / OpenAI Realtime backends use server-side VAD and ignore this knob. Requires the native module to be built with the `vad` cargo feature (`cd native && npx napi build --features vad --release`); the default build skips libfvad because its C dep adds 30–60s to clean Rust builds. Functionality win, not perf: libfvad classifies the signal spectrum so background noise / music false-positive far less than `BARGE_IN_RMS_THRESHOLD`. When enabled but the binary lacks the feature, falls back to RMS transparently.
 - `ATLAS_VAD_MODE` — 0–3 aggressiveness for `ATLAS_NATIVE_VAD` (0=quality / 3=very aggressive, fewer false positives). Default 2.
+- `ATLAS_NO_FORGE` — disables the Skill Forge subsystem entirely (no migration, no library, no synthesis). Phase 1 default-off; flip to default-on after soak (per spec §14).
+- `ATLAS_NO_FORGE_LOOKUP` — disables the lookup short-circuit. `create_tool` always proceeds to synthesis. Default-off in Phase 2.
+- `ATLAS_NO_FORGE_AUTO_SYNTHESIS` — disables the auto-queue path in `handleToolRequest`. Falls back to the old "you have three options" message.
 
 ### Rust expansion — empirical lessons (May 2026)
 

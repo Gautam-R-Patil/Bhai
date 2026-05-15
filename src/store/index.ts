@@ -44,6 +44,7 @@ export {
   SKILLS_PATH,
   MCP_PATH,
   TOOLS_PATH,
+  DYNAMIC_PATH,
   MCP_CONFIG_PATH,
 } from "./installer.js";
 

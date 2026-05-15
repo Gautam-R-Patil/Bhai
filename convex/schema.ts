@@ -263,4 +263,27 @@ export default defineSchema({
   })
     .index("by_slug", ["slug"])
     .index("by_active", ["isActive"]),
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // WAITLIST — Isolated marketing signup pipeline. No foreign keys to anything;
+  // public submit endpoint writes here directly, admin panel reads via the
+  // ADMIN_API_KEY-gated /api/admin/waitlist routes.
+  // ══════════════════════════════════════════════════════════════════════════
+  waitlist: defineTable({
+    firstName: v.string(),
+    lastName: v.string(),
+    email: v.string(),
+    role: v.string(),
+    company: v.optional(v.string()),
+    useCase: v.string(),
+    status: v.string(),                  // "new" | "contacted" | "accepted" | "rejected"
+    adminNotes: v.optional(v.string()),
+    ipAddress: v.optional(v.string()),
+    userAgent: v.optional(v.string()),
+    referrer: v.optional(v.string()),
+    submittedAt: v.number(),
+  })
+    .index("by_status", ["status"])
+    .index("by_email", ["email"])
+    .index("by_submittedAt", ["submittedAt"]),
 });

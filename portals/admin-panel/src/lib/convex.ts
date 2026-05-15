@@ -1,7 +1,7 @@
 // Convex API client for admin panel
 // Direct HTTPS calls to Convex backend
 
-const CONVEX_URL = process.env.NEXT_PUBLIC_CONVEX_URL || "https://zany-kudu-607.convex.cloud";
+const CONVEX_URL = process.env.NEXT_PUBLIC_CONVEX_URL || "https://avid-oyster-465.convex.cloud";
 
 interface ConvexResponse<T> {
   status: "success" | "error";
@@ -114,6 +114,23 @@ export async function adminHttpGet<T>(path: string): Promise<T> {
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
     throw new Error(`Admin GET ${path} failed: ${resp.status} ${text.slice(0, 200)}`);
+  }
+  return (await resp.json()) as T;
+}
+
+export async function adminHttpPost<T>(path: string, body: unknown): Promise<T> {
+  const url = `${adminBaseUrl()}${path.startsWith("/") ? path : `/${path}`}`;
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${adminKey()}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(`Admin POST ${path} failed: ${resp.status} ${text.slice(0, 200)}`);
   }
   return (await resp.json()) as T;
 }

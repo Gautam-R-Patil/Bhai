@@ -13,12 +13,14 @@ import {
   Shield,
   LogOut,
   BarChart3,
+  UserPlus,
 } from "lucide-react";
 
 const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { name: "Observability", href: "/dashboard/observability", icon: BarChart3 },
   { name: "Users", href: "/users", icon: Users },
+  { name: "Waitlist", href: "/waitlist", icon: UserPlus },
   { name: "Developers", href: "/developers", icon: Code2 },
   { name: "Submissions", href: "/submissions", icon: FileCheck },
   { name: "Published Apps", href: "/apps", icon: Package },

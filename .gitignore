@@ -163,10 +163,32 @@ desktop/hostinger-upload/
 !src/proactive/heartbeat-morning-boundary.test.ts
 !desktop/tests/
 !desktop/tests/auth-helpers.test.js
+!src/forge/__tests__/types.test.ts
+!src/forge/__tests__/store-types-extension.test.ts
+!src/forge/__tests__/library-bootstrap.test.ts
+!src/forge/__tests__/library-insert.test.ts
+!src/forge/__tests__/library-list.test.ts
+!src/forge/__tests__/telemetry.test.ts
+!src/forge/__tests__/migration.test.ts
+!src/forge/__tests__/orchestrator-init.test.ts
+!src/forge/__tests__/installer-dynamic-path.test.ts
+!src/forge/__tests__/hot-reload-dynamic.test.ts
+!src/forge/__tests__/phase1-smoke.test.ts
+!src/forge/__tests__/library-search-fts.test.ts
+!src/forge/__tests__/library-search-embedding.test.ts
+!src/forge/__tests__/lookup.test.ts
+!src/forge/__tests__/dedup.test.ts
+!src/forge/__tests__/orchestrator-lookup.test.ts
+!src/forge/__tests__/create-tool-lookup-shortcircuit.test.ts
+!src/forge/__tests__/auto-synthesis-queue.test.ts
+!src/forge/__tests__/phase2-smoke.test.ts
+!src/forge/__tests__/synthesis-envelope.test.ts
+!src/forge/__tests__/sandbox-runner.test.ts
 
-# Compiled Swift helpers (built by npm run build:location / build:ocr)
+# Compiled Swift helpers (built by npm run build:location / build:ocr / build:ax)
 scripts/get_location_bin
 scripts/ocr_screen_bin
+scripts/dump_ax_bin
 overlay-app/.build/
 
 # Local TTS eval artifacts + investigation scripts
