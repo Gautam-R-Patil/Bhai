@@ -42,6 +42,8 @@ function getItemPath(type: StoreItemType, slug: string): string {
       return join(MCP_PATH, slug);
     case "tool":
       return join(TOOLS_PATH, slug);
+    case "dynamic":
+      return join(STORE_BASE_PATH, "dynamic", slug);
   }
 }
 
