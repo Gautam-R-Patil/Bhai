@@ -1,9 +1,9 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 
 import { createHash } from "node:crypto";
-import { promises as fs, existsSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, promises as fs } from "node:fs";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import { getToolBySlug, insertTool } from "./library.js";
 import { emitForgeEvent } from "./telemetry.js";
 
@@ -46,12 +46,34 @@ async function writeArtifacts(toolDir: string, legacy: LegacyToolFile): Promise<
     await fs.writeFile(join(toolDir, "handler.js"), legacy.handler_code, "utf-8");
     await fs.writeFile(join(toolDir, "schema.json"), JSON.stringify(legacy.parameters_schema ?? {}, null, 2), "utf-8");
     await fs.writeFile(join(toolDir, "tests.json"), JSON.stringify([], null, 2), "utf-8");
-    await fs.writeFile(join(toolDir, "metrics.json"), JSON.stringify({
-        invocations: 0, successes: 0, lastUsed: null, source: "migrated",
-    }, null, 2), "utf-8");
-    await fs.writeFile(join(toolDir, "capabilities.json"), JSON.stringify({
-        fs_read: [], fs_write: [], net: [], exec: [],
-    }, null, 2), "utf-8");
+    await fs.writeFile(
+        join(toolDir, "metrics.json"),
+        JSON.stringify(
+            {
+                invocations: 0,
+                successes: 0,
+                lastUsed: null,
+                source: "migrated",
+            },
+            null,
+            2,
+        ),
+        "utf-8",
+    );
+    await fs.writeFile(
+        join(toolDir, "capabilities.json"),
+        JSON.stringify(
+            {
+                fs_read: [],
+                fs_write: [],
+                net: [],
+                exec: [],
+            },
+            null,
+            2,
+        ),
+        "utf-8",
+    );
 }
 
 export async function migrateLegacyDynamicTools(opts: MigrationOpts): Promise<MigrationResult> {
@@ -59,7 +81,9 @@ export async function migrateLegacyDynamicTools(opts: MigrationOpts): Promise<Mi
     const legacyDir = opts.legacyDir ?? DEFAULT_LEGACY_DIR;
     const dynamicStoreDir = opts.dynamicStoreDir ?? DEFAULT_DYNAMIC_STORE_DIR;
 
-    let migrated = 0, failed = 0, alreadyMigrated = 0;
+    let migrated = 0,
+        failed = 0,
+        alreadyMigrated = 0;
 
     if (!existsSync(legacyDir)) {
         return { migrated: 0, failed: 0, alreadyMigrated: 0, durationMs: Date.now() - start };
@@ -72,8 +96,14 @@ export async function migrateLegacyDynamicTools(opts: MigrationOpts): Promise<Mi
         try {
             const raw = await fs.readFile(fullPath, "utf-8");
             const parsed = JSON.parse(raw);
-            if (!looksLikeLegacy(parsed)) { failed++; continue; }
-            if (!/^[a-z][a-z0-9_]*$/.test(parsed.name)) { failed++; continue; }
+            if (!looksLikeLegacy(parsed)) {
+                failed++;
+                continue;
+            }
+            if (!/^[a-z][a-z0-9_]*$/.test(parsed.name)) {
+                failed++;
+                continue;
+            }
 
             const existing = getToolBySlug(parsed.name);
             if (existing) {
@@ -102,6 +132,12 @@ export async function migrateLegacyDynamicTools(opts: MigrationOpts): Promise<Mi
     }
 
     const durationMs = Date.now() - start;
-    emitForgeEvent({ event: "migration_completed", ts: Date.now(), migratedCount: migrated, failedCount: failed, durationMs });
+    emitForgeEvent({
+        event: "migration_completed",
+        ts: Date.now(),
+        migratedCount: migrated,
+        failedCount: failed,
+        durationMs,
+    });
     return { migrated, failed, alreadyMigrated, durationMs };
 }

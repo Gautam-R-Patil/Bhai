@@ -1,10 +1,10 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 
-import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import type { ToolMetadata, ToolLifecycleState, ToolSource } from "./types.js";
+import { dirname, join } from "node:path";
+import Database from "better-sqlite3";
+import type { ToolLifecycleState, ToolMetadata, ToolSource } from "./types.js";
 
 const SCHEMA_VERSION = 1;
 
@@ -96,15 +96,31 @@ export function openLibrary(path: string = DEFAULT_DB_PATH): Database.Database {
     try {
         // Fail-open per pragma — SQLite builds without WAL or with restricted features
         // shouldn't crash; we accept the default behavior.
-        try { _db.pragma("journal_mode = wal"); } catch { /* fail-open */ }
-        try { _db.pragma("synchronous = normal"); } catch { /* fail-open */ }
-        try { _db.pragma("foreign_keys = on"); } catch { /* fail-open */ }
+        try {
+            _db.pragma("journal_mode = wal");
+        } catch {
+            /* fail-open */
+        }
+        try {
+            _db.pragma("synchronous = normal");
+        } catch {
+            /* fail-open */
+        }
+        try {
+            _db.pragma("foreign_keys = on");
+        } catch {
+            /* fail-open */
+        }
 
         _db.exec(SCHEMA_DDL);
 
-        const existing = _db.prepare(`SELECT value FROM library_meta WHERE key = 'schema_version'`).get() as { value: string } | undefined;
+        const existing = _db.prepare(`SELECT value FROM library_meta WHERE key = 'schema_version'`).get() as
+            | { value: string }
+            | undefined;
         if (!existing) {
-            _db.prepare(`INSERT INTO library_meta (key, value) VALUES ('schema_version', ?)`).run(String(SCHEMA_VERSION));
+            _db.prepare(`INSERT INTO library_meta (key, value) VALUES ('schema_version', ?)`).run(
+                String(SCHEMA_VERSION),
+            );
         }
         return _db;
     } catch (err) {
@@ -123,7 +139,9 @@ export function closeLibrary(): void {
 
 export function getLibrarySchemaVersion(): number {
     if (!_db) throw new Error("library not open");
-    const row = _db.prepare(`SELECT value FROM library_meta WHERE key = 'schema_version'`).get() as { value: string } | undefined;
+    const row = _db.prepare(`SELECT value FROM library_meta WHERE key = 'schema_version'`).get() as
+        | { value: string }
+        | undefined;
     return row ? parseInt(row.value, 10) : 0;
 }
 
@@ -159,7 +177,9 @@ function extractSchemaKeys(schemaJson: string): string {
     try {
         const schema = JSON.parse(schemaJson);
         if (schema?.properties) return Object.keys(schema.properties).join(" ");
-    } catch { /* fall through */ }
+    } catch {
+        /* fall through */
+    }
     return "";
 }
 
@@ -173,9 +193,15 @@ export function insertTool(opts: InsertToolOptions): void {
 
     const tx = db.transaction(() => {
         insertStmt.run(
-            opts.slug, opts.description, opts.schemaJson, opts.handlerHash,
-            embeddingToBuffer(opts.embedding), opts.source, opts.originIntent ?? null,
-            opts.createdAt, opts.createdAt,
+            opts.slug,
+            opts.description,
+            opts.schemaJson,
+            opts.handlerHash,
+            embeddingToBuffer(opts.embedding),
+            opts.source,
+            opts.originIntent ?? null,
+            opts.createdAt,
+            opts.createdAt,
         );
         ftsStmt.run(opts.slug, opts.description, extractSchemaKeys(opts.schemaJson));
     });
@@ -251,7 +277,10 @@ export function listTools(opts: ListToolsOptions = {}): ToolMetadata[] {
     const args: any[] = [];
 
     if (!opts.includeArchived) conds.push("archived_at IS NULL");
-    if (opts.source) { conds.push("source = ?"); args.push(opts.source); }
+    if (opts.source) {
+        conds.push("source = ?");
+        args.push(opts.source);
+    }
 
     const where = conds.length > 0 ? `WHERE ${conds.join(" AND ")}` : "";
     const rows = db.prepare(`SELECT * FROM tools ${where} ORDER BY slug ASC`).all(...args) as ToolRow[];
@@ -268,7 +297,8 @@ export interface ToolCounts {
 
 export function countTools(): ToolCounts {
     const db = getLibrary();
-    const row = db.prepare(`
+    const row = db
+        .prepare(`
         SELECT
             COUNT(*) AS total,
             SUM(CASE WHEN archived_at IS NULL AND graduated_at IS NULL AND published_at IS NULL THEN 1 ELSE 0 END) AS active,
@@ -276,7 +306,14 @@ export function countTools(): ToolCounts {
             SUM(CASE WHEN graduated_at IS NOT NULL AND published_at IS NULL THEN 1 ELSE 0 END) AS graduated,
             SUM(CASE WHEN published_at IS NOT NULL THEN 1 ELSE 0 END) AS published
         FROM tools
-    `).get() as { total: number; active: number | null; archived: number | null; graduated: number | null; published: number | null };
+    `)
+        .get() as {
+        total: number;
+        active: number | null;
+        archived: number | null;
+        graduated: number | null;
+        published: number | null;
+    };
     return {
         total: row.total,
         active: row.active ?? 0,

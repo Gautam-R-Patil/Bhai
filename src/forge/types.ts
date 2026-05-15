@@ -5,13 +5,13 @@ import type { ChatCompletionTool } from "openai/resources/chat/completions.js";
 // ── Lifecycle ─────────────────────────────────────
 
 export type ToolLifecycleState =
-    | "proposed"          // synthesis queued, not yet run
-    | "verifying"         // verifier loop in progress
+    | "proposed" // synthesis queued, not yet run
+    | "verifying" // verifier loop in progress
     | "awaiting_approval" // persisted tool, user must approve
-    | "active"            // callable from registry
-    | "graduated"         // promoted to Stage 3 (skill)
-    | "published"         // submitted to marketplace
-    | "archived";         // disabled, recoverable
+    | "active" // callable from registry
+    | "graduated" // promoted to Stage 3 (skill)
+    | "published" // submitted to marketplace
+    | "archived"; // disabled, recoverable
 
 export type ToolSource = "synchronous" | "dream_replay" | "sideloaded" | "migrated";
 
@@ -30,7 +30,11 @@ export interface SynthesisRequest {
 }
 
 export type SynthesisResult =
-    | { kind: "lookup_hit"; slug: string; reusedFrom: { matchSimilarity: number; source: "function_gemma" | "library_embedding" } }
+    | {
+          kind: "lookup_hit";
+          slug: string;
+          reusedFrom: { matchSimilarity: number; source: "function_gemma" | "library_embedding" };
+      }
     | { kind: "synthesized"; slug: string; attempts: number; testsPassed: number; testsTotal: number }
     | { kind: "awaiting_approval"; slug: string; capabilitiesRequested: string[] }
     | { kind: "failed"; report: SynthesisFailureReport };
@@ -48,7 +52,7 @@ export interface SynthesisFailureReport {
     attempts: number;
     finalDiagnosis: string;
     failureReason: "exhausted_attempts" | "sast_unrecoverable" | "parse_unrecoverable" | "budget_exceeded";
-    reportPath: string;       // ~/.atlas/store/dynamic/_failed/<ts>_<slug>.json
+    reportPath: string; // ~/.atlas/store/dynamic/_failed/<ts>_<slug>.json
 }
 
 // ── Tool metadata (what library.ts returns) ───────
@@ -72,12 +76,12 @@ export interface ToolMetadata {
 // ── Manifest entry extension (used by installer.ts) ──
 
 export interface DynamicManifestEntry {
-    itemId: string;          // "forge_<slug>"
+    itemId: string; // "forge_<slug>"
     type: "dynamic";
     name: string;
     version: string;
     installedAt: number;
-    autoUpdate: false;       // dynamic tools never auto-update
+    autoUpdate: false; // dynamic tools never auto-update
     path: string;
     forgeMeta: {
         source: ToolSource;
@@ -92,7 +96,13 @@ export interface DynamicManifestEntry {
 export type ForgeTelemetryEvent =
     | { event: "forge_boot"; ts: number; libraryRows: number; manifestEntries: number; bootMs: number }
     | { event: "migration_completed"; ts: number; migratedCount: number; failedCount: number; durationMs: number }
-    | { event: "lookup_attempted"; ts: number; description: string; matchSimilarity: number | null; source: "function_gemma" | "library_embedding" | "miss" }
+    | {
+          event: "lookup_attempted";
+          ts: number;
+          description: string;
+          matchSimilarity: number | null;
+          source: "function_gemma" | "library_embedding" | "miss";
+      }
     | { event: "synthesis_started"; ts: number; slug: string; source: ToolSource; track: "A" | "B" }
     | { event: "synthesis_completed"; ts: number; slug: string; attempts: number; durationMs: number }
     | { event: "synthesis_failed"; ts: number; slug: string; attempts: number; reason: string }

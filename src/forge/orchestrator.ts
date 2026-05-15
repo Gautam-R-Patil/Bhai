@@ -1,11 +1,11 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 
-import { join } from "node:path";
 import { homedir } from "node:os";
-import { openLibrary, closeLibrary, countTools, listTools } from "./library.js";
+import { join } from "node:path";
+import { closeLibrary, countTools, listTools, openLibrary } from "./library.js";
 import { migrateLegacyDynamicTools } from "./migration.js";
-import { initForgeTelemetry, emitForgeEvent } from "./telemetry.js";
-import type { ForgeStats, ToolMetadata, SynthesisRequest, SynthesisResult } from "./types.js";
+import { emitForgeEvent, initForgeTelemetry } from "./telemetry.js";
+import type { ForgeStats, SynthesisRequest, SynthesisResult, ToolMetadata } from "./types.js";
 
 let _ready = false;
 let _embedFn: ((text: string) => Promise<Float32Array>) | null = null;
@@ -38,7 +38,9 @@ export async function initForge(opts: InitForgeOpts): Promise<void> {
         const legacyDir = join(home, "dynamic-tools");
         const dynamicStoreDir = join(home, "store", "dynamic");
         const migration = await migrateLegacyDynamicTools({
-            legacyDir, dynamicStoreDir, embedFn: opts.embedFn,
+            legacyDir,
+            dynamicStoreDir,
+            embedFn: opts.embedFn,
         });
 
         const counts = countTools();
@@ -65,9 +67,14 @@ export function isForgeReady(): boolean {
 export function getForgeStats(): ForgeStats {
     if (!_ready) {
         return {
-            libraryRows: 0, activeToolsCount: 0, archivedToolsCount: 0,
-            graduatedSkillsCount: 0, publishedToolsCount: 0,
-            todaySynthesisAttempts: 0, todaySynthesisSuccesses: 0, todayLookupHits: 0,
+            libraryRows: 0,
+            activeToolsCount: 0,
+            archivedToolsCount: 0,
+            graduatedSkillsCount: 0,
+            publishedToolsCount: 0,
+            todaySynthesisAttempts: 0,
+            todaySynthesisSuccesses: 0,
+            todayLookupHits: 0,
         };
     }
     const counts = countTools();

@@ -1,8 +1,8 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
 import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import type { ForgeTelemetryEvent } from "./types.js";
 
 const DEFAULT_LOG_PATH = join(homedir(), ".atlas", "data", "forge-telemetry.jsonl");
