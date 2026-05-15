@@ -370,3 +370,39 @@ export function searchByFTS(query: string, limit: number = 20): FTSSearchResult[
         return [];
     }
 }
+
+export interface EmbeddingSearchResult {
+    slug: string;
+    similarity: number;
+}
+
+function cosine(a: Float32Array, b: Float32Array): number {
+    if (a.length !== b.length) return 0;
+    let dot = 0;
+    for (let i = 0; i < a.length; i++) dot += a[i] * b[i];
+    // Inputs are L2-normalized so dot == cosine
+    return Math.max(-1, Math.min(1, dot));
+}
+
+export function searchByEmbedding(
+    queryEmbedding: Float32Array,
+    candidateSlugs: string[],
+    threshold: number = 0.85,
+): EmbeddingSearchResult[] {
+    if (candidateSlugs.length === 0) return [];
+    const db = getLibrary();
+    const placeholders = candidateSlugs.map(() => "?").join(",");
+    const rows = db.prepare(`
+        SELECT slug, embedding FROM tools
+        WHERE slug IN (${placeholders}) AND archived_at IS NULL
+    `).all(...candidateSlugs) as { slug: string; embedding: Buffer }[];
+
+    const results: EmbeddingSearchResult[] = [];
+    for (const row of rows) {
+        const emb = bufferToEmbedding(row.embedding);
+        const sim = cosine(queryEmbedding, emb);
+        if (sim >= threshold) results.push({ slug: row.slug, similarity: sim });
+    }
+    results.sort((a, b) => b.similarity - a.similarity);
+    return results;
+}
