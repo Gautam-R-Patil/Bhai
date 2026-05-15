@@ -90,7 +90,7 @@ export function clearCapabilityCache(): void {
 }
 
 function applyOverride(report: CapabilityReport): CapabilityReport {
-    const override = process.env[OVERRIDE_ENV];
+    const override = process.env[OVERRIDE_ENV] || readProfileFromRuntimeEnv();
     if (override === "lite" || override === "standard" || override === "full") {
         return {
             ...report,
@@ -99,6 +99,38 @@ function applyOverride(report: CapabilityReport): CapabilityReport {
         };
     }
     return report;
+}
+
+/**
+ * Defense-in-depth fallback: when the desktop spawns the bot it writes the
+ * user's wizard selections to `${ATLAS_DATA_DIR}/.env.runtime` and points
+ * dotenv at it via `DOTENV_CONFIG_PATH`. The production bundle obfuscates
+ * dotenv's internals, and we've seen cases where the side-effect import
+ * doesn't survive bundling — leaving `process.env.ATLAS_VISION_PROFILE`
+ * undefined even though the wizard correctly persisted "full". Parsing the
+ * runtime env file directly bypasses that dependency.
+ */
+function readProfileFromRuntimeEnv(): string | undefined {
+    try {
+        const dataDir = process.env.ATLAS_DATA_DIR;
+        if (!dataDir) return undefined;
+        const path = join(dataDir, ".env.runtime");
+        // require-style sync read keeps applyOverride synchronous to match the
+        // existing call sites; the file is < 1 KB on any real install.
+        const fs = require("node:fs") as typeof import("node:fs");
+        if (!fs.existsSync(path)) return undefined;
+        const raw = fs.readFileSync(path, "utf-8");
+        for (const line of raw.split(/\r?\n/)) {
+            const m = line.match(/^\s*ATLAS_VISION_PROFILE\s*=\s*(.+?)\s*$/);
+            if (m) {
+                const v = m[1].replace(/^['"]|['"]$/g, "");
+                if (v === "lite" || v === "standard" || v === "full") return v;
+            }
+        }
+    } catch {
+        /* fall back to env-only */
+    }
+    return undefined;
 }
 
 async function probeCapabilities(): Promise<CapabilityReport> {
@@ -259,9 +291,17 @@ async function detectDiskFreeGB(): Promise<number> {
             );
             return Math.max(0, parseFloat(stdout.trim()) || 0);
         }
-        const { stdout } = await execFileAsync("bash", ["-c", "df -BG --output=avail / | tail -1"], { timeout: 2000 });
-        const m = stdout.match(/(\d+)\s*G/);
-        if (m) return parseInt(m[1], 10);
+        // POSIX df. `-Pk` works on macOS BSD + Linux coreutils: -P forces POSIX
+        // column layout (Available is index 3), -k forces 1 KiB blocks.
+        // The previous `df -BG --output=avail /` used GNU long-form flags that
+        // BSD df rejects with "invalid option -- B", silently returning 0 GB
+        // free and pinning every Mac to the Lite vision profile regardless of
+        // actual disk space.
+        const { stdout } = await execFileAsync("df", ["-Pk", "/"], { timeout: 2000 });
+        const lastLine = stdout.trim().split("\n").pop() || "";
+        const cols = lastLine.split(/\s+/);
+        const availKb = parseInt(cols[3] || "0", 10);
+        if (availKb > 0) return Math.round(availKb / (1024 * 1024));
     } catch {
         /* fall through */
     }
@@ -336,18 +376,21 @@ async function checkMacAccessibility(): Promise<boolean> {
 }
 
 async function runCpuBench(): Promise<number> {
-    // Simple Float32 GEMM-like microbench. Higher = faster.
-    // 100 iterations of a 100x100 matrix-vector multiply.
-    // Returns ops/ms, normalized to ~1000 on a modern laptop (M2 ~3000+, 2014 i5 ~400).
-    const N = 100;
-    const ITERS = 100;
+    // Float32 GEMM-like microbench. Higher = faster.
+    // Sized so M-series finishes in ~5–15 ms (1 ms `Date.now()` resolution
+    // previously saturated to ~1,000,000 ops/ms on Apple Silicon, making the
+    // signal meaningless above the threshold). `performance.now()` gives µs
+    // precision so we don't have to inflate the workload further.
+    const N = 200;
+    const ITERS = 200;
     const a = new Float32Array(N * N);
     const x = new Float32Array(N);
     const y = new Float32Array(N);
     for (let i = 0; i < N * N; i++) a[i] = Math.random();
     for (let i = 0; i < N; i++) x[i] = Math.random();
 
-    const start = Date.now();
+    const { performance } = await import("node:perf_hooks");
+    const start = performance.now();
     for (let iter = 0; iter < ITERS; iter++) {
         for (let i = 0; i < N; i++) {
             let acc = 0;
@@ -355,9 +398,10 @@ async function runCpuBench(): Promise<number> {
             y[i] = acc;
         }
     }
-    const elapsedMs = Math.max(1, Date.now() - start);
+    const elapsedMs = Math.max(0.001, performance.now() - start);
     const totalOps = N * N * ITERS;
-    return Math.round(totalOps / elapsedMs);
+    // Hard ceiling at 50k — anything beyond is noise from a sub-ms outlier.
+    return Math.min(50_000, Math.round(totalOps / elapsedMs));
 }
 
 function round(n: number, decimals: number): number {

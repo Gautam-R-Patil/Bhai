@@ -934,7 +934,12 @@ export const appManager: ToolDefinition = {
                     },
                     app: {
                         type: "string",
-                        description: "Application name (required for quit/force_quit/hide/unhide/activate)",
+                        description:
+                            'Application name, e.g. "WhatsApp", "Safari", "Visual Studio Code". Required for every action except `list`. Accepts the alias `app_name` for compatibility.',
+                    },
+                    app_name: {
+                        type: "string",
+                        description: "Alias for `app`. Either field works; if both are provided, `app` wins.",
                     },
                 },
                 required: ["action"],
@@ -944,7 +949,10 @@ export const appManager: ToolDefinition = {
 
     async handler(input) {
         const action = input.action as string;
-        const app = input.app as string;
+        // Postel's law — small models routinely emit `app_name` even when the
+        // schema says `app`. Failing the call wastes a round-trip and pushes
+        // the agent toward fragile fallbacks (raw AppleScript keystrokes).
+        const app = (input.app as string) || (input.app_name as string);
 
         try {
             // Windows: use PowerShell for app management

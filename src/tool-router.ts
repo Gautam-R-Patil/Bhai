@@ -539,6 +539,7 @@ Rules:
 - Focus on the user's ACTUAL intent, not surface keywords
 - "play a song" = media, NOT shell (don't confuse "play" with "run/execute")
 - "run npm install" = shell, NOT media
+- IMPORTANT: When the user names a desktop app the agent must DRIVE (open, click, type in, switch to) — e.g. "open WhatsApp and send …", "click the Send button in Photoshop", "switch to Figma and …" — include BOTH "app_management" AND "os_control" in addition to any messaging category. Protocol tools like whatsapp_send/imessage_send work for contacts the bot already has on file; UI-driving the actual desktop app needs os_smart_click + app_manager.
 - IMPORTANT: Use the conversation context to resolve ambiguous references. If the user was just discussing a website, "open file manager" likely means a button ON that website (browser), not the OS file manager (app_management).${recentContext}${historyContext}
 
 Respond with JSON only: {"intent":"short_label","categories":["cat1"],"specific_tools":["tool1"],"confidence":0.9}`;
@@ -636,6 +637,26 @@ const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] 
     { pattern: /\b(email|gmail|mail|imessage|sms|text.?message)\b/i, category: "communication", minScore: 0.65 },
     // OS / Screenshots
     { pattern: /\b(screenshot|screen.?shot|screen.?capture)\b/i, category: "os_control", minScore: 0.7 },
+    // Desktop-app automation — "open WhatsApp", "click in Photoshop", "open
+    // Notion and add a row". The protocol-level whatsapp_send tool covers the
+    // user's WhatsApp contacts via Baileys, but anything that requires actually
+    // driving the desktop UI (selecting a chat in the macOS app, sending to a
+    // group not yet in the address book, doing it because Baileys isn't logged
+    // in yet) needs os_control + app_management. Without this boost the LLM
+    // classifier picks `communication` alone, os_smart_click is never exposed,
+    // and the agent falls back to brittle AppleScript keystroke sequences.
+    {
+        pattern:
+            /\b(open|launch|switch.?to|focus|click|type|drag|use|drive)\b.{0,30}\b(whatsapp|telegram|discord|slack|signal|messages|imessage|outlook|teams|zoom|notion|figma|photoshop|illustrator|finder|safari|chrome|spotify|apple.?music)\b/i,
+        category: "os_control",
+        minScore: 0.7,
+    },
+    {
+        pattern:
+            /\b(open|launch|switch.?to|focus|activate|quit|hide|close)\b.{0,40}\b(whatsapp|telegram|discord|slack|signal|messages|outlook|teams|zoom|notion|figma|photoshop|illustrator|finder|safari|chrome|spotify|apple.?music|app|application)\b/i,
+        category: "app_management",
+        minScore: 0.7,
+    },
     // Browser
     { pattern: /\b(website|webpage|url|browse|navigate.?to|open.?site)\b/i, category: "browser", minScore: 0.65 },
     // Shell
