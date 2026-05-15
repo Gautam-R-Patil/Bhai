@@ -7,18 +7,34 @@
 // prompts, and other overlays that block browser agent interactions.
 // Call attachPopupGuard() once after getBrowser() to auto-dismiss on every page.
 
-import type { Page, BrowserContext } from "./types.js";
+import type { BrowserContext, Page } from "./types.js";
 
 // ─── Cookie / Consent Banner Dismissal ───────────────────────────────────────
 
 const ACCEPT_BUTTON_TEXT = [
-    "Accept all", "Accept All", "Accept All Cookies", "Accept Cookies",
-    "Agree", "Agree All", "I agree", "I Agree",
-    "Allow all", "Allow All", "Allow cookies",
-    "OK", "Ok", "Got it", "Got It", "Okay",
-    "Continue", "Proceed", "That's fine",
-    "Yes, I accept", "Accepter tout",
-    "Alle akzeptieren", "Alles accepteren",
+    "Accept all",
+    "Accept All",
+    "Accept All Cookies",
+    "Accept Cookies",
+    "Agree",
+    "Agree All",
+    "I agree",
+    "I Agree",
+    "Allow all",
+    "Allow All",
+    "Allow cookies",
+    "OK",
+    "Ok",
+    "Got it",
+    "Got It",
+    "Okay",
+    "Continue",
+    "Proceed",
+    "That's fine",
+    "Yes, I accept",
+    "Accepter tout",
+    "Alle akzeptieren",
+    "Alles accepteren",
 ];
 
 const CONSENT_BUTTON_SELECTORS = [
@@ -42,19 +58,29 @@ const CONSENT_BUTTON_SELECTORS = [
     "[id*='consent'][class*='accept']",
     "[data-testid*='consent-accept']",
     "[data-testid*='cookie-accept']",
-    ".cookie-accept", ".cookies-accept",
-    "#accept-cookies", "#cookie-accept",
-    ".js-accept-cookies", ".accept-cookies",
+    ".cookie-accept",
+    ".cookies-accept",
+    "#accept-cookies",
+    "#cookie-accept",
+    ".js-accept-cookies",
+    ".accept-cookies",
 ];
 
 const MODAL_CLOSE_SELECTORS = [
-    "[aria-label='Close']", "[aria-label='close']",
-    "[aria-label='Dismiss']", "[aria-label='dismiss']",
-    "button[class*='close']", "button[class*='dismiss']",
-    "button[class*='modal-close']", ".modal-close",
-    ".popup-close", ".overlay-close",
-    "[data-dismiss='modal']", "[data-close]",
-    "[data-testid*='close']", "[data-testid*='dismiss']",
+    "[aria-label='Close']",
+    "[aria-label='close']",
+    "[aria-label='Dismiss']",
+    "[aria-label='dismiss']",
+    "button[class*='close']",
+    "button[class*='dismiss']",
+    "button[class*='modal-close']",
+    ".modal-close",
+    ".popup-close",
+    ".overlay-close",
+    "[data-dismiss='modal']",
+    "[data-close]",
+    "[data-testid*='close']",
+    "[data-testid*='dismiss']",
 ];
 
 export async function dismissCookieBanner(page: Page): Promise<boolean> {
@@ -67,7 +93,9 @@ export async function dismissCookieBanner(page: Page): Promise<boolean> {
                 await loc.click();
                 return true;
             }
-        } catch { /* not found */ }
+        } catch {
+            /* not found */
+        }
     }
 
     // Text-based search for accept buttons
@@ -75,11 +103,13 @@ export async function dismissCookieBanner(page: Page): Promise<boolean> {
         try {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const btn = (page as any).getByRole("button", { name: text, exact: true });
-            if (await btn.count().catch(() => 0) > 0) {
+            if ((await btn.count().catch(() => 0)) > 0) {
                 await btn.first().click({ timeout: 1500 });
                 return true;
             }
-        } catch { /* not found */ }
+        } catch {
+            /* not found */
+        }
     }
     return false;
 }
@@ -89,8 +119,10 @@ export async function dismissOverlayModals(page: Page): Promise<void> {
     try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await (page as any).keyboard.press("Escape");
-        await new Promise(r => setTimeout(r, 250));
-    } catch { /* ignore */ }
+        await new Promise((r) => setTimeout(r, 250));
+    } catch {
+        /* ignore */
+    }
 
     // Try close buttons
     for (const sel of MODAL_CLOSE_SELECTORS) {
@@ -101,7 +133,9 @@ export async function dismissOverlayModals(page: Page): Promise<void> {
                 await btn.click();
                 return;
             }
-        } catch { /* not found */ }
+        } catch {
+            /* not found */
+        }
     }
 
     // DOM-based: hide known overlay patterns directly
@@ -131,10 +165,13 @@ export async function dismissOverlayModals(page: Page): Promise<void> {
                 }
             }
             // Remove backdrop divs that block clicks
-            document.querySelectorAll("[class*='backdrop'],[class*='dimmer'],[class*='overlay-bg']")
-                .forEach(el => { (el as HTMLElement).style.display = "none"; });
+            document.querySelectorAll("[class*='backdrop'],[class*='dimmer'],[class*='overlay-bg']").forEach((el) => {
+                (el as HTMLElement).style.display = "none";
+            });
         });
-    } catch { /* non-fatal */ }
+    } catch {
+        /* non-fatal */
+    }
 }
 
 // ─── Attach to browser context ────────────────────────────────────────────────
@@ -151,11 +188,14 @@ function attachGuardToPage(page: Page): void {
 
     // Handle native JS dialogs (alert/confirm/prompt/beforeunload)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (page as any).on("dialog", async (dialog: { type: () => string; dismiss: () => Promise<void>; accept: () => Promise<void> }) => {
-        const type = dialog.type();
-        if (type === "beforeunload") return; // let navigation proceed
-        await dialog.dismiss().catch(() => {});
-    });
+    (page as any).on(
+        "dialog",
+        async (dialog: { type: () => string; dismiss: () => Promise<void>; accept: () => Promise<void> }) => {
+            const type = dialog.type();
+            if (type === "beforeunload") return; // let navigation proceed
+            await dialog.dismiss().catch(() => {});
+        },
+    );
 }
 
 export function attachPopupGuard(context: BrowserContext): void {

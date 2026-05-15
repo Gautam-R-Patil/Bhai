@@ -9,11 +9,11 @@
 // Fails open — if ffmpeg isn't installed or screen-capture is denied,
 // returns a clear error and the agent falls back to os_screenshot.
 
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { spawn, execFileSync } from "node:child_process";
-import { getPathBlockedReason, isPathAllowed } from "../../security/allowlist.js";
 import { getScreenshotsDir } from "../../config/paths.js";
+import { getPathBlockedReason, isPathAllowed } from "../../security/allowlist.js";
 import { auditLog } from "../../security/audit-log.js";
 import { logToolAction } from "../../utils/debug-log.js";
 import type { ToolDefinition } from "../get-current-time.js";
@@ -40,14 +40,23 @@ function platformInput(): PlatformInput | null {
     if (process.platform === "darwin") {
         // Index "1:none" = primary display, no audio. Index list available
         // via: ffmpeg -f avfoundation -list_devices true -i "".
-        return { inputArgs: ["-f", "avfoundation", "-framerate", String(DEFAULT_FPS), "-i", "1:none"], note: "macOS avfoundation" };
+        return {
+            inputArgs: ["-f", "avfoundation", "-framerate", String(DEFAULT_FPS), "-i", "1:none"],
+            note: "macOS avfoundation",
+        };
     }
     if (process.platform === "linux") {
         const display = process.env.DISPLAY || ":0.0";
-        return { inputArgs: ["-f", "x11grab", "-framerate", String(DEFAULT_FPS), "-i", display], note: "Linux x11grab" };
+        return {
+            inputArgs: ["-f", "x11grab", "-framerate", String(DEFAULT_FPS), "-i", display],
+            note: "Linux x11grab",
+        };
     }
     if (process.platform === "win32") {
-        return { inputArgs: ["-f", "gdigrab", "-framerate", String(DEFAULT_FPS), "-i", "desktop"], note: "Windows gdigrab" };
+        return {
+            inputArgs: ["-f", "gdigrab", "-framerate", String(DEFAULT_FPS), "-i", "desktop"],
+            note: "Windows gdigrab",
+        };
     }
     return null;
 }
@@ -122,12 +131,18 @@ export const screenRecordTool: ToolDefinition = {
 
         const args = [
             ...platform.inputArgs,
-            "-t", String(duration),
-            "-pix_fmt", "yuv420p",
-            "-c:v", "libx264",
-            "-preset", "veryfast",
-            "-crf", "28",
-            "-movflags", "+faststart",
+            "-t",
+            String(duration),
+            "-pix_fmt",
+            "yuv420p",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "28",
+            "-movflags",
+            "+faststart",
             "-y",
             outputPath,
         ];

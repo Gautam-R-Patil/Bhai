@@ -2246,4 +2246,136 @@ http.route({
   }),
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// USER PROMPT ADDENDA — bot writes per-user learnings (server-side)
+// The bot drafts learnings locally throughout the day, then synthesizes them
+// at night via dream replay and posts the merged result here. Layered onto
+// the system prompt by `assembleSystemPrompt` in systemContent.ts.
+// ══════════════════════════════════════════════════════════════════════════
+
+// POST /api/user/addendum/upsert — Create or replace a per-user addendum.
+// The `allowUserControlled` flag is gated by an explicit request body field
+// and is only respected when the slug is in the user-controlled set on the
+// server side. There's no way for a caller to escalate privileges by setting
+// it for a non-user-controlled slug.
+http.route({
+  path: "/api/user/addendum/upsert",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+
+    let body: any;
+    try { body = await request.json(); } catch {
+      return new Response(JSON.stringify({ error: "Invalid JSON" }), { status: 400, headers: { "Content-Type": "application/json" } });
+    }
+    const { slug, kind, title, content, reason, allowUserControlled } = body || {};
+    if (!slug || !kind || !title || !content || !reason) {
+      return new Response(JSON.stringify({ error: "slug, kind, title, content, reason are required" }), { status: 400, headers: { "Content-Type": "application/json" } });
+    }
+    if (kind !== "personality" && kind !== "skill" && kind !== "memory") {
+      return new Response(JSON.stringify({ error: "kind must be personality | skill | memory" }), { status: 400, headers: { "Content-Type": "application/json" } });
+    }
+
+    try {
+      const result = await ctx.runMutation(internal.userAddenda.upsertAddendum, {
+        otplessUserId: account.otplessUserId,
+        slug,
+        kind,
+        title,
+        content,
+        reason,
+        allowUserControlled: allowUserControlled === true,
+      });
+      if (!result.success) {
+        return new Response(JSON.stringify(result), { status: 400, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify(result), { status: 200, headers: { "Content-Type": "application/json" } });
+    } catch (err: any) {
+      return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: { "Content-Type": "application/json" } });
+    }
+  }),
+});
+
+// GET /api/user/addendum/list — List the caller's addenda
+http.route({
+  path: "/api/user/addendum/list",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+    try {
+      const rows = await ctx.runQuery(internal.userAddenda.listForUser, { otplessUserId: account.otplessUserId });
+      return new Response(JSON.stringify({ addenda: rows }), { status: 200, headers: { "Content-Type": "application/json" } });
+    } catch (err: any) {
+      return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: { "Content-Type": "application/json" } });
+    }
+  }),
+});
+
+// POST /api/user/addendum/revert — Revert an addendum to a prior version
+http.route({
+  path: "/api/user/addendum/revert",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+
+    let body: any;
+    try { body = await request.json(); } catch {
+      return new Response(JSON.stringify({ error: "Invalid JSON" }), { status: 400, headers: { "Content-Type": "application/json" } });
+    }
+    const { slug, toVersion } = body || {};
+    if (!slug || typeof toVersion !== "number") {
+      return new Response(JSON.stringify({ error: "slug and toVersion are required" }), { status: 400, headers: { "Content-Type": "application/json" } });
+    }
+    try {
+      const result = await ctx.runMutation(internal.userAddenda.revertAddendum, {
+        otplessUserId: account.otplessUserId,
+        slug,
+        toVersion,
+      });
+      if (!result.success) {
+        return new Response(JSON.stringify(result), { status: 400, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify(result), { status: 200, headers: { "Content-Type": "application/json" } });
+    } catch (err: any) {
+      return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: { "Content-Type": "application/json" } });
+    }
+  }),
+});
+
+// POST /api/user/addendum/deactivate — Soft-delete an addendum
+http.route({
+  path: "/api/user/addendum/deactivate",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+
+    let body: any;
+    try { body = await request.json(); } catch {
+      return new Response(JSON.stringify({ error: "Invalid JSON" }), { status: 400, headers: { "Content-Type": "application/json" } });
+    }
+    const { slug } = body || {};
+    if (!slug) {
+      return new Response(JSON.stringify({ error: "slug is required" }), { status: 400, headers: { "Content-Type": "application/json" } });
+    }
+    try {
+      const result = await ctx.runMutation(internal.userAddenda.deactivateAddendum, {
+        otplessUserId: account.otplessUserId,
+        slug,
+      });
+      return new Response(JSON.stringify(result), { status: 200, headers: { "Content-Type": "application/json" } });
+    } catch (err: any) {
+      return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: { "Content-Type": "application/json" } });
+    }
+  }),
+});
+
+
 export default http;

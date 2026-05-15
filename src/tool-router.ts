@@ -25,6 +25,7 @@
 
 import { createHash } from "node:crypto";
 import type { ChatCompletionTool } from "openai/resources/chat/completions.js";
+import { getDimensionValue } from "./harness/registry.js";
 import type { LLMClient } from "./llm.js";
 import { MODELS } from "./llm.js";
 import { getMCPToolSchemas } from "./mcp/client.js";
@@ -41,7 +42,6 @@ import {
 } from "./tool-router-analytics.js";
 import { getToolSchemas } from "./tools/index.js";
 import { extractJSON } from "./utils/json-extract.js";
-import { getDimensionValue } from "./harness/registry.js";
 
 // ── Types ─────────────────────────────────────
 
@@ -238,10 +238,21 @@ const CATEGORIES: Record<string, CategoryDef> = {
     },
     os_control: {
         description:
-            "Controlling the computer's operating system, taking screenshots of the desktop, clicking on screen elements by coordinates or OCR text, typing into OS applications, interacting with native desktop apps, visual verification of UI elements, screen capture, mouse control, keyboard input automation, macOS Automator, AppleScript, PowerShell automation, accessibility tree inspection, keyboard shortcuts for apps, fast accessibility-based navigation, hierarchical computer use for complex multi-step desktop automation tasks.",
+            "Controlling the computer's operating system, taking screenshots of the desktop, clicking on screen elements by coordinates or OCR text or accessibility-tree id, typing into OS applications, interacting with native desktop apps, visual verification of UI elements, screen capture, mouse control, keyboard input automation, macOS Automator, AppleScript, PowerShell automation, accessibility tree inspection, fast cross-OS element lookup, structured single-action OS calls with percentage coords, GUI grounding via local vision models (OmniParser, UI-TARS), keyboard shortcuts for apps, hierarchical computer use for complex multi-step desktop automation tasks.",
         tools: [
+            // ── Phase 4/5 (PRIMARY): cascade-based smart click ──
+            "os_smart_click",
+            // ── Phase 2: cross-OS AX-based element inspection + click-by-id ──
+            "os_inspect",
+            "os_click_id",
+            // ── Phase 1: structured single-action API with percentage coords (cross-OS) ──
+            "os_computer_action",
+            // ── Phase 3: vision grounding when AX is empty (Canvas apps, etc.) ──
+            "os_visualize",
+            "os_ground",
+            // ── Legacy macOS path (still useful for AppleScript-specific tasks) ──
             "os_nav",
-            "os_click_element", // Primary: fast accessibility-based interaction
+            "os_click_element",
             "apple_script",
             "os_screenshot",
             "os_click",
@@ -528,6 +539,7 @@ Rules:
 - Focus on the user's ACTUAL intent, not surface keywords
 - "play a song" = media, NOT shell (don't confuse "play" with "run/execute")
 - "run npm install" = shell, NOT media
+- IMPORTANT: When the user names a desktop app the agent must DRIVE (open, click, type in, switch to) — e.g. "open WhatsApp and send …", "click the Send button in Photoshop", "switch to Figma and …" — include BOTH "app_management" AND "os_control" in addition to any messaging category. Protocol tools like whatsapp_send/imessage_send work for contacts the bot already has on file; UI-driving the actual desktop app needs os_smart_click + app_manager.
 - IMPORTANT: Use the conversation context to resolve ambiguous references. If the user was just discussing a website, "open file manager" likely means a button ON that website (browser), not the OS file manager (app_management).${recentContext}${historyContext}
 
 Respond with JSON only: {"intent":"short_label","categories":["cat1"],"specific_tools":["tool1"],"confidence":0.9}`;
@@ -625,6 +637,26 @@ const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] 
     { pattern: /\b(email|gmail|mail|imessage|sms|text.?message)\b/i, category: "communication", minScore: 0.65 },
     // OS / Screenshots
     { pattern: /\b(screenshot|screen.?shot|screen.?capture)\b/i, category: "os_control", minScore: 0.7 },
+    // Desktop-app automation — "open WhatsApp", "click in Photoshop", "open
+    // Notion and add a row". The protocol-level whatsapp_send tool covers the
+    // user's WhatsApp contacts via Baileys, but anything that requires actually
+    // driving the desktop UI (selecting a chat in the macOS app, sending to a
+    // group not yet in the address book, doing it because Baileys isn't logged
+    // in yet) needs os_control + app_management. Without this boost the LLM
+    // classifier picks `communication` alone, os_smart_click is never exposed,
+    // and the agent falls back to brittle AppleScript keystroke sequences.
+    {
+        pattern:
+            /\b(open|launch|switch.?to|focus|click|type|drag|use|drive)\b.{0,30}\b(whatsapp|telegram|discord|slack|signal|messages|imessage|outlook|teams|zoom|notion|figma|photoshop|illustrator|finder|safari|chrome|spotify|apple.?music)\b/i,
+        category: "os_control",
+        minScore: 0.7,
+    },
+    {
+        pattern:
+            /\b(open|launch|switch.?to|focus|activate|quit|hide|close)\b.{0,40}\b(whatsapp|telegram|discord|slack|signal|messages|outlook|teams|zoom|notion|figma|photoshop|illustrator|finder|safari|chrome|spotify|apple.?music|app|application)\b/i,
+        category: "app_management",
+        minScore: 0.7,
+    },
     // Browser
     { pattern: /\b(website|webpage|url|browse|navigate.?to|open.?site)\b/i, category: "browser", minScore: 0.65 },
     // Shell
@@ -836,7 +868,11 @@ const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] 
     { pattern: /\b(stage|unstage|cherry.?pick|conflict|merge.?conflict)\b/i, category: "coding", minScore: 0.7 },
     // Design-docs / walkthrough intent — route to coding so generate_design_docs
     // and generate_walkthrough reach the selected tool set
-    { pattern: /\b(prd|product\s+requirement|technical\s+design|architecture\s+doc|design\s+doc|walkthrough|rfc)\b/i, category: "coding", minScore: 0.75 },
+    {
+        pattern: /\b(prd|product\s+requirement|technical\s+design|architecture\s+doc|design\s+doc|walkthrough|rfc)\b/i,
+        category: "coding",
+        minScore: 0.75,
+    },
 ];
 
 // ── Caching State ─────────────────────────────
@@ -1118,20 +1154,93 @@ async function classifyToolNeeds(
 // Tokenize + lowercase + strip common stopwords. Not a linguistic tokenizer,
 // just a fast split for bag-of-words overlap scoring.
 const FALLBACK_STOPWORDS = new Set<string>([
-    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
-    "do", "does", "did", "have", "has", "had", "can", "could", "should",
-    "would", "will", "shall", "may", "might", "must",
-    "i", "me", "my", "we", "our", "you", "your", "he", "she", "it", "they",
-    "this", "that", "these", "those",
-    "and", "or", "but", "if", "then", "than", "as", "at", "by", "for", "from",
-    "in", "into", "of", "on", "to", "with", "about", "just",
-    "what", "which", "who", "whom", "when", "where", "why", "how",
-    "please", "also", "some", "any", "all", "not", "no", "yes",
-    "thing", "things", "stuff",
+    "a",
+    "an",
+    "the",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "do",
+    "does",
+    "did",
+    "have",
+    "has",
+    "had",
+    "can",
+    "could",
+    "should",
+    "would",
+    "will",
+    "shall",
+    "may",
+    "might",
+    "must",
+    "i",
+    "me",
+    "my",
+    "we",
+    "our",
+    "you",
+    "your",
+    "he",
+    "she",
+    "it",
+    "they",
+    "this",
+    "that",
+    "these",
+    "those",
+    "and",
+    "or",
+    "but",
+    "if",
+    "then",
+    "than",
+    "as",
+    "at",
+    "by",
+    "for",
+    "from",
+    "in",
+    "into",
+    "of",
+    "on",
+    "to",
+    "with",
+    "about",
+    "just",
+    "what",
+    "which",
+    "who",
+    "whom",
+    "when",
+    "where",
+    "why",
+    "how",
+    "please",
+    "also",
+    "some",
+    "any",
+    "all",
+    "not",
+    "no",
+    "yes",
+    "thing",
+    "things",
+    "stuff",
 ]);
 
 function tokenize(s: string): string[] {
-    return s.toLowerCase().match(/[a-z][a-z0-9_]{1,}/g)?.filter(t => !FALLBACK_STOPWORDS.has(t)) ?? [];
+    return (
+        s
+            .toLowerCase()
+            .match(/[a-z][a-z0-9_]{1,}/g)
+            ?.filter((t) => !FALLBACK_STOPWORDS.has(t)) ?? []
+    );
 }
 
 function structuralClassify(message: string): { category: string; score: number }[] {
@@ -1154,7 +1263,7 @@ function structuralClassify(message: string): { category: string; score: number 
         // category that has one well-matched tool.
         const toolTokens = new Set<string>();
         for (const tool of cat.tools) {
-            for (const p of tool.split(/[_\-]/)) {
+            for (const p of tool.split(/[_-]/)) {
                 if (p) toolTokens.add(p.toLowerCase());
             }
         }
@@ -1245,7 +1354,9 @@ export function getLastClassification(): {
 // especially `coding`, which has 21 candidate tools that need real room.
 const MAX_TOOLS_TOTAL_DEFAULT = 36;
 const MAX_TOOLS_PER_CATEGORY = 12;
-function getMaxToolsTotal(): number { return getDimensionValue<number>("toolRouter.maxToolsTotal") ?? MAX_TOOLS_TOTAL_DEFAULT; }
+function getMaxToolsTotal(): number {
+    return getDimensionValue<number>("toolRouter.maxToolsTotal") ?? MAX_TOOLS_TOTAL_DEFAULT;
+}
 
 export async function selectTools(opts: {
     message: string;
@@ -1291,7 +1402,11 @@ export async function selectTools(opts: {
     // Try LLM classifier first (primary path)
     const llmResult = await classifyWithLLM(opts.message, opts.recentToolCalls, opts.conversationContext);
 
-    if (llmResult && llmResult.categories.length > 0 && llmResult.confidence >= (getDimensionValue<number>("toolRouter.llmConfidenceThreshold") ?? 0.4)) {
+    if (
+        llmResult &&
+        llmResult.categories.length > 0 &&
+        llmResult.confidence >= (getDimensionValue<number>("toolRouter.llmConfidenceThreshold") ?? 0.4)
+    ) {
         selectedCategories = [...llmResult.categories];
         specificTools = llmResult.specific_tools || [];
         lastClassifiedIntent = llmResult.intent;
@@ -1515,7 +1630,8 @@ export async function selectTools(opts: {
                 mcpScored.sort((a, b) => b.score - a.score);
                 for (const { schema, score } of mcpScored) {
                     if (selectedSchemas.length >= getMaxToolsTotal()) break;
-                    if (score >= (getDimensionValue<number>("toolRouter.mcpSimilarityThreshold") ?? 0.25)) selectedSchemas.push(schema);
+                    if (score >= (getDimensionValue<number>("toolRouter.mcpSimilarityThreshold") ?? 0.25))
+                        selectedSchemas.push(schema);
                 }
             } catch {
                 // If embedding fails, include top 5 MCP tools

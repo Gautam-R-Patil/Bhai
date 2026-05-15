@@ -8,10 +8,10 @@
 // Windows: Tool hints to use powershell_script or browser-based alternatives
 
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { promises as fs } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import type { ToolDefinition } from "./get-current-time.js";
 import { IS_MAC, IS_WIN, runPowerShellInline } from "./platform.js";
 
@@ -24,10 +24,10 @@ async function runAS(script: string, timeout = 10000): Promise<string> {
     try {
         await fs.writeFile(tmpFile, script, "utf-8");
         const { stdout } = await execFileAsync("osascript", [tmpFile], { timeout });
-        await fs.unlink(tmpFile).catch(() => { });
+        await fs.unlink(tmpFile).catch(() => {});
         return stdout.trim();
     } catch (err) {
-        await fs.unlink(tmpFile).catch(() => { });
+        await fs.unlink(tmpFile).catch(() => {});
         throw err;
     }
 }
@@ -37,14 +37,13 @@ async function runJXA(script: string, timeout = 10000): Promise<string> {
     try {
         await fs.writeFile(tmpFile, script, "utf-8");
         const { stdout } = await execFileAsync("osascript", ["-l", "JavaScript", tmpFile], { timeout });
-        await fs.unlink(tmpFile).catch(() => { });
+        await fs.unlink(tmpFile).catch(() => {});
         return stdout.trim();
     } catch (err) {
-        await fs.unlink(tmpFile).catch(() => { });
+        await fs.unlink(tmpFile).catch(() => {});
         throw err;
     }
 }
-
 
 // ═══════════════════════════════════════════════
 // 2. MUSIC CONTROL (Apple Music)
@@ -55,7 +54,8 @@ export const musicControl: ToolDefinition = {
         type: "function",
         function: {
             name: "music_control",
-            description: "Control Apple Music: play/pause, skip, previous, get now-playing info, or search and play. Use this when Spotify is not available or the user prefers Apple Music.",
+            description:
+                "Control Apple Music: play/pause, skip, previous, get now-playing info, or search and play. Use this when Spotify is not available or the user prefers Apple Music.",
             parameters: {
                 type: "object",
                 properties: {
@@ -76,7 +76,10 @@ export const musicControl: ToolDefinition = {
 
     async handler(input) {
         if (!IS_MAC) {
-            return JSON.stringify({ success: false, error: "music_control is only available on macOS (Apple Music / iTunes)." });
+            return JSON.stringify({
+                success: false,
+                error: "music_control is only available on macOS (Apple Music / iTunes).",
+            });
         }
         const action = input.action as string;
 
@@ -121,8 +124,11 @@ end tell`);
                     }
                     const parts = info.split("|");
                     return JSON.stringify({
-                        success: true, playing: true,
-                        track: parts[0], artist: parts[1], album: parts[2],
+                        success: true,
+                        playing: true,
+                        track: parts[0],
+                        artist: parts[1],
+                        album: parts[2],
                         duration_sec: parseInt(parts[3]) || 0,
                         position_sec: parseInt(parts[4]) || 0,
                     });
@@ -145,7 +151,10 @@ tell application "Music"
     end if
 end tell`);
                     if (result === "NO_RESULTS") {
-                        return JSON.stringify({ success: false, error: `No results for "${query}" in Apple Music library. Try the spotify tool (action='play', query='...') instead, or use os_screenshot + os_click to play it visually in whichever music app is open.` });
+                        return JSON.stringify({
+                            success: false,
+                            error: `No results for "${query}" in Apple Music library. Try the spotify tool (action='play', query='...') instead, or use os_screenshot + os_click to play it visually in whichever music app is open.`,
+                        });
                     }
                     const [track, artist] = result.split("|");
                     return JSON.stringify({ success: true, action: "search_play", track, artist });
@@ -169,22 +178,30 @@ export const calendarTool: ToolDefinition = {
         type: "function",
         function: {
             name: "calendar_tool",
-            description: "Interact with macOS Calendar: list today's events, list events for a specific date, or create a new event.",
+            description:
+                "Interact with macOS Calendar: list today's events, list events for a specific date, or create a new event.",
             parameters: {
                 type: "object",
                 properties: {
                     action: {
                         type: "string",
                         enum: ["today", "list", "create"],
-                        description: "Action: 'today' for today's events, 'list' for a specific date, 'create' for new event",
+                        description:
+                            "Action: 'today' for today's events, 'list' for a specific date, 'create' for new event",
                     },
                     date: {
                         type: "string",
                         description: "Date in YYYY-MM-DD format (for 'list' action)",
                     },
                     title: { type: "string", description: "Event title (for 'create')" },
-                    start_time: { type: "string", description: "Start time in 'YYYY-MM-DD HH:MM' 24h format (for 'create')" },
-                    end_time: { type: "string", description: "End time in 'YYYY-MM-DD HH:MM' 24h format (for 'create')" },
+                    start_time: {
+                        type: "string",
+                        description: "Start time in 'YYYY-MM-DD HH:MM' 24h format (for 'create')",
+                    },
+                    end_time: {
+                        type: "string",
+                        description: "End time in 'YYYY-MM-DD HH:MM' 24h format (for 'create')",
+                    },
                     calendar_name: { type: "string", description: "Calendar name (default: first available)" },
                     location: { type: "string", description: "Event location (for 'create')" },
                     notes: { type: "string", description: "Event notes (for 'create')" },
@@ -196,7 +213,10 @@ export const calendarTool: ToolDefinition = {
 
     async handler(input) {
         if (!IS_MAC) {
-            return JSON.stringify({ success: false, error: "calendar_tool is only available on macOS (requires the Calendar app)." });
+            return JSON.stringify({
+                success: false,
+                error: "calendar_tool is only available on macOS (requires the Calendar app).",
+            });
         }
         const action = input.action as string;
 
@@ -204,11 +224,13 @@ export const calendarTool: ToolDefinition = {
             switch (action) {
                 case "today":
                 case "list": {
-                    const dateStr = action === "today"
-                        ? new Date().toISOString().split("T")[0]
-                        : (input.date as string || new Date().toISOString().split("T")[0]);
+                    const dateStr =
+                        action === "today"
+                            ? new Date().toISOString().split("T")[0]
+                            : (input.date as string) || new Date().toISOString().split("T")[0];
 
-                    const result = await runJXA(`
+                    const result = await runJXA(
+                        `
 const cal = Application("Calendar");
 const targetDate = new Date("${dateStr}T00:00:00");
 const nextDay = new Date("${dateStr}T23:59:59");
@@ -231,7 +253,9 @@ for (const c of calendars) {
         });
     }
 }
-JSON.stringify(events);`, 10000);
+JSON.stringify(events);`,
+                        10000,
+                    );
                     const events = JSON.parse(result || "[]");
                     return JSON.stringify({ success: true, date: dateStr, count: events.length, events });
                 }
@@ -240,20 +264,24 @@ JSON.stringify(events);`, 10000);
                     const title = input.title as string;
                     if (!title) return JSON.stringify({ error: "Provide 'title' for creating an event." });
                     const startTime = input.start_time as string;
-                    if (!startTime) return JSON.stringify({ error: "Provide 'start_time' in 'YYYY-MM-DD HH:MM' format." });
-                    const endTime = input.end_time as string || (() => {
-                        // Default: 1 hour after start
-                        const d = new Date(startTime);
-                        d.setHours(d.getHours() + 1);
-                        return d.toISOString().replace("T", " ").substring(0, 16);
-                    })();
-                    const calName = input.calendar_name as string || "";
-                    const location = input.location as string || "";
-                    const notes = input.notes as string || "";
+                    if (!startTime)
+                        return JSON.stringify({ error: "Provide 'start_time' in 'YYYY-MM-DD HH:MM' format." });
+                    const endTime =
+                        (input.end_time as string) ||
+                        (() => {
+                            // Default: 1 hour after start
+                            const d = new Date(startTime);
+                            d.setHours(d.getHours() + 1);
+                            return d.toISOString().replace("T", " ").substring(0, 16);
+                        })();
+                    const calName = (input.calendar_name as string) || "";
+                    const location = (input.location as string) || "";
+                    const notes = (input.notes as string) || "";
 
                     const escaped = (s: string) => s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 
-                    const result = await runJXA(`
+                    const result = await runJXA(
+                        `
 const cal = Application("Calendar");
 let targetCal;
 if ("${escaped(calName)}") {
@@ -269,7 +297,9 @@ const evt = cal.Event({
     description: "${escaped(notes)}",
 });
 targetCal.events.push(evt);
-JSON.stringify({ title: "${escaped(title)}", start: "${startTime}", end: "${endTime}", calendar: targetCal.name() });`, 10000);
+JSON.stringify({ title: "${escaped(title)}", start: "${startTime}", end: "${endTime}", calendar: targetCal.name() });`,
+                        10000,
+                    );
                     return JSON.stringify({ success: true, action: "create", ...JSON.parse(result || "{}") });
                 }
 
@@ -297,13 +327,30 @@ export const remindersTool: ToolDefinition = {
                 properties: {
                     action: {
                         type: "string",
-                        enum: ["create", "list", "complete", "overdue", "edit", "delete", "lists", "create_list", "delete_list", "rename_list"],
+                        enum: [
+                            "create",
+                            "list",
+                            "complete",
+                            "overdue",
+                            "edit",
+                            "delete",
+                            "lists",
+                            "create_list",
+                            "delete_list",
+                            "rename_list",
+                        ],
                         description: "Action to perform",
                     },
                     title: { type: "string", description: "Reminder text (for 'create'), or new title (for 'edit')" },
-                    due_date: { type: "string", description: "Due date in 'YYYY-MM-DD HH:MM' format (for 'create' or 'edit')" },
+                    due_date: {
+                        type: "string",
+                        description: "Due date in 'YYYY-MM-DD HH:MM' format (for 'create' or 'edit')",
+                    },
                     list_name: { type: "string", description: "Reminders list name (default: default list)" },
-                    reminder_name: { type: "string", description: "Name of reminder (for 'complete', 'edit', 'delete')" },
+                    reminder_name: {
+                        type: "string",
+                        description: "Name of reminder (for 'complete', 'edit', 'delete')",
+                    },
                     new_name: { type: "string", description: "New name (for 'rename_list')" },
                 },
                 required: ["action"],
@@ -313,7 +360,10 @@ export const remindersTool: ToolDefinition = {
 
     async handler(input) {
         if (!IS_MAC) {
-            return JSON.stringify({ success: false, error: "reminders_tool is only available on macOS (requires the Reminders app)." });
+            return JSON.stringify({
+                success: false,
+                error: "reminders_tool is only available on macOS (requires the Reminders app).",
+            });
         }
         const action = input.action as string;
 
@@ -323,7 +373,7 @@ export const remindersTool: ToolDefinition = {
                     const title = input.title as string;
                     if (!title) return JSON.stringify({ error: "Provide 'title' for the reminder." });
                     const dueDate = input.due_date as string;
-                    const listName = input.list_name as string || "";
+                    const listName = (input.list_name as string) || "";
                     const escaped = (s: string) => s.replace(/"/g, '\\"');
 
                     let script: string;
@@ -351,7 +401,7 @@ end tell`;
                 }
 
                 case "list": {
-                    const listName = input.list_name as string || "";
+                    const listName = (input.list_name as string) || "";
                     const result = await runAS(`
 tell application "Reminders"
     ${listName ? `set targetList to list "${listName.replace(/"/g, '\\"')}"` : "set targetList to default list"}
@@ -365,10 +415,13 @@ tell application "Reminders"
     end repeat
     return output
 end tell`);
-                    const reminders = result.split("\n").filter(Boolean).map(line => {
-                        const [name, due] = line.split("||");
-                        return { name: name?.trim(), due: due?.trim() || null };
-                    });
+                    const reminders = result
+                        .split("\n")
+                        .filter(Boolean)
+                        .map((line) => {
+                            const [name, due] = line.split("||");
+                            return { name: name?.trim(), due: due?.trim() || null };
+                        });
                     return JSON.stringify({ success: true, count: reminders.length, reminders });
                 }
 
@@ -400,19 +453,23 @@ tell application "Reminders"
     end repeat
     return output
 end tell`);
-                    const reminders = result.split("\n").filter(Boolean).map(line => {
-                        const [name, due, list] = line.split("||");
-                        return { name: name?.trim(), due: due?.trim(), list: list?.trim() };
-                    });
+                    const reminders = result
+                        .split("\n")
+                        .filter(Boolean)
+                        .map((line) => {
+                            const [name, due, list] = line.split("||");
+                            return { name: name?.trim(), due: due?.trim(), list: list?.trim() };
+                        });
                     return JSON.stringify({ success: true, count: reminders.length, overdue: reminders });
                 }
 
                 case "edit": {
                     const reminderName = input.reminder_name as string;
                     if (!reminderName) return JSON.stringify({ error: "Provide 'reminder_name' to edit." });
-                    const newTitle = input.title as string || "";
-                    const newDueDate = input.due_date as string || "";
-                    if (!newTitle && !newDueDate) return JSON.stringify({ error: "Provide 'title' and/or 'due_date' to update." });
+                    const newTitle = (input.title as string) || "";
+                    const newDueDate = (input.due_date as string) || "";
+                    if (!newTitle && !newDueDate)
+                        return JSON.stringify({ error: "Provide 'title' and/or 'due_date' to update." });
                     const escapedName = reminderName.replace(/"/g, '\\"');
                     let editScript = `
 tell application "Reminders"
@@ -428,7 +485,8 @@ tell application "Reminders"
     end if
 end tell`;
                     const editResult = await runAS(editScript);
-                    if (editResult === "NOT_FOUND") return JSON.stringify({ success: false, error: "Reminder not found." });
+                    if (editResult === "NOT_FOUND")
+                        return JSON.stringify({ success: false, error: "Reminder not found." });
                     return JSON.stringify({ success: true, action: "edit", reminder: editResult });
                 }
 
@@ -455,10 +513,13 @@ tell application "Reminders"
     end repeat
     return output
 end tell`);
-                    const lists = result.split("\n").filter(Boolean).map(line => {
-                        const [name, count] = line.split("||");
-                        return { name: name?.trim(), pending_count: parseInt(count?.trim()) || 0 };
-                    });
+                    const lists = result
+                        .split("\n")
+                        .filter(Boolean)
+                        .map((line) => {
+                            const [name, count] = line.split("||");
+                            return { name: name?.trim(), pending_count: parseInt(count?.trim()) || 0 };
+                        });
                     return JSON.stringify({ success: true, lists });
                 }
 
@@ -511,7 +572,8 @@ export const messagesTool: ToolDefinition = {
         type: "function",
         function: {
             name: "messages_tool",
-            description: "Send an iMessage or read recent messages. Requires the Messages app and an active iMessage account.",
+            description:
+                "Send an iMessage or read recent messages. Requires the Messages app and an active iMessage account.",
             parameters: {
                 type: "object",
                 properties: {
@@ -522,7 +584,10 @@ export const messagesTool: ToolDefinition = {
                     },
                     to: { type: "string", description: "Phone number or email address to send to (for 'send')" },
                     text: { type: "string", description: "Message text (for 'send')" },
-                    count: { type: "number", description: "Number of recent messages to retrieve (default: 10, for 'read_recent')" },
+                    count: {
+                        type: "number",
+                        description: "Number of recent messages to retrieve (default: 10, for 'read_recent')",
+                    },
                 },
                 required: ["action"],
             },
@@ -531,7 +596,10 @@ export const messagesTool: ToolDefinition = {
 
     async handler(input) {
         if (!IS_MAC) {
-            return JSON.stringify({ success: false, error: "messages_tool is only available on macOS (requires the Messages app and iMessage)." });
+            return JSON.stringify({
+                success: false,
+                error: "messages_tool is only available on macOS (requires the Messages app and iMessage).",
+            });
         }
         const action = input.action as string;
 
@@ -545,22 +613,27 @@ export const messagesTool: ToolDefinition = {
                     const escapedText = text.replace(/"/g, '\\"');
                     const escapedTo = to.replace(/"/g, '\\"');
 
-                    await runAS(`
+                    await runAS(
+                        `
 tell application "Messages"
     set targetService to 1st account whose service type = iMessage
     set targetBuddy to participant "${escapedTo}" of targetService
     send "${escapedText}" to targetBuddy
-end tell`, 15000);
+end tell`,
+                        15000,
+                    );
                     return JSON.stringify({ success: true, action: "send", to, preview: text.substring(0, 50) });
                 }
 
                 case "read_recent": {
-                    const count = Math.min(input.count as number || 10, 30);
+                    const count = Math.min((input.count as number) || 10, 30);
                     // Read from the Messages SQLite database for reliability
-                    const { stdout } = await execFileAsync("sqlite3", [
-                        `${process.env.HOME}/Library/Messages/chat.db`,
-                        `-json`,
-                        `SELECT 
+                    const { stdout } = await execFileAsync(
+                        "sqlite3",
+                        [
+                            `${process.env.HOME}/Library/Messages/chat.db`,
+                            `-json`,
+                            `SELECT 
                             m.text,
                             m.is_from_me,
                             datetime(m.date/1000000000 + 978307200, 'unixepoch', 'localtime') as timestamp,
@@ -569,8 +642,10 @@ end tell`, 15000);
                         LEFT JOIN handle h ON m.handle_id = h.ROWID
                         WHERE m.text IS NOT NULL
                         ORDER BY m.date DESC
-                        LIMIT ${count}`
-                    ], { timeout: 5000 });
+                        LIMIT ${count}`,
+                        ],
+                        { timeout: 5000 },
+                    );
                     const messages = JSON.parse(stdout || "[]");
                     return JSON.stringify({ success: true, count: messages.length, messages });
                 }
@@ -593,17 +668,28 @@ export const windowManage: ToolDefinition = {
         type: "function",
         function: {
             name: "window_manage",
-            description: "Manage macOS windows: move, resize, minimize, fullscreen, or arrange windows on screen (e.g. split screen left/right half).",
+            description:
+                "Manage macOS windows: move, resize, minimize, fullscreen, or arrange windows on screen (e.g. split screen left/right half).",
             parameters: {
                 type: "object",
                 properties: {
                     app: {
                         type: "string",
-                        description: "Application name (e.g. 'Safari', 'Visual Studio Code'). If omitted, uses frontmost app.",
+                        description:
+                            "Application name (e.g. 'Safari', 'Visual Studio Code'). If omitted, uses frontmost app.",
                     },
                     action: {
                         type: "string",
-                        enum: ["left_half", "right_half", "maximize", "minimize", "center", "fullscreen", "move", "restore"],
+                        enum: [
+                            "left_half",
+                            "right_half",
+                            "maximize",
+                            "minimize",
+                            "center",
+                            "fullscreen",
+                            "move",
+                            "restore",
+                        ],
                         description: "Window arrangement action",
                     },
                     x: { type: "number", description: "X position (for 'move' action)" },
@@ -618,10 +704,13 @@ export const windowManage: ToolDefinition = {
 
     async handler(input) {
         if (!IS_MAC) {
-            return JSON.stringify({ success: false, error: "window_manager is only available on macOS. On Windows, use PowerShell with Win32 API or the built-in Snap Layouts (Win+Z)." });
+            return JSON.stringify({
+                success: false,
+                error: "window_manager is only available on macOS. On Windows, use PowerShell with Win32 API or the built-in Snap Layouts (Win+Z).",
+            });
         }
         const action = input.action as string;
-        const app = input.app as string || "";
+        const app = (input.app as string) || "";
 
         try {
             // Get screen dimensions
@@ -656,16 +745,22 @@ JSON.stringify({ w: bounds.width || 1440, h: bounds.height || 900 });`).catch(()
                     bounds = { x: 0, y: menuBarH, w: Math.floor(screenW / 2), h: screenH - menuBarH };
                     break;
                 case "right_half":
-                    bounds = { x: Math.floor(screenW / 2), y: menuBarH, w: Math.floor(screenW / 2), h: screenH - menuBarH };
+                    bounds = {
+                        x: Math.floor(screenW / 2),
+                        y: menuBarH,
+                        w: Math.floor(screenW / 2),
+                        h: screenH - menuBarH,
+                    };
                     break;
                 case "maximize":
                     bounds = { x: 0, y: menuBarH, w: screenW, h: screenH - menuBarH };
                     break;
-                case "center":
+                case "center": {
                     const cw = Math.floor(screenW * 0.6);
                     const ch = Math.floor(screenH * 0.7);
                     bounds = { x: Math.floor((screenW - cw) / 2), y: Math.floor((screenH - ch) / 2), w: cw, h: ch };
                     break;
+                }
                 case "minimize":
                     await runAS(`
 tell application "System Events"
@@ -691,10 +786,10 @@ end tell`);
                     return JSON.stringify({ success: true, action: "fullscreen", app: app || "frontmost" });
                 case "move":
                     bounds = {
-                        x: input.x as number || 0,
-                        y: input.y as number || 0,
-                        w: input.width as number || 800,
-                        h: input.height as number || 600,
+                        x: (input.x as number) || 0,
+                        y: (input.y as number) || 0,
+                        w: (input.width as number) || 800,
+                        h: (input.height as number) || 600,
                     };
                     break;
                 case "restore":
@@ -716,7 +811,9 @@ tell application "System Events"
 end tell`);
 
             return JSON.stringify({
-                success: true, action, app: app || "frontmost",
+                success: true,
+                action,
+                app: app || "frontmost",
                 bounds: { x: bounds.x, y: bounds.y, width: bounds.w, height: bounds.h },
             });
         } catch (err) {
@@ -736,7 +833,8 @@ export const osDrag: ToolDefinition = {
         type: "function",
         function: {
             name: "os_drag",
-            description: "Perform a mouse drag from one point to another on macOS. Useful for drag-and-drop, slider adjustment, drawing, and rearranging items. Coordinates should match those from os_screenshot.",
+            description:
+                "Perform a mouse drag from one point to another on macOS. Useful for drag-and-drop, slider adjustment, drawing, and rearranging items. Coordinates should match those from os_screenshot.",
             parameters: {
                 type: "object",
                 properties: {
@@ -744,7 +842,10 @@ export const osDrag: ToolDefinition = {
                     from_y: { type: "number", description: "Starting Y coordinate" },
                     to_x: { type: "number", description: "Ending X coordinate" },
                     to_y: { type: "number", description: "Ending Y coordinate" },
-                    duration_ms: { type: "number", description: "Duration of the drag in milliseconds (default: 500). Increase for precision." },
+                    duration_ms: {
+                        type: "number",
+                        description: "Duration of the drag in milliseconds (default: 500). Increase for precision.",
+                    },
                 },
                 required: ["from_x", "from_y", "to_x", "to_y"],
             },
@@ -821,7 +922,8 @@ export const appManager: ToolDefinition = {
         type: "function",
         function: {
             name: "app_manager",
-            description: "Manage running applications: list all running apps, quit an app, force quit, hide, or show an app.",
+            description:
+                "Manage running applications: list all running apps, quit an app, force quit, hide, or show an app.",
             parameters: {
                 type: "object",
                 properties: {
@@ -832,7 +934,12 @@ export const appManager: ToolDefinition = {
                     },
                     app: {
                         type: "string",
-                        description: "Application name (required for quit/force_quit/hide/unhide/activate)",
+                        description:
+                            'Application name, e.g. "WhatsApp", "Safari", "Visual Studio Code". Required for every action except `list`. Accepts the alias `app_name` for compatibility.',
+                    },
+                    app_name: {
+                        type: "string",
+                        description: "Alias for `app`. Either field works; if both are provided, `app` wins.",
                     },
                 },
                 required: ["action"],
@@ -842,7 +949,10 @@ export const appManager: ToolDefinition = {
 
     async handler(input) {
         const action = input.action as string;
-        const app = input.app as string;
+        // Postel's law — small models routinely emit `app_name` even when the
+        // schema says `app`. Failing the call wastes a round-trip and pushes
+        // the agent toward fragile fallbacks (raw AppleScript keystrokes).
+        const app = (input.app as string) || (input.app_name as string);
 
         try {
             // Windows: use PowerShell for app management
@@ -852,19 +962,33 @@ export const appManager: ToolDefinition = {
                     case "list": {
                         const result = await runPowerShellInline(
                             `Get-Process | Where-Object { $_.MainWindowTitle -ne '' } | Select-Object ProcessName,Id | ConvertTo-Json -Compress`,
-                            5000
+                            5000,
                         );
                         const procs = JSON.parse(result.trim() || "[]");
                         const arr = Array.isArray(procs) ? procs : [procs];
-                        return JSON.stringify({ success: true, count: arr.length, apps: arr.map((p: Record<string, unknown>) => ({ name: p.ProcessName, frontmost: false, visible: true })) });
+                        return JSON.stringify({
+                            success: true,
+                            count: arr.length,
+                            apps: arr.map((p: Record<string, unknown>) => ({
+                                name: p.ProcessName,
+                                frontmost: false,
+                                visible: true,
+                            })),
+                        });
                     }
                     case "quit":
                         if (!app) return JSON.stringify({ error: "Provide 'app' name to quit." });
-                        await runPowerShellInline(`Stop-Process -Name "${safeName}" -ErrorAction SilentlyContinue`, 5000);
+                        await runPowerShellInline(
+                            `Stop-Process -Name "${safeName}" -ErrorAction SilentlyContinue`,
+                            5000,
+                        );
                         return JSON.stringify({ success: true, action: "quit", app });
                     case "force_quit":
                         if (!app) return JSON.stringify({ error: "Provide 'app' name to force quit." });
-                        await runPowerShellInline(`Stop-Process -Name "${safeName}" -Force -ErrorAction SilentlyContinue`, 5000);
+                        await runPowerShellInline(
+                            `Stop-Process -Name "${safeName}" -Force -ErrorAction SilentlyContinue`,
+                            5000,
+                        );
                         return JSON.stringify({ success: true, action: "force_quit", app });
                     case "hide":
                     case "unhide":
@@ -903,7 +1027,7 @@ tell application "${app.replace(/"/g, '\\"')}" to quit`);
 
                 case "force_quit": {
                     if (!app) return JSON.stringify({ error: "Provide 'app' name to force quit." });
-                    await execFileAsync("pkill", ["-x", app], { timeout: 3000 }).catch(() => { });
+                    await execFileAsync("pkill", ["-x", app], { timeout: 3000 }).catch(() => {});
                     return JSON.stringify({ success: true, action: "force_quit", app });
                 }
 

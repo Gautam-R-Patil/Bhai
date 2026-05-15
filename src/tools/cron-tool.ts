@@ -3,9 +3,9 @@
 // See LICENSE.md for details.
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { addJob, cancelJob, getJobs } from "../cron/store.js";
 import type { ToolDefinition } from "./get-current-time.js";
 import { toolError, toolSuccess } from "./tool-result.js";
-import { addJob, cancelJob, getJobs } from "../cron/store.js";
 
 type Op = "schedule" | "list" | "cancel" | "trigger";
 
@@ -19,10 +19,7 @@ interface CronCallerContext {
 const _callerStorage = new AsyncLocalStorage<CronCallerContext>();
 
 /** Run `fn` with `ctx` as the ambient caller context for cron-scheduling. */
-export function runWithCallerContext<T>(
-    ctx: CronCallerContext,
-    fn: () => Promise<T> | T,
-): Promise<T> | T {
+export function runWithCallerContext<T>(ctx: CronCallerContext, fn: () => Promise<T> | T): Promise<T> | T {
     return _callerStorage.run(ctx, fn);
 }
 
@@ -33,10 +30,7 @@ export function setCronCallerContext(_ctx: CronCallerContext | null): void {
     // Intentionally empty: reads go through ALS now.
 }
 
-function getStringParam(
-    input: Record<string, unknown>,
-    key: string,
-): string | null {
+function getStringParam(input: Record<string, unknown>, key: string): string | null {
     const v = input[key];
     return typeof v === "string" && v.trim() ? v.trim() : null;
 }
@@ -74,8 +68,7 @@ export const cronTool: ToolDefinition = {
                     },
                     userId: {
                         type: "string",
-                        description:
-                            "(schedule only, optional) User id / chat id for routing delivery.",
+                        description: "(schedule only, optional) User id / chat id for routing delivery.",
                     },
                     id: {
                         type: "string",
@@ -130,9 +123,7 @@ export const cronTool: ToolDefinition = {
                 scheduleKind: j.scheduleKind,
                 enabled: j.enabled,
                 nextRunAt: j.nextRunAt,
-                nextRunAtHuman: j.nextRunAt
-                    ? new Date(j.nextRunAt).toISOString()
-                    : null,
+                nextRunAtHuman: j.nextRunAt ? new Date(j.nextRunAt).toISOString() : null,
                 lastStatus: j.lastStatus,
                 lastRunAt: j.lastRunAt,
                 lastError: j.lastError,

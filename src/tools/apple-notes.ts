@@ -7,10 +7,10 @@
 // Supports listing, searching, reading, creating, editing, deleting, moving, and exporting notes.
 
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { promises as fs } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import type { ToolDefinition } from "./get-current-time.js";
 
 const execFileAsync = promisify(execFile);
@@ -20,10 +20,10 @@ async function runJXA(script: string, timeout = 15000): Promise<string> {
     try {
         await fs.writeFile(tmpFile, script, "utf-8");
         const { stdout } = await execFileAsync("osascript", ["-l", "JavaScript", tmpFile], { timeout });
-        await fs.unlink(tmpFile).catch(() => { });
+        await fs.unlink(tmpFile).catch(() => {});
         return stdout.trim();
     } catch (err) {
-        await fs.unlink(tmpFile).catch(() => { });
+        await fs.unlink(tmpFile).catch(() => {});
         throw err;
     }
 }
@@ -88,7 +88,8 @@ export const appleNotesTool: ToolDefinition = {
         type: "function",
         function: {
             name: "apple_notes",
-            description: "Manage Apple Notes on macOS: list, search, read, create, edit, delete, move notes between folders, list folders, and export notes. macOS only.",
+            description:
+                "Manage Apple Notes on macOS: list, search, read, create, edit, delete, move notes between folders, list folders, and export notes. macOS only.",
             parameters: {
                 type: "object",
                 properties: {
@@ -143,11 +144,12 @@ export const appleNotesTool: ToolDefinition = {
         try {
             switch (action) {
                 case "list": {
-                    const folder = input.folder as string || "";
+                    const folder = (input.folder as string) || "";
                     const folderFilter = folder
                         ? `const targetFolder = notes.folders.whose({name: "${escapeJS(folder)}"})[0]; const notesList = targetFolder.notes();`
                         : `const notesList = notes.notes();`;
-                    const result = await runJXA(`
+                    const result = await runJXA(
+                        `
 const notes = Application("Notes");
 ${folderFilter}
 const count = Math.min(notesList.length, ${limit});
@@ -161,7 +163,9 @@ for (let i = 0; i < count; i++) {
         modified: n.modificationDate().toISOString(),
     });
 }
-JSON.stringify(output);`, 20000);
+JSON.stringify(output);`,
+                        20000,
+                    );
                     const notes = JSON.parse(result || "[]");
                     return JSON.stringify({ success: true, count: notes.length, notes });
                 }
@@ -169,7 +173,8 @@ JSON.stringify(output);`, 20000);
                 case "search": {
                     const query = input.query as string;
                     if (!query) return JSON.stringify({ error: "Provide 'query' to search." });
-                    const result = await runJXA(`
+                    const result = await runJXA(
+                        `
 const notes = Application("Notes");
 const q = "${escapeJS(query)}".toLowerCase();
 const allNotes = notes.notes();
@@ -188,7 +193,9 @@ for (let i = 0; i < allNotes.length && output.length < ${limit}; i++) {
         });
     }
 }
-JSON.stringify(output);`, 30000);
+JSON.stringify(output);`,
+                        30000,
+                    );
                     const notes = JSON.parse(result || "[]");
                     return JSON.stringify({ success: true, count: notes.length, results: notes });
                 }
@@ -196,7 +203,8 @@ JSON.stringify(output);`, 30000);
                 case "read": {
                     const noteName = input.note_name as string;
                     if (!noteName) return JSON.stringify({ error: "Provide 'note_name' to read." });
-                    const result = await runJXA(`
+                    const result = await runJXA(
+                        `
 const notes = Application("Notes");
 const found = notes.notes.whose({name: "${escapeJS(noteName)}"})[0];
 if (!found) { JSON.stringify({error: "Note not found"}); }
@@ -209,7 +217,9 @@ else {
         created: found.creationDate().toISOString(),
         modified: found.modificationDate().toISOString(),
     });
-}`, 15000);
+}`,
+                        15000,
+                    );
                     const note = JSON.parse(result || '{"error":"Note not found"}');
                     if (note.error) return JSON.stringify({ success: false, error: note.error });
                     // Convert HTML body to markdown for readability
@@ -220,19 +230,22 @@ else {
 
                 case "create": {
                     const title = input.title as string;
-                    const body = input.body as string || "";
+                    const body = (input.body as string) || "";
                     if (!title) return JSON.stringify({ error: "Provide 'title' for the note." });
-                    const folder = input.folder as string || "";
+                    const folder = (input.folder as string) || "";
                     const htmlBody = `<h1>${title}</h1>${markdownToHtml(body)}`;
                     const folderTarget = folder
                         ? `const targetFolder = notes.folders.whose({name: "${escapeJS(folder)}"})[0] || notes.defaultAccount().defaultFolder();`
                         : `const targetFolder = notes.defaultAccount().defaultFolder();`;
-                    const result = await runJXA(`
+                    const result = await runJXA(
+                        `
 const notes = Application("Notes");
 ${folderTarget}
 const newNote = notes.Note({body: "${escapeJS(htmlBody)}"});
 targetFolder.notes.push(newNote);
-JSON.stringify({name: newNote.name(), folder: targetFolder.name()});`, 15000);
+JSON.stringify({name: newNote.name(), folder: targetFolder.name()});`,
+                        15000,
+                    );
                     const created = JSON.parse(result || "{}");
                     return JSON.stringify({ success: true, action: "create", ...created });
                 }
@@ -240,9 +253,10 @@ JSON.stringify({name: newNote.name(), folder: targetFolder.name()});`, 15000);
                 case "edit": {
                     const noteName = input.note_name as string;
                     if (!noteName) return JSON.stringify({ error: "Provide 'note_name' to edit." });
-                    const newTitle = input.title as string || "";
-                    const newBody = input.body as string || "";
-                    if (!newTitle && !newBody) return JSON.stringify({ error: "Provide 'title' and/or 'body' to update." });
+                    const newTitle = (input.title as string) || "";
+                    const newBody = (input.body as string) || "";
+                    if (!newTitle && !newBody)
+                        return JSON.stringify({ error: "Provide 'title' and/or 'body' to update." });
 
                     let editScript: string;
                     if (newTitle && newBody) {
@@ -261,14 +275,17 @@ const stripped = currentBody.replace(/<h1[^>]*>.*?<\\/h1>/i, "");
 found.body = "<h1>${escapeJS(newTitle)}</h1>" + stripped;`;
                     }
 
-                    const result = await runJXA(`
+                    const result = await runJXA(
+                        `
 const notes = Application("Notes");
 const found = notes.notes.whose({name: "${escapeJS(noteName)}"})[0];
 if (!found) { JSON.stringify({error: "Note not found"}); }
 else {
     ${editScript}
     JSON.stringify({name: found.name(), modified: found.modificationDate().toISOString()});
-}`, 15000);
+}`,
+                        15000,
+                    );
                     const edited = JSON.parse(result || '{"error":"Note not found"}');
                     if (edited.error) return JSON.stringify({ success: false, error: edited.error });
                     return JSON.stringify({ success: true, action: "edit", ...edited });
@@ -277,11 +294,14 @@ else {
                 case "delete": {
                     const noteName = input.note_name as string;
                     if (!noteName) return JSON.stringify({ error: "Provide 'note_name' to delete." });
-                    await runJXA(`
+                    await runJXA(
+                        `
 const notes = Application("Notes");
 const found = notes.notes.whose({name: "${escapeJS(noteName)}"})[0];
 if (found) { notes.delete(found); }
-"done";`, 15000);
+"done";`,
+                        15000,
+                    );
                     return JSON.stringify({ success: true, action: "delete", note: noteName });
                 }
 
@@ -290,7 +310,8 @@ if (found) { notes.delete(found); }
                     const targetFolder = input.target_folder as string;
                     if (!noteName) return JSON.stringify({ error: "Provide 'note_name' to move." });
                     if (!targetFolder) return JSON.stringify({ error: "Provide 'target_folder'." });
-                    const result = await runJXA(`
+                    const result = await runJXA(
+                        `
 const notes = Application("Notes");
 const found = notes.notes.whose({name: "${escapeJS(noteName)}"})[0];
 if (!found) { JSON.stringify({error: "Note not found"}); }
@@ -301,21 +322,26 @@ else {
         notes.move(found, {to: target});
         JSON.stringify({name: found.name(), folder: "${escapeJS(targetFolder)}"});
     }
-}`, 15000);
+}`,
+                        15000,
+                    );
                     const moved = JSON.parse(result || '{"error":"Operation failed"}');
                     if (moved.error) return JSON.stringify({ success: false, error: moved.error });
                     return JSON.stringify({ success: true, action: "move", ...moved });
                 }
 
                 case "list_folders": {
-                    const result = await runJXA(`
+                    const result = await runJXA(
+                        `
 const notes = Application("Notes");
 const folders = notes.folders();
 const output = folders.map(f => ({
     name: f.name(),
     count: f.notes().length,
 }));
-JSON.stringify(output);`, 15000);
+JSON.stringify(output);`,
+                        15000,
+                    );
                     const folders = JSON.parse(result || "[]");
                     return JSON.stringify({ success: true, folders });
                 }
@@ -324,7 +350,8 @@ JSON.stringify(output);`, 15000);
                     const noteName = input.note_name as string;
                     const format = (input.format as string) || "markdown";
                     if (!noteName) return JSON.stringify({ error: "Provide 'note_name' to export." });
-                    const result = await runJXA(`
+                    const result = await runJXA(
+                        `
 const notes = Application("Notes");
 const found = notes.notes.whose({name: "${escapeJS(noteName)}"})[0];
 if (!found) { JSON.stringify({error: "Note not found"}); }
@@ -334,7 +361,9 @@ else {
         body: found.body(),
         folder: found.container().name(),
     });
-}`, 15000);
+}`,
+                        15000,
+                    );
                     const note = JSON.parse(result || '{"error":"Note not found"}');
                     if (note.error) return JSON.stringify({ success: false, error: note.error });
 

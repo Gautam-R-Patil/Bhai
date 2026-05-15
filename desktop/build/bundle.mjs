@@ -25,6 +25,23 @@ export async function bundleBot(distDir, outFile) {
 
     fs.mkdirSync(path.dirname(outFile), { recursive: true });
 
+    // We have TWO files both named `native/index.js`:
+    //   • <rootForBundle>/native/index.js — the NAPI-generated CJS loader (loads .node binary)
+    //   • src/native/index.ts → dist/native/index.js — our TS wrapper with named ESM exports
+    // The TS wrapper uses createRequire to load the NAPI loader at runtime. Static
+    // imports like `import { nativeContainsSecrets } from "../native/index.js"` from
+    // src/security/secrets-sanitizer.ts target the WRAPPER and need to be bundled inline
+    // so their named ESM exports survive. Dynamic `import("../native/index.js")` from
+    // src/index.ts targets the root NAPI loader directly (for addProtectedPath /
+    // monitorLoadRules which are NAPI-only) and must stay external.
+    //
+    // The fix: resolve the import path against the importer manually. If it lands on
+    // the root NAPI loader, externalize. Otherwise let esbuild bundle the TS wrapper.
+    // The root NAPI loader is always at `<distDir>/../native/index.js` — true for
+    // both repo dev-mode (<repo>/dist + <repo>/native) and afterPack mode
+    // (<app>/Contents/Resources/bot/dist + <app>/Contents/Resources/bot/native).
+    const rootNativeIndex = path.resolve(distDir, "..", "native", "index.js");
+
     const result = await esbuild.build({
         entryPoints: [entry],
         bundle: true,
@@ -44,19 +61,20 @@ export async function bundleBot(distDir, outFile) {
         // Suppress minification — obfuscator runs next and handles that.
         minify: false,
 
-        // Remap dynamic imports of the native binary loader to a path relative
-        // to the bundle output location (not the original source file's depth).
         plugins: [
             {
                 name: "native-remap",
                 setup(build) {
-                    // Any import that resolves through native/index.js (the NAPI binary
-                    // loader) must stay external and path must be ./native/index.js
-                    // relative to the bundle file, not relative to each source file.
-                    build.onResolve(
-                        { filter: /[/\\]native[/\\]index\.js$|^\.{1,2}[/\\](\.\.\/)*native[/\\]index\.js$/ },
-                        () => ({ path: "./native/index.js", external: true }),
-                    );
+                    build.onResolve({ filter: /native[/\\]index\.js$/ }, (args) => {
+                        if (!args.importer) return null;
+                        const resolved = path.resolve(path.dirname(args.importer), args.path);
+                        if (resolved === rootNativeIndex) {
+                            // Root NAPI CJS loader — externalize with a path relative to the bundle.
+                            return { path: "./native/index.js", external: true };
+                        }
+                        // dist/native/index.js TS wrapper or anything else — let esbuild resolve normally.
+                        return null;
+                    });
                 },
             },
         ],

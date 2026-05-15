@@ -17,9 +17,9 @@
 
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import type { ToolDefinition } from "../get-current-time.js";
 import { getPathBlockedReason, isPathAllowed, isProtectedPath } from "../../security/allowlist.js";
 import { auditLog } from "../../security/audit-log.js";
+import type { ToolDefinition } from "../get-current-time.js";
 import { hashContent, hasRegistryEntry, recordRead, wasRead } from "./read-registry.js";
 
 // ── Types ─────────────────────────────────────

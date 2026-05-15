@@ -200,6 +200,33 @@ function saveVariant(segmentName: string, content: string): void {
          VALUES (?, ?, ?, 0)`,
         [id, segmentName, content]
     );
+
+    // Also draft to the self-improvement buffer so nightly synthesis can
+    // promote a winning variant to the user's server-side addendum. The
+    // local prompt_variants table keeps the per-variant metrics; the draft
+    // mirrors only the content for upload. Failures are non-fatal — the
+    // local variant still exists and can be picked up next cycle.
+    try {
+        const { addDraft } = require("../memory/self-improvement-drafts.js") as typeof import("../memory/self-improvement-drafts.js");
+        // Map evolver segment name → addendum slug. "memory-prompt-" is a
+        // 14-char prefix; the slug cap is 64 chars total, so truncate the
+        // normalized segment to 50 chars to leave room.
+        const normalized = segmentName
+            .toLowerCase()
+            .replace(/[^a-z0-9-]+/g, "-")
+            .replace(/^-+|-+$/g, "")
+            .slice(0, 50);
+        const slug = `memory-prompt-${normalized}`;
+        addDraft({
+            kind: "memory",
+            slug,
+            content,
+            reason: `Auto-evolved variant for segment '${segmentName}' (low quality/success baseline)`,
+        });
+    } catch (err) {
+        // Likely slug validation failure; non-fatal — local variant is preserved.
+        console.warn(`[PROMPT-EVOLVER] Could not draft variant for '${segmentName}':`, (err as Error).message);
+    }
 }
 
 // ── Get Active Prompt ─────────────────────────

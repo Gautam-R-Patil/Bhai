@@ -207,64 +207,68 @@ export const browserVerify: ToolDefinition = {
         // this the listeners leaked on any unhandled throw between goto
         // and the old explicit cleanup call.
         try {
-        const start = Date.now();
-        try {
-            await (page as unknown as { goto: (u: string, opts?: unknown) => Promise<unknown> }).goto(url, {
-                waitUntil: "domcontentloaded",
-                timeout: timeoutMs,
-            });
-        } catch (err) {
-            navError = (err as Error).message;
-        }
-        loadMs = Date.now() - start;
-
-        // Stabilization wait
-        try {
-            await (page as unknown as { waitForTimeout: (ms: number) => Promise<void> }).waitForTimeout(waitMs);
-        } catch {
-            /* */
-        }
-
-        // Selector checks
-        for (const sel of expectSelectors.slice(0, 20)) {
+            const start = Date.now();
             try {
-                const handle = await (page as unknown as { $: (s: string) => Promise<unknown> }).$(sel);
-                if (!handle) missingSelectors.push(sel);
-            } catch {
-                missingSelectors.push(sel);
+                await (page as unknown as { goto: (u: string, opts?: unknown) => Promise<unknown> }).goto(url, {
+                    waitUntil: "domcontentloaded",
+                    timeout: timeoutMs,
+                });
+            } catch (err) {
+                navError = (err as Error).message;
             }
-        }
+            loadMs = Date.now() - start;
 
-        // Text checks
-        if (expectText.length > 0) {
+            // Stabilization wait
             try {
-                bodyText = await (page as unknown as { evaluate: (fn: unknown) => Promise<string> }).evaluate(
-                    "() => document.body?.innerText ?? ''",
-                );
+                await (page as unknown as { waitForTimeout: (ms: number) => Promise<void> }).waitForTimeout(waitMs);
             } catch {
-                bodyText = "";
+                /* */
             }
-            for (const txt of expectText.slice(0, 20)) {
-                if (!bodyText.includes(txt)) missingText.push(txt);
-            }
-        }
 
-        // Page state
-        try {
-            title = await (page as unknown as { title: () => Promise<string> }).title();
-        } catch {
-            /* */
-        }
-        try {
-            finalUrl = (page as unknown as { url: () => string }).url() ?? url;
-        } catch {
-            /* */
-        }
+            // Selector checks
+            for (const sel of expectSelectors.slice(0, 20)) {
+                try {
+                    const handle = await (page as unknown as { $: (s: string) => Promise<unknown> }).$(sel);
+                    if (!handle) missingSelectors.push(sel);
+                } catch {
+                    missingSelectors.push(sel);
+                }
+            }
+
+            // Text checks
+            if (expectText.length > 0) {
+                try {
+                    bodyText = await (page as unknown as { evaluate: (fn: unknown) => Promise<string> }).evaluate(
+                        "() => document.body?.innerText ?? ''",
+                    );
+                } catch {
+                    bodyText = "";
+                }
+                for (const txt of expectText.slice(0, 20)) {
+                    if (!bodyText.includes(txt)) missingText.push(txt);
+                }
+            }
+
+            // Page state
+            try {
+                title = await (page as unknown as { title: () => Promise<string> }).title();
+            } catch {
+                /* */
+            }
+            try {
+                finalUrl = (page as unknown as { url: () => string }).url() ?? url;
+            } catch {
+                /* */
+            }
         } finally {
             // Listeners must always come off — leaking them accumulates zombie
             // handlers on the shared page proxy across repeated browser_verify calls.
             for (const off of listenerCleanups) {
-                try { off(); } catch { /* */ }
+                try {
+                    off();
+                } catch {
+                    /* */
+                }
             }
         }
 

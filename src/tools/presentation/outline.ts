@@ -3,10 +3,10 @@
 // See LICENSE.md for details.
 
 import { randomBytes } from "node:crypto";
-import type { LLMClient, ChatCompletionTool } from "../../llm.js";
+import type { ChatCompletionTool, LLMClient } from "../../llm.js";
 import { MODELS } from "../../llm.js";
 import { extractJSON } from "../../utils/json-extract.js";
-import { LAYOUT_ARCHETYPES, type PresentationOutline, type DeckArchetype, type Slide } from "./types.js";
+import { type DeckArchetype, LAYOUT_ARCHETYPES, type PresentationOutline, type Slide } from "./types.js";
 
 // ── Outline via tool-use (forced-structured args, always parseable) ──
 // Rather than prompt for JSON and hope the model returns clean JSON, we
@@ -20,11 +20,13 @@ const SLIDE_PROPERTY = {
         archetype: {
             type: "string",
             enum: [...LAYOUT_ARCHETYPES],
-            description: "Layout archetype. Prefer variety: bento-3 for 3 parallel points, stat-callout for one big number, quote for a pulled quote, chart-focus for data, timeline for milestones, two-column for comparisons. 'content' is the fallback; avoid using it for more than 40% of the deck.",
+            description:
+                "Layout archetype. Prefer variety: bento-3 for 3 parallel points, stat-callout for one big number, quote for a pulled quote, chart-focus for data, timeline for milestones, two-column for comparisons. 'content' is the fallback; avoid using it for more than 40% of the deck.",
         },
         title: {
             type: "string",
-            description: "Action title (contains a verb, not a noun label). GOOD: 'Mobile revenue grew 42% YoY'. BAD: 'Revenue', 'Market Overview'. No emoji, no check-marks, no X-marks in titles.",
+            description:
+                "Action title (contains a verb, not a noun label). GOOD: 'Mobile revenue grew 42% YoY'. BAD: 'Revenue', 'Market Overview'. No emoji, no check-marks, no X-marks in titles.",
         },
         subtitle: { type: "string" },
         bullets: {
@@ -33,7 +35,11 @@ const SLIDE_PROPERTY = {
             description: "Max 4 items, grammatically parallel (all verb-initial OR all noun-initial). No emoji.",
             maxItems: 4,
         },
-        body: { type: "string", description: "Free-form text (used for quote, stat-callout label, image-full-bleed caption, or short paragraph)." },
+        body: {
+            type: "string",
+            description:
+                "Free-form text (used for quote, stat-callout label, image-full-bleed caption, or short paragraph).",
+        },
         columns: {
             type: "array",
             items: {
@@ -92,7 +98,8 @@ const SLIDE_PROPERTY = {
         },
         imagePrompt: {
             type: "string",
-            description: "Specific, photorealistic subject. FORBIDDEN: diverse-hands-on-keyboard, lightbulbs, handshakes, empty conference rooms, clipart, generic stock-photo clichés.",
+            description:
+                "Specific, photorealistic subject. FORBIDDEN: diverse-hands-on-keyboard, lightbulbs, handshakes, empty conference rooms, clipart, generic stock-photo clichés.",
         },
         speakerNotes: {
             type: "string",
@@ -106,7 +113,8 @@ function buildEmitOutlineTool(): ChatCompletionTool {
         type: "function",
         function: {
             name: "emit_presentation_outline",
-            description: "Emit the complete presentation outline as structured data. Call this exactly once with the full deck.",
+            description:
+                "Emit the complete presentation outline as structured data. Call this exactly once with the full deck.",
             parameters: {
                 type: "object",
                 required: ["title", "slides"],
@@ -116,7 +124,8 @@ function buildEmitOutlineTool(): ChatCompletionTool {
                     slides: {
                         type: "array",
                         items: SLIDE_PROPERTY,
-                        description: "Ordered slides. First slide MUST be archetype 'title'. Use varied archetypes — no more than 40% 'content' layout.",
+                        description:
+                            "Ordered slides. First slide MUST be archetype 'title'. Use varied archetypes — no more than 40% 'content' layout.",
                     },
                 },
             },
@@ -205,7 +214,10 @@ export async function generateOutline(
             });
 
             const choice = response.choices?.[0];
-            if (!choice) { lastError = `${label}: no choices in response`; continue; }
+            if (!choice) {
+                lastError = `${label}: no choices in response`;
+                continue;
+            }
 
             // Extract tool call — preferred, always structured
             const toolCall = choice.message?.tool_calls?.[0];
@@ -219,7 +231,13 @@ export async function generateOutline(
                 } catch {
                     // Some providers (Gemini) sometimes embed the JSON in wrappers
                     const recovered = extractJSON(rawArgs);
-                    if (recovered) { try { parsed = JSON.parse(recovered); } catch { /* fall through */ } }
+                    if (recovered) {
+                        try {
+                            parsed = JSON.parse(recovered);
+                        } catch {
+                            /* fall through */
+                        }
+                    }
                 }
             }
 
@@ -229,7 +247,11 @@ export async function generateOutline(
                 const text = typeof content === "string" ? content : "";
                 const jsonStr = extractJSON(text);
                 if (jsonStr) {
-                    try { parsed = JSON.parse(jsonStr); } catch { /* fall through */ }
+                    try {
+                        parsed = JSON.parse(jsonStr);
+                    } catch {
+                        /* fall through */
+                    }
                 }
             }
 
@@ -262,7 +284,8 @@ export async function generateOutline(
 
 // ── Sanitize slides: enforce archetype enum + strip emoji from titles ──
 
-const EMOJI_RE = /[\u{2600}-\u{27BF}\u{1F000}-\u{1FFFF}\u{2700}-\u{27BF}\u{FE00}-\u{FE0F}\u{1F300}-\u{1F6FF}\u{1F900}-\u{1F9FF}\u2713\u2717\u2714\u2716]/gu;
+const EMOJI_RE =
+    /[\u{2600}-\u{27BF}\u{1F000}-\u{1FFFF}\u{2700}-\u{27BF}\u{FE00}-\u{FE0F}\u{1F300}-\u{1F6FF}\u{1F900}-\u{1F9FF}\u2713\u2717\u2714\u2716]/gu;
 
 function normalizeSlides(raw: Slide[]): Slide[] {
     const validArchetypes = new Set<string>(LAYOUT_ARCHETYPES as readonly string[]);
@@ -313,10 +336,7 @@ function diversifyLayouts(slides: Slide[]): void {
 
     // Break long runs of identical archetypes (no 3+ in a row)
     for (let i = 2; i < n; i++) {
-        if (
-            slides[i].archetype === slides[i - 1].archetype &&
-            slides[i].archetype === slides[i - 2].archetype
-        ) {
+        if (slides[i].archetype === slides[i - 1].archetype && slides[i].archetype === slides[i - 2].archetype) {
             const alt = promoteArchetype(slides[i]);
             if (alt) slides[i].archetype = alt;
         }

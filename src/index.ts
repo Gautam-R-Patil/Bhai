@@ -56,6 +56,7 @@ import { initCredibilityModel } from "./research/credibility-model.js";
 import { initLocationService, refreshLocation, onLocationChange } from "./location/index.js";
 import { startNetworkWatcher, stopNetworkWatcher } from "./location/network-watcher.js";
 import { getPlatformCapabilities } from "./utils/platform-capabilities.js";
+import { probeAndLogMacPermissions } from "./utils/macos-permissions.js";
 import { initRegistry } from "./harness/registry.js";
 import { initForge } from "./forge/orchestrator.js";
 
@@ -166,6 +167,10 @@ async function boot() {
         initIdentityDB(memDb);
         initTraitsDB(memDb);
 
+        // Local self-improvement draft buffer (drains nightly to server)
+        const { initSelfImprovementDrafts } = await import("./memory/self-improvement-drafts.js");
+        initSelfImprovementDrafts(memDb);
+
         // Deep-research boot recovery — must run after data dir is created
         // by initMemoryDB. Marks any "running" entries from the prior process
         // as "interrupted" so the agent surfaces them honestly on next turn.
@@ -185,6 +190,23 @@ async function boot() {
             }
         } catch (err) {
             console.warn("[wizard-seed] non-fatal error:", (err as Error).message);
+        }
+
+        // Sync user-chosen personality preset to server addendum
+        // (slug: "user-personality"). Idempotent — renames source after push.
+        try {
+            const { syncPersonalityIfPresent } = await import("./setup/personality-sync.js");
+            const r = await syncPersonalityIfPresent({
+                userDataDir: process.env.ATLAS_USER_DATA_DIR,
+                dataDir: process.env.ATLAS_DATA_DIR,
+            });
+            if (r.ran) {
+                console.log(`🎨 Personality preset synced to server (v${r.version})`);
+            } else if (r.reason && r.reason !== "no-file") {
+                console.warn(`[personality-sync] ${r.reason}${r.error ? `: ${r.error}` : ""}`);
+            }
+        } catch (err) {
+            console.warn("[personality-sync] non-fatal:", (err as Error).message);
         }
 
         initSupabase();
@@ -442,6 +464,12 @@ async function boot() {
     // Warm up platform capability probe (non-blocking)
     if (process.env.ATLAS_SKIP_CAPABILITY_PROBE !== "true") {
         getPlatformCapabilities().catch(err => console.warn("[boot] capability probe failed:", err));
+    }
+
+    // macOS-only — probe Accessibility + Screen Recording for real, with actionable
+    // advice when the user thinks they granted permission but the bot can't actually use it.
+    if (process.platform === "darwin" && process.env.ATLAS_SKIP_PERMISSION_PROBE !== "true") {
+        probeAndLogMacPermissions().catch((err) => console.warn("[boot] permission probe failed:", err));
     }
 
     // Auto-resume any long tasks that were interrupted (async, non-blocking)

@@ -89,14 +89,10 @@
                 ]
             },
             {
-                "from": "../skills",
-                "to": "bot/skills",
+                "from": "../skills/templates",
+                "to": "bot/skills/templates",
                 "filter": [
-                    "**/*",
-                    "!convex",
-                    "!convex/**",
-                    "!convex-*",
-                    "!convex-*/**"
+                    "**/*"
                 ]
             },
             {
@@ -151,6 +147,8 @@
                     "!**/test/**",
                     "!**/tests/**",
                     "!**/__tests__/**",
+                    "playwright/lib/mcp/test/**",
+                    "playwright-core/lib/mcp/test/**",
                     "!**/*.test.js",
                     "!**/*.spec.js",
                     "!**/.github/**",

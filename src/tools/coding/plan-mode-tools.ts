@@ -7,11 +7,11 @@
 // loop: enter_plan_mode (agent-initiated plan entry) and exit_plan_mode
 // (hand the plan back to the user and flip to act mode).
 
-import { writeFileSync, mkdirSync } from "node:fs";
-import path from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import type { ToolDefinition } from "../get-current-time.js";
+import path from "node:path";
 import { enterPlanMode, exitPlanMode, isPlanMode } from "../../agents/plan-mode.js";
+import type { ToolDefinition } from "../get-current-time.js";
 
 // ── enter_plan_mode ───────────────────────────
 

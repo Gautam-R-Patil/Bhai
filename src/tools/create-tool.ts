@@ -8,22 +8,18 @@
 // Handler code is executed inside a vm.createContext() sandbox to prevent
 // access to the global scope, prototype chain, and dangerous Node APIs.
 
-import type { ChatCompletionTool } from "openai/resources/chat/completions.js";
-import type { ToolDefinition } from "./get-current-time.js";
-import { execFile, exec } from "node:child_process";
-import { promisify } from "node:util";
-import * as fs from "node:fs";
-import * as path from "node:path";
-import * as url from "node:url";
-import * as querystring from "node:querystring";
+import { exec, execFile } from "node:child_process";
 import * as crypto from "node:crypto";
-import * as vm from "node:vm";
+import * as fs from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import {
-    isSystemDestructive,
-    isShellBypass,
-    shellArgsTargetProtectedPath,
-} from "../security/allowlist.js";
+import * as path from "node:path";
+import * as querystring from "node:querystring";
+import * as url from "node:url";
+import { promisify } from "node:util";
+import * as vm from "node:vm";
+import type { ChatCompletionTool } from "openai/resources/chat/completions.js";
+import { isShellBypass, isSystemDestructive, shellArgsTargetProtectedPath } from "../security/allowlist.js";
+import type { ToolDefinition } from "./get-current-time.js";
 
 const execFileAsync = promisify(execFile);
 const execAsync = promisify(exec);
@@ -71,14 +67,12 @@ function validateShellCommand(cmd: string, args?: string[]): void {
     if (isSystemDestructive(fullCommand)) {
         throw new Error(
             `Blocked: command "${cmd}" is system-destructive and not allowed. ` +
-            `Commands that wipe the system disk, destroy boot files, or format the main drive are blocked.`
+                `Commands that wipe the system disk, destroy boot files, or format the main drive are blocked.`,
         );
     }
 
     if (args && isShellBypass(cmd, args)) {
-        throw new Error(
-            `Blocked: inline command contains a system-destructive operation.`
-        );
+        throw new Error(`Blocked: inline command contains a system-destructive operation.`);
     }
 
     // Codebase self-protection: block destructive shell commands targeting the atlas folder
@@ -90,7 +84,7 @@ function validateShellCommand(cmd: string, args?: string[]): void {
         if (hit) {
             throw new Error(
                 `Blocked: command "${cmd}" targets the bot's own codebase path "${hit}". ` +
-                `Write/delete operations on the atlas codebase are not allowed.`
+                    `Write/delete operations on the atlas codebase are not allowed.`,
             );
         }
     }
@@ -123,8 +117,10 @@ function sandboxRequire(moduleName: string): unknown {
     if (!mod) {
         throw new Error(
             `require("${moduleName}") is not available in the sandbox. ` +
-            `Allowed modules: ${Object.keys(SAFE_REQUIRE_MODULES).filter(k => !k.startsWith("node:")).join(", ")}. ` +
-            `Use utils.fs (read-only), utils.path, utils.exec instead.`
+                `Allowed modules: ${Object.keys(SAFE_REQUIRE_MODULES)
+                    .filter((k) => !k.startsWith("node:"))
+                    .join(", ")}. ` +
+                `Use utils.fs (read-only), utils.path, utils.exec instead.`,
         );
     }
     return mod;
@@ -246,8 +242,8 @@ function buildHandler(code: string): (input: Record<string, unknown>) => Promise
             const context = vm.createContext(sandbox, {
                 name: "dynamic-tool-sandbox",
                 codeGeneration: {
-                    strings: false,   // Block eval() and new Function() inside the sandbox
-                    wasm: false,      // Block WebAssembly compilation
+                    strings: false, // Block eval() and new Function() inside the sandbox
+                    wasm: false, // Block WebAssembly compilation
                 },
             });
 
@@ -285,7 +281,8 @@ export const createTool: ToolDefinition = {
                 properties: {
                     name: {
                         type: "string",
-                        description: "Tool name in snake_case (e.g., 'send_whatsapp', 'translate_text'). Must be unique.",
+                        description:
+                            "Tool name in snake_case (e.g., 'send_whatsapp', 'translate_text'). Must be unique.",
                     },
                     description: {
                         type: "string",
@@ -293,15 +290,18 @@ export const createTool: ToolDefinition = {
                     },
                     parameters_schema: {
                         type: "object",
-                        description: "JSON Schema for the tool's input parameters. Must be {type: 'object', properties: {...}, required: [...]}.",
+                        description:
+                            "JSON Schema for the tool's input parameters. Must be {type: 'object', properties: {...}, required: [...]}.",
                     },
                     handler_code: {
                         type: "string",
-                        description: "JavaScript code for the handler. Runs in async context with 'input' and 'utils' available. Must return a string or JSON-serializable value.",
+                        description:
+                            "JavaScript code for the handler. Runs in async context with 'input' and 'utils' available. Must return a string or JSON-serializable value.",
                     },
                     persistent: {
                         type: "boolean",
-                        description: "If true, saves the tool to disk so it persists across restarts. Default: false (session-only).",
+                        description:
+                            "If true, saves the tool to disk so it persists across restarts. Default: false (session-only).",
                     },
                 },
                 required: ["name", "description", "handler_code"],
@@ -322,7 +322,9 @@ export const createTool: ToolDefinition = {
 
         // Validate name
         if (!/^[a-z][a-z0-9_]*$/.test(name)) {
-            return JSON.stringify({ error: "Invalid tool name — must be snake_case (lowercase letters, digits, underscores)" });
+            return JSON.stringify({
+                error: "Invalid tool name — must be snake_case (lowercase letters, digits, underscores)",
+            });
         }
 
         // ── FORGE Phase 2: lookup short-circuit ──
@@ -400,10 +402,7 @@ export const createTool: ToolDefinition = {
                     handler_code: handlerCode,
                     created_at: new Date().toISOString(),
                 };
-                fs.writeFileSync(
-                    path.join(DYNAMIC_TOOLS_DIR, `${name}.json`),
-                    JSON.stringify(toolData, null, 2),
-                );
+                fs.writeFileSync(path.join(DYNAMIC_TOOLS_DIR, `${name}.json`), JSON.stringify(toolData, null, 2));
                 console.log(`💾 Dynamic tool persisted: ${name}`);
             } catch (err) {
                 console.error(`⚠️ Failed to persist tool "${name}":`, (err as Error).message);
@@ -441,12 +440,14 @@ export const listDynamicTools: ToolDefinition = {
         // Check persisted tools
         const persistedTools: string[] = [];
         if (fs.existsSync(DYNAMIC_TOOLS_DIR)) {
-            const files = fs.readdirSync(DYNAMIC_TOOLS_DIR).filter(f => f.endsWith(".json"));
+            const files = fs.readdirSync(DYNAMIC_TOOLS_DIR).filter((f) => f.endsWith(".json"));
             for (const file of files) {
                 try {
                     const data = JSON.parse(fs.readFileSync(path.join(DYNAMIC_TOOLS_DIR, file), "utf-8"));
                     persistedTools.push(`${data.name}: ${data.description} (created ${data.created_at})`);
-                } catch { /* skip corrupt files */ }
+                } catch {
+                    /* skip corrupt files */
+                }
             }
         }
 
@@ -468,7 +469,7 @@ export async function loadDynamicTools(): Promise<void> {
 
     if (!fs.existsSync(DYNAMIC_TOOLS_DIR)) return;
 
-    const files = fs.readdirSync(DYNAMIC_TOOLS_DIR).filter(f => f.endsWith(".json"));
+    const files = fs.readdirSync(DYNAMIC_TOOLS_DIR).filter((f) => f.endsWith(".json"));
     let loaded = 0;
 
     for (const file of files) {

@@ -25,12 +25,8 @@ export type EditOp =
 // The user gives a natural-language instruction; the LLM emits a list of
 // concrete edit operations targeting specific slide indices.
 
-function buildPatchPrompt(
-    outline: PresentationOutline,
-    instruction: string,
-): string {
-    const summary = outline.slides.map((s, i) =>
-        `  ${i + 1}. [${s.archetype}] "${s.title}"`).join("\n");
+function buildPatchPrompt(outline: PresentationOutline, instruction: string): string {
+    const summary = outline.slides.map((s, i) => `  ${i + 1}. [${s.archetype}] "${s.title}"`).join("\n");
 
     return `You are editing an existing presentation.
 
@@ -114,10 +110,13 @@ export function applyOp(outline: PresentationOutline, op: EditOp): void {
         case "reorder": {
             const { fromIndex, toIndex } = op;
             if (
-                fromIndex < 0 || fromIndex >= outline.slides.length ||
-                toIndex < 0 || toIndex >= outline.slides.length ||
+                fromIndex < 0 ||
+                fromIndex >= outline.slides.length ||
+                toIndex < 0 ||
+                toIndex >= outline.slides.length ||
                 fromIndex === toIndex
-            ) return;
+            )
+                return;
             const [slide] = outline.slides.splice(fromIndex, 1);
             outline.slides.splice(toIndex, 0, slide);
             return;
@@ -169,15 +168,25 @@ export function applyPatch(outline: PresentationOutline, ops: EditOp[]): string[
 
 function describeOp(op: EditOp): string {
     switch (op.kind) {
-        case "edit_title": return `Edited title of slide ${op.index + 1}`;
-        case "edit_subtitle": return `Edited subtitle of slide ${op.index + 1}`;
-        case "edit_bullets": return `Edited bullets of slide ${op.index + 1} (${op.bullets.length} items)`;
-        case "edit_body": return `Edited body of slide ${op.index + 1}`;
-        case "edit_speaker_notes": return `Edited speaker notes of slide ${op.index + 1}`;
-        case "change_archetype": return `Changed slide ${op.index + 1} layout to ${op.archetype}`;
-        case "add_slide": return `Added new ${op.slide.archetype} slide after position ${op.afterIndex + 1}`;
-        case "remove_slide": return `Removed slide ${op.index + 1}`;
-        case "reorder": return `Moved slide ${op.fromIndex + 1} to position ${op.toIndex + 1}`;
-        case "change_theme": return `Changed theme to ${op.themeId}`;
+        case "edit_title":
+            return `Edited title of slide ${op.index + 1}`;
+        case "edit_subtitle":
+            return `Edited subtitle of slide ${op.index + 1}`;
+        case "edit_bullets":
+            return `Edited bullets of slide ${op.index + 1} (${op.bullets.length} items)`;
+        case "edit_body":
+            return `Edited body of slide ${op.index + 1}`;
+        case "edit_speaker_notes":
+            return `Edited speaker notes of slide ${op.index + 1}`;
+        case "change_archetype":
+            return `Changed slide ${op.index + 1} layout to ${op.archetype}`;
+        case "add_slide":
+            return `Added new ${op.slide.archetype} slide after position ${op.afterIndex + 1}`;
+        case "remove_slide":
+            return `Removed slide ${op.index + 1}`;
+        case "reorder":
+            return `Moved slide ${op.fromIndex + 1} to position ${op.toIndex + 1}`;
+        case "change_theme":
+            return `Changed theme to ${op.themeId}`;
     }
 }

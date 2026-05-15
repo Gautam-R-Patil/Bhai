@@ -23,18 +23,17 @@ export interface LLMClient {
         messages: ChatCompletionMessageParam[];
         tools?: ChatCompletionTool[];
         systemPrompt?: string;
+        /**
+         * Server-side prompt slug to use as the system prompt instead of the
+         * default identity stack. The server fetches the slug's content from
+         * its DB and treats it like a systemPromptOverride. Lets internal
+         * callers (e.g. the orchestrator) swap base prompts without bundling
+         * any content client-side.
+         */
+        serverPromptSlug?: string;
         thinkingLevel?: ThinkingLevel;
         modelOverride?: string;
         skillSlugs?: string[];
-        /**
-         * When set, instructs the provider to constrain output to valid JSON.
-         * Server adds response_format: { type: "json_object" } for OpenAI-
-         * compatible providers; Gemini routes get responseMimeType:
-         * application/json. No-op for providers that don't support it —
-         * the existing extractJSON fallback still handles markdown-fenced
-         * output. Only pass this on calls that DON'T use `tools` — tool
-         * use and JSON mode are mutually exclusive on most providers.
-         */
         responseFormat?: "json_object";
     }): Promise<ChatCompletion>;
     config: Config;
@@ -56,24 +55,9 @@ export const MODELS = {
     NOVA_PRO: "amazon/nova-pro-v1",
     NOVA_LITE: "amazon/nova-lite-v1",
     NOVA_MICRO: "amazon/nova-micro-v1",
-};
-
-// Display names (used in terminal/frontend)
-// @deprecated — Fallback chains are now resolved dynamically from the Rust router via getHorizontalFailover()
-export const MODEL_FALLBACKS: Record<string, string[]> = {
-    [MODELS.PRO]: [MODELS.SONNET, MODELS.GEMINI_PRO],
-    [MODELS.SONNET]: [MODELS.SONNET_45, MODELS.GEMINI_PRO],
-    [MODELS.SONNET_45]: [MODELS.SONNET, MODELS.GEMINI_PRO],
-    [MODELS.HAIKU]: [MODELS.GEMINI_25_FLASH, MODELS.FLASH],
-    [MODELS.GEMINI_PRO]: [MODELS.GEMINI_25_FLASH, MODELS.SONNET],
-    [MODELS.GEMINI_25_FLASH]: [MODELS.FLASH, MODELS.NOVA_PRO],
-    [MODELS.FLASH]: [MODELS.GEMINI_25_FLASH, MODELS.HAIKU],
-    [MODELS.FLASH_LITE]: [MODELS.GEMINI_25_FLASH_LITE, MODELS.HAIKU],
-    [MODELS.GEMINI_25_FLASH_LITE]: [MODELS.NOVA_LITE, MODELS.GEMINI_20_FLASH],
-    [MODELS.GEMINI_20_FLASH]: [MODELS.GEMINI_25_FLASH_LITE, MODELS.NOVA_LITE],
-    [MODELS.NOVA_PRO]: [MODELS.GEMINI_25_FLASH, MODELS.FLASH],
-    [MODELS.NOVA_LITE]: [MODELS.GEMINI_25_FLASH_LITE, MODELS.GEMINI_20_FLASH],
-    [MODELS.NOVA_MICRO]: [MODELS.NOVA_LITE, MODELS.GEMINI_25_FLASH_LITE],
+    DEEPSEEK_V31: "deepseek/deepseek-chat-v3.1",
+    DEEPSEEK_V32: "deepseek/deepseek-v3.2-exp",
+    GLM_46: "z-ai/glm-4.6",
 };
 
 export const MODEL_DISPLAY: Record<string, string> = {
@@ -90,6 +74,9 @@ export const MODEL_DISPLAY: Record<string, string> = {
     [MODELS.NOVA_PRO]: "Nova Pro",
     [MODELS.NOVA_LITE]: "Nova Lite",
     [MODELS.NOVA_MICRO]: "Nova Micro",
+    [MODELS.DEEPSEEK_V31]: "DeepSeek V3.1",
+    [MODELS.DEEPSEEK_V32]: "DeepSeek V3.2 (exp)",
+    [MODELS.GLM_46]: "GLM 4.6",
 };
 
 import { IS_MAC, IS_WIN } from "./tools/platform.js";
@@ -121,10 +108,10 @@ async function isModelCircuitOpen(model: string): Promise<boolean> {
     }
 }
 
-async function getModelFallback(model: string): Promise<string | null> {
+async function getModelFallback(model: string, exclude?: string[]): Promise<string | null> {
     try {
         const { getHorizontalFailoverModel } = await import("./model-router.js");
-        return getHorizontalFailoverModel(model);
+        return getHorizontalFailoverModel(model, exclude);
     } catch {
         return null;
     }
@@ -137,7 +124,7 @@ export function createLLMClient(config: Config): LLMClient {
 
     return {
         config,
-        async chat({ messages, tools, systemPrompt, thinkingLevel, modelOverride, skillSlugs, responseFormat }) {
+        async chat({ messages, tools, systemPrompt, serverPromptSlug, thinkingLevel, modelOverride, skillSlugs, responseFormat }) {
             // ── Network health guard: fail fast if internet is down ──
             try {
                 const { isOffline, reportNetworkError } = await import("./network-health.js");
@@ -211,6 +198,7 @@ export function createLLMClient(config: Config): LLMClient {
                     platform: PLATFORM,
                     skillSlugs: params.skillSlugs || [],
                     systemPromptOverride: params.systemPrompt || undefined,
+                    serverPromptSlug: serverPromptSlug || undefined,
                     // Grammar-constrained decoding for JSON-expecting calls.
                     // Mutually exclusive with tool use — the server drops it
                     // when tools are present so the flag is safe to set in
@@ -218,29 +206,19 @@ export function createLLMClient(config: Config): LLMClient {
                     response_format: responseFormat === "json_object" ? { type: "json_object" } : undefined,
                 };
 
-                // Model-aware provider routing
-                if (model.startsWith("anthropic/") && !isThinking) {
-                    requestBody.provider = { order: ["Google Vertex"] };
-                }
-
                 // Add reasoning config for thinking models
                 if (isThinking) {
                     const apiEffort = effort === "max" ? "high" : effort;
                     requestBody.reasoning = { effort: apiEffort };
                 }
 
-            // ── Fast failover: on first error, immediately try next model ──
-            // Build fallback chain: primary → up to 4 fallbacks from router
+            // Exclude already-tried models so each hop surfaces a new provider.
             const modelsToTry: string[] = [model];
-            let fb = await getModelFallback(model);
-            if (fb && !modelsToTry.includes(fb)) modelsToTry.push(fb);
-            if (fb) {
-                const fb2 = await getModelFallback(fb);
-                if (fb2 && !modelsToTry.includes(fb2)) modelsToTry.push(fb2);
-                if (fb2) {
-                    const fb3 = await getModelFallback(fb2);
-                    if (fb3 && !modelsToTry.includes(fb3)) modelsToTry.push(fb3);
-                }
+            for (let i = 0; i < 3; i++) {
+                const seed = modelsToTry[modelsToTry.length - 1];
+                const next = await getModelFallback(seed, modelsToTry);
+                if (!next || modelsToTry.includes(next)) break;
+                modelsToTry.push(next);
             }
             let lastError: Error | null = null;
 
@@ -258,11 +236,7 @@ export function createLLMClient(config: Config): LLMClient {
                 }
 
                 // Rebuild body for this model (fallbacks drop provider constraints)
-                const modelBody = {
-                    ...requestBody,
-                    model: currentModel,
-                    provider: isFallback ? undefined : requestBody.provider,
-                };
+                const modelBody = { ...requestBody, model: currentModel };
 
                 try {
                     let sessionToken = await getSessionToken();
@@ -296,8 +270,11 @@ export function createLLMClient(config: Config): LLMClient {
                         });
                         if (!retryResponse.ok) {
                             const errData = await retryResponse.json().catch(() => ({}));
+                            const raw = (errData as any).error;
+                            const rawStr = typeof raw === "string" ? raw : raw ? JSON.stringify(raw) : `HTTP ${retryResponse.status}`;
+                            const { sanitizeSecrets } = await import("./security/secrets-sanitizer.js");
                             throw Object.assign(
-                                new Error((errData as any).error || `HTTP ${retryResponse.status}`),
+                                new Error(sanitizeSecrets(rawStr).sanitized.slice(0, 500)),
                                 { status: retryResponse.status }
                             );
                         }
@@ -312,10 +289,13 @@ export function createLLMClient(config: Config): LLMClient {
                     if (!response.ok) {
                         const errData = await response.json().catch(() => ({}));
                         const errMsg = (errData as any).error?.message || (errData as any).error || `HTTP ${response.status}`;
-                        const errStr = typeof errMsg === 'string' ? errMsg.slice(0, 200) : JSON.stringify(errMsg).slice(0, 200);
+                        const rawStr = typeof errMsg === "string" ? errMsg : JSON.stringify(errMsg);
+                        const { sanitizeSecrets } = await import("./security/secrets-sanitizer.js");
+                        const safe = sanitizeSecrets(rawStr).sanitized;
+                        const errStr = safe.slice(0, 200);
                         console.error(`  ❌ ${MODEL_DISPLAY[currentModel] || currentModel} failed (${response.status}): ${errStr}`);
                         throw Object.assign(
-                            new Error(typeof errMsg === 'string' ? errMsg : JSON.stringify(errMsg)),
+                            new Error(safe.slice(0, 500)),
                             { status: response.status }
                         );
                     }

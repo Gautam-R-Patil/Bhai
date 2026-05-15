@@ -2,16 +2,16 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import type { ToolDefinition } from "../get-current-time.js";
 import type { LLMClient } from "../../llm.js";
+import { deliverToActiveChannel } from "../channel-send.js";
+import type { ToolDefinition } from "../get-current-time.js";
+import { clearAssetCache, resolveAssets } from "./assets.js";
+import { applyAutoFixes, auditOutline } from "./design-rules.js";
+import { applyPatch, generatePatch } from "./modify.js";
 import { generateOutline } from "./outline.js";
+import { renderHtml } from "./render-html.js";
 import { renderPptx } from "./render-pptx.js";
 import { listThemeIds } from "./themes.js";
-import { resolveAssets, clearAssetCache } from "./assets.js";
-import { auditOutline, applyAutoFixes } from "./design-rules.js";
-import { generatePatch, applyPatch } from "./modify.js";
-import { renderHtml } from "./render-html.js";
-import { deliverToActiveChannel } from "../channel-send.js";
 import type { DeckArchetype, PresentationOutline, Slide } from "./types.js";
 
 // ── LLM client injection (follows swarm-tool.ts pattern) ──
@@ -41,28 +41,20 @@ export function saveOutline(outline: PresentationOutline): void {
 // get an image. Keeps decks from becoming image-soup.
 
 async function resolveSlideImages(outline: PresentationOutline): Promise<void> {
-    const imageArchetypes = new Set<Slide["archetype"]>([
-        "image-full-bleed",
-        "content",
-        "section-divider",
-    ]);
+    const imageArchetypes = new Set<Slide["archetype"]>(["image-full-bleed", "content", "section-divider"]);
 
     const requests = outline.slides
         .map((slide, i) => ({ slide, i }))
-        .filter(({ slide }) =>
-            slide.imagePrompt &&
-            slide.imagePrompt.trim().length > 0 &&
-            imageArchetypes.has(slide.archetype),
+        .filter(
+            ({ slide }) =>
+                slide.imagePrompt && slide.imagePrompt.trim().length > 0 && imageArchetypes.has(slide.archetype),
         )
         .map(({ slide, i }) => ({
             id: String(i),
             opts: {
                 prompt: slide.imagePrompt ?? "",
                 slideTitle: slide.title,
-                aspectRatio:
-                    slide.archetype === "image-full-bleed"
-                        ? ("16:9" as const)
-                        : ("4:3" as const),
+                aspectRatio: slide.archetype === "image-full-bleed" ? ("16:9" as const) : ("4:3" as const),
             },
         }));
 
@@ -80,9 +72,7 @@ async function resolveSlideImages(outline: PresentationOutline): Promise<void> {
             slide.imagePath = asset.path;
             if (asset.attribution) {
                 slide.speakerNotes =
-                    (slide.speakerNotes ?? "") +
-                    (slide.speakerNotes ? "\n\n" : "") +
-                    `Image: ${asset.attribution}`;
+                    (slide.speakerNotes ?? "") + (slide.speakerNotes ? "\n\n" : "") + `Image: ${asset.attribution}`;
             }
             resolved++;
         }
@@ -104,7 +94,8 @@ export const createPresentation: ToolDefinition = {
                 properties: {
                     prompt: {
                         type: "string",
-                        description: "What the presentation should be about. Include the core topic, any key facts/data to cover, and the goal (e.g. 'pitch deck for an AI pet-collar startup raising seed, 10 slides, emphasize market size').",
+                        description:
+                            "What the presentation should be about. Include the core topic, any key facts/data to cover, and the goal (e.g. 'pitch deck for an AI pet-collar startup raising seed, 10 slides, emphasize market size').",
                     },
                     num_slides: {
                         type: "number",
@@ -112,7 +103,8 @@ export const createPresentation: ToolDefinition = {
                     },
                     audience: {
                         type: "string",
-                        description: "Who the deck is for (e.g. 'investors', 'engineering team', 'executives'). Influences tone and depth.",
+                        description:
+                            "Who the deck is for (e.g. 'investors', 'engineering team', 'executives'). Influences tone and depth.",
                     },
                     tone: {
                         type: "string",
@@ -121,7 +113,8 @@ export const createPresentation: ToolDefinition = {
                     archetype: {
                         type: "string",
                         enum: ["pitch", "sales", "research", "qbr", "training", "keynote", "board", "general"],
-                        description: "Deck type — 'pitch' for fundraising, 'sales' for customer-facing, 'research' for findings, 'qbr' for quarterly review, 'training' for educational, 'keynote' for product launch, 'board' for board meeting, 'general' otherwise.",
+                        description:
+                            "Deck type — 'pitch' for fundraising, 'sales' for customer-facing, 'research' for findings, 'qbr' for quarterly review, 'training' for educational, 'keynote' for product launch, 'board' for board meeting, 'general' otherwise.",
                     },
                     theme: {
                         type: "string",
@@ -129,7 +122,8 @@ export const createPresentation: ToolDefinition = {
                     },
                     skip_images: {
                         type: "boolean",
-                        description: "Skip image generation to make the render faster (title-and-text deck). Defaults to false.",
+                        description:
+                            "Skip image generation to make the render faster (title-and-text deck). Defaults to false.",
                     },
                 },
                 required: ["prompt"],
@@ -176,7 +170,9 @@ export const createPresentation: ToolDefinition = {
             }
             const audit = auditOutline(outline);
             if (!audit.passes) {
-                console.log(`  ⚠️  Design audit: ${audit.slideIssues.length} slides with issues, ${audit.warnings.length} deck warnings`);
+                console.log(
+                    `  ⚠️  Design audit: ${audit.slideIssues.length} slides with issues, ${audit.warnings.length} deck warnings`,
+                );
             }
 
             saveOutline(outline);
@@ -213,9 +209,9 @@ export const createPresentation: ToolDefinition = {
                 design_audit: audit.passes
                     ? "pass"
                     : {
-                        slide_issues: audit.slideIssues,
-                        deck_warnings: audit.warnings,
-                    },
+                          slide_issues: audit.slideIssues,
+                          deck_warnings: audit.warnings,
+                      },
                 delivered: delivery.delivered,
                 delivered_on: delivery.channel ?? undefined,
                 tip: delivery.delivered
@@ -238,7 +234,8 @@ export const listPresentations: ToolDefinition = {
         type: "function",
         function: {
             name: "list_presentations",
-            description: "List presentations created in the current session. Returns their IDs, titles, slide counts, and file paths. Useful before calling export_presentation or modify_presentation on a specific deck.",
+            description:
+                "List presentations created in the current session. Returns their IDs, titles, slide counts, and file paths. Useful before calling export_presentation or modify_presentation on a specific deck.",
             parameters: { type: "object", properties: {}, required: [] },
         },
     },
@@ -263,17 +260,20 @@ export const modifyPresentation: ToolDefinition = {
         type: "function",
         function: {
             name: "modify_presentation",
-            description: "Modify an existing presentation created earlier in this session. Takes the outline_id (from create_presentation or list_presentations) and a natural-language instruction describing the changes. The agent will translate the instruction into concrete edits — change titles, bullets, layouts, add/remove slides, switch themes — and re-render the deck. Use when the user asks to edit, change, update, tweak, fix, or add to an existing deck.",
+            description:
+                "Modify an existing presentation created earlier in this session. Takes the outline_id (from create_presentation or list_presentations) and a natural-language instruction describing the changes. The agent will translate the instruction into concrete edits — change titles, bullets, layouts, add/remove slides, switch themes — and re-render the deck. Use when the user asks to edit, change, update, tweak, fix, or add to an existing deck.",
             parameters: {
                 type: "object",
                 properties: {
                     outline_id: {
                         type: "string",
-                        description: "The id of the presentation to modify (from create_presentation's response or list_presentations).",
+                        description:
+                            "The id of the presentation to modify (from create_presentation's response or list_presentations).",
                     },
                     instruction: {
                         type: "string",
-                        description: "What to change, in natural language. Examples: 'Change slide 3 title to say revenue grew 42% YoY', 'Add a closing CTA slide after slide 7', 'Remove slide 5', 'Switch the theme to midnight', 'Turn slide 4 into a bento-3 layout', 'Make the bullets on slide 2 more concise'.",
+                        description:
+                            "What to change, in natural language. Examples: 'Change slide 3 title to say revenue grew 42% YoY', 'Add a closing CTA slide after slide 7', 'Remove slide 5', 'Switch the theme to midnight', 'Turn slide 4 into a bento-3 layout', 'Make the bullets on slide 2 more concise'.",
                     },
                     format: {
                         type: "string",
@@ -353,7 +353,9 @@ export const modifyPresentation: ToolDefinition = {
                 format,
                 changes_made: changes,
                 auto_fixes: autoFixes.length > 0 ? autoFixes : undefined,
-                design_audit: audit.passes ? "pass" : { slide_issues: audit.slideIssues, deck_warnings: audit.warnings },
+                design_audit: audit.passes
+                    ? "pass"
+                    : { slide_issues: audit.slideIssues, deck_warnings: audit.warnings },
                 warnings: warnings.length > 0 ? warnings : undefined,
                 delivered: delivery.delivered,
                 delivered_on: delivery.channel ?? undefined,
@@ -372,13 +374,15 @@ export const exportPresentation: ToolDefinition = {
         type: "function",
         function: {
             name: "export_presentation",
-            description: "Re-render an existing presentation in a different format (PPTX or HTML/Reveal.js). Use after create_presentation or modify_presentation when the user asks for the deck in a different format. The same outline produces all formats — no quality loss.",
+            description:
+                "Re-render an existing presentation in a different format (PPTX or HTML/Reveal.js). Use after create_presentation or modify_presentation when the user asks for the deck in a different format. The same outline produces all formats — no quality loss.",
             parameters: {
                 type: "object",
                 properties: {
                     outline_id: {
                         type: "string",
-                        description: "The id of the presentation to export (from create_presentation's response or list_presentations).",
+                        description:
+                            "The id of the presentation to export (from create_presentation's response or list_presentations).",
                     },
                     format: {
                         type: "string",

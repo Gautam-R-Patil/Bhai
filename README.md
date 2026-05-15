@@ -9,7 +9,7 @@
 
 ## Overview
 
-**A.T.L.A.S** is an autonomous personal AI agent engineered for people who want more than a chatbot. It is a continuously running process that takes action, remembers what happened, reasons about what to do next, and keeps working while you sleep. The runtime combines a Node.js/TypeScript orchestration surface (~385 `.ts` files) with a native Rust performance layer (55 `.rs` modules) compiled through napi-rs for SIMD-accelerated vector math, routing, and memory operations.
+**A.T.L.A.S** is an autonomous personal AI agent engineered for people who want more than a chatbot. It is a continuously running process that takes action, remembers what happened, reasons about what to do next, and keeps working while you sleep. The runtime combines a Node.js/TypeScript orchestration surface (~650 `.ts` files across src/) with a native Rust performance layer (64 `.rs` modules) compiled through napi-rs for SIMD-accelerated vector math, routing, memory operations, and cross-OS accessibility-tree walking.
 
 ATLAS is built for operators, founders, and researchers who need a single system that can drive a browser, write and ship code, run deep research, orchestrate multi-agent swarms, manage a marketing funnel across nine social platforms, and hold a real conversation across Telegram, Discord, Slack, Matrix, WhatsApp, email, and a native desktop overlay — all from one codebase, one memory, and one identity.
 
@@ -22,18 +22,20 @@ Security and privacy are foundational rather than bolted on. Every LLM call is p
 ## Feature Highlights
 
 - **Multi-Channel Presence** — First-class integrations with Telegram, Discord, Slack, Matrix, WhatsApp (Baileys), IMAP/SMTP email, a native Electron desktop overlay, a WebSocket canvas surface, and an embeddable web widget.
-- **Organic Memory** — 39 memory modules spanning core store, knowledge graph, HNSW vector index, episodic milestones, emotional trajectory, traits, identity, session, relationship, world/user/self models, working memory, Hopfield associative recall, active inference, prospective, counterfactual, temporal cache, and nightly dream replay.
-- **Native Rust Acceleration** — 55 Rust modules (SIMD via `wide`/`simsimd`, `rayon` parallelism) delivering ~15-20x speedup on vector ops, model routing, HNSW search, swarm/mesh orchestration, metacognition, MCTS, and the harness optimizer.
-- **Semantic Tool Selection** — MiniLM 384-dim embeddings route user intent across 20+ tool categories and 100+ tool implementations. A `request_tools` meta-tool lets the agent expand its surface mid-task.
+- **Organic Memory** — 49 memory modules spanning core store, knowledge graph, HNSW vector index, episodic milestones, emotional trajectory, traits, identity, session, relationship, world/user/self models, working memory, Hopfield associative recall, active inference, prospective, counterfactual, temporal cache, project memory, Memory Studio insights, and nightly dream replay.
+- **Native Rust Acceleration** — 64 Rust modules (SIMD via `wide`/`simsimd`, `rayon` parallelism) delivering ~15-20x speedup on vector ops, model routing, HNSW search, swarm/mesh orchestration, metacognition, MCTS, the harness optimizer, secrets sanitization, and cross-OS AX tree walking.
+- **Vision Navigation** — Tiered Perception Cascade (`src/screen/`) for autonomous computer use. Capability detector auto-picks one of three profiles (Lite/Standard/Full) on boot; perception-router walks AX → OmniParser → UI-TARS with confidence gating; persistent click-memory + per-monitor drift calibration learn across sessions. `os_smart_click` is the agent's primary GUI interaction tool.
+- **Semantic Tool Selection** — MiniLM 384-dim embeddings route user intent across 20+ tool categories and 120+ tool implementations. A `request_tools` meta-tool lets the agent expand its surface mid-task.
 - **Four-Tier Orchestration** — Sub-Agent (specialized roles), Swarm (decomposition + evaluator-optimizer), Mesh (parallel DAG with layered recovery), Long-Task (multi-phase checkpointed execution up to 100 phases).
 - **Deep Research** — Three-phase research engine, 12 pluggable search backends, up to 500 sources per run, hypothesis generation and testing, source credibility scoring, relevance reranking.
 - **E2E Encrypted LLM Proxy** — ECDH P-256 + AES-256-GCM on top of HTTPS; 24h session tokens; atomic credit deduction; system prompts assembled server-side.
-- **Proactive Behaviors** — Heartbeat engine with per-channel postures (calm / active / ambient), nightly dream replay during detected sleep windows, quiet-hours guard, urgency bypass rules, shadow mode for dry runs.
-- **Video Studio** — Project-scoped video pipeline with AI edit planning, scene detection, beat sync, FFmpeg render stage, and reproducible hash-addressed inputs.
+- **Proactive Behaviors** — Heartbeat engine with per-channel postures (calm / active / ambient), nightly dream replay during detected sleep windows, quiet-hours guard, urgency bypass rules, shadow mode for dry runs. 50+ files spanning observer pipeline, composer fast-path, intent sources (calendar, news, stale email, weather, tasks, source gates), telemetry, and the proactive inbox.
+- **Memory Studio** — Interactive graph viewer with edit/pin/forget controls and AI-generated insights over the local memory database (`src/memory/studio-graph.ts`, `studio-insights.ts`).
+- **Video Studio** — Project-scoped video pipeline (25 files) with AI edit planning, scene detection, beat sync, FFmpeg render stage, and reproducible hash-addressed inputs.
 - **Meta-Harness Self-Optimizer** — 30+ tunable dimensions (weights, thresholds, k-values, phase ratios) tuned via NSGA-II Pareto search, GP surrogate modeling, and TextGrad-style prompt refinement.
 - **A2A Protocol** — Google Agent-to-Agent protocol for inter-agent delegation and negotiation across trusted peers.
 - **CAPTCHA Solver** — Four-tier ladder: passive detection, audio-challenge bypass, NopeCHA, 2captcha fallback.
-- **Voice Mode** — Local ASR/TTS, Whisper transcription, ElevenLabs TTS, Gemini Live voice, OpenAI Realtime voice, wake-word detection, Telegram voice-note pipeline.
+- **Voice Mode** — Local ASR/TTS (Whisper, Kokoro), ElevenLabs TTS, Gemini Live voice, OpenAI Realtime voice, libfvad-backed barge-in detection (opt-in), wake-word detection, Telegram voice-note pipeline.
 - **Marketing Brain** — Native integrations with Instagram, LinkedIn, TikTok, X/Twitter, Facebook Pages, YouTube, Reddit, Product Hunt, plus content calendars, cold outreach, lead finding, and trend research.
 - **Coding Pipeline** — Design-doc gating, LSP integration, per-repo codebase index (SQLite + tree-sitter + FTS5 BM25), agent git worktrees for parallel coders, code critic (compile/test/lint/SAST), and walkthrough generation.
 
@@ -53,17 +55,18 @@ Security and privacy are foundational rather than bolted on. Every LLM call is p
 │  Credit gate → Context pruning → 12-system memory retrieval (parallel)       │
 │  → Model router → Semantic tool selection → LLM call → Tool exec             │
 │  → Cascade escalation → Completion check  [max 200 iter · mid-session gate]  │
-└───┬────────────┬────────────┬────────────┬────────────┬──────────────────────┘
-    │            │            │            │            │
-┌───▼────┐ ┌─────▼─────┐ ┌────▼────┐ ┌────▼─────┐ ┌─────▼──────┐
-│ Memory │ │  Agents   │ │  Tools  │ │ Research │ │  Proactive │
-│ 39 mod │ │  30 mod   │ │ 100+ t  │ │  11 mod  │ │  28 mod    │
-└────────┘ └───────────┘ └─────────┘ └──────────┘ └────────────┘
-    │            │            │            │            │
-┌───▼────────────▼────────────▼────────────▼────────────▼──────────────────────┐
-│                     Native Rust Layer (55 .rs modules)                       │
+└─┬──────────┬──────────┬──────────┬──────────┬──────────┬────────────────────┘
+  │          │          │          │          │          │
+┌─▼────┐ ┌───▼───┐ ┌────▼────┐ ┌───▼────┐ ┌───▼─────┐ ┌──▼──────┐
+│Memory│ │Agents │ │  Tools  │ │Research│ │Proactive│ │ Screen  │
+│49 mod│ │30+ mod│ │ 120+ t  │ │ 11 mod │ │ 50+ mod │ │ 10 mod  │
+└──────┘ └───────┘ └─────────┘ └────────┘ └─────────┘ └─────────┘
+   │         │          │          │          │           │
+┌──▼─────────▼──────────▼──────────▼──────────▼───────────▼───────────────────┐
+│                     Native Rust Layer (64 .rs modules)                       │
 │  SIMD vectors · Model router · HNSW · Swarm/Mesh · Metacognition · MCTS      │
 │  Harness optimizer · Hopfield · Active inference · Credibility · Proactive   │
+│  AX walker · Secrets sanitizer · PCM VAD · Spreading · Query classifier      │
 └─────────────────────────────────────────────────────────────────────────────┘
     │
 ┌───▼──────────────────────────────────────────────────────────────────────────┐
@@ -78,18 +81,22 @@ Security and privacy are foundational rather than bolted on. Every LLM call is p
 ## Source Layout
 
 ```
-src/                                  # ~385 TypeScript files
+src/                                  # ~650 TypeScript files (incl. tests)
 ├── index.ts                          # Ordered + parallelized boot sequence
 ├── agent.ts                          # Core agent loop (runAgent)
 ├── llm.ts                            # LLM client (proxied through Convex)
 ├── llm-middleware.ts                 # Pre/post LLM middleware layer
-├── llm-cache.ts                      # Semantic response cache (cosine > 0.95)
+├── llm-cache.ts                      # Semantic response cache (cosine > 0.88)
+├── llm-parsers/                      # 6 files — provider-specific response parsers
 ├── crypto-transport.ts               # ECDH P-256 + AES-256-GCM encrypted fetch
+├── crypto-kdf.ts                     # Machine-stable secret KDF
+├── context-scrubber.ts               # Secrets-scrubbing pass for outbound payloads
 ├── model-router.ts                   # Model tier selection (wraps native Rust)
 ├── tool-router.ts                    # Semantic tool selection via MiniLM
 ├── language.ts                       # Adaptive language detection & matching
 ├── alive-ux.ts                       # Centralized personality + phrasing
 ├── network-health.ts                 # Online/degraded/offline monitor
+├── account-guard.ts session.ts       # Credit/session middleware
 ├── telegram.ts | discord.ts | slack.ts | matrix.ts | whatsapp.ts | email.ts
 │
 ├── agents/                           # 30 files — four-tier orchestration
@@ -100,66 +107,95 @@ src/                                  # ~385 TypeScript files
 │   ├── textgrad-refiner.ts self-editor.ts self-heal.ts
 │   ├── agent-worktree.ts             # Per-coder git worktree isolation
 │   ├── code-action-agent.ts computer-use-agent.ts
+│   ├── circuit-breaker.ts human-interrupt.ts tool-output-offload.ts a2a.ts
 │   └── error-recovery.ts handoff.ts blackboard.ts decomposition-library.ts
 │
-├── memory/                           # 39 files — organic memory system
+├── memory/                           # 49 files — organic memory system
 │   ├── sqlite.ts                     # Primary store (remember / recall / core)
-│   ├── knowledge-graph.ts vector-index.ts embeddings.ts
+│   ├── knowledge-graph.ts vector-index.ts embeddings.ts embedding-cache.ts
+│   ├── resolve-embedding.ts memory-tiers.ts fts5-query.ts
 │   ├── reflection.ts                 # Nightly dream replay + decay
 │   ├── emotional.ts episodic.ts identity.ts traits.ts session.ts
-│   ├── relationship.ts self-state.ts self-model.ts goals.ts
-│   ├── working-memory.ts hopfield-memory.ts
+│   ├── relationship.ts self-state.ts self-model.ts goals.ts anticipation.ts briefing.ts
+│   ├── working-memory.ts hopfield-memory.ts spreading-activation.ts
 │   ├── world-model.ts user-model.ts active-inference.ts counterfactual.ts prospective.ts
-│   ├── sleep-gate.ts surprise-gate.ts reranker.ts strategy-library.ts
-│   ├── codebase-sidecar.ts codebase-merkle.ts codebase-index.ts
+│   ├── sleep-gate.ts surprise-gate.ts reranker.ts strategy-library.ts self-evolving.ts
+│   ├── codebase-sidecar.ts codebase-merkle.ts codebase-index.ts code-parse/
+│   ├── multimodal.ts multimodal-embedding.ts project-memory.ts memory-informed-planning.ts
+│   ├── studio-graph.ts studio-insights.ts    # Memory Studio (graph viewer + AI insights)
+│   ├── supabase.ts                            # Optional cloud sync (off by default)
 │   └── classifier.ts context-pruning.ts consolidation.ts temporal-cache.ts
 │
-├── tools/                            # 100+ tool implementations (~60 files)
-│   ├── browser/                      # 15 files — Playwright + Chrome Extension backends
+├── screen/                           # 10 files — Vision Navigation subsystem
+│   ├── capability-detector.ts        # Picks Lite/Standard/Full profile at boot
+│   ├── perception-router.ts          # Tiered Perception Cascade (AX → OmniParser → UI-TARS)
+│   ├── ax-dump.ts                    # Cross-OS accessibility tree dumping (TS + native fallback)
+│   ├── omniparser.ts ui-tars.ts      # Vision-model integrations
+│   ├── click-memory.ts               # Persistent learnt-click recall (data/click-memory.db)
+│   ├── drift-calibration.ts          # Per-monitor affine drift correction
+│   ├── outcome-classifier.ts         # Click-success vs miss classification feedback
+│   ├── computer-action.ts            # Structured action schema (mouse/keyboard/scroll)
+│   └── screen-dimensions.ts          # Multi-monitor coord-system reconciliation
+│
+├── tools/                            # 126 files — tool implementations
+│   ├── browser/                      # ~15 files — Playwright + Chrome Extension backends
 │   ├── coding/                       # 25+ files — edit/write/grep/glob/lsp/git/codebase
+│   ├── os-smart-click.ts             # Primary GUI click tool (uses perception-router)
+│   ├── os-computer-action.ts os-grounding.ts os-inspect.ts
+│   ├── platform.ts platform-info.ts platform-bridge.ts macos.ts linux.ts windows.ts
 │   ├── shell.ts files.ts memory-tools.ts deep-research.ts
-│   ├── github-api.ts google-api.ts spotify.ts apple-notes.ts
-│   ├── generate-image.ts blender.ts audio-visualize.ts
-│   └── tool-intelligence.ts tool-fabricator.ts create-tool.ts
+│   ├── github-api.ts google-api.ts spotify.ts apple-notes.ts sonos.ts
+│   ├── generate-image.ts blender.ts audio-visualize.ts video-studio.ts
+│   └── tool-intelligence.ts create-tool.ts repo-map.ts
 │
 ├── research/                         # 11 files — deep research engine
-├── harness/                          # Meta-harness registry + optimizer integration
-├── video-studio/                     # Project-scoped video pipeline
-├── marketing/                        # 9-platform marketing brain
-├── proactive/                        # 28 files — heartbeat, dreaming, composer, dispatch
-├── planning/                         # MCTS, hierarchical planner, logic verifier
+├── harness/                          # 17 files — Meta-harness registry + optimizer
+├── video-studio/                     # 25 files — Project-scoped video pipeline
+├── marketing/                        # 29 files — 9-platform marketing brain
+├── proactive/                        # 58 files — heartbeat, dreaming, composer, dispatch, inbox, monitors, sources
+├── planning/                         # 4 files — MCTS, hierarchical planner, logic verifier
 ├── execution/                        # Speculative execution patterns
-├── social/                           # Theory of mind, pragmatics, emotion detection
-├── models/                           # Local ASR/TTS/OCR/vision + FunctionGemma
-├── voice/                            # TTS, transcription, live voice, wake-word
+├── social/                           # emotion-detector.ts (lexicon + punctuation heuristic)
+├── models/                           # 5 files — Local ASR/TTS/OCR/vision + FunctionGemma
+├── voice/                            # 4 files + live/ (16) — TTS, transcription, live voice
+├── documents/                        # 10 files — block-based doc renderer + templates
 ├── config/                           # Keys, paths, protected config loader
-├── security/                         # Sandboxing, allowlist, secrets, Docker
-├── mcp/                              # Model Context Protocol client + gitmcp bridge
-├── plugins/                          # Plugin registry
-├── skills/                           # Skill loader (frontmatter markdown)
-├── store/                            # Marketplace + hot-reload + sideload
+├── security/                         # 5 files — Sandboxing, allowlist, secrets, Docker
+├── mcp/                              # 2 files — Model Context Protocol + gitmcp bridge
+├── hooks/                            # 3 files — Built-in pre/post tool hooks
+├── cron/                             # 3 files — Schedule parser + store + tick
+├── skills/                           # 3 files — Skill loader (frontmatter markdown)
+├── store/                            # 6 files — Marketplace + hot-reload + sideload
 ├── canvas/                           # WebSocket canvas channel
 ├── commands/                         # Slash command parsing
-├── location/                         # GPS → Wi-Fi → IP fallback
+├── location/                         # 7 files — GPS → Wi-Fi → IP fallback
 ├── notifications/                    # Web-push delivery
 ├── widget/                           # Embeddable chat widget IIFE
 ├── setup/                            # Wizard + profile seeding
-└── prompts/                          # Dynamic prompt assembly
+└── prompts/                          # 4 files — Dynamic prompt assembly + watermark
 
-native/src/                           # 55 Rust modules (napi-rs + SIMD)
+native/src/                           # 64 Rust modules (napi-rs + SIMD)
 ├── lib.rs                            # napi-rs entry point
 ├── vector.rs batch.rs                # SIMD-accelerated vector math
-├── model_router.rs tool_router.rs tool_analytics.rs
-├── hnsw.rs spreading.rs consolidation.rs temporal_cache.rs
+├── model_router.rs tool_router.rs tool_analytics.rs query_classifier.rs
+├── hnsw.rs spreading.rs consolidation.rs temporal_cache.rs context_pruning.rs
 ├── memory_state.rs memory_tiers.rs session_memory.rs knowledge_graph.rs
+├── traits_engine.rs task_learnings.rs reflection_core.rs
 ├── swarm.rs mesh.rs sub_agent.rs long_task.rs agent_core.rs
 ├── metacognition.rs mcts_engine.rs logic_engine.rs active_inference.rs
 ├── hopfield.rs working_memory.rs sleep_gate.rs surprise_gate.rs
 ├── world_model.rs user_model.rs credibility_model.rs
 ├── inner_thoughts.rs goal_engine.rs habit_detector.rs notification_tracker.rs
 ├── proactive_intent.rs proactive_scheduler.rs proactive_monitor.rs
+├── proactive_calendar.rs proactive_news.rs proactive_stale_email.rs
+├── proactive_tasks.rs proactive_weather.rs proactive_source_gate.rs
 ├── browser_agent.rs browser_guard.rs chrome_bridge.rs
+├── ax_walker.rs                      # Cross-OS AX tree walker (opt-in via ATLAS_NATIVE_AX)
+├── pcm_vad.rs                        # libfvad-backed barge-in detection (opt-in, cargo feature `vad`)
+├── secrets_sanitizer.rs              # Multi-pattern outbound secrets scrubber (default-ON)
 ├── harness_optimizer.rs              # NSGA-II + GP surrogate
+├── research_engine.rs info_gain.rs citation_graph.rs skill_scorer.rs
+├── pattern_speculator.rs process_reward.rs prompt_evaluator.rs
 └── security.rs ip_guard.rs
 
 convex/                               # Serverless backend
@@ -169,12 +205,16 @@ convex/                               # Serverless backend
 └── store/                            # items, submissions, developers, installs, reviews
 
 desktop/                              # Electron app (setup wizard, panel, tray)
+├── installer/                        # Phase runner — Ollama, Python venv, vision deps
+├── wizard/                           # First-run wizard (incl. vision-intelligence tier step)
+└── components/ detection/ migration/ hostinger-upload/
+
 overlay-app/                          # Native macOS Swift overlay
 chrome-extension/                     # User-side Chrome automation bridge
 portals/                              # Next.js admin-panel + developer-portal
 prompts/                              # Source-of-truth for seeded system prompts
 skills/                               # Source-of-truth for seeded skills
-scripts/                              # Swift helpers, Convex seeds, hotkeys
+scripts/                              # Swift helpers (OCR, GPS, AX dump), Convex seeds, hotkeys
 ```
 
 ---
@@ -183,7 +223,7 @@ scripts/                              # Swift helpers, Convex seeds, hotkeys
 
 ### LLM Client & Transport
 
-The `LLMClient` is created once at boot by `createLLMClient(config)` and dependency-injected into every subsystem (agent, swarm, research, memory writes, marketing, etc.). `.chat()` builds messages, adds dynamic context (clock, widget hints), and POSTs to `${convexSiteUrl}/api/llm/chat` via `encryptedFetch()`, which runs ECDH P-256 key exchange on first use and wraps every subsequent request body in AES-256-GCM. The server prepends its own system prompt from the `system_prompts` table before forwarding to OpenRouter. Client-side layers add a semantic response cache (cosine > 0.95, 10 min TTL, 200-entry LRU) and adaptive language matching across Devanagari, CJK, Cyrillic, Arabic, Hangul, Thai, Latin scripts, and Romanized Hindi.
+The `LLMClient` is created once at boot by `createLLMClient(config)` and dependency-injected into every subsystem (agent, swarm, research, memory writes, marketing, etc.). `.chat()` builds messages, adds dynamic context (clock, widget hints), and POSTs to `${convexSiteUrl}/api/llm/chat` via `encryptedFetch()`, which runs ECDH P-256 key exchange on first use and wraps every subsequent request body in AES-256-GCM. The server prepends its own system prompt from the `system_prompts` table before forwarding to OpenRouter. Client-side layers add a semantic response cache (cosine ≥ 0.88, 10 min TTL, 200-entry LRU; bypassed for tool-call and thinking-mode requests) and adaptive language matching across Devanagari, CJK, Cyrillic, Arabic, Hangul, Thai, Latin scripts, and Romanized Hindi.
 
 ### Model Router
 
@@ -246,6 +286,18 @@ Per-channel posture drives delivery cadence. Each channel maps to one of three p
 | ambient | 1       | 360 min | 240 min   | yes           | yes           |
 
 Defaults: WhatsApp/Discord/Slack/Matrix → calm; Telegram → active; Overlay/Email → ambient. Config in `data/proactive-config.json`, reloads at runtime. Night windows (default 22:30-07:00) throttle deliveries; `urgentAllowedAfter` sets the earliest non-urgent hour. Kill-switches per source and per channel; shadow mode composes and logs without delivering.
+
+### Vision Navigation
+
+Autonomous GUI control without depending on a single cloud VLM. `src/screen/capability-detector.ts` profiles the host machine at boot (RAM, CPU, GPU class, free disk, Ollama presence) and picks one of three profiles:
+
+| Profile  | When picked                              | Stack |
+|----------|------------------------------------------|-------|
+| Lite     | Low-spec Windows / no GPU / Ollama missing | AX tree only |
+| Standard | Typical laptop with ≥8 GB RAM             | AX + OmniParser captions |
+| Full     | Apple-silicon or discrete GPU + Ollama    | AX + OmniParser + UI-TARS grounding |
+
+The Tiered Perception Cascade (`perception-router.ts`) walks `click-memory recall → AX exact → AX fuzzy → OmniParser → UI-TARS` and stops at the first tier whose confidence clears the gate. Successful clicks feed `click-memory.ts` (SQLite at `data/click-memory.db`) and `drift-calibration.ts` (per-monitor affine correction) so the agent gets faster and more accurate over time. `os_smart_click` is the primary GUI tool the agent reaches for; legacy coordinate tools remain available but are demoted in the tool-router prompt. Override the picked profile with `ATLAS_VISION_PROFILE=lite|standard|full`; kill-switches: `ATLAS_NO_CLICK_MEMORY`, `ATLAS_NO_DRIFT_CALIBRATION`, `ATLAS_NATIVE_AX` (opt-in Rust walker).
 
 ### Video Studio
 
@@ -318,6 +370,11 @@ OpenRouter and Convex keys are bundled with the app — end users do not configu
 | `HF_TOKEN` | No | HuggingFace token (gated embedding models) |
 | `ATLAS_EMBEDDING_MODEL` | No | `minilm` (default) or `nomic` |
 | `LIVE_VOICE_NAME` / `LIVE_VOICE_BACKEND` | No | Voice preferences (Gemini/OpenAI/hybrid) |
+| `ATLAS_VISION_PROFILE` | No | Override capability-detector pick: `lite` / `standard` / `full` |
+| `ATLAS_NO_CLICK_MEMORY` | No | Disable persistent click-memory recall/record |
+| `ATLAS_NO_DRIFT_CALIBRATION` | No | Disable per-monitor drift correction |
+| `ATLAS_NATIVE_AX` | No | Opt-in Rust accessibility-tree walker (off by default) |
+| `ATLAS_NATIVE_VAD` / `ATLAS_VAD_MODE` | No | Opt-in libfvad barge-in (hybrid voice only); aggressiveness 0–3 |
 | `ATLAS_ENV` | No | `prod` to flip Convex client to production deployment |
 | `MEMORY_DEBUG` | No | Verbose memory subsystem logging |
 | `ATLAS_PROACTIVE_DISABLE` | No | Emergency global mute for proactive sends |
@@ -349,12 +406,14 @@ All runtime artifacts live under `data/` (gitignored). User-facing artifacts (de
 data/
 ├── memory.db                        # SQLite — all memory subsystems
 ├── codebase-index/<repo-hash>.db    # Per-repo tree-sitter + FTS5 index
+├── click-memory.db                  # Persistent learnt-click sites (Vision Nav)
 ├── long-tasks/                      # Checkpoint JSON for resumable tasks
 ├── research/                        # Saved research results (markdown)
 ├── browser-profile/                 # Persistent Playwright profile (cookies, cache)
 ├── agent-worktrees/<step-id>/       # Throwaway git worktrees for parallel coders
 ├── video-projects/vid_YYYY_MM_DD_<n>/  # Video Studio projects
 ├── harness/active/harness-config.json  # Active meta-harness tuning
+├── harness/runs/<run_id>/           # Per-run candidates, traces, leaderboard
 ├── proactive-config.json            # Per-channel postures, night windows
 ├── whatsapp-users/                  # Owners, contacts, personas, groups (JSON)
 ├── google-credentials.json + google-tokens/
@@ -375,6 +434,7 @@ data/
 | LLM providers | OpenRouter — Anthropic (Opus/Sonnet/Haiku 4.x), Google Gemini (2.x/3.x), Amazon Nova |
 | Embeddings | MiniLM 384-dim default, Nomic 768→256-dim optional (`@xenova/transformers`) |
 | Browser automation | Playwright 1.50 + Chrome Extension dual backend |
+| Vision-nav models | OmniParser (captions) + UI-TARS (grounding), runtime-detected via Ollama |
 | Desktop | Electron 40+ with `electron-builder`, `bytenode` protected modules |
 | Telegram | `grammy` 1.35 |
 | Discord | `discord.js` 14 + `@discordjs/voice` |
@@ -384,7 +444,7 @@ data/
 | Email | `imapflow` + `nodemailer` |
 | Code parsing | `tree-sitter` 0.22 (TypeScript default; Python/Rust/Go gated) + regex fallback |
 | MCP | `@modelcontextprotocol/sdk` 1.9 |
-| Voice | Whisper, ElevenLabs, Gemini Live, OpenAI Realtime, local ASR/TTS |
+| Voice | Whisper, Kokoro TTS, ElevenLabs, Gemini Live, OpenAI Realtime, libfvad (opt-in) |
 | Media | `ffmpeg-static`, `ffprobe-static`, `fluent-ffmpeg`, `sharp`, `pdf-lib`, `pptxgenjs`, `docx` |
 | Validation | `zod` 4 |
 | Encryption | AES-256-GCM + ECDH P-256 (native Rust + Node `crypto`) |

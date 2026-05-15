@@ -2,10 +2,10 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { writeFileSync, unlinkSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { preflight } from "./preflight.js";
 
@@ -19,7 +19,11 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-    try { rmSync(TMP, { recursive: true, force: true }); } catch { /* */ }
+    try {
+        rmSync(TMP, { recursive: true, force: true });
+    } catch {
+        /* */
+    }
 });
 
 describe("preflight — file-path tools", () => {
@@ -82,7 +86,7 @@ describe("preflight — URL tools", () => {
 
 describe("preflight — shell tools", () => {
     it("shell_exec: empty command → hint", () => {
-        expect(preflight("shell_exec", { command: "" })).toBeNull();  // empty is pickStringArg-skipped
+        expect(preflight("shell_exec", { command: "" })).toBeNull(); // empty is pickStringArg-skipped
         expect(preflight("shell_exec", { command: "   " })).not.toBeNull();
     });
 

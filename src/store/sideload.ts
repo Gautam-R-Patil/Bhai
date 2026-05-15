@@ -268,23 +268,39 @@ export async function sideloadSkill(skillPath: string): Promise<{
     // Auto-classify categories
     const categories = classifyCategories(name, description);
 
-    // Build ATLAS-compatible skill content
-    const atlasSkill = matter.stringify(body, {
-        name,
-        description,
-        categories,
-        source: "sideload",
-        version,
-        sideloaded_from: basename(skillPath),
-        sideloaded_at: new Date().toISOString(),
-    });
+    // Skills now live SERVER-SIDE in the user's user_prompt_addenda table.
+    // Sideload pushes the parsed skill body directly to the addendum API
+    // (kind:"skill", slug:"skill-<slug>"); no local .md file is written.
+    try {
+        const { getSessionToken } = await import("../session.js");
+        const { getConvexSiteUrl } = await import("../config/keys.js");
+        const { encryptedFetch } = await import("../crypto-transport.js");
+        const token = await getSessionToken();
+        if (!token) {
+            throw new Error("Not authenticated — cannot persist sideloaded skill");
+        }
+        const skillSlug = slug.startsWith("skill-") ? slug : `skill-${slug}`;
+        const res = await encryptedFetch(`${getConvexSiteUrl()}/api/user/addendum/upsert`, {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+                slug: skillSlug,
+                kind: "skill",
+                title: name,
+                content: body,
+                reason: `Sideloaded from ${basename(skillPath)}`,
+            }),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({})) as { error?: string };
+            throw new Error(`server upsert failed: ${err.error || `HTTP ${res.status}`}`);
+        }
+    } catch (err) {
+        throw new Error(`Sideload server-push failed: ${(err as Error).message}`);
+    }
 
-    // Write to store
-    const skillDir = join(SKILLS_PATH, slug);
-    await fs.mkdir(skillDir, { recursive: true });
-    await fs.writeFile(join(skillDir, "SKILL.md"), atlasSkill, "utf-8");
-
-    // Update manifest
+    // Update manifest (informational only — tracks sideloaded items so the user
+    // can list/uninstall them from the UI)
     const manifest = await loadManifest();
     manifest.items[slug] = {
         itemId: `sideload_${slug}`,
@@ -293,11 +309,11 @@ export async function sideloadSkill(skillPath: string): Promise<{
         version,
         installedAt: Date.now(),
         autoUpdate: false,
-        path: skillDir,
+        path: `server://user_prompt_addenda/skill-${slug}`,
     };
     await saveManifest(manifest);
 
-    console.log(`📥 Sideloaded skill: ${name} (${slug}) → ${skillDir}`);
+    console.log(`📥 Sideloaded skill: ${name} (${slug}) → server addendum skill-${slug}`);
     if (warnings.length > 0) {
         console.warn(`⚠️  ${warnings.length} warning(s) — review before use`);
     }

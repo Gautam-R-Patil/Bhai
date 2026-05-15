@@ -66,10 +66,7 @@ const NEGATION_WINDOW_CHARS = 30;
  *
  * Callers should treat any non-null return as a hard gate failure.
  */
-export function checkEvidencePhrase(
-    phrase: string | undefined | null,
-    needle: string,
-): string | null {
+export function checkEvidencePhrase(phrase: string | undefined | null, needle: string): string | null {
     const trimmed = (phrase ?? "").trim().toLowerCase();
     if (!trimmed) {
         return `evidence_phrase required (must include substring: "${needle}")`;

@@ -2,14 +2,23 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import type { ToolDefinition } from "./get-current-time.js";
 import fs from "node:fs";
 import path from "node:path";
 import type { InputFile } from "grammy";
+import type { ToolDefinition } from "./get-current-time.js";
 
 // ── Active chat state (set by telegram.ts) ────
 
-let _botInstance: { api: { sendDocument: Function; sendPhoto: Function; sendVideo: Function; sendAudio: Function; sendVoice: Function; sendAnimation: Function } } | null = null;
+let _botInstance: {
+    api: {
+        sendDocument: Function;
+        sendPhoto: Function;
+        sendVideo: Function;
+        sendAudio: Function;
+        sendVoice: Function;
+        sendAnimation: Function;
+    };
+} | null = null;
 let _activeChatId: number | null = null;
 
 export function setTelegramContext(bot: unknown, chatId: number): void {
@@ -44,7 +53,8 @@ export const sendFileTool: ToolDefinition = {
         type: "function",
         function: {
             name: "send_file",
-            description: "Send a file from the local system to the user on Telegram. Supports all file types: photos (jpg/png), videos (mp4/mov), audio (mp3/wav), documents (pdf/doc/txt/zip/ppt), etc. The file will be sent as the appropriate type (photo, video, audio, or document).",
+            description:
+                "Send a file from the local system to the user on Telegram. Supports all file types: photos (jpg/png), videos (mp4/mov), audio (mp3/wav), documents (pdf/doc/txt/zip/ppt), etc. The file will be sent as the appropriate type (photo, video, audio, or document).",
             parameters: {
                 type: "object",
                 properties: {
@@ -101,7 +111,12 @@ export const sendFileTool: ToolDefinition = {
                     break;
             }
 
-            return JSON.stringify({ success: true, sent: fileName, type: category, size_kb: Math.round(stats.size / 1024) });
+            return JSON.stringify({
+                success: true,
+                sent: fileName,
+                type: category,
+                size_kb: Math.round(stats.size / 1024),
+            });
         } catch (err) {
             return JSON.stringify({ error: `Failed to send file: ${(err as Error).message}` });
         }

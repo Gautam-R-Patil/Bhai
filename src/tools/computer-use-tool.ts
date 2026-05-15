@@ -8,9 +8,9 @@
 // Workers execute low-level interactions (click, type, scroll).
 // Inspired by Agent-S3 (69.9% OSWorld, near human 72%).
 
-import type { ToolDefinition } from "./get-current-time.js";
-import type { LLMClient } from "../llm.js";
 import { executeComputerUseTask } from "../agents/computer-use-agent.js";
+import type { LLMClient } from "../llm.js";
+import type { ToolDefinition } from "./get-current-time.js";
 
 // ── LLM Client Injection ──────────────────────
 
@@ -44,7 +44,8 @@ Returns the actions executed and the final state.`,
                 properties: {
                     task: {
                         type: "string",
-                        description: "Description of the desktop task to accomplish (e.g., 'Open System Preferences and change the wallpaper')",
+                        description:
+                            "Description of the desktop task to accomplish (e.g., 'Open System Preferences and change the wallpaper')",
                     },
                     max_steps: {
                         type: "number",
@@ -74,7 +75,7 @@ Returns the actions executed and the final state.`,
             return JSON.stringify({
                 success: result.success,
                 steps_used: result.stepsUsed,
-                actions: result.actionsExecuted.map(a => ({
+                actions: result.actionsExecuted.map((a) => ({
                     type: a.type,
                     ...(a.x !== undefined && { x: a.x }),
                     ...(a.y !== undefined && { y: a.y }),

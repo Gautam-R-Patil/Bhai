@@ -2,7 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { checkEvidencePhrase } from "./evidence-phrase.js";
 
 describe("checkEvidencePhrase", () => {
@@ -83,52 +83,38 @@ describe("checkEvidencePhrase", () => {
         it("rejects 'won't', 'can't', 'shouldn't'", () => {
             expect(checkEvidencePhrase("I won't force push", "force push")).not.toBeNull();
             expect(checkEvidencePhrase("can't force push sorry", "force push")).not.toBeNull();
-            expect(
-                checkEvidencePhrase("shouldn't force push here", "force push"),
-            ).not.toBeNull();
+            expect(checkEvidencePhrase("shouldn't force push here", "force push")).not.toBeNull();
         });
 
         it("rejects 'avoid', 'stop', 'skip', 'prevent'", () => {
             expect(checkEvidencePhrase("avoid force push", "force push")).not.toBeNull();
             expect(checkEvidencePhrase("stop force push", "force push")).not.toBeNull();
             expect(checkEvidencePhrase("skip the force push", "force push")).not.toBeNull();
-            expect(
-                checkEvidencePhrase("prevent force push on main", "force push"),
-            ).not.toBeNull();
+            expect(checkEvidencePhrase("prevent force push on main", "force push")).not.toBeNull();
         });
 
         it("rejects negation-then-needle even with padding", () => {
             // 30-char window should catch negations with modest padding.
-            expect(
-                checkEvidencePhrase("we must not just force push", "force push"),
-            ).not.toBeNull();
+            expect(checkEvidencePhrase("we must not just force push", "force push")).not.toBeNull();
         });
     });
 
     describe("no false positives on negation-LOOKING words", () => {
         it("accepts 'note' (contains 'not' but not 'not ')", () => {
             // Tests the trailing-space discipline on "not ".
-            expect(
-                checkEvidencePhrase("note to self: force push allowed", "force push"),
-            ).toBeNull();
+            expect(checkEvidencePhrase("note to self: force push allowed", "force push")).toBeNull();
         });
 
         it("accepts 'notable' (contains 'not' but not 'not ')", () => {
-            expect(
-                checkEvidencePhrase("notable: yes force push", "force push"),
-            ).toBeNull();
+            expect(checkEvidencePhrase("notable: yes force push", "force push")).toBeNull();
         });
 
         it("accepts 'nobody' (contains 'no' but not 'no ')", () => {
-            expect(
-                checkEvidencePhrase("nobody else, force push now", "force push"),
-            ).toBeNull();
+            expect(checkEvidencePhrase("nobody else, force push now", "force push")).toBeNull();
         });
 
         it("accepts 'stopped' (contains 'stop' but not 'stop ')", () => {
-            expect(
-                checkEvidencePhrase("stopped waiting, force push", "force push"),
-            ).toBeNull();
+            expect(checkEvidencePhrase("stopped waiting, force push", "force push")).toBeNull();
         });
     });
 
@@ -136,26 +122,20 @@ describe("checkEvidencePhrase", () => {
         it("negation AFTER the needle does NOT reject (window is look-behind only)", () => {
             // "force push, don't worry about the downstream" is clearly
             // asking for force push. The don't is after.
-            expect(
-                checkEvidencePhrase("force push, don't worry about downstream", "force push"),
-            ).toBeNull();
+            expect(checkEvidencePhrase("force push, don't worry about downstream", "force push")).toBeNull();
         });
 
         it("far-away negation (>30 chars before) does NOT reject", () => {
             // A "don't" far earlier shouldn't trip the check.
             const prefix = "I don't want to skip the deploy; also run tests; ";
             expect(prefix.length).toBeGreaterThan(30);
-            expect(
-                checkEvidencePhrase(`${prefix}force push when ready`, "force push"),
-            ).toBeNull();
+            expect(checkEvidencePhrase(`${prefix}force push when ready`, "force push")).toBeNull();
         });
 
         it("negation exactly inside the window is rejected", () => {
             // 30-char window. "don't do this: " is 15 chars, so needle
             // is 15 chars from the "don't" — inside the window.
-            expect(
-                checkEvidencePhrase("don't do this: force push", "force push"),
-            ).not.toBeNull();
+            expect(checkEvidencePhrase("don't do this: force push", "force push")).not.toBeNull();
         });
     });
 
@@ -169,9 +149,7 @@ describe("checkEvidencePhrase", () => {
         });
 
         it("accepts when all occurrences are clean", () => {
-            expect(
-                checkEvidencePhrase("force push to main, then force push to release", "force push"),
-            ).toBeNull();
+            expect(checkEvidencePhrase("force push to main, then force push to release", "force push")).toBeNull();
         });
     });
 

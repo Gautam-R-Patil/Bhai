@@ -62,19 +62,16 @@ export const walkthroughTool: ToolDefinition = {
                     slug: { type: "string", description: "Optional output slug; auto-derived from task if omitted." },
                     since_commit: {
                         type: "string",
-                        description:
-                            "Optional starting git SHA. If omitted, uses the last 10 commits on HEAD.",
+                        description: "Optional starting git SHA. If omitted, uses the last 10 commits on HEAD.",
                     },
                     run_commands: {
                         type: "array",
                         items: { type: "string" },
-                        description:
-                            "Optional 'try it' commands to include (e.g. ['npm run dev', 'npm test']).",
+                        description: "Optional 'try it' commands to include (e.g. ['npm run dev', 'npm test']).",
                     },
                     notes: {
                         type: "string",
-                        description:
-                            "Optional 'known limitations / follow-ups' free-text block.",
+                        description: "Optional 'known limitations / follow-ups' free-text block.",
                     },
                     repo_root: { type: "string", description: "Git repo root (default: cwd)." },
                 },
@@ -89,8 +86,7 @@ export const walkthroughTool: ToolDefinition = {
         const slug = typeof input.slug === "string" && input.slug ? slugify(input.slug) : slugify(task);
         const repoRoot =
             typeof input.repo_root === "string" && input.repo_root ? path.resolve(input.repo_root) : process.cwd();
-        const sinceRef =
-            typeof input.since_commit === "string" && input.since_commit ? input.since_commit : "HEAD~10";
+        const sinceRef = typeof input.since_commit === "string" && input.since_commit ? input.since_commit : "HEAD~10";
         const runCommands = Array.isArray(input.run_commands) ? (input.run_commands as string[]) : [];
         const notes = typeof input.notes === "string" ? input.notes.trim() : "";
 
@@ -143,7 +139,11 @@ export const walkthroughTool: ToolDefinition = {
         }
 
         auditLog("generate_walkthrough", { slug, dir, commits: commits.length, touched: touched.length });
-        logToolAction({ tool: "generate_walkthrough", filePath: outFile, action: `summarized ${commits.length} commits across ${touched.length} files` });
+        logToolAction({
+            tool: "generate_walkthrough",
+            filePath: outFile,
+            action: `summarized ${commits.length} commits across ${touched.length} files`,
+        });
 
         return JSON.stringify({
             success: true,

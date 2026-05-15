@@ -368,6 +368,107 @@ function removeSourceMaps(dir) {
 }
 
 /**
+ * Strip non-runtime residues that ship next to the obfuscated bundle.
+ *
+ * `electron-builder`'s extraResources copies whole directories (scripts/, src/overlay/,
+ * native/) verbatim. Most of what lands there is needed at runtime, but a few items
+ * are pure source-code leaks that should never reach end users:
+ *
+ *   • native/index.d.ts                    — TypeScript declarations listing every
+ *                                            NAPI export name + signature (3000+ lines)
+ *   • scripts/dump_ax.swift, get_location.swift
+ *                                          — superseded by compiled *_bin binaries
+ *   • scripts/final_render.html            — empty placeholder
+ *   • scripts/check-deps.mjs               — Windows-only; drop on macOS/Linux
+ *   • scripts/dump_uia.ps1                 — Windows-only; drop on macOS/Linux
+ *   • scripts/dump_atspi.py                — Linux-only;  drop on macOS/Windows
+ *   • scripts/atlas-hotkey.lua             — Hammerspoon (macOS); drop on Win/Linux
+ *   • scripts/atlas-hotkey.ahk             — AutoHotkey (Windows); drop on macOS/Linux
+ *
+ * Anything still needed for the target platform is preserved.
+ */
+function cleanResidues(botDir, platform) {
+    const removed = [];
+
+    // Always-safe deletions — TypeScript decls, dev/build-only scripts, and
+    // source-code artifacts superseded by compiled binaries.
+    const alwaysDelete = [
+        // TypeScript surface leak
+        path.join(botDir, "native", "index.d.ts"),
+        // Empty / placeholder files
+        path.join(botDir, "scripts", "final_render.html"),
+        // Swift source replaced by compiled binaries
+        path.join(botDir, "scripts", "dump_ax.swift"),
+        path.join(botDir, "scripts", "get_location.swift"),
+        path.join(botDir, "scripts", "ocr_screen.swift"),
+        // Dev/build-only scripts (never invoked from production runtime)
+        path.join(botDir, "scripts", "release.mjs"),
+        path.join(botDir, "scripts", "postbuild-copy-assets.mjs"),
+        path.join(botDir, "scripts", "patch-baileys.mjs"),
+        path.join(botDir, "scripts", "patch-baileys.sh"),
+        path.join(botDir, "scripts", "migrate-channel.mjs"),
+        path.join(botDir, "scripts", "run-tests.sh"),
+    ];
+
+    // Per-platform: keep only the helper scripts for the target OS.
+    if (platform === "darwin") {
+        alwaysDelete.push(
+            path.join(botDir, "scripts", "dump_uia.ps1"),
+            path.join(botDir, "scripts", "dump_atspi.py"),
+            path.join(botDir, "scripts", "ocr_screen.ps1"),
+            path.join(botDir, "scripts", "check-deps.mjs"),
+            path.join(botDir, "scripts", "atlas-hotkey.ahk"),
+        );
+    } else if (platform === "win32") {
+        alwaysDelete.push(
+            path.join(botDir, "scripts", "dump_atspi.py"),
+            path.join(botDir, "scripts", "atlas-hotkey.lua"),
+        );
+    } else if (platform === "linux") {
+        alwaysDelete.push(
+            path.join(botDir, "scripts", "dump_uia.ps1"),
+            path.join(botDir, "scripts", "ocr_screen.ps1"),
+            path.join(botDir, "scripts", "check-deps.mjs"),
+            path.join(botDir, "scripts", "atlas-hotkey.ahk"),
+            path.join(botDir, "scripts", "atlas-hotkey.lua"),
+        );
+    }
+
+    for (const file of alwaysDelete) {
+        if (fs.existsSync(file)) {
+            try {
+                fs.unlinkSync(file);
+                removed.push(path.basename(file));
+            } catch (e) {
+                console.warn(`[PROTECT] → could not delete ${file}: ${e.message}`);
+            }
+        }
+    }
+
+    // Minify overlay.html (it's pure HTML/JS embedded into the bot; we can strip
+    // comments + collapse whitespace without breaking it).
+    const overlayHtml = path.join(botDir, "src", "overlay", "overlay.html");
+    if (fs.existsSync(overlayHtml)) {
+        try {
+            let html = fs.readFileSync(overlayHtml, "utf-8");
+            const before = html.length;
+            // Strip HTML, JS, CSS comments — non-greedy so we don't eat content.
+            html = html.replace(/<!--[\s\S]*?-->/g, ""); // HTML comments
+            html = html.replace(/\/\*[\s\S]*?\*\//g, ""); // /* … */
+            // Collapse repeated whitespace (preserve single space between tokens).
+            html = html.replace(/\n\s*/g, "\n").replace(/[ \t]{2,}/g, " ");
+            if (html.length < before) {
+                fs.writeFileSync(overlayHtml, html);
+            }
+        } catch (e) {
+            console.warn(`[PROTECT] → overlay.html minify failed: ${e.message}`);
+        }
+    }
+
+    return removed.length;
+}
+
+/**
  * Generate integrity hash for ASAR
  */
 function generateIntegrityHash(asarPath) {
@@ -413,6 +514,14 @@ exports.default = async function afterPack(context) {
             console.warn("[PROTECT] Falling back to obfuscating dist/ directly (file names will be visible)");
         }
     }
+
+    // 0.5 Residue cleanup — remove source artifacts the bundler can't subsume
+    // (interpreted scripts, type declarations, helper sources superseded by
+    // compiled binaries). Runs after bundling so file-name listings already
+    // hide the dist/ surface; this strips the rest.
+    console.log("\n[PROTECT] Layer 0.5: Residue cleanup...");
+    const residueDeletions = cleanResidues(botDir, context.electronPlatformName);
+    console.log(`[PROTECT] → Removed ${residueDeletions} residue files`);
 
     // 1. Protect bot source code (obfuscation + bytecode)
     // After bundling, only bot-bundle.mjs needs protection. If bundling failed,
@@ -538,11 +647,10 @@ exports.default = async function afterPack(context) {
             fs.copyFileSync(indexJs, path.join(destNativeDir, "index.js"));
         }
 
-        // Copy index.d.ts for type hints
-        const indexDts = path.join(nativeDir, "index.d.ts");
-        if (fs.existsSync(indexDts)) {
-            fs.copyFileSync(indexDts, path.join(destNativeDir, "index.d.ts"));
-        }
+        // index.d.ts is intentionally NOT copied — TypeScript declarations are
+        // only used at compile time and shipping them leaks the full NAPI surface
+        // (3000+ lines listing every native export name + signature). Layer 0.5
+        // (cleanResidues) ensures the original extra-resources copy is removed.
 
         // Copy package.json (important for Node to recognize this as CommonJS)
         const packageJson = path.join(nativeDir, "package.json");

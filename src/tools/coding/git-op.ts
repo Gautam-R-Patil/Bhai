@@ -263,17 +263,27 @@ interactive rebase, add -A/-u/.`,
                     });
                 }
                 auditLog("git_op.checkpoint", { sha, code: r.code });
-                return JSON.stringify({ success: true, sha, hint: `Restore with git_op restore_checkpoint sha=${sha}` });
+                return JSON.stringify({
+                    success: true,
+                    sha,
+                    hint: `Restore with git_op restore_checkpoint sha=${sha}`,
+                });
             }
             if (operation === "restore_checkpoint") {
                 const sha = typeof input.sha === "string" ? input.sha.trim() : "";
                 if (!/^[a-f0-9]{7,40}$/i.test(sha)) {
-                    return JSON.stringify({ success: false, error: "sha must be a 7-40 char git hash from a prior checkpoint op" });
+                    return JSON.stringify({
+                        success: false,
+                        error: "sha must be a 7-40 char git hash from a prior checkpoint op",
+                    });
                 }
                 // Sanity-check: confirm the SHA is reachable before overwriting anything
                 const exists = runGit(root, ["rev-parse", "--verify", `${sha}^{commit}`]);
                 if (exists.code !== 0) {
-                    return JSON.stringify({ success: false, error: `SHA ${sha} not found in this repo (checkpoints are local + ephemeral — may have been GC'd)` });
+                    return JSON.stringify({
+                        success: false,
+                        error: `SHA ${sha} not found in this repo (checkpoints are local + ephemeral — may have been GC'd)`,
+                    });
                 }
                 const r = runGit(root, ["checkout", sha, "--", "."]);
                 auditLog("git_op.restore_checkpoint", { sha, code: r.code });

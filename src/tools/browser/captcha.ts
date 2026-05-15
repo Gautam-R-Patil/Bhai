@@ -7,13 +7,13 @@
 // and injects the token. Falls back gracefully if no API key is set.
 // Supports: reCAPTCHA v2/v3, hCaptcha, Cloudflare Turnstile.
 
-import type { ToolDefinition } from "../get-current-time.js";
-import { getActivePage } from "./core.js";
-import { isNativeBrowserAvailable } from "./native-browser.js";
-import { transcribeBuffer } from "../../voice/transcribe.js";
-import { getCurrentMode } from "./browser-backend.js";
 import { createRequire } from "node:module";
 import { join } from "node:path";
+import { transcribeBuffer } from "../../voice/transcribe.js";
+import type { ToolDefinition } from "../get-current-time.js";
+import { getCurrentMode } from "./browser-backend.js";
+import { getActivePage } from "./core.js";
+import { isNativeBrowserAvailable } from "./native-browser.js";
 
 // Try to use Rust-native CAPTCHA classifier for speed
 let nativeClassifyCaptcha: ((html: string) => { kind: string; confidence: number }) | null = null;
@@ -23,7 +23,9 @@ try {
     if (typeof mod.classifyCaptcha === "function") {
         nativeClassifyCaptcha = mod.classifyCaptcha as (html: string) => { kind: string; confidence: number };
     }
-} catch { /* native not available */ }
+} catch {
+    /* native not available */
+}
 
 export type CaptchaType = "recaptcha-v2" | "recaptcha-v3" | "hcaptcha" | "turnstile" | "none";
 
@@ -37,7 +39,8 @@ async function ensureCaptchaKeys(): Promise<void> {
     if (_captchaKeysFetched) return;
     // Skip Convex fetch if any solving key already present locally
     if (process.env.NOPECHA_API_KEY || process.env.CAPTCHA_API_KEY || process.env.TWO_CAPTCHA_API_KEY) {
-        _captchaKeysFetched = true; return;
+        _captchaKeysFetched = true;
+        return;
     }
     // Deduplicate concurrent calls — return the same in-flight promise to all callers
     if (_captchaKeysFetchInFlight) return _captchaKeysFetchInFlight;
@@ -45,8 +48,8 @@ async function ensureCaptchaKeys(): Promise<void> {
         // Node.js is single-threaded: the check above and the finally below are
         // atomic w.r.t. the event loop — no true TOCTOU race is possible here.
         try {
-        const { getConvexSiteUrl } = await import("../../config/keys.js");
-        const { getSessionToken } = await import("../../session.js");
+            const { getConvexSiteUrl } = await import("../../config/keys.js");
+            const { getSessionToken } = await import("../../session.js");
             const convexUrl = getConvexSiteUrl();
             const sessionToken = await getSessionToken().catch(() => null);
             if (!convexUrl || !sessionToken) return;
@@ -54,7 +57,7 @@ async function ensureCaptchaKeys(): Promise<void> {
                 headers: { Authorization: `Bearer ${sessionToken}` },
             });
             if (!resp.ok) return;
-            const secrets = await resp.json() as Record<string, string>;
+            const secrets = (await resp.json()) as Record<string, string>;
             if (secrets.NOPECHA_API_KEY && !process.env.NOPECHA_API_KEY) {
                 process.env.NOPECHA_API_KEY = secrets.NOPECHA_API_KEY;
                 console.log("  🔑 CAPTCHA: NOPECHA_API_KEY loaded from Convex");
@@ -63,8 +66,12 @@ async function ensureCaptchaKeys(): Promise<void> {
                 process.env.CAPTCHA_API_KEY = secrets.CAPTCHA_API_KEY;
                 console.log("  🔑 CAPTCHA: CAPTCHA_API_KEY loaded from Convex");
             }
-        } catch { /* non-fatal — keys may still be available via process.env */ }
-        finally { _captchaKeysFetched = true; _captchaKeysFetchInFlight = null; }
+        } catch {
+            /* non-fatal — keys may still be available via process.env */
+        } finally {
+            _captchaKeysFetched = true;
+            _captchaKeysFetchInFlight = null;
+        }
     })();
     return _captchaKeysFetchInFlight;
 }
@@ -76,15 +83,21 @@ export interface CaptchaInfo {
 
 // ─── Detection ────────────────────────────────
 
-export async function detectCaptcha(page: ReturnType<typeof getActivePage> extends Promise<infer P> ? P : never): Promise<CaptchaInfo> {
+export async function detectCaptcha(
+    page: ReturnType<typeof getActivePage> extends Promise<infer P> ? P : never,
+): Promise<CaptchaInfo> {
     // Fast Rust pre-check: scan raw HTML for CAPTCHA signals before running JS
     if (nativeClassifyCaptcha) {
         try {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const html = await (page as any).evaluate(() => document.documentElement.innerHTML.substring(0, 50000)) as string;
+            const html = (await (page as any).evaluate(() =>
+                document.documentElement.innerHTML.substring(0, 50000),
+            )) as string;
             const result = nativeClassifyCaptcha(html);
             if (result.kind !== "none" && result.confidence > 0.7) {
-                console.log(`  🦀 Rust CAPTCHA classifier: ${result.kind} (confidence ${result.confidence.toFixed(2)})`);
+                console.log(
+                    `  🦀 Rust CAPTCHA classifier: ${result.kind} (confidence ${result.confidence.toFixed(2)})`,
+                );
                 // siteKey is null here by design — the Rust classifier only reads raw HTML
                 // and cannot safely extract dynamic sitekeys (they may be injected by JS).
                 // Tiers requiring siteKey (NopeCHA, 2captcha) will skip; audio bypass and
@@ -94,7 +107,9 @@ export async function detectCaptcha(page: ReturnType<typeof getActivePage> exten
             if (result.kind === "none" && result.confidence === 0) {
                 return { type: "none", siteKey: null }; // definitively no CAPTCHA
             }
-        } catch { /* fall through to JS eval */ }
+        } catch {
+            /* fall through to JS eval */
+        }
     }
 
     // Full JS evaluate for siteKey extraction
@@ -105,8 +120,7 @@ export async function detectCaptcha(page: ReturnType<typeof getActivePage> exten
         const tsWidget = document.querySelector('[class*="cf-turnstile"],[data-cf-turnstile]');
         if (tsFrame || tsWidget) {
             const src = tsFrame?.getAttribute("src") ?? "";
-            const key = src.match(/[?&]sitekey=([^&]+)/)?.[1]
-                ?? (tsWidget as HTMLElement)?.dataset?.sitekey ?? null;
+            const key = src.match(/[?&]sitekey=([^&]+)/)?.[1] ?? (tsWidget as HTMLElement)?.dataset?.sitekey ?? null;
             return { type: "turnstile", siteKey: key };
         }
         // hCaptcha
@@ -116,8 +130,8 @@ export async function detectCaptcha(page: ReturnType<typeof getActivePage> exten
             return { type: "hcaptcha", siteKey: (hcWidget as HTMLElement)?.dataset?.sitekey ?? null };
         }
         // reCAPTCHA v3 (invisible — detected by script tag)
-        const scripts = Array.from(document.scripts).map(s => s.src);
-        const rcV3 = scripts.find(s => s.includes("recaptcha/api.js?render="));
+        const scripts = Array.from(document.scripts).map((s) => s.src);
+        const rcV3 = scripts.find((s) => s.includes("recaptcha/api.js?render="));
         if (rcV3) {
             return { type: "recaptcha-v3", siteKey: rcV3.match(/render=([^&]+)/)?.[1] ?? null };
         }
@@ -148,7 +162,15 @@ async function solve2captcha(type: CaptchaType, siteKey: string, pageUrl: string
         params = { ...params, method: "userrecaptcha", googlekey: siteKey, pageurl: pageUrl };
     } else if (type === "recaptcha-v3") {
         endpoint = "https://2captcha.com/in.php";
-        params = { ...params, method: "userrecaptcha", googlekey: siteKey, pageurl: pageUrl, version: "v3", action: "submit", min_score: "0.7" };
+        params = {
+            ...params,
+            method: "userrecaptcha",
+            googlekey: siteKey,
+            pageurl: pageUrl,
+            version: "v3",
+            action: "submit",
+            min_score: "0.7",
+        };
     } else if (type === "hcaptcha") {
         endpoint = "https://2captcha.com/in.php";
         params = { ...params, method: "hcaptcha", sitekey: siteKey, pageurl: pageUrl };
@@ -163,17 +185,23 @@ async function solve2captcha(type: CaptchaType, siteKey: string, pageUrl: string
         // Submit task
         const submitUrl = endpoint + "?" + new URLSearchParams(params).toString();
         const submitRes = await fetch(submitUrl);
-        const submitData = await submitRes.json() as { status: number; request: string };
-        if (submitData.status !== 1) { console.warn("  ⚠️ 2captcha submit failed:", submitData.request); return null; }
+        const submitData = (await submitRes.json()) as { status: number; request: string };
+        if (submitData.status !== 1) {
+            console.warn("  ⚠️ 2captcha submit failed:", submitData.request);
+            return null;
+        }
         const taskId = submitData.request;
 
         // Poll for result (max 120s)
         for (let i = 0; i < 24; i++) {
-            await new Promise(r => setTimeout(r, 5000));
+            await new Promise((r) => setTimeout(r, 5000));
             const pollRes = await fetch(`https://2captcha.com/res.php?key=${apiKey}&action=get&id=${taskId}&json=1`);
-            const pollData = await pollRes.json() as { status: number; request: string };
+            const pollData = (await pollRes.json()) as { status: number; request: string };
             if (pollData.status === 1) return pollData.request;
-            if (pollData.request !== "CAPCHA_NOT_READY") { console.warn("  ⚠️ 2captcha poll error:", pollData.request); return null; }
+            if (pollData.request !== "CAPCHA_NOT_READY") {
+                console.warn("  ⚠️ 2captcha poll error:", pollData.request);
+                return null;
+            }
         }
         console.warn("  ⚠️ 2captcha: timeout waiting for solution");
         return null;
@@ -187,31 +215,41 @@ async function solve2captcha(type: CaptchaType, siteKey: string, pageUrl: string
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function injectToken(page: any, type: CaptchaType, token: string): Promise<void> {
-    await page.evaluate(({ t, tok }: { t: string; tok: string }) => {
-        if (t === "recaptcha-v2" || t === "recaptcha-v3") {
-            const el = document.querySelector("#g-recaptcha-response") as HTMLTextAreaElement;
-            if (el) { el.value = tok; el.style.display = "block"; }
-            // Trigger callback
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const cfg = (window as any).___grecaptcha_cfg;
-            if (cfg?.clients) {
-                for (const c of Object.values(cfg.clients) as Record<string, (t: string) => void>[]) {
-                    try { c?.callback?.(tok); } catch { /* */ }
+    await page.evaluate(
+        ({ t, tok }: { t: string; tok: string }) => {
+            if (t === "recaptcha-v2" || t === "recaptcha-v3") {
+                const el = document.querySelector("#g-recaptcha-response") as HTMLTextAreaElement;
+                if (el) {
+                    el.value = tok;
+                    el.style.display = "block";
                 }
+                // Trigger callback
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const cfg = (window as any).___grecaptcha_cfg;
+                if (cfg?.clients) {
+                    for (const c of Object.values(cfg.clients) as Record<string, (t: string) => void>[]) {
+                        try {
+                            c?.callback?.(tok);
+                        } catch {
+                            /* */
+                        }
+                    }
+                }
+            } else if (t === "hcaptcha") {
+                const el = document.querySelector("[name='h-captcha-response']") as HTMLTextAreaElement;
+                if (el) el.value = tok;
+                const el2 = document.querySelector("[name='g-recaptcha-response']") as HTMLTextAreaElement;
+                if (el2) el2.value = tok;
+                // Trigger hCaptcha callback
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                (window as any).hcaptcha?.execute?.();
+            } else if (t === "turnstile") {
+                const el = document.querySelector("[name='cf-turnstile-response']") as HTMLInputElement;
+                if (el) el.value = tok;
             }
-        } else if (t === "hcaptcha") {
-            const el = document.querySelector("[name='h-captcha-response']") as HTMLTextAreaElement;
-            if (el) el.value = tok;
-            const el2 = document.querySelector("[name='g-recaptcha-response']") as HTMLTextAreaElement;
-            if (el2) el2.value = tok;
-            // Trigger hCaptcha callback
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (window as any).hcaptcha?.execute?.();
-        } else if (t === "turnstile") {
-            const el = document.querySelector("[name='cf-turnstile-response']") as HTMLInputElement;
-            if (el) el.value = tok;
-        }
-    }, { t: type, tok: token });
+        },
+        { t: type, tok: token },
+    );
 }
 
 // ─── Turnstile: try passive wait first ────────
@@ -228,7 +266,7 @@ async function waitForTurnstilePassive(page: any, timeoutMs = 25000): Promise<bo
                 // Frame becomes hidden when challenge passes
                 return s.display === "none" || s.visibility === "hidden" || s.opacity === "0";
             },
-            { timeout: timeoutMs, polling: 1000 }
+            { timeout: timeoutMs, polling: 1000 },
         );
         return true;
     } catch {
@@ -258,11 +296,10 @@ async function solveAudioCaptcha(page: any): Promise<string | null> {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const frames: any[] = typeof page.frames === "function" ? page.frames() : [];
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const rcFrame = frames.find((f: any) =>
-            typeof f.url === "function" && (
-                f.url().includes("google.com/recaptcha") ||
-                f.url().includes("recaptcha.net/recaptcha")
-            )
+        const rcFrame = frames.find(
+            (f: any) =>
+                typeof f.url === "function" &&
+                (f.url().includes("google.com/recaptcha") || f.url().includes("recaptcha.net/recaptcha")),
         );
         if (!rcFrame) {
             console.log("  🎧 Audio CAPTCHA: reCAPTCHA frame not found");
@@ -274,7 +311,7 @@ async function solveAudioCaptcha(page: any): Promise<string | null> {
         const audioBtnVisible = await audioBtn.isVisible({ timeout: 2000 }).catch(() => false);
         if (audioBtnVisible) {
             await audioBtn.click();
-            await new Promise(r => setTimeout(r, 1200));
+            await new Promise((r) => setTimeout(r, 1200));
         }
 
         // Wait for audio source element to appear
@@ -282,7 +319,10 @@ async function solveAudioCaptcha(page: any): Promise<string | null> {
         const audioVisible = await audioSource.isVisible({ timeout: 4000 }).catch(() => false);
         if (!audioVisible) {
             // May already be showing audio challenge — check for the response input
-            const inputVisible = await rcFrame.locator("#audio-response").isVisible({ timeout: 1500 }).catch(() => false);
+            const inputVisible = await rcFrame
+                .locator("#audio-response")
+                .isVisible({ timeout: 1500 })
+                .catch(() => false);
             if (!inputVisible) {
                 console.log("  🎧 Audio CAPTCHA: audio source not found (blocked or rate limited)");
                 return null;
@@ -307,7 +347,9 @@ async function solveAudioCaptcha(page: any): Promise<string | null> {
                 if (!resp.ok) return null;
                 const ab = await resp.arrayBuffer();
                 return Array.from(new Uint8Array(ab));
-            } catch { return null; }
+            } catch {
+                return null;
+            }
         }, audioUrl);
 
         if (!audioBytes || audioBytes.length === 0) {
@@ -326,7 +368,10 @@ async function solveAudioCaptcha(page: any): Promise<string | null> {
         }
 
         // Clean: reCAPTCHA audio uses spoken digits/words separated by spaces
-        const answer = rawTranscript.toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
+        const answer = rawTranscript
+            .toLowerCase()
+            .replace(/[^a-z0-9 ]/g, "")
+            .trim();
         if (!answer) {
             console.log("  🎧 Audio CAPTCHA: cleaned transcript empty");
             return null;
@@ -341,11 +386,11 @@ async function solveAudioCaptcha(page: any): Promise<string | null> {
             return null;
         }
         await responseInput.fill(answer);
-        await new Promise(r => setTimeout(r, 300));
+        await new Promise((r) => setTimeout(r, 300));
 
         // Submit
         await rcFrame.locator("#recaptcha-verify-button").click();
-        await new Promise(r => setTimeout(r, 1500));
+        await new Promise((r) => setTimeout(r, 1500));
 
         // Check success: reCAPTCHA sets #g-recaptcha-response token on success
         const token: string | null = await page.evaluate((): string | null => {
@@ -373,15 +418,11 @@ async function solveAudioCaptcha(page: any): Promise<string | null> {
 const NOPECHA_TYPE_MAP: Partial<Record<CaptchaType, string>> = {
     "recaptcha-v2": "recaptchav2",
     "recaptcha-v3": "recaptchav3",
-    "hcaptcha": "hcaptcha",
-    "turnstile": "turnstile",
+    hcaptcha: "hcaptcha",
+    turnstile: "turnstile",
 };
 
-async function solveViaNopeCHA(
-    type: CaptchaType,
-    siteKey: string,
-    pageUrl: string,
-): Promise<string | null> {
+async function solveViaNopeCHA(type: CaptchaType, siteKey: string, pageUrl: string): Promise<string | null> {
     const apiKey = process.env.NOPECHA_API_KEY;
     if (!apiKey) return null;
 
@@ -395,8 +436,11 @@ async function solveViaNopeCHA(
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ type: nopechaType, sitekey: siteKey, url: pageUrl, key: apiKey }),
         });
-        if (!submitRes.ok) { console.warn(`  ⚠️ NopeCHA submit HTTP error: ${submitRes.status}`); return null; }
-        const submitData = await submitRes.json() as { id?: string; error?: number; data?: string };
+        if (!submitRes.ok) {
+            console.warn(`  ⚠️ NopeCHA submit HTTP error: ${submitRes.status}`);
+            return null;
+        }
+        const submitData = (await submitRes.json()) as { id?: string; error?: number; data?: string };
         // error === 0 means success in some NopeCHA response variants — only abort on non-zero
         if (submitData.error !== undefined && submitData.error !== 0) {
             console.warn(`  ⚠️ NopeCHA submit error: ${submitData.error}`);
@@ -410,14 +454,18 @@ async function solveViaNopeCHA(
 
         // Poll for result (max 60s, 3s intervals)
         for (let i = 0; i < 20; i++) {
-            await new Promise(r => setTimeout(r, 3000));
+            await new Promise((r) => setTimeout(r, 3000));
             const pollRes = await fetch(`https://api.nopecha.com/?key=${apiKey}&id=${taskId}`);
-            if (!pollRes.ok) { console.warn(`  ⚠️ NopeCHA poll HTTP error: ${pollRes.status}`); return null; }
-            const pollData = await pollRes.json() as { error?: number; data?: string };
+            if (!pollRes.ok) {
+                console.warn(`  ⚠️ NopeCHA poll HTTP error: ${pollRes.status}`);
+                return null;
+            }
+            const pollData = (await pollRes.json()) as { error?: number; data?: string };
             if (pollData.error === 10) continue; // not ready yet
             // error === 0 is success; only abort on non-zero, non-10 codes
             if (pollData.error !== undefined && pollData.error !== 0 && pollData.error !== 10) {
-                console.warn(`  ⚠️ NopeCHA poll error: ${pollData.error}`); return null;
+                console.warn(`  ⚠️ NopeCHA poll error: ${pollData.error}`);
+                return null;
             }
             if (pollData.data && typeof pollData.data === "string") {
                 console.log(`  🟢 NopeCHA: solved ${type} (${i * 3 + 3}s)`);
@@ -435,7 +483,9 @@ async function solveViaNopeCHA(
 // ─── Main CAPTCHA Handler ─────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function handleCaptchaIfPresent(page: any): Promise<{ handled: boolean; type: CaptchaType; method: string }> {
+export async function handleCaptchaIfPresent(
+    page: any,
+): Promise<{ handled: boolean; type: CaptchaType; method: string }> {
     // Ensure CAPTCHA keys are loaded from Convex (if not already in process.env)
     await ensureCaptchaKeys();
 
@@ -489,7 +539,8 @@ export const browserHandleCaptcha: ToolDefinition = {
         type: "function",
         function: {
             name: "browser_handle_captcha",
-            description: "Detect and solve CAPTCHA challenges on the current page. Solving waterfall (all automatic): 1) Cloudflare Turnstile — passive stealth bypass; 2) reCAPTCHA v2 — free audio challenge bypass (no API key needed); 3) All types — NopeCHA free API (set NOPECHA_API_KEY in Convex, 100 free solves/day); 4) All types — 2captcha paid fallback (set CAPTCHA_API_KEY in Convex). Call this when a page is blocked by a CAPTCHA before proceeding.",
+            description:
+                "Detect and solve CAPTCHA challenges on the current page. Solving waterfall (all automatic): 1) Cloudflare Turnstile — passive stealth bypass; 2) reCAPTCHA v2 — free audio challenge bypass (no API key needed); 3) All types — NopeCHA free API (set NOPECHA_API_KEY in Convex, 100 free solves/day); 4) All types — 2captcha paid fallback (set CAPTCHA_API_KEY in Convex). Call this when a page is blocked by a CAPTCHA before proceeding.",
             parameters: {
                 type: "object",
                 properties: {},
@@ -511,8 +562,10 @@ export const browserHandleCaptcha: ToolDefinition = {
                 method: result.method,
                 ...(result.handled
                     ? { message: `CAPTCHA solved via ${result.method}. You may now proceed.` }
-                    : { message: "CAPTCHA detected but could not be solved automatically. reCAPTCHA v2 audio bypass was attempted (free, no key needed). To enable full solving: set NOPECHA_API_KEY (free 100/day, nopecha.com) or CAPTCHA_API_KEY (2captcha, paid). Solve manually if needed." }
-                ),
+                    : {
+                          message:
+                              "CAPTCHA detected but could not be solved automatically. reCAPTCHA v2 audio bypass was attempted (free, no key needed). To enable full solving: set NOPECHA_API_KEY (free 100/day, nopecha.com) or CAPTCHA_API_KEY (2captcha, paid). Solve manually if needed.",
+                      }),
             });
         } catch (err) {
             return JSON.stringify({ error: `CAPTCHA handler failed: ${(err as Error).message}` });

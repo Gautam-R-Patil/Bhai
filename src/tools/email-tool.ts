@@ -2,8 +2,8 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import type { ToolDefinition } from "./get-current-time.js";
 import { sendEmailFromAtlas } from "../email.js";
+import type { ToolDefinition } from "./get-current-time.js";
 
 // ── email_send ────────────────────────────────
 

@@ -2,17 +2,17 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-    isCacheable,
-    getCached,
-    setCache,
-    clearCache,
     checkRateLimit,
-    resetRateLimits,
-    requiresConfirmation,
-    recordToolUsage,
+    clearCache,
+    getCached,
     getToolAnalytics,
+    isCacheable,
+    recordToolUsage,
+    requiresConfirmation,
+    resetRateLimits,
+    setCache,
 } from "./tool-intelligence.js";
 
 describe("tool-intelligence — result cache", () => {
@@ -157,12 +157,7 @@ describe("tool-intelligence — rate limiter", () => {
     });
 
     it("exempts long-running tools from rate limiting", () => {
-        for (const exempt of [
-            "deep_research",
-            "swarm_task",
-            "shell_exec_background",
-            "start_long_task",
-        ]) {
+        for (const exempt of ["deep_research", "swarm_task", "shell_exec_background", "start_long_task"]) {
             for (let i = 0; i < 100; i++) {
                 expect(checkRateLimit(exempt).allowed).toBe(true);
             }
@@ -208,12 +203,8 @@ describe("tool-intelligence — destructive-action confirmation", () => {
         });
 
         it("returns false for destructive tools with a non-destructive action", () => {
-            expect(requiresConfirmation("app_manager", { action: "list" }).needsConfirmation).toBe(
-                false,
-            );
-            expect(requiresConfirmation("trash_manager", { action: "list" }).needsConfirmation).toBe(
-                false,
-            );
+            expect(requiresConfirmation("app_manager", { action: "list" }).needsConfirmation).toBe(false);
+            expect(requiresConfirmation("trash_manager", { action: "list" }).needsConfirmation).toBe(false);
         });
     });
 
@@ -283,14 +274,8 @@ describe("tool-intelligence — destructive-action confirmation", () => {
             // with no filter. A DELETE inside quoted shell context
             // (`psql -c "DELETE FROM x;"`) correctly does NOT match
             // because of the trailing quote.
-            expect(
-                requiresConfirmation("shell_exec", { command: "DELETE FROM users;" })
-                    .needsConfirmation,
-            ).toBe(true);
-            expect(
-                requiresConfirmation("shell_exec", { command: "DELETE FROM users" })
-                    .needsConfirmation,
-            ).toBe(true);
+            expect(requiresConfirmation("shell_exec", { command: "DELETE FROM users;" }).needsConfirmation).toBe(true);
+            expect(requiresConfirmation("shell_exec", { command: "DELETE FROM users" }).needsConfirmation).toBe(true);
             // Shell-quoted context is NOT flagged (the regex trades false
             // negatives here for zero false positives on safer callers).
             expect(
@@ -301,33 +286,22 @@ describe("tool-intelligence — destructive-action confirmation", () => {
         });
 
         it("flags shutdown / reboot", () => {
-            expect(
-                requiresConfirmation("shell_exec", { command: "sudo shutdown -h now" })
-                    .needsConfirmation,
-            ).toBe(true);
-            expect(
-                requiresConfirmation("shell_exec", { command: "reboot" }).needsConfirmation,
-            ).toBe(true);
+            expect(requiresConfirmation("shell_exec", { command: "sudo shutdown -h now" }).needsConfirmation).toBe(
+                true,
+            );
+            expect(requiresConfirmation("shell_exec", { command: "reboot" }).needsConfirmation).toBe(true);
         });
 
         it("flags chmod 777", () => {
-            expect(
-                requiresConfirmation("shell_exec", { command: "chmod 777 /etc/passwd" })
-                    .needsConfirmation,
-            ).toBe(true);
+            expect(requiresConfirmation("shell_exec", { command: "chmod 777 /etc/passwd" }).needsConfirmation).toBe(
+                true,
+            );
         });
 
         it("does NOT flag safe shell commands", () => {
-            expect(
-                requiresConfirmation("shell_exec", { command: "ls -la" }).needsConfirmation,
-            ).toBe(false);
-            expect(
-                requiresConfirmation("shell_exec", { command: "npm install" })
-                    .needsConfirmation,
-            ).toBe(false);
-            expect(
-                requiresConfirmation("shell_exec", { command: "rm file.txt" }).needsConfirmation,
-            ).toBe(false); // rm without -rf
+            expect(requiresConfirmation("shell_exec", { command: "ls -la" }).needsConfirmation).toBe(false);
+            expect(requiresConfirmation("shell_exec", { command: "npm install" }).needsConfirmation).toBe(false);
+            expect(requiresConfirmation("shell_exec", { command: "rm file.txt" }).needsConfirmation).toBe(false); // rm without -rf
         });
 
         it("also flags shell_exec_background commands", () => {

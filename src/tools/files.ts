@@ -11,10 +11,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { ToolDefinition } from "./get-current-time.js";
-import { isPathAllowed, isProtectedPath, getPathBlockedReason } from "../security/allowlist.js";
+import { getPathBlockedReason, isPathAllowed, isProtectedPath } from "../security/allowlist.js";
 import { auditLog } from "../security/audit-log.js";
 import { forget as forgetRead } from "./coding/read-registry.js";
+import type { ToolDefinition } from "./get-current-time.js";
 
 // ── Constants ─────────────────────────────────
 
@@ -91,7 +91,9 @@ export const deleteFile: ToolDefinition = {
             return JSON.stringify({ error: reason });
         }
         if (isProtectedPath(filePath)) {
-            return JSON.stringify({ error: `Deleting "${filePath}" is not allowed — this path is part of the bot's own codebase and is write-protected.` });
+            return JSON.stringify({
+                error: `Deleting "${filePath}" is not allowed — this path is part of the bot's own codebase and is write-protected.`,
+            });
         }
         try {
             fs.unlinkSync(filePath);

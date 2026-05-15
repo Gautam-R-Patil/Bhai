@@ -5,6 +5,7 @@
     const ICON = { pending: "\u25CB", running: "\u25D0", done: "\u2713", failed: "\u2715" };
     const PHASE_IDS = [
         "node", "playwright-chromium", "embedding-model", "sox",
+        "ollama", "ui-tars-model", "omniparser-deps",
         "data-dir", "workspace", "setup-state-finalize",
     ];
     const LABELS = {
@@ -12,6 +13,9 @@
         "playwright-chromium": "Browser engine",
         "embedding-model": "AI model",
         "sox": "Audio toolkit",
+        "ollama": "Local model runtime",
+        "ui-tars-model": "Vision model",
+        "omniparser-deps": "Vision deps",
         "data-dir": "Data directory",
         "workspace": "Workspace folder",
         "setup-state-finalize": "Finalize",
@@ -152,23 +156,27 @@
             return;
         }
 
-        // ── Fun facts — rotate every 7s while install runs ──
+        // ── Fun facts — user-facing benefits, rotate every 7s ──
+        // Pulled from tryatlasagi.com/101-reasons. Stay product-benefit framed
+        // (what the user can do) rather than implementation detail (what tech
+        // powers it). The wizard is the first impression — leaking internals
+        // here positions A.T.L.A.S as a tech demo, not as a useful assistant.
         const FUN_FACTS = [
-            "A.T.L.A.S remembers your conversations across sessions — it learns how you work.",
-            "Memory uses HNSW graphs for nearest-neighbor recall — the same tech Spotify uses for recommendations.",
-            "Tools are chosen by semantic similarity, not keywords — so you can ask for anything in your own words.",
-            "A.T.L.A.S dreams at 3am every night — consolidating the day's learnings into long-term memory.",
-            "The brain runs in Rust — ~15-20x faster than pure JavaScript for the hot paths.",
-            "You can summon A.T.L.A.S anywhere with Alt+Space — even while another app is fullscreen.",
-            "Live voice mode uses sub-second latency with Gemini Live or OpenAI Realtime — you talk, it replies instantly.",
-            "A.T.L.A.S reads your screen when you ask — no screenshots uploaded anywhere, all local.",
-            "It can book flights, draft emails, and run long research tasks in the background — for hours.",
-            "Every action is explained: A.T.L.A.S tells you what it's about to do before doing it.",
-            "Your memory is yours — SQLite on disk, encrypted, never synced to the cloud.",
-            "The wake word is customizable — call it anything from 'Hey Atlas' to 'Yo Jarvis'.",
-            "A.T.L.A.S can talk to you through Telegram, Discord, Slack, WhatsApp, Matrix, or email.",
-            "Errors auto-escalate the model tier — simple tasks stay cheap, hard ones get the big guns.",
-            "You're not locked in — A.T.L.A.S works with Opus, Sonnet, Haiku, GPT, and Gemini.",
+            "A.T.L.A.S remembers your preferences, communication style, and past conversations.",
+            "It automates browser tasks — form-filling, clicking, tab-switching — without you watching.",
+            "It researches across hundreds of sources and gives you a synthesized report, not a pile of links.",
+            "It deploys multiple specialized agents to work on different parts of your task in parallel.",
+            "You can control it entirely through natural voice — no technical syntax to memorize.",
+            "Your data runs locally on your machine and never leaves your device.",
+            "It keeps working even when your computer is closed — finishing tasks while you sleep.",
+            "Reach it from desktop, mobile, Slack, Discord, WhatsApp, or your browser.",
+            "It learns from your workflows and improves its approach based on your patterns.",
+            "It executes complex multi-step processes across different apps in minutes.",
+            "It manages spreadsheets, APIs, terminal commands, and file organization for you.",
+            "Sources come with credibility scores — facts are cross-referenced before you see them.",
+            "It switches languages mid-sentence and auto-detects your preferred one.",
+            "It anticipates what you'll need next and suggests it before you ask.",
+            "Routine Monday-morning tasks — dashboards, email summaries — disappear.",
         ];
         let factIdx = Math.floor(Math.random() * FUN_FACTS.length);
         function rotateFact() {
@@ -186,9 +194,11 @@
         // Full install (Node + Playwright + embedding + data + workspace + finalize)
         // empirically runs 30-90s on cold install, <5s on cached. We compute a
         // rolling estimate from the current progress rate.
-        let installStartMs = 0;
-        let lastPercent = 0;
-        let etaTimer = null;
+        // Sliding-window ETA: only updates on real progress events; deltas over
+        // the last N samples avoid the old bug where a flat-percent long phase
+        // (e.g. 5-minute `ollama pull`) inflated elapsed \u2192 shrank rate \u2192 grew ETA.
+        const RATE_SAMPLES = [];
+        const RATE_WINDOW = 8;
         function formatEta(seconds) {
             if (seconds < 0 || !Number.isFinite(seconds)) return "Estimating\u2026";
             if (seconds < 5) return "Almost done\u2026";
@@ -197,40 +207,80 @@
             const s = Math.round(seconds % 60);
             return "~" + m + "m " + (s < 10 ? "0" : "") + s + "s remaining";
         }
-        function updateEta() {
-            if (installStartMs === 0 || lastPercent <= 1) { etaEl.textContent = "Estimating\u2026"; return; }
-            const elapsed = Date.now() - installStartMs;
-            const rate = lastPercent / elapsed; // percent per ms
-            const remaining = (100 - lastPercent) / rate;
+        function recordProgressAndUpdateEta(percent) {
+            const now = Date.now();
+            RATE_SAMPLES.push({ ts: now, percent: percent });
+            if (RATE_SAMPLES.length > RATE_WINDOW) RATE_SAMPLES.shift();
+            if (RATE_SAMPLES.length < 2 || percent <= 1) {
+                etaEl.textContent = "Estimating\u2026";
+                return;
+            }
+            const oldest = RATE_SAMPLES[0];
+            const newest = RATE_SAMPLES[RATE_SAMPLES.length - 1];
+            const deltaP = newest.percent - oldest.percent;
+            const deltaT = newest.ts - oldest.ts;
+            if (deltaP <= 0 || deltaT <= 0) return; // no forward progress yet \u2014 keep last
+            const rate = deltaP / deltaT;
+            const remaining = (100 - newest.percent) / rate;
             etaEl.textContent = formatEta(remaining / 1000);
+        }
+        // Staleness timer: when no progress event has arrived for 15s (e.g.
+        // during a long `ollama pull`), reset ETA to "Estimating\u2026" so the user
+        // doesn't see a stale "~1m 20s remaining" frozen for 5 minutes while
+        // the actual download takes much longer than predicted.
+        const etaStalenessTimer = setInterval(function () {
+            if (RATE_SAMPLES.length > 0 &&
+                Date.now() - RATE_SAMPLES[RATE_SAMPLES.length - 1].ts > 15000) {
+                etaEl.textContent = "Estimating\u2026";
+            }
+        }, 5000);
+
+        // Hide all pre-flight buttons as soon as the install actually starts streaming
+        // progress. Previously the Resume button stayed visible during active progress
+        // because the original render kept it shown when prior phases existed.
+        function hidePreflightButtons() {
+            startBtn.classList.add("hidden");
+            resumeBtn.classList.add("hidden");
+            retryBtn.classList.add("hidden");
         }
 
         // Listen for progress + log streams from the main-process runner.
+        // Runner now sends "Running: id=<phase_id>" so the spinner highlights
+        // the active phase by ID \u2014 independent of label-string drift between
+        // phases.js and install.js. The old "Running: <label>" form is kept as
+        // a fallback in case an older runner is in play.
         if (typeof atlas.onInstallProgress === "function") {
             atlas.onInstallProgress(function (payload) {
                 if (!payload) return;
                 const percent = payload.percent;
                 const message = payload.message;
                 if (typeof percent === "number" && percent >= 0) {
-                    if (installStartMs === 0 && percent > 0) installStartMs = Date.now();
-                    lastPercent = percent;
                     bar.style.width = Math.min(100, percent) + "%";
                     percentEl.textContent = Math.round(percent) + "%";
-                    updateEta();
-                    if (!etaTimer) etaTimer = setInterval(updateEta, 1000);
+                    recordProgressAndUpdateEta(percent);
+                    if (percent > 0 && percent < 100) hidePreflightButtons();
                 }
                 if (typeof message === "string") {
-                    const match = message.match(/^Running:\s*(.+)$/);
-                    if (match) {
-                        const label = match[1];
-                        const id = Object.keys(LABELS).find(function (k) { return LABELS[k] === label; });
-                        if (id) renderList(id);
+                    const idMatch = message.match(/^Running:\s*id=(\S+)/);
+                    if (idMatch) {
+                        renderList(idMatch[1]);
+                        hidePreflightButtons();
+                    } else {
+                        const labelMatch = message.match(/^Running:\s*(.+)$/);
+                        if (labelMatch) {
+                            const label = labelMatch[1];
+                            const id = Object.keys(LABELS).find(function (k) { return LABELS[k] === label; });
+                            if (id) {
+                                renderList(id);
+                                hidePreflightButtons();
+                            }
+                        }
                     }
                 }
                 if (percent === 100) {
                     etaEl.textContent = "Done \u2713";
-                    if (etaTimer) { clearInterval(etaTimer); etaTimer = null; }
                     clearInterval(factTimer);
+                    clearInterval(etaStalenessTimer);
                     setTimeout(function () { window.location.href = "ready-hub.html"; }, 500);
                 }
             });
@@ -278,7 +328,8 @@
             if (typeof atlas.startInstall !== "function") { errEl.textContent = "Install IPC unavailable."; startBtn.disabled = false; return; }
             const workspace = (ctx && ctx.state && ctx.state.workspace && ctx.state.workspace.path) || "";
             try { await handle(await atlas.startInstall({ workspace: workspace })); }
-            catch (err) { errEl.textContent = "Install error: " + (err.message || err); startBtn.disabled = false; }
+            catch (err) { errEl.textContent = "Install error: " + (err.message || err); }
+            finally { startBtn.disabled = false; }
         });
 
         resumeBtn.addEventListener("click", async function () {
@@ -287,7 +338,7 @@
             if (typeof atlas.setupResumeInstall !== "function") { errEl.textContent = "Resume IPC unavailable."; resumeBtn.disabled = false; return; }
             try { await handle(await atlas.setupResumeInstall()); }
             catch (err) { errEl.textContent = "Resume error: " + (err.message || err); }
-            resumeBtn.disabled = false;
+            finally { resumeBtn.disabled = false; }
         });
 
         retryBtn.addEventListener("click", async function () {
@@ -297,7 +348,7 @@
             if (typeof atlas.setupRetryInstallPhase !== "function") { errEl.textContent = "Retry IPC unavailable."; retryBtn.disabled = false; return; }
             try { await handle(await atlas.setupRetryInstallPhase(failedId)); }
             catch (err) { errEl.textContent = "Retry error: " + (err.message || err); }
-            retryBtn.disabled = false;
+            finally { retryBtn.disabled = false; }
         });
     }
 

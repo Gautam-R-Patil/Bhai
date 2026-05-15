@@ -235,6 +235,18 @@ async function runDreaming(llm: LLMClient, recentContext: string): Promise<void>
             console.warn("[DREAMING] KG decay failed (non-fatal):", (err as Error).message);
         }
 
+        // Step 1d: Self-improvement synthesis — merge local drafts and ship
+        try {
+            const { runSelfImprovementSynthesis } = await import("./self-improvement-synthesis.js");
+            const synthResults = await runSelfImprovementSynthesis(llm);
+            const succeeded = synthResults.filter((r) => r.success).length;
+            if (synthResults.length > 0) {
+                console.log(`[DREAMING] 🪪 Self-improvement synthesis: ${succeeded}/${synthResults.length} slug(s) synced to server`);
+            }
+        } catch (err) {
+            console.warn("[DREAMING] Self-improvement synthesis failed (non-fatal):", (err as Error).message);
+        }
+
         // Step 2: Harvest pending tasks from conversation
         const tasks = await harvestDreamTasks(llm, recentContext);
 

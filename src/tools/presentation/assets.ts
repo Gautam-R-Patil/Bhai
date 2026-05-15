@@ -2,14 +2,14 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { createHash } from "node:crypto";
 import sharp from "sharp";
-import { getSessionToken } from "../../session.js";
 import { getConvexSiteUrl } from "../../config/keys.js";
-import { encryptedFetch } from "../../crypto-transport.js";
 import { getWorkspaceSubdir } from "../../config/paths.js";
+import { encryptedFetch } from "../../crypto-transport.js";
+import { getSessionToken } from "../../session.js";
 import type { Asset } from "./types.js";
 
 const IMAGE_MODEL = "openai/gpt-5-image";
@@ -48,16 +48,18 @@ async function generateAIImage(prompt: string): Promise<string | null> {
             body: JSON.stringify({
                 model: IMAGE_MODEL,
                 modalities: ["text", "image"],
-                messages: [{
-                    role: "user",
-                    content: `Generate an image: ${prompt}`,
-                }],
+                messages: [
+                    {
+                        role: "user",
+                        content: `Generate an image: ${prompt}`,
+                    },
+                ],
             }),
         });
 
         if (!response.ok) return null;
 
-        const data = await response.json() as Record<string, unknown>;
+        const data = (await response.json()) as Record<string, unknown>;
         const base64 = extractImageBase64(data);
         if (!base64) return null;
 
@@ -116,7 +118,14 @@ async function fetchPexelsImage(query: string): Promise<{ path: string; attribut
         const url = `https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=1&orientation=landscape`;
         const res = await fetch(url, { headers: { Authorization: apiKey } });
         if (!res.ok) return null;
-        const data = await res.json() as { photos?: Array<{ src: { large2x?: string; large?: string }; photographer: string; url: string; alt?: string }> };
+        const data = (await res.json()) as {
+            photos?: Array<{
+                src: { large2x?: string; large?: string };
+                photographer: string;
+                url: string;
+                alt?: string;
+            }>;
+        };
         const photo = data.photos?.[0];
         if (!photo) return null;
 
@@ -170,7 +179,7 @@ export interface ResolveOpts {
     prompt: string;
     slideTitle: string;
     aspectRatio?: "16:9" | "4:3" | "1:1" | "free";
-    preferStock?: boolean;          // skip AI gen (faster, cheaper)
+    preferStock?: boolean; // skip AI gen (faster, cheaper)
 }
 
 /**
@@ -228,10 +237,14 @@ export async function resolveAsset(opts: ResolveOpts): Promise<Asset | null> {
 
 function aspectToDims(aspect?: ResolveOpts["aspectRatio"]): { targetWidth: number; targetHeight?: number } {
     switch (aspect) {
-        case "16:9": return { targetWidth: 1920, targetHeight: 1080 };
-        case "4:3": return { targetWidth: 1600, targetHeight: 1200 };
-        case "1:1": return { targetWidth: 1200, targetHeight: 1200 };
-        default: return { targetWidth: 1920 };
+        case "16:9":
+            return { targetWidth: 1920, targetHeight: 1080 };
+        case "4:3":
+            return { targetWidth: 1600, targetHeight: 1200 };
+        case "1:1":
+            return { targetWidth: 1200, targetHeight: 1200 };
+        default:
+            return { targetWidth: 1920 };
     }
 }
 

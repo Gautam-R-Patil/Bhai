@@ -41,10 +41,7 @@ export function registerToolSchema(toolName: string, schema: z.ZodType): void {
  * Validate tool input against its registered Zod schema.
  * Returns { valid: true } if no schema is registered (fail-open).
  */
-export function validateToolInput(
-    toolName: string,
-    input: unknown,
-): { valid: boolean; errors?: string[] } {
+export function validateToolInput(toolName: string, input: unknown): { valid: boolean; errors?: string[] } {
     const schema = toolSchemas.get(toolName);
     if (!schema) {
         // No schema registered -- fail-open, allow execution
@@ -246,7 +243,10 @@ const webSearchSchema = z.object({
     query: z.string().describe("Search query"),
     // Coerce — LLMs sometimes emit "10" instead of 10. Without coercion,
     // every string-typed call fails validation and burns an iteration.
-    num_results: llmNumber().pipe(z.number().int().min(1).max(15)).optional().describe("Number of results to return (1-15)"),
+    num_results: llmNumber()
+        .pipe(z.number().int().min(1).max(15))
+        .optional()
+        .describe("Number of results to return (1-15)"),
 });
 registerToolSchema("web_search", webSearchSchema);
 

@@ -48,7 +48,14 @@ function isPrivateIPv4(ip: string): boolean {
 function isPrivateIPv6(ip: string): boolean {
     const lower = ip.toLowerCase();
     if (lower === "::1" || lower === "::") return true;
-    if (lower.startsWith("fe80:") || lower.startsWith("fe8") || lower.startsWith("fe9") || lower.startsWith("fea") || lower.startsWith("feb")) return true; // link-local fe80::/10
+    if (
+        lower.startsWith("fe80:") ||
+        lower.startsWith("fe8") ||
+        lower.startsWith("fe9") ||
+        lower.startsWith("fea") ||
+        lower.startsWith("feb")
+    )
+        return true; // link-local fe80::/10
     if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // ULA fc00::/7
     // IPv4-mapped IPv6: ::ffff:<ipv4>
     const mapped = lower.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);

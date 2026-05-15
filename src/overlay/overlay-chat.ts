@@ -546,15 +546,30 @@ function isScreenQuery(msg: string): boolean {
 }
 
 
-async function captureScreen(): Promise<{ base64: string; path: string } | null> {
+async function captureScreen(): Promise<{ base64: string; mimeType: string } | null> {
+    let tmpPath: string | null = null;
     try {
-        const tmpPath = join(tmpdir(), `atlas_screen_${Date.now()}.png`);
+        tmpPath = join(tmpdir(), `atlas_screen_${Date.now()}.png`);
         await captureScreenshot(tmpPath);
-        const buffer = readFileSync(tmpPath);
-        return { base64: buffer.toString("base64"), path: tmpPath };
+        const rawBuffer = readFileSync(tmpPath);
+        try {
+            const sharp = (await import("sharp")).default;
+            const compressed = await sharp(rawBuffer)
+                .resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true })
+                .jpeg({ quality: 85, mozjpeg: true })
+                .toBuffer();
+            return { base64: compressed.toString("base64"), mimeType: "image/jpeg" };
+        } catch (compressErr) {
+            console.warn("[OVERLAY] Screenshot recompress failed, sending raw PNG:", (compressErr as Error).message);
+            return { base64: rawBuffer.toString("base64"), mimeType: "image/png" };
+        }
     } catch (err) {
         console.error("[OVERLAY] Screenshot failed:", (err as Error).message);
         return null;
+    } finally {
+        if (tmpPath && existsSync(tmpPath)) {
+            try { unlinkSync(tmpPath); } catch { /* */ }
+        }
     }
 }
 
@@ -610,7 +625,7 @@ async function handleOverlayMessage(ws: WebSocket, userMessage: string): Promise
 
         const screenshot = await captureScreen();
         if (screenshot) {
-            media = [{ type: "image", base64: screenshot.base64, mimeType: "image/png" }];
+            media = [{ type: "image", base64: screenshot.base64, mimeType: screenshot.mimeType }];
             taggedMessage = `${userMessage}
 
 [SOURCE: Desktop overlay chat — respond here, NOT on Telegram. Keep responses SHORT (2-4 sentences).

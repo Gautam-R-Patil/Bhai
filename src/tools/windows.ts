@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { getScreenDimensions, percentageToScreen, scaleImageToScreen } from "../screen/screen-dimensions.js";
 import type { ToolDefinition } from "./get-current-time.js";
 import {
     captureScreenshot,
@@ -152,8 +153,9 @@ export const winOsScreenshot: ToolDefinition = {
         const tmpJpg = join(tmpdir(), `atlas_screen_${Date.now()}.jpg`);
 
         try {
-            // Get screen resolution
-            const screen = await getScreenResolution();
+            // Get dims for the focused monitor (multi-monitor aware).
+            const dims = await getScreenDimensions({ focusedWindow: true, force: true });
+            const screen = { width: dims.width, height: dims.height };
             lastScreenWidth = screen.width;
             lastScreenHeight = screen.height;
 
@@ -189,10 +191,14 @@ $bmp.Dispose()
             const projectRoot = join(__dirname, "..", "..");
             const gridScript = join(projectRoot, "scripts", "grid_overlay.py");
             try {
-                await execFileAsync("python", [gridScript, tmpPng, tmpJpg, "200"], { timeout: 5000 });
+                await execFileAsync("python", [gridScript, tmpPng, tmpJpg, "200", String(screen.width)], {
+                    timeout: 5000,
+                });
             } catch {
                 try {
-                    await execFileAsync("python3", [gridScript, tmpPng, tmpJpg, "200"], { timeout: 5000 });
+                    await execFileAsync("python3", [gridScript, tmpPng, tmpJpg, "200", String(screen.width)], {
+                        timeout: 5000,
+                    });
                 } catch {
                     // Fallback: convert to JPEG via PowerShell
                     try {
@@ -260,12 +266,14 @@ export const winOsClick: ToolDefinition = {
         function: {
             name: "os_click",
             description:
-                "Click, double-click, right-click, or move the mouse on Windows. Pass x,y coordinates as you see them in the os_screenshot image — they are auto-scaled to actual screen resolution.",
+                "Click, double-click, right-click, or move the mouse on Windows. PREFERRED: pass percent_x/percent_y in [0..1] (resolution-independent, works on any monitor/DPI). LEGACY: pass x/y image-pixel coords from os_screenshot.",
             parameters: {
                 type: "object",
                 properties: {
-                    x: { type: "number", description: "X coordinate from the screenshot image" },
-                    y: { type: "number", description: "Y coordinate from the screenshot image" },
+                    x: { type: "number", description: "X coordinate from the screenshot image (legacy)" },
+                    y: { type: "number", description: "Y coordinate from the screenshot image (legacy)" },
+                    percent_x: { type: "number", description: "X position as 0..1 fraction. PREFERRED." },
+                    percent_y: { type: "number", description: "Y position as 0..1 fraction. PREFERRED." },
                     action: {
                         type: "string",
                         enum: ["click", "double_click", "right_click", "move"],
@@ -273,10 +281,11 @@ export const winOsClick: ToolDefinition = {
                     },
                     raw: {
                         type: "boolean",
-                        description: "If true, treat x/y as raw screen pixels without scaling (default: false)",
+                        description:
+                            "If true, treat x/y as raw screen pixels without scaling. Ignored when percent_x/y are given.",
                     },
                 },
-                required: ["x", "y"],
+                required: [],
             },
         },
     },
@@ -286,20 +295,51 @@ export const winOsClick: ToolDefinition = {
             return JSON.stringify({ error: "os_click is only available on Windows." });
         }
 
-        const rawX = input.x as number;
-        const rawY = input.y as number;
         const action = (input.action as string) || "click";
         const useRaw = input.raw as boolean;
+        const pctX = input.percent_x as number | undefined;
+        const pctY = input.percent_y as number | undefined;
+        const rawX = input.x as number | undefined;
+        const rawY = input.y as number | undefined;
 
-        let x = rawX;
-        let y = rawY;
-        if (!useRaw && lastScreenWidth > 0) {
-            const RESIZE_WIDTH = 1920;
-            const scaleFactor = lastScreenWidth / RESIZE_WIDTH;
-            x = Math.round(rawX * scaleFactor);
-            y = Math.round(rawY * scaleFactor);
-            console.log(`  🖱️  Click: image(${rawX},${rawY}) → screen(${x},${y}) [scale=${scaleFactor.toFixed(3)}]`);
+        const hasPercent = typeof pctX === "number" && typeof pctY === "number";
+        const hasPixel = typeof rawX === "number" && typeof rawY === "number";
+        if (!hasPercent && !hasPixel) {
+            return JSON.stringify({
+                error: "os_click requires either (percent_x, percent_y) [preferred] or (x, y) coordinates.",
+            });
         }
+        if (hasPercent && hasPixel) {
+            return JSON.stringify({
+                error: "os_click: provide EITHER (percent_x, percent_y) OR (x, y), not both — they would conflict.",
+            });
+        }
+
+        const dims = await getScreenDimensions({ focusedWindow: true });
+        let x: number;
+        let y: number;
+        let coordMode: string;
+        if (hasPercent) {
+            const resolved = percentageToScreen({ percentX: pctX, percentY: pctY, dims });
+            x = resolved.x;
+            y = resolved.y;
+            coordMode = "percent";
+        } else {
+            const RESIZE_WIDTH = 1920;
+            const scaled = scaleImageToScreen({
+                rawX: rawX as number,
+                rawY: rawY as number,
+                imageWidth: RESIZE_WIDTH,
+                dims,
+                raw: useRaw,
+            });
+            x = scaled.x;
+            y = scaled.y;
+            coordMode = useRaw ? "raw" : `image(scale=${scaled.scaleFactor})`;
+        }
+        console.log(
+            `  🖱️  Click: ${coordMode}(${hasPercent ? `${pctX},${pctY}` : `${rawX},${rawY}`}) → screen(${x},${y}) [monitor=${dims.monitorId} origin=(${dims.originX},${dims.originY})]`,
+        );
 
         // PowerShell script using user32.dll
         let mouseFlags: string;

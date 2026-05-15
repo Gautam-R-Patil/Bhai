@@ -6,18 +6,18 @@
 // Exposes the long-running task executor to the LLM as callable tools.
 // Three tools: start, check, and cancel long-running tasks.
 
-import type { ToolDefinition } from "./get-current-time.js";
-import type { LLMClient } from "../llm.js";
 import {
-    startLongTask,
-    getLongTaskStatus,
     cancelLongTask,
+    getLongTaskStatus,
+    type LongTaskProgress,
     listActiveLongTasks,
     listSavedTasks,
     loadCheckpoint,
     resumeLongTask,
-    type LongTaskProgress,
+    startLongTask,
 } from "../agents/long-task.js";
+import type { LLMClient } from "../llm.js";
+import type { ToolDefinition } from "./get-current-time.js";
 
 // ── LLM Client Injection ──────────────────────
 
@@ -46,7 +46,7 @@ function makeProgressCallback(): ((progress: LongTaskProgress) => Promise<void>)
         if (progress.status === "completed") {
             // Completion notification — deliver reviewed result to user via the current channel
             const msg = `✅ **Task complete!** (${progress.phasesTotal} phases, ${elapsed}s)\n\n${progress.currentPhaseDescription}`;
-            await fn(msg).catch(() => { });
+            await fn(msg).catch(() => {});
 
             // Also emit to the proactive subsystem so the V2 scheduler + Composer handle it
             // across channels (template fast-path: "Done with X. <summary>").
@@ -64,13 +64,13 @@ function makeProgressCallback(): ((progress: LongTaskProgress) => Promise<void>)
             }
         } else if (progress.currentPhaseId === "quality_review") {
             // Quality review in progress — brief status update
-            await fn(`🔍 All phases done — reviewing quality of work...`).catch(() => { });
+            await fn(`🔍 All phases done — reviewing quality of work...`).catch(() => {});
         } else {
             const eta = progress.estimatedRemainingMs
                 ? ` (~${Math.round(progress.estimatedRemainingMs / 1000)}s remaining)`
                 : "";
             const msg = `📋 Long task: phase ${progress.phasesCompleted + 1}/${progress.phasesTotal} — ${progress.currentPhaseDescription.substring(0, 80)} (${elapsed}s${eta})`;
-            await fn(msg).catch(() => { });
+            await fn(msg).catch(() => {});
         }
     };
 }
@@ -97,7 +97,8 @@ The task runs asynchronously — you'll get a task ID to check on it later.`,
                 properties: {
                     description: {
                         type: "string",
-                        description: "Detailed description of the full task to execute. Be as specific as possible — include URLs, file paths, expected outcomes, etc.",
+                        description:
+                            "Detailed description of the full task to execute. Be as specific as possible — include URLs, file paths, expected outcomes, etc.",
                     },
                 },
                 required: ["description"],
@@ -123,9 +124,10 @@ The task runs asynchronously — you'll get a task ID to check on it later.`,
                 task_id: task.id,
                 status: task.status,
                 phases: task.phases.length,
-                phase_summary: task.phases.map(p => `${p.id} [${p.role}]: ${p.description.substring(0, 80)}`),
+                phase_summary: task.phases.map((p) => `${p.id} [${p.role}]: ${p.description.substring(0, 80)}`),
                 message: `Long task "${task.id}" started with ${task.phases.length} phases running in background.`,
-                instruction: "STOP: This task is now DELEGATED to background workers. Do NOT attempt this work yourself — do NOT use shell_exec, write, edit, browser, or any tools to do the same task. Simply tell the user the task is running in the background and they can check progress later. Make NO more tool calls for this task.",
+                instruction:
+                    "STOP: This task is now DELEGATED to background workers. Do NOT attempt this work yourself — do NOT use shell_exec, write, edit, browser, or any tools to do the same task. Simply tell the user the task is running in the background and they can check progress later. Make NO more tool calls for this task.",
             });
         } catch (err) {
             return JSON.stringify({
@@ -142,7 +144,8 @@ export const checkLongTaskTool: ToolDefinition = {
         type: "function",
         function: {
             name: "check_long_task",
-            description: "Check the status and progress of a running long task. Also use this to list all active tasks (omit task_id).",
+            description:
+                "Check the status and progress of a running long task. Also use this to list all active tasks (omit task_id).",
             parameters: {
                 type: "object",
                 properties: {
@@ -164,7 +167,7 @@ export const checkLongTaskTool: ToolDefinition = {
             const active = listActiveLongTasks();
             const saved = await listSavedTasks();
             return JSON.stringify({
-                active_tasks: active.map(t => ({
+                active_tasks: active.map((t) => ({
                     id: t.id,
                     description: t.description.substring(0, 100),
                     status: t.status,
@@ -251,7 +254,8 @@ export const resumeLongTaskTool: ToolDefinition = {
         type: "function",
         function: {
             name: "resume_long_task",
-            description: "Resume a previously started long task from its last checkpoint. Use this if a task was interrupted or paused.",
+            description:
+                "Resume a previously started long task from its last checkpoint. Use this if a task was interrupted or paused.",
             parameters: {
                 type: "object",
                 properties: {

@@ -2,8 +2,8 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import type { ToolDefinition } from "./get-current-time.js";
 import { getLocation } from "../location/index.js";
+import type { ToolDefinition } from "./get-current-time.js";
 
 // ── Types ─────────────────────────────────────
 
@@ -77,8 +77,7 @@ async function fetchOpenMeteoFallback(): Promise<Record<string, unknown>> {
     const loc = getLocation();
     const lat = loc?.latitude ?? 0;
     const lon = loc?.longitude ?? 0;
-    const url =
-        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true`;
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`Open-Meteo returned ${res.status}`);
     const data = (await res.json()) as {
@@ -123,9 +122,7 @@ function formatForecast(days: WttrDay[], metric: boolean, count: number) {
         max_temp: metric ? `${d.maxtempC}°C` : `${d.maxtempF}°F`,
         min_temp: metric ? `${d.mintempC}°C` : `${d.mintempF}°F`,
         conditions: d.hourly[4]?.weatherDesc?.[0]?.value ?? "Unknown",
-        precipitation_chance: `${Math.max(
-            ...d.hourly.map((h) => parseInt(h.chanceofrain || "0", 10))
-        )}%`,
+        precipitation_chance: `${Math.max(...d.hourly.map((h) => parseInt(h.chanceofrain || "0", 10)))}%`,
         uv_index: d.uvIndex,
         sunrise: d.astronomy?.[0]?.sunrise ?? "N/A",
         sunset: d.astronomy?.[0]?.sunset ?? "N/A",
@@ -141,7 +138,7 @@ function formatHourly(day: WttrDay, metric: boolean) {
             conditions: h.weatherDesc?.[0]?.value ?? "Unknown",
             precipitation_chance: `${Math.max(
                 parseInt(h.chanceofrain || "0", 10),
-                parseInt(h.chanceofsnow || "0", 10)
+                parseInt(h.chanceofsnow || "0", 10),
             )}%`,
         };
     });
@@ -176,8 +173,7 @@ export const weatherTool: ToolDefinition = {
                     },
                     days: {
                         type: "number",
-                        description:
-                            "Number of forecast days (1-7). Only used with action=forecast. Defaults to 3.",
+                        description: "Number of forecast days (1-7). Only used with action=forecast. Defaults to 3.",
                     },
                 },
                 required: ["action", "location"],
@@ -203,7 +199,7 @@ export const weatherTool: ToolDefinition = {
                     return JSON.stringify({ success: true, ...fallback });
                 }
                 throw new Error(
-                    "Primary weather API (wttr.in) is unavailable and fallback does not support this action."
+                    "Primary weather API (wttr.in) is unavailable and fallback does not support this action.",
                 );
             }
 
@@ -219,8 +215,7 @@ export const weatherTool: ToolDefinition = {
             }
 
             if (action === "forecast") {
-                if (!data.weather?.length)
-                    return JSON.stringify({ error: "No forecast data available." });
+                if (!data.weather?.length) return JSON.stringify({ error: "No forecast data available." });
                 return JSON.stringify({
                     success: true,
                     location,
@@ -232,8 +227,7 @@ export const weatherTool: ToolDefinition = {
 
             if (action === "hourly") {
                 const today = data.weather?.[0];
-                if (!today?.hourly?.length)
-                    return JSON.stringify({ error: "No hourly data available." });
+                if (!today?.hourly?.length) return JSON.stringify({ error: "No hourly data available." });
                 return JSON.stringify({
                     success: true,
                     location,

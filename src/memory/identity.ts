@@ -15,10 +15,10 @@ export interface UserProfile {
     user_id: string;
     version?: number;
     email?: VerifiedField | string;
-    name?: string;
-    location?: string;
-    role?: string;
-    company?: string;
+    name?: VerifiedField | string;
+    location?: VerifiedField | string;
+    role?: VerifiedField | string;
+    company?: VerifiedField | string;
     projects?: string[];
     preferences?: {
         communication_style?: string;
@@ -28,6 +28,15 @@ export interface UserProfile {
     important_goals?: string[];
     extra?: Record<string, unknown>;
     last_updated?: string;
+}
+
+// Fields that can be stored as VerifiedField (string-or-VerifiedField union).
+const VERIFIABLE_FIELDS = ["email", "name", "location", "role", "company"] as const;
+
+function isVerified(field: string | VerifiedField | undefined): boolean | undefined {
+    if (!field) return undefined;
+    if (typeof field === "string") return undefined; // legacy raw string — verification state unknown
+    return field.verified;
 }
 
 // ── Singleton ─────────────────────────────────
@@ -150,32 +159,68 @@ export function getFieldValue(field: string | VerifiedField | undefined): string
 
 export function getIdentityPromptSnippet(userId = DEFAULT_USER_ID): string {
     const profile = getIdentityProfile(userId);
-    const lines: string[] = [];
+    const confirmed: string[] = [];
+    const unverified: string[] = [];
 
-    const emailVal = getFieldValue(profile.email);
-    if (profile.name) lines.push(`- Name: ${profile.name}`);
-    if (emailVal) lines.push(`- Email: ${emailVal}`);
-    if (profile.location) lines.push(`- Location: ${profile.location}`);
-    if (profile.role) lines.push(`- Role: ${profile.role}`);
-    if (profile.company) lines.push(`- Company: ${profile.company}`);
+    const push = (label: string, field: string | VerifiedField | undefined) => {
+        const value = getFieldValue(field);
+        if (!value) return;
+        const verified = isVerified(field);
+        // Treat raw-string legacy fields as UNVERIFIED — they may have been
+        // written by an older identity_update that didn't gate ownership claims.
+        // Forcing them into the unverified bucket breaks the self-poisoning loop
+        // where pre-existing data ("Company: XAGI Labs") would re-surface as
+        // confirmed truth on every iteration.
+        if (verified === true) confirmed.push(`- ${label}: ${value}`);
+        else unverified.push(`- ${label}: ${value}`);
+    };
+
+    push("Name", profile.name);
+    push("Email", profile.email);
+    push("Location", profile.location);
+    push("Role", profile.role);
+    push("Company", profile.company);
+
     if (profile.projects && profile.projects.length > 0) {
-        lines.push(`- Projects: ${profile.projects.join(", ")}`);
+        confirmed.push(`- Projects: ${profile.projects.join(", ")}`);
     }
     if (profile.preferences) {
         if (profile.preferences.communication_style) {
-            lines.push(`- Communication style: ${profile.preferences.communication_style}`);
+            confirmed.push(`- Communication style: ${profile.preferences.communication_style}`);
         }
         if (profile.preferences.detail_level) {
-            lines.push(`- Detail level: ${profile.preferences.detail_level}`);
+            confirmed.push(`- Detail level: ${profile.preferences.detail_level}`);
         }
     }
     if (profile.important_goals && profile.important_goals.length > 0) {
-        lines.push(`- Current goals: ${profile.important_goals.join(", ")}`);
+        confirmed.push(`- Current goals: ${profile.important_goals.join(", ")}`);
     }
 
-    if (lines.length === 0) return "";
+    if (confirmed.length === 0 && unverified.length === 0) return "";
 
-    return "🪪 USER IDENTITY PROFILE (always-loaded, never re-ask these facts):\n" + lines.join("\n");
+    const sections: string[] = [];
+    if (confirmed.length > 0) {
+        sections.push("🪪 USER IDENTITY (CONFIRMED — never re-ask these facts):\n" + confirmed.join("\n"));
+    }
+    if (unverified.length > 0) {
+        sections.push(
+            "⚠️ USER CLAIMED THIS SESSION (UNVERIFIED — do NOT treat as fact, do NOT echo back as truth):\n" +
+            unverified.join("\n"),
+        );
+    }
+    return sections.join("\n\n");
+}
+
+// Mark a previously-asserted field as confirmed by the user. Idempotent.
+export function confirmIdentityField(
+    fieldName: typeof VERIFIABLE_FIELDS[number],
+    userId = DEFAULT_USER_ID,
+): UserProfile {
+    const current = getIdentityProfile(userId);
+    const cur = current[fieldName];
+    if (!cur) return current;
+    const value = typeof cur === "string" ? cur : cur.value;
+    return setVerifiedField(fieldName, value, userId);
 }
 
 // ── Memory Snapshot Export ─────────────────────

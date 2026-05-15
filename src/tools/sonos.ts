@@ -51,11 +51,7 @@ let discoveryCache: DiscoveryCache | null = null;
 
 // ── SOAP Helper ───────────────────────────────
 
-function buildSoapEnvelope(
-    service: string,
-    action: string,
-    args: Record<string, string | number> = {},
-): string {
+function buildSoapEnvelope(service: string, action: string, args: Record<string, string | number> = {}): string {
     const argXml = Object.entries(args)
         .map(([key, val]) => `<${key}>${escapeXml(String(val))}</${key}>`)
         .join("");
@@ -74,11 +70,7 @@ function buildSoapEnvelope(
 }
 
 function escapeXml(str: string): string {
-    return str
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;");
+    return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 async function soapAction(
@@ -169,9 +161,7 @@ async function discoverSpeakers(): Promise<SonosSpeaker[]> {
                 const descXml = await descRes.text();
 
                 const roomName =
-                    extractTag(descXml, "roomName") ||
-                    extractTag(descXml, "friendlyName") ||
-                    "Unknown Room";
+                    extractTag(descXml, "roomName") || extractTag(descXml, "friendlyName") || "Unknown Room";
                 const modelName = extractTag(descXml, "modelName") || "Sonos";
                 const displayName = extractTag(descXml, "displayName") || roomName;
 
@@ -204,9 +194,7 @@ async function discoverSpeakers(): Promise<SonosSpeaker[]> {
 
 // ── Speaker Resolution ────────────────────────
 
-async function resolveSpeaker(
-    speakerIdent?: string,
-): Promise<SonosSpeaker> {
+async function resolveSpeaker(speakerIdent?: string): Promise<SonosSpeaker> {
     const speakers = await discoverSpeakers();
 
     if (speakers.length === 0) {
@@ -239,9 +227,7 @@ async function resolveSpeaker(
 
     if (!match) {
         const available = speakers.map((s) => `${s.name} (${s.room})`).join(", ");
-        throw new Error(
-            `Speaker "${speakerIdent}" not found. Available speakers: ${available}`,
-        );
+        throw new Error(`Speaker "${speakerIdent}" not found. Available speakers: ${available}`);
     }
 
     return match;
@@ -266,13 +252,9 @@ async function handleDiscover(): Promise<object> {
 
 async function handleStatus(speaker: SonosSpeaker): Promise<object> {
     // Get transport state
-    const transportXml = await soapAction(
-        speaker.ip,
-        PATH_AV_TRANSPORT,
-        SERVICE_AV_TRANSPORT,
-        "GetTransportInfo",
-        { InstanceID: 0 },
-    );
+    const transportXml = await soapAction(speaker.ip, PATH_AV_TRANSPORT, SERVICE_AV_TRANSPORT, "GetTransportInfo", {
+        InstanceID: 0,
+    });
 
     const rawState = extractTag(transportXml, "CurrentTransportState");
     const stateMap: Record<string, string> = {
@@ -284,13 +266,9 @@ async function handleStatus(speaker: SonosSpeaker): Promise<object> {
     const state = stateMap[rawState] ?? rawState.toLowerCase();
 
     // Get current track metadata
-    const positionXml = await soapAction(
-        speaker.ip,
-        PATH_AV_TRANSPORT,
-        SERVICE_AV_TRANSPORT,
-        "GetPositionInfo",
-        { InstanceID: 0 },
-    );
+    const positionXml = await soapAction(speaker.ip, PATH_AV_TRANSPORT, SERVICE_AV_TRANSPORT, "GetPositionInfo", {
+        InstanceID: 0,
+    });
 
     const metaRaw = extractTag(positionXml, "TrackMetaData");
     const meta = decodeXmlEntities(metaRaw);
@@ -299,23 +277,17 @@ async function handleStatus(speaker: SonosSpeaker): Promise<object> {
     const album = decodeXmlEntities(extractTag(meta, "upnp:album")) || "Unknown";
 
     // Get volume
-    const volXml = await soapAction(
-        speaker.ip,
-        PATH_RENDERING,
-        SERVICE_RENDERING,
-        "GetVolume",
-        { InstanceID: 0, Channel: "Master" },
-    );
+    const volXml = await soapAction(speaker.ip, PATH_RENDERING, SERVICE_RENDERING, "GetVolume", {
+        InstanceID: 0,
+        Channel: "Master",
+    });
     const volume = parseInt(extractTag(volXml, "CurrentVolume"), 10) || 0;
 
     // Get mute state
-    const muteXml = await soapAction(
-        speaker.ip,
-        PATH_RENDERING,
-        SERVICE_RENDERING,
-        "GetMute",
-        { InstanceID: 0, Channel: "Master" },
-    );
+    const muteXml = await soapAction(speaker.ip, PATH_RENDERING, SERVICE_RENDERING, "GetMute", {
+        InstanceID: 0,
+        Channel: "Master",
+    });
     const muted = extractTag(muteXml, "CurrentMute") === "1";
 
     return {
@@ -335,40 +307,26 @@ async function handleTransportAction(
     speaker: SonosSpeaker,
     action: "Play" | "Pause" | "Stop" | "Next" | "Previous",
 ): Promise<object> {
-    await soapAction(
-        speaker.ip,
-        PATH_AV_TRANSPORT,
-        SERVICE_AV_TRANSPORT,
-        action,
-        { InstanceID: 0, ...(action === "Play" ? { Speed: 1 } : {}) },
-    );
+    await soapAction(speaker.ip, PATH_AV_TRANSPORT, SERVICE_AV_TRANSPORT, action, {
+        InstanceID: 0,
+        ...(action === "Play" ? { Speed: 1 } : {}),
+    });
 
     return { success: true, speaker: speaker.name, action: action.toLowerCase() };
 }
 
-async function handlePlay(
-    speaker: SonosSpeaker,
-    uri?: string,
-): Promise<object> {
+async function handlePlay(speaker: SonosSpeaker, uri?: string): Promise<object> {
     if (uri) {
         // Set the transport URI first, then play
         const metadata = "";
-        await soapAction(
-            speaker.ip,
-            PATH_AV_TRANSPORT,
-            SERVICE_AV_TRANSPORT,
-            "SetAVTransportURI",
-            { InstanceID: 0, CurrentURI: uri, CurrentURIMetaData: metadata },
-        );
+        await soapAction(speaker.ip, PATH_AV_TRANSPORT, SERVICE_AV_TRANSPORT, "SetAVTransportURI", {
+            InstanceID: 0,
+            CurrentURI: uri,
+            CurrentURIMetaData: metadata,
+        });
     }
 
-    await soapAction(
-        speaker.ip,
-        PATH_AV_TRANSPORT,
-        SERVICE_AV_TRANSPORT,
-        "Play",
-        { InstanceID: 0, Speed: 1 },
-    );
+    await soapAction(speaker.ip, PATH_AV_TRANSPORT, SERVICE_AV_TRANSPORT, "Play", { InstanceID: 0, Speed: 1 });
 
     return {
         success: true,
@@ -378,28 +336,19 @@ async function handlePlay(
     };
 }
 
-async function handleVolume(
-    speaker: SonosSpeaker,
-    volume: number,
-): Promise<object> {
+async function handleVolume(speaker: SonosSpeaker, volume: number): Promise<object> {
     const clamped = Math.max(0, Math.min(100, Math.round(volume)));
 
-    await soapAction(
-        speaker.ip,
-        PATH_RENDERING,
-        SERVICE_RENDERING,
-        "SetVolume",
-        { InstanceID: 0, Channel: "Master", DesiredVolume: clamped },
-    );
+    await soapAction(speaker.ip, PATH_RENDERING, SERVICE_RENDERING, "SetVolume", {
+        InstanceID: 0,
+        Channel: "Master",
+        DesiredVolume: clamped,
+    });
 
     return { success: true, speaker: speaker.name, volume: clamped };
 }
 
-async function handleGroup(
-    speaker: SonosSpeaker,
-    groupAction: string,
-    targetSpeaker?: string,
-): Promise<object> {
+async function handleGroup(speaker: SonosSpeaker, groupAction: string, targetSpeaker?: string): Promise<object> {
     switch (groupAction) {
         case "party": {
             // Group all speakers with this one as coordinator
@@ -407,17 +356,11 @@ async function handleGroup(
             const coordinatorUuid = await getUuid(speaker.ip);
             for (const s of speakers) {
                 if (s.ip !== speaker.ip) {
-                    await soapAction(
-                        s.ip,
-                        PATH_AV_TRANSPORT,
-                        SERVICE_AV_TRANSPORT,
-                        "SetAVTransportURI",
-                        {
-                            InstanceID: 0,
-                            CurrentURI: `x-rincon:${coordinatorUuid}`,
-                            CurrentURIMetaData: "",
-                        },
-                    );
+                    await soapAction(s.ip, PATH_AV_TRANSPORT, SERVICE_AV_TRANSPORT, "SetAVTransportURI", {
+                        InstanceID: 0,
+                        CurrentURI: `x-rincon:${coordinatorUuid}`,
+                        CurrentURIMetaData: "",
+                    });
                 }
             }
             return {
@@ -445,17 +388,11 @@ async function handleGroup(
             }
             const target = await resolveSpeaker(targetSpeaker);
             const targetUuid = await getUuid(target.ip);
-            await soapAction(
-                speaker.ip,
-                PATH_AV_TRANSPORT,
-                SERVICE_AV_TRANSPORT,
-                "SetAVTransportURI",
-                {
-                    InstanceID: 0,
-                    CurrentURI: `x-rincon:${targetUuid}`,
-                    CurrentURIMetaData: "",
-                },
-            );
+            await soapAction(speaker.ip, PATH_AV_TRANSPORT, SERVICE_AV_TRANSPORT, "SetAVTransportURI", {
+                InstanceID: 0,
+                CurrentURI: `x-rincon:${targetUuid}`,
+                CurrentURIMetaData: "",
+            });
             return {
                 success: true,
                 speaker: speaker.name,
@@ -493,20 +430,14 @@ async function getUuid(ip: string): Promise<string> {
 }
 
 async function handleFavorites(speaker: SonosSpeaker): Promise<object> {
-    const xml = await soapAction(
-        speaker.ip,
-        PATH_CONTENT_DIR,
-        SERVICE_CONTENT_DIR,
-        "Browse",
-        {
-            ObjectID: "FV:2",
-            BrowseFlag: "BrowseDirectChildren",
-            Filter: "*",
-            StartingIndex: 0,
-            RequestedCount: 100,
-            SortCriteria: "",
-        },
-    );
+    const xml = await soapAction(speaker.ip, PATH_CONTENT_DIR, SERVICE_CONTENT_DIR, "Browse", {
+        ObjectID: "FV:2",
+        BrowseFlag: "BrowseDirectChildren",
+        Filter: "*",
+        StartingIndex: 0,
+        RequestedCount: 100,
+        SortCriteria: "",
+    });
 
     const resultRaw = extractTag(xml, "Result");
     const result = decodeXmlEntities(resultRaw);
@@ -519,8 +450,7 @@ async function handleFavorites(speaker: SonosSpeaker): Promise<object> {
         const itemXml = match[1];
         const title = decodeXmlEntities(extractTag(itemXml, "dc:title"));
         const uri =
-            decodeXmlEntities(extractTag(itemXml, "res")) ||
-            decodeXmlEntities(extractTag(itemXml, "orderedItem"));
+            decodeXmlEntities(extractTag(itemXml, "res")) || decodeXmlEntities(extractTag(itemXml, "orderedItem"));
 
         if (title) {
             favorites.push({ title, uri });
@@ -531,20 +461,14 @@ async function handleFavorites(speaker: SonosSpeaker): Promise<object> {
 }
 
 async function handleQueue(speaker: SonosSpeaker): Promise<object> {
-    const xml = await soapAction(
-        speaker.ip,
-        PATH_CONTENT_DIR,
-        SERVICE_CONTENT_DIR,
-        "Browse",
-        {
-            ObjectID: "Q:0",
-            BrowseFlag: "BrowseDirectChildren",
-            Filter: "*",
-            StartingIndex: 0,
-            RequestedCount: 50,
-            SortCriteria: "",
-        },
-    );
+    const xml = await soapAction(speaker.ip, PATH_CONTENT_DIR, SERVICE_CONTENT_DIR, "Browse", {
+        ObjectID: "Q:0",
+        BrowseFlag: "BrowseDirectChildren",
+        Filter: "*",
+        StartingIndex: 0,
+        RequestedCount: 50,
+        SortCriteria: "",
+    });
 
     const resultRaw = extractTag(xml, "Result");
     const result = decodeXmlEntities(resultRaw);
@@ -599,8 +523,7 @@ export const sonosControl: ToolDefinition = {
                     },
                     speaker: {
                         type: "string",
-                        description:
-                            "Speaker name or IP address. If omitted, uses the first discovered speaker.",
+                        description: "Speaker name or IP address. If omitted, uses the first discovered speaker.",
                     },
                     volume: {
                         type: "number",
@@ -616,13 +539,11 @@ export const sonosControl: ToolDefinition = {
                     },
                     target_speaker: {
                         type: "string",
-                        description:
-                            "Target speaker name or IP for group join/leave operations.",
+                        description: "Target speaker name or IP for group join/leave operations.",
                     },
                     uri: {
                         type: "string",
-                        description:
-                            "Media URI to play (Spotify URI, radio URL, etc.). Used with the play action.",
+                        description: "Media URI to play (Spotify URI, radio URL, etc.). Used with the play action.",
                     },
                 },
                 required: ["action"],
@@ -655,30 +576,22 @@ export const sonosControl: ToolDefinition = {
 
                 case "pause": {
                     const speaker = await resolveSpeaker(speakerIdent);
-                    return JSON.stringify(
-                        await handleTransportAction(speaker, "Pause"),
-                    );
+                    return JSON.stringify(await handleTransportAction(speaker, "Pause"));
                 }
 
                 case "stop": {
                     const speaker = await resolveSpeaker(speakerIdent);
-                    return JSON.stringify(
-                        await handleTransportAction(speaker, "Stop"),
-                    );
+                    return JSON.stringify(await handleTransportAction(speaker, "Stop"));
                 }
 
                 case "next": {
                     const speaker = await resolveSpeaker(speakerIdent);
-                    return JSON.stringify(
-                        await handleTransportAction(speaker, "Next"),
-                    );
+                    return JSON.stringify(await handleTransportAction(speaker, "Next"));
                 }
 
                 case "previous": {
                     const speaker = await resolveSpeaker(speakerIdent);
-                    return JSON.stringify(
-                        await handleTransportAction(speaker, "Previous"),
-                    );
+                    return JSON.stringify(await handleTransportAction(speaker, "Previous"));
                 }
 
                 case "volume": {
@@ -688,9 +601,7 @@ export const sonosControl: ToolDefinition = {
                         });
                     }
                     const speaker = await resolveSpeaker(speakerIdent);
-                    return JSON.stringify(
-                        await handleVolume(speaker, volumeLevel),
-                    );
+                    return JSON.stringify(await handleVolume(speaker, volumeLevel));
                 }
 
                 case "group": {
@@ -700,9 +611,7 @@ export const sonosControl: ToolDefinition = {
                         });
                     }
                     const speaker = await resolveSpeaker(speakerIdent);
-                    return JSON.stringify(
-                        await handleGroup(speaker, groupAction, targetSpeaker),
-                    );
+                    return JSON.stringify(await handleGroup(speaker, groupAction, targetSpeaker));
                 }
 
                 case "favorites": {

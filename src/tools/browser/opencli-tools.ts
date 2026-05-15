@@ -14,8 +14,11 @@
 
 import type { ToolDefinition } from "../get-current-time.js";
 import {
-    getActivePage, getBrowser,
-    GET_FORM_STATE_JS, AUTO_SCROLL_JS, NETWORK_REQUESTS_JS,
+    AUTO_SCROLL_JS,
+    GET_FORM_STATE_JS,
+    getActivePage,
+    getBrowser,
+    NETWORK_REQUESTS_JS,
     SCROLL_TO_ELEMENT_JS,
 } from "./core.js";
 
@@ -28,14 +31,18 @@ export const browserBatchFetch: ToolDefinition = {
         type: "function",
         function: {
             name: "browser_batch_fetch",
-            description: "Fetch multiple URLs concurrently in a single browser evaluate() call — massively faster than N individual fetch calls because all HTTP requests run inside the browser (with session cookies, auth headers) in one CDP round-trip. Returns array of { url, status, data, error }. Uses worker-pool concurrency (default 5). Ideal for bulk data extraction, API fan-out, parallel page fetching.",
+            description:
+                "Fetch multiple URLs concurrently in a single browser evaluate() call — massively faster than N individual fetch calls because all HTTP requests run inside the browser (with session cookies, auth headers) in one CDP round-trip. Returns array of { url, status, data, error }. Uses worker-pool concurrency (default 5). Ideal for bulk data extraction, API fan-out, parallel page fetching.",
             parameters: {
                 type: "object",
                 properties: {
                     urls: { type: "array", items: { type: "string" }, description: "URLs to fetch concurrently" },
                     method: { type: "string", description: "HTTP method (default: GET)" },
                     headers: { type: "object", description: "Request headers to send with every request" },
-                    concurrency: { type: "number", description: "Max parallel fetches inside browser (default: 5, max: 20)" },
+                    concurrency: {
+                        type: "number",
+                        description: "Max parallel fetches inside browser (default: 5, max: 20)",
+                    },
                     response_type: { type: "string", description: "'json' (default), 'text', or 'auto'" },
                     timeout_ms: { type: "number", description: "Per-request timeout in ms (default: 15000)" },
                 },
@@ -59,43 +66,54 @@ export const browserBatchFetch: ToolDefinition = {
             // with the browser's cookies, auth headers, and CORS credentials.
             // Worker-pool pattern: configurable concurrency to avoid overwhelming servers.
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const results = await page.evaluate(async ([urlList, meth, hdrs, conc, resType, toutMs]: any[]) => {
-                const results: Array<{ url: string; status: number; data: unknown; error?: string; size: number }> = new Array(urlList.length);
-                let idx = 0;
+            const results = await page.evaluate(
+                async ([urlList, meth, hdrs, conc, resType, toutMs]: any[]) => {
+                    const results: Array<{ url: string; status: number; data: unknown; error?: string; size: number }> =
+                        new Array(urlList.length);
+                    let idx = 0;
 
-                async function worker() {
-                    while (idx < urlList.length) {
-                        const i = idx++;
-                        const url = urlList[i];
-                        const ctrl = new AbortController();
-                        const timer = setTimeout(() => ctrl.abort(), toutMs);
-                        try {
-                            const resp = await fetch(url, {
-                                method: meth,
-                                headers: hdrs,
-                                credentials: "include",
-                                signal: ctrl.signal,
-                            });
-                            clearTimeout(timer);
-                            const text = await resp.text();
-                            let data: unknown = text;
-                            if (resType === "json" || (resType === "auto" && resp.headers.get("content-type")?.includes("json"))) {
-                                try { data = JSON.parse(text); } catch { data = text; }
+                    async function worker() {
+                        while (idx < urlList.length) {
+                            const i = idx++;
+                            const url = urlList[i];
+                            const ctrl = new AbortController();
+                            const timer = setTimeout(() => ctrl.abort(), toutMs);
+                            try {
+                                const resp = await fetch(url, {
+                                    method: meth,
+                                    headers: hdrs,
+                                    credentials: "include",
+                                    signal: ctrl.signal,
+                                });
+                                clearTimeout(timer);
+                                const text = await resp.text();
+                                let data: unknown = text;
+                                if (
+                                    resType === "json" ||
+                                    (resType === "auto" && resp.headers.get("content-type")?.includes("json"))
+                                ) {
+                                    try {
+                                        data = JSON.parse(text);
+                                    } catch {
+                                        data = text;
+                                    }
+                                }
+                                results[i] = { url, status: resp.status, data, size: text.length };
+                            } catch (e) {
+                                clearTimeout(timer);
+                                results[i] = { url, status: 0, data: null, error: (e as Error).message, size: 0 };
                             }
-                            results[i] = { url, status: resp.status, data, size: text.length };
-                        } catch (e) {
-                            clearTimeout(timer);
-                            results[i] = { url, status: 0, data: null, error: (e as Error).message, size: 0 };
                         }
                     }
-                }
 
-                const workers = Array.from({ length: Math.min(conc, urlList.length) }, () => worker());
-                await Promise.all(workers);
-                return results;
-            }, [urls, method, headers, concurrency, responseType, timeoutMs]);
+                    const workers = Array.from({ length: Math.min(conc, urlList.length) }, () => worker());
+                    await Promise.all(workers);
+                    return results;
+                },
+                [urls, method, headers, concurrency, responseType, timeoutMs],
+            );
 
-            const successCount = (results as Array<{ error?: string }>).filter(r => !r.error).length;
+            const successCount = (results as Array<{ error?: string }>).filter((r) => !r.error).length;
             return JSON.stringify({
                 success: true,
                 total: urls.length,
@@ -118,13 +136,20 @@ export const browserAutoScroll: ToolDefinition = {
         type: "function",
         function: {
             name: "browser_auto_scroll",
-            description: "Scroll the page N times with intelligent DOM mutation settle detection between each scroll. Uses MutationObserver to detect when lazy-loaded content finishes rendering before scrolling further. Perfect for infinite scroll pages, lazy-loading galleries, social feeds. More reliable than timed scrolls because it waits for actual content, not just fixed delays.",
+            description:
+                "Scroll the page N times with intelligent DOM mutation settle detection between each scroll. Uses MutationObserver to detect when lazy-loaded content finishes rendering before scrolling further. Perfect for infinite scroll pages, lazy-loading galleries, social feeds. More reliable than timed scrolls because it waits for actual content, not just fixed delays.",
             parameters: {
                 type: "object",
                 properties: {
                     times: { type: "number", description: "Number of scroll steps (default: 3)" },
-                    scroll_delay_ms: { type: "number", description: "Max wait after each scroll for content to appear (default: 2000ms)" },
-                    settle_ms: { type: "number", description: "DOM quiet period to consider 'settled' (default: 600ms)" },
+                    scroll_delay_ms: {
+                        type: "number",
+                        description: "Max wait after each scroll for content to appear (default: 2000ms)",
+                    },
+                    settle_ms: {
+                        type: "number",
+                        description: "DOM quiet period to consider 'settled' (default: 600ms)",
+                    },
                     direction: { type: "string", description: "'down' (default) or 'up'" },
                 },
                 required: [],
@@ -139,9 +164,10 @@ export const browserAutoScroll: ToolDefinition = {
             const settleMs = (input.settle_ms as number) || 600;
             const direction = (input.direction as string) || "down";
 
-            const scrollScript = direction === "up"
-                ? AUTO_SCROLL_JS.replace("window.innerHeight * 0.85", "-(window.innerHeight * 0.85)")
-                : AUTO_SCROLL_JS;
+            const scrollScript =
+                direction === "up"
+                    ? AUTO_SCROLL_JS.replace("window.innerHeight * 0.85", "-(window.innerHeight * 0.85)")
+                    : AUTO_SCROLL_JS;
 
             await page.evaluate(`(${scrollScript})(${times}, ${delayMs}, ${settleMs})`);
             const scrollY = await page.evaluate("window.scrollY").catch(() => 0);
@@ -162,12 +188,20 @@ export const browserNetworkRequests: ToolDefinition = {
         type: "function",
         function: {
             name: "browser_network_requests",
-            description: "Inspect all network requests made by the current page using the Performance Resource Timing API — works without CDP Network domain. Returns URL, type, duration, transfer size for all requests. Filter by type (fetch, xmlhttprequest, script, img) or pattern. Useful for discovering API endpoints, understanding page data sources, or debugging load performance.",
+            description:
+                "Inspect all network requests made by the current page using the Performance Resource Timing API — works without CDP Network domain. Returns URL, type, duration, transfer size for all requests. Filter by type (fetch, xmlhttprequest, script, img) or pattern. Useful for discovering API endpoints, understanding page data sources, or debugging load performance.",
             parameters: {
                 type: "object",
                 properties: {
-                    include_static: { type: "boolean", description: "Include images, CSS, fonts (default: false — excludes them)" },
-                    filter_type: { type: "string", description: "Only return requests of this initiator type: 'fetch', 'xmlhttprequest', 'script', 'link', etc." },
+                    include_static: {
+                        type: "boolean",
+                        description: "Include images, CSS, fonts (default: false — excludes them)",
+                    },
+                    filter_type: {
+                        type: "string",
+                        description:
+                            "Only return requests of this initiator type: 'fetch', 'xmlhttprequest', 'script', 'link', etc.",
+                    },
                     filter_pattern: { type: "string", description: "Only return URLs containing this string" },
                 },
                 required: [],
@@ -182,7 +216,7 @@ export const browserNetworkRequests: ToolDefinition = {
             const filterPattern = (input.filter_pattern as string) || "";
 
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            let requests = await page.evaluate(`(${NETWORK_REQUESTS_JS})(${includeStatic})`) as any[];
+            let requests = (await page.evaluate(`(${NETWORK_REQUESTS_JS})(${includeStatic})`)) as any[];
 
             if (filterType) requests = requests.filter((r: { type: string }) => r.type === filterType);
             if (filterPattern) requests = requests.filter((r: { url: string }) => r.url.includes(filterPattern));
@@ -207,7 +241,8 @@ export const browserFormState: ToolDefinition = {
         type: "function",
         function: {
             name: "browser_form_state",
-            description: "Snapshot all form field values (inputs, selects, textareas) in one call. Returns { field_id_or_name → value } map. Checkboxes return booleans, multi-selects return arrays. Call before and after form interactions to track state changes, or to verify form was filled correctly.",
+            description:
+                "Snapshot all form field values (inputs, selects, textareas) in one call. Returns { field_id_or_name → value } map. Checkboxes return booleans, multi-selects return arrays. Call before and after form interactions to track state changes, or to verify form was filled correctly.",
             parameters: {
                 type: "object",
                 properties: {},
@@ -236,11 +271,15 @@ export const browserScrollToElement: ToolDefinition = {
         type: "function",
         function: {
             name: "browser_scroll_to_element",
-            description: "Scroll a specific element into view using its data-atlas-id or CSS selector. Uses instant scrollIntoView with block:center positioning. More reliable than coordinate-based scrolling for elements that are off-screen. Use before clicking elements that aren't visible in the current viewport.",
+            description:
+                "Scroll a specific element into view using its data-atlas-id or CSS selector. Uses instant scrollIntoView with block:center positioning. More reliable than coordinate-based scrolling for elements that are off-screen. Use before clicking elements that aren't visible in the current viewport.",
             parameters: {
                 type: "object",
                 properties: {
-                    selector: { type: "string", description: "Element's data-atlas-id value (from browser_scan) or CSS selector" },
+                    selector: {
+                        type: "string",
+                        description: "Element's data-atlas-id value (from browser_scan) or CSS selector",
+                    },
                 },
                 required: ["selector"],
             },
@@ -321,11 +360,16 @@ export const browserInterceptStart: ToolDefinition = {
         type: "function",
         function: {
             name: "browser_intercept_start",
-            description: "Install a Fetch/XHR interceptor that captures API responses from the browser's own network calls. Unlike CDP Network domain (which requires a new browser session), this monkey-patches fetch() and XMLHttpRequest in-page and works immediately. Use for extracting private API data from SPAs (Twitter, LinkedIn, etc.) without screen-scraping. Follow with an action that triggers the request, then call browser_intercept_read.",
+            description:
+                "Install a Fetch/XHR interceptor that captures API responses from the browser's own network calls. Unlike CDP Network domain (which requires a new browser session), this monkey-patches fetch() and XMLHttpRequest in-page and works immediately. Use for extracting private API data from SPAs (Twitter, LinkedIn, etc.) without screen-scraping. Follow with an action that triggers the request, then call browser_intercept_read.",
             parameters: {
                 type: "object",
                 properties: {
-                    pattern: { type: "string", description: "Only capture requests whose URL contains this string (e.g. 'api', 'graphql', 'timeline'). Empty = capture all." },
+                    pattern: {
+                        type: "string",
+                        description:
+                            "Only capture requests whose URL contains this string (e.g. 'api', 'graphql', 'timeline'). Empty = capture all.",
+                    },
                 },
                 required: [],
             },
@@ -348,12 +392,17 @@ export const browserInterceptRead: ToolDefinition = {
         type: "function",
         function: {
             name: "browser_intercept_read",
-            description: "Read all captured API responses collected since browser_intercept_start. Returns array of { url, method, status, type, body } objects. Call after triggering the action that makes the network request.",
+            description:
+                "Read all captured API responses collected since browser_intercept_start. Returns array of { url, method, status, type, body } objects. Call after triggering the action that makes the network request.",
             parameters: {
                 type: "object",
                 properties: {
                     clear: { type: "boolean", description: "Clear the capture buffer after reading (default: true)" },
-                    wait_ms: { type: "number", description: "Wait this many ms before reading (default: 500) to allow in-flight requests to complete" },
+                    wait_ms: {
+                        type: "number",
+                        description:
+                            "Wait this many ms before reading (default: 500) to allow in-flight requests to complete",
+                    },
                 },
                 required: [],
             },
@@ -392,11 +441,16 @@ export const browserExtractArticle: ToolDefinition = {
         type: "function",
         function: {
             name: "browser_extract_article",
-            description: "Extract the main article content from the current page using Mozilla Readability (run in-page) with a CSS selector fallback chain. Returns clean title, author, publish date, and markdown-ready HTML body. Strips ads, navigation, comments, cookie banners. Much better than browser_extract for article/blog/news pages.",
+            description:
+                "Extract the main article content from the current page using Mozilla Readability (run in-page) with a CSS selector fallback chain. Returns clean title, author, publish date, and markdown-ready HTML body. Strips ads, navigation, comments, cookie banners. Much better than browser_extract for article/blog/news pages.",
             parameters: {
                 type: "object",
                 properties: {
-                    format: { type: "string", description: "'text' (default, plain text), 'html' (raw HTML), 'summary' (first 500 chars of text)" },
+                    format: {
+                        type: "string",
+                        description:
+                            "'text' (default, plain text), 'html' (raw HTML), 'summary' (first 500 chars of text)",
+                    },
                 },
                 required: [],
             },
@@ -411,16 +465,32 @@ export const browserExtractArticle: ToolDefinition = {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const result = await page.evaluate(async (fmt: string) => {
                 // Single <pre> shortcut (GitHub file views, raw text)
-                if (document.body.children.length === 1 && document.body.children[0].tagName === 'PRE') {
-                    const text = (document.body.children[0] as HTMLElement).innerText || '';
-                    return { source: 'pre', title: document.title, text, html: `<pre>${text}</pre>` };
+                if (document.body.children.length === 1 && document.body.children[0].tagName === "PRE") {
+                    const text = (document.body.children[0] as HTMLElement).innerText || "";
+                    return { source: "pre", title: document.title, text, html: `<pre>${text}</pre>` };
                 }
 
                 // Denoise clone
                 const clone = document.cloneNode(true) as Document;
-                const noisy = ['script','style','nav','footer','aside','[aria-hidden="true"]','[role="navigation"]',
-                    '.cookie-banner','.ad-banner','.advertisement','#comments','.sidebar'];
-                noisy.forEach(sel => { try { clone.querySelectorAll(sel).forEach(e => e.remove()); } catch {} });
+                const noisy = [
+                    "script",
+                    "style",
+                    "nav",
+                    "footer",
+                    "aside",
+                    '[aria-hidden="true"]',
+                    '[role="navigation"]',
+                    ".cookie-banner",
+                    ".ad-banner",
+                    ".advertisement",
+                    "#comments",
+                    ".sidebar",
+                ];
+                noisy.forEach((sel) => {
+                    try {
+                        clone.querySelectorAll(sel).forEach((e) => e.remove());
+                    } catch {}
+                });
 
                 // Try Readability if available (may be loaded by the page)
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -430,34 +500,51 @@ export const browserExtractArticle: ToolDefinition = {
                         const article = new Readability(clone).parse();
                         if (article && article.textContent?.length > 100) {
                             return {
-                                source: 'readability', title: article.title, byline: article.byline,
-                                publishedTime: article.publishedTime, siteName: article.siteName,
-                                text: article.textContent?.trim(), html: article.content,
+                                source: "readability",
+                                title: article.title,
+                                byline: article.byline,
+                                publishedTime: article.publishedTime,
+                                siteName: article.siteName,
+                                text: article.textContent?.trim(),
+                                html: article.content,
                             };
                         }
                     } catch {}
                 }
 
                 // CSS fallback chain (OpenCLI's 8-selector fallback)
-                const selectors = ['main','[role="main"]','#main-content','#main','#content',
-                    '.content','.post-content','article','body'];
+                const selectors = [
+                    "main",
+                    '[role="main"]',
+                    "#main-content",
+                    "#main",
+                    "#content",
+                    ".content",
+                    ".post-content",
+                    "article",
+                    "body",
+                ];
                 for (const sel of selectors) {
                     const el = clone.querySelector(sel);
                     if (el) {
-                        const text = (el as HTMLElement).innerText?.trim() || '';
+                        const text = (el as HTMLElement).innerText?.trim() || "";
                         if (text.length > 80) {
-                            return { source: 'fallback_' + sel, title: document.title, text, html: el.innerHTML };
+                            return { source: "fallback_" + sel, title: document.title, text, html: el.innerHTML };
                         }
                     }
                 }
-                return { source: 'none', title: document.title, text: document.body.innerText?.substring(0, 5000) || '', html: '' };
+                return {
+                    source: "none",
+                    title: document.title,
+                    text: document.body.innerText?.substring(0, 5000) || "",
+                    html: "",
+                };
             }, format);
 
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const r = result as any;
-            const output = format === 'html' ? r.html
-                : format === 'summary' ? (r.text || '').substring(0, 500)
-                : r.text || '';
+            const output =
+                format === "html" ? r.html : format === "summary" ? (r.text || "").substring(0, 500) : r.text || "";
 
             return JSON.stringify({
                 success: true,
@@ -467,7 +554,7 @@ export const browserExtractArticle: ToolDefinition = {
                 published_time: r.publishedTime,
                 site_name: r.siteName,
                 content: output?.substring(0, 8000),
-                content_length: (output || '').length,
+                content_length: (output || "").length,
             });
         } catch (err) {
             return JSON.stringify({ error: `extract_article failed: ${(err as Error).message}` });
@@ -481,14 +568,14 @@ export const browserExtractArticle: ToolDefinition = {
 
 // Known Electron apps with their CDP debug ports (OpenCLI's built-in registry)
 const ELECTRON_APPS: Record<string, { port: number; names: string[] }> = {
-    cursor:    { port: 9222, names: ['Cursor', 'cursor'] },
-    codex:     { port: 9223, names: ['Codex'] },
-    chatwise:  { port: 9224, names: ['ChatWise', 'chatwise'] },
-    notion:    { port: 9225, names: ['Notion', 'notion'] },
-    discord:   { port: 9226, names: ['Discord', 'discord'] },
-    doubao:    { port: 9228, names: ['Doubao'] },
-    chatgpt:   { port: 9236, names: ['ChatGPT', 'chatgpt'] },
-    vscode:    { port: 9229, names: ['Visual Studio Code', 'Code', 'code'] },
+    cursor: { port: 9222, names: ["Cursor", "cursor"] },
+    codex: { port: 9223, names: ["Codex"] },
+    chatwise: { port: 9224, names: ["ChatWise", "chatwise"] },
+    notion: { port: 9225, names: ["Notion", "notion"] },
+    discord: { port: 9226, names: ["Discord", "discord"] },
+    doubao: { port: 9228, names: ["Doubao"] },
+    chatgpt: { port: 9236, names: ["ChatGPT", "chatgpt"] },
+    vscode: { port: 9229, names: ["Visual Studio Code", "Code", "code"] },
 };
 
 export const browserConnectElectron: ToolDefinition = {
@@ -496,13 +583,22 @@ export const browserConnectElectron: ToolDefinition = {
         type: "function",
         function: {
             name: "browser_connect_electron",
-            description: "Connect to an Electron desktop app (Cursor, Notion, Discord, ChatGPT Desktop, VS Code) via Chrome DevTools Protocol. Lists available targets in the app. Once connected, use browser_navigate/scan/click as normal — the agent controls the Electron app's UI directly. App must be running with --remote-debugging-port (auto-detected for known apps).",
+            description:
+                "Connect to an Electron desktop app (Cursor, Notion, Discord, ChatGPT Desktop, VS Code) via Chrome DevTools Protocol. Lists available targets in the app. Once connected, use browser_navigate/scan/click as normal — the agent controls the Electron app's UI directly. App must be running with --remote-debugging-port (auto-detected for known apps).",
             parameters: {
                 type: "object",
                 properties: {
-                    app: { type: "string", description: "App name: 'cursor', 'notion', 'discord', 'chatgpt', 'vscode', 'codex', 'chatwise', 'doubao'" },
+                    app: {
+                        type: "string",
+                        description:
+                            "App name: 'cursor', 'notion', 'discord', 'chatgpt', 'vscode', 'codex', 'chatwise', 'doubao'",
+                    },
                     port: { type: "number", description: "Custom CDP debug port (if app not in built-in registry)" },
-                    action: { type: "string", description: "'probe' (check if running), 'list' (list targets), 'info' (version info). Default: 'probe'" },
+                    action: {
+                        type: "string",
+                        description:
+                            "'probe' (check if running), 'list' (list targets), 'info' (version info). Default: 'probe'",
+                    },
                 },
                 required: [],
             },
@@ -524,7 +620,7 @@ export const browserConnectElectron: ToolDefinition = {
             if (!port) {
                 const available = Object.entries(ELECTRON_APPS)
                     .map(([k, v]) => `${k} (port ${v.port})`)
-                    .join(', ');
+                    .join(", ");
                 return JSON.stringify({ error: `Unknown app '${appName}'. Known: ${available}` });
             }
 
@@ -545,7 +641,7 @@ export const browserConnectElectron: ToolDefinition = {
                         running: false,
                         app: appName,
                         port,
-                        hint: `${appName || 'App'} is not running with CDP enabled on port ${port}. Start it with --remote-debugging-port=${port}`,
+                        hint: `${appName || "App"} is not running with CDP enabled on port ${port}. Start it with --remote-debugging-port=${port}`,
                     });
                 }
                 const version = await resp.json();
@@ -555,15 +651,13 @@ export const browserConnectElectron: ToolDefinition = {
             if (action === "list") {
                 const resp = await probe("/json");
                 if (!resp || !resp.ok) return JSON.stringify({ error: `App not running on port ${port}` });
-                const targets = await resp.json() as Array<{ title: string; url: string; type: string; id: string }>;
-                const filtered = targets.filter(t =>
-                    !t.url?.includes('devtools://') && t.type !== 'worker'
-                );
+                const targets = (await resp.json()) as Array<{ title: string; url: string; type: string; id: string }>;
+                const filtered = targets.filter((t) => !t.url?.includes("devtools://") && t.type !== "worker");
                 return JSON.stringify({
                     success: true,
                     app: appName,
                     port,
-                    targets: filtered.map(t => ({
+                    targets: filtered.map((t) => ({
                         id: t.id,
                         title: t.title,
                         url: t.url,
@@ -598,7 +692,8 @@ export const browserWaitForSelector: ToolDefinition = {
         type: "function",
         function: {
             name: "browser_wait_for_selector",
-            description: "Wait for a CSS selector to appear in the DOM using MutationObserver (fires immediately when the element appears, no polling lag). More efficient than browser_wait with type:'selector'. Also supports waiting for the selector to DISAPPEAR (e.g. wait for loading spinner to go away).",
+            description:
+                "Wait for a CSS selector to appear in the DOM using MutationObserver (fires immediately when the element appears, no polling lag). More efficient than browser_wait with type:'selector'. Also supports waiting for the selector to DISAPPEAR (e.g. wait for loading spinner to go away).",
             parameters: {
                 type: "object",
                 properties: {
@@ -619,20 +714,33 @@ export const browserWaitForSelector: ToolDefinition = {
 
             // MutationObserver-based wait (OpenCLI waitForSelectorJs)
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const result = await page.evaluate(async ([sel, st, tout]: any[]) => {
-                return new Promise((resolve, reject) => {
-                    const checkFn = () => !!document.querySelector(sel);
-                    const satisfied = st === 'hidden' ? !checkFn() : checkFn();
-                    if (satisfied) { resolve('immediate'); return; }
+            const result = await page.evaluate(
+                async ([sel, st, tout]: any[]) => {
+                    return new Promise((resolve, reject) => {
+                        const checkFn = () => !!document.querySelector(sel);
+                        const satisfied = st === "hidden" ? !checkFn() : checkFn();
+                        if (satisfied) {
+                            resolve("immediate");
+                            return;
+                        }
 
-                    const cap = setTimeout(() => { obs.disconnect(); reject(new Error(`Timeout: "${sel}" not ${st} after ${tout}ms`)); }, tout);
-                    const obs = new MutationObserver(() => {
-                        const now = st === 'hidden' ? !checkFn() : checkFn();
-                        if (now) { clearTimeout(cap); obs.disconnect(); resolve('observed'); }
+                        const cap = setTimeout(() => {
+                            obs.disconnect();
+                            reject(new Error(`Timeout: "${sel}" not ${st} after ${tout}ms`));
+                        }, tout);
+                        const obs = new MutationObserver(() => {
+                            const now = st === "hidden" ? !checkFn() : checkFn();
+                            if (now) {
+                                clearTimeout(cap);
+                                obs.disconnect();
+                                resolve("observed");
+                            }
+                        });
+                        obs.observe(document.documentElement, { childList: true, subtree: true, attributes: true });
                     });
-                    obs.observe(document.documentElement, { childList: true, subtree: true, attributes: true });
-                });
-            }, [selector, state, timeoutMs]);
+                },
+                [selector, state, timeoutMs],
+            );
 
             return JSON.stringify({ success: true, selector, state, resolved: result });
         } catch (err) {

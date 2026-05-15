@@ -17,9 +17,9 @@ export const THEMES: Record<string, Theme> = {
         name: "Clean Light",
         mode: "light",
         colors: {
-            primary: "2563EB",       // blue-600
-            secondary: "7C3AED",     // violet-600
-            accent: "F59E0B",        // amber-500
+            primary: "2563EB", // blue-600
+            secondary: "7C3AED", // violet-600
+            accent: "F59E0B", // amber-500
             bg: "FFFFFF",
             surface: "F8FAFC",
             text: "0F172A",
@@ -55,10 +55,10 @@ export const THEMES: Record<string, Theme> = {
         name: "Executive Serif",
         mode: "light",
         colors: {
-            primary: "1E3A8A",       // deep navy
-            secondary: "991B1B",     // oxblood
-            accent: "A16207",        // dark gold
-            bg: "FDFCF8",            // warm off-white
+            primary: "1E3A8A", // deep navy
+            secondary: "991B1B", // oxblood
+            accent: "A16207", // dark gold
+            bg: "FDFCF8", // warm off-white
             surface: "F5F3EC",
             text: "1C1917",
             textMuted: "57534E",
@@ -144,7 +144,7 @@ export function contrastRatio(hex1: string, hex2: string): number {
         const r = parseInt(h.slice(0, 2), 16) / 255;
         const g = parseInt(h.slice(2, 4), 16) / 255;
         const b = parseInt(h.slice(4, 6), 16) / 255;
-        const channel = (c: number) => c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+        const channel = (c: number) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
         return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
     };
     const l1 = lum(hex1);
@@ -158,9 +158,7 @@ export function validateThemeContrast(theme: Theme): string[] {
     const warnings: string[] = [];
     const bodyRatio = contrastRatio(theme.colors.text, theme.colors.bg);
     if (bodyRatio < 4.5) {
-        warnings.push(
-            `Theme ${theme.id}: body text/bg contrast ${bodyRatio.toFixed(2)} < 4.5 (WCAG AA fail)`,
-        );
+        warnings.push(`Theme ${theme.id}: body text/bg contrast ${bodyRatio.toFixed(2)} < 4.5 (WCAG AA fail)`);
     }
     return warnings;
 }

@@ -484,15 +484,7 @@ async function readPlaybackSnapshot(): Promise<{ trackUri: string; contextUri: s
     return { trackUri, contextUri, playing };
 }
 
-type SpotifyUriType =
-    | "track"
-    | "album"
-    | "playlist"
-    | "artist"
-    | "show"
-    | "episode"
-    | "collection"
-    | "unknown";
+type SpotifyUriType = "track" | "album" | "playlist" | "artist" | "show" | "episode" | "collection" | "unknown";
 
 function uriType(uri: string): SpotifyUriType {
     const m = uri.match(/^spotify:([a-z]+):/i);
@@ -508,12 +500,7 @@ function uriType(uri: string): SpotifyUriType {
 // a single track/show/episode). verifyPlayback's context-aware branch and
 // doPlay's OS-fixup routing both depend on this being the same predicate —
 // divergence between the two would silently break verification.
-const CONTEXT_URI_TYPES: ReadonlySet<SpotifyUriType> = new Set([
-    "playlist",
-    "album",
-    "artist",
-    "collection",
-]);
+const CONTEXT_URI_TYPES: ReadonlySet<SpotifyUriType> = new Set(["playlist", "album", "artist", "collection"]);
 
 function isContextType(t: SpotifyUriType): boolean {
     return CONTEXT_URI_TYPES.has(t);

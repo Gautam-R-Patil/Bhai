@@ -57,7 +57,14 @@ async function runDetection(deps) {
     const isReconfigure = safeSync(() => signals.detectSetupFlag(fs, paths.setupFlag), false);
     const legal = safeSync(() => signals.detectLegalAcceptance(fs, paths.legalAcceptance), { accepted: false });
     const envPresent = safeSync(() => signals.detectEnvPresent(fs, paths.envFile), false);
-    const account = safeSync(() => signals.detectOtplessSession(prefs), { signedIn: false });
+    // Pass through the decrypted account.enc session (if any) so detection
+    // reads from the canonical source (the .enc file written by
+    // finalizeAuth/saveAccountSession). prefs.account in electron-store is
+    // never populated, so relying on it alone would always say "not signed in".
+    const account = safeSync(
+        () => signals.detectOtplessSession(prefs, safeDeps.accountSessionFromFile || null),
+        { signedIn: false },
+    );
     const playwright = safeSync(() => signals.detectPlaywrightChromium(fs, paths.botDir), false);
     let permissions;
     if (platform === "darwin") {
@@ -104,6 +111,17 @@ async function runDetection(deps) {
     const matrix   = signals.detectMatrix(envObj);    if (matrix)   channels.matrix   = matrix;
     const email    = signals.detectEmail(envObj);     if (email)    channels.email    = email;
 
+    const visionTier = safeSync(() => signals.detectVisionTier(os, proc), {
+        max: "lite", ramGB: 0, gpuClass: "unknown", platform,
+    });
+    // Allow up to 3s for the dep probe — `python3 -c "import ultralytics"` can take
+    // ~1s on cold disk, `ollama list` ~200ms; default 500ms is too tight.
+    const visionDeps = await withTimeout(
+        signals.detectVisionDeps(fs, execFn, paths.homeDir),
+        3000,
+        { ollama: false, uiTarsModel: false, omniparser: false },
+    );
+
     return {
         platform,
         isReconfigure,
@@ -128,6 +146,9 @@ async function runDetection(deps) {
         hotkey: { current: hotkey, conflicts: hotkeyConflicts },
         theme,
         workspace,
+        // Vision-nav tier detection — drives the vision-tier wizard step.
+        visionTier,
+        visionDeps,
     };
 }
 

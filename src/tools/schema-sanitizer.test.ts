@@ -3,10 +3,7 @@
 // See LICENSE.md for details.
 
 import { describe, expect, it } from "vitest";
-import {
-    sanitizeToolSchemas,
-    stripNullableUnions,
-} from "./schema-sanitizer.js";
+import { sanitizeToolSchemas, stripNullableUnions } from "./schema-sanitizer.js";
 
 describe("stripNullableUnions", () => {
     it("collapses anyOf nullable union to the non-null branch", () => {
@@ -21,8 +18,7 @@ describe("stripNullableUnions", () => {
             },
         };
         const out = stripNullableUnions(input) as Record<string, unknown>;
-        const name = (out.properties as Record<string, Record<string, unknown>>)
-            .name;
+        const name = (out.properties as Record<string, Record<string, unknown>>).name;
         expect(name.type).toBe("string");
         expect(name.nullable).toBe(true);
         expect(name.description).toBe("user name");
@@ -81,12 +77,8 @@ describe("stripNullableUnions", () => {
             },
         };
         const out = stripNullableUnions(input) as Record<string, unknown>;
-        const outer = (out.properties as Record<string, Record<string, unknown>>)
-            .outer;
-        const inner = (outer.properties as Record<
-            string,
-            Record<string, unknown>
-        >).inner;
+        const outer = (out.properties as Record<string, Record<string, unknown>>).outer;
+        const inner = (outer.properties as Record<string, Record<string, unknown>>).inner;
         expect(inner.type).toBe("string");
         expect(inner.nullable).toBe(true);
     });
@@ -113,11 +105,10 @@ describe("sanitizeToolSchemas", () => {
         const out = sanitizeToolSchemas(tools);
         expect(out).toEqual(tools);
         // Deep copy — mutating output should not affect input
-        (out![0].function as { parameters: { properties: Record<string, unknown> } })
-            .parameters.properties.tampered = true;
+        (out![0].function as { parameters: { properties: Record<string, unknown> } }).parameters.properties.tampered =
+            true;
         expect(
-            (tools[0].function as { parameters: { properties: Record<string, unknown> } })
-                .parameters.properties,
+            (tools[0].function as { parameters: { properties: Record<string, unknown> } }).parameters.properties,
         ).not.toHaveProperty("tampered");
     });
 
@@ -131,8 +122,7 @@ describe("sanitizeToolSchemas", () => {
                 },
             },
         ]);
-        const params = (out![0].function as { parameters: Record<string, unknown> })
-            .parameters;
+        const params = (out![0].function as { parameters: Record<string, unknown> }).parameters;
         expect(params.type).toBe("object");
         expect(params.properties).toEqual({});
     });
@@ -199,8 +189,7 @@ describe("sanitizeToolSchemas", () => {
                 },
             },
         ]);
-        const params = (out![0].function as { parameters: Record<string, unknown> })
-            .parameters;
+        const params = (out![0].function as { parameters: Record<string, unknown> }).parameters;
         expect(params.required).toEqual(["a"]);
     });
 
@@ -218,8 +207,7 @@ describe("sanitizeToolSchemas", () => {
                 },
             },
         ]);
-        const params = (out![0].function as { parameters: Record<string, unknown> })
-            .parameters;
+        const params = (out![0].function as { parameters: Record<string, unknown> }).parameters;
         expect(params).not.toHaveProperty("required");
     });
 
@@ -239,8 +227,7 @@ describe("sanitizeToolSchemas", () => {
                 },
             },
         ]);
-        const params = (out![0].function as { parameters: Record<string, unknown> })
-            .parameters;
+        const params = (out![0].function as { parameters: Record<string, unknown> }).parameters;
         expect(params.required).toEqual(["path"]);
     });
 
@@ -280,16 +267,13 @@ describe("sanitizeToolSchemas", () => {
                 },
             },
         ]);
-        const params = (out![0].function as { parameters: Record<string, unknown> })
-            .parameters;
+        const params = (out![0].function as { parameters: Record<string, unknown> }).parameters;
         expect(params).toEqual({ type: "object", properties: {} });
     });
 
     it("returns the input list unchanged when empty or undefined", () => {
         expect(sanitizeToolSchemas([])).toEqual([]);
-        expect(
-            sanitizeToolSchemas(undefined as unknown as Array<Record<string, unknown>>),
-        ).toBeUndefined();
+        expect(sanitizeToolSchemas(undefined as unknown as Array<Record<string, unknown>>)).toBeUndefined();
     });
 
     it("collapses nullable union at the top-level parameters field", () => {
@@ -302,10 +286,7 @@ describe("sanitizeToolSchemas", () => {
                         type: "object",
                         properties: {
                             maybe: {
-                                anyOf: [
-                                    { type: "integer" },
-                                    { type: "null" },
-                                ],
+                                anyOf: [{ type: "integer" }, { type: "null" }],
                             },
                         },
                     },

@@ -5,6 +5,13 @@
 
 const VALID_VOICE_BACKENDS = ["gemini-live", "openai-realtime"];
 const VALID_THEMES = ["light", "dark", "system"];
+const VALID_PERSONALITY_PRESETS = [
+    "casual_playful",
+    "professional_concise",
+    "warm_supportive",
+    "direct_terse",
+];
+const PERSONALITY_NOTES_MAX = 800;
 
 function mergePersonalize(prefs, update) {
     const next = Object.assign({}, prefs || {});
@@ -33,6 +40,17 @@ function mergePersonalize(prefs, update) {
         const phrase = u.wakeWord.phrase && String(u.wakeWord.phrase).trim();
         p.wakeWord = { enabled: !!u.wakeWord.enabled, phrase: phrase || "Hey Atlas" };
     }
+    if ("personality" in u && u.personality) {
+        const preset = u.personality.preset;
+        if (preset && VALID_PERSONALITY_PRESETS.indexOf(preset) < 0) {
+            throw new Error("personality.preset must be one of " + VALID_PERSONALITY_PRESETS.join("|"));
+        }
+        const notes = u.personality.notes != null ? String(u.personality.notes).slice(0, PERSONALITY_NOTES_MAX) : "";
+        p.personality = {
+            preset: preset || "casual_playful",
+            notes: notes,
+        };
+    }
     next.personalize = p;
     return next;
 }
@@ -52,4 +70,4 @@ function envKVsFromPersonalize(p) {
     return out;
 }
 
-module.exports = { mergePersonalize, envKVsFromPersonalize, VALID_VOICE_BACKENDS, VALID_THEMES };
+module.exports = { mergePersonalize, envKVsFromPersonalize, VALID_VOICE_BACKENDS, VALID_THEMES, VALID_PERSONALITY_PRESETS, PERSONALITY_NOTES_MAX };

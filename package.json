@@ -7,7 +7,7 @@
   "author": "XAGI Labs Private Limited",
   "type": "module",
   "scripts": {
-    "predev": "npm run build:location 2>/dev/null || true",
+    "predev": "(npm run build:location && npm run build:ax) 2>/dev/null || true",
     "dev": "tsx --watch src/index.ts",
     "build": "node node_modules/typescript/bin/tsc -p tsconfig.prod.json",
     "postbuild": "node scripts/postbuild-copy-assets.mjs",
@@ -15,7 +15,8 @@
     "build:native": "cd native && npm install && npm run build",
     "build:ocr": "swiftc -O scripts/ocr_screen.swift -o scripts/ocr_screen_bin 2>/dev/null || echo 'Swift OCR compilation skipped (non-macOS or no Swift)'",
     "build:location": "swiftc -O scripts/get_location.swift -o scripts/get_location_bin -framework CoreLocation -framework Foundation -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker scripts/LocationInfo.plist 2>/dev/null || echo 'Swift location helper compilation skipped (non-macOS or no Swift)'",
-    "build:all": "npm run build:native && npm run build:ocr && npm run build:location && npm run build",
+    "build:ax": "swiftc -O scripts/dump_ax.swift -o scripts/dump_ax_bin 2>/dev/null || echo 'Swift AX helper compilation skipped (non-macOS or no Swift)'",
+    "build:all": "npm run build:native && npm run build:ocr && npm run build:location && npm run build:ax && npm run build",
     "lint": "biome check .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

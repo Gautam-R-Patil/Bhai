@@ -27,8 +27,7 @@ export const getCurrentTime: ToolDefinition = {
                 properties: {
                     timezone: {
                         type: "string",
-                        description:
-                            'Optional IANA timezone (e.g. "America/New_York"). Defaults to system timezone.',
+                        description: 'Optional IANA timezone (e.g. "America/New_York"). Defaults to system timezone.',
                     },
                 },
                 required: [],

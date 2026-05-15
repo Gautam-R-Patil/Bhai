@@ -6,9 +6,9 @@
 // Exposes the swarm orchestrator as a tool the main agent can invoke
 // for complex multi-step tasks that benefit from parallel sub-agents.
 
-import type { ToolDefinition } from "./get-current-time.js";
-import type { LLMClient } from "../llm.js";
 import { runSwarm } from "../agents/swarm.js";
+import type { LLMClient } from "../llm.js";
+import type { ToolDefinition } from "./get-current-time.js";
 import { isTriviallyDirectExecutable } from "./swarm-gate.js";
 
 // ── LLM Client Injection ──────────────────────
@@ -69,7 +69,8 @@ Do NOT use for simple, single-focus tasks — just handle those directly.`,
             return JSON.stringify({
                 status: "rejected",
                 reason: "Task is too simple to benefit from swarm decomposition",
-                message: "Handle this directly with a single tool call or short reasoning loop. Swarm decomposition adds 6-10 s of orchestration overhead without parallelism benefit for single-verb tasks.",
+                message:
+                    "Handle this directly with a single tool call or short reasoning loop. Swarm decomposition adds 6-10 s of orchestration overhead without parallelism benefit for single-verb tasks.",
             });
         }
 

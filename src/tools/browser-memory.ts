@@ -22,16 +22,16 @@ interface BrowsingStep {
 
 interface BrowsingStrategy {
     id: string;
-    taskPattern: string;      // e.g. "search product on amazon", "login to site"
-    domain: string;            // e.g. "amazon.in", "google.com"
+    taskPattern: string; // e.g. "search product on amazon", "login to site"
+    domain: string; // e.g. "amazon.in", "google.com"
     steps: BrowsingStep[];
     totalDurationMs: number;
     successRate: number;
     timesUsed: number;
     lastUsed: string;
-    notes: string;             // LLM-generated tips
-    version: number;           // increments on each update
-    createdAt: string;         // when first created
+    notes: string; // LLM-generated tips
+    version: number; // increments on each update
+    createdAt: string; // when first created
 }
 
 interface DomainTipEntry {
@@ -41,16 +41,16 @@ interface DomainTipEntry {
 
 interface StrategyStore {
     strategies: BrowsingStrategy[];
-    domainTips: Record<string, DomainTipEntry[] | string[]>;  // domain → tips (supports legacy string[] format)
+    domainTips: Record<string, DomainTipEntry[] | string[]>; // domain → tips (supports legacy string[] format)
 }
 
 // ── Constants ─────────────────────────────────
 
 const STORE_PATH = path.join(process.env.ATLAS_DATA_DIR || path.resolve("data"), "browser-strategies.json");
-const STALE_DAYS = 30;          // warn after 30 days
-const EXPIRED_DAYS = 90;        // auto-prune after 90 days (if low success)
-const TIP_STALE_DAYS = 60;      // warn for tips
-const TIP_EXPIRED_DAYS = 120;   // auto-prune tips
+const STALE_DAYS = 30; // warn after 30 days
+const EXPIRED_DAYS = 90; // auto-prune after 90 days (if low success)
+const TIP_STALE_DAYS = 60; // warn for tips
+const TIP_EXPIRED_DAYS = 120; // auto-prune tips
 
 let store: StrategyStore = { strategies: [], domainTips: {} };
 let strategyCounter = 0;
@@ -77,7 +77,7 @@ export function initBrowserMemory(): void {
             // Migrate legacy string[] domainTips → DomainTipEntry[]
             for (const [domain, tips] of Object.entries(store.domainTips)) {
                 if (tips.length > 0 && typeof tips[0] === "string") {
-                    store.domainTips[domain] = (tips as string[]).map(t => ({
+                    store.domainTips[domain] = (tips as string[]).map((t) => ({
                         tip: t,
                         addedAt: new Date().toISOString(),
                     }));
@@ -174,7 +174,9 @@ export function trackBrowserStep(
                 };
                 console.log(`  🌐 [auto-track] New browser session on ${domain}`);
             }
-        } catch { /* invalid URL, ignore */ }
+        } catch {
+            /* invalid URL, ignore */
+        }
     }
 
     if (!activeSession) {
@@ -203,7 +205,9 @@ export function trackBrowserStep(
     try {
         const mode = getCurrentMode();
         if (mode === "playwright" || mode === "chrome") browserMode = mode;
-    } catch { /* backend manager not loaded */ }
+    } catch {
+        /* backend manager not loaded */
+    }
 
     activeSession.steps.push({ tool, args: compactArgs, success, durationMs, mode: browserMode });
     if (success) activeSession.toolSuccesses++;
@@ -227,13 +231,11 @@ function finalizeSession(): void {
     const successRate = activeSession.toolSuccesses / Math.max(1, activeSession.steps.length);
 
     // Auto-generate task pattern from the tools used
-    const toolSet = [...new Set(activeSession.steps.map(s => s.tool))];
-    const hasForm = activeSession.steps.some(s =>
-        s.tool === "browser_type" || s.tool === "browser_select" || s.tool === "browser_click_at"
+    const toolSet = [...new Set(activeSession.steps.map((s) => s.tool))];
+    const hasForm = activeSession.steps.some(
+        (s) => s.tool === "browser_type" || s.tool === "browser_select" || s.tool === "browser_click_at",
     );
-    const hasExtract = activeSession.steps.some(s =>
-        s.tool === "browser_extract" || s.tool === "browser_run_js"
-    );
+    const hasExtract = activeSession.steps.some((s) => s.tool === "browser_extract" || s.tool === "browser_run_js");
 
     let taskType = "browse";
     if (hasForm) taskType = "interact with form on";
@@ -242,12 +244,12 @@ function finalizeSession(): void {
 
     // Auto-generate tips from failure patterns
     const tips: string[] = [];
-    const failedTools = activeSession.steps.filter(s => !s.success);
+    const failedTools = activeSession.steps.filter((s) => !s.success);
     if (failedTools.length > 0) {
-        const failedToolNames = [...new Set(failedTools.map(s => s.tool))];
+        const failedToolNames = [...new Set(failedTools.map((s) => s.tool))];
         tips.push(`Tools that failed: ${failedToolNames.join(", ")} — try alternative approaches next time`);
     }
-    if (activeSession.steps.some(s => s.tool === "browser_run_js" && !s.success)) {
+    if (activeSession.steps.some((s) => s.tool === "browser_run_js" && !s.success)) {
         tips.push("browser_run_js failed — prefer individual browser_click_at with label IDs");
     }
     if (activeSession.steps.length > 30) {
@@ -258,9 +260,7 @@ function finalizeSession(): void {
     const stepsToSave = activeSession.steps.slice(-20);
 
     // Record strategy
-    const existing = store.strategies.find(
-        (s) => s.domain === domain && s.taskPattern === taskPattern
-    );
+    const existing = store.strategies.find((s) => s.domain === domain && s.taskPattern === taskPattern);
 
     if (existing) {
         existing.timesUsed++;
@@ -301,26 +301,21 @@ function finalizeSession(): void {
     }
 
     saveStore();
-    console.log(`  💾 [auto-save] Browser strategy saved for "${taskPattern}" (${activeSession.steps.length} steps, ${(successRate * 100).toFixed(0)}% success)`);
+    console.log(
+        `  💾 [auto-save] Browser strategy saved for "${taskPattern}" (${activeSession.steps.length} steps, ${(successRate * 100).toFixed(0)}% success)`,
+    );
 
     activeSession = null;
 }
 
 // ── Record a Browsing Session (manual) ────────
 
-export function recordStrategy(
-    taskPattern: string,
-    domain: string,
-    steps: BrowsingStep[],
-    notes: string
-): string {
+export function recordStrategy(taskPattern: string, domain: string, steps: BrowsingStep[], notes: string): string {
     const id = `strat_${++strategyCounter}`;
     const totalMs = steps.reduce((sum, s) => sum + s.durationMs, 0);
     const successCount = steps.filter((s) => s.success).length;
 
-    const existing = store.strategies.find(
-        (s) => s.taskPattern === taskPattern && s.domain === domain
-    );
+    const existing = store.strategies.find((s) => s.taskPattern === taskPattern && s.domain === domain);
 
     if (existing) {
         existing.timesUsed++;
@@ -388,7 +383,7 @@ export function findStrategy(task: string, domain?: string): BrowsingStrategy | 
         // Recency bonus / staleness penalty
         if (daysSinceUse < 7) score += 3;
         else if (daysSinceUse < STALE_DAYS) score += 1;
-        else if (daysSinceUse > STALE_DAYS) score -= 2;  // stale penalty
+        else if (daysSinceUse > STALE_DAYS) score -= 2; // stale penalty
 
         // Usage frequency bonus
         score += Math.min(strategy.timesUsed, 5);
@@ -407,7 +402,7 @@ export function findStrategy(task: string, domain?: string): BrowsingStrategy | 
 export function addDomainTip(domain: string, tip: string): void {
     if (!store.domainTips[domain]) store.domainTips[domain] = [];
     const entries = store.domainTips[domain] as DomainTipEntry[];
-    if (!entries.some(e => (typeof e === "string" ? e : e.tip) === tip)) {
+    if (!entries.some((e) => (typeof e === "string" ? e : e.tip) === tip)) {
         entries.push({ tip, addedAt: new Date().toISOString() });
         if (entries.length > 10) entries.shift();
         saveStore();
@@ -417,7 +412,7 @@ export function addDomainTip(domain: string, tip: string): void {
 export function getDomainTips(domain: string): string[] {
     const entries = store.domainTips[domain];
     if (!entries) return [];
-    return entries.map(e => typeof e === "string" ? e : e.tip);
+    return entries.map((e) => (typeof e === "string" ? e : e.tip));
 }
 
 // ── Get Context for Agent ─────────────────────
@@ -430,15 +425,20 @@ export function getBrowserContext(task: string): string {
     const strategy = findStrategy(task);
     if (strategy) {
         const daysSince = (now - new Date(strategy.lastUsed).getTime()) / 86_400_000;
-        const staleWarning = daysSince > STALE_DAYS
-            ? `\n   ⚠️ This strategy is ${Math.round(daysSince)} days old — the site may have changed. Verify each step works.`
-            : "";
+        const staleWarning =
+            daysSince > STALE_DAYS
+                ? `\n   ⚠️ This strategy is ${Math.round(daysSince)} days old — the site may have changed. Verify each step works.`
+                : "";
 
         parts.push(`📋 PREVIOUS STRATEGY FOUND for similar task "${strategy.taskPattern}":`);
-        parts.push(`   Domain: ${strategy.domain} | Success rate: ${(strategy.successRate * 100).toFixed(0)}% | Used ${strategy.timesUsed}x | v${strategy.version || 1}${staleWarning}`);
+        parts.push(
+            `   Domain: ${strategy.domain} | Success rate: ${(strategy.successRate * 100).toFixed(0)}% | Used ${strategy.timesUsed}x | v${strategy.version || 1}${staleWarning}`,
+        );
         parts.push(`   Steps:`);
         for (const step of strategy.steps) {
-            parts.push(`   - ${step.tool}(${JSON.stringify(step.args)}) → ${step.success ? "✅" : "❌"} (${step.durationMs}ms)`);
+            parts.push(
+                `   - ${step.tool}(${JSON.stringify(step.args)}) → ${step.success ? "✅" : "❌"} (${step.durationMs}ms)`,
+            );
         }
         if (strategy.notes) {
             parts.push(`   Tips: ${strategy.notes}`);
@@ -449,16 +449,15 @@ export function getBrowserContext(task: string): string {
     for (const [domain, tips] of Object.entries(store.domainTips)) {
         if (task.toLowerCase().includes(domain.split(".")[0])) {
             const entries = tips as DomainTipEntry[];
-            const activeTips = entries
-                .map(e => {
-                    const t = typeof e === "string" ? e : e.tip;
-                    const addedAt = typeof e === "string" ? null : e.addedAt;
-                    if (addedAt) {
-                        const daysOld = (now - new Date(addedAt).getTime()) / 86_400_000;
-                        if (daysOld > TIP_STALE_DAYS) return `${t} (⚠️ ${Math.round(daysOld)}d old — may be outdated)`;
-                    }
-                    return t;
-                });
+            const activeTips = entries.map((e) => {
+                const t = typeof e === "string" ? e : e.tip;
+                const addedAt = typeof e === "string" ? null : e.addedAt;
+                if (addedAt) {
+                    const daysOld = (now - new Date(addedAt).getTime()) / 86_400_000;
+                    if (daysOld > TIP_STALE_DAYS) return `${t} (⚠️ ${Math.round(daysOld)}d old — may be outdated)`;
+                }
+                return t;
+            });
 
             if (activeTips.length > 0) {
                 parts.push(`\n🌐 Tips for ${domain}:`);

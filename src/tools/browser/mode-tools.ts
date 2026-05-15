@@ -7,17 +7,8 @@
 // and checking Chrome extension connection status.
 
 import type { ToolDefinition } from "../get-current-time.js";
-import {
-    setPreferredMode,
-    getCurrentMode,
-    resolveBackend,
-} from "./browser-backend.js";
-import {
-    isExtensionConnected,
-    getExtensionTabs,
-    getBridgeStats,
-    getBridgeToken,
-} from "./chrome-bridge.js";
+import { getCurrentMode, resolveBackend, setPreferredMode } from "./browser-backend.js";
+import { getBridgeStats, getBridgeToken, getExtensionTabs, isExtensionConnected } from "./chrome-bridge.js";
 
 // ═══════════════════════════════════════════════
 // TOOL: Set Browser Mode
@@ -49,7 +40,8 @@ Use "auto" to let the system decide based on context.`,
                     mode: {
                         type: "string",
                         enum: ["chrome", "playwright", "auto"],
-                        description: "'chrome' = user's real Chrome via extension, 'playwright' = headless Playwright browser, 'auto' = system decides based on context",
+                        description:
+                            "'chrome' = user's real Chrome via extension, 'playwright' = headless Playwright browser, 'auto' = system decides based on context",
                     },
                 },
                 required: ["mode"],
@@ -85,12 +77,12 @@ Use "auto" to let the system decide based on context.`,
         if (actualMode === "chrome") {
             try {
                 const tabs = await getExtensionTabs();
-                const activeTab = tabs.find(t => t.active);
-                result.active_tab = activeTab
-                    ? { title: activeTab.title, url: activeTab.url }
-                    : null;
+                const activeTab = tabs.find((t) => t.active);
+                result.active_tab = activeTab ? { title: activeTab.title, url: activeTab.url } : null;
                 result.total_tabs = tabs.length;
-            } catch { /* extension error — non-fatal */ }
+            } catch {
+                /* extension error — non-fatal */
+            }
         }
 
         return JSON.stringify(result);
@@ -106,13 +98,15 @@ export const browserChromeStatus: ToolDefinition = {
         type: "function",
         function: {
             name: "browser_chrome_status",
-            description: "Check if the Chrome extension is connected, and list the user's open Chrome tabs. Use this to see what the user is currently browsing before deciding whether to use chrome or playwright mode.",
+            description:
+                "Check if the Chrome extension is connected, and list the user's open Chrome tabs. Use this to see what the user is currently browsing before deciding whether to use chrome or playwright mode.",
             parameters: {
                 type: "object",
                 properties: {
                     show_token: {
                         type: "boolean",
-                        description: "If true, include the bridge token in the response (for the user to configure the extension)",
+                        description:
+                            "If true, include the bridge token in the response (for the user to configure the extension)",
                     },
                 },
                 required: [],
@@ -133,13 +127,13 @@ export const browserChromeStatus: ToolDefinition = {
         if (connected) {
             try {
                 const tabs = await getExtensionTabs();
-                result.tabs = tabs.map(t => ({
+                result.tabs = tabs.map((t) => ({
                     title: t.title,
                     url: t.url,
                     active: t.active,
                 }));
                 result.total_tabs = tabs.length;
-                const activeTab = tabs.find(t => t.active);
+                const activeTab = tabs.find((t) => t.active);
                 if (activeTab) {
                     result.active_tab = { title: activeTab.title, url: activeTab.url };
                 }
@@ -147,7 +141,8 @@ export const browserChromeStatus: ToolDefinition = {
                 result.tabs_error = (err as Error).message;
             }
         } else {
-            result.help = "The Chrome extension is not connected. The user needs to: 1) Install the ATLAS Browser Bridge extension from chrome-extension/ folder, 2) Enter the auth token from the ATLAS console into the extension popup, 3) Click Connect.";
+            result.help =
+                "The Chrome extension is not connected. The user needs to: 1) Install the ATLAS Browser Bridge extension from chrome-extension/ folder, 2) Enter the auth token from the ATLAS console into the extension popup, 3) Click Connect.";
         }
 
         if (input.show_token) {

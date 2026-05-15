@@ -7,15 +7,15 @@
 // Enables the agent to see and interact with the user's real Chrome tabs
 // instead of always opening a headless Playwright browser.
 
-import { WebSocketServer, type WebSocket } from "ws";
-import http from "node:http";
 import crypto from "node:crypto";
 import fs from "node:fs";
-import path from "node:path";
-import { homedir } from "node:os";
+import http from "node:http";
 import { createRequire as _bridgeCreateRequire } from "node:module";
-import type { ChromeTabInfo, ChromeBridgeCommand, ChromeBridgeResponse, ChromeBridgeEvent } from "./types.js";
+import { homedir } from "node:os";
+import path from "node:path";
+import { type WebSocket, WebSocketServer } from "ws";
 import { resetBackend } from "./browser-backend.js";
+import type { ChromeBridgeCommand, ChromeBridgeEvent, ChromeBridgeResponse, ChromeTabInfo } from "./types.js";
 
 // ── Try native Rust module for token/encryption (fail-open to JS) ──
 
@@ -81,11 +81,14 @@ let heartbeatTimer: NodeJS.Timeout | null = null;
 // mid-transaction, or silently drops responses — without a cap the map
 // could grow unbounded with orphan entries until process memory was gone.
 const MAX_PENDING_REQUESTS = 100;
-const pendingRequests = new Map<string, {
-    resolve: (data: unknown) => void;
-    reject: (err: Error) => void;
-    timeout: NodeJS.Timeout;
-}>();
+const pendingRequests = new Map<
+    string,
+    {
+        resolve: (data: unknown) => void;
+        reject: (err: Error) => void;
+        timeout: NodeJS.Timeout;
+    }
+>();
 
 // Event handlers for unsolicited extension events
 const eventHandlers: Array<(event: ChromeBridgeEvent) => void> = [];
@@ -119,7 +122,9 @@ function loadOrCreateToken(): string {
                 return stored;
             }
         }
-    } catch { /* generate new */ }
+    } catch {
+        /* generate new */
+    }
 
     const token = generateToken();
     try {
@@ -170,7 +175,9 @@ function removeDiscoveryFile(): void {
         if (fs.existsSync(DISCOVERY_FILE)) {
             fs.unlinkSync(DISCOVERY_FILE);
         }
-    } catch { /* non-fatal */ }
+    } catch {
+        /* non-fatal */
+    }
 }
 
 // ── Register Native Messaging Host ───────────
@@ -266,7 +273,14 @@ function sendMessage(msg) {
 
         let manifestDir: string;
         if (platform === "darwin") {
-            manifestDir = path.join(homedir(), "Library", "Application Support", "Google", "Chrome", "NativeMessagingHosts");
+            manifestDir = path.join(
+                homedir(),
+                "Library",
+                "Application Support",
+                "Google",
+                "Chrome",
+                "NativeMessagingHosts",
+            );
         } else if (platform === "linux") {
             manifestDir = path.join(homedir(), ".config", "google-chrome", "NativeMessagingHosts");
         } else {
@@ -278,10 +292,7 @@ function sendMessage(msg) {
             fs.mkdirSync(manifestDir, { recursive: true });
         }
 
-        fs.writeFileSync(
-            path.join(manifestDir, "com.atlas.bridge.json"),
-            JSON.stringify(manifest, null, 2)
-        );
+        fs.writeFileSync(path.join(manifestDir, "com.atlas.bridge.json"), JSON.stringify(manifest, null, 2));
     } catch (err) {
         // Native messaging registration is non-fatal — HTTP discovery is the primary method
         console.warn("⚠️  Could not register native messaging host (non-fatal):", (err as Error).message);
@@ -327,7 +338,7 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
             const corsHeaders: Record<string, string> = {
                 "Content-Type": "application/json",
                 "Cache-Control": "no-store",
-                "Vary": "Origin",
+                Vary: "Origin",
             };
             if (isExtension) corsHeaders["Access-Control-Allow-Origin"] = origin;
             res.writeHead(200, corsHeaders);
@@ -343,7 +354,7 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
                 "Access-Control-Allow-Origin": allowOrigin,
                 "Access-Control-Allow-Methods": "GET",
                 "Access-Control-Allow-Headers": "Content-Type",
-                "Vary": "Origin",
+                Vary: "Origin",
             });
             res.end();
             return;
@@ -418,7 +429,11 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
                 clearPendingRequests("Extension connection error");
                 stopHeartbeat();
             }
-            try { ws.terminate(); } catch { /* already dead */ }
+            try {
+                ws.terminate();
+            } catch {
+                /* already dead */
+            }
         });
     });
 
@@ -440,11 +455,7 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
 
 // ── Message Handler ──────────────────────────
 
-function handleExtensionMessage(
-    ws: WebSocket,
-    msg: Record<string, unknown>,
-    authTimer: NodeJS.Timeout
-): void {
+function handleExtensionMessage(ws: WebSocket, msg: Record<string, unknown>, authTimer: NodeJS.Timeout): void {
     // Auth handshake — must be first message
     if (msg.type === "auth") {
         const token = msg.token as string;
@@ -504,7 +515,7 @@ function handleExtensionMessage(
 export async function sendBridgeCommand(
     type: string,
     payload: Record<string, unknown> = {},
-    timeoutMs?: number
+    timeoutMs?: number,
 ): Promise<unknown> {
     if (!extensionSocket || extensionSocket.readyState !== 1 || !authenticated) {
         throw new Error("Chrome extension not connected");
@@ -538,11 +549,13 @@ export async function sendBridgeCommand(
         // most are 2-30 s).
         if (pendingRequests.size >= MAX_PENDING_REQUESTS) {
             if (native) native.recordBridgeError();
-            reject(new Error(
-                `Chrome bridge pending-request queue full (${pendingRequests.size} / ${MAX_PENDING_REQUESTS}) — ` +
-                    `extension is unresponsive or very busy. Retry after 5-10 seconds once pending commands ` +
-                    `time out; if this persists, reconnect or restart the extension.`,
-            ));
+            reject(
+                new Error(
+                    `Chrome bridge pending-request queue full (${pendingRequests.size} / ${MAX_PENDING_REQUESTS}) — ` +
+                        `extension is unresponsive or very busy. Retry after 5-10 seconds once pending commands ` +
+                        `time out; if this persists, reconnect or restart the extension.`,
+                ),
+            );
             return;
         }
 
@@ -635,7 +648,9 @@ export function getBridgeStats(): Record<string, unknown> {
     if (native) {
         try {
             return JSON.parse(native.getBridgeStats());
-        } catch { /* fallback below */ }
+        } catch {
+            /* fallback below */
+        }
     }
     return {
         authenticated,
@@ -671,7 +686,9 @@ export function rotateBridgeToken(): string {
 
     try {
         fs.writeFileSync(TOKEN_FILE, bridgeToken, { mode: 0o600 });
-    } catch { /* non-fatal */ }
+    } catch {
+        /* non-fatal */
+    }
 
     // Rewrite discovery file with new token
     writeDiscoveryFile(BRIDGE_PORT);
@@ -688,7 +705,11 @@ export function closeChromeBridge(): void {
     clearPendingRequests("Bridge shutting down");
 
     if (extensionSocket) {
-        try { extensionSocket.close(1000, "Server shutting down"); } catch { /* */ }
+        try {
+            extensionSocket.close(1000, "Server shutting down");
+        } catch {
+            /* */
+        }
         extensionSocket = null;
     }
 
@@ -744,6 +765,8 @@ function notifyEvent(event: ChromeBridgeEvent): void {
     for (const handler of eventHandlers) {
         try {
             handler(event);
-        } catch { /* handler errors shouldn't crash the bridge */ }
+        } catch {
+            /* handler errors shouldn't crash the bridge */
+        }
     }
 }

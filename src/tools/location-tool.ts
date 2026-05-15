@@ -1,21 +1,23 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 // Location tool — exposes device location to the agent.
 
+import { getLocation, getLocationString, getTimezone, refreshLocation } from "../location/index.js";
 import type { ToolDefinition } from "./get-current-time.js";
-import { getLocation, getTimezone, getLocationString, refreshLocation } from "../location/index.js";
 
 export const locationTool: ToolDefinition = {
     schema: {
         type: "function",
         function: {
             name: "get_location",
-            description: "Get the user's current geographic location, timezone, and location source. Returns GPS coordinates, city/region/country, accuracy, and how the location was determined (GPS, Wi-Fi, or IP).",
+            description:
+                "Get the user's current geographic location, timezone, and location source. Returns GPS coordinates, city/region/country, accuracy, and how the location was determined (GPS, Wi-Fi, or IP).",
             parameters: {
                 type: "object",
                 properties: {
                     refresh: {
                         type: "boolean",
-                        description: "If true, force a fresh location detection instead of using cached data. Default: false.",
+                        description:
+                            "If true, force a fresh location detection instead of using cached data. Default: false.",
                     },
                 },
                 required: [],

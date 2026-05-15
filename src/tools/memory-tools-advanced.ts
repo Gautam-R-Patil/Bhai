@@ -3,12 +3,15 @@
 // See LICENSE.md for details.
 
 import { getIdentityProfile, updateIdentityProfile } from "../memory/identity.js";
-import { getTrait, reinforceTrait, getAllTraits, upsertTrait, deleteTrait } from "../memory/traits.js";
 import {
-    getKnowledgeGraphDB, findEntities, addEntity, addRelationship,
+    addEntity,
+    addRelationship,
+    findEntities,
+    getKnowledgeGraphDB,
     getRelationships,
 } from "../memory/knowledge-graph.js";
-import { remember, listMemories, forgetMemory } from "../memory/sqlite.js";
+import { forgetMemory, listMemories, remember } from "../memory/sqlite.js";
+import { deleteTrait, getAllTraits, getTrait, reinforceTrait, upsertTrait } from "../memory/traits.js";
 import type { ToolDefinition } from "./get-current-time.js";
 
 // ── Section Types ────────────────────────────────
@@ -29,29 +32,35 @@ function readSection(section: CoreMemorySection): string {
         case "traits": {
             const traits = getAllTraits();
             if (traits.length === 0) return "(no traits recorded)";
-            return traits.map(t =>
-                `${t.trait_key}: ${t.value} (confidence: ${Math.round(t.confidence * 100)}%, reinforced: ${t.reinforcement_count}x)`
-            ).join("\n");
+            return traits
+                .map(
+                    (t) =>
+                        `${t.trait_key}: ${t.value} (confidence: ${Math.round(t.confidence * 100)}%, reinforced: ${t.reinforcement_count}x)`,
+                )
+                .join("\n");
         }
         case "preferences": {
             const kgDb = getKnowledgeGraphDB();
             if (!kgDb) return "(knowledge graph not available)";
             const entities = findEntities(kgDb, "%", "preference");
             if (entities.length === 0) return "(no preferences stored)";
-            return entities.map(e => {
-                const props = e.properties;
-                const rels = getRelationships(kgDb, e.id);
-                const relStr = rels.length > 0
-                    ? rels.map(r => `  -> ${r.relationship.type}: ${r.entity.name}`).join("\n")
-                    : "";
-                return `${e.name}: ${JSON.stringify(props)}${relStr ? "\n" + relStr : ""}`;
-            }).join("\n");
+            return entities
+                .map((e) => {
+                    const props = e.properties;
+                    const rels = getRelationships(kgDb, e.id);
+                    const relStr =
+                        rels.length > 0
+                            ? rels.map((r) => `  -> ${r.relationship.type}: ${r.entity.name}`).join("\n")
+                            : "";
+                    return `${e.name}: ${JSON.stringify(props)}${relStr ? "\n" + relStr : ""}`;
+                })
+                .join("\n");
         }
         default: {
             // Custom sections: stored as core memories with category = section name
             const memories = listMemories(section, 50);
             if (memories.length === 0) return `(no content in section "${section}")`;
-            return memories.map(m => m.content).join("\n");
+            return memories.map((m) => m.content).join("\n");
         }
     }
 }
@@ -70,7 +79,8 @@ export const coreMemoryRead: ToolDefinition = {
                 properties: {
                     section: {
                         type: "string",
-                        description: "The memory section to read: 'identity', 'traits', 'preferences', or a custom section name",
+                        description:
+                            "The memory section to read: 'identity', 'traits', 'preferences', or a custom section name",
                     },
                 },
                 required: ["section"],
@@ -173,7 +183,7 @@ export const coreMemoryReplace: ToolDefinition = {
                 case "traits": {
                     // Parse old_content as "trait_key: value" or just use it as trait_key lookup
                     const allTraits = getAllTraits();
-                    const match = allTraits.find(t => t.value === oldContent || t.trait_key === oldContent);
+                    const match = allTraits.find((t) => t.value === oldContent || t.trait_key === oldContent);
 
                     if (!match) {
                         return JSON.stringify({
@@ -207,7 +217,8 @@ export const coreMemoryReplace: ToolDefinition = {
                             // Copy relationships
                             const rels = getRelationships(kgDb, entity.id);
                             for (const rel of rels) {
-                                const fromId = rel.relationship.from_id === entity.id ? newId : rel.relationship.from_id;
+                                const fromId =
+                                    rel.relationship.from_id === entity.id ? newId : rel.relationship.from_id;
                                 const toId = rel.relationship.to_id === entity.id ? newId : rel.relationship.to_id;
                                 addRelationship(kgDb, fromId, toId, rel.relationship.type, rel.relationship.properties);
                             }
@@ -222,7 +233,7 @@ export const coreMemoryReplace: ToolDefinition = {
                                 props[key] = newContent;
                                 kgDb.run(
                                     "UPDATE entities SET properties = ?, updated_at = datetime('now') WHERE id = ?",
-                                    [JSON.stringify(props), entity.id]
+                                    [JSON.stringify(props), entity.id],
                                 );
                                 found = true;
                                 break;
@@ -295,7 +306,8 @@ export const coreMemoryAppend: ToolDefinition = {
                     },
                     content: {
                         type: "string",
-                        description: "The content to append. For traits, use 'key: value' format (e.g., 'prefers_dark_mode: true'). For identity, use 'field: value' format. For preferences and custom sections, free-form text.",
+                        description:
+                            "The content to append. For traits, use 'key: value' format (e.g., 'prefers_dark_mode: true'). For identity, use 'field: value' format. For preferences and custom sections, free-form text.",
                     },
                     importance: {
                         type: "number",
@@ -329,8 +341,11 @@ export const coreMemoryAppend: ToolDefinition = {
                     const value = content.substring(colonIdx + 1).trim();
 
                     const fieldMap: Record<string, string> = {
-                        name: "name", email: "email", location: "location",
-                        role: "role", company: "company",
+                        name: "name",
+                        email: "email",
+                        location: "location",
+                        role: "role",
+                        company: "company",
                     };
 
                     if (fieldMap[field]) {
@@ -424,7 +439,8 @@ export const coreMemoryDelete: ToolDefinition = {
                     },
                     content: {
                         type: "string",
-                        description: "The content to delete. For identity: field name (e.g., 'location'). For traits: trait_key. For preferences: preference name. For custom sections: exact text match.",
+                        description:
+                            "The content to delete. For identity: field name (e.g., 'location'). For traits: trait_key. For preferences: preference name. For custom sections: exact text match.",
                     },
                 },
                 required: ["section", "content"],
@@ -524,10 +540,10 @@ export const coreMemoryDelete: ToolDefinition = {
                                 invalidateRelationship(kgDb, rel.relationship.id);
                             }
                             // Mark entity as deleted via properties
-                            kgDb.run(
-                                "UPDATE entities SET properties = ?, updated_at = datetime('now') WHERE id = ?",
-                                [JSON.stringify({ ...entity.properties, _deleted: true, _deleted_at: Date.now() }), entity.id]
-                            );
+                            kgDb.run("UPDATE entities SET properties = ?, updated_at = datetime('now') WHERE id = ?", [
+                                JSON.stringify({ ...entity.properties, _deleted: true, _deleted_at: Date.now() }),
+                                entity.id,
+                            ]);
                             return JSON.stringify({
                                 success: true,
                                 message: `Preference "${entity.name}" marked as deleted (relationships invalidated)`,

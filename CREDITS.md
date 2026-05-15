@@ -17,8 +17,10 @@ We gratefully acknowledge their authors and communities.
 | Package | License | Description |
 |---------|---------|-------------|
 | [OpenAI Node SDK](https://github.com/openai/openai-node) (`openai`) | Apache-2.0 | LLM API client |
-| [Google GenAI](https://github.com/googleapis/js-genai) (`@google/genai`) | Apache-2.0 | Google Generative AI SDK |
+| [Google GenAI](https://github.com/googleapis/js-genai) (`@google/genai`) | Apache-2.0 | Google Generative AI SDK (Gemini Live + multimodal) |
 | [Xenova Transformers](https://github.com/xenova/transformers.js) (`@xenova/transformers`) | Apache-2.0 | Local embedding and transformer models |
+| [Hugging Face Transformers.js](https://github.com/huggingface/transformers.js) (`@huggingface/transformers`) | Apache-2.0 | Newer Transformers.js fork (cross-encoder rerank, Kokoro TTS) |
+| [Kokoro.js](https://github.com/hexgrad/kokoro) (`kokoro-js`) | Apache-2.0 | Local in-process Kokoro TTS for offline voice synthesis |
 | [Convex](https://github.com/get-convex/convex-js) (`convex`) | Apache-2.0 | Reactive backend client |
 
 ## Messaging & Channels
@@ -143,6 +145,8 @@ We gratefully acknowledge their authors and communities.
 | [Vitest](https://vitest.dev) (`vitest`) | MIT | Fast unit testing framework |
 | [Vitest UI](https://vitest.dev) (`@vitest/ui`) | MIT | Browser UI for Vitest |
 | [archiver](https://github.com/archiverjs/node-archiver) (`archiver`) | MIT | Streaming zip/tar archive creation |
+| [AWS SDK for JavaScript v3 — S3 Client](https://github.com/aws/aws-sdk-js-v3) (`@aws-sdk/client-s3`) | Apache-2.0 | Used by release/distribution scripts for S3-compatible storage |
+| [AWS SDK for JavaScript v3 — lib-storage](https://github.com/aws/aws-sdk-js-v3) (`@aws-sdk/lib-storage`) | Apache-2.0 | Multipart upload helpers for the S3 client |
 | [@types/node](https://github.com/DefinitelyTyped/DefinitelyTyped) | MIT | Type definitions for Node.js |
 | [@types/archiver](https://github.com/DefinitelyTyped/DefinitelyTyped) | MIT | Type definitions for archiver |
 | [@types/better-sqlite3](https://github.com/DefinitelyTyped/DefinitelyTyped) | MIT | Type definitions for better-sqlite3 |
@@ -178,9 +182,11 @@ The native performance layer is built in Rust via napi-rs. It links the followin
 | [once_cell](https://github.com/matklad/once_cell) (`once_cell`) | MIT OR Apache-2.0 | Single-assignment cells and lazy values |
 | [aes-gcm](https://github.com/RustCrypto/AEADs) (`aes-gcm`) | MIT OR Apache-2.0 | AES-256-GCM authenticated encryption |
 | [scrypt](https://github.com/RustCrypto/password-hashes) (`scrypt`) | MIT OR Apache-2.0 | scrypt key-derivation function |
+| [sha2](https://github.com/RustCrypto/hashes) (`sha2`) | MIT OR Apache-2.0 | SHA-256 (chrome-bridge KDF) |
 | [getrandom](https://github.com/rust-random/getrandom) (`getrandom`) | MIT OR Apache-2.0 | Cryptographic random bytes |
 | [hex](https://github.com/KokaKiwi/rust-hex) (`hex`) | MIT OR Apache-2.0 | Hex encoding/decoding |
 | [libc](https://github.com/rust-lang/libc) (`libc`) | MIT OR Apache-2.0 | Raw FFI bindings to platform C libraries |
+| [webrtc-vad](https://github.com/kpcyrd/webrtc-vad-rs) (`webrtc-vad`) | MIT OR Apache-2.0 | libfvad-backed voice activity detection (gated behind cargo feature `vad`, used by `pcm_vad.rs`) |
 
 ---
 

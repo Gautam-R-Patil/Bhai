@@ -11,9 +11,9 @@
 //                   signBrowserAction, verifyBrowserAction, getActionAuditTail,
 //                   getModuleFingerprint, encryptSensitive, decryptSensitive
 
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createRequire } from "node:module";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -43,7 +43,12 @@ export interface HoverHint {
 
 interface NativeBrowserModule {
     // browser_agent
-    scoreElementCandidates(desc: string, candidates: ElementCandidate[], vw?: number | null, vh?: number | null): ScoredElement[];
+    scoreElementCandidates(
+        desc: string,
+        candidates: ElementCandidate[],
+        vw?: number | null,
+        vh?: number | null,
+    ): ScoredElement[];
     setVideoPlayerState(url: string, stateJson: string): void;
     getVideoPlayerState(url: string): string | null;
     invalidateVideoState(url: string): void;
@@ -69,7 +74,12 @@ interface NativeBrowserModule {
     decryptSensitive(encrypted: string): string;
     // browser_guard
     classifyCaptcha(html: string): { kind: string; confidence: number; signals: string[] };
-    scorePopupRisk(html: string): { cookieBannerProb: number; modalProb: number; runGuardEagerly: boolean; signals: string[] };
+    scorePopupRisk(html: string): {
+        cookieBannerProb: number;
+        modalProb: number;
+        runGuardEagerly: boolean;
+        signals: string[];
+    };
     getStealthUserAgent(platform: string, seed: number): string;
     getStealthInitScript(seed: number): string;
     compressElementsForLlm(elements: object[], maxTextLen?: number | null, maxElements?: number | null): string;
@@ -97,21 +107,19 @@ try {
 
 // ── Fallback implementations ──────────────────────────────────────────────────
 
-function fallbackScoreElementCandidates(
-    description: string,
-    candidates: ElementCandidate[],
-): ScoredElement[] {
+function fallbackScoreElementCandidates(description: string, candidates: ElementCandidate[]): ScoredElement[] {
     const desc = description.toLowerCase();
     return candidates
-        .map(el => {
+        .map((el) => {
             let score = 0;
             const combined = `${el.text} ${el.ariaLabel} ${el.className}`.toLowerCase();
             // Simple token overlap
             const tokens = desc.split(/\s+/);
-            const matches = tokens.filter(t => combined.includes(t)).length;
+            const matches = tokens.filter((t) => combined.includes(t)).length;
             score += (matches / Math.max(tokens.length, 1)) * 0.5;
             if (el.className.includes("ytp-mute") && desc.includes("mute")) score += 0.3;
-            if (el.className.includes("ytp-subtitles") && (desc.includes("caption") || desc.includes("subtitle"))) score += 0.3;
+            if (el.className.includes("ytp-subtitles") && (desc.includes("caption") || desc.includes("subtitle")))
+                score += 0.3;
             if (el.className.includes("ytp-play") && (desc.includes("play") || desc.includes("pause"))) score += 0.3;
             return { label: el.label, score: Math.min(score, 1), reason: "js_fallback" };
         })
@@ -119,7 +127,15 @@ function fallbackScoreElementCandidates(
 }
 
 function fallbackValidateJsCode(code: string): string {
-    const blocked = ["XMLHttpRequest", "fetch(", "WebSocket(", "eval(", "__proto__", "__hoverAddedNodes", "__hoverObserver"];
+    const blocked = [
+        "XMLHttpRequest",
+        "fetch(",
+        "WebSocket(",
+        "eval(",
+        "__proto__",
+        "__hoverAddedNodes",
+        "__hoverObserver",
+    ];
     for (const p of blocked) {
         if (code.includes(p)) throw new Error(`ip_guard: blocked pattern '${p}'`);
     }
@@ -152,58 +168,64 @@ export function scoreElementCandidates(
     viewportWidth?: number,
     viewportHeight?: number,
 ): ScoredElement[] {
-    if (native) return (native as any)['scoreElementCandidates'](description, candidates, viewportWidth ?? null, viewportHeight ?? null);
+    if (native)
+        return (native as any)["scoreElementCandidates"](
+            description,
+            candidates,
+            viewportWidth ?? null,
+            viewportHeight ?? null,
+        );
     return fallbackScoreElementCandidates(description, candidates);
 }
 
 /** Cache video player state after an action to avoid redundant page.evaluate() calls. */
 export function setVideoPlayerState(url: string, stateJson: string): void {
-    (native as any)?.['setVideoPlayerState'](url, stateJson);
+    (native as any)?.["setVideoPlayerState"](url, stateJson);
 }
 
 /** Get cached player state. Returns null if not cached or stale (>10s). */
 export function getVideoPlayerState(url: string): string | null {
-    return (native as any)?.['getVideoPlayerState'](url) ?? null;
+    return (native as any)?.["getVideoPlayerState"](url) ?? null;
 }
 
 /** Invalidate video state cache for a URL (call on navigation). */
 export function invalidateVideoState(url: string): void {
-    (native as any)?.['invalidateVideoState'](url);
+    (native as any)?.["invalidateVideoState"](url);
 }
 
 /** Check rate limit for a browser action on a URL. Returns false if throttled. */
 export function checkBrowserRateLimit(actionType: string, url: string): boolean {
-    return (native as any)?.['checkBrowserActionRateLimit'](actionType, url) ?? true; // fallback: allow
+    return (native as any)?.["checkBrowserActionRateLimit"](actionType, url) ?? true; // fallback: allow
 }
 
 /** Record a browser action outcome for loop detection and stats. */
 export function recordBrowserAction(actionType: string, url: string, selector: string, success: boolean): void {
-    (native as any)?.['recordBrowserAction'](actionType, url, selector, success);
+    (native as any)?.["recordBrowserAction"](actionType, url, selector, success);
 }
 
 /** Detect if the agent is looping on the same failed action. Returns true = loop. */
 export function detectActionLoop(actionType: string, selector: string, url: string): boolean {
-    return (native as any)?.['detectActionLoop'](actionType, selector, url) ?? false;
+    return (native as any)?.["detectActionLoop"](actionType, selector, url) ?? false;
 }
 
 /** Reset loop counter after the agent intentionally changes strategy. */
 export function resetActionLoop(actionType: string, selector: string, url: string): void {
-    (native as any)?.['resetActionLoop'](actionType, selector, url);
+    (native as any)?.["resetActionLoop"](actionType, selector, url);
 }
 
 /** Get cached hover coordinates for a (url, selector) pair. Returns null if unknown. */
 export function getHoverHint(url: string, selector: string): HoverHint | null {
-    return (native as any)?.['getHoverHint'](url, selector) ?? null;
+    return (native as any)?.["getHoverHint"](url, selector) ?? null;
 }
 
 /** Record a successful hover at these coordinates. Updates EMA cache. */
 export function recordHoverSuccess(url: string, selector: string, x: number, y: number): void {
-    (native as any)?.['recordHoverSuccess'](url, selector, x, y);
+    (native as any)?.["recordHoverSuccess"](url, selector, x, y);
 }
 
 /** Record a failed hover attempt. Lowers confidence for this selector. */
 export function recordHoverFailure(url: string, selector: string): void {
-    (native as any)?.['recordHoverFailure'](url, selector);
+    (native as any)?.["recordHoverFailure"](url, selector);
 }
 
 /**
@@ -212,7 +234,7 @@ export function recordHoverFailure(url: string, selector: string): void {
  * Throws if blocked, returns original code if clean.
  */
 export function validateJsCode(code: string): string {
-    if (native) return (native as any)['validateJsCode'](code);
+    if (native) return (native as any)["validateJsCode"](code);
     return fallbackValidateJsCode(code);
 }
 
@@ -221,7 +243,7 @@ export function validateJsCode(code: string): string {
  * Prevents reverse-engineering of our MutationObserver injection patterns.
  */
 export function obfuscateInjectedVariable(name: string): string {
-    if (native) return (native as any)['obfuscateInjectedVariable'](name);
+    if (native) return (native as any)["obfuscateInjectedVariable"](name);
     return fallbackObfuscate(name);
 }
 
@@ -230,7 +252,7 @@ export function obfuscateInjectedVariable(name: string): string {
  * to their obfuscated session-scoped equivalents.
  */
 export function rewriteInternalVars(code: string): string {
-    if (native) return (native as any)['rewriteInternalVars'](code);
+    if (native) return (native as any)["rewriteInternalVars"](code);
     return fallbackRewriteVars(code);
 }
 
@@ -239,32 +261,40 @@ export function rewriteInternalVars(code: string): string {
  * Returns hex HMAC-SHA256.
  */
 export function signBrowserAction(toolName: string, paramsJson: string): string {
-    return (native as any)?.['signBrowserAction'](toolName, paramsJson) ?? "";
+    return (native as any)?.["signBrowserAction"](toolName, paramsJson) ?? "";
 }
 
 /** Verify a previously-issued action signature. */
 export function verifyBrowserAction(toolName: string, paramsJson: string, signature: string): boolean {
-    return (native as any)?.['verifyBrowserAction'](toolName, paramsJson, signature) ?? false;
+    return (native as any)?.["verifyBrowserAction"](toolName, paramsJson, signature) ?? false;
 }
 
 /** Get last N entries of the tamper-evident action audit log as JSON. */
 export function getActionAuditTail(n: number): string {
-    return (native as any)?.['getActionAuditTail'](n) ?? "[]";
+    return (native as any)?.["getActionAuditTail"](n) ?? "[]";
 }
 
 /** Get the compile-time module integrity fingerprint for boot-time tamper detection. */
 export function getModuleFingerprint(): string {
-    return (native as any)?.['getModuleFingerprint']() ?? "unavailable";
+    return (native as any)?.["getModuleFingerprint"]() ?? "unavailable";
 }
 
 /** Encrypt sensitive data with the session AES-256-GCM key. */
 export function encryptSensitive(plaintext: string): string | null {
-    try { return (native as any)?.['encryptSensitive'](plaintext) ?? null; } catch { return null; }
+    try {
+        return (native as any)?.["encryptSensitive"](plaintext) ?? null;
+    } catch {
+        return null;
+    }
 }
 
 /** Decrypt data encrypted with encryptSensitive(). */
 export function decryptSensitive(encrypted: string): string | null {
-    try { return (native as any)?.['decryptSensitive'](encrypted) ?? null; } catch { return null; }
+    try {
+        return (native as any)?.["decryptSensitive"](encrypted) ?? null;
+    } catch {
+        return null;
+    }
 }
 
 /** Whether the native module is loaded and active. */
@@ -276,46 +306,67 @@ export function isNativeBrowserAvailable(): boolean {
 
 /** Classify CAPTCHA type from page HTML. Rust pattern matching — zero JS eval overhead. */
 export function classifyCaptchaFromHtml(html: string): { kind: string; confidence: number; signals: string[] } {
-    return (native as any)?.['classifyCaptcha'](html) ?? { kind: "none", confidence: 0, signals: [] };
+    return (native as any)?.["classifyCaptcha"](html) ?? { kind: "none", confidence: 0, signals: [] };
 }
 
 /** Score popup/overlay risk from page HTML. Returns probabilities for cookie banner and modals. */
-export function scorePopupRisk(html: string): { cookieBannerProb: number; modalProb: number; runGuardEagerly: boolean } {
-    return (native as any)?.['scorePopupRisk'](html) ?? { cookieBannerProb: 0, modalProb: 0, runGuardEagerly: false };
+export function scorePopupRisk(html: string): {
+    cookieBannerProb: number;
+    modalProb: number;
+    runGuardEagerly: boolean;
+} {
+    return (native as any)?.["scorePopupRisk"](html) ?? { cookieBannerProb: 0, modalProb: 0, runGuardEagerly: false };
 }
 
 /** Get Rust-generated stealth init script to inject via addInitScript(). Varies by session seed. */
 export function getStealthInitScript(seed: number): string | null {
-    return (native as any)?.['getStealthInitScript'](seed) ?? null;
+    return (native as any)?.["getStealthInitScript"](seed) ?? null;
 }
 
 /** Compress element list for LLM — deduplicates, groups repeats, truncates. ~30-50% fewer tokens. */
 export function compressElementsForLlm(
-    elements: Array<{ label: number; tag: string; text: string; x: number; y: number; width?: number; height?: number; isOcr?: boolean; editorType?: string | null }>,
+    elements: Array<{
+        label: number;
+        tag: string;
+        text: string;
+        x: number;
+        y: number;
+        width?: number;
+        height?: number;
+        isOcr?: boolean;
+        editorType?: string | null;
+    }>,
     maxTextLen = 40,
     maxElements = 80,
 ): string {
     if (native) {
         // Ensure width/height have default 0 if not provided
-        const withDims = elements.map(e => ({ ...e, width: e.width ?? 0, height: e.height ?? 0 }));
-        try { return (native as any)['compressElementsForLlm'](withDims, maxTextLen, maxElements); } catch { /* fallback */ }
+        const withDims = elements.map((e) => ({ ...e, width: e.width ?? 0, height: e.height ?? 0 }));
+        try {
+            return (native as any)["compressElementsForLlm"](withDims, maxTextLen, maxElements);
+        } catch {
+            /* fallback */
+        }
     }
     // JS fallback uses OpenCLI [N]<tag>text format
-    return elements.slice(0, maxElements).map(e => {
-        const t = (e.text ?? "").substring(0, maxTextLen);
-        if (e.editorType) return `[${e.label}]<code-editor:${e.editorType}>`;
-        if (e.isOcr)      return `[${e.label}]<ocr>${t}`;
-        return t ? `[${e.label}]<${e.tag}>${t}` : `[${e.label}]<${e.tag}>`;
-    }).join('\n');
+    return elements
+        .slice(0, maxElements)
+        .map((e) => {
+            const t = (e.text ?? "").substring(0, maxTextLen);
+            if (e.editorType) return `[${e.label}]<code-editor:${e.editorType}>`;
+            if (e.isOcr) return `[${e.label}]<ocr>${t}`;
+            return t ? `[${e.label}]<${e.tag}>${t}` : `[${e.label}]<${e.tag}>`;
+        })
+        .join("\n");
 }
 
 /** Rust human-like typing delay for a character (WPM-based with punctuation pauses). */
 export function humanTypingDelayMs(charCode: number, wpm = 65): number {
-    return (native as any)?.['humanTypingDelayMs'](charCode, wpm) ?? 35;
+    return (native as any)?.["humanTypingDelayMs"](charCode, wpm) ?? 35;
 }
 
 /** Rust Fitts's-law mouse movement: returns [steps, pre_pause_ms]. */
 export function humanMouseParams(sx: number, sy: number, ex: number, ey: number, seed: number): [number, number] {
-    const r = (native as any)?.['humanMouseParams'](sx, sy, ex, ey, seed);
+    const r = (native as any)?.["humanMouseParams"](sx, sy, ex, ey, seed);
     return r ? [r[0], r[1]] : [8, 120];
 }

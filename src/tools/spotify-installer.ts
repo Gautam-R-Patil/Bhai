@@ -10,13 +10,22 @@
 // This lets non-technical Electron-app users get full Spotify control without
 // touching a terminal.
 
-import { createWriteStream, existsSync, mkdirSync, chmodSync, unlinkSync, renameSync, statSync, readdirSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir, homedir, arch, platform } from "node:os";
 import { execFile, spawn } from "node:child_process";
-import { promisify } from "node:util";
-import { get as httpsGet } from "node:https";
+import {
+    chmodSync,
+    createWriteStream,
+    existsSync,
+    mkdirSync,
+    readdirSync,
+    renameSync,
+    statSync,
+    unlinkSync,
+} from "node:fs";
 import type { IncomingMessage } from "node:http";
+import { get as httpsGet } from "node:https";
+import { arch, homedir, platform, tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import { IS_LINUX, IS_MAC, IS_WIN } from "./platform.js";
 
 const execFileAsync = promisify(execFile);
@@ -66,26 +75,30 @@ function httpsJson<T = unknown>(url: string): Promise<T> {
     return new Promise((resolve, reject) => {
         const doGet = (u: string, depth = 0) => {
             if (depth > 5) return reject(new Error("Too many redirects"));
-            httpsGet(u, { headers: { "User-Agent": "atlas-spotify-installer", Accept: "application/vnd.github+json" } }, (res: IncomingMessage) => {
-                if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-                    res.resume();
-                    return doGet(res.headers.location, depth + 1);
-                }
-                if (res.statusCode !== 200) {
-                    res.resume();
-                    return reject(new Error(`GitHub API responded ${res.statusCode} for ${u}`));
-                }
-                const chunks: Buffer[] = [];
-                res.on("data", (c: Buffer) => chunks.push(c));
-                res.on("end", () => {
-                    try {
-                        resolve(JSON.parse(Buffer.concat(chunks).toString("utf-8")));
-                    } catch (e) {
-                        reject(e);
+            httpsGet(
+                u,
+                { headers: { "User-Agent": "atlas-spotify-installer", Accept: "application/vnd.github+json" } },
+                (res: IncomingMessage) => {
+                    if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                        res.resume();
+                        return doGet(res.headers.location, depth + 1);
                     }
-                });
-                res.on("error", reject);
-            }).on("error", reject);
+                    if (res.statusCode !== 200) {
+                        res.resume();
+                        return reject(new Error(`GitHub API responded ${res.statusCode} for ${u}`));
+                    }
+                    const chunks: Buffer[] = [];
+                    res.on("data", (c: Buffer) => chunks.push(c));
+                    res.on("end", () => {
+                        try {
+                            resolve(JSON.parse(Buffer.concat(chunks).toString("utf-8")));
+                        } catch (e) {
+                            reject(e);
+                        }
+                    });
+                    res.on("error", reject);
+                },
+            ).on("error", reject);
         };
         doGet(url);
     });
@@ -114,7 +127,11 @@ function httpsDownload(url: string, outPath: string, onProgress?: (pct: number) 
                 res.pipe(file);
                 file.on("finish", () => file.close(() => resolve()));
                 file.on("error", (err) => {
-                    try { unlinkSync(outPath); } catch { /* */ }
+                    try {
+                        unlinkSync(outPath);
+                    } catch {
+                        /* */
+                    }
                     reject(err);
                 });
             }).on("error", reject);
@@ -134,9 +151,15 @@ async function extractZip(archivePath: string, extractDir: string): Promise<void
     // Use PowerShell Expand-Archive on Windows (built-in, no deps)
     const ps = `Expand-Archive -LiteralPath '${archivePath.replace(/'/g, "''")}' -DestinationPath '${extractDir.replace(/'/g, "''")}' -Force`;
     await new Promise<void>((resolve, reject) => {
-        const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", ps], { timeout: 60_000 });
+        const child = spawn(
+            "powershell.exe",
+            ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", ps],
+            { timeout: 60_000 },
+        );
         let stderr = "";
-        child.stderr?.on("data", (c) => { stderr += c.toString(); });
+        child.stderr?.on("data", (c) => {
+            stderr += c.toString();
+        });
         child.on("close", (code) => {
             if (code === 0) resolve();
             else reject(new Error(`Expand-Archive failed (exit ${code}): ${stderr.trim()}`));
@@ -186,7 +209,9 @@ export interface InstallResult {
  * Download + install spogo into ~/.atlas/bin. Returns the resolved binary path.
  * If already installed, returns the existing path without re-downloading.
  */
-export async function installSpogo(opts: { force?: boolean; onProgress?: (msg: string, pct?: number) => void } = {}): Promise<InstallResult> {
+export async function installSpogo(
+    opts: { force?: boolean; onProgress?: (msg: string, pct?: number) => void } = {},
+): Promise<InstallResult> {
     const log = opts.onProgress || ((msg: string) => console.log(`🎵 spogo: ${msg}`));
 
     try {
@@ -215,13 +240,15 @@ export async function installSpogo(opts: { force?: boolean; onProgress?: (msg: s
 
         const { osToken, archToken, extension } = expectedAssetTokens();
         // Match by containing both tokens + extension (version number varies)
-        const asset = release.assets.find((a) =>
-            a.name.includes(osToken) && a.name.includes(archToken) && a.name.endsWith(extension),
+        const asset = release.assets.find(
+            (a) => a.name.includes(osToken) && a.name.includes(archToken) && a.name.endsWith(extension),
         );
         if (!asset) {
             // Fallback for Apple Silicon when only amd64 is published — Rosetta can run it
             if (IS_MAC && archToken === "arm64") {
-                const amd = release.assets.find((a) => a.name.includes("darwin") && a.name.includes("amd64") && a.name.endsWith("tar.gz"));
+                const amd = release.assets.find(
+                    (a) => a.name.includes("darwin") && a.name.includes("amd64") && a.name.endsWith("tar.gz"),
+                );
                 if (amd) {
                     log(`no arm64 build; falling back to amd64 (Rosetta)`);
                     return await downloadAndInstall(amd, release.tag_name, log);
@@ -236,7 +263,11 @@ export async function installSpogo(opts: { force?: boolean; onProgress?: (msg: s
     }
 }
 
-async function downloadAndInstall(asset: ReleaseAsset, tagName: string, log: (msg: string, pct?: number) => void): Promise<InstallResult> {
+async function downloadAndInstall(
+    asset: ReleaseAsset,
+    tagName: string,
+    log: (msg: string, pct?: number) => void,
+): Promise<InstallResult> {
     const tmpDir = join(tmpdir(), `atlas-spogo-${Date.now()}`);
     mkdirSync(tmpDir, { recursive: true });
 
@@ -269,11 +300,19 @@ async function downloadAndInstall(asset: ReleaseAsset, tagName: string, log: (ms
 
     const target = spogoBinaryPath();
     // If a prior binary exists, remove it
-    try { if (existsSync(target)) unlinkSync(target); } catch { /* */ }
+    try {
+        if (existsSync(target)) unlinkSync(target);
+    } catch {
+        /* */
+    }
     renameSync(extractedBin, target);
 
     if (!IS_WIN) {
-        try { chmodSync(target, 0o755); } catch { /* */ }
+        try {
+            chmodSync(target, 0o755);
+        } catch {
+            /* */
+        }
     }
 
     // Verify the installed binary runs
@@ -288,6 +327,8 @@ async function downloadAndInstall(asset: ReleaseAsset, tagName: string, log: (ms
         try {
             const { rmSync } = await import("node:fs");
             rmSync(tmpDir, { recursive: true, force: true });
-        } catch { /* */ }
+        } catch {
+            /* */
+        }
     }
 }

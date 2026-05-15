@@ -4,7 +4,7 @@
 
 import { promises as fs } from "fs";
 import { homedir } from "os";
-import { join, basename } from "path";
+import { basename, join } from "path";
 import type { ToolDefinition } from "./get-current-time.js";
 
 // ── Constants ────────────────────────────────
@@ -66,29 +66,24 @@ export const gifSearch: ToolDefinition = {
                     },
                     query: {
                         type: "string",
-                        description:
-                            "Search query string. Required when action is 'search'.",
+                        description: "Search query string. Required when action is 'search'.",
                     },
                     limit: {
                         type: "number",
-                        description:
-                            "Maximum number of results to return (1-20). Defaults to 5.",
+                        description: "Maximum number of results to return (1-20). Defaults to 5.",
                     },
                     provider: {
                         type: "string",
                         enum: ["tenor", "giphy"],
-                        description:
-                            "GIF provider to use. Defaults to 'tenor'. Giphy requires GIPHY_API_KEY env var.",
+                        description: "GIF provider to use. Defaults to 'tenor'. Giphy requires GIPHY_API_KEY env var.",
                     },
                     url: {
                         type: "string",
-                        description:
-                            "The GIF URL to download. Required when action is 'download'.",
+                        description: "The GIF URL to download. Required when action is 'download'.",
                     },
                     output_path: {
                         type: "string",
-                        description:
-                            "File path to save the downloaded GIF. Defaults to ~/Downloads/.",
+                        description: "File path to save the downloaded GIF. Defaults to ~/Downloads/.",
                     },
                 },
                 required: ["action"],
@@ -116,10 +111,12 @@ export const gifSearch: ToolDefinition = {
                 if (provider === "giphy") {
                     const giphyKey = process.env.GIPHY_API_KEY;
                     if (!giphyKey) {
-                        return JSON.stringify({ error: "GIPHY_API_KEY env var is not set. Use provider 'tenor' or set the env var." });
+                        return JSON.stringify({
+                            error: "GIPHY_API_KEY env var is not set. Use provider 'tenor' or set the env var.",
+                        });
                     }
                     const res = await fetch(
-                        `${GIPHY_BASE}/search?api_key=${encodeURIComponent(giphyKey)}&q=${encodeURIComponent(query)}&limit=${limit}`
+                        `${GIPHY_BASE}/search?api_key=${encodeURIComponent(giphyKey)}&q=${encodeURIComponent(query)}&limit=${limit}`,
                     );
                     if (!res.ok) {
                         return JSON.stringify({ error: `Giphy API error: ${res.status} ${res.statusText}` });
@@ -128,7 +125,7 @@ export const gifSearch: ToolDefinition = {
                     results = parseGiphyResults(data.data || []);
                 } else {
                     const res = await fetch(
-                        `${TENOR_BASE}/search?q=${encodeURIComponent(query)}&key=${TENOR_DEMO_KEY}&limit=${limit}&media_filter=gif`
+                        `${TENOR_BASE}/search?q=${encodeURIComponent(query)}&key=${TENOR_DEMO_KEY}&limit=${limit}&media_filter=gif`,
                     );
                     if (!res.ok) {
                         return JSON.stringify({ error: `Tenor API error: ${res.status} ${res.statusText}` });
@@ -137,7 +134,14 @@ export const gifSearch: ToolDefinition = {
                     results = parseTenorResults(data.results || []);
                 }
 
-                return JSON.stringify({ success: true, action: "search", query, provider, count: results.length, results });
+                return JSON.stringify({
+                    success: true,
+                    action: "search",
+                    query,
+                    provider,
+                    count: results.length,
+                    results,
+                });
             }
 
             // ── Trending ─────────────────────────
@@ -147,10 +151,12 @@ export const gifSearch: ToolDefinition = {
                 if (provider === "giphy") {
                     const giphyKey = process.env.GIPHY_API_KEY;
                     if (!giphyKey) {
-                        return JSON.stringify({ error: "GIPHY_API_KEY env var is not set. Use provider 'tenor' or set the env var." });
+                        return JSON.stringify({
+                            error: "GIPHY_API_KEY env var is not set. Use provider 'tenor' or set the env var.",
+                        });
                     }
                     const res = await fetch(
-                        `${GIPHY_BASE}/trending?api_key=${encodeURIComponent(giphyKey)}&limit=${limit}`
+                        `${GIPHY_BASE}/trending?api_key=${encodeURIComponent(giphyKey)}&limit=${limit}`,
                     );
                     if (!res.ok) {
                         return JSON.stringify({ error: `Giphy API error: ${res.status} ${res.statusText}` });
@@ -159,7 +165,7 @@ export const gifSearch: ToolDefinition = {
                     results = parseGiphyResults(data.data || []);
                 } else {
                     const res = await fetch(
-                        `${TENOR_BASE}/featured?key=${TENOR_DEMO_KEY}&limit=${limit}&media_filter=gif`
+                        `${TENOR_BASE}/featured?key=${TENOR_DEMO_KEY}&limit=${limit}&media_filter=gif`,
                     );
                     if (!res.ok) {
                         return JSON.stringify({ error: `Tenor API error: ${res.status} ${res.statusText}` });

@@ -7,10 +7,10 @@
 // No external binary needed beyond ffmpeg (commonly installed via brew/apt).
 
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { existsSync } from "node:fs";
-import { join, basename, extname } from "node:path";
 import { tmpdir } from "node:os";
+import { basename, extname, join } from "node:path";
+import { promisify } from "node:util";
 import type { ToolDefinition } from "./get-current-time.js";
 
 const execFileAsync = promisify(execFile);
@@ -29,7 +29,8 @@ export const audioVisualize: ToolDefinition = {
         type: "function",
         function: {
             name: "audio_visualize",
-            description: "Generate audio visualizations (spectrograms, waveforms) and extract audio metadata using ffmpeg. Requires ffmpeg to be installed.",
+            description:
+                "Generate audio visualizations (spectrograms, waveforms) and extract audio metadata using ffmpeg. Requires ffmpeg to be installed.",
             parameters: {
                 type: "object",
                 properties: {
@@ -119,14 +120,19 @@ export const audioVisualize: ToolDefinition = {
                     const args = [
                         "-y",
                         ...timeArgs,
-                        "-i", inputPath,
-                        "-lavfi", `showspectrumpic=s=${width}x${height}:color=${color}:scale=log`,
+                        "-i",
+                        inputPath,
+                        "-lavfi",
+                        `showspectrumpic=s=${width}x${height}:color=${color}:scale=log`,
                         outputPath,
                     ];
 
                     const { stderr } = await execFileAsync("ffmpeg", args, { timeout: 60000 });
                     if (!existsSync(outputPath)) {
-                        return JSON.stringify({ error: "Failed to generate spectrogram", details: stderr.substring(0, 300) });
+                        return JSON.stringify({
+                            error: "Failed to generate spectrogram",
+                            details: stderr.substring(0, 300),
+                        });
                     }
 
                     return JSON.stringify({
@@ -144,15 +150,21 @@ export const audioVisualize: ToolDefinition = {
                     const args = [
                         "-y",
                         ...timeArgs,
-                        "-i", inputPath,
-                        "-filter_complex", `showwavespic=s=${width}x${height}:colors=#4A90D9|#357ABD`,
-                        "-frames:v", "1",
+                        "-i",
+                        inputPath,
+                        "-filter_complex",
+                        `showwavespic=s=${width}x${height}:colors=#4A90D9|#357ABD`,
+                        "-frames:v",
+                        "1",
                         outputPath,
                     ];
 
                     const { stderr } = await execFileAsync("ffmpeg", args, { timeout: 60000 });
                     if (!existsSync(outputPath)) {
-                        return JSON.stringify({ error: "Failed to generate waveform", details: stderr.substring(0, 300) });
+                        return JSON.stringify({
+                            error: "Failed to generate waveform",
+                            details: stderr.substring(0, 300),
+                        });
                     }
 
                     return JSON.stringify({
@@ -168,17 +180,17 @@ export const audioVisualize: ToolDefinition = {
                         return JSON.stringify({ error: "ffprobe is not installed. Install with: brew install ffmpeg" });
                     }
 
-                    const { stdout } = await execFileAsync("ffprobe", [
-                        "-v", "quiet",
-                        "-print_format", "json",
-                        "-show_format",
-                        "-show_streams",
-                        inputPath,
-                    ], { timeout: 15000 });
+                    const { stdout } = await execFileAsync(
+                        "ffprobe",
+                        ["-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", inputPath],
+                        { timeout: 15000 },
+                    );
 
                     const data = JSON.parse(stdout);
                     const format = data.format || {};
-                    const audioStream = (data.streams || []).find((s: Record<string, unknown>) => s.codec_type === "audio");
+                    const audioStream = (data.streams || []).find(
+                        (s: Record<string, unknown>) => s.codec_type === "audio",
+                    );
 
                     return JSON.stringify({
                         success: true,
@@ -188,13 +200,15 @@ export const audioVisualize: ToolDefinition = {
                         duration_sec: parseFloat(format.duration) || 0,
                         size_bytes: parseInt(format.size) || 0,
                         bit_rate: parseInt(format.bit_rate) || 0,
-                        audio: audioStream ? {
-                            codec: audioStream.codec_long_name || audioStream.codec_name,
-                            sample_rate: parseInt(audioStream.sample_rate as string) || 0,
-                            channels: audioStream.channels || 0,
-                            channel_layout: audioStream.channel_layout || "unknown",
-                            bit_depth: audioStream.bits_per_raw_sample || audioStream.bits_per_sample || null,
-                        } : null,
+                        audio: audioStream
+                            ? {
+                                  codec: audioStream.codec_long_name || audioStream.codec_name,
+                                  sample_rate: parseInt(audioStream.sample_rate as string) || 0,
+                                  channels: audioStream.channels || 0,
+                                  channel_layout: audioStream.channel_layout || "unknown",
+                                  bit_depth: audioStream.bits_per_raw_sample || audioStream.bits_per_sample || null,
+                              }
+                            : null,
                         tags: format.tags || {},
                     });
                 }

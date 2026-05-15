@@ -34,13 +34,15 @@ export const scheduleTask: ToolDefinition = {
         type: "function",
         function: {
             name: "schedule_task",
-            description: "Schedule a recurring task. Use cron expressions (e.g. '0 9 * * *' for 9 AM daily) or common patterns.",
+            description:
+                "Schedule a recurring task. Use cron expressions (e.g. '0 9 * * *' for 9 AM daily) or common patterns.",
             parameters: {
                 type: "object",
                 properties: {
                     expression: {
                         type: "string",
-                        description: "Cron expression. Common: '*/5 * * * *' (every 5 min), '0 9 * * *' (9 AM daily), '0 9 * * 1' (Mon 9 AM)",
+                        description:
+                            "Cron expression. Common: '*/5 * * * *' (every 5 min), '0 9 * * *' (9 AM daily), '0 9 * * 1' (Mon 9 AM)",
                     },
                     description: { type: "string", description: "Human-readable description of the task" },
                     action: { type: "string", description: "What to do when triggered (message to send to the agent)" },
@@ -139,7 +141,8 @@ export const setReminder: ToolDefinition = {
         type: "function",
         function: {
             name: "set_reminder",
-            description: "Set a one-off reminder to trigger after a specific number of minutes. This is easier and more reliable than schedule_task for simple reminders.",
+            description:
+                "Set a one-off reminder to trigger after a specific number of minutes. This is easier and more reliable than schedule_task for simple reminders.",
             parameters: {
                 type: "object",
                 properties: {
@@ -148,7 +151,11 @@ export const setReminder: ToolDefinition = {
                         description: "Number of minutes from now to trigger the reminder (e.g., 5 for 5 minutes).",
                     },
                     description: { type: "string", description: "Human-readable description of the reminder." },
-                    action: { type: "string", description: "What to do when triggered (message to send to the agent, e.g., 'Remind the user to drink water')." },
+                    action: {
+                        type: "string",
+                        description:
+                            "What to do when triggered (message to send to the agent, e.g., 'Remind the user to drink water').",
+                    },
                 },
                 required: ["minutes", "description", "action"],
             },
@@ -169,7 +176,7 @@ export const setReminder: ToolDefinition = {
         // Emulate cron.ScheduledTask for compatibility with our task mapper
         const fakeTask = {
             stop: () => clearTimeout(timer),
-            start: () => { },
+            start: () => {},
         } as unknown as cron.ScheduledTask;
 
         const timer = setTimeout(async () => {

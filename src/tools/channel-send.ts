@@ -89,13 +89,15 @@ export const channelSendTool: ToolDefinition = {
         type: "function",
         function: {
             name: "send_message_on_channel",
-            description: "Send a message to the user on a specific communication channel (Telegram, WhatsApp, Discord, Slack, Email, Matrix, or Overlay). Use this when the user asks you to message them on a different channel than the one they're currently talking to you on. For example, if the user is on WhatsApp and says 'send me a hi on Telegram', use this tool with channel='telegram'.",
+            description:
+                "Send a message to the user on a specific communication channel (Telegram, WhatsApp, Discord, Slack, Email, Matrix, or Overlay). Use this when the user asks you to message them on a different channel than the one they're currently talking to you on. For example, if the user is on WhatsApp and says 'send me a hi on Telegram', use this tool with channel='telegram'.",
             parameters: {
                 type: "object",
                 properties: {
                     channel: {
                         type: "string",
-                        description: "The channel to send the message on. Options: telegram, whatsapp, discord, slack, email, matrix, overlay",
+                        description:
+                            "The channel to send the message on. Options: telegram, whatsapp, discord, slack, email, matrix, overlay",
                         enum: ["telegram", "whatsapp", "discord", "slack", "email", "matrix", "overlay"],
                     },
                     message: {
@@ -112,8 +114,8 @@ export const channelSendTool: ToolDefinition = {
         },
     },
     handler: async (input: Record<string, unknown>) => {
-        const channel = (input.channel as string || "").toLowerCase();
-        const message = input.message as string || "";
+        const channel = ((input.channel as string) || "").toLowerCase();
+        const message = (input.message as string) || "";
         const filePath = input.file_path as string | undefined;
 
         if (!message) {

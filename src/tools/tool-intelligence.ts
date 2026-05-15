@@ -6,8 +6,8 @@
 // Wraps tool execution with: result caching, audit logging, and rate limiting.
 // This is middleware — it sits between the agent and the raw tool handlers.
 
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { existsSync, mkdirSync, statSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
 
 // ═══════════════════════════════════════════════
 // 1. RESULT CACHE (TTL-based)
@@ -31,26 +31,26 @@ let _cacheSweepTimer: NodeJS.Timeout | null = null;
 // Tools whose results are safe to cache (read-only, no side effects)
 const CACHEABLE_TOOLS = new Set([
     "system_info",
-    "app_manager",       // only the "list" action
-    "dark_mode",         // only the "status" action
+    "app_manager", // only the "list" action
+    "dark_mode", // only the "status" action
     "bluetooth_control", // only "status" and "list" actions
-    "wifi_control",      // only "status" action
-    "clipboard",         // only "read" action
-    "file_metadata",     // read-only file info
-    "list_directory",    // read-only directory listing
-    "read",              // read-only file contents
-    "get_current_time",  // current time (short TTL)
-    "list_tasks",        // scheduled tasks list
-    "list_webhooks",     // webhooks list
-    "memory_list",       // memory listing
-    "identity_view",     // identity info
-    "trait_list",        // traits listing
-    "google_accounts",   // only "list" action
+    "wifi_control", // only "status" action
+    "clipboard", // only "read" action
+    "file_metadata", // read-only file info
+    "list_directory", // read-only directory listing
+    "read", // read-only file contents
+    "get_current_time", // current time (short TTL)
+    "list_tasks", // scheduled tasks list
+    "list_webhooks", // webhooks list
+    "memory_list", // memory listing
+    "identity_view", // identity info
+    "trait_list", // traits listing
+    "google_accounts", // only "list" action
     // Expensive tools — caching saves significant cost
-    "web_search",        // search results are stable for minutes
-    "memory_search",     // memory doesn't change within a conversation
-    "glob",              // file listing stable for short windows
-    "grep",              // codebase searches stable for short windows
+    "web_search", // search results are stable for minutes
+    "memory_search", // memory doesn't change within a conversation
+    "glob", // file listing stable for short windows
+    "grep", // codebase searches stable for short windows
 ]);
 
 // Actions that are read-only for tools with mixed read/write actions
@@ -82,23 +82,28 @@ const TOOL_TTL_MS: Record<string, number> = {
     bluetooth_control: 60_000,
     wifi_control: 60_000,
     dark_mode: 60_000,
-    clipboard: 30_000,      // Changes frequently
+    clipboard: 30_000, // Changes frequently
     get_current_time: 5_000, // Time changes constantly
     // Expensive tools — cache to reduce latency + cost
-    web_search: 120_000,     // Search results stable for 2 minutes
-    memory_search: 120_000,  // Memory stable within conversation
-    glob: 60_000,            // File listings stable for short windows
-    grep: 60_000,            // Code search results stable for short windows
+    web_search: 120_000, // Search results stable for 2 minutes
+    memory_search: 120_000, // Memory stable within conversation
+    glob: 60_000, // File listings stable for short windows
+    grep: 60_000, // Code search results stable for short windows
 };
 
 const DEFAULT_TTL_MS = 60_000; // 60 seconds (doubled from 30)
 
 function getCacheKey(toolName: string, args: Record<string, unknown>): string {
     // Sort args for consistency
-    const sorted = Object.keys(args).sort().reduce((acc, k) => {
-        acc[k] = args[k];
-        return acc;
-    }, {} as Record<string, unknown>);
+    const sorted = Object.keys(args)
+        .sort()
+        .reduce(
+            (acc, k) => {
+                acc[k] = args[k];
+                return acc;
+            },
+            {} as Record<string, unknown>,
+        );
     return `${toolName}:${JSON.stringify(sorted)}`;
 }
 
@@ -265,7 +270,7 @@ export async function rotateAuditLog(): Promise<void> {
         const lines = content.split("\n").filter(Boolean);
         const sevenDaysAgo = Date.now() - 7 * 86400000;
 
-        const kept = lines.filter(line => {
+        const kept = lines.filter((line) => {
             try {
                 const entry = JSON.parse(line);
                 return new Date(entry.ts).getTime() > sevenDaysAgo;
@@ -375,25 +380,28 @@ const DESTRUCTIVE_ACTIONS: Record<string, Set<string>> = {
 
 // Dangerous shell command patterns that should trigger a warning
 const DANGEROUS_SHELL_PATTERNS = [
-    /\brm\s+(-rf?|--recursive)\s+[\/~]/i,   // rm -rf /path or rm -r ~/
-    /\brm\s+-rf?\s+\//i,                     // rm -rf /
-    /\bmkfs\b/i,                             // filesystem format
-    /\bdd\s+if=/i,                           // disk destroyer
-    /:\(\)\{\s*:\|:&\s*\};:/,               // fork bomb
-    /\bshutdown\b/i,                         // system shutdown
-    /\breboot\b/i,                           // system reboot
-    /\bchmod\s+777\b/,                       // world-writable permissions
-    /DROP\s+(TABLE|DATABASE)/i,              // SQL destructive
-    /DELETE\s+FROM\s+\w+\s*;?\s*$/i,        // SQL delete without WHERE
-    /\bgit\s+push\s+.*--force\b/i,          // force push
-    /\bgit\s+reset\s+--hard\b/i,            // hard reset
+    /\brm\s+(-rf?|--recursive)\s+[/~]/i, // rm -rf /path or rm -r ~/
+    /\brm\s+-rf?\s+\//i, // rm -rf /
+    /\bmkfs\b/i, // filesystem format
+    /\bdd\s+if=/i, // disk destroyer
+    /:\(\)\{\s*:\|:&\s*\};:/, // fork bomb
+    /\bshutdown\b/i, // system shutdown
+    /\breboot\b/i, // system reboot
+    /\bchmod\s+777\b/, // world-writable permissions
+    /DROP\s+(TABLE|DATABASE)/i, // SQL destructive
+    /DELETE\s+FROM\s+\w+\s*;?\s*$/i, // SQL delete without WHERE
+    /\bgit\s+push\s+.*--force\b/i, // force push
+    /\bgit\s+reset\s+--hard\b/i, // hard reset
 ];
 
 /**
  * Check if a tool call requires confirmation.
  * Philosophy: NEVER block — only warn. The agent confirms with the user, then executes.
  */
-export function requiresConfirmation(toolName: string, args: Record<string, unknown>): {
+export function requiresConfirmation(
+    toolName: string,
+    args: Record<string, unknown>,
+): {
     needsConfirmation: boolean;
     warningMessage?: string;
 } {
@@ -421,7 +429,8 @@ export function requiresConfirmation(toolName: string, args: Record<string, unkn
                 warning = "⚠️ This will permanently empty the Trash. This cannot be undone.";
                 break;
             case "wifi_control":
-                warning = "⚠️ Turning off Wi-Fi will kill my connection. I won't be able to respond until you turn it back on manually.";
+                warning =
+                    "⚠️ Turning off Wi-Fi will kill my connection. I won't be able to respond until you turn it back on manually.";
                 break;
             case "app_manager":
                 warning = `⚠️ Force-quitting "${args.app}" may cause unsaved data loss.`;

@@ -6,15 +6,14 @@
 // Screen recording, file tags, compression, trash, shortcuts, and open-in-app.
 
 import { execFile } from "node:child_process";
+import { existsSync, promises as fs, readFileSync, statSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { promises as fs } from "node:fs";
-import { existsSync, statSync, readFileSync } from "node:fs";
-import { join, basename, extname, dirname, resolve } from "node:path";
-import { tmpdir, homedir } from "node:os";
-import type { ToolDefinition } from "./get-current-time.js";
 import { getExportsDir } from "../config/paths.js";
+import type { ToolDefinition } from "./get-current-time.js";
+import { IS_MAC, IS_WIN, nativeOpen, runPowerShell, runPowerShellInline } from "./platform.js";
 import { getTelegramContext } from "./send-file.js";
-import { IS_MAC, IS_WIN, runPowerShell, runPowerShellInline, nativeOpen } from "./platform.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -25,10 +24,10 @@ async function runAS(script: string, timeout = 10000): Promise<string> {
     try {
         await fs.writeFile(tmpFile, script, "utf-8");
         const { stdout } = await execFileAsync("osascript", [tmpFile], { timeout });
-        await fs.unlink(tmpFile).catch(() => { });
+        await fs.unlink(tmpFile).catch(() => {});
         return stdout.trim();
     } catch (err) {
-        await fs.unlink(tmpFile).catch(() => { });
+        await fs.unlink(tmpFile).catch(() => {});
         throw err;
     }
 }
@@ -47,7 +46,8 @@ export const screenRecord: ToolDefinition = {
         type: "function",
         function: {
             name: "screen_record",
-            description: "Start or stop a screen recording. Use 'start' to begin recording, 'stop' to end and optionally send the recording to the user.",
+            description:
+                "Start or stop a screen recording. Use 'start' to begin recording, 'stop' to end and optionally send the recording to the user.",
             parameters: {
                 type: "object",
                 properties: {
@@ -77,7 +77,10 @@ export const screenRecord: ToolDefinition = {
             switch (action) {
                 case "start": {
                     if (activeRecordingPid) {
-                        return JSON.stringify({ error: "A recording is already in progress. Stop it first.", pid: activeRecordingPid });
+                        return JSON.stringify({
+                            error: "A recording is already in progress. Stop it first.",
+                            pid: activeRecordingPid,
+                        });
                     }
 
                     const durationSec = input.duration_sec as number | undefined;
@@ -93,16 +96,31 @@ export const screenRecord: ToolDefinition = {
                             activeRecordingPid = proc.pid || null;
                             activeRecordingPath = outputPath;
                             if (durationSec) {
-                                setTimeout(() => { if (activeRecordingPid === proc.pid) activeRecordingPid = null; }, (durationSec + 2) * 1000);
+                                setTimeout(
+                                    () => {
+                                        if (activeRecordingPid === proc.pid) activeRecordingPid = null;
+                                    },
+                                    (durationSec + 2) * 1000,
+                                );
                             }
-                            return JSON.stringify({ success: true, action: "start", pid: activeRecordingPid, output_path: outputPath, note: "🔴 Recording started (FFmpeg)." });
+                            return JSON.stringify({
+                                success: true,
+                                action: "start",
+                                pid: activeRecordingPid,
+                                output_path: outputPath,
+                                note: "🔴 Recording started (FFmpeg).",
+                            });
                         } catch {
-                            return JSON.stringify({ error: "Screen recording requires FFmpeg on Windows. Install FFmpeg and add to PATH." });
+                            return JSON.stringify({
+                                error: "Screen recording requires FFmpeg on Windows. Install FFmpeg and add to PATH.",
+                            });
                         }
                     }
 
                     if (!IS_MAC) {
-                        return JSON.stringify({ error: "Screen recording requires FFmpeg on this platform. Install FFmpeg and add to PATH." });
+                        return JSON.stringify({
+                            error: "Screen recording requires FFmpeg on this platform. Install FFmpeg and add to PATH.",
+                        });
                     }
 
                     // macOS: use screencapture
@@ -117,15 +135,21 @@ export const screenRecord: ToolDefinition = {
                     activeRecordingPath = outputPath;
 
                     if (durationSec) {
-                        setTimeout(() => {
-                            if (activeRecordingPid === proc.pid) {
-                                activeRecordingPid = null;
-                            }
-                        }, (durationSec + 2) * 1000);
+                        setTimeout(
+                            () => {
+                                if (activeRecordingPid === proc.pid) {
+                                    activeRecordingPid = null;
+                                }
+                            },
+                            (durationSec + 2) * 1000,
+                        );
                     }
 
                     return JSON.stringify({
-                        success: true, action: "start", pid: activeRecordingPid, output_path: outputPath,
+                        success: true,
+                        action: "start",
+                        pid: activeRecordingPid,
+                        output_path: outputPath,
                         duration: durationSec ? `${durationSec}s` : "manual",
                         note: "🔴 Recording started.",
                     });
@@ -138,9 +162,11 @@ export const screenRecord: ToolDefinition = {
                         // Kill the screencapture process to stop recording
                         try {
                             process.kill(activeRecordingPid, "SIGINT");
-                        } catch { /* already dead */ }
+                        } catch {
+                            /* already dead */
+                        }
                         // Wait for file to be finalized
-                        await new Promise(r => setTimeout(r, 1500));
+                        await new Promise((r) => setTimeout(r, 1500));
                     }
 
                     const recPath = activeRecordingPath;
@@ -162,13 +188,16 @@ export const screenRecord: ToolDefinition = {
                                 const { InputFile } = await import("grammy");
                                 const inputFile = new InputFile(fileBuffer, `screen_recording_${Date.now()}.mov`);
                                 await bot.api.sendVideo(chatId, inputFile, { caption: "📹 Screen recording" });
-                                await fs.unlink(recPath).catch(() => { });
+                                await fs.unlink(recPath).catch(() => {});
                                 return JSON.stringify({ success: true, action: "stop", sent: true, size_kb: sizeKb });
                             } catch (sendErr) {
                                 return JSON.stringify({
-                                    success: true, action: "stop", sent: false,
+                                    success: true,
+                                    action: "stop",
+                                    sent: false,
                                     error: `Recording saved but failed to send: ${(sendErr as Error).message}`,
-                                    path: recPath, size_kb: sizeKb,
+                                    path: recPath,
+                                    size_kb: sizeKb,
                                 });
                             }
                         }
@@ -203,7 +232,8 @@ export const fileMetadata: ToolDefinition = {
         type: "function",
         function: {
             name: "file_metadata",
-            description: "Get or set macOS file metadata: Finder tags (colored labels), Spotlight comments, file info (creation date, type, size).",
+            description:
+                "Get or set macOS file metadata: Finder tags (colored labels), Spotlight comments, file info (creation date, type, size).",
             parameters: {
                 type: "object",
                 properties: {
@@ -216,7 +246,8 @@ export const fileMetadata: ToolDefinition = {
                     tags: {
                         type: "array",
                         items: { type: "string" },
-                        description: "Tags to set (for 'set_tags'). Colors: Red, Orange, Yellow, Green, Blue, Purple, Gray. Or any custom tag name.",
+                        description:
+                            "Tags to set (for 'set_tags'). Colors: Red, Orange, Yellow, Green, Blue, Purple, Gray. Or any custom tag name.",
                     },
                     comment: { type: "string", description: "Spotlight comment to set (for 'set_comment')" },
                 },
@@ -238,9 +269,17 @@ export const fileMetadata: ToolDefinition = {
                 case "get": {
                     if (IS_MAC) {
                         // Get tags via xattr (macOS only)
-                        const { stdout: tagOut } = await execFileAsync("xattr", ["-p", "com.apple.metadata:_kMDItemUserTags", filePath], { timeout: 3000 }).catch(() => ({ stdout: "" }));
+                        const { stdout: tagOut } = await execFileAsync(
+                            "xattr",
+                            ["-p", "com.apple.metadata:_kMDItemUserTags", filePath],
+                            { timeout: 3000 },
+                        ).catch(() => ({ stdout: "" }));
                         // Get Spotlight comment via mdls (macOS only)
-                        const { stdout: commentOut } = await execFileAsync("mdls", ["-name", "kMDItemFinderComment", filePath], { timeout: 3000 }).catch(() => ({ stdout: "" }));
+                        const { stdout: commentOut } = await execFileAsync(
+                            "mdls",
+                            ["-name", "kMDItemFinderComment", filePath],
+                            { timeout: 3000 },
+                        ).catch(() => ({ stdout: "" }));
                         const comment = commentOut.match(/"([^"]+)"/)?.[1] || "";
 
                         // Parse tags from plist binary
@@ -248,7 +287,7 @@ export const fileMetadata: ToolDefinition = {
                         if (tagOut) {
                             const tagMatches = tagOut.match(/<string>([^<]+)<\/string>/g);
                             if (tagMatches) {
-                                tags = tagMatches.map(m => m.replace(/<\/?string>/g, "").split("\n")[0]);
+                                tags = tagMatches.map((m) => m.replace(/<\/?string>/g, "").split("\n")[0]);
                             }
                         }
 
@@ -263,7 +302,13 @@ export const fileMetadata: ToolDefinition = {
                                 5000,
                             );
                             const info = JSON.parse(result.trim() || "{}");
-                            return JSON.stringify({ success: true, path: filePath, tags: [], comment: "", windowsProperties: info });
+                            return JSON.stringify({
+                                success: true,
+                                path: filePath,
+                                tags: [],
+                                comment: "",
+                                windowsProperties: info,
+                            });
                         } catch {
                             // Fall through to basic stat
                         }
@@ -272,8 +317,15 @@ export const fileMetadata: ToolDefinition = {
                     // Fallback: basic stat info
                     const stat = statSync(filePath);
                     return JSON.stringify({
-                        success: true, path: filePath, tags: [], comment: "",
-                        metadata: { size: stat.size, created: stat.birthtime.toISOString(), modified: stat.mtime.toISOString() },
+                        success: true,
+                        path: filePath,
+                        tags: [],
+                        comment: "",
+                        metadata: {
+                            size: stat.size,
+                            created: stat.birthtime.toISOString(),
+                            modified: stat.mtime.toISOString(),
+                        },
                     });
                 }
 
@@ -284,12 +336,14 @@ export const fileMetadata: ToolDefinition = {
                     const tags = input.tags as string[];
                     if (!tags || tags.length === 0) return JSON.stringify({ error: "Provide 'tags' array." });
                     // Build plist XML for tags
-                    const plistItems = tags.map(t => `<string>${t}</string>`).join("");
+                    const plistItems = tags.map((t) => `<string>${t}</string>`).join("");
                     const plist = `<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><array>${plistItems}</array></plist>`;
                     const tmpFile = join(tmpdir(), `tags_${Date.now()}.plist`);
                     await fs.writeFile(tmpFile, plist, "utf-8");
-                    await execFileAsync("xattr", ["-w", "com.apple.metadata:_kMDItemUserTags", plist, filePath], { timeout: 3000 });
-                    await fs.unlink(tmpFile).catch(() => { });
+                    await execFileAsync("xattr", ["-w", "com.apple.metadata:_kMDItemUserTags", plist, filePath], {
+                        timeout: 3000,
+                    });
+                    await fs.unlink(tmpFile).catch(() => {});
                     return JSON.stringify({ success: true, path: filePath, tags });
                 }
 
@@ -312,8 +366,14 @@ end tell`);
                         const { stdout } = await execFileAsync("mdls", [filePath], { timeout: 5000 });
                         // Parse key fields
                         const info: Record<string, string> = {};
-                        const fields = ["kMDItemContentType", "kMDItemFSSize", "kMDItemFSCreationDate",
-                            "kMDItemFSContentChangeDate", "kMDItemDisplayName", "kMDItemKind"];
+                        const fields = [
+                            "kMDItemContentType",
+                            "kMDItemFSSize",
+                            "kMDItemFSCreationDate",
+                            "kMDItemFSContentChangeDate",
+                            "kMDItemDisplayName",
+                            "kMDItemKind",
+                        ];
                         for (const field of fields) {
                             const match = stdout.match(new RegExp(`${field}\\s+=\\s+(.+)`));
                             if (match) info[field.replace("kMDItem", "")] = match[1].trim();
@@ -327,7 +387,11 @@ end tell`);
                                 `Get-ItemProperty -LiteralPath '${filePath.replace(/'/g, "''")}' | Select-Object CreationTime, LastWriteTime, Length, Extension, Attributes | ConvertTo-Json -Compress`,
                                 5000,
                             );
-                            return JSON.stringify({ success: true, path: filePath, metadata: JSON.parse(result.trim() || "{}") });
+                            return JSON.stringify({
+                                success: true,
+                                path: filePath,
+                                metadata: JSON.parse(result.trim() || "{}"),
+                            });
                         } catch {
                             // Fall through
                         }
@@ -336,8 +400,13 @@ end tell`);
                     // Fallback: basic stat
                     const stat = statSync(filePath);
                     return JSON.stringify({
-                        success: true, path: filePath,
-                        metadata: { size: stat.size, created: stat.birthtime.toISOString(), modified: stat.mtime.toISOString() },
+                        success: true,
+                        path: filePath,
+                        metadata: {
+                            size: stat.size,
+                            created: stat.birthtime.toISOString(),
+                            modified: stat.mtime.toISOString(),
+                        },
                     });
                 }
 
@@ -375,7 +444,8 @@ export const compressFiles: ToolDefinition = {
                     },
                     archive_path: {
                         type: "string",
-                        description: "Path to the archive file. For 'zip': output path (default: auto-named in ATLAS Exports folder). For 'unzip': archive to extract.",
+                        description:
+                            "Path to the archive file. For 'zip': output path (default: auto-named in ATLAS Exports folder). For 'unzip': archive to extract.",
                     },
                     output_dir: {
                         type: "string",
@@ -400,16 +470,21 @@ export const compressFiles: ToolDefinition = {
                     if (!existsSync(p)) return JSON.stringify({ error: `Path not found: ${p}` });
                 }
 
-                const archivePath = (input.archive_path as string) ||
-                    join(getExportsDir(), `archive_${Date.now()}.zip`);
+                const archivePath =
+                    (input.archive_path as string) || join(getExportsDir(), `archive_${Date.now()}.zip`);
 
                 if (IS_MAC) {
-                    await execFileAsync("ditto", ["-c", "-k", "--sequesterRsrc", ...paths, archivePath], { timeout: 60000 });
+                    await execFileAsync("ditto", ["-c", "-k", "--sequesterRsrc", ...paths, archivePath], {
+                        timeout: 60000,
+                    });
                 } else {
                     // Windows/Linux: use zip command or PowerShell
                     if (IS_WIN) {
                         const pathList = paths.map((p: string) => `"${p}"`).join(", ");
-                        await runPowerShellInline(`Compress-Archive -Path ${pathList} -DestinationPath "${archivePath}" -Force`, 60000);
+                        await runPowerShellInline(
+                            `Compress-Archive -Path ${pathList} -DestinationPath "${archivePath}" -Force`,
+                            60000,
+                        );
                     } else {
                         await execFileAsync("zip", ["-r", archivePath, ...paths], { timeout: 60000 });
                     }
@@ -420,27 +495,30 @@ export const compressFiles: ToolDefinition = {
                     success: true,
                     action: "zip",
                     archive: archivePath,
-                    size_mb: Math.round(stats.size / 1048576 * 100) / 100,
+                    size_mb: Math.round((stats.size / 1048576) * 100) / 100,
                     files: paths.map((p: string) => basename(p)),
                 });
             }
 
             if (action === "unzip") {
                 const archivePath = input.archive_path as string;
-                if (!archivePath) return JSON.stringify({ error: "Provide 'archive_path' for the archive to extract." });
+                if (!archivePath)
+                    return JSON.stringify({ error: "Provide 'archive_path' for the archive to extract." });
                 if (!existsSync(archivePath)) return JSON.stringify({ error: `Archive not found: ${archivePath}` });
 
-                const outputDir = (input.output_dir as string) || join(
-                    dirname(archivePath),
-                    basename(archivePath, extname(archivePath))
-                );
+                const outputDir =
+                    (input.output_dir as string) ||
+                    join(dirname(archivePath), basename(archivePath, extname(archivePath)));
 
                 const ext = extname(archivePath).toLowerCase();
                 if (ext === ".zip") {
                     if (IS_MAC) {
                         await execFileAsync("ditto", ["-x", "-k", archivePath, outputDir], { timeout: 60000 });
                     } else if (IS_WIN) {
-                        await runPowerShellInline(`Expand-Archive -Path "${archivePath}" -DestinationPath "${outputDir}" -Force`, 60000);
+                        await runPowerShellInline(
+                            `Expand-Archive -Path "${archivePath}" -DestinationPath "${outputDir}" -Force`,
+                            60000,
+                        );
                     } else {
                         await fs.mkdir(outputDir, { recursive: true });
                         await execFileAsync("unzip", ["-o", archivePath, "-d", outputDir], { timeout: 60000 });
@@ -449,7 +527,9 @@ export const compressFiles: ToolDefinition = {
                     await fs.mkdir(outputDir, { recursive: true });
                     await execFileAsync("tar", ["-xf", archivePath, "-C", outputDir], { timeout: 60000 });
                 } else {
-                    return JSON.stringify({ error: `Unsupported archive format: ${ext}. Supported: .zip, .tar, .gz, .tgz` });
+                    return JSON.stringify({
+                        error: `Unsupported archive format: ${ext}. Supported: .zip, .tar, .gz, .tgz`,
+                    });
                 }
 
                 return JSON.stringify({
@@ -475,14 +555,16 @@ export const trashManager: ToolDefinition = {
         type: "function",
         function: {
             name: "trash_manager",
-            description: "Manage the system Trash/Recycle Bin: move files to Trash (safe delete), empty Trash, or list Trash contents with total size.",
+            description:
+                "Manage the system Trash/Recycle Bin: move files to Trash (safe delete), empty Trash, or list Trash contents with total size.",
             parameters: {
                 type: "object",
                 properties: {
                     action: {
                         type: "string",
                         enum: ["trash", "empty", "list"],
-                        description: "Action: 'trash' to move a file to Trash, 'empty' to empty Trash, 'list' to see contents",
+                        description:
+                            "Action: 'trash' to move a file to Trash, 'empty' to empty Trash, 'list' to see contents",
                     },
                     path: { type: "string", description: "File/folder path to move to Trash (for 'trash' action)" },
                 },
@@ -504,11 +586,14 @@ export const trashManager: ToolDefinition = {
                     if (IS_WIN) {
                         // Windows: use Shell.Application COM to recycle
                         const absPath = resolve(filePath);
-                        await runPowerShell(`
+                        await runPowerShell(
+                            `
 $shell = New-Object -ComObject Shell.Application
 $item = $shell.NameSpace(0).ParseName("${absPath.replace(/\\/g, "\\\\")}")
 if ($item) { $item.InvokeVerb("delete") } else { Write-Error "Item not found" }
-`, 10000);
+`,
+                            10000,
+                        );
                     } else {
                         await runAS(`
 tell application "Finder"
@@ -522,10 +607,13 @@ end tell`);
                     if (IS_WIN) {
                         await runPowerShellInline(`Clear-RecycleBin -Force -ErrorAction SilentlyContinue`, 15000);
                     } else {
-                        await runAS(`
+                        await runAS(
+                            `
 tell application "Finder"
     empty the trash
-end tell`, 30000);
+end tell`,
+                            30000,
+                        );
                     }
                     return JSON.stringify({ success: true, action: "empty", note: "🗑️ Trash emptied." });
                 }
@@ -535,7 +623,8 @@ end tell`, 30000);
                     if (IS_WIN) {
                         // Windows Recycle Bin — use Shell.Application
                         try {
-                            const result = await runPowerShell(`
+                            const result = await runPowerShell(
+                                `
 $shell = New-Object -ComObject Shell.Application
 $recycleBin = $shell.NameSpace(0xA)
 $items = $recycleBin.Items()
@@ -546,18 +635,25 @@ foreach ($item in $items) {
 }
 $list -join '\n'
 Write-Output "---$count"
-`, 10000);
+`,
+                                10000,
+                            );
                             const lines = result.split("\n").filter(Boolean);
-                            const countLine = lines.find(l => l.startsWith("---"));
+                            const countLine = lines.find((l) => l.startsWith("---"));
                             const count = countLine ? parseInt(countLine.replace("---", "")) : 0;
-                            const itemLines = lines.filter(l => !l.startsWith("---")).slice(0, 20);
-                            const items = itemLines.map(l => {
+                            const itemLines = lines.filter((l) => !l.startsWith("---")).slice(0, 20);
+                            const items = itemLines.map((l) => {
                                 const [name, size] = l.split("|");
                                 return { name, size_kb: Math.round((parseInt(size) || 0) / 1024), type: "unknown" };
                             });
                             return JSON.stringify({ success: true, count, items, truncated: count > 20 });
                         } catch {
-                            return JSON.stringify({ success: true, count: 0, items: [], note: "Could not query Recycle Bin." });
+                            return JSON.stringify({
+                                success: true,
+                                count: 0,
+                                items: [],
+                                note: "Could not query Recycle Bin.",
+                            });
                         }
                     }
 
@@ -577,12 +673,14 @@ Write-Output "---$count"
                                     size_kb: Math.round(size / 1024),
                                     type: stats.isDirectory() ? "folder" : "file",
                                 });
-                            } catch { /* skip */ }
+                            } catch {
+                                /* skip */
+                            }
                         }
                         return JSON.stringify({
                             success: true,
                             count: entries.length,
-                            total_size_mb: Math.round(totalSize / 1048576 * 100) / 100,
+                            total_size_mb: Math.round((totalSize / 1048576) * 100) / 100,
                             items: items.slice(0, 20),
                             truncated: entries.length > 20,
                         });
@@ -609,7 +707,8 @@ export const runShortcut: ToolDefinition = {
         type: "function",
         function: {
             name: "run_shortcut",
-            description: "Run an Apple Shortcut by name, or list all available shortcuts. Shortcuts.app must be set up with the desired shortcuts first.",
+            description:
+                "Run an Apple Shortcut by name, or list all available shortcuts. Shortcuts.app must be set up with the desired shortcuts first.",
             parameters: {
                 type: "object",
                 properties: {
@@ -674,7 +773,8 @@ export const openInApp: ToolDefinition = {
         type: "function",
         function: {
             name: "open_in_app",
-            description: "Open a file, folder, or URL in a specific application. If no app is specified, opens with the default app.",
+            description:
+                "Open a file, folder, or URL in a specific application. If no app is specified, opens with the default app.",
             parameters: {
                 type: "object",
                 properties: {
@@ -684,7 +784,8 @@ export const openInApp: ToolDefinition = {
                     },
                     app: {
                         type: "string",
-                        description: "Application name to open with (e.g. 'Preview', 'Visual Studio Code', 'Safari'). If omitted, uses default app.",
+                        description:
+                            "Application name to open with (e.g. 'Preview', 'Visual Studio Code', 'Safari'). If omitted, uses default app.",
                     },
                 },
                 required: ["target"],

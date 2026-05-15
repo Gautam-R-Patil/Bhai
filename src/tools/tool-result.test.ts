@@ -3,13 +3,7 @@
 // See LICENSE.md for details.
 
 import { describe, expect, it } from "vitest";
-import {
-    ensureToolResult,
-    isErrorResultString,
-    toolError,
-    toolResult,
-    toolSuccess,
-} from "./tool-result.js";
+import { ensureToolResult, isErrorResultString, toolError, toolResult, toolSuccess } from "./tool-result.js";
 
 describe("toolError", () => {
     it("returns a JSON string with an error field", () => {

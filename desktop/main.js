@@ -776,11 +776,20 @@ function buildDetectionDeps() {
         whatsappOwners: path.join(app.getPath("userData"), "whatsapp-users", "owners.json"),
     };
 
+    // Decrypt atlas-account.enc here so the detector can read the canonical
+    // signin state. saveAccountSession writes to this file; prefs.account in
+    // electron-store is never populated, so the detector previously always
+    // claimed "not signed in" no matter how many times you signed in.
+    const accountSessionFromFile = (() => {
+        try { return loadAccountSession(); } catch { return null; }
+    })();
+
     return {
         proc: process,
         fs,
         os: osmod,
         systemPreferences,
+        accountSessionFromFile,
         nativeTheme,
         globalShortcut,
         prefs,
@@ -3366,11 +3375,44 @@ function registerIPC() {
     // Setup: adaptive, resumable install. Builds the phase list from detection,
     // runs each phase sequentially, and writes per-phase markers to
     // data/setup-state.json so a crash mid-install can be resumed.
+    // Resolve options.workspace from the persisted .env.enc so retry/resume
+    // paths preserve the workspace path the wizard captured on the first install.
+    // Without this, ctx.options.workspace is undefined and the workspace phase
+    // silently skips with "No workspace requested".
+    function resolveWorkspaceOptions() {
+        try {
+            const env = loadEnvDecrypted() || "";
+            const wsLine = env.split("\n").find((l) => l.startsWith("ATLAS_WORKSPACE="));
+            if (wsLine) return { workspace: wsLine.slice("ATLAS_WORKSPACE=".length).trim() };
+        } catch { /* ignore */ }
+        return {};
+    }
+
+    // Inject the user's persisted choices (vision tier etc) into the detection
+    // state so buildPhaseList includes the optional ML-dep phases when warranted.
+    // Validates the stored string against the known tier set (a corrupted prefs
+    // file with e.g. "ultra" must NOT pass through as-is), then caps it against
+    // the freshly-detected max-supported tier so a prefs file copied from a
+    // more capable machine doesn't install Full-tier deps on a Lite-spec box.
+    function augmentStateWithChoices(state) {
+        try {
+            const prefs = store.get("prefs") || {};
+            const stored = prefs.visionTierChoice;
+            const VALID = new Set(["lite", "standard", "full"]);
+            if (!stored || !VALID.has(stored)) return state;
+            const TIER_RANK = { lite: 0, standard: 1, full: 2 };
+            const max = (state.visionTier && state.visionTier.max) || "lite";
+            const cappedMax = VALID.has(max) ? max : "lite";
+            state.visionTierChoice = TIER_RANK[stored] <= TIER_RANK[cappedMax] ? stored : cappedMax;
+        } catch { /* ignore */ }
+        return state;
+    }
+
     ipcMain.handle("setup:install", async (_, options) => {
         const ctx = buildInstallCtx(mainWindow, options);
         try {
             const { runDetection, buildPhaseList, runPhases } = requireInstaller();
-            const state = await runDetection(buildDetectionDeps());
+            const state = augmentStateWithChoices(await runDetection(buildDetectionDeps()));
             const phases = buildPhaseList(state);
             const res = await runPhases(phases, ctx);
             if (res.status === "complete") {
@@ -3394,15 +3436,25 @@ function registerIPC() {
     // (see desktop/components/install-log.js).
     ipcMain.handle("setup:retry-install-phase", async (_, phaseId) => {
         try {
-            const { runDetection, buildPhaseList, runPhases } = requireInstaller();
-            const state = await runDetection(buildDetectionDeps());
+            const { runDetection, buildPhaseList, runPhases, getResumeList, readSetupState } = requireInstaller();
+            const state = augmentStateWithChoices(await runDetection(buildDetectionDeps()));
             const full = buildPhaseList(state);
-            const phase = full.find((p) => p.id === phaseId);
-            if (!phase) return { success: false, error: "Unknown phase: " + phaseId };
-            const res = await runPhases([phase], buildInstallCtx(mainWindow, {}));
+            const idx = full.findIndex((p) => p.id === phaseId);
+            if (idx < 0) return { success: false, error: "Unknown phase: " + phaseId };
+            // Run the failed phase AND every subsequent phase that isn't already
+            // done. Without this, retry-success leaves the install stuck — phases
+            // after the failed one never auto-run, the user thinks "Retry" =
+            // "complete the install" and walks away with a half-installed app.
+            const tail = full.slice(idx);
+            const remaining = getResumeList(tail, readSetupState(DATA_DIR));
+            // Carry forward the workspace path that the wizard captured earlier.
+            // Without this, the workspace phase silently skips ("No workspace
+            // requested — skipping") because ctx.options.workspace is undefined.
+            const res = await runPhases(remaining, buildInstallCtx(mainWindow, resolveWorkspaceOptions()));
             return {
                 success: res.status === "complete",
                 paused: res.status === "paused",
+                failedPhase: res.failedPhase,
                 error: res.error && res.error.message,
             };
         } catch (err) {
@@ -3415,10 +3467,10 @@ function registerIPC() {
     ipcMain.handle("setup:resume-install", async () => {
         try {
             const { runDetection, buildPhaseList, runPhases, getResumeList, readSetupState } = requireInstaller();
-            const state = await runDetection(buildDetectionDeps());
+            const state = augmentStateWithChoices(await runDetection(buildDetectionDeps()));
             const full = buildPhaseList(state);
             const remaining = getResumeList(full, readSetupState(DATA_DIR));
-            const res = await runPhases(remaining, buildInstallCtx(mainWindow, {}));
+            const res = await runPhases(remaining, buildInstallCtx(mainWindow, resolveWorkspaceOptions()));
             return {
                 success: res.status === "complete",
                 paused: res.status === "paused",
@@ -3599,7 +3651,31 @@ function registerIPC() {
     // Fail-safe: errors and timeouts never abort detection — every probe has a fallback.
     ipcMain.handle("setup:detect", async () => {
         const { runDetection } = requireInstaller();
-        return runDetection(buildDetectionDeps());
+        const state = await runDetection(buildDetectionDeps());
+        // Carry forward any tier choice the user previously made — drives both
+        // pre-selection in the vision-tier card UI and conditional phase
+        // building. Apply the same cap-against-hardware logic as
+        // augmentStateWithChoices so a prefs file copied from a more capable
+        // machine doesn't pre-select an unsupported card. Persist the capped
+        // value back so reads from prefs stay in sync with reality.
+        try {
+            const prefs = store.get("prefs") || {};
+            const stored = prefs.visionTierChoice;
+            const VALID = new Set(["lite", "standard", "full"]);
+            if (stored && VALID.has(stored)) {
+                const TIER_RANK = { lite: 0, standard: 1, full: 2 };
+                const detMax = (state.visionTier && state.visionTier.max) || "lite";
+                const cap = VALID.has(detMax) ? detMax : "lite";
+                if (TIER_RANK[stored] > TIER_RANK[cap]) {
+                    state.visionTierChoice = cap;
+                    prefs.visionTierChoice = cap;
+                    store.set("prefs", prefs);
+                } else {
+                    state.visionTierChoice = stored;
+                }
+            }
+        } catch { /* ignore */ }
+        return state;
     });
 
     // Setup: re-read the permission map for live polling from the Permissions step of the
@@ -3835,7 +3911,52 @@ function registerIPC() {
             store.set("prefs", next);
             try { saveEnvKVs(envKVsFromPersonalize(next.personalize)); }
             catch (e) { console.warn("[setup:save-personalize] env mirror failed:", e.message); }
+            // Mirror personality choice into a separate file that the bot's
+            // boot sequence picks up and pushes to /api/user/addendum/upsert.
+            // Idempotent: bot renames to .user-personality.synced.json after
+            // successful upload.
+            try {
+                if (next.personalize && next.personalize.personality) {
+                    const personalityPath = path.join(app.getPath("userData"), ".user-personality.json");
+                    // mode 0o600: owner-only read/write. File contains the user's
+                    // free-text personality notes, which can include personal
+                    // context the user wouldn't want readable by other local
+                    // accounts on shared macOS/Linux systems.
+                    fs.writeFileSync(personalityPath, JSON.stringify({
+                        preset: next.personalize.personality.preset,
+                        notes: next.personalize.personality.notes || "",
+                        updatedAt: Date.now(),
+                    }, null, 2), { mode: 0o600 });
+                }
+            } catch (e) {
+                console.warn("[setup:save-personalize] personality file write failed:", e.message);
+            }
             return { success: true, prefs: next };
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    // Setup: persist user's vision-tier choice (lite/standard/full).
+    // The choice is read by buildPhaseList in installer/phases.js to decide
+    // whether to push Ollama / UI-TARS / OmniParser phases into the install run.
+    // Also mirrored into .env.enc as ATLAS_VISION_PROFILE so the bot's
+    // capability-detector respects the user's selection on boot.
+    ipcMain.handle("setup:save-vision-tier", async (_evt, payload) => {
+        try {
+            const tier = (payload && payload.tier) || "lite";
+            if (!["lite", "standard", "full"].includes(tier)) {
+                return { success: false, error: "Invalid tier: " + tier };
+            }
+            const prefs = store.get("prefs") || {};
+            prefs.visionTierChoice = tier;
+            store.set("prefs", prefs);
+            try {
+                saveEnvKVs({ ATLAS_VISION_PROFILE: tier });
+            } catch (e) {
+                console.warn("[setup:save-vision-tier] env mirror failed:", e.message);
+            }
+            return { success: true, tier: tier };
         } catch (err) {
             return { success: false, error: err.message };
         }
@@ -4947,11 +5068,44 @@ function downloadAndInstallNode(sendProgress) {
     });
 }
 
+// Augment PATH with common binary locations missing from Electron's stripped
+// dock-launch PATH. brew (Apple Silicon at /opt/homebrew/bin), ollama, python3,
+// and ATLAS-managed tools all live in non-default locations.
+function buildAugmentedPath() {
+    if (process.platform === "win32") return process.env.PATH || "";
+    const extras = [
+        path.join(require("os").homedir(), ".atlas", "bin"),
+        "/opt/homebrew/bin",       // Homebrew (Apple Silicon)
+        "/usr/local/bin",          // Homebrew (Intel) / general
+        "/opt/homebrew/sbin",
+        "/usr/local/sbin",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+    ];
+    const current = (process.env.PATH || "").split(path.delimiter);
+    return [...new Set([...extras, ...current])].join(path.delimiter);
+}
+
 function runCommand(cmd, args, cwd, onOutput) {
     return new Promise((resolve, reject) => {
         let executable = cmd;
-        let spawnEnv = { ...process.env, NODE_ENV: "production" };
-        let shell = true;
+        // Augment PATH so spawn(shell:false) on POSIX can find brew, ollama,
+        // python3 etc. Without this, the macOS dock-launched Electron has only
+        // /usr/bin:/bin in its inherited PATH and every Homebrew binary errors
+        // with ENOENT.
+        let spawnEnv = {
+            ...process.env,
+            NODE_ENV: "production",
+            PATH: buildAugmentedPath(),
+        };
+        // shell: false everywhere except Windows. On POSIX we resolve via PATH
+        // without a shell wrapper — safer (no risk that a future caller's
+        // interpolated arg gets re-parsed by /bin/sh). Windows still needs
+        // shell:true so spawn can find .cmd/.bat shims (winget, choco) via
+        // PATHEXT resolution.
+        let shell = process.platform === "win32";
 
         if (cmd === "node" && !IS_DEV) {
             executable = process.execPath;
@@ -4966,13 +5120,25 @@ function runCommand(cmd, args, cwd, onOutput) {
         });
 
         let output = "";
-        proc.stdout?.on("data", (data) => {
-            output += data.toString();
-            if (onOutput) onOutput(data.toString().trim());
-        });
-        proc.stderr?.on("data", (data) => {
-            output += data.toString();
-        });
+        // Forward BOTH stdout and stderr to onOutput. Tools like `ollama pull`
+        // write their progress bar to stderr (typical for download progress so
+        // pipes-to-other-tools stay clean). If we only forward stdout, the
+        // install log shows nothing for the entire 15-minute pull.
+        // Split on \r AND \n because progress bars rewrite the same line.
+        const forwardChunk = (data) => {
+            const s = data.toString();
+            output += s;
+            if (!onOutput) return;
+            // Each \r-separated segment is a re-render of the same line.
+            // Emit each non-empty segment so the latest progress reaches the UI.
+            const parts = s.split(/[\r\n]+/);
+            for (const p of parts) {
+                const trimmed = p.trim();
+                if (trimmed) onOutput(trimmed);
+            }
+        };
+        proc.stdout?.on("data", forwardChunk);
+        proc.stderr?.on("data", forwardChunk);
 
         proc.on("exit", (code) => {
             if (code === 0) resolve(output);
@@ -4981,11 +5147,13 @@ function runCommand(cmd, args, cwd, onOutput) {
 
         proc.on("error", reject);
 
-        // Timeout after 10 minutes
+        // Per-command timeout. The vision-model pull legitimately takes 15-25
+        // minutes on slow connections; 10 minutes was too tight. 45 minutes
+        // is enough for a 5 GB pull at ~2 MB/s.
         setTimeout(() => {
             proc.kill();
-            reject(new Error(`Command '${cmd}' timed out after 10 minutes`));
-        }, 600000);
+            reject(new Error(`Command '${cmd}' timed out after 45 minutes`));
+        }, 45 * 60 * 1000);
     });
 }
 

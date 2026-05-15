@@ -88,11 +88,13 @@ export const askOwnerTool: ToolDefinition = {
                 properties: {
                     question: {
                         type: "string",
-                        description: "The question to relay to the owner, written as if you are asking the owner on the contact's behalf.",
+                        description:
+                            "The question to relay to the owner, written as if you are asking the owner on the contact's behalf.",
                     },
                     contact_reply: {
                         type: "string",
-                        description: "What to tell the contact right now while waiting for the owner's reply. Should be friendly and set expectations (e.g. 'Let me check with him and get back to you!').",
+                        description:
+                            "What to tell the contact right now while waiting for the owner's reply. Should be friendly and set expectations (e.g. 'Let me check with him and get back to you!').",
                     },
                 },
                 required: ["question", "contact_reply"],
@@ -102,8 +104,8 @@ export const askOwnerTool: ToolDefinition = {
 
     async handler(input) {
         const question = (input.question as string)?.trim();
-        const contactReply = (input.contact_reply as string)?.trim() ||
-            "Let me check with him and get back to you shortly!";
+        const contactReply =
+            (input.contact_reply as string)?.trim() || "Let me check with him and get back to you shortly!";
 
         if (!question) return JSON.stringify({ error: "question is required" });
 
@@ -126,7 +128,8 @@ export const askOwnerTool: ToolDefinition = {
         const ownerPending = getPendingQueriesForOwner(ctx.ownerJid);
         let ownerMsg = `❓ *${ctx.contactName}* wants to know:\n"${question}"`;
         if (ownerPending.length > 1) {
-            ownerMsg += `\n\n_${ownerPending.length} questions pending:_\n` +
+            ownerMsg +=
+                `\n\n_${ownerPending.length} questions pending:_\n` +
                 ownerPending.map((q, i) => `${i + 1}. [${q.contactName}] "${q.question}"`).join("\n");
             ownerMsg += `\n\nReply:\n• \`reply to <name>: <answer>\` — answer a specific contact\n• \`reply <answer>\` — answer the latest (${ctx.contactName})`;
         } else {

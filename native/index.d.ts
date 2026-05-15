@@ -57,7 +57,9 @@ export const enum Provider {
   Anthropic = 'Anthropic',
   Google = 'Google',
   Openai = 'Openai',
-  Amazon = 'Amazon'
+  Amazon = 'Amazon',
+  Deepseek = 'Deepseek',
+  Zai = 'Zai'
 }
 export interface ModelInfo {
   id: string
@@ -128,8 +130,8 @@ export declare function getAvgLatencyNapi(modelId: string): number
 export declare function isRateLimitedNapi(modelId: string): boolean
 export declare function updateToolStats(modelId: string, success: boolean, taskType?: string | undefined | null): void
 export declare function recordQualityFailure(modelId: string, taskType: string, reason: string): void
-/** Horizontal failover: switch to same-tier different-provider model */
 export declare function getHorizontalFailover(modelId: string): string | null
+export declare function getHorizontalFailoverExcluding(modelId: string, exclude: Array<string>): string | null
 export declare function getSessionCostSummary(): string
 export declare function resetSessionStats(): void
 export interface Signals {
@@ -3097,28 +3099,18 @@ export declare function sanitizeSecrets(input: string): SanitizeResultNapi
  */
 export declare function containsSecrets(input: string): boolean
 /**
- * Classify a single 10/20/30ms frame of 16kHz mono i16 PCM as speech or not.
+ * Flatten an AX dump's interactive elements. Input/output are JSON-encoded strings.
  *
- * `pcm` must be a `Buffer` of exactly 320 (10ms), 640 (20ms), or 960 (30ms)
- * bytes — i.e. 160/320/480 i16 samples little-endian. Any other length
- * throws. `aggressiveness` is 0-3.
- *
- * We instantiate a fresh `Vad` per call. libfvad's state is small (~hundreds
- * of bytes) and per-call construction lets the JS caller change modes
- * dynamically without holding a handle. The construction cost is ~1-5μs
- * per call which is negligible at 50Hz (frame rate).
+ * Designed so the napi boundary only crosses one string per call rather than marshaling
+ * a deeply-nested object graph (serde_json deserialize is 5-10× faster than per-property
+ * napi marshaling for tree-shaped data).
  */
-export declare function isSpeechFrame16Khz(pcm: Buffer, aggressiveness: number): boolean
+export declare function axFlattenInteractive(dumpJson: string): string
 /**
- * Convenience: scan a longer 16kHz PCM chunk by splitting it into 20ms
- * sub-frames and returning true if ANY sub-frame is classified as speech.
- * `pcm` may be any length that's a multiple of 640 bytes (20ms × 16kHz × 2
- * bytes/sample). The 100ms mic chunks ATLAS uses are 3200 bytes = 5 frames.
- *
- * Returning early on the first speech-positive frame minimizes per-chunk
- * cost in the common silent-chunk case.
+ * Find the best label/value match in a previously-flattened element list.
+ * Returns the matching element JSON, or "" if nothing meets min_score.
  */
-export declare function anySpeechFrame16Khz(pcm: Buffer, aggressiveness: number): boolean
+export declare function axFindByLabel(elementsJson: string, query: string, minScore: number): string
 /** Get the native module version */
 export declare function getVersion(): string
 /** Check if SIMD is available on this platform */

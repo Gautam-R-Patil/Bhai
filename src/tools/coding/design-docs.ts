@@ -100,7 +100,11 @@ async function generateDocBodies(
             technical?: unknown;
             architecture?: unknown;
         };
-        if (typeof parsed.prd !== "string" || typeof parsed.technical !== "string" || typeof parsed.architecture !== "string") {
+        if (
+            typeof parsed.prd !== "string" ||
+            typeof parsed.technical !== "string" ||
+            typeof parsed.architecture !== "string"
+        ) {
             return null;
         }
         return { prd: parsed.prd, technical: parsed.technical, architecture: parsed.architecture };
@@ -146,8 +150,7 @@ export const designDocsTool: ToolDefinition = {
                     },
                     parent_dir: {
                         type: "string",
-                        description:
-                            "Parent directory. Defaults to A.T.L.A.S Files/Documents/design-docs/.",
+                        description: "Parent directory. Defaults to A.T.L.A.S Files/Documents/design-docs/.",
                     },
                 },
                 required: ["task"],
@@ -168,7 +171,11 @@ export const designDocsTool: ToolDefinition = {
         mkdirSync(dir, { recursive: true });
 
         auditLog("generate_design_docs", { slug, dir });
-        logToolAction({ tool: "generate_design_docs", filePath: dir, action: `drafting design docs for '${task.slice(0, 60)}'` });
+        logToolAction({
+            tool: "generate_design_docs",
+            filePath: dir,
+            action: `drafting design docs for '${task.slice(0, 60)}'`,
+        });
 
         const bodies = (await generateDocBodies(task)) ?? fallbackBodies(task);
         const files = {

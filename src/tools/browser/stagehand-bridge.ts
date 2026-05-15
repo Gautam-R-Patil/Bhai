@@ -11,21 +11,21 @@
  * Self-healing: when DOM changes, falls back to AI and updates cache.
  */
 
-import type { Page } from "./types.js";
 import fs from "node:fs";
 import path from "node:path";
+import type { Page } from "./types.js";
 
 // ── Types ─────────────────────────────────────
 
 interface CachedAction {
-    urlPattern: string;         // Regex pattern matching the URL
-    actionDescription: string;  // Human-readable description
-    selector: string;           // CSS/XPath selector used
+    urlPattern: string; // Regex pattern matching the URL
+    actionDescription: string; // Human-readable description
+    selector: string; // CSS/XPath selector used
     actionType: "click" | "type" | "select" | "scroll" | "navigate";
-    value?: string;             // For type/select actions
+    value?: string; // For type/select actions
     successCount: number;
     failureCount: number;
-    lastUsed: number;           // Timestamp
+    lastUsed: number; // Timestamp
 }
 
 interface ActionResult {
@@ -78,7 +78,10 @@ function saveCache(): void {
 export async function act(
     page: Page,
     actionDescription: string,
-    aiSelector?: (page: Page, description: string) => Promise<{ selector: string; actionType: string; value?: string } | null>,
+    aiSelector?: (
+        page: Page,
+        description: string,
+    ) => Promise<{ selector: string; actionType: string; value?: string } | null>,
 ): Promise<ActionResult> {
     ensureCacheLoaded();
 
@@ -147,7 +150,9 @@ export async function extract(
         if (text.length > 100) {
             return `Page: ${title}\nURL: ${url}\n\n${text}`;
         }
-    } catch { /* */ }
+    } catch {
+        /* */
+    }
 
     // Fallback to AI extraction
     if (fallbackExtractor) {
@@ -173,10 +178,11 @@ export async function observe(page: Page): Promise<{
         const elements = await page.evaluate(() => {
             const els: Array<{ selector: string; text: string; type: string }> = [];
             const interactive = document.querySelectorAll(
-                "a, button, input, select, textarea, [role='button'], [onclick], [tabindex]"
+                "a, button, input, select, textarea, [role='button'], [onclick], [tabindex]",
             );
             for (const el of Array.from(interactive).slice(0, 50)) {
-                const text = (el as HTMLElement).innerText?.substring(0, 100) || (el as HTMLInputElement).placeholder || "";
+                const text =
+                    (el as HTMLElement).innerText?.substring(0, 100) || (el as HTMLInputElement).placeholder || "";
                 const tag = el.tagName.toLowerCase();
                 const id = el.id ? `#${el.id}` : "";
                 const cls = el.className ? `.${String(el.className).split(" ")[0]}` : "";
@@ -189,9 +195,7 @@ export async function observe(page: Page): Promise<{
             return els;
         });
 
-        const visibleText = await page.evaluate(
-            () => document.body?.innerText?.substring(0, 3000) || ""
-        );
+        const visibleText = await page.evaluate(() => document.body?.innerText?.substring(0, 3000) || "");
 
         return { url, title, interactiveElements: elements, visibleText };
     } catch {
@@ -240,15 +244,18 @@ function findCachedAction(cacheKey: string, description: string): CachedAction |
     if (!actions) return null;
 
     const descLower = description.toLowerCase();
-    return actions.find(a =>
-        a.actionDescription.toLowerCase() === descLower ||
-        descLower.includes(a.actionDescription.toLowerCase())
-    ) || null;
+    return (
+        actions.find(
+            (a) =>
+                a.actionDescription.toLowerCase() === descLower ||
+                descLower.includes(a.actionDescription.toLowerCase()),
+        ) || null
+    );
 }
 
 function addToCache(cacheKey: string, action: CachedAction): void {
     const existing = actionCache.get(cacheKey) || [];
-    const idx = existing.findIndex(a => a.actionDescription === action.actionDescription);
+    const idx = existing.findIndex((a) => a.actionDescription === action.actionDescription);
     if (idx >= 0) {
         existing[idx] = action;
     } else {
@@ -260,7 +267,7 @@ function addToCache(cacheKey: string, action: CachedAction): void {
 
 function updateCacheSuccess(cacheKey: string, description: string): void {
     const actions = actionCache.get(cacheKey);
-    const action = actions?.find(a => a.actionDescription === description);
+    const action = actions?.find((a) => a.actionDescription === description);
     if (action) {
         action.successCount++;
         action.lastUsed = Date.now();
@@ -270,7 +277,7 @@ function updateCacheSuccess(cacheKey: string, description: string): void {
 
 function updateCacheFailure(cacheKey: string, description: string): void {
     const actions = actionCache.get(cacheKey);
-    const action = actions?.find(a => a.actionDescription === description);
+    const action = actions?.find((a) => a.actionDescription === description);
     if (action) {
         action.failureCount++;
         saveCache();

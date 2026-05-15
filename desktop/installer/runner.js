@@ -18,10 +18,16 @@ const SECRET_PATTERNS = [
     /MATRIX_ACCESS_TOKEN\s*=\s*\S+/gi,
     /EMAIL_PASSWORD\s*=\s*\S+/gi,
     /SLACK_CLIENT_SECRET\s*=\s*\S+/gi,
+    /OLLAMA_API_KEY\s*=\s*\S+/gi,
+    /HF_TOKEN\s*=\s*\S+/gi,
+    /OPENAI_API_KEY\s*=\s*\S+/gi,
+    /ANTHROPIC_API_KEY\s*=\s*\S+/gi,
     // Standalone Telegram bot token shape: <digits>:<35+ base64-url chars>
     /\b\d{8,12}:[A-Za-z0-9_-]{30,}\b/g,
     // "Bot <token>" HTTP header form
     /\b[Bb]ot\s+[A-Za-z0-9._-]{30,}/g,
+    // URL-embedded credentials: https://user:pass@host  (pip --extra-index-url etc)
+    /\bhttps?:\/\/[^:/\s@]+:[^@/\s]+@/g,
 ];
 
 function redactSecrets(line) {
@@ -34,6 +40,9 @@ function redactSecrets(line) {
                 return match.slice(0, eq + 1) + "***";
             }
             if (/^bot\s/i.test(match)) return match.replace(/(\s+).*$/, "$1***");
+            // URL-embedded credentials: keep scheme + host, redact user:pass.
+            const urlAuth = match.match(/^(https?:\/\/)([^:/\s@]+):([^@/\s]+)@/);
+            if (urlAuth) return urlAuth[1] + urlAuth[2] + ":***@";
             return "***";
         });
     }
@@ -68,17 +77,42 @@ async function runPhases(phaseList, ctx) {
     };
     for (let i = 0; i < total; i++) {
         const ph = phaseList[i];
+        const phaseStart = Math.floor((i / total) * 100);
+        const phaseEnd = Math.floor(((i + 1) / total) * 100);
         if (ctx.sendProgress) {
-            ctx.sendProgress(Math.floor((i / total) * 100), "Running: " + ph.label);
+            // Send the phase ID so the UI doesn't depend on label-string parity.
+            // Old format was "Running: <label>" which broke whenever phases.js
+            // and install.js labels drifted (e.g. "Audio toolkit (sox)" vs
+            // "Audio toolkit") — the UI's reverse-label-lookup silently failed
+            // and the spinner stuck on the previous phase.
+            ctx.sendProgress(phaseStart, "Running: id=" + ph.id);
         }
+        // Per-phase sub-progress helper. Phases call this to drive the outer
+        // bar during long operations (model pulls, big pip installs). Without
+        // it, the outer bar stays frozen at phaseStart for the entire phase.
+        // `fraction` is 0..1 within the phase; the helper linearly maps it to
+        // the absolute [phaseStart, phaseEnd] range.
+        ctx.reportSubProgress = function (fraction, msg) {
+            if (!ctx.sendProgress) return;
+            const clamped = Math.max(0, Math.min(1, fraction));
+            const abs = Math.floor(phaseStart + (phaseEnd - phaseStart) * clamped);
+            ctx.sendProgress(abs, msg || ("Running: id=" + ph.id));
+        };
         const t0 = Date.now();
         try {
             await ph.run(ctx, log);
             state[ph.id] = { completedAt: new Date().toISOString(), durationMs: Date.now() - t0 };
-            writeSetupState(ctx.DATA_DIR, state);
+            try { writeSetupState(ctx.DATA_DIR, state); } catch (persistErr) {
+                // Disk full or perms error during marker persist. Log it but
+                // continue — the phase itself succeeded, so we'd rather report
+                // success and lose the marker than fail the whole install.
+                log("Warning: could not persist setup-state.json (" + (persistErr && persistErr.message) + ")");
+            }
         } catch (err) {
             // Persist anything that did complete so a subsequent resume works.
-            writeSetupState(ctx.DATA_DIR, state);
+            // Wrap in try/catch — disk-full here must not double-fault and
+            // produce an unhandled rejection that hides the original error.
+            try { writeSetupState(ctx.DATA_DIR, state); } catch { /* best-effort */ }
             if (ctx.sendProgress) ctx.sendProgress(-1, "Paused at " + ph.label);
             log("ERROR in phase " + ph.id + ": " + (err && err.message ? err.message : String(err)));
             return {
