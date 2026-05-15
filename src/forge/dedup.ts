@@ -12,8 +12,11 @@ export interface DedupOpts {
     candidateEmbedding: Float32Array;
 }
 
+// Auto-merge — very high confidence the candidate is a rephrasing of the existing tool.
 const MERGE_THRESHOLD = 0.92;
+// Warn — parity with lookup retrieval threshold. Same vector, different lifecycle stage.
 const WARN_THRESHOLD = 0.85;
+// FTS narrows the candidate pool to top-20 by BM25 before cosine rerank.
 const FTS_TOP_N = 20;
 
 // Dedup differs from lookup in retrieval breadth: a rephrasing like
