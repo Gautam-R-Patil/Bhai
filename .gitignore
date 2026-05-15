@@ -178,6 +178,7 @@ desktop/hostinger-upload/
 !src/forge/__tests__/library-search-embedding.test.ts
 !src/forge/__tests__/lookup.test.ts
 !src/forge/__tests__/dedup.test.ts
+!src/forge/__tests__/orchestrator-lookup.test.ts
 
 # Compiled Swift helpers (built by npm run build:location / build:ocr)
 scripts/get_location_bin

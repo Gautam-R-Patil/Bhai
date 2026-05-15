@@ -2,7 +2,8 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { closeLibrary, countTools, listTools, openLibrary } from "./library.js";
+import { closeLibrary, countTools, getToolBySlug, listTools, openLibrary } from "./library.js";
+import { lookupTool as runLookupPipeline } from "./lookup.js";
 import { migrateLegacyDynamicTools } from "./migration.js";
 import { emitForgeEvent, initForgeTelemetry } from "./telemetry.js";
 import type { ForgeStats, SynthesisRequest, SynthesisResult, ToolMetadata } from "./types.js";
@@ -97,8 +98,28 @@ export function listDynamicTools(opts: { includeArchived?: boolean } = {}): Tool
 
 // ── Phase 2+ stubs ───────────────────────────────
 
-export async function lookupTool(_description: string, _schema: Record<string, unknown>): Promise<ToolMetadata | null> {
-    throw new Error("forge.lookupTool: not implemented until phase 2 (lookup-first)");
+export async function lookupTool(
+    description: string,
+    _schema: Record<string, unknown>,
+): Promise<ToolMetadata | null> {
+    if (!_ready || !_embedFn) return null;
+
+    // FunctionGemma is opt-in via Ollama. Load lazily; if unavailable, lookupTool
+    // falls through to FTS+cosine without the FunctionGemma fast-path.
+    let fgFn: any | undefined;
+    try {
+        fgFn = (await import("../models/function-gemma.js")).routeWithFunctionGemma;
+    } catch {
+        fgFn = undefined;
+    }
+
+    const hit = await runLookupPipeline({
+        description,
+        embedFn: _embedFn,
+        functionGemmaFn: fgFn,
+    });
+    if (!hit) return null;
+    return getToolBySlug(hit.slug);
 }
 
 export async function synthesizeTool(_req: SynthesisRequest): Promise<SynthesisResult> {
