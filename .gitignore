@@ -170,6 +170,7 @@ desktop/hostinger-upload/
 !src/forge/__tests__/library-list.test.ts
 !src/forge/__tests__/telemetry.test.ts
 !src/forge/__tests__/migration.test.ts
+!src/forge/__tests__/orchestrator-init.test.ts
 
 # Compiled Swift helpers (built by npm run build:location / build:ocr)
 scripts/get_location_bin
