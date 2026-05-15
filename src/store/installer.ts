@@ -28,6 +28,7 @@ const STORE_BASE_PATH = join(homedir(), ".atlas", "store");
 const SKILLS_PATH = join(STORE_BASE_PATH, "skills");
 const MCP_PATH = join(STORE_BASE_PATH, "mcp-servers");
 const TOOLS_PATH = join(STORE_BASE_PATH, "tools");
+const DYNAMIC_PATH = join(STORE_BASE_PATH, "dynamic");
 const MANIFEST_PATH = join(STORE_BASE_PATH, "installs.json");
 const MCP_CONFIG_PATH = join(STORE_BASE_PATH, "mcp-servers.json");
 const BACKUP_PATH = join(STORE_BASE_PATH, ".backup");
@@ -43,7 +44,7 @@ function getItemPath(type: StoreItemType, slug: string): string {
     case "tool":
       return join(TOOLS_PATH, slug);
     case "dynamic":
-      return join(STORE_BASE_PATH, "dynamic", slug);
+      return join(DYNAMIC_PATH, slug);
   }
 }
 
@@ -54,6 +55,7 @@ async function ensureStoreDirectories(): Promise<void> {
   await mkdir(SKILLS_PATH, { recursive: true });
   await mkdir(MCP_PATH, { recursive: true });
   await mkdir(TOOLS_PATH, { recursive: true });
+  await mkdir(DYNAMIC_PATH, { recursive: true });
   await mkdir(BACKUP_PATH, { recursive: true });
 }
 
@@ -469,4 +471,4 @@ export async function getLocalInstallInfo(
 
 // ── Exports for external use ──────────────────────
 
-export { STORE_BASE_PATH, SKILLS_PATH, MCP_PATH, TOOLS_PATH, MCP_CONFIG_PATH };
+export { STORE_BASE_PATH, SKILLS_PATH, MCP_PATH, TOOLS_PATH, DYNAMIC_PATH, MCP_CONFIG_PATH };
