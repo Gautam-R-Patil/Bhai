@@ -115,4 +115,43 @@ describe("forge lookup pipeline", () => {
         });
         expect(hit).toBeNull();
     });
+
+    it("returns null when ATLAS_NO_FORGE_LOOKUP=true", async () => {
+        insertTool({
+            slug: "x", description: "x",
+            schemaJson: "{}", handlerHash: "x", embedding: vector(0),
+            source: "synchronous", createdAt: Date.now(),
+        });
+
+        process.env.ATLAS_NO_FORGE_LOOKUP = "true";
+        try {
+            const hit = await lookupTool({
+                description: "x",
+                embedFn: async () => vector(0),
+                functionGemmaFn: async () => null,
+            });
+            expect(hit).toBeNull();
+        } finally {
+            delete process.env.ATLAS_NO_FORGE_LOOKUP;
+        }
+    });
+
+    it("FunctionGemma throws → falls through to embedding lookup", async () => {
+        insertTool({
+            slug: "recover_me", description: "this is recoverable",
+            schemaJson: "{}", handlerHash: "x", embedding: vector(0),
+            source: "synchronous", createdAt: Date.now(),
+        });
+
+        const hit = await lookupTool({
+            description: "this is recoverable",
+            embedFn: async () => vector(0),
+            functionGemmaFn: async () => { throw new Error("ollama down"); },
+        });
+
+        // FG threw → caught by try/catch → fall through → FTS+embedding find the match
+        expect(hit).not.toBeNull();
+        expect(hit!.slug).toBe("recover_me");
+        expect(hit!.source).toBe("library_embedding");
+    });
 });

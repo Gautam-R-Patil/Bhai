@@ -332,7 +332,10 @@ export function searchByFTS(query: string, limit: number = 20): FTSSearchResult[
     const db = getLibrary();
     // Sanitize for FTS5: keep only Unicode letters, digits, underscore, whitespace.
     // This strips quotes, parens, operators, punctuation in one pass.
-    const cleaned = query.replace(/[^\p{L}\p{N}_\s]/gu, " ").replace(/\s+/g, " ").trim();
+    const cleaned = query
+        .replace(/[^\p{L}\p{N}_\s]/gu, " ")
+        .replace(/\s+/g, " ")
+        .trim();
     if (!cleaned) return [];
 
     // FTS5 reserves AND, OR, NOT, NEAR as operators (uppercase only).
@@ -392,10 +395,12 @@ export function searchByEmbedding(
     if (candidateSlugs.length === 0) return [];
     const db = getLibrary();
     const placeholders = candidateSlugs.map(() => "?").join(",");
-    const rows = db.prepare(`
+    const rows = db
+        .prepare(`
         SELECT slug, embedding FROM tools
         WHERE slug IN (${placeholders}) AND archived_at IS NULL
-    `).all(...candidateSlugs) as { slug: string; embedding: Buffer }[];
+    `)
+        .all(...candidateSlugs) as { slug: string; embedding: Buffer }[];
 
     const results: EmbeddingSearchResult[] = [];
     for (const row of rows) {

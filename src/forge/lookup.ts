@@ -1,11 +1,14 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 
-import { searchByFTS, searchByEmbedding, getToolBySlug, listTools } from "./library.js";
-import { emitForgeEvent } from "./telemetry.js";
 import type { FunctionGemmaResult } from "../models/function-gemma.js";
+import { getToolBySlug, listTools, searchByEmbedding, searchByFTS } from "./library.js";
+import { emitForgeEvent } from "./telemetry.js";
 
+// FunctionGemma is 85% accurate at 0.8 confidence; below that, fall through to embedding rerank.
 const FG_CONFIDENCE_THRESHOLD = 0.8;
+// 0.85 cosine: tight enough to avoid false reuse, loose enough to compound. See forge-deep-dives/04-routing-orchestrator.md.
 const EMBEDDING_SIMILARITY_THRESHOLD = 0.85;
+// FTS gives BM25-ranked candidates; rerank top-20 with cosine. Larger N hurts latency without improving precision past this.
 const FTS_TOP_N = 20;
 
 export interface LookupHit {
@@ -25,7 +28,13 @@ export interface LookupOpts {
 
 export async function lookupTool(opts: LookupOpts): Promise<LookupHit | null> {
     if (process.env.ATLAS_NO_FORGE_LOOKUP === "true") {
-        emitForgeEvent({ event: "lookup_attempted", ts: Date.now(), description: opts.description, matchSimilarity: null, source: "miss" });
+        emitForgeEvent({
+            event: "lookup_attempted",
+            ts: Date.now(),
+            description: opts.description,
+            matchSimilarity: null,
+            source: "miss",
+        });
         return null;
     }
 
@@ -34,7 +43,7 @@ export async function lookupTool(opts: LookupOpts): Promise<LookupHit | null> {
         try {
             const allTools = listTools();
             if (allTools.length > 0) {
-                const schemas = allTools.map(t => ({
+                const schemas = allTools.map((t) => ({
                     name: t.slug,
                     description: t.description,
                     parameters: Object.keys(t.schema?.properties ?? {}),
@@ -44,14 +53,22 @@ export async function lookupTool(opts: LookupOpts): Promise<LookupHit | null> {
                     const tool = getToolBySlug(fgResult.toolName);
                     if (tool) {
                         emitForgeEvent({
-                            event: "lookup_attempted", ts: Date.now(),
+                            event: "lookup_attempted",
+                            ts: Date.now(),
                             description: opts.description,
                             matchSimilarity: fgResult.confidence,
                             source: "function_gemma",
                         });
                         return { slug: tool.slug, matchSimilarity: fgResult.confidence, source: "function_gemma" };
                     }
-                    // FG claimed a ghost slug — fall through
+                    // FG hallucinated a slug — log it for offline FG-drift analysis
+                    emitForgeEvent({
+                        event: "lookup_attempted",
+                        ts: Date.now(),
+                        description: opts.description,
+                        matchSimilarity: fgResult.confidence,
+                        source: "miss",
+                    });
                 }
             }
         } catch {
@@ -62,26 +79,51 @@ export async function lookupTool(opts: LookupOpts): Promise<LookupHit | null> {
     // Stage 2: BM25 FTS → top-20 candidates
     const ftsResults = searchByFTS(opts.description, FTS_TOP_N);
     if (ftsResults.length === 0) {
-        emitForgeEvent({ event: "lookup_attempted", ts: Date.now(), description: opts.description, matchSimilarity: null, source: "miss" });
+        emitForgeEvent({
+            event: "lookup_attempted",
+            ts: Date.now(),
+            description: opts.description,
+            matchSimilarity: null,
+            source: "miss",
+        });
         return null;
     }
 
-    // Stage 3: cosine rerank
-    const queryEmbedding = await opts.embedFn(opts.description);
-    const candidateSlugs = ftsResults.map(r => r.slug);
-    const cosineResults = searchByEmbedding(queryEmbedding, candidateSlugs, EMBEDDING_SIMILARITY_THRESHOLD);
+    // Stage 3: cosine rerank (fail-open — embedding crash returns null with miss telemetry)
+    try {
+        const queryEmbedding = await opts.embedFn(opts.description);
+        const candidateSlugs = ftsResults.map((r) => r.slug);
+        const cosineResults = searchByEmbedding(queryEmbedding, candidateSlugs, EMBEDDING_SIMILARITY_THRESHOLD);
 
-    if (cosineResults.length === 0) {
-        emitForgeEvent({ event: "lookup_attempted", ts: Date.now(), description: opts.description, matchSimilarity: ftsResults[0]?.bm25Score ?? null, source: "miss" });
+        if (cosineResults.length === 0) {
+            emitForgeEvent({
+                event: "lookup_attempted",
+                ts: Date.now(),
+                description: opts.description,
+                matchSimilarity: ftsResults[0]?.bm25Score ?? null,
+                source: "miss",
+            });
+            return null;
+        }
+
+        const top = cosineResults[0];
+        emitForgeEvent({
+            event: "lookup_attempted",
+            ts: Date.now(),
+            description: opts.description,
+            matchSimilarity: top.similarity,
+            source: "library_embedding",
+        });
+        return { slug: top.slug, matchSimilarity: top.similarity, source: "library_embedding" };
+    } catch (err) {
+        console.warn(`[forge] lookup embedding stage failed: ${(err as Error).message.slice(0, 100)}`);
+        emitForgeEvent({
+            event: "lookup_attempted",
+            ts: Date.now(),
+            description: opts.description,
+            matchSimilarity: ftsResults[0]?.bm25Score ?? null,
+            source: "miss",
+        });
         return null;
     }
-
-    const top = cosineResults[0];
-    emitForgeEvent({
-        event: "lookup_attempted", ts: Date.now(),
-        description: opts.description,
-        matchSimilarity: top.similarity,
-        source: "library_embedding",
-    });
-    return { slug: top.slug, matchSimilarity: top.similarity, source: "library_embedding" };
 }
