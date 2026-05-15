@@ -1,7 +1,7 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 
 import Database from "better-sqlite3";
-import { existsSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 
@@ -79,6 +79,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS tools_fts USING fts5(
 
 CREATE INDEX IF NOT EXISTS idx_executions_slug_ts ON executions(slug, ts);
 CREATE INDEX IF NOT EXISTS idx_tools_source ON tools(source);
+CREATE INDEX IF NOT EXISTS idx_tools_active ON tools(slug) WHERE archived_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_tools_archived ON tools(archived_at) WHERE archived_at IS NOT NULL;
 `;
 
@@ -87,23 +88,28 @@ export function openLibrary(path: string = DEFAULT_DB_PATH): Database.Database {
     if (_db) closeLibrary();
 
     const dir = dirname(path);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    mkdirSync(dir, { recursive: true });
 
     _db = new Database(path);
     _path = path;
-    _db.pragma("journal_mode = wal");
-    _db.pragma("synchronous = normal");
-    _db.pragma("foreign_keys = on");
+    try {
+        // Fail-open per pragma — SQLite builds without WAL or with restricted features
+        // shouldn't crash; we accept the default behavior.
+        try { _db.pragma("journal_mode = wal"); } catch { /* fail-open */ }
+        try { _db.pragma("synchronous = normal"); } catch { /* fail-open */ }
+        try { _db.pragma("foreign_keys = on"); } catch { /* fail-open */ }
 
-    _db.exec(SCHEMA_DDL);
+        _db.exec(SCHEMA_DDL);
 
-    // Record schema version on first open
-    const existing = _db.prepare(`SELECT value FROM library_meta WHERE key = 'schema_version'`).get() as { value: string } | undefined;
-    if (!existing) {
-        _db.prepare(`INSERT INTO library_meta (key, value) VALUES ('schema_version', ?)`).run(String(SCHEMA_VERSION));
+        const existing = _db.prepare(`SELECT value FROM library_meta WHERE key = 'schema_version'`).get() as { value: string } | undefined;
+        if (!existing) {
+            _db.prepare(`INSERT INTO library_meta (key, value) VALUES ('schema_version', ?)`).run(String(SCHEMA_VERSION));
+        }
+        return _db;
+    } catch (err) {
+        closeLibrary();
+        throw err;
     }
-
-    return _db;
 }
 
 export function closeLibrary(): void {

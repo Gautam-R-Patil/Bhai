@@ -4,7 +4,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openLibrary, closeLibrary, getLibrarySchemaVersion } from "../library.js";
+import { openLibrary, closeLibrary, getLibrarySchemaVersion, getLibrary } from "../library.js";
 
 describe("library bootstrap", () => {
     let tmpDir: string;
@@ -57,5 +57,12 @@ describe("library bootstrap", () => {
         const db = openLibrary(dbPath);
         const mode = db.prepare(`PRAGMA journal_mode`).get() as { journal_mode: string };
         expect(mode.journal_mode).toBe("wal");
+    });
+
+    it("getLibrary throws when nothing is open", async () => {
+        const { closeLibrary: close, getLibrary: get, getLibrarySchemaVersion: getVersion } = await import("../library.js");
+        close(); // belt-and-braces: ensure closed
+        expect(() => get()).toThrow("library not open");
+        expect(() => getVersion()).toThrow("library not open");
     });
 });
