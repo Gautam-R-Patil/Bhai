@@ -325,6 +325,26 @@ export const createTool: ToolDefinition = {
             return JSON.stringify({ error: "Invalid tool name — must be snake_case (lowercase letters, digits, underscores)" });
         }
 
+        // ── FORGE Phase 2: lookup short-circuit ──
+        if (process.env.ATLAS_NO_FORGE_LOOKUP !== "true") {
+            try {
+                const { lookupTool: forgeLookup, isForgeReady } = await import("../forge/orchestrator.js");
+                if (isForgeReady()) {
+                    const hit = await forgeLookup(description, paramsSchema ?? {});
+                    if (hit) {
+                        return JSON.stringify({
+                            success: true,
+                            lookup_hit: true,
+                            tool_name: hit.slug,
+                            message: `Reused existing tool "${hit.slug}" — its description matches what you requested. Call it directly with the appropriate parameters.`,
+                        });
+                    }
+                }
+            } catch {
+                // Forge unavailable — fall through to synthesis
+            }
+        }
+
         // Check for conflicts with built-in tools
         if (registryRef.has(name) && !dynamicToolNames.has(name)) {
             return JSON.stringify({ error: `Cannot override built-in tool "${name}". Choose a different name.` });
