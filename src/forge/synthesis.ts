@@ -28,9 +28,14 @@ export interface SynthesisEnvelope {
 }
 
 const VALID_KINDS = new Set<ExpectedKind>([
-    "returns_contains", "returns_equals", "returns_matches_regex",
-    "throws", "throws_contains", "returns_no_error",
-    "side_effect_file_exists", "side_effect_url_called",
+    "returns_contains",
+    "returns_equals",
+    "returns_matches_regex",
+    "throws",
+    "throws_contains",
+    "returns_no_error",
+    "side_effect_file_exists",
+    "side_effect_url_called",
 ]);
 
 const VALID_SIDE_EFFECTS = new Set(["none", "fs.write", "net.outbound", "system.modify"]);
@@ -38,9 +43,7 @@ const MAX_HANDLER_BYTES = 50_000;
 const MIN_TESTS = 3;
 const MAX_TESTS = 7;
 
-export type ParseResult =
-    | { ok: true; envelope: SynthesisEnvelope }
-    | { ok: false; errors: string[] };
+export type ParseResult = { ok: true; envelope: SynthesisEnvelope } | { ok: false; errors: string[] };
 
 export function parseEnvelope(raw: string): ParseResult {
     const errors: string[] = [];
@@ -50,8 +53,11 @@ export function parseEnvelope(raw: string): ParseResult {
     if (!extracted) {
         return { ok: false, errors: ["malformed JSON / no extractable JSON object"] };
     }
-    try { json = JSON.parse(extracted); }
-    catch (err) { return { ok: false, errors: [`JSON.parse failed: ${(err as Error).message}`] }; }
+    try {
+        json = JSON.parse(extracted);
+    } catch (err) {
+        return { ok: false, errors: [`JSON.parse failed: ${(err as Error).message}`] };
+    }
 
     if (!json || typeof json !== "object") {
         return { ok: false, errors: ["envelope must be an object"] };
@@ -59,7 +65,8 @@ export function parseEnvelope(raw: string): ParseResult {
     const o = json as Record<string, unknown>;
 
     if (typeof o.handler_code !== "string") errors.push("handler_code missing or not a string");
-    else if ((o.handler_code as string).length > MAX_HANDLER_BYTES) errors.push(`handler_code too large (>${MAX_HANDLER_BYTES} bytes)`);
+    else if (Buffer.byteLength(o.handler_code, "utf8") > MAX_HANDLER_BYTES)
+        errors.push(`handler_code too large (>${MAX_HANDLER_BYTES} bytes)`);
 
     if (!Array.isArray(o.tests)) errors.push("tests missing or not an array");
     else {
@@ -67,7 +74,10 @@ export function parseEnvelope(raw: string): ParseResult {
         if (o.tests.length > MAX_TESTS) errors.push(`expected at most 7 tests, got ${o.tests.length}`);
         for (let i = 0; i < o.tests.length; i++) {
             const t = o.tests[i] as Record<string, unknown>;
-            if (!t || typeof t !== "object") { errors.push(`test[${i}] not an object`); continue; }
+            if (!t || typeof t !== "object") {
+                errors.push(`test[${i}] not an object`);
+                continue;
+            }
             if (typeof t.expected_kind !== "string" || !VALID_KINDS.has(t.expected_kind as ExpectedKind)) {
                 errors.push(`test[${i}].expected_kind invalid`);
             }
@@ -81,10 +91,7 @@ export function parseEnvelope(raw: string): ParseResult {
 
     if (!Array.isArray(o.capabilities_declared)) errors.push("capabilities_declared missing or not an array");
 
-    if (typeof o.synthesis_notes !== "string") {
-        // not strictly required — provide a default
-        (o as any).synthesis_notes = "";
-    }
+    const synthesisNotes = typeof o.synthesis_notes === "string" ? o.synthesis_notes : "";
 
     if (errors.length > 0) return { ok: false, errors };
 
@@ -95,7 +102,7 @@ export function parseEnvelope(raw: string): ParseResult {
             tests: o.tests as SynthesisTest[],
             capabilities_declared: o.capabilities_declared as string[],
             side_effects: o.side_effects as SynthesisEnvelope["side_effects"],
-            synthesis_notes: o.synthesis_notes as string,
+            synthesis_notes: synthesisNotes,
         },
     };
 }

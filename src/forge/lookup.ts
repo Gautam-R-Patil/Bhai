@@ -144,7 +144,7 @@ function ftsCandidates(description: string): { slug: string; bm25Score: number }
         .replace(/\s+/g, " ")
         .trim()
         .split(" ")
-        .filter(t => t.length > 0 && !FTS5_RESERVED.has(t.toUpperCase()));
+        .filter((t) => t.length > 0 && !FTS5_RESERVED.has(t.toUpperCase()));
 
     if (tokens.length === 0) return [];
 

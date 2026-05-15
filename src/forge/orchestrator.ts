@@ -99,10 +99,7 @@ export function listDynamicTools(opts: { includeArchived?: boolean } = {}): Tool
 
 // ── Phase 2+ stubs ───────────────────────────────
 
-export async function lookupTool(
-    description: string,
-    _schema: Record<string, unknown>,
-): Promise<ToolMetadata | null> {
+export async function lookupTool(description: string, _schema: Record<string, unknown>): Promise<ToolMetadata | null> {
     if (!_ready || !_embedFn) return null;
 
     // FunctionGemma is opt-in via Ollama. Load lazily; if unavailable, lookupTool

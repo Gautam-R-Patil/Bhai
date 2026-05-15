@@ -1,6 +1,6 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 
-import { getLibrary, searchByFTS, searchByEmbedding } from "./library.js";
+import { getLibrary, searchByEmbedding, searchByFTS } from "./library.js";
 
 export type DedupResult =
     | { kind: "distinct" }
@@ -28,12 +28,13 @@ function ftsCandidates(description: string): string[] {
     const andHits = searchByFTS(description, FTS_TOP_N);
     if (andHits.length > 0) return andHits.map((r) => r.slug);
 
-    const cleaned = description.replace(/[^\p{L}\p{N}_\s]/gu, " ").replace(/\s+/g, " ").trim();
+    const cleaned = description
+        .replace(/[^\p{L}\p{N}_\s]/gu, " ")
+        .replace(/\s+/g, " ")
+        .trim();
     if (!cleaned) return [];
     const FTS5_RESERVED = new Set(["AND", "OR", "NOT", "NEAR"]);
-    const tokens = cleaned
-        .split(" ")
-        .filter((t) => t.length > 0 && !FTS5_RESERVED.has(t.toUpperCase()));
+    const tokens = cleaned.split(" ").filter((t) => t.length > 0 && !FTS5_RESERVED.has(t.toUpperCase()));
     if (tokens.length === 0) return [];
 
     const seen = new Set<string>();
