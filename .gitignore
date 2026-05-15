@@ -132,6 +132,8 @@ desktop/hostinger-upload/
 !src/memory/spreading-activation.parity.test.ts
 !src/security/secrets-sanitizer.parity.test.ts
 !src/voice/live/pcm-vad.test.ts
+!src/agents/defang-plan-injection.test.ts
+!src/tools/identity-update.test.ts
 !src/llm-parsers/*.test.ts
 !src/tools/schema-sanitizer.test.ts
 !src/tools/tool-result.test.ts

@@ -249,19 +249,22 @@ export async function installItem(
 
     notify("downloading", 40, "Download complete");
 
-    // 3. Prepare destination
+    // 3. Prepare destination — only created for types that actually extract
+    // archive content locally. Skills live server-side and need no dir.
     const destPath = getItemPath(type, slug);
-    await mkdir(destPath, { recursive: true });
 
     notify("extracting", 50, "Extracting files...");
 
     // 4. Extract/copy based on type
     if (type === "skill") {
-      // Skills are single .md files
-      const content = await readFile(tempFile);
-      await writeFile(join(destPath, "SKILL.md"), content);
+      // Skill instructions live SERVER-SIDE only — they get assembled into
+      // the system prompt by convex/systemContent.ts via the user's
+      // store_installs row. We do NOT write the .md content to disk, and
+      // we do NOT create a slug-named directory for skills either.
     } else {
-      // MCP servers and tools are archives
+      // MCP servers and tools are archives that must be extracted (binary
+      // tools that run in-process). These genuinely need local files.
+      await mkdir(destPath, { recursive: true });
       await extractArchive(tempFile, destPath);
     }
 
@@ -291,7 +294,8 @@ export async function installItem(
       version,
       installedAt: Date.now(),
       autoUpdate: true,
-      path: destPath,
+      // Skills are server-only; record a virtual path for UI display.
+      path: type === "skill" ? `server://store_installs/${slug}` : destPath,
     };
     await saveManifest(manifest);
 

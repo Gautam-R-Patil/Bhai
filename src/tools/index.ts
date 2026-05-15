@@ -297,6 +297,12 @@ registry.set(coreMemoryReplace.schema.function.name, coreMemoryReplace);
 registry.set(coreMemoryAppend.schema.function.name, coreMemoryAppend);
 registry.set(coreMemoryDelete.schema.function.name, coreMemoryDelete);
 
+// Self-improvement (local draft buffer; synthesized nightly to server)
+import { selfImprovementDraft, selfImprovementListDrafts, selfImprovementDiscardDraft } from "./self-improvement.js";
+registry.set(selfImprovementDraft.schema.function.name, selfImprovementDraft);
+registry.set(selfImprovementListDrafts.schema.function.name, selfImprovementListDrafts);
+registry.set(selfImprovementDiscardDraft.schema.function.name, selfImprovementDiscardDraft);
+
 // Shell tool (cross-platform)
 registry.set(shellExec.schema.function.name, shellExec);
 

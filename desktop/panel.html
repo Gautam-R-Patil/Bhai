@@ -414,6 +414,57 @@
                         </div>
                     </div>
 
+                    <!-- ═════════ PERSONALITY ═════════ -->
+                    <div class="pref-section surface-card">
+                        <div class="pref-section-header">
+                            <span class="pref-section-icon">🗣️</span>
+                            <div>
+                                <h3 class="pref-section-title">Personality</h3>
+                                <p class="pref-section-desc">How A.T.L.A.S should sound when talking with you</p>
+                            </div>
+                        </div>
+                        <div class="pref-items" style="flex-direction:column;gap:8px;align-items:stretch;">
+                            <div id="personalityPresets" style="display:flex;flex-direction:column;gap:8px;">
+                                <label class="radio-row" style="display:flex;gap:10px;padding:10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;align-items:flex-start;">
+                                    <input type="radio" name="personality-preset" value="casual_playful" id="ppPresetCasual" style="margin-top:3px;" checked>
+                                    <div style="flex:1;">
+                                        <div style="font-weight:600;margin-bottom:2px;">Casual &amp; playful</div>
+                                        <div style="font-size:0.9em;color:var(--text-secondary);">Warm, witty, emoji-friendly. Reacts like a close friend.</div>
+                                    </div>
+                                </label>
+                                <label class="radio-row" style="display:flex;gap:10px;padding:10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;align-items:flex-start;">
+                                    <input type="radio" name="personality-preset" value="professional_concise" id="ppPresetProfessional" style="margin-top:3px;">
+                                    <div style="flex:1;">
+                                        <div style="font-weight:600;margin-bottom:2px;">Professional &amp; concise</div>
+                                        <div style="font-size:0.9em;color:var(--text-secondary);">Clear, formal-leaning, minimal emoji. Gets to the point.</div>
+                                    </div>
+                                </label>
+                                <label class="radio-row" style="display:flex;gap:10px;padding:10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;align-items:flex-start;">
+                                    <input type="radio" name="personality-preset" value="warm_supportive" id="ppPresetWarm" style="margin-top:3px;">
+                                    <div style="flex:1;">
+                                        <div style="font-weight:600;margin-bottom:2px;">Warm &amp; supportive</div>
+                                        <div style="font-size:0.9em;color:var(--text-secondary);">Empathetic, encouraging, low on sarcasm. Best for stressful work.</div>
+                                    </div>
+                                </label>
+                                <label class="radio-row" style="display:flex;gap:10px;padding:10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;align-items:flex-start;">
+                                    <input type="radio" name="personality-preset" value="direct_terse" id="ppPresetDirect" style="margin-top:3px;">
+                                    <div style="flex:1;">
+                                        <div style="font-weight:600;margin-bottom:2px;">Direct &amp; no-nonsense</div>
+                                        <div style="font-size:0.9em;color:var(--text-secondary);">Terse, action-first. Skips filler. Good for power users.</div>
+                                    </div>
+                                </label>
+                            </div>
+                            <label style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">
+                                <span style="font-size:0.9em;color:var(--text-secondary);">Custom notes (optional)</span>
+                                <textarea id="personalityNotes" rows="3" maxlength="800" placeholder="e.g. 'always start with the bottom line', 'use Hindi-English mix sometimes', 'no emojis ever'" style="resize:vertical;min-height:60px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:8px;outline:none;font-family:inherit;font-size:13px;"></textarea>
+                            </label>
+                            <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px;">
+                                <button class="btn btn-sm btn-primary" id="personalitySaveBtn" onclick="savePersonality()">Save personality</button>
+                            </div>
+                            <div id="personalitySaveStatus" style="font-size:0.85em;color:var(--text-secondary);margin-top:4px;min-height:1em;"></div>
+                        </div>
+                    </div>
+
                     <!-- ═════════ INTEGRATIONS ═════════ -->
                     <div class="settings-group-heading">Integrations</div>
 
@@ -2797,6 +2848,62 @@
             atlas.setPref('theme', theme);
             updateThemeButtons(theme);
             applyTheme(theme);
+        }
+
+        // ── Personality preset handlers ──
+        async function loadPersonalityFromPrefs() {
+            try {
+                const prefs = await (atlas.getPrefs ? atlas.getPrefs() : Promise.resolve({}));
+                const persona = (prefs && prefs.personalize && prefs.personalize.personality) || { preset: 'casual_playful', notes: '' };
+                const r = document.querySelector(`input[name="personality-preset"][value="${persona.preset}"]`);
+                if (r) r.checked = true;
+                else {
+                    const fallback = document.getElementById('ppPresetCasual');
+                    if (fallback) fallback.checked = true;
+                }
+                const notes = document.getElementById('personalityNotes');
+                if (notes) notes.value = persona.notes || '';
+            } catch (e) {
+                // Non-fatal — leave defaults
+            }
+        }
+
+        async function savePersonality() {
+            const btn = document.getElementById('personalitySaveBtn');
+            const status = document.getElementById('personalitySaveStatus');
+            if (btn) btn.disabled = true;
+            if (status) status.textContent = 'Saving…';
+            try {
+                const presetEl = document.querySelector('input[name="personality-preset"]:checked');
+                const preset = (presetEl && presetEl.value) || 'casual_playful';
+                const notesEl = document.getElementById('personalityNotes');
+                const notes = (notesEl && notesEl.value || '').trim();
+                if (!atlas || typeof atlas.setupSavePersonalize !== 'function') {
+                    if (status) status.textContent = 'IPC not ready — try again';
+                    return;
+                }
+                const res = await atlas.setupSavePersonalize({ personality: { preset, notes } });
+                if (!res || !res.success) {
+                    if (status) status.textContent = 'Save failed: ' + ((res && res.error) || 'unknown error');
+                    return;
+                }
+                if (status) status.textContent = 'Saved — A.T.L.A.S will pick this up on the next chat turn.';
+            } catch (e) {
+                if (status) status.textContent = 'Save failed: ' + (e.message || e);
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        // Trigger initial load now — the inline script runs after DOMContentLoaded
+        // when this panel is opened post-boot, so an addEventListener would never fire.
+        // Run inline + also listen, to cover both timings.
+        if (typeof window !== 'undefined') {
+            if (document.readyState === 'loading') {
+                window.addEventListener('DOMContentLoaded', loadPersonalityFromPrefs);
+            } else {
+                loadPersonalityFromPrefs();
+            }
         }
 
         function updateThemeButtons(activeTheme) {

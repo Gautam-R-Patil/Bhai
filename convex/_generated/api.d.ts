@@ -24,6 +24,7 @@ import type * as store_reviews from "../store/reviews.js";
 import type * as store_storage from "../store/storage.js";
 import type * as store_submissions from "../store/submissions.js";
 import type * as systemContent from "../systemContent.js";
+import type * as userAddenda from "../userAddenda.js";
 
 import type {
   ApiFromModules,
@@ -48,6 +49,7 @@ declare const fullApi: ApiFromModules<{
   "store/storage": typeof store_storage;
   "store/submissions": typeof store_submissions;
   systemContent: typeof systemContent;
+  userAddenda: typeof userAddenda;
 }>;
 
 /**

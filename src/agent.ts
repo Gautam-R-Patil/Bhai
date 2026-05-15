@@ -1704,6 +1704,29 @@ STRATEGY: Execute in as few tool calls as possible.
                 /* dynamic context is a nicety — never block the turn */
             }
 
+            // ── Casual-chat nudge: when the user is in short-message mode,
+            // suppress the model's reflexive interrogation. Looks at the last
+            // 3 user messages — if all are ≤ 5 words, signal casual mode.
+            try {
+                const userMsgs = messages
+                    .filter((m) => m.role === "user")
+                    .slice(-3);
+                if (userMsgs.length >= 2) {
+                    const wordCounts = userMsgs.map((m) => {
+                        const content = typeof m.content === "string" ? m.content : "";
+                        return content.trim().split(/\s+/).filter(Boolean).length;
+                    });
+                    const allShort = wordCounts.every((c) => c > 0 && c <= 5);
+                    if (allShort) {
+                        parts.push(
+                            "[chat is casual — drop interrogation patterns. NO 'what're you working on?' / 'what's on your mind?' / 'what's next?' style follow-ups. End with a statement or short reaction. Only ask a question if you genuinely need information to act.]"
+                        );
+                    }
+                }
+            } catch {
+                /* nudge is a hint, never block */
+            }
+
             // ── Credit awareness context ──
             // Let the LLM know remaining credits so it can optimize its approach.
             // Does NOT mean reject tasks — only prefer efficient strategies when low.
@@ -2041,11 +2064,15 @@ STRATEGY: Execute in as few tool calls as possible.
                 const strategyContext = getStrategyContext(rawUserMessage);
 
                 // Build conversation context so orchestrator understands references like "this device", "do that thing"
+                // Defang user-supplied text in recent pairs to neutralize prompt-injection
+                // attempts targeting the orchestrator's identity-defense layer.
+                const { defangPlanInjection: defangInput } = await import("./agents/defang-plan-injection.js");
                 const recentPairs: string[] = [];
                 const historySlice = messages.slice(-12); // last ~6 user/assistant pairs
                 for (const msg of historySlice) {
                     if (msg.role === "user" && typeof msg.content === "string") {
-                        recentPairs.push(`User: ${msg.content.substring(0, 150)}`);
+                        const safe = defangInput(msg.content.substring(0, 150)).text;
+                        recentPairs.push(`User: ${safe}`);
                     } else if (msg.role === "assistant" && typeof msg.content === "string") {
                         recentPairs.push(`Assistant: ${msg.content.substring(0, 150)}`);
                     }
@@ -2077,31 +2104,50 @@ STRATEGY: Execute in as few tool calls as possible.
 
 You are the ORCHESTRATOR (Sonnet 4.6). Create a precise execution plan.
 
-TOOLS:
-- spotify: action='play' query="exact song name" plays a track; query="<name> playlist" or uri="spotify:playlist:<id>" plays a playlist; query="liked songs" plays the user's Liked Songs (pseudo-URI spotify:collection:tracks). Free + Premium via the spogo CLI. Listing playlists_list / saved_tracks is not supported by spogo's connect engine — playing them IS. action='now_playing' to verify. action='pause'/'resume'/'next'/'previous'/'volume'/'seek'/'shuffle'/'repeat'. Also: search (types=['playlist'] to resolve a name → uri), queue_add, queue_get, devices. First-time use may prompt spogo install or auth_import (imports Spotify cookies from the user's browser).
-- music_control: Same for Apple Music
-- app_manager: activate app="AppName"
-- os_nav: Lists clickable elements (~200ms). Run BEFORE clicking.
-- os_click_element: text="song name" clicks by text match (MOST RELIABLE). Also: label=N, action=double_click
-- os_type: text="hello" or key=Return or combo="command+f"
-- os_scan: Screenshot+OCR (slow, only if os_nav fails)
-- browser_navigate/browser_type/browser_click: Web tasks
-- messages_tool: iMessage only. WhatsApp/Telegram → use app_manager + os_nav + os_click_element
+TOOLS (pick the right one — listed by domain):
+
+Desktop / GUI automation (any "click X", "open app Y", "send via the WhatsApp app", "click in Figma"):
+- app_manager: action='activate' app="WhatsApp" (also: list, quit, force_quit, hide, unhide). Accepts \`app\` OR \`app_name\`.
+- os_smart_click: DEFAULT click-by-description tool. Pass instruction="the Send button" — it cascades click-memory → AX exact → AX fuzzy → OmniParser → UI-TARS local grounding automatically. ALWAYS prefer this over os_nav+os_click_element / raw apple_script for click tasks. Optional: app, window_title, surface_hint=native|canvas|web.
+- os_type: text="hello" or key=Return or combo="command+f". Use AFTER focusing the right field with os_smart_click.
+- os_screenshot: capture the screen for vision-grounding tools or for os_visual_verify.
+- os_visual_verify: REQUIRED after any UI-driving step that claims to have changed state (sent a message, opened a tab, clicked a button). Pass expected_text or expected_element. Without this, "did the click work?" is a guess.
+- os_inspect / os_click_id: cross-OS AX-based element listing + click-by-id when os_smart_click misses.
+- os_computer_action: structured single-action API with percentage coords (cross-OS).
+- Legacy fallbacks (use only when os_smart_click + os_inspect both miss): os_nav, os_click_element, os_ocr_click, apple_script. Raw AppleScript keystroke sequences are LAST resort — they fire blind, never check focus, and routinely "succeed" while doing nothing.
+
+Music:
+- spotify: action='play' query="exact song name" plays a track; query="<name> playlist" or uri="spotify:playlist:<id>" plays a playlist; query="liked songs" plays Liked Songs. action='now_playing' to verify. action='pause'/'resume'/'next'/'previous'/'volume'/'seek'/'shuffle'/'repeat'/'search'/'queue_add'/'queue_get'/'devices'.
+- music_control: same for Apple Music.
+
+Messaging:
+- whatsapp_send: protocol-level send via Baileys. Works for contacts the bot is already paired with. Use for "message AP saying gym?" when the bot has a WhatsApp session.
+- messages_tool: iMessage only.
+- If whatsapp_send fails OR the contact lives only inside the desktop app: app_manager activate WhatsApp → os_smart_click "new chat button" → os_type the contact name → os_smart_click on that contact in the result list → os_type the message → os_smart_click "send button" → os_visual_verify expected_text=the_message.
+
+Web:
+- browser_navigate / browser_type / browser_click / browser_extract: for web tasks.
 
 CRITICAL RULES:
-1. Search for EXACTLY what the user said. Do NOT add artist names unless user specified them. "play the song time" → query="Time", NOT "Time Pink Floyd".
-2. If the query is AMBIGUOUS (common words like "Time", "Happy", "Stay", "Home"), your FIRST step MUST be: ASK_USER "Which 'Time'? Some options: Pink Floyd, MKJ, NF, Hans Zimmer (Inception). Which one?"
-3. After playing a song, ALWAYS verify with spotify action='now_playing' — confirm the correct track is playing before saying "done".
-4. os_click_element text="song name" is MORE RELIABLE than label numbers. Always prefer text=.
-5. If search_play fails, fallback: os_nav → os_click_element text="song name" action=double_click
+1. **Verify before declaring done.** Every UI-driving plan ENDS with os_visual_verify (or for music, spotify action='now_playing'). Never say "done" off a fire-and-forget AppleScript.
+2. **Prefer os_smart_click over raw keystroke sequences.** "Cmd+N then type the name then return" reads correctly but does NOT verify focus and breaks silently if the wrong window has focus. os_smart_click checks before clicking.
+3. **For music queries, search EXACTLY what the user said.** "play the song time" → query="Time", NOT "Time Pink Floyd". If the query is AMBIGUOUS (common words like "Time", "Happy", "Stay", "Home"), step 1 = ASK_USER "Which 'Time'? Some options: Pink Floyd, MKJ, NF, Hans Zimmer (Inception). Which one?"
+4. **For os_click_element legacy path, prefer text= over label=N.** Text matches survive screen layout changes; label numbers don't.
 
 Write 3-8 numbered steps with exact tool calls.
 PLAN:`,
                         },
                     ],
                     modelOverride: planModel,
+                    serverPromptSlug: "orchestrator-base",
                 });
-                const planText = planResponse?.choices?.[0]?.message?.content || "";
+                const rawPlanText = planResponse?.choices?.[0]?.message?.content || "";
+                const { defangPlanInjection } = await import("./agents/defang-plan-injection.js");
+                const defanged = defangPlanInjection(rawPlanText);
+                const planText = defanged.text;
+                if (defanged.scrubbed) {
+                    console.warn(`  ⚠️ Orchestrator plan scrubbed (${defanged.patternsHit} identity-affirming pattern(s) neutralized)`);
+                }
 
                 if (planText.length > 20) {
                     // Check if orchestrator wants to ask the user a question
@@ -2129,7 +2175,7 @@ PLAN:`,
                     } else {
                         iterationMessages.push({
                             role: "system" as const,
-                            content: `[ORCHESTRATOR PLAN — follow precisely]\n${planText}\n\n[EXECUTION RULES]\n- Follow the plan step by step\n- ALWAYS use os_click_element with text= (e.g., text="Perfect") — NOT label numbers\n- os_click_element auto-double-clicks in Spotify/Music apps (plays the song)\n- After playing a song: MUST call spotify action='now_playing' to VERIFY the correct track is actually playing\n- Do NOT say "Done" until now_playing confirms the correct song name\n- If a step fails, use os_nav + os_click_element text= as fallback`,
+                            content: `[ORCHESTRATOR PLAN — follow precisely]\n${planText}\n\n[EXECUTION RULES]\n- Follow the plan step by step.\n- For "click X" steps, ALWAYS try os_smart_click first (it cascades AX → OmniParser → UI-TARS automatically). Only fall back to os_nav+os_click_element text= or os_ocr_click if os_smart_click returns cascade_miss.\n- Raw apple_script keystroke sequences ("cmd+n then type then return") fire blind and silently fail when focus is wrong. They are the LAST resort, never the first attempt.\n- For Spotify/Music apps, os_click_element auto-double-clicks (plays the song). After playing a song, MUST call spotify action='now_playing' to verify the correct track is playing before saying "Done".\n- For ALL OTHER UI-driving tasks (sent a message, opened a tab, clicked through a form, etc.), MUST call os_visual_verify (or os_screenshot + inspect the result) before saying "Done". Never claim success off a fire-and-forget tool call.\n- If a step fails, escalate via the cascade: os_smart_click → os_inspect+os_click_id → os_nav+os_click_element text= → os_ocr_click.`,
                         });
                     }
                     console.log(

@@ -32,6 +32,8 @@ pub enum Provider {
     Google,
     Openai,
     Amazon,
+    Deepseek,
+    Zai,
 }
 
 #[napi(object)]
@@ -255,6 +257,51 @@ fn build_model_registry() -> HashMap<String, ModelInfo> {
         supports_parallel_tools: true,
         supports_vision: false,
         provider: Provider::Amazon,
+    });
+
+    m.insert("deepseek/deepseek-chat-v3.1".into(), ModelInfo {
+        id: "deepseek/deepseek-chat-v3.1".into(),
+        display_name: "DeepSeek V3.1".into(),
+        input_cost_per_1m: 0.27,
+        output_cost_per_1m: 1.10,
+        tier: 5,
+        speed: Speed::Fast,
+        strengths: vec!["agentic".into(), "tool_use".into(), "reasoning".into(), "coding".into(), "balanced".into()],
+        max_tokens: 8192,
+        supports_tools: true,
+        supports_parallel_tools: true,
+        supports_vision: false,
+        provider: Provider::Deepseek,
+    });
+
+    m.insert("deepseek/deepseek-v3.2-exp".into(), ModelInfo {
+        id: "deepseek/deepseek-v3.2-exp".into(),
+        display_name: "DeepSeek V3.2 (exp)".into(),
+        input_cost_per_1m: 0.27,
+        output_cost_per_1m: 0.40,
+        tier: 5,
+        speed: Speed::Fast,
+        strengths: vec!["agentic".into(), "tool_use".into(), "reasoning".into(), "experimental".into()],
+        max_tokens: 8192,
+        supports_tools: true,
+        supports_parallel_tools: true,
+        supports_vision: false,
+        provider: Provider::Deepseek,
+    });
+
+    m.insert("z-ai/glm-4.6".into(), ModelInfo {
+        id: "z-ai/glm-4.6".into(),
+        display_name: "GLM 4.6".into(),
+        input_cost_per_1m: 0.55,
+        output_cost_per_1m: 2.20,
+        tier: 5,
+        speed: Speed::Fast,
+        strengths: vec!["tool_use".into(), "agentic".into(), "long_context".into(), "balanced".into()],
+        max_tokens: 8192,
+        supports_tools: true,
+        supports_parallel_tools: true,
+        supports_vision: false,
+        provider: Provider::Zai,
     });
 
     m
@@ -825,21 +872,35 @@ fn get_dominant_failure_type(model_id: &str) -> String {
     "server_error".to_string()
 }
 
-/// Horizontal failover: switch to same-tier different-provider model
 #[napi]
 pub fn get_horizontal_failover(model_id: String) -> Option<String> {
+    get_horizontal_failover_excluding(model_id, vec![])
+}
+
+#[napi]
+pub fn get_horizontal_failover_excluding(
+    model_id: String,
+    exclude: Vec<String>,
+) -> Option<String> {
     let model = MODEL_REGISTRY.get(&model_id)?;
 
     let mut candidates: Vec<&ModelInfo> = MODEL_REGISTRY.values()
         .filter(|m| {
             m.id != model_id
+                && !exclude.contains(&m.id)
                 && m.provider != model.provider
                 && m.supports_tools
                 && (m.tier as i32 - model.tier as i32).unsigned_abs() <= 2
         })
         .collect();
 
-    candidates.sort_by_key(|m| (m.tier as i32 - model.tier as i32).unsigned_abs());
+    candidates.sort_by(|a, b| {
+        let da = (a.tier as i32 - model.tier as i32).unsigned_abs();
+        let db = (b.tier as i32 - model.tier as i32).unsigned_abs();
+        da.cmp(&db)
+            .then_with(|| a.input_cost_per_1m.partial_cmp(&b.input_cost_per_1m).unwrap_or(std::cmp::Ordering::Equal))
+            .then_with(|| a.id.cmp(&b.id))
+    });
 
     candidates.first().map(|m| m.id.clone())
 }

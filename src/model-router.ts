@@ -96,6 +96,7 @@ interface NativeModelRouter {
     shouldCascadeEscalate(response: string, originalMessage: string, currentModelId: string): { should_escalate: boolean; reason: string };
     getCascadeNext(currentModelId: string): string | null;
     getHorizontalFailover(modelId: string): string | null;
+    getHorizontalFailoverExcluding(modelId: string, exclude: string[]): string | null;
     isCircuitOpenNapi(modelId: string): boolean;
     getProviderOrder(modelId: string): string[] | null;
     getConversationContext(): any;
@@ -234,8 +235,18 @@ export function isCircuitOpen(modelId: string): boolean {
     return false;
 }
 
-export function getHorizontalFailoverModel(modelId: string): string | null {
+let warnedAboutMissingExclude = false;
+export function getHorizontalFailoverModel(modelId: string, exclude?: string[]): string | null {
     if (native) {
+        if (exclude && exclude.length > 0) {
+            if (native.getHorizontalFailoverExcluding) {
+                return native.getHorizontalFailoverExcluding(modelId, exclude);
+            }
+            if (!warnedAboutMissingExclude) {
+                warnedAboutMissingExclude = true;
+                console.warn("⚠️  native router missing getHorizontalFailoverExcluding — rebuild native module to restore full fallback chain");
+            }
+        }
         return native.getHorizontalFailover(modelId);
     }
     return null;
@@ -301,11 +312,6 @@ export function shouldCascadeEscalate(response: string, originalMessage: string,
 
 export function getCascadeNext(currentModelId: string): string | null {
     if (native) return native.getCascadeNext(currentModelId);
-    return null;
-}
-
-export function getHorizontalFailover(modelId: string): string | null {
-    if (native) return native.getHorizontalFailover(modelId);
     return null;
 }
 

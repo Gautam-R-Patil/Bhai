@@ -89,14 +89,10 @@
                 ]
             },
             {
-                "from": "../skills",
-                "to": "bot/skills",
+                "from": "../skills/templates",
+                "to": "bot/skills/templates",
                 "filter": [
-                    "**/*",
-                    "!convex",
-                    "!convex/**",
-                    "!convex-*",
-                    "!convex-*/**"
+                    "**/*"
                 ]
             },
             {

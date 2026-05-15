@@ -263,4 +263,41 @@ export default defineSchema({
   })
     .index("by_slug", ["slug"])
     .index("by_active", ["isActive"]),
+
+  // ── Per-user bot-authored prompt addenda (layered on top of core prompts)
+  // Bot CANNOT edit system_prompts/system_skills. It writes here instead, per
+  // user, and the assembler appends these after the core prompts.
+  user_prompt_addenda: defineTable({
+    otplessUserId: v.string(),
+    slug: v.string(),                    // e.g. "self-improvement" or "skill-coding-style"
+    kind: v.union(
+      v.literal("personality"),
+      v.literal("skill"),
+      v.literal("memory"),
+    ),
+    title: v.string(),
+    content: v.string(),                 // markdown, ≤ 50KB enforced at write
+    version: v.number(),
+    isActive: v.boolean(),
+    hits: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_user", ["otplessUserId"])
+    .index("by_user_active", ["otplessUserId", "isActive"])
+    .index("by_user_slug", ["otplessUserId", "slug"]),
+
+  user_prompt_addendum_history: defineTable({
+    otplessUserId: v.string(),
+    addendumId: v.id("user_prompt_addenda"),
+    slug: v.string(),
+    content: v.string(),
+    version: v.number(),
+    authoredAt: v.number(),
+    reason: v.string(),                  // why the bot made this edit
+    revertedFrom: v.optional(v.number()),
+  })
+    .index("by_addendum_version", ["addendumId", "version"])
+    .index("by_user", ["otplessUserId"])
+    .index("by_user_authoredAt", ["otplessUserId", "authoredAt"]),
 });

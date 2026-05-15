@@ -66,17 +66,9 @@ export async function initSkillMetadata(): Promise<void> {
         }
 
         const data = await response.json() as { skills: SkillMetadata[] };
-        const serverSkills = data.skills || [];
-        // Merge in auto-generated skills written to skills/auto/ by the
-        // auto-skill-creator after complex tasks. Without this, the tool
-        // router never sees agent-authored procedures.
-        const { mergeAutoSkills } = await import("./auto-skill-ingest.js");
-        cachedMetadata = mergeAutoSkills(serverSkills);
-        const autoCount = cachedMetadata.filter((s) => s.source === "auto").length;
+        cachedMetadata = data.skills || [];
         const storeCount = cachedMetadata.filter((s) => s.source === "store").length;
-        console.log(
-            `📚 ${cachedMetadata.length} skill(s) available (${storeCount} store, ${autoCount} auto)`,
-        );
+        console.log(`📚 ${cachedMetadata.length} skill(s) available (${storeCount} store)`);
     } catch (err) {
         console.warn("⚠️  Skill metadata fetch failed (non-fatal):", (err as Error).message);
     }

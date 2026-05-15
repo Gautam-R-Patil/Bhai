@@ -57,7 +57,9 @@ export const enum Provider {
   Anthropic = 'Anthropic',
   Google = 'Google',
   Openai = 'Openai',
-  Amazon = 'Amazon'
+  Amazon = 'Amazon',
+  Deepseek = 'Deepseek',
+  Zai = 'Zai'
 }
 export interface ModelInfo {
   id: string
@@ -128,8 +130,8 @@ export declare function getAvgLatencyNapi(modelId: string): number
 export declare function isRateLimitedNapi(modelId: string): boolean
 export declare function updateToolStats(modelId: string, success: boolean, taskType?: string | undefined | null): void
 export declare function recordQualityFailure(modelId: string, taskType: string, reason: string): void
-/** Horizontal failover: switch to same-tier different-provider model */
 export declare function getHorizontalFailover(modelId: string): string | null
+export declare function getHorizontalFailoverExcluding(modelId: string, exclude: Array<string>): string | null
 export declare function getSessionCostSummary(): string
 export declare function resetSessionStats(): void
 export interface Signals {

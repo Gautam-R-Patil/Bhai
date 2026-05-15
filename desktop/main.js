@@ -3911,6 +3911,26 @@ function registerIPC() {
             store.set("prefs", next);
             try { saveEnvKVs(envKVsFromPersonalize(next.personalize)); }
             catch (e) { console.warn("[setup:save-personalize] env mirror failed:", e.message); }
+            // Mirror personality choice into a separate file that the bot's
+            // boot sequence picks up and pushes to /api/user/addendum/upsert.
+            // Idempotent: bot renames to .user-personality.synced.json after
+            // successful upload.
+            try {
+                if (next.personalize && next.personalize.personality) {
+                    const personalityPath = path.join(app.getPath("userData"), ".user-personality.json");
+                    // mode 0o600: owner-only read/write. File contains the user's
+                    // free-text personality notes, which can include personal
+                    // context the user wouldn't want readable by other local
+                    // accounts on shared macOS/Linux systems.
+                    fs.writeFileSync(personalityPath, JSON.stringify({
+                        preset: next.personalize.personality.preset,
+                        notes: next.personalize.personality.notes || "",
+                        updatedAt: Date.now(),
+                    }, null, 2), { mode: 0o600 });
+                }
+            } catch (e) {
+                console.warn("[setup:save-personalize] personality file write failed:", e.message);
+            }
             return { success: true, prefs: next };
         } catch (err) {
             return { success: false, error: err.message };

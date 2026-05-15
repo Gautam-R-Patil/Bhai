@@ -9,13 +9,10 @@
 // gray-matter markdown skills to skills/auto/.
 
 import type { LLMClient, ChatCompletionMessageParam } from "../llm.js";
-import fs from "node:fs";
-import path from "node:path";
 import { extractJSON } from "../utils/json-extract.js";
 
 // ── Constants ────────────────────────────────────
 
-const SKILLS_AUTO_DIR = path.join(process.cwd(), "skills", "auto");
 const MIN_TOOL_CALLS = 5;             // Don't create skills for simple tasks
 const MAX_TOOL_HISTORY_ITEMS = 40;    // Cap tool history to keep prompt manageable
 const SIMILARITY_THRESHOLD = 0.6;     // Threshold for detecting duplicate skills
@@ -200,81 +197,59 @@ Output ONLY valid JSON.`;
 // ── Skill File Writer ────────────────────────────
 
 function writeSkillFile(analysis: SkillAnalysis, basedOnTask: string): string | null {
-    const filePath = path.join(SKILLS_AUTO_DIR, `${analysis.slug}.md`);
+    // Auto-skills now go into the local self-improvement draft buffer
+    // (kind: "skill"). The nightly synthesis pass merges drafts per slug
+    // and uploads to the server's user_prompt_addenda table. Nothing
+    // touches the user's filesystem anymore.
+    try {
+        const { addDraft, listDrafts } = require("../memory/self-improvement-drafts.js") as typeof import("../memory/self-improvement-drafts.js");
+        const slug = `skill-${analysis.slug}`;
 
-    // Check for exact slug duplicate
-    if (fs.existsSync(filePath)) {
-        console.log(`[AUTO-SKILL] Skill "${analysis.slug}" already exists, skipping`);
+        // De-dup: if a draft for this slug already contains the same first
+        // procedure step, skip. (Synthesis itself dedupes too, but cheaper
+        // here.) Empty/whitespace procedure[0] would make .includes("") true
+        // unconditionally — guard against that so we don't lock out the slug.
+        const firstStep = (analysis.procedure[0] || "").trim();
+        if (firstStep.length > 0) {
+            const existing = listDrafts(slug);
+            if (existing.length > 0 && existing[0].content.includes(firstStep)) {
+                console.log(`[AUTO-SKILL] Skill "${slug}" already drafted today, skipping`);
+                return null;
+            }
+        }
+
+        const procedureSection = analysis.procedure.map((step, i) => `${i + 1}. ${step}`).join("\n");
+        const pitfallsSection = analysis.pitfalls.length > 0
+            ? analysis.pitfalls.map((p) => `- ${p}`).join("\n")
+            : "- No known pitfalls identified yet.";
+        const verificationSection = analysis.verification.length > 0
+            ? analysis.verification.map((v) => `- ${v}`).join("\n")
+            : "- Verify the final output matches the expected result.";
+
+        const content = `# ${analysis.name}\n\n${analysis.description}\n\n## Procedure\n\n${procedureSection}\n\n## Common Pitfalls\n\n${pitfallsSection}\n\n## Verification Steps\n\n${verificationSection}\n\n*Triggers: ${analysis.triggers.join(", ") || "general"}*\n*Tools used: ${analysis.tools_required.join(", ") || "various"}*\n`;
+
+        const reason = `Auto-skill from successful task: ${basedOnTask.substring(0, 100)}`;
+        addDraft({ kind: "skill", slug, content, reason });
+        console.log(`[AUTO-SKILL] Drafted "${slug}" (will sync at nightly synthesis)`);
+        return slug;
+    } catch (err) {
+        console.warn("[AUTO-SKILL] Draft failed (non-fatal):", (err as Error).message);
         return null;
     }
-
-    // Ensure directory exists
-    if (!fs.existsSync(SKILLS_AUTO_DIR)) {
-        fs.mkdirSync(SKILLS_AUTO_DIR, { recursive: true });
-    }
-
-    // Build gray-matter frontmatter + markdown content
-    const triggersYaml = analysis.triggers.map(t => `  - "${t.replace(/"/g, '\\"')}"`).join("\n");
-    const toolsYaml = analysis.tools_required.map(t => `  - "${t}"`).join("\n");
-
-    const procedureSection = analysis.procedure
-        .map((step, i) => `${i + 1}. ${step}`)
-        .join("\n");
-
-    const pitfallsSection = analysis.pitfalls.length > 0
-        ? analysis.pitfalls.map(p => `- ${p}`).join("\n")
-        : "- No known pitfalls identified yet.";
-
-    const verificationSection = analysis.verification.length > 0
-        ? analysis.verification.map(v => `- ${v}`).join("\n")
-        : "- Verify the final output matches the expected result.";
-
-    const content = `---
-name: "${analysis.name.replace(/"/g, '\\"')}"
-slug: "${analysis.slug}"
-description: "${analysis.description.replace(/"/g, '\\"')}"
-triggers:
-${triggersYaml}
-tools_required:
-${toolsYaml}
-source: auto_generated
-created_at: "${new Date().toISOString()}"
-outcome_when_created: "success"
----
-
-# ${analysis.name}
-
-${analysis.description}
-
-## Procedure
-
-${procedureSection}
-
-## Common Pitfalls
-
-${pitfallsSection}
-
-## Verification Steps
-
-${verificationSection}
-
----
-*Auto-generated from task: "${basedOnTask.substring(0, 100).replace(/"/g, '\\"')}"*
-*Tools used: ${analysis.tools_required.join(", ") || "various"}*
-`;
-
-    fs.writeFileSync(filePath, content, "utf-8");
-    return filePath;
 }
 
 // ── Helpers ──────────────────────────────────────
 
-/** List slugs of all existing auto-generated skills. */
+/** List slugs of auto-generated skills currently in the local draft buffer. */
 function listExistingSkillSlugs(): string[] {
-    if (!fs.existsSync(SKILLS_AUTO_DIR)) return [];
-    return fs.readdirSync(SKILLS_AUTO_DIR)
-        .filter(f => f.endsWith(".md"))
-        .map(f => f.replace(".md", ""));
+    try {
+        const { getDraftSlugs } = require("../memory/self-improvement-drafts.js") as typeof import("../memory/self-improvement-drafts.js");
+        return getDraftSlugs()
+            .filter((s) => s.startsWith("skill-"))
+            .map((s) => s.replace(/^skill-/, ""));
+    } catch {
+        return [];
+    }
 }
 
 /** Extract lowercase keywords from a string for similarity comparison. */

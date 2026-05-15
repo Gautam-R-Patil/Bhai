@@ -315,11 +315,35 @@ http.route({
     }
 
     // 5. Assemble system prompt
-    //    If client sends systemPromptOverride, use it directly (for sub-agents, classifiers, etc.)
-    //    Otherwise, build from server DB using platform + skillSlugs.
+    //    If client sends serverPromptSlug, fetch THAT slug's content from the
+    //    DB and use it as the override (lets the orchestrator and other internal
+    //    callers select an alternative base prompt without bundling it locally).
+    //    If client sends systemPromptOverride, use it directly (for sub-agents,
+    //    classifiers, etc.). Otherwise, build from server DB via platform + skillSlugs.
     const messages = Array.isArray(body.messages) ? [...body.messages] : [];
 
-    if (body.systemPromptOverride && typeof body.systemPromptOverride === "string") {
+    // Resolve a server-side slug into a literal override before the override path.
+    let resolvedOverride: string | undefined = body.systemPromptOverride;
+    if (!resolvedOverride && body.serverPromptSlug && typeof body.serverPromptSlug === "string") {
+      try {
+        const slugRow = await ctx.runQuery(
+          internal.systemContent.getPromptBySlug,
+          { slug: body.serverPromptSlug },
+        );
+        if (slugRow && typeof slugRow.content === "string") {
+          resolvedOverride = slugRow.content;
+        } else {
+          // Caller asked for a specific slug but it's not seeded. Falling
+          // through to the default identity stack means the caller's
+          // expectations don't match what the model receives — log loudly.
+          console.warn(`[LLM-Proxy] serverPromptSlug '${body.serverPromptSlug}' not found; falling back to default prompt stack`);
+        }
+      } catch (err) {
+        console.warn(`[LLM-Proxy] serverPromptSlug lookup failed for '${body.serverPromptSlug}':`, (err as Error).message);
+      }
+    }
+
+    if (resolvedOverride && typeof resolvedOverride === "string") {
       // Client-specified override: sub-agents, JSON planners, and classifiers
       // still want the narrow task-specific prompt — but we always prepend the
       // server-side `rules` slug so core safety rails are non-overridable even
@@ -337,8 +361,8 @@ http.route({
       } catch { /* missing rules slug — proceed without */ }
 
       const composed = safetyRules
-        ? `${safetyRules}\n\n${body.systemPromptOverride}`
-        : body.systemPromptOverride;
+        ? `${safetyRules}\n\n${resolvedOverride}`
+        : resolvedOverride;
 
       if (messages.length > 0 && messages[0].role === "system") {
         messages[0] = {
@@ -1876,6 +1900,137 @@ http.route({
         .replace(/\n.*$/s, "")
         .trim();
       return new Response(JSON.stringify({ error: clean || "validate failed" }), { status: 401, headers: { "Content-Type": "application/json" } });
+    }
+  }),
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// USER PROMPT ADDENDA — bot writes per-user learnings (server-side)
+// The bot drafts learnings locally throughout the day, then synthesizes them
+// at night via dream replay and posts the merged result here. Layered onto
+// the system prompt by `assembleSystemPrompt` in systemContent.ts.
+// ══════════════════════════════════════════════════════════════════════════
+
+// POST /api/user/addendum/upsert — Create or replace a per-user addendum.
+// The `allowUserControlled` flag is gated by an explicit request body field
+// and is only respected when the slug is in the user-controlled set on the
+// server side. There's no way for a caller to escalate privileges by setting
+// it for a non-user-controlled slug.
+http.route({
+  path: "/api/user/addendum/upsert",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+
+    let body: any;
+    try { body = await request.json(); } catch {
+      return new Response(JSON.stringify({ error: "Invalid JSON" }), { status: 400, headers: { "Content-Type": "application/json" } });
+    }
+    const { slug, kind, title, content, reason, allowUserControlled } = body || {};
+    if (!slug || !kind || !title || !content || !reason) {
+      return new Response(JSON.stringify({ error: "slug, kind, title, content, reason are required" }), { status: 400, headers: { "Content-Type": "application/json" } });
+    }
+    if (kind !== "personality" && kind !== "skill" && kind !== "memory") {
+      return new Response(JSON.stringify({ error: "kind must be personality | skill | memory" }), { status: 400, headers: { "Content-Type": "application/json" } });
+    }
+
+    try {
+      const result = await ctx.runMutation(internal.userAddenda.upsertAddendum, {
+        otplessUserId: account.otplessUserId,
+        slug,
+        kind,
+        title,
+        content,
+        reason,
+        allowUserControlled: allowUserControlled === true,
+      });
+      if (!result.success) {
+        return new Response(JSON.stringify(result), { status: 400, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify(result), { status: 200, headers: { "Content-Type": "application/json" } });
+    } catch (err: any) {
+      return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: { "Content-Type": "application/json" } });
+    }
+  }),
+});
+
+// GET /api/user/addendum/list — List the caller's addenda
+http.route({
+  path: "/api/user/addendum/list",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+    try {
+      const rows = await ctx.runQuery(internal.userAddenda.listForUser, { otplessUserId: account.otplessUserId });
+      return new Response(JSON.stringify({ addenda: rows }), { status: 200, headers: { "Content-Type": "application/json" } });
+    } catch (err: any) {
+      return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: { "Content-Type": "application/json" } });
+    }
+  }),
+});
+
+// POST /api/user/addendum/revert — Revert an addendum to a prior version
+http.route({
+  path: "/api/user/addendum/revert",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+
+    let body: any;
+    try { body = await request.json(); } catch {
+      return new Response(JSON.stringify({ error: "Invalid JSON" }), { status: 400, headers: { "Content-Type": "application/json" } });
+    }
+    const { slug, toVersion } = body || {};
+    if (!slug || typeof toVersion !== "number") {
+      return new Response(JSON.stringify({ error: "slug and toVersion are required" }), { status: 400, headers: { "Content-Type": "application/json" } });
+    }
+    try {
+      const result = await ctx.runMutation(internal.userAddenda.revertAddendum, {
+        otplessUserId: account.otplessUserId,
+        slug,
+        toVersion,
+      });
+      if (!result.success) {
+        return new Response(JSON.stringify(result), { status: 400, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify(result), { status: 200, headers: { "Content-Type": "application/json" } });
+    } catch (err: any) {
+      return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: { "Content-Type": "application/json" } });
+    }
+  }),
+});
+
+// POST /api/user/addendum/deactivate — Soft-delete an addendum
+http.route({
+  path: "/api/user/addendum/deactivate",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+
+    let body: any;
+    try { body = await request.json(); } catch {
+      return new Response(JSON.stringify({ error: "Invalid JSON" }), { status: 400, headers: { "Content-Type": "application/json" } });
+    }
+    const { slug } = body || {};
+    if (!slug) {
+      return new Response(JSON.stringify({ error: "slug is required" }), { status: 400, headers: { "Content-Type": "application/json" } });
+    }
+    try {
+      const result = await ctx.runMutation(internal.userAddenda.deactivateAddendum, {
+        otplessUserId: account.otplessUserId,
+        slug,
+      });
+      return new Response(JSON.stringify(result), { status: 200, headers: { "Content-Type": "application/json" } });
+    } catch (err: any) {
+      return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: { "Content-Type": "application/json" } });
     }
   }),
 });
