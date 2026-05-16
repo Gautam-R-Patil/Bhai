@@ -189,6 +189,7 @@ desktop/hostinger-upload/
 !desktop/tests/awakening.snapshot.test.js
 !desktop/tests/wizard.persona.test.js
 !desktop/tests/profile-merge.test.js
+!src/setup/wizard-seed.test.ts
 !src/forge/__tests__/
 !src/forge/__tests__/types.test.ts
 !src/forge/__tests__/store-types-extension.test.ts

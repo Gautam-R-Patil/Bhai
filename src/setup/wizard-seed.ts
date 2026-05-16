@@ -20,6 +20,10 @@ import { updateIdentityProfile } from "../memory/identity.js";
 export interface WizardProfileShape {
     name?: string;
     tone?: string;
+    // W2: persona enum + metadata. Persisted to identity.extra after validation.
+    persona?: string;
+    personaConfidence?: number;
+    personaSelectedAt?: number;
     // Legacy v1 fields — preserved verbatim into identity.extra
     age?: number | string;
     gender?: string;
@@ -77,9 +81,32 @@ export function buildIdentityUpdate(profile: WizardProfileShape): {
     if (typeof profile.tone === "string" && profile.tone.trim()) {
         update.preferences = { communication_style: profile.tone.trim() };
     }
+    // ── W2: persona / personaConfidence / personaSelectedAt ──
+    // Validate before they land in identity.extra so a corrupt profile can't
+    // poison runtime tool-router weights (read by src/tool-router.ts) with
+    // a bogus persona string. The agent reads identity.extra?.persona on
+    // each turn; an invalid value is the same as "no persona" — explorer-equivalent.
+    const PERSONA_VALUES = new Set(["developer", "founder", "creator", "researcher", "explorer"]);
+
     // Preserve legacy v1 fields (age, gender) + any unknown keys in identity.extra.
-    const known = new Set(["name", "tone"]);
+    // Persona is special-cased: we validate it; everything else is pass-through.
+    const known = new Set(["name", "tone", "persona", "personaConfidence", "personaSelectedAt"]);
     const extra: Record<string, unknown> = {};
+
+    if (typeof profile.persona === "string" && PERSONA_VALUES.has(profile.persona)) {
+        extra.persona = profile.persona;
+        if (typeof profile.personaConfidence === "number"
+            && profile.personaConfidence >= 0
+            && profile.personaConfidence <= 1) {
+            extra.personaConfidence = profile.personaConfidence;
+        } else {
+            extra.personaConfidence = 1.0;
+        }
+        if (typeof profile.personaSelectedAt === "number" && profile.personaSelectedAt > 0) {
+            extra.personaSelectedAt = profile.personaSelectedAt;
+        }
+    }
+    // Pass-through for legacy v1 fields (age, gender) and any unknown keys.
     for (const k of Object.keys(profile)) {
         if (!known.has(k) && profile[k] !== undefined && profile[k] !== null) {
             extra[k] = profile[k];
