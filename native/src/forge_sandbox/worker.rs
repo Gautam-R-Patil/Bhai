@@ -151,6 +151,7 @@ impl Worker {
             Ok(Ok(None)) => return Err(InvokeError::Ipc("child closed stdout".into())),
             Ok(Err(e)) => return Err(InvokeError::Pipe(e)),
             Err(_) => {
+                let _ = self.child.start_kill();
                 return Err(InvokeError::Timeout { budget_ms: deadline.as_millis() as u64 });
             }
         };
@@ -320,5 +321,56 @@ mod tests {
     fn truncate_under_max_returns_as_is() {
         let s = "hello";
         assert_eq!(truncate(s, 100), "hello");
+    }
+
+    #[tokio::test]
+    async fn invoke_times_out_when_child_does_not_respond() {
+        let child = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(r#"echo '{"id":"__boot__","ok":true}'; sleep 60"#)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn");
+        let paths = Sandpath { handler_dir: std::env::temp_dir() };
+        let mut w = Worker::from_child("slow".into(), paths, child).await.expect("boot");
+
+        w.try_acquire_inflight().expect("acquire");
+        let start = Instant::now();
+        let r = w.invoke(serde_json::json!({}), Duration::from_millis(200)).await;
+        let elapsed = start.elapsed();
+        w.release_inflight();
+
+        match r {
+            Err(InvokeError::Timeout { budget_ms }) => assert_eq!(budget_ms, 200),
+            other => panic!("expected Timeout, got {other:?}"),
+        }
+        assert!(elapsed < Duration::from_secs(5), "invoke should have killed quickly, took {elapsed:?}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn timeout_does_not_leak_child_process() {
+        let child = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(r#"echo '{"id":"__boot__","ok":true}'; sleep 60"#)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn");
+        let paths = Sandpath { handler_dir: std::env::temp_dir() };
+        let mut w = Worker::from_child("leak".into(), paths, child).await.expect("boot");
+        let pid = w.pid;
+
+        w.try_acquire_inflight().expect("acquire");
+        let _ = w.invoke(serde_json::json!({}), Duration::from_millis(100)).await;
+        w.release_inflight();
+
+        drop(w);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let kill_check = unsafe { libc::kill(pid as i32, 0) };
+        assert!(kill_check != 0, "child pid {pid} should be reaped after Worker drop");
     }
 }
