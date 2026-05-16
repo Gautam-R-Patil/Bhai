@@ -126,3 +126,26 @@ export interface ForgeStats {
 // describes additional aggregate metrics (successRateAcrossActiveTools, nightly synthesis
 // counts) that depend on data Phases 3-6 will start emitting. Extend this interface as
 // later phases land, keeping field names consistent with what's already shipped.
+
+// ── Persisted dynamic tool manifest ───────────────
+
+import type { Capabilities } from "./capabilities.js";
+
+export interface PersistedToolManifest {
+    /** Slug, must match /^[a-z][a-z0-9_]*$/ — same regex as create-tool.ts:324. */
+    slug: string;
+    /** One-sentence description (shown in tool schema + approval prompt). */
+    description: string;
+    /** Capabilities declared by the verifier and validated by validateCapabilities. */
+    capabilities: Capabilities;
+    /** JSON-schema for the tool's parameters object. */
+    parametersSchema: Record<string, unknown>;
+    /** Semantic version — initial value "0.1.0", bumped on update. */
+    version: string;
+    /** Wall-clock ms epoch the user clicked approve. */
+    approvedAt: number;
+    /** Verbatim text the user used to approve. Audit-trail; required for revoke proof. */
+    userQuote: string;
+    /** First 16 hex chars of sha256(handler.js content). Tampering detector. */
+    handlerHash: string;
+}
