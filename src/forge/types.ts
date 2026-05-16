@@ -37,7 +37,7 @@ export type SynthesisResult =
           reusedFrom: { matchSimilarity: number; source: "function_gemma" | "library_embedding" };
       }
     | { kind: "synthesized"; slug: string; attempts: number; testsPassed: number; testsTotal: number }
-    | { kind: "awaiting_approval"; slug: string; capabilitiesRequested: string[] }
+    | { kind: "awaiting_approval"; slug: string; capabilitiesRequested: Capabilities }
     | { kind: "failed"; report: SynthesisFailureReport };
 
 // NOTE: The variants here carry `slug: string` rather than `tool: ToolMetadata` as the
