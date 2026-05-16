@@ -2,6 +2,11 @@
 // Single source of truth for every user-visible string in the wizard.
 // Step renderers MUST read through Copy.get(stepId, key). Inline literals
 // in step files are a review-blocking finding.
+//
+// Wrapped in an IIFE so local `const COPY` / `const api` don't collide with
+// identically-named globals in other top-level wizard modules (chips.js,
+// cinematic.js) when this file is loaded as a classic <script>.
+(function () {
 "use strict";
 
 const COPY = {
@@ -131,6 +136,7 @@ function get(stepId, key) {
     return val == null ? null : val;
 }
 
-const api = { get, _COPY: COPY };
+const api = { get: get, _COPY: COPY };
 if (typeof window !== "undefined") window.Copy = api;
-if (typeof module !== "undefined" && module.exports) module.exports = { Copy: api, get };
+if (typeof module !== "undefined" && module.exports) module.exports = { Copy: api, get: get };
+})();
