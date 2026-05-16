@@ -9,6 +9,8 @@
  * composes the optimal system prompt at runtime.
  */
 
+import { getPersonaIdentityLine } from "./persona-bias.js";
+
 // ── Types ─────────────────────────────────────
 
 export interface PromptContext {
@@ -19,6 +21,7 @@ export interface PromptContext {
     activeSkills?: string[];
     hour?: number;
     isProactive?: boolean;
+    persona?: import("./persona-bias.js").Persona;   // W2: persona specialization
 }
 
 interface PromptModule {
@@ -120,6 +123,20 @@ const MODULES: PromptModule[] = [
         priority: 5,
         tokenEstimate: 20,
     },
+    {
+        name: "persona_identity",
+        condition: (ctx) => {
+            if (process.env.ATLAS_NO_PERSONA_BIAS === "true") return false;
+            if (!ctx.persona) return false;
+            return getPersonaIdentityLine(ctx.persona) != null;
+        },
+        // Static placeholder; substituted at assemble-time with the actual
+        // identity line from persona-bias.ts. This avoids restructuring
+        // the MODULES array to support dynamic content strings.
+        content: "__PERSONA_IDENTITY_LINE__",
+        priority: 9,        // Higher than tone modules — persona is a stronger signal.
+        tokenEstimate: 35,
+    },
 ];
 
 // ── Assemble ──────────────────────────────────
@@ -142,7 +159,19 @@ export function assembleDynamicPrompt(
 
     for (const mod of matching) {
         if (tokensUsed + mod.tokenEstimate > tokenBudget) continue;
-        parts.push(mod.content);
+
+        // W2: substitute the persona placeholder with the actual identity line.
+        // condition() already verified getPersonaIdentityLine returns non-null,
+        // but re-check defensively so a future MODULES edit can't ship the
+        // literal placeholder string into the prompt.
+        let content = mod.content;
+        if (content === "__PERSONA_IDENTITY_LINE__") {
+            const line = getPersonaIdentityLine(ctx.persona);
+            if (!line) continue;
+            content = line;
+        }
+
+        parts.push(content);
         tokensUsed += mod.tokenEstimate;
     }
 

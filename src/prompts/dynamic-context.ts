@@ -8,6 +8,7 @@ import {
     detectTaskType,
     type PromptContext,
 } from "./dynamic-assembler.js";
+import type { Persona } from "./persona-bias.js";
 
 export interface DynamicContextOpts {
     hour?: number;
@@ -15,6 +16,7 @@ export interface DynamicContextOpts {
     relationshipDepth?: number;
     activeSkills?: string[];
     preferredLength?: "terse" | "normal" | "detailed";
+    persona?: Persona;          // W2: piped through to PromptContext.persona
 }
 
 // Map the emotion-detector's primary label into the slots dynamic-assembler's
@@ -43,6 +45,7 @@ export function buildDynamicContextReminder(
         relationshipDepth: opts.relationshipDepth,
         activeSkills: opts.activeSkills,
         preferredLength: opts.preferredLength,
+        persona: opts.persona,    // W2
     };
 
     return assembleDynamicPrompt(ctx);
