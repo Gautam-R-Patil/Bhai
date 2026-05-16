@@ -8,34 +8,44 @@
 <link rel="stylesheet" href="styles.css"/>
 <link rel="stylesheet" href="components/components.css"/>
 </head>
-<body>
-<div class="bg-canvas">
-    <div class="orb orb-1"></div>
-    <div class="orb orb-2"></div>
-    <div class="orb orb-3"></div>
-    <div class="orb orb-4"></div>
-    <div class="orb orb-5"></div>
-    <div class="orb orb-6"></div>
+<body data-step="welcome">
+
+<!-- Ambient atmosphere — single soft wash, no orbs. -->
+<div class="atmosphere" aria-hidden="true">
+    <div class="atmosphere-wash"></div>
+    <div class="atmosphere-grain"></div>
 </div>
 
-<div class="title-bar">
-    <span class="title-bar-text">A.T.L.A.S Setup</span>
-    <div class="title-bar-buttons">
-        <button class="title-btn" onclick="atlas.minimize()">─</button>
-        <button class="title-btn close" onclick="atlas.close()">✕</button>
+<!-- Chrome -->
+<header class="chrome">
+    <div class="chrome-mark">A.T.L.A.S</div>
+    <div class="chrome-folio" id="chrome-folio">01 / 10</div>
+    <div class="chrome-tools">
+        <button class="chrome-btn" title="Audio" id="audio-toggle" aria-label="Toggle audio">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M11 5L6 9H2v6h4l5 4z"/><path d="M19.07 4.93a10 10 0 010 14.14"/><path d="M15.54 8.46a5 5 0 010 7.07"/>
+            </svg>
+        </button>
+        <button class="chrome-btn" title="Minimize" onclick="atlas.minimize()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+        <button class="chrome-btn" title="Close" onclick="atlas.close()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
     </div>
-</div>
+</header>
 
-<div class="wizard-container">
-    <header class="wizard-head">
-        <h1 id="wizard-header">Welcome</h1>
-        <div id="step-dots" class="step-dots" role="tablist" aria-label="Setup progress"></div>
-    </header>
-    <div id="already-set-strip" class="chip-strip" aria-label="Already configured"></div>
-    <div class="wizard-content">
-        <main id="current-step" class="step-container" aria-live="polite"></main>
-    </div>
-</div>
+<!-- Iridescent rule — scribes left → right → retreat on each step transition. -->
+<div class="iridescent-rule" id="iridescent-rule" aria-hidden="true"></div>
+
+<main class="stage">
+    <article id="step-root" class="step-root"></article>
+</main>
+
+<footer class="indicator" id="indicator" aria-hidden="true"></footer>
+
+<!-- "Already set" chips — moved into a separate slot. Hidden in W1 (rewired in W2 when persona ships). -->
+<div id="already-set-strip" class="chip-strip" hidden></div>
 
 <script src="wizard/router.js"></script>
 <script src="components/status-tile.js"></script>
@@ -54,6 +64,8 @@
 <script src="wizard/steps/permissions.js"></script>
 <script src="wizard/steps/vision-tier.js"></script>
 <script src="wizard/steps/install.js"></script>
+<script src="wizard/cinematic.js"></script>
+<script src="wizard/copy.js"></script>
 <script src="wizard/boot.js"></script>
 </body>
 </html>
