@@ -212,4 +212,80 @@ mod tests {
         assert_eq!(escape_sbpl_string("/has \"quote\""), "/has \\\"quote\\\"");
         assert_eq!(escape_sbpl_string("/back\\slash"), "/back\\\\slash");
     }
+
+    #[tokio::test]
+    #[ignore]
+    async fn macos_spawn_runs_handler_under_sandbox_exec() {
+        use std::time::Duration;
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().expect("tempdir");
+        let handler_dir = dir.path();
+
+        let handler_src = b"module.exports = async function(input) { return { doubled: input.x * 2 }; };\n";
+        std::fs::write(handler_dir.join("handler.js"), handler_src).expect("write handler");
+
+        let sandbox = MacosSandbox;
+        let caps = Capabilities::default();
+        let child = sandbox.spawn("itest", handler_dir, &caps).expect("spawn under sandbox-exec");
+
+        let paths = crate::forge_sandbox::worker::Sandpath { handler_dir: handler_dir.to_path_buf() };
+        let mut w = crate::forge_sandbox::worker::Worker::from_child("itest".into(), paths, child)
+            .await
+            .expect("boot under sandbox-exec");
+
+        w.try_acquire_inflight().expect("acquire");
+        let resp = tokio::time::timeout(
+            Duration::from_secs(10),
+            w.invoke(serde_json::json!({"x": 21}), Duration::from_secs(5)),
+        ).await.expect("timeout").expect("invoke");
+        w.release_inflight();
+
+        assert!(resp.get("ok").and_then(|o| o.as_bool()).unwrap_or(false), "expected ok:true, got {resp}");
+        let result = resp.get("result").expect("result field");
+        let doubled = result.get("doubled").and_then(|d| d.as_i64()).expect("doubled field");
+        assert_eq!(doubled, 42, "21*2 should be 42, got {doubled}");
+
+        let _ = w.shutdown().await;
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn macos_spawn_blocks_disallowed_filesystem_read() {
+        use tempfile::TempDir;
+        let dir = TempDir::new().expect("tempdir");
+        let handler_dir = dir.path();
+        let handler_src = br#"
+            const fs = require("node:fs");
+            module.exports = async function() {
+                try {
+                    const data = fs.readFileSync("/etc/passwd", "utf8");
+                    return { read: data.length };
+                } catch (err) {
+                    return { denied: true, code: err.code };
+                }
+            };
+        "#;
+        std::fs::write(handler_dir.join("handler.js"), handler_src).expect("write handler");
+
+        let sandbox = MacosSandbox;
+        let caps = Capabilities::default();
+        let child = sandbox.spawn("denytest", handler_dir, &caps).expect("spawn");
+        let paths = crate::forge_sandbox::worker::Sandpath { handler_dir: handler_dir.to_path_buf() };
+        let mut w = crate::forge_sandbox::worker::Worker::from_child("denytest".into(), paths, child)
+            .await
+            .expect("boot");
+
+        w.try_acquire_inflight().expect("acquire");
+        let resp = w.invoke(serde_json::json!({}), std::time::Duration::from_secs(5)).await.expect("invoke");
+        w.release_inflight();
+        let _ = w.shutdown().await;
+
+        let result = resp.get("result").expect("result");
+        let denied = result.get("denied").and_then(|d| d.as_bool()).unwrap_or(false);
+        let code = result.get("code").and_then(|c| c.as_str()).unwrap_or("");
+        assert!(denied, "expected denied:true, got {result}");
+        assert!(code == "EACCES" || code == "EPERM",
+                "expected EACCES/EPERM from sandbox, got code={code}");
+    }
 }
