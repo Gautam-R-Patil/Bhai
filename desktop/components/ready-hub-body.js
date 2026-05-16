@@ -150,18 +150,7 @@
         // Cells we render in the new hub-index grid. 6 cells, 3 columns.
         const cellOrder = ["account", "workspace", "hotkey", "voice", "persona", "permissions"];
         for (const id of cellOrder) {
-            let model = TM.tileModel(state, id);
-            if (!model && id === "persona") {
-                model = {
-                    label: "Persona",
-                    value: (state && state.profile && state.profile.persona)
-                          ? (state.profile.persona.charAt(0).toUpperCase() + state.profile.persona.slice(1))
-                          : "Explorer",
-                    status: "ok",
-                    secondary: null,
-                    onClickRoute: null,
-                };
-            }
+            const model = TM.tileModel(state, id);
             if (!model) continue;
             const cell = document.createElement("div");
             cell.className = "hub-cell" + (model.status === "amber" ? " amber" : "");

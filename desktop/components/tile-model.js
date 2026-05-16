@@ -5,7 +5,7 @@
 (function () {
     "use strict";
 
-    const TILE_ORDER = ["account", "overlay", "permissions", "google", "channels", "voice", "theme", "wakeWord"];
+    const TILE_ORDER = ["account", "workspace", "hotkey", "voice", "persona", "permissions", "overlay", "google", "channels", "theme", "wakeWord"];
 
     function tileModel(state, name) {
         const s = state || {};
@@ -28,6 +28,37 @@
             case "overlay": {
                 const h = s.hotkey || {};
                 return { label: "Overlay", value: h.current || "Alt+Space", status: "green", onClickRoute: "wizard:hotkey" };
+            }
+            case "hotkey": {
+                const pz = s.personalize || {};
+                const h  = s.hotkey || {};
+                return {
+                    label: "Hotkey",
+                    value: pz.hotkey || h.current || (s.platform === "win32" ? "Ctrl+Space" : "Alt+Space"),
+                    status: "green",
+                    onClickRoute: "settings:hotkey",
+                };
+            }
+            case "workspace": {
+                const w = s.workspace || {};
+                const path = w.path || null;
+                if (path) {
+                    // Show only the trailing folder for readability.
+                    const parts = String(path).split(/[\\/]/);
+                    const tail = parts[parts.length - 1] || path;
+                    return { label: "Workspace", value: tail, secondary: path, status: w.exists === false ? "amber" : "green", onClickRoute: "settings:workspace" };
+                }
+                return { label: "Workspace", value: "Default", status: "neutral", onClickRoute: "settings:workspace" };
+            }
+            case "persona": {
+                const persona = s.profile && s.profile.persona;
+                return {
+                    label: "Persona",
+                    value: persona ? (persona.charAt(0).toUpperCase() + persona.slice(1)) : "Explorer",
+                    secondary: persona ? null : "Pick a shape in Settings",
+                    status: persona ? "ok" : "neutral",
+                    onClickRoute: persona ? null : "wizard:persona", // W2 wires this up
+                };
             }
             case "permissions": {
                 if (s.platform !== "darwin") return null;
