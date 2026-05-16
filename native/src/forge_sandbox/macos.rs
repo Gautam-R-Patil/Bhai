@@ -25,6 +25,10 @@ impl Sandbox for MacosSandbox {
         caps: &Capabilities,
     ) -> io::Result<Child> {
         let node = locate_node()?;
+        // sandbox-exec evaluates process-exec against the REALPATH of the binary.
+        // Homebrew node is a symlink (`/opt/homebrew/bin/node` → Cellar). Resolve
+        // the symlink so the SBPL `(allow process-exec (literal ...))` matches.
+        let node = std::fs::canonicalize(&node).unwrap_or(node);
         let sbpl_path = handler_dir.join(".sandbox.sb");
         let shim_path = handler_dir.join(".handler-shim.js");
         let handler_path = handler_dir.join("handler.js");
