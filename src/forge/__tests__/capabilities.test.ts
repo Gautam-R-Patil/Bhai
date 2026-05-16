@@ -166,3 +166,58 @@ describe("capabilities validate", () => {
         expect(r.errors.length).toBe(2);
     });
 });
+
+describe("isPathHardDenied", () => {
+    it("catches /etc/passwd (lowercase)", () => {
+        expect(isPathHardDenied("/etc/passwd")).toBe(true);
+    });
+
+    it("catches /etc/shadow", () => {
+        expect(isPathHardDenied("/etc/shadow")).toBe(true);
+    });
+
+    it("catches /etc/sudoers", () => {
+        expect(isPathHardDenied("/etc/sudoers")).toBe(true);
+    });
+
+    it("catches ~/.ssh paths", () => {
+        expect(isPathHardDenied("/Users/x/.ssh/id_rsa")).toBe(true);
+    });
+
+    it("catches ~/.aws and ~/.gnupg paths", () => {
+        expect(isPathHardDenied("/Users/x/.aws/credentials")).toBe(true);
+        expect(isPathHardDenied("/Users/x/.gnupg/private-keys-v1.d/key.key")).toBe(true);
+    });
+
+    it("catches encrypted ATLAS source paths", () => {
+        expect(isPathHardDenied("/Users/x/Desktop/ATLAS/src/agent.ts")).toBe(true);
+        expect(isPathHardDenied("/Users/x/Desktop/ATLAS/native/index.js")).toBe(true);
+        expect(isPathHardDenied("/Users/x/Desktop/ATLAS/prompts/identity.md")).toBe(true);
+        expect(isPathHardDenied("/Users/x/Desktop/ATLAS/convex/http.ts")).toBe(true);
+    });
+
+    it("does NOT flag ~/.atlas/store/dynamic (the legit tool home)", () => {
+        expect(isPathHardDenied("/Users/x/.atlas/store/dynamic/foo/handler.js")).toBe(false);
+    });
+
+    it("does NOT flag arbitrary user paths", () => {
+        expect(isPathHardDenied("/Users/x/Downloads/file.pdf")).toBe(false);
+        expect(isPathHardDenied("/tmp/scratch.txt")).toBe(false);
+    });
+
+    it("catches uppercase /etc/PASSWD on darwin/win32 (case-insensitive FS bypass fix)", () => {
+        if (process.platform === "linux") {
+            expect(isPathHardDenied("/etc/PASSWD")).toBe(false);
+            return;
+        }
+        expect(isPathHardDenied("/etc/PASSWD")).toBe(true);
+        expect(isPathHardDenied("/Etc/Passwd")).toBe(true);
+        expect(isPathHardDenied("/USERS/x/.SSH/id_rsa")).toBe(true);
+    });
+
+    it("catches mixed-case encrypted source paths on darwin/win32", () => {
+        if (process.platform === "linux") return;
+        expect(isPathHardDenied("/Users/x/Desktop/ATLAS/SRC/agent.ts")).toBe(true);
+        expect(isPathHardDenied("/Users/x/Desktop/ATLAS/Convex/http.ts")).toBe(true);
+    });
+});

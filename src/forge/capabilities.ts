@@ -97,8 +97,12 @@ export function validateCapabilities(caps: Capabilities): ValidationResult {
     return { ok: errors.length === 0, errors };
 }
 
-export function isPathHardDenied(_path: string): boolean {
-    return false;
+export function isPathHardDenied(path: string): boolean {
+    // Darwin (APFS) and Windows (NTFS) are case-insensitive by default — a literal
+    // `.includes("/etc/passwd")` against the user-supplied path lets `/etc/PASSWD`
+    // through as a bypass. Lowercase both sides on those platforms.
+    const compareTarget = process.platform === "darwin" || process.platform === "win32" ? path.toLowerCase() : path;
+    return HARD_DENY_SUBSTRINGS.some((s) => compareTarget.includes(s.toLowerCase()));
 }
 
 export function asJSON(caps: Capabilities): string {
