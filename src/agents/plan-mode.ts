@@ -42,6 +42,12 @@ export type PlanModeState =
         /** Directory containing PRD.md / TECHNICAL.md / ARCHITECTURE.md */
         designDocsDir: string;
         source: "user" | "auto";
+    }
+    | {
+        mode: "awaiting_dynamic_tool_approval";
+        enteredAt: number;
+        slug: string;
+        source: "user" | "auto";
     };
 
 let state: PlanModeState = { mode: "act" };
@@ -231,6 +237,23 @@ export function filterToolsForAwaitingApproval<T extends { function: { name: str
     return tools.filter((t) => AWAITING_APPROVAL_ALLOWED_TOOLS.has(t.function.name));
 }
 
+// Mode-allowlist for awaiting_dynamic_tool_approval — agent can render the
+// manifest, send to the user, accept approval/rejection.
+export const AWAITING_DYNAMIC_TOOL_APPROVAL_ALLOWED_TOOLS: ReadonlySet<string> = new Set([
+    ...PLAN_MODE_ALLOWED_TOOLS,
+    "render_md_to_pdf",
+    "send_message_on_channel",
+    "send_push_notification",
+    "approve_dynamic_tool",
+    "revoke_dynamic_tool",
+]);
+
+export function filterToolsForDynamicApproval<T extends { function: { name: string } }>(
+    tools: T[],
+): T[] {
+    return tools.filter((t) => AWAITING_DYNAMIC_TOOL_APPROVAL_ALLOWED_TOOLS.has(t.function.name));
+}
+
 /**
  * Is this a tool the agent can call right now, given the current mode?
  * Used as a last-resort safety check in the tool executor.
@@ -239,6 +262,8 @@ export function isToolAllowedInCurrentMode(toolName: string): boolean {
     if (state.mode === "act") return true;
     if (state.mode === "spec") return SPEC_MODE_ALLOWED_TOOLS.has(toolName);
     if (state.mode === "awaiting_approval") return AWAITING_APPROVAL_ALLOWED_TOOLS.has(toolName);
+    if (state.mode === "awaiting_dynamic_tool_approval")
+        return AWAITING_DYNAMIC_TOOL_APPROVAL_ALLOWED_TOOLS.has(toolName);
     return PLAN_MODE_ALLOWED_TOOLS.has(toolName);
 }
 
