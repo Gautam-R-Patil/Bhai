@@ -750,6 +750,17 @@ async function boot() {
                 console.log("[BOOT] long_task_status source registration failed (non-fatal):", (err as Error).message);
             }
 
+            // ── Register onboarding_graduation source (W3) ──
+            // Fires Day-2 / Day-3 / Day-5 wizard graduation nudges.
+            // ATLAS_NO_ONBOARDING_NUDGES=true short-circuits the source itself.
+            try {
+                const { onboardingGraduationSource } = await import("./proactive/sources/onboarding-graduation.js");
+                obs.registerSource(onboardingGraduationSource);
+                console.log("💓 Registered source: onboarding_graduation");
+            } catch (err) {
+                console.log("[BOOT] onboarding_graduation source registration failed (non-fatal):", (err as Error).message);
+            }
+
             // ── Register latent_topic_monitor source (Phase 3 Task 3.9d) ──
             // Opens the memory DB raw handle, constructs a MonitorStore around
             // the monitor_rules table (created in Task 0.2), pushes all active
