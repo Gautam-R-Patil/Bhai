@@ -87,6 +87,24 @@ async function getCreditUsers(): Promise<CreditUser[]> {
   }
 }
 
+interface TopModel {
+  model: string;
+  count: number;
+  creditsCharged: number;
+  lastCalledAt: number;
+}
+
+async function getTopModels(): Promise<TopModel[]> {
+  try {
+    const { models } = await adminHttpGet<{ models: TopModel[] }>(
+      "/api/admin/observability/top-models?limit=15",
+    );
+    return models ?? [];
+  } catch {
+    return [];
+  }
+}
+
 // ── Helper ────────────────────────────────────────
 
 function formatTimestamp(ts: number): string {
@@ -107,11 +125,16 @@ function formatCredits(n: number): string {
 
 // ── Page ──────────────────────────────────────────
 
+export const dynamic = "force-dynamic";
+
 export default async function ObservabilityPage() {
-  const [data, creditUsers] = await Promise.all([
+  const [data, creditUsers, topModels] = await Promise.all([
     getObservabilityData(),
     getCreditUsers(),
+    getTopModels(),
   ]);
+  const totalLlmCalls = topModels.reduce((s, m) => s + m.count, 0);
+  const totalCreditsCharged = topModels.reduce((s, m) => s + m.creditsCharged, 0);
 
   if (!data) {
     return (
@@ -296,6 +319,51 @@ export default async function ObservabilityPage() {
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* Top Models By Actual Usage (from llm_usage_counters) */}
+      <div className="glass-card-static p-6">
+        <div className="flex items-center justify-between mb-5">
+          <div className="flex items-center gap-3">
+            <Cpu className="h-5 w-5 text-[--accent-primary]" />
+            <h2 className="text-lg font-semibold text-[--text-primary]">
+              Top Models By Usage
+            </h2>
+          </div>
+          <p className="text-xs text-[--text-muted]">
+            {totalLlmCalls.toLocaleString()} total calls · {totalCreditsCharged.toFixed(2)} credits charged
+          </p>
+        </div>
+        {topModels.length === 0 ? (
+          <p className="text-[--text-muted] text-sm">
+            No LLM usage recorded yet. Counters populate after the first successful{" "}
+            <code className="font-mono">/api/llm/chat</code> response.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {topModels.map((m) => {
+              const pct = totalLlmCalls > 0 ? (m.count / totalLlmCalls) * 100 : 0;
+              return (
+                <div key={m.model}>
+                  <div className="flex justify-between text-sm mb-1">
+                    <span className="font-mono text-xs truncate" title={m.model}>
+                      {m.model}
+                    </span>
+                    <span className="text-[--text-muted] text-xs whitespace-nowrap ml-3">
+                      {m.count.toLocaleString()} calls · {m.creditsCharged.toFixed(2)} credits
+                    </span>
+                  </div>
+                  <div className="h-2 bg-black/5 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-blue-500 to-purple-500"
+                      style={{ width: `${Math.max(pct, 2)}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Credit Usage Per User */}

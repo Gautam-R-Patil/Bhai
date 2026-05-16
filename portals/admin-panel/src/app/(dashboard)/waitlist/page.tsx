@@ -1,13 +1,31 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { adminHttpGet, adminHttpPost } from "@/lib/convex";
 import type {
   WaitlistEntry,
   WaitlistStats,
   WaitlistListResponse,
   WaitlistStatus,
 } from "@/lib/types";
+
+// Same-origin proxies — client components can't read ATLAS_ADMIN_KEY,
+// so the /api/waitlist/* Next.js routes (server-side) hold the key and
+// forward to Convex's admin-gated endpoints. See src/app/api/waitlist/*.
+async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
+  const resp = await fetch(input, {
+    ...init,
+    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+  });
+  if (!resp.ok) {
+    let msg = `${resp.status}`;
+    try {
+      const data = await resp.json();
+      if (data?.error) msg = data.error;
+    } catch { /* ignore */ }
+    throw new Error(msg);
+  }
+  return (await resp.json()) as T;
+}
 import {
   Check,
   X,
@@ -100,12 +118,19 @@ export default function WaitlistPage() {
       const qs = new URLSearchParams();
       if (status !== "all") qs.set("status", status);
       qs.set("limit", "200");
-      const [listResp, statsResp] = await Promise.all([
-        adminHttpGet<WaitlistListResponse>(`/api/admin/waitlist?${qs.toString()}`),
-        adminHttpGet<{ stats: WaitlistStats }>("/api/admin/waitlist/stats"),
+      // Render whichever half succeeds — see users/page.tsx for rationale.
+      const [listR, statsR] = await Promise.allSettled([
+        fetchJson<WaitlistListResponse>(`/api/waitlist?${qs.toString()}`),
+        fetchJson<{ stats: WaitlistStats }>("/api/waitlist/stats"),
       ]);
-      setEntries(listResp.entries);
-      setStats(statsResp.stats);
+      if (listR.status === "fulfilled") {
+        setEntries(listR.value.entries);
+      } else {
+        setEntries([]);
+        setError(listR.reason instanceof Error ? listR.reason.message : "Failed to load list");
+      }
+      setStats(statsR.status === "fulfilled" ? statsR.value.stats : null);
+      if (statsR.status === "rejected") console.error("[waitlist] stats failed:", statsR.reason);
     } catch (err) {
       console.error("Failed to load waitlist:", err);
       setError(err instanceof Error ? err.message : "Failed to load");
@@ -123,7 +148,10 @@ export default function WaitlistPage() {
     patch: { status?: WaitlistStatus; adminNotes?: string },
   ) => {
     try {
-      await adminHttpPost("/api/admin/waitlist/update", { entryId, ...patch });
+      await fetchJson<{ success: boolean }>("/api/waitlist/update", {
+        method: "POST",
+        body: JSON.stringify({ entryId, ...patch }),
+      });
       load(activeFilter);
     } catch (err) {
       alert(`Update failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -133,7 +161,10 @@ export default function WaitlistPage() {
   const deleteEntry = async (entryId: string, email: string) => {
     if (!confirm(`Delete waitlist entry for ${email}? This can't be undone.`)) return;
     try {
-      await adminHttpPost("/api/admin/waitlist/delete", { entryId });
+      await fetchJson<{ success: boolean }>("/api/waitlist/delete", {
+        method: "POST",
+        body: JSON.stringify({ entryId }),
+      });
       load(activeFilter);
     } catch (err) {
       alert(`Delete failed: ${err instanceof Error ? err.message : String(err)}`);

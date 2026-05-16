@@ -30,6 +30,192 @@ const MODEL_COSTS: Record<string, { credits: number; costPer1kInput: number; cos
     "openai/gpt-5-image":                   { credits: 3,  costPer1kInput: 0.005, costPer1kOutput: 0.015, tier: "heavy" },
 };
 
+// ── System overview (one-shot fetch for the admin dashboard) ──────────────
+// Aggregates accounts + sessions + waitlist + activity + model usage + recent
+// errors into a single payload so the dashboard renders with one HTTP round-trip.
+// All takes are capped at safe limits (same as getObservabilityData) — the
+// dashboard intentionally never shows authoritative billing numbers, so a
+// scan cap is acceptable here.
+export const getSystemOverview = internalQuery({
+    args: {},
+    handler: async (ctx) => {
+        const now = Date.now();
+        const day = 24 * 60 * 60 * 1000;
+        const week = 7 * day;
+
+        const accounts = await ctx.db.query("accounts").take(10000);
+        const totalAccounts = accounts.length;
+        const activeAccounts = accounts.filter((a) => a.status === "active").length;
+        const suspendedAccounts = accounts.filter((a) => a.status === "suspended").length;
+        const blockedAccounts = accounts.filter((a) => a.status === "blocked").length;
+        const totalCreditsRemaining = accounts.reduce((s, a) => s + (a.ai_credits || 0), 0);
+        const planCounts: Record<string, number> = {};
+        for (const a of accounts) {
+            const plan = a.plan || "free";
+            planCounts[plan] = (planCounts[plan] || 0) + 1;
+        }
+
+        const sessions = await ctx.db.query("sessions").take(5000);
+        const activeSessions = sessions.filter((s) => s.expiresAt > now).length;
+        const sessionsToday = sessions.filter((s) => s.createdAt > now - day).length;
+        const sessionsThisWeek = sessions.filter((s) => s.createdAt > now - week).length;
+
+        const waitlist = await ctx.db.query("waitlist").take(2000);
+        const waitlistTotal = waitlist.length;
+        const waitlistNew = waitlist.filter((w) => w.status === "new").length;
+        const waitlistContacted = waitlist.filter((w) => w.status === "contacted").length;
+        const waitlistAccepted = waitlist.filter((w) => w.status === "accepted").length;
+        const waitlistRejected = waitlist.filter((w) => w.status === "rejected").length;
+        const waitlist24h = waitlist.filter((w) => w.submittedAt > now - day).length;
+        const waitlist7d = waitlist.filter((w) => w.submittedAt > now - week).length;
+
+        const developers = await ctx.db.query("developers").take(5000);
+        const pendingDevelopers = developers.filter((d) => d.status === "pending").length;
+
+        const items = await ctx.db.query("store_items").take(5000);
+        const totalItems = items.length;
+        const activeItems = items.filter((i) => i.status === "active").length;
+        const totalInstalls = items.reduce((s, i) => s + (i.installCount || 0), 0);
+
+        const submissions = await ctx.db.query("submissions").take(5000);
+        const pendingSubmissions = submissions.filter((s) => s.status === "pending").length;
+
+        // Model usage from the denormalized counter table
+        const modelCounters = await ctx.db.query("llm_usage_counters").take(500);
+        modelCounters.sort((a, b) => b.count - a.count);
+        const topModels = modelCounters.slice(0, 10).map((m) => ({
+            model: m.model,
+            count: m.count,
+            creditsCharged: m.creditsCharged,
+            lastCalledAt: m.lastCalledAt,
+        }));
+        const totalLlmCalls = modelCounters.reduce((s, m) => s + m.count, 0);
+        const totalCreditsCharged = modelCounters.reduce((s, m) => s + m.creditsCharged, 0);
+        const lastLlmCall = modelCounters.reduce((max, m) => Math.max(max, m.lastCalledAt), 0);
+
+        // Recent errors: union the new generic error_log (any subsystem)
+        // with the legacy store_activity_log metadata-scan (marketplace
+        // events). The error_log is the authoritative source going
+        // forward; the activity-log scan stays so already-recorded store
+        // events don't disappear from the dashboard.
+        const ACTIVITY_SCAN_LIMIT = 5000;
+        const activityLogs = await ctx.db
+            .query("store_activity_log")
+            .withIndex("by_timestamp")
+            .order("desc")
+            .take(ACTIVITY_SCAN_LIMIT);
+        const activityScanCapped = activityLogs.length >= ACTIVITY_SCAN_LIMIT;
+
+        const errorLogRows = await ctx.db
+            .query("error_log")
+            .withIndex("by_timestamp")
+            .order("desc")
+            .take(50);
+
+        const storeErrorRows = activityLogs
+            .filter((l) => {
+                if (!l.metadata) return false;
+                try {
+                    const m = JSON.parse(l.metadata);
+                    return m.error || m.status === "error" || m.status === "failed";
+                } catch {
+                    return l.metadata.toLowerCase().includes("error");
+                }
+            })
+            .slice(0, 20)
+            .map((l) => ({
+                id: String(l._id),
+                source: "store",
+                type: l.type,
+                message: l.metadata ?? "",
+                severity: "error",
+                timestamp: l.timestamp,
+            }));
+
+        const recentErrors = [
+            ...errorLogRows.map((e) => ({
+                id: String(e._id),
+                source: e.source,
+                type: e.type,
+                message: e.message,
+                severity: e.severity,
+                timestamp: e.timestamp,
+            })),
+            ...storeErrorRows,
+        ]
+            .sort((a, b) => b.timestamp - a.timestamp)
+            .slice(0, 15);
+
+        const activity24h = activityLogs.filter((l) => l.timestamp > now - day).length;
+        const activity7d = activityLogs.filter((l) => l.timestamp > now - week).length;
+
+        // Health signal — anchored on whether the deployment has EVER seen
+        // LLM traffic. A fresh prod deploy with no calls yet should NOT show
+        // red — it should show "Awaiting traffic". Once traffic has happened,
+        // recency of the last call decides healthy vs idle.
+        const hourMs = 60 * 60 * 1000;
+        const dayMs = 24 * hourMs;
+        let health: "healthy" | "idle" | "stale";
+        if (lastLlmCall === 0 && totalLlmCalls === 0) {
+            // Never received an LLM call. Backend is reachable (we're answering
+            // this query) — it's just a fresh deploy waiting for first traffic.
+            health = "healthy";
+        } else if (now - lastLlmCall < hourMs) {
+            health = "healthy";
+        } else if (now - lastLlmCall < dayMs || activity24h > 0) {
+            health = "idle";
+        } else {
+            health = "stale";
+        }
+
+        return {
+            now,
+            health,
+            accounts: {
+                total: totalAccounts,
+                active: activeAccounts,
+                suspended: suspendedAccounts,
+                blocked: blockedAccounts,
+                totalCreditsRemaining,
+                planCounts,
+            },
+            sessions: { active: activeSessions, today: sessionsToday, week: sessionsThisWeek },
+            waitlist: {
+                total: waitlistTotal,
+                new: waitlistNew,
+                contacted: waitlistContacted,
+                accepted: waitlistAccepted,
+                rejected: waitlistRejected,
+                last24h: waitlist24h,
+                last7d: waitlist7d,
+            },
+            store: {
+                totalDevelopers: developers.length,
+                pendingDevelopers,
+                totalItems,
+                activeItems,
+                totalInstalls,
+                pendingSubmissions,
+            },
+            llm: {
+                topModels,
+                totalCalls: totalLlmCalls,
+                totalCreditsCharged,
+                lastCalledAt: lastLlmCall || null,
+            },
+            activity: {
+                last24h: activity24h,
+                last7d: activity7d,
+                // True when activity24h/7d may under-report because the scan
+                // hit the 5000-row ceiling. The UI shows "5000+" instead of
+                // a definite number when this is true.
+                scanCapped: activityScanCapped,
+            },
+            recentErrors,
+        };
+    },
+});
+
 // ── Get observability overview ──────────────────────
 
 export const getObservabilityData = internalQuery({

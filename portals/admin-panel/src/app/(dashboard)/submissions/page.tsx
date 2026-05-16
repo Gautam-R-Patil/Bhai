@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { convexQuery, convexMutation } from "@/lib/convex";
+import { storeProxy } from "@/lib/convex";
 import type { Submission } from "@/lib/types";
 import { Check, X, MessageSquare, Eye } from "lucide-react";
 
@@ -28,9 +28,10 @@ export default function SubmissionsPage() {
   const loadSubmissions = async (status: string) => {
     setLoading(true);
     try {
-      const subs = await convexQuery<Submission[]>(
+      const subs = await storeProxy<Submission[]>(
+        "query",
         status === "all" ? "store/submissions:list" : "store/submissions:listByStatus",
-        status === "all" ? { limit: 50 } : { status, limit: 50 }
+        status === "all" ? { limit: 50 } : { status, limit: 50 },
       );
       setSubmissions(subs);
     } catch (err) {
@@ -46,7 +47,7 @@ export default function SubmissionsPage() {
 
   const handleAction = async (subId: string, action: string, notes?: string) => {
     try {
-      await convexMutation(`store/submissions:${action}`, {
+      await storeProxy("mutation", `store/submissions:${action}`, {
         submissionId: subId,
         adminId: "admin", // TODO: get from session
         ...(notes ? { notes } : {}),

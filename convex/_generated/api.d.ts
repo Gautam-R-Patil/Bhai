@@ -11,8 +11,12 @@
 import type * as accounts from "../accounts.js";
 import type * as appRuntime from "../appRuntime.js";
 import type * as credit_cost from "../credit_cost.js";
+import type * as crons from "../crons.js";
 import type * as crypto from "../crypto.js";
+import type * as errorLog from "../errorLog.js";
 import type * as http from "../http.js";
+import type * as llmCallLog from "../llmCallLog.js";
+import type * as llmUsage from "../llmUsage.js";
 import type * as observability from "../observability.js";
 import type * as otpless from "../otpless.js";
 import type * as sessions from "../sessions.js";
@@ -38,8 +42,12 @@ declare const fullApi: ApiFromModules<{
   accounts: typeof accounts;
   appRuntime: typeof appRuntime;
   credit_cost: typeof credit_cost;
+  crons: typeof crons;
   crypto: typeof crypto;
+  errorLog: typeof errorLog;
   http: typeof http;
+  llmCallLog: typeof llmCallLog;
+  llmUsage: typeof llmUsage;
   observability: typeof observability;
   otpless: typeof otpless;
   sessions: typeof sessions;

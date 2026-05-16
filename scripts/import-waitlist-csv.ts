@@ -10,7 +10,8 @@
 // CSV columns expected (header row required):
 //   Submitted At, First Name, Last Name, Email, Company, Role, Subject, Use Case
 
-import { readFileSync } from "node:fs";
+import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { extname } from "node:path";
 import { argv, exit } from "node:process";
 
 const adminBase = process.env.ATLAS_ADMIN_BASE;
@@ -23,9 +24,45 @@ if (!adminBase || !adminKey) {
     exit(2);
 }
 
+// Refuse anything that isn't an HTTPS Convex URL — a malicious .env line like
+// ATLAS_ADMIN_BASE=https://attacker.example/ would quietly exfiltrate the
+// entire waitlist + the bearer token. The convex.site / convex.cloud
+// hostnames are the only places the admin endpoints actually live.
+let parsedBase: URL;
+try {
+    parsedBase = new URL(adminBase);
+} catch {
+    console.error(`ATLAS_ADMIN_BASE is not a valid URL: ${adminBase}`);
+    exit(2);
+}
+if (parsedBase.protocol !== "https:" || !/\.convex\.(site|cloud)$/i.test(parsedBase.hostname)) {
+    console.error(
+        `ATLAS_ADMIN_BASE must be https://*.convex.site (or .convex.cloud). Got: ${adminBase}`,
+    );
+    exit(2);
+}
+
 const csvPath = argv[2];
 if (!csvPath) {
     console.error("Usage: tsx scripts/import-waitlist-csv.ts <path-to.csv>");
+    exit(2);
+}
+
+// Refuse symlinks and non-.csv extensions. Operator typically runs this
+// against their own CSV, but a tampered Makefile/CI variable could swap the
+// path for a symlink to /etc/passwd; we'd dutifully parse it as CSV and
+// POST the contents upstream.
+const stat = lstatSync(csvPath);
+if (stat.isSymbolicLink()) {
+    console.error(`Refusing to follow symlink: ${csvPath} → ${realpathSync(csvPath)}`);
+    exit(2);
+}
+if (!stat.isFile()) {
+    console.error(`Not a regular file: ${csvPath}`);
+    exit(2);
+}
+if (extname(csvPath).toLowerCase() !== ".csv") {
+    console.error(`Expected .csv extension, got: ${extname(csvPath)}`);
     exit(2);
 }
 
@@ -151,27 +188,48 @@ for (let r = 1; r < rows.length; r++) {
     });
 }
 
-console.log(`Parsed ${entries.length} entries. Importing to ${adminBase}/api/admin/waitlist/import …`);
+// Chunk to <=500 entries per request. The Convex side rejects larger batches
+// to keep a single mutation transaction within its read/write/time limits.
+const CHUNK_SIZE = 500;
+console.log(
+    `Parsed ${entries.length} entries. Importing to ${adminBase}/api/admin/waitlist/import in ` +
+        `${Math.ceil(entries.length / CHUNK_SIZE)} chunk(s) …`,
+);
 
 const url = `${adminBase.replace(/\/+$/, "")}/api/admin/waitlist/import`;
-const resp = await fetch(url, {
-    method: "POST",
-    headers: {
-        Authorization: `Bearer ${adminKey}`,
-        "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ entries }),
+let totalInserted = 0;
+let totalSkipped = 0;
+const allSkippedEmails: string[] = [];
+
+for (let i = 0; i < entries.length; i += CHUNK_SIZE) {
+    const chunk = entries.slice(i, i + CHUNK_SIZE);
+    const resp = await fetch(url, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${adminKey}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ entries: chunk }),
+    });
+    const text = await resp.text();
+    if (!resp.ok) {
+        console.error(
+            `Chunk ${i / CHUNK_SIZE + 1} failed (${resp.status}): ${text.slice(0, 500)}`,
+        );
+        exit(1);
+    }
+    try {
+        const data = JSON.parse(text);
+        totalInserted += data.inserted ?? 0;
+        totalSkipped += data.skipped ?? 0;
+        if (Array.isArray(data.skippedEmails)) allSkippedEmails.push(...data.skippedEmails);
+    } catch {
+        console.warn(`Chunk ${i / CHUNK_SIZE + 1} returned non-JSON:`, text.slice(0, 200));
+    }
+}
+
+console.log("Import result:", {
+    inserted: totalInserted,
+    skipped: totalSkipped,
+    skippedEmails: allSkippedEmails.slice(0, 20),
 });
-
-const text = await resp.text();
-if (!resp.ok) {
-    console.error(`Import failed (${resp.status}):`, text);
-    exit(1);
-}
-
-try {
-    const result = JSON.parse(text);
-    console.log("Import result:", result);
-} catch {
-    console.log("Server replied:", text);
-}

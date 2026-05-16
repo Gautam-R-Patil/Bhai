@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { convexQuery, convexMutation } from "@/lib/convex";
+import { storeProxy } from "@/lib/convex";
 import type { Developer } from "@/lib/types";
 import { Check, X, Ban, RotateCcw } from "lucide-react";
 
@@ -26,9 +26,10 @@ export default function DevelopersPage() {
   const loadDevelopers = async (status: string) => {
     setLoading(true);
     try {
-      const devs = await convexQuery<Developer[]>(
+      const devs = await storeProxy<Developer[]>(
+        "query",
         status === "all" ? "store/developers:list" : "store/developers:listByStatus",
-        status === "all" ? { limit: 50 } : { status, limit: 50 }
+        status === "all" ? { limit: 50 } : { status, limit: 50 },
       );
       setDevelopers(devs);
     } catch (err) {
@@ -44,7 +45,7 @@ export default function DevelopersPage() {
 
   const handleAction = async (devId: string, action: string, notes?: string) => {
     try {
-      await convexMutation(`store/developers:${action}`, {
+      await storeProxy("mutation", `store/developers:${action}`, {
         developerId: devId,
         adminId: "admin", // TODO: get from session
         ...(notes ? { notes } : {}),

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { convexQuery, convexMutation } from "@/lib/convex";
+import { storeProxy } from "@/lib/convex";
 import type { StoreItem } from "@/lib/types";
 import { Star, Download, Trash2, Award } from "lucide-react";
 
@@ -27,7 +27,7 @@ export default function AppsPage() {
   const loadApps = async () => {
     setLoading(true);
     try {
-      const items = await convexQuery<StoreItem[]>("store/items:list", {
+      const items = await storeProxy<StoreItem[]>("query", "store/items:list", {
         type: typeFilter === "all" ? undefined : typeFilter,
         limit: 50,
       });
@@ -45,7 +45,7 @@ export default function AppsPage() {
 
   const handleFeature = async (itemId: string, rank: number | null) => {
     try {
-      await convexMutation("store/items:setFeatured", {
+      await storeProxy("mutation", "store/items:setFeatured", {
         itemId,
         featuredRank: rank,
       });
@@ -58,7 +58,7 @@ export default function AppsPage() {
   const handleRemove = async (itemId: string) => {
     if (!confirm("Are you sure you want to remove this app?")) return;
     try {
-      await convexMutation("store/items:updateStatus", {
+      await storeProxy("mutation", "store/items:updateStatus", {
         itemId,
         status: "removed",
       });

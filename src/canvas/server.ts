@@ -26,9 +26,21 @@ let widgetCounter = 0;
 // ── Initialize ────────────────────────────────
 
 export function initCanvas(port = 18791): void {
-    wss = new WebSocketServer({ port, host: "127.0.0.1" });
+    const server = new WebSocketServer({ port, host: "127.0.0.1" });
 
-    wss.on("connection", (ws) => {
+    server.on("error", (err: NodeJS.ErrnoException) => {
+        if (err.code === "EADDRINUSE") {
+            console.warn(`🎨 Canvas port ${port} already in use — another ATLAS instance is running. Skipping canvas server.`);
+        } else {
+            console.warn(`🎨 Canvas server error:`, err.message);
+        }
+        try { server.close(); } catch { /* nothing to close */ }
+        if (wss === server) wss = null;
+    });
+
+    wss = server;
+
+    server.on("connection", (ws) => {
         clients.add(ws);
         console.log(`🎨 Canvas client connected (${clients.size} total)`);
 

@@ -203,3 +203,54 @@ export interface WaitlistListResponse {
   isDone: boolean;
   continueCursor: string | null;
 }
+
+// ── System Overview ──────────────────────────────
+
+export interface SystemOverview {
+  now: number;
+  health: "healthy" | "idle" | "stale";
+  accounts: {
+    total: number;
+    active: number;
+    suspended: number;
+    blocked: number;
+    totalCreditsRemaining: number;
+    planCounts: Record<string, number>;
+  };
+  sessions: { active: number; today: number; week: number };
+  waitlist: {
+    total: number;
+    new: number;
+    contacted: number;
+    accepted: number;
+    rejected: number;
+    last24h: number;
+    last7d: number;
+  };
+  store: {
+    totalDevelopers: number;
+    pendingDevelopers: number;
+    totalItems: number;
+    activeItems: number;
+    totalInstalls: number;
+    pendingSubmissions: number;
+  };
+  llm: {
+    topModels: Array<{
+      model: string;
+      count: number;
+      creditsCharged: number;
+      lastCalledAt: number;
+    }>;
+    totalCalls: number;
+    totalCreditsCharged: number;
+    lastCalledAt: number | null;
+  };
+  activity: { last24h: number; last7d: number; scanCapped?: boolean };
+  recentErrors: Array<{
+    id: string;
+    type: string;
+    timestamp: number;
+    metadata: string | null;
+  }>;
+}

@@ -265,6 +265,60 @@ export default defineSchema({
     .index("by_active", ["isActive"]),
 
   // ══════════════════════════════════════════════════════════════════════════
+  // LLM USAGE COUNTERS — Denormalized per-model counters for the admin dashboard.
+  // Incremented atomically by the LLM proxy after each successful provider
+  // response. Cheaper than scanning request logs at admin-page load time.
+  // ══════════════════════════════════════════════════════════════════════════
+  llm_usage_counters: defineTable({
+    model: v.string(),               // OpenRouter model id, e.g. "anthropic/claude-sonnet-4.6"
+    count: v.number(),               // total successful invocations
+    creditsCharged: v.number(),      // total credits deducted for this model
+    lastCalledAt: v.number(),        // most recent successful call (Unix ms)
+  }).index("by_model", ["model"]),
+
+  // ── Per-call LLM log. One row per /api/llm/chat invocation, success or
+  // failure. The aggregate counters above are still authoritative for "top
+  // models" because they're cheap to read; this table is the drill-down for
+  // the admin LLM Logs page. Swept nightly to keep the table bounded.
+  llm_call_log: defineTable({
+    accountId: v.optional(v.id("accounts")),
+    otplessUserId: v.optional(v.string()),
+    model: v.string(),
+    status: v.string(),              // "success" | "failed" | "rejected"
+    credits: v.number(),             // 0 when failed/rejected before billing
+    latencyMs: v.number(),
+    inputTokens: v.optional(v.number()),
+    outputTokens: v.optional(v.number()),
+    errorMessage: v.optional(v.string()),
+    hasMedia: v.optional(v.boolean()),
+    timestamp: v.number(),
+  })
+    .index("by_timestamp", ["timestamp"])
+    .index("by_account_timestamp", ["accountId", "timestamp"])
+    .index("by_model_timestamp", ["model", "timestamp"])
+    .index("by_status_timestamp", ["status", "timestamp"]),
+
+  // ── Generic error log writable by any subsystem (LLM proxy, auth,
+  // sessions, waitlist, admin, etc.). The dashboard's "Recent Errors"
+  // panel reads from here so issues across the whole backend surface in
+  // one place — `store_activity_log` was scoped to marketplace events
+  // and missed everything else. Swept nightly.
+  error_log: defineTable({
+    source: v.string(),              // "llm_proxy" | "auth" | "session" | "waitlist" | "store" | "admin" | "system"
+    type: v.string(),                // short error code, e.g. "openrouter_5xx", "credit_deduction_failed"
+    message: v.string(),             // human-readable summary
+    metadata: v.optional(v.string()),// JSON-stringified details (stack, request id, model, etc.)
+    accountId: v.optional(v.id("accounts")),
+    otplessUserId: v.optional(v.string()),
+    ipAddress: v.optional(v.string()),
+    severity: v.string(),            // "error" | "warning" | "info"
+    timestamp: v.number(),
+  })
+    .index("by_timestamp", ["timestamp"])
+    .index("by_source_timestamp", ["source", "timestamp"])
+    .index("by_severity_timestamp", ["severity", "timestamp"]),
+
+  // ══════════════════════════════════════════════════════════════════════════
   // WAITLIST — Isolated marketing signup pipeline. No foreign keys to anything;
   // public submit endpoint writes here directly, admin panel reads via the
   // ADMIN_API_KEY-gated /api/admin/waitlist routes.

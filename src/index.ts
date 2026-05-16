@@ -192,6 +192,26 @@ async function boot() {
             console.warn("[wizard-seed] non-fatal error:", (err as Error).message);
         }
 
+        // Push the wizard's name to Convex accounts.name. OTPless doesn't
+        // include a display name in its identity payload, so without this
+        // the admin panel renders every user as "Unnamed User".
+        // upsertAccountInternal is a no-op when the value already matches,
+        // so this is safe to call on every boot.
+        try {
+            const { syncAccountNameIfPresent } = await import("./setup/account-name-sync.js");
+            const r = await syncAccountNameIfPresent({
+                userDataDir: process.env.ATLAS_USER_DATA_DIR,
+                dataDir: process.env.ATLAS_DATA_DIR,
+            });
+            if (r.ran) {
+                console.log(`👤 Account name synced to server: ${r.name}`);
+            } else if (r.reason === "push-failed") {
+                console.warn("[account-name-sync] push failed:", r.error);
+            }
+        } catch (err) {
+            console.warn("[account-name-sync] non-fatal error:", (err as Error).message);
+        }
+
         // Sync user-chosen personality preset to server addendum
         // (slug: "user-personality"). Idempotent — renames source after push.
         try {

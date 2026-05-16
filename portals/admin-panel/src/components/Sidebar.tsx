@@ -14,29 +14,52 @@ import {
   LogOut,
   BarChart3,
   UserPlus,
+  Zap,
+  AlertTriangle,
 } from "lucide-react";
 
-const navigation = [
+// Permissions strings come from convex/store/admins.ts::PERMISSIONS. Adding a
+// `requiredPermission` here gates the nav entry — a super_admin sees every
+// entry regardless; everyone else only sees what their permissions list grants.
+// `undefined` here means "any authenticated admin".
+type NavItem = {
+  name: string;
+  href: string;
+  icon: React.ElementType;
+  requiredPermission?: string;
+};
+
+const NAVIGATION: NavItem[] = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-  { name: "Observability", href: "/dashboard/observability", icon: BarChart3 },
-  { name: "Users", href: "/users", icon: Users },
-  { name: "Waitlist", href: "/waitlist", icon: UserPlus },
-  { name: "Developers", href: "/developers", icon: Code2 },
-  { name: "Submissions", href: "/submissions", icon: FileCheck },
-  { name: "Published Apps", href: "/apps", icon: Package },
-  { name: "Activity Logs", href: "/activity", icon: Activity },
+  { name: "Observability", href: "/dashboard/observability", icon: BarChart3, requiredPermission: "view_analytics" },
+  { name: "Users", href: "/users", icon: Users, requiredPermission: "manage_users" },
+  { name: "Waitlist", href: "/waitlist", icon: UserPlus, requiredPermission: "manage_users" },
+  { name: "Developers", href: "/developers", icon: Code2, requiredPermission: "approve_devs" },
+  { name: "Submissions", href: "/submissions", icon: FileCheck, requiredPermission: "approve_apps" },
+  { name: "Published Apps", href: "/apps", icon: Package, requiredPermission: "approve_apps" },
+  { name: "Activity Logs", href: "/activity", icon: Activity, requiredPermission: "view_analytics" },
+  { name: "LLM Logs", href: "/llm-logs", icon: Zap, requiredPermission: "view_analytics" },
+  { name: "Error Logs", href: "/error-logs", icon: AlertTriangle, requiredPermission: "view_analytics" },
   { name: "Settings", href: "/settings", icon: Settings },
-  { name: "Admins", href: "/admins", icon: Shield },
+  { name: "Admins", href: "/admins", icon: Shield, requiredPermission: "manage_admins" },
 ];
 
 interface SidebarProps {
   adminName: string;
   adminRole: string;
+  adminPermissions: string[];
 }
 
-export default function Sidebar({ adminName, adminRole }: SidebarProps) {
+export default function Sidebar({ adminName, adminRole, adminPermissions }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
+
+  const visible = adminRole === "super_admin"
+    ? NAVIGATION
+    : NAVIGATION.filter((item) => {
+        if (!item.requiredPermission) return true;
+        return adminPermissions.includes(item.requiredPermission);
+      });
 
   const handleLogout = async () => {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -57,7 +80,7 @@ export default function Sidebar({ adminName, adminRole }: SidebarProps) {
       {/* Navigation */}
       <nav className="flex-1 py-4 overflow-y-auto">
         <div className="space-y-1">
-          {navigation.map((item) => {
+          {visible.map((item) => {
             const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
             return (
               <Link

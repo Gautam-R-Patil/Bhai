@@ -168,6 +168,27 @@ export const listPending = query({
   },
 });
 
+/**
+ * List submissions across all statuses (admin "All" filter).
+ * Sorted newest-first via the _creationTime index; capped at `limit`.
+ */
+export const list = query({
+  args: {
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const limit = Math.min(Math.max(args.limit ?? 50, 1), 200);
+    const submissions = await ctx.db.query("submissions").order("desc").take(limit);
+    const enriched = await Promise.all(
+      submissions.map(async (sub) => {
+        const developer = await ctx.db.get(sub.developerId);
+        return { ...sub, developerName: developer?.displayName || "Unknown" };
+      }),
+    );
+    return enriched;
+  },
+});
+
 // ── Mutations ──────────────────────────────────────────────────────────────
 
 /**

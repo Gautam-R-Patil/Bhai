@@ -24,7 +24,11 @@ export default async function DashboardLayout({
       </div>
 
       {/* Sidebar */}
-      <Sidebar adminName={session.name} adminRole={session.role} />
+      <Sidebar
+        adminName={session.name}
+        adminRole={session.role}
+        adminPermissions={session.permissions || []}
+      />
 
       {/* Main Content */}
       <main className="flex-1 p-8 relative z-10">{children}</main>

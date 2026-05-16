@@ -47,12 +47,21 @@ export const sendNewEntryNotification = internalAction({
 
     const toAddress = process.env.WAITLIST_NOTIFY_EMAIL || "hello@xagilab.com";
     const fromAddress = process.env.WAITLIST_NOTIFY_FROM || user;
+    // Derive the visible-domain (e.g. "xagilab.com") so headers we generate
+    // identify the message as originating from the brand, not the SMTP relay.
+    // Without this, mail clients fall back to the SMTP server's hostname
+    // for things like the auto-Message-ID, which is why receivers show
+    // "via <relay>" tags in the sender line.
+    const fromDomain = (fromAddress.split("@")[1] || "xagilab.com").trim();
 
     const transporter = nodemailer.createTransport({
       host,
       port,
       secure: port === 465,
       auth: { user, pass },
+      // Force the EHLO/HELO greeting to match the From-domain so SMTP
+      // banners don't expose the underlying relay hostname.
+      name: fromDomain,
     });
 
     const fullName = `${entry.firstName} ${entry.lastName}`.trim();
@@ -86,13 +95,26 @@ export const sendNewEntryNotification = internalAction({
       </div>
     `;
 
+    // Custom Message-ID so the header reads <random@xagilab.com>, not the
+    // relay's default <random@smtp.xxx.com>. Also pin the envelope sender
+    // (Return-Path) to the From-address so receiving clients don't see
+    // "<smtp-relay-domain> sent on behalf of" tags.
+    const messageId = `<waitlist-${args.entryId}-${Date.now()}@${fromDomain}>`;
+
     try {
       await transporter.sendMail({
-        from: fromAddress,
+        from: { name: "ATLAS", address: fromAddress },
         to: toAddress,
+        replyTo: fromAddress,
+        sender: fromAddress,
+        envelope: { from: fromAddress, to: toAddress },
+        messageId,
         subject,
         text,
         html,
+        headers: {
+          "X-Mailer": "ATLAS",
+        },
       });
       return { sent: true };
     } catch (err: any) {

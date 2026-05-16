@@ -1,10 +1,54 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { convexQuery, convexMutation } from "@/lib/convex";
 import type { Admin } from "@/lib/types";
 import { Plus, Trash2 } from "lucide-react";
-import bcrypt from "bcryptjs";
+
+// All admin mutations go through dedicated server routes (/api/admins/*)
+// that compute bcrypt hashes server-side and gate by `manage_admins`.
+// Doing bcrypt in the browser would mean the hash IS the credential — a
+// stolen hash could be replayed directly via the network call. Reads still
+// use the generic store proxy.
+async function storeQuery<T>(
+  functionPath: string,
+  args: Record<string, unknown> = {},
+): Promise<T> {
+  const resp = await fetch("/api/store", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind: "query", functionPath, args }),
+  });
+  if (!resp.ok) {
+    let msg = `${resp.status}`;
+    try {
+      const data = await resp.json();
+      if (data?.error) msg = data.error;
+    } catch { /* ignore */ }
+    throw new Error(msg);
+  }
+  const data = await resp.json();
+  return data.value as T;
+}
+
+async function adminAction(
+  endpoint: string,
+  body: Record<string, unknown>,
+): Promise<unknown> {
+  const resp = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    let msg = `${resp.status}`;
+    try {
+      const data = await resp.json();
+      if (data?.error) msg = data.error;
+    } catch { /* ignore */ }
+    throw new Error(msg);
+  }
+  return resp.json();
+}
 
 const roleColors: Record<string, string> = {
   super_admin: "bg-red-100 text-red-800",
@@ -12,9 +56,18 @@ const roleColors: Record<string, string> = {
   reviewer: "bg-green-100 text-green-800",
 };
 
+interface MeResponse {
+  adminId: string;
+  email: string;
+  name: string;
+  role: string;
+  permissions: string[];
+}
+
 export default function AdminsPage() {
   const [admins, setAdmins] = useState<Admin[]>([]);
   const [loading, setLoading] = useState(true);
+  const [me, setMe] = useState<MeResponse | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [newAdmin, setNewAdmin] = useState({
     email: "",
@@ -26,7 +79,7 @@ export default function AdminsPage() {
   const loadAdmins = async () => {
     setLoading(true);
     try {
-      const result = await convexQuery<Admin[]>("store/admins:list", {});
+      const result = await storeQuery<Admin[]>("store/admins:list");
       setAdmins(result);
     } catch (err) {
       console.error("Failed to load admins:", err);
@@ -37,35 +90,44 @@ export default function AdminsPage() {
 
   useEffect(() => {
     loadAdmins();
+    // Pull the current admin's role so the create-admin form can hide the
+    // super_admin option from non-super-admins. Server enforces this too —
+    // this is just a UX guardrail.
+    fetch("/api/auth/me")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => setMe(data))
+      .catch(() => setMe(null));
   }, []);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const passwordHash = await bcrypt.hash(newAdmin.password, 12);
-      await convexMutation("store/admins:create", {
+      // Server route /api/admins/create computes the bcrypt hash server-side
+      // and enforces manage_admins. The plaintext password leaves the
+      // browser only once, via TLS to same-origin.
+      await adminAction("/api/admins/create", {
         email: newAdmin.email,
-        passwordHash,
+        password: newAdmin.password,
         name: newAdmin.name,
         role: newAdmin.role,
-        permissions: getPermissionsForRole(newAdmin.role),
       });
       setShowCreate(false);
       setNewAdmin({ email: "", password: "", name: "", role: "reviewer" });
       loadAdmins();
     } catch (err) {
-      console.error("Failed to create admin:", err);
-      alert("Failed to create admin");
+      const msg = err instanceof Error ? err.message : "Failed to create admin";
+      alert(msg);
     }
   };
 
   const handleDelete = async (adminId: string) => {
     if (!confirm("Are you sure you want to delete this admin?")) return;
     try {
-      await convexMutation("store/admins:delete", { adminId });
+      await adminAction("/api/admins/delete", { adminId });
       loadAdmins();
     } catch (err) {
-      console.error("Failed to delete admin:", err);
+      const msg = err instanceof Error ? err.message : "Failed to delete admin";
+      alert(msg);
     }
   };
 
@@ -131,7 +193,9 @@ export default function AdminsPage() {
                 >
                   <option value="reviewer">Reviewer</option>
                   <option value="moderator">Moderator</option>
-                  <option value="super_admin">Super Admin</option>
+                  {me?.role === "super_admin" && (
+                    <option value="super_admin">Super Admin</option>
+                  )}
                 </select>
               </div>
               <div className="flex justify-end space-x-3">
@@ -205,15 +269,3 @@ export default function AdminsPage() {
   );
 }
 
-function getPermissionsForRole(role: string): string[] {
-  switch (role) {
-    case "super_admin":
-      return ["*"];
-    case "moderator":
-      return ["approve_devs", "approve_apps", "manage_users", "view_analytics"];
-    case "reviewer":
-      return ["approve_apps", "view_analytics"];
-    default:
-      return [];
-  }
-}

@@ -1,10 +1,25 @@
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 
-if (!process.env.JWT_SECRET) {
-  throw new Error("JWT_SECRET environment variable is required. Set it in .env before starting the admin panel.");
+const rawJwtSecret = process.env.JWT_SECRET;
+if (!rawJwtSecret) {
+  throw new Error(
+    "JWT_SECRET environment variable is required. Set it in .env before starting the admin panel.",
+  );
 }
-const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET);
+// Refuse the placeholder from .env.example — leaving it set ships a guessable
+// secret that anyone reading the public repo could use to mint admin sessions.
+if (
+  rawJwtSecret.includes("change-this") ||
+  rawJwtSecret === "your-super-secret-jwt-key-change-this-in-production-64-chars" ||
+  rawJwtSecret.length < 32
+) {
+  throw new Error(
+    "JWT_SECRET is unsafe. Generate a fresh ≥32-char random value: " +
+      "openssl rand -base64 48",
+  );
+}
+const JWT_SECRET = new TextEncoder().encode(rawJwtSecret);
 
 export interface AdminSession {
   adminId: string;

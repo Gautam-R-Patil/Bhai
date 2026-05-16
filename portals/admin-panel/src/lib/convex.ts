@@ -105,11 +105,17 @@ function adminKey(): string {
 // Admin-gated HTTP GET for endpoints defined with validateAdminRequest().
 // Use this for routes like /api/admin/observability/overview that require
 // a Bearer-authenticated request instead of Convex's public /api/query.
+//
+// `cache: "no-store"` is load-bearing: Next.js' server-fetch defaults to
+// `force-cache` even when the calling page is `dynamic = "force-dynamic"`,
+// so without this the dashboard would render data from the first request
+// after deploy until the server process restarts.
 export async function adminHttpGet<T>(path: string): Promise<T> {
   const url = `${adminBaseUrl()}${path.startsWith("/") ? path : `/${path}`}`;
   const resp = await fetch(url, {
     method: "GET",
     headers: { Authorization: `Bearer ${adminKey()}` },
+    cache: "no-store",
   });
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
@@ -127,10 +133,65 @@ export async function adminHttpPost<T>(path: string, body: unknown): Promise<T> 
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
+    cache: "no-store",
   });
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
     throw new Error(`Admin POST ${path} failed: ${resp.status} ${text.slice(0, 200)}`);
   }
   return (await resp.json()) as T;
+}
+
+// Convenience wrappers: read/write the store via the admin-key-gated
+// /api/admin/store-{query,mutation} proxy. Every store/* function is now
+// declared as internalQuery/internalMutation in Convex (see admins.ts,
+// developers.ts, submissions.ts line 5 of each), so the public /api/query
+// path can't reach them. The proxy reuses the existing STORE_QUERY_ALLOWLIST
+// — anything not in that map returns 403.
+export async function adminStoreQuery<T>(
+  functionPath: string,
+  args: Record<string, unknown> = {},
+): Promise<T> {
+  const { value } = await adminHttpPost<{ status: "success"; value: T }>(
+    "/api/admin/store-query",
+    { functionPath, args },
+  );
+  return value;
+}
+
+export async function adminStoreMutation<T>(
+  functionPath: string,
+  args: Record<string, unknown> = {},
+): Promise<T> {
+  const { value } = await adminHttpPost<{ status: "success"; value: T }>(
+    "/api/admin/store-mutation",
+    { functionPath, args },
+  );
+  return value;
+}
+
+// ── Browser-side store proxy ────────────────────────────────────────────────
+// Client components can't read ATLAS_ADMIN_KEY, so they hit the same-origin
+// /api/store route which adds the admin bearer server-side and forwards to
+// the admin-key-gated Convex store proxy.
+export async function storeProxy<T>(
+  kind: "query" | "mutation",
+  functionPath: string,
+  args: Record<string, unknown> = {},
+): Promise<T> {
+  const resp = await fetch("/api/store", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind, functionPath, args }),
+  });
+  if (!resp.ok) {
+    let msg = `${resp.status}`;
+    try {
+      const data = await resp.json();
+      if (data?.error) msg = data.error;
+    } catch { /* ignore */ }
+    throw new Error(msg);
+  }
+  const data = (await resp.json()) as { value: T };
+  return data.value;
 }

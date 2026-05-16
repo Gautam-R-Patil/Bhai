@@ -203,6 +203,27 @@ function waitlistCorsHeaders(origin: string | null): Record<string, string> {
   };
 }
 
+// In-memory dedup for hCaptcha tokens. Tokens are nominally single-use on
+// hCaptcha's side but they accept replays within a small grace window; this
+// closes that window on our side. Per-isolate state — fine for politeness,
+// not relied on as a primary security boundary (that's hCaptcha itself).
+const HCAPTCHA_TOKEN_TTL_MS = 2 * 60 * 1000;
+const seenHcaptchaTokens = new Map<string, number>();
+
+function checkAndRecordHcaptchaToken(token: string): boolean {
+  if (!token) return false;
+  const now = Date.now();
+  if (seenHcaptchaTokens.size > 1024) {
+    for (const [k, ts] of seenHcaptchaTokens) {
+      if (now - ts > HCAPTCHA_TOKEN_TTL_MS) seenHcaptchaTokens.delete(k);
+    }
+  }
+  const prev = seenHcaptchaTokens.get(token);
+  if (prev !== undefined && now - prev < HCAPTCHA_TOKEN_TTL_MS) return false;
+  seenHcaptchaTokens.set(token, now);
+  return true;
+}
+
 async function verifyHCaptcha(token: string, remoteIp?: string): Promise<boolean> {
   const secret = process.env.HCAPTCHA_SECRET;
   // Fail-closed: if the secret isn't configured, reject everything. Loud
@@ -211,8 +232,18 @@ async function verifyHCaptcha(token: string, remoteIp?: string): Promise<boolean
     console.warn("[waitlist] HCAPTCHA_SECRET not set — submissions will fail until configured");
     return false;
   }
+  // Refuse already-seen tokens server-side. hCaptcha invalidates tokens
+  // post-verify, but cluster timing / network grace lets the same token slip
+  // through more than once in rapid succession.
+  if (!checkAndRecordHcaptchaToken(token)) {
+    console.warn("[waitlist] hCaptcha token replay rejected");
+    return false;
+  }
   const body = new URLSearchParams({ secret, response: token });
   if (remoteIp) body.append("remoteip", remoteIp);
+  // Pin sitekey if configured so a token issued for a different site won't pass.
+  const sitekey = process.env.HCAPTCHA_SITEKEY;
+  if (sitekey) body.append("sitekey", sitekey);
   try {
     const resp = await fetch("https://api.hcaptcha.com/siteverify", {
       method: "POST",
@@ -220,7 +251,18 @@ async function verifyHCaptcha(token: string, remoteIp?: string): Promise<boolean
       body: body.toString(),
     });
     const data: any = await resp.json().catch(() => null);
-    return !!data?.success;
+    if (!data?.success) return false;
+    // Bind to our hostname so a token solved against a third-party hCaptcha
+    // site can't be replayed here. WAITLIST_HOSTNAME defaults to the public
+    // domain but is overridable via env for staging.
+    const expectedHostname = process.env.WAITLIST_HOSTNAME || "tryatlasagi.com";
+    if (data.hostname && data.hostname !== expectedHostname) {
+      console.warn(
+        `[waitlist] hCaptcha hostname mismatch: got '${data.hostname}', expected '${expectedHostname}'`,
+      );
+      return false;
+    }
+    return true;
   } catch (err: any) {
     console.error("[waitlist] hCaptcha verify network error:", err?.message);
     return false;
@@ -339,8 +381,67 @@ http.route({
     if (validation instanceof Response) return validation;
     const { account } = validation;
 
+    // Start the latency clock AFTER auth so we measure the LLM round-trip,
+    // not session validation. logCall() captures the row to llm_call_log
+    // and (on failure) to error_log; both run best-effort so they never
+    // block or change the response.
+    const callStartedAt = Date.now();
+    const logCall = async (params: {
+      model: string;
+      status: "success" | "failed" | "rejected";
+      credits?: number;
+      errorMessage?: string;
+      errorType?: string;
+      inputTokens?: number;
+      outputTokens?: number;
+      hasMedia?: boolean;
+    }) => {
+      const latencyMs = Date.now() - callStartedAt;
+      try {
+        await ctx.runMutation(internal.llmCallLog.record, {
+          accountId: account.accountId,
+          otplessUserId: account.otplessUserId,
+          model: params.model,
+          status: params.status,
+          credits: params.credits ?? 0,
+          latencyMs,
+          inputTokens: params.inputTokens,
+          outputTokens: params.outputTokens,
+          errorMessage: params.errorMessage,
+          hasMedia: params.hasMedia,
+        });
+      } catch (err) {
+        console.warn("[HTTP Proxy] llm_call_log insert failed:", (err as Error).message);
+      }
+      if (params.status !== "success") {
+        try {
+          await ctx.runMutation(internal.errorLog.record, {
+            source: "llm_proxy",
+            type: params.errorType ?? `llm_${params.status}`,
+            message: params.errorMessage ?? `LLM call ${params.status}`,
+            metadata: JSON.stringify({
+              model: params.model,
+              latencyMs,
+              credits: params.credits ?? 0,
+            }),
+            accountId: account.accountId,
+            otplessUserId: account.otplessUserId,
+            severity: params.status === "failed" ? "error" : "warning",
+          });
+        } catch (err) {
+          console.warn("[HTTP Proxy] error_log insert failed:", (err as Error).message);
+        }
+      }
+    };
+
     // 2. Check credits
     if (account.ai_credits <= 0) {
+      await logCall({
+        model: "unknown",
+        status: "rejected",
+        errorType: "insufficient_credits_fastpath",
+        errorMessage: "Account has 0 credits",
+      });
       return new Response(
         JSON.stringify({ error: "Insufficient credits" }),
         { status: 402, headers: { "Content-Type": "application/json" } }
@@ -355,6 +456,12 @@ http.route({
       body = parsed.body;
       isEncrypted = parsed.encrypted;
     } catch (err: any) {
+      await logCall({
+        model: "unknown",
+        status: "failed",
+        errorType: "bad_request_body",
+        errorMessage: err?.message ?? "Invalid request body",
+      });
       return new Response(
         JSON.stringify({ error: err.message || "Invalid request body" }),
         { status: 400, headers: { "Content-Type": "application/json" } }
@@ -363,12 +470,27 @@ http.route({
 
     const model = body.model || "anthropic/claude-sonnet-4.6";
 
+    // Detect whether the request payload contains image/media parts so the
+    // logs page can filter to multimodal calls. Best-effort: looks for
+    // `content` arrays whose blocks carry an `image` or `image_url` type.
+    const hasMedia = Array.isArray(body.messages) && body.messages.some((m: any) =>
+      Array.isArray(m?.content) &&
+      m.content.some((b: any) => b && (b.type === "image" || b.type === "image_url")),
+    );
+
     // 3b. Precise credit pre-check — reject before calling the LLM if the
     //     account can't afford the selected model. The earlier `<= 0` gate
     //     is a cheap fast-path; this catches e.g. a 0.5-credit account
     //     trying to invoke a 3-credit model.
     const cost = getCreditCost(model);
     if (account.ai_credits < cost) {
+      await logCall({
+        model: String(model),
+        status: "rejected",
+        errorType: "insufficient_credits",
+        errorMessage: `cost=${cost} available=${account.ai_credits}`,
+        hasMedia,
+      });
       return new Response(
         JSON.stringify({
           error: "Insufficient credits",
@@ -383,6 +505,13 @@ http.route({
     const openrouterKey = process.env.OPENROUTER_API_KEY;
     if (!openrouterKey) {
       console.error("[HTTP Proxy] OPENROUTER_API_KEY not set in Convex environment");
+      await logCall({
+        model: String(model),
+        status: "failed",
+        errorType: "missing_openrouter_key",
+        errorMessage: "OPENROUTER_API_KEY not set",
+        hasMedia,
+      });
       return new Response(
         JSON.stringify({ error: "Server configuration error" }),
         { status: 500, headers: { "Content-Type": "application/json" } }
@@ -565,7 +694,15 @@ http.route({
 
       // 8. If OpenRouter returned an error, log it and pass it through
       if (!orResponse.ok) {
-        console.error(`[HTTP Proxy] OpenRouter error ${orResponse.status} for ${model}:`, JSON.stringify(responseData).slice(0, 500));
+        const snippet = JSON.stringify(responseData).slice(0, 500);
+        console.error(`[HTTP Proxy] OpenRouter error ${orResponse.status} for ${model}:`, snippet);
+        await logCall({
+          model: String(model),
+          status: "failed",
+          errorType: `openrouter_${orResponse.status}`,
+          errorMessage: snippet,
+          hasMedia,
+        });
         return new Response(JSON.stringify(responseData), {
           status: orResponse.status,
           headers: { "Content-Type": "application/json" },
@@ -589,6 +726,20 @@ http.route({
               `model=${model} cost=${cost} remaining=${deductResult.remaining}: ${deductResult.error}. ` +
               `Tokens already consumed on provider — manual reconciliation may be required.`,
           );
+          // Reconciliation flag for the dashboard. The user still got the
+          // response, so the per-call row below logs as success — this is
+          // purely the billing-side anomaly.
+          try {
+            await ctx.runMutation(internal.errorLog.record, {
+              source: "llm_proxy",
+              type: "credit_deduction_rejected",
+              message: `Deduction rejected after successful LLM call: ${deductResult.error}`,
+              metadata: JSON.stringify({ model, cost, remaining: deductResult.remaining }),
+              accountId: account.accountId,
+              otplessUserId: account.otplessUserId,
+              severity: "error",
+            });
+          } catch { /* best effort */ }
         }
       } catch (err) {
         console.error(
@@ -597,12 +748,53 @@ http.route({
             `Error:`,
           err,
         );
+        try {
+          await ctx.runMutation(internal.errorLog.record, {
+            source: "llm_proxy",
+            type: "credit_deduction_threw",
+            message: (err as Error).message ?? "deduction threw",
+            metadata: JSON.stringify({ model, cost }),
+            accountId: account.accountId,
+            otplessUserId: account.otplessUserId,
+            severity: "error",
+          });
+        } catch { /* best effort */ }
       }
+
+      // 9b. Bump per-model usage counter for the admin dashboard.
+      //     Best-effort — never blocks or fails the LLM response.
+      try {
+        await ctx.runMutation(internal.llmUsage.incrementModelUsage, {
+          model: String(model),
+          credits: cost,
+        });
+      } catch (err) {
+        console.warn("[HTTP Proxy] usage counter bump failed:", (err as Error).message);
+      }
+
+      // 9c. Per-call audit row. Pulled out of the response payload so we
+      //     don't keep prompts/responses — just token totals + latency.
+      const usage = responseData?.usage ?? {};
+      await logCall({
+        model: String(model),
+        status: "success",
+        credits: cost,
+        inputTokens: typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : undefined,
+        outputTokens: typeof usage.completion_tokens === "number" ? usage.completion_tokens : undefined,
+        hasMedia,
+      });
 
       // 10. Return the OpenRouter response (encrypted if client uses E2E)
       return await buildResponse(responseData, 200, isEncrypted, account.sharedKey, request);
     } catch (err: any) {
       console.error("[HTTP Proxy] OpenRouter request failed:", err.message);
+      await logCall({
+        model: String(model),
+        status: "failed",
+        errorType: "openrouter_network",
+        errorMessage: err?.message ?? "OpenRouter fetch threw",
+        hasMedia,
+      });
       return new Response(
         JSON.stringify({ error: "LLM service temporarily unavailable" }),
         { status: 502, headers: { "Content-Type": "application/json" } }
@@ -854,7 +1046,12 @@ const STORE_QUERY_ALLOWLIST: Record<string, any> = {
   "store/admins:listAll":           internal.store.admins.listAll,
   "store/admins:hasPermission":     internal.store.admins.hasPermission,
   "store/admins:getDashboardStats": internal.store.admins.getDashboardStats,
-  "store/admins:getPasswordHash":   internal.store.admins.getPasswordHash,
+  // store/admins:getPasswordHash is INTENTIONALLY ABSENT.
+  // Exposing it via the generic query proxy lets any logged-in admin pull
+  // any other admin's bcrypt hash for offline cracking — see commit history
+  // for the round-4 finding. The login flow uses a dedicated
+  // /api/admin/auth/get-password-hash route that talks to
+  // internal.store.admins.getPasswordHash directly; it doesn't need this entry.
   "store/admins:list":              internal.store.admins.list,
   "store/admins:getActivityLogs":   internal.store.admins.getActivityLogs,
   // store/reviews
@@ -870,6 +1067,7 @@ const STORE_QUERY_ALLOWLIST: Record<string, any> = {
   "store/installs:getInstallCount": internal.store.installs.getInstallCount,
   // store/submissions
   "store/submissions:getById":         internal.store.submissions.getById,
+  "store/submissions:list":            internal.store.submissions.list,
   "store/submissions:listByStatus":    internal.store.submissions.listByStatus,
   "store/submissions:getPendingCount": internal.store.submissions.getPendingCount,
   "store/submissions:getByDeveloper":  internal.store.submissions.getByDeveloper,
@@ -880,61 +1078,106 @@ const STORE_QUERY_ALLOWLIST: Record<string, any> = {
   "store/storage:getFileUrls": internal.store.storage.getFileUrls,
 };
 
-const STORE_MUTATION_ALLOWLIST: Record<string, any> = {
-  // store/items
-  "store/items:incrementInstallCount": internal.store.items.incrementInstallCount,
-  "store/items:updateRating":          internal.store.items.updateRating,
-  "store/items:setFeatured":           internal.store.items.setFeatured,
-  "store/items:updateStatus":          internal.store.items.updateStatus,
-  "store/items:create":                internal.store.items.create,
-  "store/items:update":                internal.store.items.update,
-  "store/items:resetWeeklyInstalls":   internal.store.items.resetWeeklyInstalls,
-  // store/developers
-  "store/developers:register":        internal.store.developers.register,
-  "store/developers:updateProfile":   internal.store.developers.updateProfile,
-  "store/developers:recordLogin":     internal.store.developers.recordLogin,
-  "store/developers:approve":         internal.store.developers.approve,
-  "store/developers:reject":          internal.store.developers.reject,
-  "store/developers:suspend":         internal.store.developers.suspend,
-  "store/developers:ban":             internal.store.developers.ban,
-  "store/developers:reinstate":       internal.store.developers.reinstate,
-  "store/developers:changePassword":  internal.store.developers.changePassword,
-  "store/developers:updateLastLogin": internal.store.developers.updateLastLogin,
-  // store/admins
-  "store/admins:create":          internal.store.admins.create,
-  "store/admins:update":          internal.store.admins.update,
-  "store/admins:recordLogin":     internal.store.admins.recordLogin,
-  "store/admins:changePassword":  internal.store.admins.changePassword,
-  "store/admins:remove":          internal.store.admins.remove,
-  "store/admins:initSuperAdmin":  internal.store.admins.initSuperAdmin,
-  "store/admins:updateLastLogin": internal.store.admins.updateLastLogin,
-  "store/admins:deleteAdmin":     internal.store.admins.deleteAdmin,
-  // store/reviews
+// Mutations reachable by a holder of a USER SESSION TOKEN (the desktop app /
+// bot). Restricted to operations a regular ATLAS end-user legitimately
+// performs as themselves against the store (install/uninstall, submit review,
+// register a developer profile). Anything that could escalate privilege
+// (creating admins/developers, approving submissions, banning developers,
+// promoting items) lives in `ADMIN_STORE_MUTATION_ALLOWLIST` below.
+//
+// ⚠ KEY INVARIANT: every mutation in this list either (a) takes NO foreign
+// identifier from the caller, or (b) the Convex mutation handler itself binds
+// the operation to `args.user`/`args.developerId` after deriving identity
+// from a server-controlled source. Listing a mutation here that accepts a
+// raw `developerId`/`adminId` would let any session-token holder act as any
+// other developer/admin — see commit history for the developer-credential
+// takeover vector this list explicitly avoids.
+//
+// `developers:changePassword`, `developers:updateProfile`, and the
+// `submissions:create|resubmit|cancel` mutations were REMOVED from this list
+// because they accept an attacker-supplied `developerId`. The developer
+// portal (portals/developer-portal/) must use its own session-bound server
+// route that re-derives the developerId from the developer's JWT — those
+// mutations must NOT be exposed on the generic session-proxy.
+const USER_STORE_MUTATION_ALLOWLIST: Record<string, any> = {
+  // Reviews — end-user submits + edits their own review. Convex handler
+  // binds by `args.user` (the otplessUserId) → safe.
   "store/reviews:submit":      internal.store.reviews.submit,
   "store/reviews:remove":      internal.store.reviews.remove,
   "store/reviews:markHelpful": internal.store.reviews.markHelpful,
-  "store/reviews:adminDelete": internal.store.reviews.adminDelete,
-  // store/installs
+
+  // Installs — end-user manages their own install state. Convex handlers
+  // bind by `args.user` → safe.
   "store/installs:startInstall":      internal.store.installs.startInstall,
   "store/installs:confirmInstall":    internal.store.installs.confirmInstall,
   "store/installs:uninstall":         internal.store.installs.uninstall,
   "store/installs:updateVersion":     internal.store.installs.updateVersion,
   "store/installs:setAutoUpdate":     internal.store.installs.setAutoUpdate,
   "store/installs:getUpdateDownload": internal.store.installs.getUpdateDownload,
-  // store/submissions
-  "store/submissions:create":          internal.store.submissions.create,
+
+  // Developer registration — first-time sign-up; the handler refuses if the
+  // email already has a developer row, so it can't overwrite anyone.
+  "store/developers:register": internal.store.developers.register,
+
+  // Developer login bookkeeping — recordLogin / updateLastLogin take a
+  // developerId but only patch a timestamp. Worst-case abuse is timeline
+  // pollution; not a credential or content-affecting mutation.
+  "store/developers:recordLogin":     internal.store.developers.recordLogin,
+  "store/developers:updateLastLogin": internal.store.developers.updateLastLogin,
+};
+
+// Mutations reachable ONLY by the admin panel (via ADMIN_API_KEY). These are
+// the actions that affect other users' state, approve content, or modify the
+// admins table itself. The two allowlists are intentionally disjoint — never
+// merge them or you re-introduce the round-2 privilege-escalation regression.
+const ADMIN_STORE_MUTATION_ALLOWLIST: Record<string, any> = {
+  // Admin user management (browser-side bcrypt is BANNED — the dedicated
+  // /api/admins/* server routes compute hashes and call these).
+  "store/admins:create":          internal.store.admins.create,
+  "store/admins:update":          internal.store.admins.update,
+  "store/admins:changePassword":  internal.store.admins.changePassword,
+  "store/admins:remove":          internal.store.admins.remove,
+  "store/admins:deleteAdmin":     internal.store.admins.deleteAdmin,
+  "store/admins:recordLogin":     internal.store.admins.recordLogin,
+  "store/admins:updateLastLogin": internal.store.admins.updateLastLogin,
+  // store/admins:initSuperAdmin is intentionally absent from BOTH lists.
+  // It's only reachable via /api/admin/setup-super-admin, whose handler
+  // calls the internal mutation directly. The mutation itself refuses if
+  // any admin row already exists.
+
+  // Developer review actions.
+  "store/developers:approve":   internal.store.developers.approve,
+  "store/developers:reject":    internal.store.developers.reject,
+  "store/developers:suspend":   internal.store.developers.suspend,
+  "store/developers:ban":       internal.store.developers.ban,
+  "store/developers:reinstate": internal.store.developers.reinstate,
+
+  // Store item moderation (feature / status changes).
+  "store/items:setFeatured": internal.store.items.setFeatured,
+  "store/items:updateStatus": internal.store.items.updateStatus,
+  // create/update would let an admin impersonate a developer — kept out.
+  // System-only counters (incrementInstallCount, updateRating,
+  // resetWeeklyInstalls) are intentionally absent; they belong to cron /
+  // user-flow paths, not admin actions.
+
+  // Submission moderation.
   "store/submissions:startReview":     internal.store.submissions.startReview,
   "store/submissions:approve":         internal.store.submissions.approve,
   "store/submissions:reject":          internal.store.submissions.reject,
   "store/submissions:requestRevision": internal.store.submissions.requestRevision,
-  "store/submissions:resubmit":        internal.store.submissions.resubmit,
-  "store/submissions:cancel":          internal.store.submissions.cancel,
-  // store/storage
-  "store/storage:generateUploadUrl":      internal.store.storage.generateUploadUrl,
+
+  // Admin-deleted reviews (moderation of user content).
+  "store/reviews:adminDelete": internal.store.reviews.adminDelete,
+
+  // Admin-upload + cleanup.
   "store/storage:generateAdminUploadUrl": internal.store.storage.generateAdminUploadUrl,
   "store/storage:deleteFile":             internal.store.storage.deleteFile,
-  "store/storage:getItemContentUrl":      internal.store.storage.getItemContentUrl,
   "store/storage:cleanupOrphanedFiles":   internal.store.storage.cleanupOrphanedFiles,
+
+  // Admin can uninstall on a user's behalf (e.g. removing a banned skill
+  // from every installed user). Convex handler still takes args.user, so
+  // moderators must pass the target explicitly.
+  "store/installs:uninstall": internal.store.installs.uninstall,
 };
 
 // ── POST /api/store/query — Proxy Convex store queries via session auth ──
@@ -1014,7 +1257,12 @@ http.route({
       );
     }
 
-    const mutationRef = STORE_MUTATION_ALLOWLIST[functionPath];
+    // ⚠ Session-token route MUST use the USER allowlist, NOT the admin one.
+    // The admin allowlist contains privilege-escalating mutations (create
+    // admin, approve/ban developers, moderate submissions). Merging the two
+    // lets any signed-in ATLAS user call those mutations through their
+    // normal session.
+    const mutationRef = USER_STORE_MUTATION_ALLOWLIST[functionPath];
     if (!mutationRef) {
       return new Response(
         JSON.stringify({ error: "Forbidden: function path not in allowlist" }),
@@ -1150,6 +1398,38 @@ http.route({
 });
 
 http.route({
+  path: "/api/admin/observability/system-overview",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authErr = await validateAdminRequest(request);
+    if (authErr) return authErr;
+    const data = await ctx.runQuery(internal.observability.getSystemOverview, {});
+    return new Response(JSON.stringify({ data }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
+
+http.route({
+  path: "/api/admin/observability/top-models",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authErr = await validateAdminRequest(request);
+    if (authErr) return authErr;
+    const url = new URL(request.url);
+    const limit = Number(url.searchParams.get("limit") || 10);
+    const models = await ctx.runQuery(internal.llmUsage.getTopModels, {
+      limit: Number.isFinite(limit) ? limit : 10,
+    });
+    return new Response(JSON.stringify({ models }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
+
+http.route({
   path: "/api/admin/observability/credit-users",
   method: "GET",
   handler: httpAction(async (ctx, request) => {
@@ -1158,6 +1438,94 @@ http.route({
 
     const users = await ctx.runQuery(internal.observability.getCreditUsagePerUser, {});
     return new Response(JSON.stringify({ users }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
+
+// ── GET /api/admin/llm-logs — paginated per-call LLM audit log ─────────
+// Query params:
+//   accountId   v.id("accounts") — drill into one user's calls
+//   model       OpenRouter model id — filter to one model
+//   status      "success" | "failed" | "rejected"
+//   sinceMs     window length (e.g. 86400000 for last 24h)
+//   limit       page size (default 50, max 200)
+//   cursor      pagination cursor from prior response
+http.route({
+  path: "/api/admin/llm-logs",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authErr = await validateAdminRequest(request);
+    if (authErr) return authErr;
+    const url = new URL(request.url);
+    const args: Record<string, unknown> = {};
+    const accountId = url.searchParams.get("accountId");
+    if (accountId) args.accountId = accountId;
+    const model = url.searchParams.get("model");
+    if (model) args.model = model;
+    const status = url.searchParams.get("status");
+    if (status) args.status = status;
+    const sinceMs = Number(url.searchParams.get("sinceMs") || "");
+    if (Number.isFinite(sinceMs) && sinceMs > 0) args.sinceMs = sinceMs;
+    const limit = Number(url.searchParams.get("limit") || "");
+    if (Number.isFinite(limit) && limit > 0) args.limit = limit;
+    const cursor = url.searchParams.get("cursor");
+    if (cursor) args.cursor = cursor;
+
+    const result = await ctx.runQuery(internal.llmCallLog.listRecent, args);
+    return new Response(JSON.stringify(result), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
+
+// ── GET /api/admin/llm-logs/stats — latency percentiles + success rate
+http.route({
+  path: "/api/admin/llm-logs/stats",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authErr = await validateAdminRequest(request);
+    if (authErr) return authErr;
+    const url = new URL(request.url);
+    const sinceMs = Number(url.searchParams.get("sinceMs") || "");
+    const stats = await ctx.runQuery(internal.llmCallLog.getStats, {
+      sinceMs: Number.isFinite(sinceMs) && sinceMs > 0 ? sinceMs : undefined,
+    });
+    return new Response(JSON.stringify({ stats }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
+
+// ── GET /api/admin/error-logs — paginated generic error log ────────────
+// Query params:
+//   source     "llm_proxy" | "auth" | "session" | "waitlist" | "store" | "admin" | "system" | "otpless"
+//   severity   "error" | "warning" | "info"
+//   sinceMs, limit, cursor — same as llm-logs
+http.route({
+  path: "/api/admin/error-logs",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authErr = await validateAdminRequest(request);
+    if (authErr) return authErr;
+    const url = new URL(request.url);
+    const args: Record<string, unknown> = {};
+    const source = url.searchParams.get("source");
+    if (source) args.source = source;
+    const severity = url.searchParams.get("severity");
+    if (severity) args.severity = severity;
+    const sinceMs = Number(url.searchParams.get("sinceMs") || "");
+    if (Number.isFinite(sinceMs) && sinceMs > 0) args.sinceMs = sinceMs;
+    const limit = Number(url.searchParams.get("limit") || "");
+    if (Number.isFinite(limit) && limit > 0) args.limit = limit;
+    const cursor = url.searchParams.get("cursor");
+    if (cursor) args.cursor = cursor;
+
+    const result = await ctx.runQuery(internal.errorLog.listRecent, args);
+    return new Response(JSON.stringify(result), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
@@ -2377,5 +2745,354 @@ http.route({
   }),
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// ADMIN PANEL AUTH — admin-key-gated wrappers around internal admin queries.
+// store/admins.ts re-exports query()/mutation() as internalQuery/internalMutation
+// (see admins.ts line 5), so the admin panel can't reach them via the public
+// /api/query path. These HTTP routes bridge that gap using ADMIN_API_KEY,
+// which the admin panel already has server-side as ATLAS_ADMIN_KEY.
+// ══════════════════════════════════════════════════════════════════════════
+
+http.route({
+  path: "/api/admin/auth/get-by-email",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authErr = await validateAdminRequest(request);
+    if (authErr) return authErr;
+
+    let body: any;
+    try {
+      body = await request.json();
+    } catch {
+      return new Response(
+        JSON.stringify({ error: "Invalid JSON body" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    const { email } = body || {};
+    if (!email || typeof email !== "string") {
+      return new Response(
+        JSON.stringify({ error: "email is required" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    const admin = await ctx.runQuery(internal.store.admins.getByEmail, { email });
+    return new Response(JSON.stringify({ admin }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
+
+http.route({
+  path: "/api/admin/auth/get-password-hash",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authErr = await validateAdminRequest(request);
+    if (authErr) return authErr;
+
+    let body: any;
+    try {
+      body = await request.json();
+    } catch {
+      return new Response(
+        JSON.stringify({ error: "Invalid JSON body" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    const { adminId } = body || {};
+    if (!adminId) {
+      return new Response(
+        JSON.stringify({ error: "adminId is required" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    const result = await ctx.runQuery(internal.store.admins.getPasswordHash, { adminId });
+    return new Response(JSON.stringify(result), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
+
+http.route({
+  path: "/api/admin/auth/update-last-login",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authErr = await validateAdminRequest(request);
+    if (authErr) return authErr;
+
+    let body: any;
+    try {
+      body = await request.json();
+    } catch {
+      return new Response(
+        JSON.stringify({ error: "Invalid JSON body" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    const { adminId } = body || {};
+    if (!adminId) {
+      return new Response(
+        JSON.stringify({ error: "adminId is required" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    await ctx.runMutation(internal.store.admins.updateLastLogin, { adminId });
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// POST /api/admin/setup-super-admin — one-shot bootstrap.
+// Admin-key-gated. Calls internal.store.admins.initSuperAdmin which itself
+// refuses if any admin row already exists. Kept on a dedicated path (instead
+// of the generic store-mutation proxy) so the allowlist there can omit
+// initSuperAdmin entirely, removing a leaked-key replay vector.
+// ══════════════════════════════════════════════════════════════════════════
+
+http.route({
+  path: "/api/admin/setup-super-admin",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authErr = await validateAdminRequest(request);
+    if (authErr) return authErr;
+
+    let body: any;
+    try {
+      body = await request.json();
+    } catch {
+      return new Response(
+        JSON.stringify({ error: "Invalid JSON body" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    const { email, passwordHash, name } = body || {};
+    if (!email || !passwordHash || !name) {
+      return new Response(
+        JSON.stringify({ error: "email, passwordHash, name are required" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    try {
+      const adminId = await ctx.runMutation(internal.store.admins.initSuperAdmin, {
+        email,
+        passwordHash,
+        name,
+      });
+      return new Response(JSON.stringify({ adminId }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch (err: any) {
+      // The mutation throws "Admins already exist. Use create() instead."
+      // when a row exists — surface that as a 409 so the caller can tell
+      // bootstrap-already-done from a real error.
+      const msg = err?.message || "Setup failed";
+      const status = msg.includes("already exist") ? 409 : 500;
+      return new Response(JSON.stringify({ error: msg }), {
+        status,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+  }),
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// ADMIN store proxy — admin-key-gated counterpart to /api/store/query|mutation.
+// /api/store/* requires a SESSION token (used by the bot/desktop app); the
+// admin panel doesn't have a session and shouldn't impersonate one. These
+// routes use the same allowlists but check ADMIN_API_KEY instead, so the
+// admin panel can read every store table without exposing them publicly.
+// ══════════════════════════════════════════════════════════════════════════
+
+http.route({
+  path: "/api/admin/store-query",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authErr = await validateAdminRequest(request);
+    if (authErr) return authErr;
+
+    let body: any;
+    try {
+      body = await request.json();
+    } catch {
+      return new Response(
+        JSON.stringify({ error: "Invalid JSON body" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    const { functionPath, args } = body || {};
+    if (!functionPath || typeof functionPath !== "string") {
+      return new Response(
+        JSON.stringify({ error: "functionPath is required" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    const queryRef = STORE_QUERY_ALLOWLIST[functionPath];
+    if (!queryRef) {
+      return new Response(
+        JSON.stringify({ error: "Forbidden: function path not in allowlist" }),
+        { status: 403, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    try {
+      const result = await ctx.runQuery(queryRef, args || {});
+      return new Response(
+        JSON.stringify({ status: "success", value: result }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    } catch (err: any) {
+      return new Response(
+        JSON.stringify({ error: err?.message || "Query failed" }),
+        { status: 500, headers: { "Content-Type": "application/json" } },
+      );
+    }
+  }),
+});
+
+http.route({
+  path: "/api/admin/store-mutation",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authErr = await validateAdminRequest(request);
+    if (authErr) return authErr;
+
+    let body: any;
+    try {
+      body = await request.json();
+    } catch {
+      return new Response(
+        JSON.stringify({ error: "Invalid JSON body" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    const { functionPath, args } = body || {};
+    if (!functionPath || typeof functionPath !== "string") {
+      return new Response(
+        JSON.stringify({ error: "functionPath is required" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    // Admin route — strictly use the admin list. We previously fell through
+    // to the user list ("admin is a superset"), but that re-exposed user-flow
+    // mutations like developer-password rewrites under admin-key reach,
+    // bypassing any per-admin permission gating + audit trail in /api/admins/*.
+    // If an admin legitimately needs to uninstall on a user's behalf, add a
+    // dedicated /api/admin/installs/uninstall route that logs the action.
+    const mutationRef = ADMIN_STORE_MUTATION_ALLOWLIST[functionPath];
+    if (!mutationRef) {
+      return new Response(
+        JSON.stringify({ error: "Forbidden: function path not in allowlist" }),
+        { status: 403, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    try {
+      const result = await ctx.runMutation(mutationRef, args || {});
+      return new Response(
+        JSON.stringify({ status: "success", value: result }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    } catch (err: any) {
+      return new Response(
+        JSON.stringify({ error: err?.message || "Mutation failed" }),
+        { status: 500, headers: { "Content-Type": "application/json" } },
+      );
+    }
+  }),
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// POST /api/account/update-profile — Update name on the caller's own account.
+// Session-authenticated (NOT admin-key gated) — the user can only patch their
+// own account, derived from the bearer token. Called by the bot's boot path
+// to push the setup-wizard's name to Convex so the admin panel displays it.
+// OTPless's identity often doesn't include a display name, so this is the
+// authoritative source of `accounts.name`.
+// ══════════════════════════════════════════════════════════════════════════
+
+http.route({
+  path: "/api/account/update-profile",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+
+    let body: any;
+    let isEncrypted = false;
+    try {
+      const parsed = await parseRequestBody(request, account.sharedKey);
+      body = parsed.body;
+      isEncrypted = parsed.encrypted;
+    } catch (err: any) {
+      return new Response(
+        JSON.stringify({ error: err.message || "Invalid request body" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    const name = typeof body?.name === "string" ? body.name.trim() : "";
+    if (!name) {
+      return await buildResponse(
+        { error: "name is required" },
+        400,
+        isEncrypted,
+        account.sharedKey,
+        request,
+      );
+    }
+    if (name.length > 200) {
+      return await buildResponse(
+        { error: "name too long (max 200 chars)" },
+        400,
+        isEncrypted,
+        account.sharedKey,
+        request,
+      );
+    }
+
+    // Body opt-in `overwrite: true` is required to replace an existing name.
+    // Default behaviour is "set only if empty" so a wizard-driven boot-time
+    // sync can never clobber an admin-panel edit that happened later.
+    const overwrite = body?.overwrite === true;
+    const existing = await ctx.runQuery(internal.accounts.getByOtplessIdInternal, {
+      otplessUserId: account.otplessUserId,
+    });
+    if (existing && typeof existing.name === "string" && existing.name.trim() && !overwrite) {
+      return await buildResponse(
+        { success: false, skipped: true, reason: "name already set" },
+        200,
+        isEncrypted,
+        account.sharedKey,
+        request,
+      );
+    }
+
+    await ctx.runMutation(internal.accounts.upsertAccountInternal, {
+      otplessUserId: account.otplessUserId,
+      name,
+    });
+
+    return await buildResponse(
+      { success: true, name },
+      200,
+      isEncrypted,
+      account.sharedKey,
+      request,
+    );
+  }),
+});
 
 export default http;

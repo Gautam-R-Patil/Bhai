@@ -153,38 +153,67 @@ export const bulkImportWaitlist = internalMutation({
         role: v.string(),
         company: v.optional(v.string()),
         useCase: v.string(),
-        status: v.optional(v.string()),
+        // Locked to the canonical status union. Free-form v.string() would let
+        // a caller with the admin key set status to any value and break
+        // downstream filters / queries.
+        status: v.optional(
+          v.union(
+            v.literal("new"),
+            v.literal("contacted"),
+            v.literal("accepted"),
+            v.literal("rejected"),
+          ),
+        ),
         adminNotes: v.optional(v.string()),
         submittedAt: v.optional(v.number()),
       }),
     ),
   },
   handler: async (ctx, args) => {
+    // Cap the batch so a single mutation can't blow through Convex's 1MB
+    // arg / per-transaction read limits (each entry does a by_email lookup).
+    // For larger imports, chunk client-side.
+    if (args.entries.length > 500) {
+      throw new Error(`Batch too large (${args.entries.length}); chunk into ≤500-entry batches`);
+    }
     const now = Date.now();
+    // Allow backdating up to 2 years; nothing legitimate predates that. Future
+    // timestamps are clamped to "now" — they're never honest.
+    const earliest = now - 2 * 365 * 24 * 60 * 60 * 1000;
     let inserted = 0;
     let skipped = 0;
     const skippedEmails: string[] = [];
 
     for (const entry of args.entries) {
+      // Normalize so a "Different@Case.com" duplicate import doesn't create
+      // a parallel row that bypasses the by_email dedup index.
+      const email = entry.email.trim().toLowerCase();
+      if (!email) {
+        skipped++;
+        continue;
+      }
       const existing = await ctx.db
         .query("waitlist")
-        .withIndex("by_email", (q) => q.eq("email", entry.email))
+        .withIndex("by_email", (q) => q.eq("email", email))
         .first();
       if (existing) {
         skipped++;
-        skippedEmails.push(entry.email);
+        skippedEmails.push(email);
         continue;
       }
+      const submittedAt = entry.submittedAt
+        ? Math.min(Math.max(entry.submittedAt, earliest), now)
+        : now;
       await ctx.db.insert("waitlist", {
         firstName: entry.firstName,
         lastName: entry.lastName,
-        email: entry.email,
+        email,
         role: entry.role,
         company: entry.company,
         useCase: entry.useCase,
         status: entry.status ?? "new",
         adminNotes: entry.adminNotes,
-        submittedAt: entry.submittedAt ?? now,
+        submittedAt,
       });
       inserted++;
     }
