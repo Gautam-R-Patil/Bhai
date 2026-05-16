@@ -211,6 +211,7 @@ desktop/hostinger-upload/
 !src/forge/__tests__/pending-consumer.test.ts
 !src/forge/__tests__/create-tool-verifier-route.test.ts
 !src/forge/__tests__/phase3-smoke.test.ts
+!src/forge/__tests__/runner-asset.test.ts
 
 # Compiled Swift helpers (built by npm run build:location / build:ocr / build:ax)
 scripts/get_location_bin
