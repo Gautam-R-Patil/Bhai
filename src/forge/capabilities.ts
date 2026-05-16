@@ -63,8 +63,28 @@ export interface ValidationResult {
     errors: string[];
 }
 
-export function validateCapabilities(_caps: Capabilities): ValidationResult {
-    return { ok: true, errors: [] };
+export function validateCapabilities(caps: Capabilities): ValidationResult {
+    const errors: string[] = [];
+
+    for (const p of caps.fs_read) {
+        if (OVERLY_BROAD_PREFIXES.includes(p)) errors.push(`fs_read overly broad: ${p}`);
+        if (p.length < 3) errors.push(`fs_read path too short / risky: ${p}`);
+    }
+    for (const p of caps.fs_write) {
+        if (OVERLY_BROAD_PREFIXES.includes(p)) errors.push(`fs_write overly broad: ${p}`);
+        if (p.length < 3) errors.push(`fs_write path too short / risky: ${p}`);
+    }
+    for (const host of caps.net) {
+        if (host === "*" || host === "0.0.0.0" || host === "localhost" || host === "127.0.0.1") {
+            errors.push(`net hostname too broad: ${host}`);
+        }
+    }
+    for (const cmd of caps.exec) {
+        const bare = cmd.split(/\s+/)[0];
+        if (BANNED_EXEC.has(bare)) errors.push(`banned command in exec: ${bare}`);
+    }
+
+    return { ok: errors.length === 0, errors };
 }
 
 export function isPathHardDenied(_path: string): boolean {

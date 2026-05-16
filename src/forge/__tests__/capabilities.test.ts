@@ -54,3 +54,82 @@ describe("capabilities parse", () => {
         expect(JSON.parse(asJSON(caps))).toEqual(caps);
     });
 });
+
+describe("capabilities validate", () => {
+    it("validateCapabilities rejects overly-broad fs_read paths", () => {
+        const result = validateCapabilities({
+            fs_read: ["/"],
+            fs_write: [],
+            net: [],
+            exec: [],
+        });
+        expect(result.ok).toBe(false);
+        expect(result.errors[0]).toMatch(/overly broad|root/i);
+    });
+
+    it("validateCapabilities rejects overly-broad fs_write paths", () => {
+        const result = validateCapabilities({
+            fs_read: [],
+            fs_write: ["~"],
+            net: [],
+            exec: [],
+        });
+        expect(result.ok).toBe(false);
+        expect(result.errors[0]).toMatch(/overly broad/i);
+    });
+
+    it("validateCapabilities rejects banned commands in exec", () => {
+        const result = validateCapabilities({
+            fs_read: [],
+            fs_write: [],
+            net: [],
+            exec: ["rm"],
+        });
+        expect(result.ok).toBe(false);
+        expect(result.errors[0]).toMatch(/banned.*command|rm/i);
+    });
+
+    it("validateCapabilities rejects sudo even with args", () => {
+        const r = validateCapabilities({
+            fs_read: [],
+            fs_write: [],
+            net: [],
+            exec: ["sudo apt-get install foo"],
+        });
+        expect(r.ok).toBe(false);
+        expect(r.errors[0]).toMatch(/sudo/);
+    });
+
+    it("validateCapabilities rejects wildcard net host", () => {
+        const r = validateCapabilities({
+            fs_read: [],
+            fs_write: [],
+            net: ["*"],
+            exec: [],
+        });
+        expect(r.ok).toBe(false);
+        expect(r.errors[0]).toMatch(/too broad|hostname/i);
+    });
+
+    it("validateCapabilities rejects localhost / loopback net entries", () => {
+        const r = validateCapabilities({
+            fs_read: [],
+            fs_write: [],
+            net: ["localhost", "127.0.0.1", "0.0.0.0"],
+            exec: [],
+        });
+        expect(r.ok).toBe(false);
+        expect(r.errors.length).toBe(3);
+    });
+
+    it("validateCapabilities accepts a minimal declaration", () => {
+        const r = validateCapabilities({
+            fs_read: ["~/Downloads/"],
+            fs_write: [],
+            net: [],
+            exec: [],
+        });
+        expect(r.ok).toBe(true);
+        expect(r.errors).toEqual([]);
+    });
+});
