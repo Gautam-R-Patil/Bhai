@@ -111,6 +111,9 @@
         timers.push(setTimeout(function () { glyph.classList.add("in");  }, 120));
         timers.push(setTimeout(function () { greet.classList.add("in");  }, 280));
         timers.push(setTimeout(function () { iri.classList.add("in");    }, 1100));
+        timers.push(setTimeout(function () {
+            if (window.WizardAudio && window.WizardAudio.play) window.WizardAudio.play("awakeningChime");
+        }, 1450));
         timers.push(setTimeout(function () { status.classList.add("in"); }, 1450));
         timers.push(setTimeout(function () { cta.classList.add("in");    }, 1850));
 

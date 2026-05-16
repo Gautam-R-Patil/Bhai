@@ -67,6 +67,13 @@
         // Apply stored theme preference (empty = follow system).
         applyTheme((state.personalize && state.personalize.theme) || "");
 
+        // Initialize audio enabled-state from persisted preference.
+        if (window.WizardAudio && window.WizardAudio.setEnabled) {
+            const enabled = (state.personalize && state.personalize.audio && state.personalize.audio.enabled) || false;
+            window.WizardAudio.setEnabled(enabled);
+            if (enabled) window.WizardAudio.preload();
+        }
+
         const initial = decideInitialRoute(steps);
         if (initial.route === "ready-hub") {
             window.location.href = "ready-hub.html";
@@ -86,6 +93,7 @@
         }
 
         async function advance(fromIdx) {
+            if (window.WizardAudio && window.WizardAudio.play) window.WizardAudio.play("confirm");
             const n = router.next(fromIdx, steps);
             if (n === -1) {
                 await refreshState();
