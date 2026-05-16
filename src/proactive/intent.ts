@@ -11,7 +11,8 @@ export type IntentSource =
   | "convex_notification"
   | "calendar_morning" | "calendar_prep" | "tasks_morning"
   | "tasks_deadline" | "goals_morning" | "weather_morning"
-  | "news_morning" | "stale_email" | "deep_work_gap";
+  | "news_morning" | "stale_email" | "deep_work_gap"
+  | "onboarding_graduation";   // W3: Day-2/3/5 wizard graduation nudges
 
 export type Channel =
   | "whatsapp" | "telegram" | "discord" | "slack"
@@ -65,6 +66,7 @@ const VALID_SOURCES: IntentSource[] = [
   "calendar_morning", "calendar_prep", "tasks_morning",
   "tasks_deadline", "goals_morning", "weather_morning",
   "news_morning", "stale_email", "deep_work_gap",
+  "onboarding_graduation",
 ];
 const VALID_MODES: ProactiveMode[] = ["fyi", "question", "review"];
 const VALID_URGENCIES: Urgency[] = ["urgent", "normal", "ambient"];
