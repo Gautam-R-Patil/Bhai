@@ -53,6 +53,41 @@ const COPY = {
         "eyebrow": "How you work",
         "title": "Pick a starting shape.",
         "sub": "Shapes the examples I show, the tools I prioritize, and the way I talk. You can change this anytime.",
+
+        // Developer
+        "developer_title":  "Developer",
+        "developer_desc":   "Terminal-first. Code-aware. Speaks git.",
+        "developer_cap_1":  "Codebase memory across sessions",
+        "developer_cap_2":  "Shell + IDE awareness",
+        "developer_cap_3":  "Debug, review, and ship faster",
+
+        // Founder
+        "founder_title":    "Founder",
+        "founder_desc":     "Calendar, comms, decisions. Move fast.",
+        "founder_cap_1":    "Meeting summaries + decision log",
+        "founder_cap_2":    "Calendar + email orchestration",
+        "founder_cap_3":    "Research → decision in minutes",
+
+        // Creator
+        "creator_title":    "Creator",
+        "creator_desc":     "Ideas, media, drafts. Make things.",
+        "creator_cap_1":    "References + mood organized",
+        "creator_cap_2":    "Script + caption generation",
+        "creator_cap_3":    "Asset corral across tools",
+
+        // Researcher
+        "researcher_title": "Researcher",
+        "researcher_desc":  "Sources, citations, synthesis.",
+        "researcher_cap_1": "Deep research across 500+ sources",
+        "researcher_cap_2": "Credibility-scored citations",
+        "researcher_cap_3": "Hypothesis tracking",
+
+        // Explorer — the no-bias option
+        "explorer_title":   "Explorer",
+        "explorer_desc":    "Not sure yet — I'll learn as we go.",
+        "explorer_cap_1":   "No bias applied",
+        "explorer_cap_2":   "Adapts from your behavior",
+        "explorer_cap_3":   "You can pick a path later",
     },
 
     "personalize": {
