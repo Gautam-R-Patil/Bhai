@@ -56,9 +56,51 @@ impl StrikeRecord {
     }
 }
 
-// StrikeBoard is filled in P2T4 — keeping the export stub line so the
-// re-export in mod.rs continues to resolve.
-pub struct StrikeBoard;
+// ─── StrikeBoard ─────────────────────────────────────────
+//
+// `DashMap<String, StrikeRecord>` keyed by slug. Lock-free reads, sharded
+// per-key write lock so two unrelated slugs never contend.
+
+use dashmap::DashMap;
+use std::sync::Arc;
+
+#[derive(Debug, Default, Clone)]
+pub struct StrikeBoard {
+    strikes: Arc<DashMap<String, StrikeRecord>>,
+}
+
+impl StrikeBoard {
+    pub fn new() -> Self {
+        Self { strikes: Arc::new(DashMap::new()) }
+    }
+
+    /// Record one strike against `slug`. Returns the current count within the
+    /// 1-hour window. Caller decides whether the count crosses the archive
+    /// threshold and what to do about it.
+    pub fn record(&self, slug: &str, window: Duration) -> usize {
+        let mut entry = self.strikes.entry(slug.to_string()).or_default();
+        entry.record_strike();
+        entry.count_in_window(window)
+    }
+
+    /// Read-only check — no mutation. Internally `is_archived` drains expired
+    /// entries which IS a mutation, so we go through `entry` not `get`.
+    pub fn is_archived(&self, slug: &str, window: Duration) -> bool {
+        let mut entry = self.strikes.entry(slug.to_string()).or_default();
+        entry.is_archived(window)
+    }
+
+    pub fn count(&self, slug: &str, window: Duration) -> usize {
+        let mut entry = self.strikes.entry(slug.to_string()).or_default();
+        entry.count_in_window(window)
+    }
+
+    /// Reset on user-revoke. Removes the slug entry entirely so the next
+    /// strike starts fresh.
+    pub fn clear(&self, slug: &str) {
+        self.strikes.remove(slug);
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -123,5 +165,66 @@ mod tests {
         r.clear();
         assert!(!r.is_archived(Duration::from_secs(3600)));
         assert_eq!(r.count_in_window(Duration::from_secs(3600)), 0);
+    }
+}
+
+#[cfg(test)]
+mod board_tests {
+    use super::*;
+    use std::thread::sleep;
+
+    #[test]
+    fn board_records_per_slug_independently() {
+        let board = StrikeBoard::new();
+        let w = Duration::from_secs(3600);
+        assert_eq!(board.record("a", w), 1);
+        assert_eq!(board.record("a", w), 2);
+        assert_eq!(board.record("b", w), 1);
+        assert_eq!(board.count("a", w), 2);
+        assert_eq!(board.count("b", w), 1);
+        assert!(!board.is_archived("a", w));
+        assert!(!board.is_archived("b", w));
+    }
+
+    #[test]
+    fn board_archives_at_three() {
+        let board = StrikeBoard::new();
+        let w = Duration::from_secs(3600);
+        board.record("evil", w);
+        board.record("evil", w);
+        assert!(!board.is_archived("evil", w));
+        board.record("evil", w);
+        assert!(board.is_archived("evil", w));
+    }
+
+    #[test]
+    fn board_clear_resets_slug() {
+        let board = StrikeBoard::new();
+        let w = Duration::from_secs(3600);
+        board.record("x", w);
+        board.record("x", w);
+        board.record("x", w);
+        assert!(board.is_archived("x", w));
+        board.clear("x");
+        assert!(!board.is_archived("x", w));
+        assert_eq!(board.count("x", w), 0);
+    }
+
+    #[test]
+    fn board_unknown_slug_is_not_archived() {
+        let board = StrikeBoard::new();
+        let w = Duration::from_secs(3600);
+        assert!(!board.is_archived("never_seen", w));
+        assert_eq!(board.count("never_seen", w), 0);
+    }
+
+    #[test]
+    fn board_drops_expired_strikes() {
+        let board = StrikeBoard::new();
+        board.record("flaky", Duration::from_secs(3600));
+        board.record("flaky", Duration::from_secs(3600));
+        sleep(Duration::from_millis(40));
+        let count = board.count("flaky", Duration::from_millis(10));
+        assert_eq!(count, 0, "expected 0 strikes in tight window, got {count}");
     }
 }
