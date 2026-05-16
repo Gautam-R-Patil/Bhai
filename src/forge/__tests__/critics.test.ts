@@ -14,6 +14,11 @@ describe("compile critic", () => {
         expect(r.pass).toBe(false);
         expect(r.hardFail).toBe(true);
     });
+
+    it("accepts top-level await in wrapper", () => {
+        const r = runCompileCheck("const x = await Promise.resolve(1);");
+        expect(r.pass).toBe(true);
+    });
 });
 
 describe("SAST critic (regex fallback)", () => {
@@ -42,6 +47,23 @@ describe("SAST critic (regex fallback)", () => {
     it("passes clean code", async () => {
         const r = await runSastCritic("module.exports = async (i) => i.x + 1;", { rulesPath: null });
         expect(r.pass).toBe(true);
+    });
+
+    it("does not flag process.env equality checks", async () => {
+        const r = await runSastCritic("if (process.env.X === 'y') return;", { rulesPath: null });
+        expect(r.findings.find(f => f.ruleId === "forge-no-env-write")).toBeUndefined();
+    });
+
+    it("does not flag utils.fetch (sanctioned API)", async () => {
+        const r = await runSastCritic("await utils.fetch(url);", { rulesPath: null });
+        expect(r.findings.find(f => f.ruleId === "forge-fetch-no-cap")).toBeUndefined();
+    });
+
+    it("WARNING-only findings still pass (soft signal)", async () => {
+        const r = await runSastCritic("process.env.X = 'y';", { rulesPath: null });
+        expect(r.pass).toBe(true);
+        expect(r.findings.length).toBeGreaterThan(0);
+        expect(r.findings.every(f => f.severity === "WARNING")).toBe(true);
     });
 });
 

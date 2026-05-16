@@ -131,7 +131,7 @@ const REGEX_RULES: Array<{ id: string; pattern: RegExp; severity: "ERROR" | "WAR
     },
     {
         id: "forge-no-env-write",
-        pattern: /process\.env\.\w+\s*=/g,
+        pattern: /process\.env\.\w+\s*=(?!=)/g,
         severity: "WARNING",
         message: "writing to process.env discouraged",
     },
@@ -155,7 +155,7 @@ const REGEX_RULES: Array<{ id: string; pattern: RegExp; severity: "ERROR" | "WAR
     },
     {
         id: "forge-fetch-no-cap",
-        pattern: /(?:^|[^\w])fetch\s*\(/g,
+        pattern: /(?:^|[^\w.])fetch\s*\(/g,
         severity: "WARNING",
         message: "fetch call detected — ensure net capability declared",
     },
