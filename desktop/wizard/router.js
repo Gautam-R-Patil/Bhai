@@ -3,7 +3,7 @@
 // Browser: attaches to window.WizardRouter. Main process: required from main.js.
 "use strict";
 
-const ALL_STEPS = ["awakening", "welcome", "terms", "signin", "profile", "personalize", "permissions", "vision-tier", "install"];
+const ALL_STEPS = ["awakening", "welcome", "terms", "signin", "profile", "persona", "personalize", "permissions", "vision-tier", "install"];
 
 function envFlag(name) {
     try { if (typeof process !== "undefined" && process.env && process.env[name] === "true") return true; }
@@ -58,6 +58,7 @@ function getSteps(state) {
     if (needsTerms(s) || s.isReconfigure) out.push("terms");
     if (!signedIn || s.isReconfigure) out.push("signin");
     out.push("profile");
+    out.push("persona");       // ← W2: persona specialization step
     out.push("personalize");
     if (s.platform !== "win32") out.push("permissions");
     out.push("vision-tier");
