@@ -125,10 +125,48 @@ impl Worker {
         self.inflight.load(Ordering::Acquire)
     }
 
-    /// Drop-in placeholder; Task 7 fills the body. Marked pub so the Pool
-    /// can call it.
-    pub async fn invoke(&mut self, _input: Value, _deadline: Duration) -> Result<Value, InvokeError> {
-        Err(InvokeError::Other("Worker::invoke unimplemented (Task 7)".into()))
+    /// Send a request and read the matching response. Caller is expected to
+    /// have already called `try_acquire_inflight()` — `invoke` does NOT
+    /// re-enter that gate so the Pool can checkout the worker before holding
+    /// it across an await point.
+    pub async fn invoke(&mut self, input: Value, deadline: Duration) -> Result<Value, InvokeError> {
+        let req_id = uuid::Uuid::new_v4().to_string();
+        let request = serde_json::json!({
+            "id": req_id,
+            "input": input,
+            "deadline_ms": deadline.as_millis() as u64,
+        });
+        let mut line = serde_json::to_string(&request).map_err(|e| InvokeError::Other(e.to_string()))?;
+        line.push('\n');
+
+        self.stdin
+            .write_all(line.as_bytes())
+            .await
+            .map_err(InvokeError::Pipe)?;
+        self.stdin.flush().await.map_err(InvokeError::Pipe)?;
+
+        let read = tokio::time::timeout(deadline, self.stdout_lines.next_line()).await;
+        let raw = match read {
+            Ok(Ok(Some(s))) => s,
+            Ok(Ok(None)) => return Err(InvokeError::Ipc("child closed stdout".into())),
+            Ok(Err(e)) => return Err(InvokeError::Pipe(e)),
+            Err(_) => {
+                return Err(InvokeError::Timeout { budget_ms: deadline.as_millis() as u64 });
+            }
+        };
+
+        let value: Value = serde_json::from_str(&raw)
+            .map_err(|e| InvokeError::Ipc(format!("response not JSON: {e}; raw={}", truncate(&raw, 200))))?;
+
+        let resp_id = value.get("id").and_then(|i| i.as_str()).unwrap_or("");
+        if resp_id != req_id {
+            return Err(InvokeError::Ipc(format!(
+                "response id mismatch: expected {req_id}, got {resp_id}"
+            )));
+        }
+
+        self.last_used = Instant::now();
+        Ok(value)
     }
 
     /// Drop-in placeholder; Task 9 fills the body.
@@ -136,6 +174,10 @@ impl Worker {
         let _ = self.child.kill().await;
         Ok(())
     }
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    if s.len() <= max { s.to_string() } else { format!("{}…", &s[..max]) }
 }
 
 #[cfg(test)]
@@ -195,5 +237,55 @@ mod tests {
         assert!(matches!(w.try_acquire_inflight(), Err(InvokeError::Busy)));
         w.release_inflight();
         assert!(w.try_acquire_inflight().is_ok(), "after release, acquire succeeds again");
+    }
+
+    async fn spawn_echo_child() -> Child {
+        Command::new("/bin/sh")
+            .arg("-c")
+            .arg(r#"echo '{"id":"__boot__","ok":true}'; while IFS= read -r LINE; do printf '%s\n' "$LINE"; done"#)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn")
+    }
+
+    #[tokio::test]
+    async fn invoke_round_trips_via_echo_child() {
+        let child = spawn_echo_child().await;
+        let paths = Sandpath { handler_dir: std::env::temp_dir() };
+        let mut w = Worker::from_child("echo".into(), paths, child).await.expect("boot");
+
+        let req = serde_json::json!({"echo": "hello"});
+        w.try_acquire_inflight().expect("acquire");
+        let resp = w.invoke(req.clone(), Duration::from_secs(5)).await.expect("invoke");
+        w.release_inflight();
+
+        assert!(resp.get("id").is_some(), "response has id");
+        assert!(resp.get("input").is_some(), "echo preserved input field");
+        assert_eq!(resp.get("input").unwrap(), &req, "input round-tripped");
+    }
+
+    #[tokio::test]
+    async fn invoke_returns_pipe_error_when_child_dies() {
+        let child = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(r#"echo '{"id":"__boot__","ok":true}'; read X; exit 0"#)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn");
+        let paths = Sandpath { handler_dir: std::env::temp_dir() };
+        let mut w = Worker::from_child("dies".into(), paths, child).await.expect("boot");
+
+        w.try_acquire_inflight().expect("acquire");
+        let first = w.invoke(serde_json::json!({"x":1}), Duration::from_secs(2)).await;
+        w.release_inflight();
+        match first {
+            Err(InvokeError::Ipc(m)) if m.contains("closed") => {},
+            Err(InvokeError::Pipe(_)) => {},
+            other => panic!("expected EOF-style error, got {other:?}"),
+        }
     }
 }
