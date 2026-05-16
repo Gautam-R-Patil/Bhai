@@ -74,4 +74,53 @@ describe("diagnose prompt builder", () => {
         expect(p).toContain("forge-no-eval");
         expect(p).toContain("eval not allowed");
     });
+
+    it("safeStringify handles undefined actual without crashing", () => {
+        const p = buildDiagnosePrompt({
+            priorHandlerCode: "return;",
+            failures: [
+                { description: "missing return", input: { x: 1 }, expectedKind: "returns_equals", expectedValue: 42, actual: undefined },
+            ],
+            sastFindings: [],
+            attemptNumber: 1,
+            maxAttempts: 3,
+        });
+        expect(p).toContain("Actual: undefined");
+    });
+
+    it("safeStringify handles circular actual without crashing", () => {
+        const cyc: Record<string, unknown> = { name: "a" };
+        cyc.self = cyc;
+        const p = buildDiagnosePrompt({
+            priorHandlerCode: "return req;",
+            failures: [
+                { description: "circular", input: {}, expectedKind: "returns_equals", expectedValue: 1, actual: cyc },
+            ],
+            sastFindings: [],
+            attemptNumber: 1,
+            maxAttempts: 3,
+        });
+        expect(p).toContain("[unserializable: object]");
+    });
+
+    it("caps failures at 7 with overflow footer", () => {
+        const failures = Array.from({ length: 10 }, (_, i) => ({
+            description: `test ${i}`,
+            input: { i },
+            expectedKind: "returns_equals",
+            expectedValue: i,
+            actual: 0,
+        }));
+        const p = buildDiagnosePrompt({
+            priorHandlerCode: "return 0;",
+            failures,
+            sastFindings: [],
+            attemptNumber: 1,
+            maxAttempts: 3,
+        });
+        expect(p).toContain("## Test: test 0");
+        expect(p).toContain("## Test: test 6");
+        expect(p).not.toContain("## Test: test 7");
+        expect(p).toContain("3 more failures suppressed");
+    });
 });

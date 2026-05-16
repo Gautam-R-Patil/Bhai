@@ -38,7 +38,7 @@ export function buildSynthesisPrompt(opts: BuildSynthesisOpts): string {
     if (opts.trackB) {
         parts.push("# Track B (retrospective synthesis)");
         parts.push("");
-        parts.push(`This is a retrospective synthesis from yesterday's tool-call history.`);
+        parts.push("This is a retrospective synthesis from yesterday's tool-call history.");
         if (opts.patternClass) parts.push(`Observed pattern: ${opts.patternClass}`);
         if (opts.evidenceSummary) {
             parts.push("Evidence summary:");
@@ -117,12 +117,18 @@ export function buildDiagnosePrompt(opts: BuildDiagnoseOpts): string {
     if (opts.failures.length > 0) {
         parts.push(`When run against your own tests, ${opts.failures.length} failed:`);
         parts.push("");
-        for (const f of opts.failures) {
+        const MAX_FAILURES_IN_PROMPT = 7;
+        const shown = opts.failures.slice(0, MAX_FAILURES_IN_PROMPT);
+        for (const f of shown) {
             parts.push(`## Test: ${f.description}`);
-            parts.push(`Input: ${JSON.stringify(f.input)}`);
-            parts.push(`Expected: ${f.expectedKind} = ${JSON.stringify(f.expectedValue)}`);
-            parts.push(`Actual: ${JSON.stringify(f.actual).slice(0, 200)}`);
+            parts.push(`Input: ${safeStringify(f.input)}`);
+            parts.push(`Expected: ${f.expectedKind} = ${safeStringify(f.expectedValue)}`);
+            parts.push(`Actual: ${safeStringify(f.actual).slice(0, 200)}`);
             if (f.stack) parts.push(`Stack: ${f.stack.split("\n").slice(0, 5).join("\n")}`);
+            parts.push("");
+        }
+        if (opts.failures.length > MAX_FAILURES_IN_PROMPT) {
+            parts.push(`... and ${opts.failures.length - MAX_FAILURES_IN_PROMPT} more failures suppressed`);
             parts.push("");
         }
     }
@@ -138,7 +144,7 @@ export function buildDiagnosePrompt(opts: BuildDiagnoseOpts): string {
     parts.push("# Your task");
     parts.push("");
     parts.push("Diagnose WHY the failures happened, then produce a corrected JSON response.");
-    parts.push(`Your synthesis_notes MUST explain what you changed and why.`);
+    parts.push("Your synthesis_notes MUST explain what you changed and why.");
     parts.push("");
     parts.push(`This is attempt ${opts.attemptNumber} of ${opts.maxAttempts}.`);
 
@@ -148,4 +154,14 @@ export function buildDiagnosePrompt(opts: BuildDiagnoseOpts): string {
 function truncate(s: string, max: number): string {
     if (s.length <= max) return s;
     return s.slice(0, max) + `\n... ${s.length - max} more characters truncated`;
+}
+
+function safeStringify(v: unknown): string {
+    if (v === undefined) return "undefined";
+    try {
+        const s = JSON.stringify(v);
+        return s === undefined ? String(v) : s;
+    } catch {
+        return `[unserializable: ${typeof v}]`;
+    }
 }
