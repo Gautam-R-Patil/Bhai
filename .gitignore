@@ -185,6 +185,7 @@ desktop/hostinger-upload/
 !desktop/tests/copy.test.js
 !desktop/tests/awakening.test.js
 !desktop/tests/router.test.js
+!desktop/tests/magic-moment.test.js
 !src/forge/__tests__/
 !src/forge/__tests__/types.test.ts
 !src/forge/__tests__/store-types-extension.test.ts
