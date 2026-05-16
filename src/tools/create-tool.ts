@@ -32,6 +32,10 @@ export function setRegistryRef(reg: Map<string, ToolDefinition>): void {
     registryRef = reg;
 }
 
+export function getRegistryRef(): Map<string, ToolDefinition> | null {
+    return registryRef;
+}
+
 // ── Tracked dynamic tool names for listing ───────────────
 const dynamicToolNames = new Set<string>();
 

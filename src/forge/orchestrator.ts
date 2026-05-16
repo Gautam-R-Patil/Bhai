@@ -1,18 +1,41 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { LLMClient } from "../llm.js";
 import { selectForToolSynthesis } from "../model-router.js";
 import type { FunctionGemmaResult } from "../models/function-gemma.js";
-import { closeLibrary, countTools, getToolBySlug, insertTool, listTools, openLibrary } from "./library.js";
+import { getRegistryRef } from "../tools/create-tool.js";
+import { parseCapabilities, type Capabilities } from "./capabilities.js";
+import {
+    closeLibrary,
+    countTools,
+    getToolBySlug,
+    insertTool,
+    listTools,
+    openLibrary,
+    setLifecycleState,
+} from "./library.js";
 import { lookupTool as runLookupPipeline } from "./lookup.js";
+import { getDynamicStoreDir, manifestDir, readManifest, writeManifest } from "./manifest.js";
 import { migrateLegacyDynamicTools } from "./migration.js";
 import { buildSynthesisPrompt } from "./prompt-builder.js";
+import {
+    installPersistedTool,
+    invokePersistedTool,
+    reinstallPersistedTool,
+    uninstallPersistedTool,
+} from "./sandbox-supervisor.js";
 import { emitForgeEvent, initForgeTelemetry } from "./telemetry.js";
-import type { ForgeStats, SynthesisRequest, SynthesisResult, ToolMetadata } from "./types.js";
+import type {
+    ForgeStats,
+    PersistedToolManifest,
+    SynthesisRequest,
+    SynthesisResult,
+    ToolMetadata,
+} from "./types.js";
 import { runVerifier } from "./verifier.js";
 
 type FunctionGemmaFn = (
@@ -74,7 +97,14 @@ export async function initForge(opts: InitForgeOpts): Promise<void> {
         });
 
         _ready = true;
-        console.log(`🔧 Forge: ready (${counts.total} tools in library, migrated ${migration.migrated} legacy)`);
+        const scan = await scanAndRegisterApprovedTools().catch((err) => {
+            console.error("🔧 Forge: boot scan failed:", (err as Error).message);
+            return { registered: 0, archived: 0 };
+        });
+        console.log(
+            `🔧 Forge: ready (${counts.total} tools in library, migrated ${migration.migrated} legacy, ` +
+                `${scan.registered} persisted re-registered, ${scan.archived} archived)`,
+        );
     } catch (err) {
         console.error("🔧 Forge: init failed:", (err as Error).message);
         _ready = false;
@@ -272,12 +302,13 @@ export async function synthesizeTool(req: SynthesisRequest): Promise<SynthesisRe
 
     if (!_embedFn) throw new Error("embedFn not set");
     const embedding = await _embedFn(req.description);
+    const handlerHash = hashSync(result.envelope.handler_code);
     try {
         insertTool({
             slug: req.name,
             description: req.description,
             schemaJson: JSON.stringify(req.parametersSchema),
-            handlerHash: hashSync(result.envelope.handler_code),
+            handlerHash,
             embedding,
             source: req.source,
             originIntent: req.originIntent,
@@ -294,6 +325,52 @@ export async function synthesizeTool(req: SynthesisRequest): Promise<SynthesisRe
                 failureReason: "exhausted_attempts",
                 reportPath: "",
             },
+        };
+    }
+
+    // Persistent tier — write manifest, mark awaiting_approval, return without
+    // registering in the agent's tool registry. The user must approve via
+    // approveDynamicTool before the tool becomes callable.
+    if (req.persistent) {
+        const capabilities = parseCapabilities({
+            // Phase 3's envelope ships capabilities_declared as a string array.
+            // Empty array becomes default ({fs_read:[],...}) — caller must
+            // surface a "no capabilities declared" warning in the approval UI.
+            fs_read: [],
+            fs_write: [],
+            net: [],
+            exec: [],
+        });
+        const manifest: PersistedToolManifest = {
+            slug: req.name,
+            description: req.description,
+            capabilities,
+            parametersSchema: req.parametersSchema,
+            version: "0.1.0",
+            approvedAt: 0,
+            userQuote: "",
+            handlerHash,
+        };
+        try {
+            await installPersistedTool(req.name, result.envelope.handler_code, manifest);
+            setLifecycleState(req.name, "awaiting_approval");
+        } catch (err) {
+            return {
+                kind: "failed",
+                report: {
+                    requestedName: req.name,
+                    description: req.description,
+                    attempts: result.attempts,
+                    finalDiagnosis: `manifest write failed: ${(err as Error).message}`,
+                    failureReason: "exhausted_attempts",
+                    reportPath: "",
+                },
+            };
+        }
+        return {
+            kind: "awaiting_approval",
+            slug: req.name,
+            capabilitiesRequested: capabilities,
         };
     }
 
@@ -336,12 +413,128 @@ async function synthesizeWithStubLLM(req: SynthesisRequest): Promise<SynthesisRe
     return { kind: "synthesized", slug: req.name, attempts: 1, testsPassed: 1, testsTotal: 1 };
 }
 
-export async function approveDynamicTool(_slug: string, _userQuote: string): Promise<void> {
-    throw new Error("forge.approveDynamicTool: not implemented until phase 4 (sandbox + approval gate)");
+export async function approveDynamicTool(
+    slug: string,
+    userQuote: string,
+): Promise<{ ok: true; toolName: string } | { ok: false; error: string }> {
+    if (!userQuote || userQuote.trim().length < 10) {
+        return { ok: false, error: "user_quote too short or empty (must be ≥10 non-whitespace chars)" };
+    }
+    const manifest = readManifest(slug);
+    if (!manifest) {
+        return { ok: false, error: `manifest not found for slug ${slug}` };
+    }
+    // Refresh approval metadata.
+    const approved: PersistedToolManifest = {
+        ...manifest,
+        approvedAt: Date.now(),
+        userQuote,
+    };
+    try {
+        await writeManifest(slug, approved);
+        await reinstallPersistedTool(slug);
+        setLifecycleState(slug, "active");
+    } catch (err) {
+        return { ok: false, error: `install failed: ${(err as Error).message}` };
+    }
+
+    const registry = getRegistryRef();
+    if (registry) {
+        const handler = async (input: Record<string, unknown>) => {
+            const res = await invokePersistedTool(slug, input);
+            return JSON.stringify(res);
+        };
+        registry.set(slug, {
+            schema: {
+                type: "function",
+                function: {
+                    name: slug,
+                    description: `[Dynamic — sandboxed] ${manifest.description}`,
+                    parameters: manifest.parametersSchema,
+                },
+            },
+            handler,
+        });
+    }
+    emitForgeEvent({ event: "tool_approved", ts: Date.now(), slug } as never);
+    return { ok: true, toolName: slug };
 }
 
-export async function revokeDynamicTool(_slug: string): Promise<void> {
-    throw new Error("forge.revokeDynamicTool: not implemented until phase 4");
+export async function revokeDynamicTool(slug: string): Promise<void> {
+    try {
+        await uninstallPersistedTool(slug);
+    } catch (err) {
+        console.error("revokeDynamicTool: uninstall failed:", (err as Error).message);
+    }
+    const registry = getRegistryRef();
+    if (registry) {
+        registry.delete(slug);
+    }
+    try {
+        setLifecycleState(slug, "archived");
+    } catch {
+        // unknown slug → no-op
+    }
+    emitForgeEvent({ event: "tool_revoked", ts: Date.now(), slug } as never);
+}
+
+/// Boot-scan: walk ~/.atlas/store/dynamic/* and re-register any active
+/// (approved) manifests in the agent's tool registry.
+async function scanAndRegisterApprovedTools(): Promise<{ registered: number; archived: number }> {
+    const dir = getDynamicStoreDir();
+    if (!existsSync(dir)) {
+        return { registered: 0, archived: 0 };
+    }
+    let entries: string[];
+    try {
+        entries = readdirSync(dir);
+    } catch {
+        return { registered: 0, archived: 0 };
+    }
+    let registered = 0;
+    let archived = 0;
+    const registry = getRegistryRef();
+    for (const slug of entries) {
+        if (slug === "_failed") continue;
+        const manifest = readManifest(slug);
+        if (!manifest) {
+            // Manifest unreadable/invalid → archive the row if present.
+            try {
+                setLifecycleState(slug, "archived");
+                archived++;
+            } catch {
+                // unknown slug in library; skip
+            }
+            continue;
+        }
+        if (manifest.approvedAt === 0) continue; // awaiting_approval — don't register
+        const meta = getToolBySlug(slug);
+        if (!meta || meta.lifecycleState !== "active") continue;
+        if (registry) {
+            const handler = async (input: Record<string, unknown>) => {
+                const res = await invokePersistedTool(slug, input);
+                return JSON.stringify(res);
+            };
+            registry.set(slug, {
+                schema: {
+                    type: "function",
+                    function: {
+                        name: slug,
+                        description: `[Dynamic — sandboxed] ${manifest.description}`,
+                        parameters: manifest.parametersSchema,
+                    },
+                },
+                handler,
+            });
+        }
+        try {
+            await reinstallPersistedTool(slug);
+        } catch (err) {
+            console.error(`boot-scan: failed to pre-warm ${slug}:`, (err as Error).message);
+        }
+        registered++;
+    }
+    return { registered, archived };
 }
 
 // ── Pending queue with HMAC integrity (F6) ────────────────
