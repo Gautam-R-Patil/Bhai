@@ -22,6 +22,8 @@ pub mod macos;
 pub mod linux_seccomp;
 #[cfg(target_os = "linux")]
 pub mod linux_landlock;
+#[cfg(target_os = "linux")]
+pub mod linux;
 
 /// Validated set of resources a persisted tool may touch. Mirrors the TS
 /// `Capabilities` shape in `src/forge/capabilities.ts` exactly — Plan 4 wires
@@ -52,21 +54,27 @@ pub trait Sandbox: Send + Sync {
 }
 
 /// Compile-time factory. Returns the per-OS impl, or a stub that errors with
-/// `platform_unsupported` on Linux/Windows until Plan 3 ships.
+/// `platform_unsupported` on platforms not yet implemented.
 #[cfg(target_os = "macos")]
 pub fn make_sandbox() -> Box<dyn Sandbox> {
     Box::new(macos::MacosSandbox)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+pub fn make_sandbox() -> Box<dyn Sandbox> {
+    let node_path = which::which("node").unwrap_or_else(|_| std::path::PathBuf::from("/usr/bin/node"));
+    Box::new(linux::LinuxSandbox::new(node_path))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn make_sandbox() -> Box<dyn Sandbox> {
     Box::new(UnsupportedSandbox)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub struct UnsupportedSandbox;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 impl Sandbox for UnsupportedSandbox {
     fn spawn(
         &self,
@@ -76,7 +84,7 @@ impl Sandbox for UnsupportedSandbox {
     ) -> io::Result<Child> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
-            "forge sandbox: platform_unsupported (Plan 3 adds Linux/Windows backends)",
+            "forge sandbox: platform_unsupported (Plan 3 Windows backend pending)",
         ))
     }
 }
