@@ -44,6 +44,7 @@ uuid = { version = "1", features = ["v4"] }
 lru = "0.12"
 which = "6"
 dashmap = "6"
+thiserror = "1"
 
 # Crypto (security module)
 aes-gcm = "0.10"      # AES-256-GCM encryption

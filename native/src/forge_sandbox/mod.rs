@@ -20,6 +20,8 @@ pub mod macos;
 
 #[cfg(target_os = "linux")]
 pub mod linux_seccomp;
+#[cfg(target_os = "linux")]
+pub mod linux_landlock;
 
 /// Validated set of resources a persisted tool may touch. Mirrors the TS
 /// `Capabilities` shape in `src/forge/capabilities.ts` exactly — Plan 4 wires
