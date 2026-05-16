@@ -134,10 +134,65 @@ fn tracing_warn(slug: &str, msg: &str) {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use nix::sched::CloneFlags;
+    use std::fs;
+    use std::io::{BufRead, BufReader};
 
     #[test]
     fn clone_newnet_flag_value_is_correct() {
         assert_eq!(CloneFlags::CLONE_NEWNET.bits(), 0x40000000);
+    }
+
+    /// Integration: spawn Node under the Linux sandbox and confirm a denied
+    /// fs read returns EACCES/EPERM rather than succeeding. Requires `node`
+    /// and unprivileged userns or CAP_NET_ADMIN. Skipped on hosts without.
+    #[tokio::test]
+    #[ignore]
+    async fn linux_sandbox_blocks_disallowed_fs_read() {
+        if which::which("node").is_err() {
+            eprintln!("[skip] node not on PATH");
+            return;
+        }
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let handler_path = tmp.path().join("handler.js");
+        // The handler attempts /etc/passwd read; expected EACCES from Landlock.
+        fs::write(
+            tmp.path().join(".handler-shim.js"),
+            r#"
+const fs = require("node:fs");
+try {
+    const data = fs.readFileSync("/etc/passwd", "utf8");
+    process.stdout.write(JSON.stringify({id:"__boot__",ok:false,error:{kind:"bypass",len:data.length}}) + "\n");
+} catch (err) {
+    process.stdout.write(JSON.stringify({id:"__boot__",ok:false,error:{kind:"cap_denied",code:err.code}}) + "\n");
+}
+process.exit(0);
+"#,
+        ).expect("write shim");
+        fs::write(&handler_path, "module.exports = async () => ({});").expect("write handler");
+
+        let sandbox = LinuxSandbox::new(which::which("node").unwrap());
+        let caps = Capabilities {
+            fs_read: vec![tmp.path().to_string_lossy().into_owned()],
+            ..Capabilities::default()
+        };
+        let res = sandbox.spawn("denytest", tmp.path(), &caps);
+        if let Err(e) = &res {
+            if format!("{e:?}").contains("EPERM") {
+                eprintln!("[skip] unprivileged userns disabled on this host");
+                return;
+            }
+        }
+        let mut child = res.expect("spawn");
+        let stdout = child.stdout.take().expect("stdout");
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        let _ = reader.read_line(&mut line);
+        assert!(
+            line.contains("cap_denied") || line.contains("EACCES") || line.contains("EPERM"),
+            "expected cap_denied/EACCES/EPERM, got: {line}"
+        );
+        let _ = child.kill().await;
     }
 }
