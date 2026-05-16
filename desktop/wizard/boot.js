@@ -1,7 +1,6 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
-// Renderer bootstrap for the adaptive wizard. IIFE at bottom runs on page load
-// (when #wizard-header exists); pure helpers are exposed on window.__WizardBoot
-// for testing without auto-booting.
+// Renderer bootstrap for the cinematic wizard. IIFE at bottom runs on page load
+// when #step-root exists; pure helpers exposed on window.__WizardBoot for tests.
 (function () {
     "use strict";
 
@@ -9,57 +8,49 @@
         while (el && el.firstChild) el.removeChild(el.firstChild);
     }
 
-    function renderDots(dotsEl, allSteps, activeSteps, currentId, onDotClick) {
-        clearChildren(dotsEl);
-        for (const id of allSteps) {
-            const d = document.createElement("span");
-            d.className = "step-dot"
-                + (id === currentId ? " active" : "")
-                + (activeSteps.indexOf(id) < 0 ? " skipped" : "");
-            d.title = id;
-            d.setAttribute("data-sp-step", id);
-            if (activeSteps.indexOf(id) >= 0 && typeof onDotClick === "function") {
-                d.addEventListener("click", function () {
-                    onDotClick(activeSteps.indexOf(id));
-                });
+    function renderIndicator(host, allSteps, activeSteps, currentIdx, onDotClick) {
+        clearChildren(host);
+        // Awakening doesn't show in the indicator strip — too cinematic for dots.
+        for (let i = 1; i < activeSteps.length; i++) {
+            const id = activeSteps[i];
+            const cls = "indicator-dot"
+                + (i === currentIdx ? " active" : i < currentIdx ? " done" : "");
+            const dot = document.createElement("span");
+            dot.className = cls;
+            dot.setAttribute("data-sp-step", id);
+            if (typeof onDotClick === "function") {
+                dot.addEventListener("click", function () { onDotClick(i); });
             }
-            dotsEl.appendChild(d);
+            host.appendChild(dot);
         }
     }
 
-    function renderChips(chipsEl, chips, onChipClick) {
-        clearChildren(chipsEl);
-        for (let i = 0; i < chips.length; i++) {
-            const c = chips[i];
-            const b = document.createElement("button");
-            b.type = "button";
-            b.className = "chip";
-            b.textContent = (c.label || "") + " \u2713";
-            b.setAttribute("data-sp-chip", c.id || c.label || "");
-            if (typeof onChipClick === "function") {
-                const chip = c;
-                b.addEventListener("click", function () { onChipClick(chip); });
-            }
-            chipsEl.appendChild(b);
-        }
+    function setFolio(folioEl, currentIdx, total) {
+        if (!folioEl) return;
+        folioEl.textContent = String(currentIdx + 1).padStart(2, "0") + " / " + String(total).padStart(2, "0");
     }
 
-    // Decide whether to skip straight to Ready Hub, or render step 0.
-    // Returns { route: "ready-hub" | "step", stepIndex?: number }.
+    // Apply user's theme preference. Empty string ⇒ remove attribute ⇒ OS decides.
+    function applyTheme(value) {
+        const root = document.documentElement;
+        if (!value || value === "system") root.removeAttribute("data-theme");
+        else root.setAttribute("data-theme", value);
+    }
+
     function decideInitialRoute(steps) {
         if (!Array.isArray(steps) || steps.length === 0) return { route: "ready-hub" };
         return { route: "step", stepIndex: 0 };
     }
 
     async function boot() {
-        const headerEl = document.getElementById("wizard-header");
-        const dotsEl = document.getElementById("step-dots");
-        const chipsEl = document.getElementById("already-set-strip");
-        const stepEl = document.getElementById("current-step");
-        if (!headerEl || !dotsEl || !chipsEl || !stepEl) return; // not the wizard page
+        const stepEl  = document.getElementById("step-root");
+        const indEl   = document.getElementById("indicator");
+        const folioEl = document.getElementById("chrome-folio");
+        if (!stepEl) return; // not the wizard page
 
-        const atlas = window.atlas || {};
+        const atlas  = window.atlas || {};
         const router = window.WizardRouter;
+        const Cin    = window.Cinematic || { scribeRule: function () {}, applyConfidence: function () {} };
         if (!router || !atlas.setupDetect) {
             stepEl.textContent = "Setup shell failed to load (router or IPC missing).";
             return;
@@ -71,8 +62,10 @@
             stepEl.textContent = "Detection failed: " + (err.message || String(err));
             return;
         }
-        let { steps, header } = router.getSteps(state);
-        headerEl.textContent = header;
+        let { steps } = router.getSteps(state);
+
+        // Apply stored theme preference (empty = follow system).
+        applyTheme((state.personalize && state.personalize.theme) || "");
 
         const initial = decideInitialRoute(steps);
         if (initial.route === "ready-hub") {
@@ -85,19 +78,6 @@
             catch { return; }
             const nxt = router.getSteps(state);
             steps = nxt.steps;
-            headerEl.textContent = nxt.header;
-            refreshChips();
-        }
-
-        function refreshChips() {
-            const chips = (window.WizardChips && typeof window.WizardChips.buildChips === "function")
-                ? window.WizardChips.buildChips(state)
-                : [];
-            renderChips(chipsEl, chips, function (chip) {
-                const i = steps.indexOf(chip.stepTarget);
-                if (i >= 0) renderIndex(i);
-                else window.dispatchEvent(new CustomEvent("wizard:manage", { detail: chip }));
-            });
         }
 
         function goBack(fromIdx) {
@@ -119,49 +99,96 @@
 
         function renderIndex(idx) {
             const id = steps[idx];
-            renderDots(dotsEl, router.ALL_STEPS, steps, id, function (newIdx) { renderIndex(newIdx); });
-            refreshChips();
-            clearChildren(stepEl);
-            const stepApi = window.WizardSteps && window.WizardSteps[id];
-            if (!stepApi || typeof stepApi.render !== "function") {
-                const msg = document.createElement("div");
-                msg.textContent = "Unknown step: " + id;
-                stepEl.appendChild(msg);
-                return;
+
+            // 1. Outgoing-step cleanup hook (used by awakening to clear timers/listeners).
+            if (typeof stepEl._cleanup === "function") {
+                try { stepEl._cleanup(); } catch (_) { /* swallow */ }
+                stepEl._cleanup = null;
             }
-            stepApi.render(stepEl, {
-                state: state,
-                onAdvance: function () { advance(idx); },
-                onBack: function () { goBack(idx); },
-                refreshState: refreshState,
+
+            // 2. Leave animation
+            stepEl.classList.add("leaving");
+            setTimeout(function () {
+                stepEl.classList.remove("leaving", "ready");
+                stepEl.classList.add("entering");
+                clearChildren(stepEl);
+                document.body.setAttribute("data-step", id);
+
+                Cin.applyConfidence(idx, steps.length);
+
+                // 3. Render the step
+                const stepApi = window.WizardSteps && window.WizardSteps[id];
+                if (!stepApi || typeof stepApi.render !== "function") {
+                    const msg = document.createElement("div");
+                    msg.textContent = "Unknown step: " + id;
+                    stepEl.appendChild(msg);
+                    return;
+                }
+                stepApi.render(stepEl, {
+                    state: state,
+                    onAdvance: function () { advance(idx); },
+                    onBack:    function () { goBack(idx); },
+                    refreshState: refreshState,
+                });
+
+                // 4. Chrome + indicator
+                setFolio(folioEl, idx, steps.length);
+                renderIndicator(indEl, router.ALL_STEPS, steps, idx, function (newIdx) { renderIndex(newIdx); });
+
+                // 5. Scribe the iridescent rule (awakening is the only step that skips this).
+                if (id !== "awakening") Cin.scribeRule();
+
+                // 6. Cascade entry — set per-child --enter-delay, then add .ready
+                const children = stepEl.children;
+                for (let i = 0; i < children.length; i++) {
+                    children[i].style.setProperty("--enter-delay", (60 + i * 70) + "ms");
+                }
+
+                requestAnimationFrame(function () {
+                    stepEl.classList.remove("entering");
+                    requestAnimationFrame(function () { stepEl.classList.add("ready"); });
+                });
+            }, 220);
+        }
+
+        // Audio toggle
+        const audioBtn = document.getElementById("audio-toggle");
+        if (audioBtn) {
+            audioBtn.addEventListener("click", function () {
+                const next = !((state.personalize && state.personalize.audio && state.personalize.audio.enabled) || false);
+                if (atlas.setupSavePersonalize) {
+                    atlas.setupSavePersonalize({
+                        audio: { enabled: next },
+                    }).catch(function () { /* best-effort */ });
+                }
+                if (window.WizardAudio && window.WizardAudio.setEnabled) window.WizardAudio.setEnabled(next);
+                audioBtn.style.color = next ? "var(--ink-0)" : "";
             });
         }
 
         renderIndex(0);
     }
 
-    // Expose testable helpers
     if (typeof window !== "undefined") {
         window.__WizardBoot = {
             clearChildren: clearChildren,
-            renderDots: renderDots,
-            renderChips: renderChips,
+            renderIndicator: renderIndicator,
+            setFolio: setFolio,
+            applyTheme: applyTheme,
             decideInitialRoute: decideInitialRoute,
         };
     }
 
-    // Auto-boot only if we're on a real wizard page with the expected container.
-    // jsdom tests that import this file as a <script> text will not auto-trigger,
-    // because they set up document.body first without the expected IDs.
-    if (typeof document !== "undefined" && document.getElementById && document.getElementById("wizard-header")) {
+    if (typeof document !== "undefined" && document.getElementById && document.getElementById("step-root")) {
         boot();
     }
 
     if (typeof module !== "undefined" && module.exports) {
         module.exports = {
             clearChildren: clearChildren,
-            renderDots: renderDots,
-            renderChips: renderChips,
+            renderIndicator: renderIndicator,
+            setFolio: setFolio,
+            applyTheme: applyTheme,
             decideInitialRoute: decideInitialRoute,
         };
     }
