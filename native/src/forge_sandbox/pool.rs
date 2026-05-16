@@ -206,4 +206,57 @@ mod tests {
         pool.evict("x").await;
         assert_eq!(pool.len().await, 0);
     }
+
+    #[tokio::test]
+    async fn pool_eviction_skips_inflight_worker() {
+        let pool = Arc::new(Pool::new(Box::new(MockSandbox), 2));
+        let caps = Capabilities::default();
+        let dir = std::env::temp_dir();
+
+        let pid_a = {
+            let mut g = pool.get_or_spawn("a", &dir, &caps).await.expect("a");
+            let w = g.worker_mut().unwrap();
+            w.try_acquire_inflight().expect("acquire");
+            w.pid
+        };
+        let _b_pid = {
+            let mut g = pool.get_or_spawn("b", &dir, &caps).await.expect("b");
+            g.worker_mut().unwrap().pid
+        };
+        assert_eq!(pool.len().await, 2);
+
+        let _c_pid = {
+            let mut g = pool.get_or_spawn("c", &dir, &caps).await.expect("c");
+            g.worker_mut().unwrap().pid
+        };
+        assert_eq!(pool.len().await, 2);
+
+        let g = pool.get_or_spawn("a", &dir, &caps).await.expect("a-still-there");
+        let pid_after = g.guard.peek(&"a".to_string()).map(|w| w.pid);
+        assert_eq!(pid_after, Some(pid_a), "inflight worker should NOT have been evicted");
+    }
+
+    #[tokio::test]
+    async fn pool_returns_no_capacity_when_all_inflight() {
+        let pool = Arc::new(Pool::new(Box::new(MockSandbox), 2));
+        let caps = Capabilities::default();
+        let dir = std::env::temp_dir();
+
+        {
+            let mut g = pool.get_or_spawn("a", &dir, &caps).await.expect("a");
+            g.worker_mut().unwrap().try_acquire_inflight().expect("acquire a");
+        }
+        {
+            let mut g = pool.get_or_spawn("b", &dir, &caps).await.expect("b");
+            g.worker_mut().unwrap().try_acquire_inflight().expect("acquire b");
+        }
+        assert_eq!(pool.len().await, 2);
+
+        let r = pool.get_or_spawn("c", &dir, &caps).await;
+        match r {
+            Err(SpawnError::NoCapacity) => {}
+            Err(e) => panic!("expected NoCapacity, got Err({e:?})"),
+            Ok(_) => panic!("expected NoCapacity, got Ok(_)"),
+        }
+    }
 }
