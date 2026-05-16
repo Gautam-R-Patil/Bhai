@@ -183,6 +183,7 @@ desktop/hostinger-upload/
 !desktop/tests/auth-helpers.test.js
 !desktop/tests/cinematic.test.js
 !desktop/tests/copy.test.js
+!desktop/tests/awakening.test.js
 !src/forge/__tests__/
 !src/forge/__tests__/types.test.ts
 !src/forge/__tests__/store-types-extension.test.ts
