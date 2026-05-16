@@ -5,68 +5,100 @@
 
     const REFRESH_MS = 3000;
 
+    function escapeHtml(s) {
+        return String(s)
+            .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    }
+
     function renderHubBody(state) {
+        const Copy = (typeof window !== "undefined" && window.Copy) || { get: function(){return null;} };
+
         const root = document.createElement("div");
-        root.className = "hub-root";
+        root.className = "hub";
 
-        const header = document.createElement("h1");
-        header.className = "hub-title";
-        header.textContent = "Ready to go";
-        root.appendChild(header);
+        const name = (state && state.profile && state.profile.name)
+                  || (state && state.osUserName)
+                  || "";
+        const hotkey = (state && state.personalize && state.personalize.hotkey) || "\u2325 Space";
 
-        const name = state && state.osUserName ? ", " + state.osUserName : "";
-        const sub = document.createElement("p");
-        sub.className = "hub-sub";
-        sub.textContent = "A.T.L.A.S is configured" + name + ". Launch when you are ready.";
-        root.appendChild(sub);
+        // Title \u2014 "Ready, <em>Name</em>." (name omitted if no name resolved)
+        const title = document.createElement("h1");
+        title.className = "hub-title";
+        if (name) {
+            title.innerHTML = "Ready, <em>" + escapeHtml(name) + "</em>.";
+        } else {
+            title.innerHTML = "Ready.";
+        }
+        root.appendChild(title);
 
+        // Dek \u2014 "Press <kbd>hotkey</kbd> anywhere on your computer. I'll be there."
+        const dek = document.createElement("p");
+        dek.className = "hub-dek";
+        dek.appendChild(document.createTextNode("Press "));
+        const kbd = document.createElement("span");
+        kbd.className = "hotkey";
+        kbd.textContent = hotkey;
+        dek.appendChild(kbd);
+        dek.appendChild(document.createTextNode(" anywhere on your computer. I'll be there."));
+        root.appendChild(dek);
+
+        // Iridescent rule
+        const iri = document.createElement("div");
+        iri.className = "hub-iri";
+        root.appendChild(iri);
+
+        // Magic moment \u2014 placeholder div; magic-moment.js mounts into it.
+        const magic = document.createElement("div");
+        magic.id = "hub-magic-moment";
+        root.appendChild(magic);
+
+        // Settings index \u2014 3-col grid of (label, value)
+        const index = document.createElement("div");
+        index.id = "hub-tiles"; // keep the legacy id so renderTiles still finds it
+        index.className = "hub-index";
+        root.appendChild(index);
+
+        // Actions
         const actions = document.createElement("div");
         actions.id = "hub-actions";
         actions.className = "hub-actions";
-
-        const launchBtn = document.createElement("button");
-        launchBtn.type = "button";
-        launchBtn.className = "btn-primary btn-launch";
-        launchBtn.setAttribute("data-action", "launch");
-        launchBtn.textContent = "Launch A.T.L.A.S";
-
-        const talkBtn = document.createElement("button");
-        talkBtn.type = "button";
-        talkBtn.className = "btn-ghost";
-        talkBtn.setAttribute("data-action", "talk");
-        talkBtn.textContent = "\uD83C\uDF99 Talk";
-
-        const typeBtn = document.createElement("button");
-        typeBtn.type = "button";
-        typeBtn.className = "btn-ghost";
-        typeBtn.setAttribute("data-action", "type");
-        typeBtn.textContent = "\u2328\uFE0F Type";
+        const launch = document.createElement("button");
+        launch.type = "button";
+        launch.className = "btn btn-primary btn-launch";
+        launch.setAttribute("data-action", "launch");
+        launch.innerHTML = (Copy.get("ready-hub", "launch") || "Launch A.T.L.A.S") + ' <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline points="9 6 15 12 9 18"/></svg></span>';
+        const talk = document.createElement("button");
+        talk.type = "button";
+        talk.className = "btn btn-secondary";
+        talk.setAttribute("data-action", "talk");
+        talk.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 00-3 3v6a3 3 0 006 0V5a3 3 0 00-3-3z"/><path d="M19 10v1a7 7 0 01-14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/></svg><span>' + (Copy.get("ready-hub", "talk") || "Talk") + '</span>';
+        const type = document.createElement("button");
+        type.type = "button";
+        type.className = "btn btn-secondary";
+        type.setAttribute("data-action", "type");
+        type.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h12"/></svg><span>' + (Copy.get("ready-hub", "type") || "Type") + '</span>';
+        actions.appendChild(launch); actions.appendChild(talk); actions.appendChild(type);
+        root.appendChild(actions);
 
         const actionsErr = document.createElement("p");
         actionsErr.id = "hub-actions-err";
         actionsErr.className = "step-error";
         actionsErr.setAttribute("aria-live", "polite");
-
-        actions.appendChild(launchBtn);
-        actions.appendChild(talkBtn);
-        actions.appendChild(typeBtn);
-        root.appendChild(actions);
         root.appendChild(actionsErr);
 
-        const tilesWrap = document.createElement("div");
-        tilesWrap.id = "hub-tiles";
-        tilesWrap.className = "hub-tiles";
-        root.appendChild(tilesWrap);
-
-        const tryHeading = document.createElement("div");
-        tryHeading.className = "hub-try-heading";
-        tryHeading.textContent = "Try this";
-        root.appendChild(tryHeading);
-
+        // Try this
+        const trySec = document.createElement("div");
+        trySec.className = "try-section";
+        const tryHead = document.createElement("p");
+        tryHead.className = "try-heading";
+        tryHead.textContent = Copy.get("ready-hub", "try_heading") || "Try this";
+        trySec.appendChild(tryHead);
         const tryBox = document.createElement("div");
         tryBox.id = "hub-try-this";
-        tryBox.className = "hub-try-this";
-        root.appendChild(tryBox);
+        tryBox.className = "try-list";
+        trySec.appendChild(tryBox);
+        root.appendChild(trySec);
 
         return root;
     }
@@ -112,62 +144,63 @@
     function renderTiles(tilesWrap, state, atlas) {
         if (!tilesWrap) return;
         const TM = _getTileModel();
-        const C = (typeof window !== "undefined" && window.SetupComponents) || {};
-        if (!TM || !C.StatusTile) return;
-
-        const prevInstances = tilesWrap._spInstances || new Map();
-        for (const [, inst] of prevInstances) {
-            try { if (typeof inst.unmount === "function") inst.unmount(); } catch {}
-        }
+        if (!TM) return;
         while (tilesWrap.firstChild) tilesWrap.removeChild(tilesWrap.firstChild);
 
-        const instances = new Map();
-        for (const id of TM.TILE_ORDER) {
-            const model = TM.tileModel(state, id);
+        // Cells we render in the new hub-index grid. 6 cells, 3 columns.
+        const cellOrder = ["account", "workspace", "hotkey", "voice", "persona", "permissions"];
+        for (const id of cellOrder) {
+            let model = TM.tileModel(state, id);
+            if (!model && id === "persona") {
+                model = {
+                    label: "Persona",
+                    value: (state && state.profile && state.profile.persona)
+                          ? (state.profile.persona.charAt(0).toUpperCase() + state.profile.persona.slice(1))
+                          : "Explorer",
+                    status: "ok",
+                    secondary: null,
+                    onClickRoute: null,
+                };
+            }
             if (!model) continue;
-            const holder = document.createElement("div");
-            holder.setAttribute("data-sp-tile", id);
-            tilesWrap.appendChild(holder);
+            const cell = document.createElement("div");
+            cell.className = "hub-cell" + (model.status === "amber" ? " amber" : "");
+            cell.setAttribute("data-sp-tile", id);
+
+            const label = document.createElement("span");
+            label.className = "hub-cell-label";
+            label.textContent = model.label;
+            cell.appendChild(label);
+
+            const value = document.createElement("span");
+            value.className = "hub-cell-value";
+            value.textContent = model.value || "—";
+            cell.appendChild(value);
+
+            if (model.secondary) {
+                const sec = document.createElement("span");
+                sec.className = "hub-cell-secondary";
+                sec.textContent = model.secondary;
+                cell.appendChild(sec);
+            }
+
             const route = model.onClickRoute;
-            const tile = new C.StatusTile({
-                label: model.label,
-                value: model.value,
-                secondary: model.secondary,
-                status: model.status,
-                onClick: route ? function () { handleTileRoute(route, atlas); } : undefined,
-            });
-            tile.mount(holder);
-            instances.set(id, tile);
+            if (route) {
+                cell.style.cursor = "pointer";
+                cell.addEventListener("click", function () { handleTileRoute(route, atlas); });
+            }
+            tilesWrap.appendChild(cell);
         }
-        tilesWrap._spInstances = instances;
     }
 
     function applyDiff(tilesWrap, prevState, nextState, atlas) {
         if (!tilesWrap) return;
-        const TM = _getTileModel();
         const Diff = _getDiff();
         const changed = Diff.diffTiles(prevState, nextState);
         if (changed.length === 0) return;
-
-        const instances = tilesWrap._spInstances || new Map();
-        let needsFullRender = false;
-        for (const id of changed) {
-            const inst = instances.get(id);
-            const nextModel = TM.tileModel(nextState, id);
-            const hadBefore = !!inst;
-            const hasNow = !!nextModel;
-            if (!hadBefore && !hasNow) continue;
-            if (hadBefore !== hasNow) { needsFullRender = true; break; }
-            const route = nextModel.onClickRoute;
-            inst.update({
-                label: nextModel.label,
-                value: nextModel.value,
-                secondary: nextModel.secondary,
-                status: nextModel.status,
-                onClick: route ? function () { handleTileRoute(route, atlas); } : undefined,
-            });
-        }
-        if (needsFullRender) renderTiles(tilesWrap, nextState, atlas);
+        // The new hub-index cells are plain divs (no StatusTile instances), so we
+        // re-render the whole grid on any change. The grid is 6 cells — cheap.
+        renderTiles(tilesWrap, nextState, atlas);
     }
 
     // Merge the real account-info IPC result into the detection state so the
@@ -230,6 +263,14 @@
         container.appendChild(body);
         renderTiles(body.querySelector("#hub-tiles"), enriched, atlas);
 
+        // Mount magic-moment if available + not killed by env.
+        let mmHandle = null;
+        if (window.MagicMoment && typeof window.MagicMoment.mount === "function"
+            && !(typeof process !== "undefined" && process.env && process.env.ATLAS_NO_MAGIC_MOMENT === "true")) {
+            const mmHost = body.querySelector("#hub-magic-moment");
+            if (mmHost) mmHandle = window.MagicMoment.mount(mmHost, enriched);
+        }
+
         const errEl = body.querySelector("#hub-actions-err");
 
         // Wire Launch button — fires setup:finish which main.js handles by
@@ -289,6 +330,7 @@
         return {
             stop: function () {
                 if (tryHandle && typeof tryHandle.stop === "function") tryHandle.stop();
+                if (mmHandle && typeof mmHandle.stop === "function") mmHandle.stop();
                 if (liveHandle && typeof liveHandle.stop === "function") liveHandle.stop();
             },
             refreshNow: liveHandle.refreshNow,
