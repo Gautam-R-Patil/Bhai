@@ -1,6 +1,6 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 
-import { createHash } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -142,6 +142,25 @@ export async function lookupTool(description: string, _schema: Record<string, un
     return getToolBySlug(hit.slug);
 }
 
+// F5: centralized slug validation. Matches both the persisted-manifest slug
+// regex (PersistedToolManifest.slug docs) and the create-tool snake_case rule,
+// with a 63-char ceiling so it composes with filesystem path budgets.
+const SLUG_RE = /^[a-z][a-z0-9_]{0,62}$/;
+
+function rejectInvalidSlug(slug: string, req?: SynthesisRequest): SynthesisResult {
+    return {
+        kind: "failed",
+        report: {
+            requestedName: slug,
+            description: req?.description ?? "",
+            attempts: 0,
+            finalDiagnosis: `invalid slug "${slug}" — must match /^[a-z][a-z0-9_]{0,62}$/`,
+            failureReason: "exhausted_attempts",
+            reportPath: "",
+        },
+    };
+}
+
 export async function synthesizeTool(req: SynthesisRequest): Promise<SynthesisResult> {
     if (!_ready) {
         return {
@@ -155,6 +174,11 @@ export async function synthesizeTool(req: SynthesisRequest): Promise<SynthesisRe
                 reportPath: "",
             },
         };
+    }
+
+    // F5: refuse path-traversal-shaped or otherwise malformed slugs at entry.
+    if (!SLUG_RE.test(req.name)) {
+        return rejectInvalidSlug(req.name, req);
     }
 
     if (process.env.ATLAS_NO_FORGE_LOOKUP !== "true" && _embedFn) {
@@ -320,9 +344,74 @@ export async function revokeDynamicTool(_slug: string): Promise<void> {
     throw new Error("forge.revokeDynamicTool: not implemented until phase 4");
 }
 
+// ── Pending queue with HMAC integrity (F6) ────────────────
+//
+// Threat: a malicious actor who can write to ~/.atlas/data/forge-pending.json
+// could inject crafted SynthesisRequests that the consumer picks up and
+// passes into the verifier loop. We can't stop them from writing to disk
+// (filesystem is shared with the user), but we can refuse to consume
+// entries that weren't signed by THIS running process.
+//
+// Implementation: at process boot, generate a 32-byte random key in memory.
+// Each queued entry is wrapped as { candidate, queuedAt, hmac } where
+// hmac = HMAC-SHA256(key, canonicalJSON({candidate, queuedAt})). On consume,
+// recompute and timing-safe-compare. Entries that fail HMAC are silently
+// dropped. The key never touches disk, so on process restart the entire
+// queue self-invalidates — that's intentional, the queue is a session-local
+// hint, not durable state.
+//
+// Rate cap: at most 1 synthesis consumed per minute. The 60s window starts
+// fresh each successful consume. Failed/no-op consumes don't advance it.
+
+interface SignedPendingEntry {
+    candidate: SynthesisRequest;
+    queuedAt: number;
+    hmac: string;
+}
+
 interface PendingQueue {
-    candidates: Array<SynthesisRequest & { queuedAt: number }>;
+    candidates: SignedPendingEntry[];
     lastUpdated: number;
+}
+
+const _bootKey: Buffer = randomBytes(32);
+
+function canonicalize(candidate: SynthesisRequest, queuedAt: number): string {
+    // Stable key ordering so HMAC is deterministic across writes.
+    return JSON.stringify({
+        canon_version: 1,
+        candidate: {
+            name: candidate.name,
+            description: candidate.description,
+            parametersSchema: candidate.parametersSchema,
+            persistent: candidate.persistent,
+            originIntent: candidate.originIntent ?? null,
+            source: candidate.source,
+            patternClass: candidate.patternClass ?? null,
+            evidenceIds: candidate.evidenceIds ?? null,
+        },
+        queuedAt,
+    });
+}
+
+function signEntry(candidate: SynthesisRequest, queuedAt: number): string {
+    return createHmac("sha256", _bootKey).update(canonicalize(candidate, queuedAt)).digest("hex");
+}
+
+function verifyEntry(entry: SignedPendingEntry): boolean {
+    if (!entry || typeof entry !== "object") return false;
+    if (typeof entry.hmac !== "string" || entry.hmac.length !== 64) return false;
+    if (!entry.candidate || typeof entry.candidate !== "object") return false;
+    if (typeof entry.queuedAt !== "number" || !Number.isFinite(entry.queuedAt)) return false;
+    const expected = signEntry(entry.candidate, entry.queuedAt);
+    const a = Buffer.from(entry.hmac, "hex");
+    const b = Buffer.from(expected, "hex");
+    if (a.length !== b.length) return false;
+    try {
+        return timingSafeEqual(a, b);
+    } catch {
+        return false;
+    }
 }
 
 function pendingPath(): string {
@@ -333,7 +422,9 @@ function loadPending(): PendingQueue {
     const p = pendingPath();
     if (!existsSync(p)) return { candidates: [], lastUpdated: 0 };
     try {
-        return JSON.parse(readFileSync(p, "utf-8"));
+        const parsed = JSON.parse(readFileSync(p, "utf-8")) as PendingQueue;
+        if (!Array.isArray(parsed?.candidates)) return { candidates: [], lastUpdated: 0 };
+        return parsed;
     } catch {
         return { candidates: [], lastUpdated: 0 };
     }
@@ -349,20 +440,31 @@ function savePending(q: PendingQueue): void {
 
 export async function queueSynthesisCandidate(req: SynthesisRequest): Promise<void> {
     if (!_ready) return;
+    // F5 entry-point slug validation
+    if (!SLUG_RE.test(req.name)) return;
     const q = loadPending();
-    if (q.candidates.some((c) => c.description === req.description)) return;
-    q.candidates.push({ ...req, queuedAt: Date.now() });
+    // Dedupe on description; require existing entry to be HMAC-valid before counting as dup.
+    if (q.candidates.some((c) => verifyEntry(c) && c.candidate.description === req.description)) return;
+    const queuedAt = Date.now();
+    q.candidates.push({ candidate: req, queuedAt, hmac: signEntry(req, queuedAt) });
     savePending(q);
 }
 
 export function consumeNextPendingCandidate(): SynthesisRequest | null {
     if (!_ready) return null;
     const q = loadPending();
+    // F6: drop unsigned / bad-hmac entries before picking. HMAC verification is
+    // the security boundary — bad entries are silently quarantined so a
+    // malicious writer can't keep blocking the queue head.
+    const verified = q.candidates.filter(verifyEntry);
+    if (verified.length !== q.candidates.length) {
+        q.candidates = verified;
+        savePending(q);
+    }
     const next = q.candidates.shift();
     if (!next) return null;
     savePending(q);
-    const { queuedAt: _queuedAt, ...req } = next;
-    return req;
+    return next.candidate;
 }
 
 export async function runDreamReplaySynthesis(_window: { from: number; to: number }): Promise<unknown> {

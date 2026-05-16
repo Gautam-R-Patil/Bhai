@@ -4,12 +4,27 @@ import { consumeNextPendingCandidate, isForgeReady, synthesizeTool } from "./orc
 import { emitForgeEvent } from "./telemetry.js";
 import type { SynthesisResult } from "./types.js";
 
+// F6: absolute rate cap. Synthesis is expensive AND attack-surface; cap at
+// one consumed candidate per 60s window across the whole process. Tests that
+// need to exercise the underlying queue go through consumeNextPendingCandidate
+// directly; only this user-facing wrapper enforces the cap.
+const CONSUME_RATE_MS = 60_000;
+let _lastConsumedAt = 0;
+
+export function _resetConsumeRateLimitForTests(): void {
+    _lastConsumedAt = 0;
+}
+
 export async function consumeOnePending(): Promise<SynthesisResult | null> {
     if (!isForgeReady()) return null;
     if (process.env.ATLAS_NO_FORGE_VERIFIER === "true") return null;
 
+    const now = Date.now();
+    if (now - _lastConsumedAt < CONSUME_RATE_MS) return null;
+
     const next = consumeNextPendingCandidate();
     if (!next) return null;
+    _lastConsumedAt = now;
 
     emitForgeEvent({
         event: "synthesis_started",

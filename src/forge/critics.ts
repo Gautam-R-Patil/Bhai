@@ -106,6 +106,54 @@ const REGEX_RULES: Array<{ id: string; pattern: RegExp; severity: "ERROR" | "WAR
         message: "new Function() not allowed",
     },
     {
+        id: "forge-no-constructor-chain",
+        pattern: /\.constructor\s*\.\s*constructor/g,
+        severity: "ERROR",
+        message: "`.constructor.constructor` host-realm escape chain not allowed",
+    },
+    {
+        id: "forge-no-constructor-call",
+        pattern: /\.constructor\s*\(/g,
+        severity: "ERROR",
+        message: "`.constructor(...)` host-realm escape vector not allowed",
+    },
+    {
+        id: "forge-no-fromCharCode",
+        pattern: /\bString\s*\.\s*fromCharCode\s*\(/g,
+        severity: "ERROR",
+        message: "String.fromCharCode(...) is a code-obfuscation channel; reject",
+    },
+    {
+        id: "forge-no-atob",
+        pattern: /\batob\s*\(/g,
+        severity: "ERROR",
+        message: "atob() base64-eval channel not allowed",
+    },
+    {
+        id: "forge-no-webassembly",
+        pattern: /\bWebAssembly\b/g,
+        severity: "ERROR",
+        message: "WebAssembly references not allowed (wasm escape vector)",
+    },
+    {
+        id: "forge-no-dynamic-import",
+        pattern: /\bimport\s*\(/g,
+        severity: "ERROR",
+        message: "dynamic import() not allowed (data:/http: URL escape)",
+    },
+    {
+        id: "forge-no-reflect-meta",
+        pattern: /\bReflect\s*\.\s*(?:get|getPrototypeOf|construct)\s*\(/g,
+        severity: "ERROR",
+        message: "Reflect prototype/construct reflection not allowed",
+    },
+    {
+        id: "forge-no-proto",
+        pattern: /\b__proto__\b/g,
+        severity: "ERROR",
+        message: "__proto__ access not allowed (prototype pollution channel)",
+    },
+    {
         id: "forge-no-process-binding",
         pattern: /process\.binding\s*\(/g,
         severity: "ERROR",
@@ -161,14 +209,35 @@ const REGEX_RULES: Array<{ id: string; pattern: RegExp; severity: "ERROR" | "WAR
     },
 ];
 
+// Bidi/RLO/ZWJ control characters that can disguise code's true direction or
+// hide tokens. NFKC-normalize first so that ligatures and full-width digits
+// collapse to ASCII, then strip these explicit controls.
+const BIDI_CONTROL_RE = /[‪-‮⁦-⁩​-‍﻿]/g;
+
+/**
+ * Normalize handler code for SAST scanning. Removes invisible bidi/zwj/zwsp
+ * markers and NFKC-normalizes width/ligature variants. Returns a string that
+ * is byte-for-byte safe to scan with the static regex rules.
+ *
+ * Note: the original handler_code is what gets persisted/executed. This
+ * normalization affects only the scan view — if obfuscated code passes the
+ * regex test in normalized form but executes differently in raw form, that's
+ * still a finding worth catching, because the regex set is conservative
+ * (refuse-on-any-match).
+ */
+function normalizeForScan(code: string): string {
+    return code.normalize("NFKC").replace(BIDI_CONTROL_RE, "");
+}
+
 export async function runSastCritic(code: string, _opts: SastCriticOpts): Promise<SastResult> {
     // Phase 3: regex fallback always. Semgrep wiring can be added later.
+    const scanCode = normalizeForScan(code);
     const findings: CriticFinding[] = [];
     for (const rule of REGEX_RULES) {
-        const matches = [...code.matchAll(rule.pattern)];
+        const matches = [...scanCode.matchAll(rule.pattern)];
         for (const m of matches) {
             // line number
-            const before = code.slice(0, m.index ?? 0);
+            const before = scanCode.slice(0, m.index ?? 0);
             const line = before.split("\n").length;
             findings.push({
                 ruleId: rule.id,
