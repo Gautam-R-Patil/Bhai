@@ -31,22 +31,26 @@
         const Copy = window.Copy;
         const wrap = document.createElement("button");
         wrap.type = "button";
+        // Class names mirror the existing CSS in desktop/styles.css —
+        // `.persona-card`, `.persona-title`, `.persona-desc`, `.persona-caps`,
+        // and the `.explorer` variant (which makes the card span 2 cols
+        // at the bottom of the 2×3 grid).
         wrap.className = "persona-card" + (isSelected ? " active" : "")
-                       + (personaId === "explorer" ? " persona-explorer" : "");
+                       + (personaId === "explorer" ? " explorer" : "");
         wrap.setAttribute("data-persona-id", personaId);
 
         const title = document.createElement("h3");
-        title.className = "persona-card-title";
+        title.className = "persona-title";
         title.textContent = Copy.get("persona", personaId + "_title") || personaId;
         wrap.appendChild(title);
 
         const desc = document.createElement("p");
-        desc.className = "persona-card-desc";
+        desc.className = "persona-desc";
         desc.textContent = Copy.get("persona", personaId + "_desc") || "";
         wrap.appendChild(desc);
 
         const caps = document.createElement("ul");
-        caps.className = "persona-card-caps";
+        caps.className = "persona-caps";
         for (let i = 1; i <= 3; i++) {
             const li = document.createElement("li");
             li.textContent = Copy.get("persona", personaId + "_cap_" + i) || "";
