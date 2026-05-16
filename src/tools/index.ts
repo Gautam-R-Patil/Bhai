@@ -9,6 +9,7 @@ import type { ChatCompletionTool } from "openai/resources/chat/completions.js";
 import { firePostToolUse, firePreToolUse } from "../hooks/index.js";
 import { executeMCPTool, getMCPToolSchemas, isMCPTool } from "../mcp/client.js";
 import { sideloadSkillTool } from "../store/sideload.js";
+import { approveDynamicToolTool, revokeDynamicToolTool } from "./forge-approval.js";
 import { contactLookupTool, whatsappGroupInfoTool, whatsappSendTool, whatsappStickerTool } from "../whatsapp.js";
 import {
     appManager,
@@ -401,6 +402,8 @@ registry.set(sonosControl.schema.function.name, sonosControl);
 registry.set(audioVisualize.schema.function.name, audioVisualize);
 registry.set(sideloadSkillTool.schema.function.name, sideloadSkillTool);
 registry.set(storeBrowse.schema.function.name, storeBrowse);
+registry.set(approveDynamicToolTool.schema.function.name, approveDynamicToolTool);
+registry.set(revokeDynamicToolTool.schema.function.name, revokeDynamicToolTool);
 
 // File & utility tools
 registry.set(screenRecord.schema.function.name, screenRecord);
