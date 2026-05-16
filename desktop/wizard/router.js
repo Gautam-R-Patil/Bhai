@@ -49,7 +49,8 @@ function getSteps(state) {
     const out = [];
     const signedIn = s.account && s.account.signedIn;
     if (!s.isReconfigure && needsAwakening(s)) out.push("awakening");
-    if (!s.isReconfigure && !signedIn) out.push("welcome");
+    // Welcome step is now redundant — the awakening cinematic IS the welcome.
+    // Kept the file in the codebase but never inserted into the flow.
     if (needsTerms(s)) out.push("terms");
     if (!signedIn) out.push("signin");
     if (s.isReconfigure || !(s.profile && s.profile.name && s.profile.tone)) out.push("profile");

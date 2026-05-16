@@ -3303,9 +3303,13 @@ body[data-step] {
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
     overflow-x: hidden;
+    overflow-y: auto;   /* Override legacy `body { overflow: hidden }` so long steps scroll. */
     user-select: none;
     font-feature-settings: "kern" 1, "ss01" 1;
 }
+/* Legacy `html { overflow: hidden }` (line ~55) also blocks page scroll. Force visible
+   only when a wizard step is mounted; legacy pages still get the original behavior. */
+html:has(body[data-step]) { overflow: visible !important; }
 body[data-step] ::selection { background: rgba(110,182,255,0.4); color: #fff; }
 body[data-step]::-webkit-scrollbar { width: 8px; }
 body[data-step]::-webkit-scrollbar-track { background: transparent; }
@@ -3554,7 +3558,9 @@ body[data-step="awakening"] .indicator { opacity: 0; }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn:disabled:active { transform: none; }
 
-.btn-primary {
+/* Scoped to body[data-step] so we beat `.step .btn-primary` from
+   components.css which forces a blue gradient on wizard step buttons. */
+body[data-step] .btn-primary {
     background: #ffffff;
     color: #0a0b0d;
     padding: 13px 22px;
@@ -3566,7 +3572,7 @@ body[data-step="awakening"] .indicator { opacity: 0; }
         inset 0 -1px 0 rgba(0,0,0,0.06),
         0 1px 3px rgba(0,0,0,0.3);
 }
-.btn-primary:hover {
+body[data-step] .btn-primary:hover {
     background: #fff;
     transform: translateY(-1px);
     box-shadow:
@@ -3574,11 +3580,11 @@ body[data-step="awakening"] .indicator { opacity: 0; }
         0 8px 20px rgba(255,255,255,0.12),
         0 2px 6px rgba(0,0,0,0.4);
 }
-.btn-primary:active { transform: scale(0.97); }
-.btn-primary .chev { transition: transform 200ms var(--ease-out); }
-.btn-primary:hover .chev { transform: translateX(3px); }
+body[data-step] .btn-primary:active { transform: scale(0.97); }
+body[data-step] .btn-primary .chev { transition: transform 200ms var(--ease-out); }
+body[data-step] .btn-primary:hover .chev { transform: translateX(3px); }
 
-.btn-secondary {
+body[data-step] .btn-secondary {
     background: transparent;
     color: var(--ink-1);
     padding: 13px 18px;
@@ -3586,17 +3592,17 @@ body[data-step="awakening"] .indicator { opacity: 0; }
     font-size: 15px;
     font-weight: 500;
 }
-.btn-secondary:hover { color: var(--ink-0); background: var(--surface-1); }
+body[data-step] .btn-secondary:hover { color: var(--ink-0); background: var(--surface-1); }
 
-.btn-link {
+body[data-step] .btn-link {
     background: transparent; color: var(--ink-2);
     padding: 6px 0;
     font-size: 14px;
     font-weight: 500;
 }
-.btn-link:hover { color: var(--ink-0); }
+body[data-step] .btn-link:hover { color: var(--ink-0); }
 
-.btn-text {
+body[data-step] .btn-text {
     background: transparent;
     color: var(--ink-2);
     font-size: 14px;
@@ -3604,7 +3610,7 @@ body[data-step="awakening"] .indicator { opacity: 0; }
     padding: 6px 12px;
     border-radius: 8px;
 }
-.btn-text:hover { color: var(--ink-0); background: var(--surface-1); }
+body[data-step] .btn-text:hover { color: var(--ink-0); background: var(--surface-1); }
 
 .step-actions {
     display: flex; align-items: center; gap: 12px;
@@ -3890,6 +3896,11 @@ body[data-step="awakening"].atmosphere-on .atmosphere-wash { opacity: 1; }
 .signin-option:hover { background: var(--surface-3); border-color: var(--hairline-3); }
 .signin-option:active { transform: scale(0.98); }
 .signin-option svg { width: 18px; height: 18px; opacity: 0.7; }
+body[data-step] .signin-cta {
+    margin-top: 4px;
+    padding: 14px 26px;
+    font-size: 15.5px;
+}
 .signin-fineprint {
     font-size: 12px;
     color: var(--ink-3);
@@ -4875,3 +4886,46 @@ body[data-step="awakening"].atmosphere-on .atmosphere-wash { opacity: 1; }
 :root[data-theme="light"] .phase.running .phase-dot::after { background: linear-gradient(135deg, #1464d2, #6928b9); }
 :root[data-theme="light"] ::selection { background: rgba(105,40,185,0.22); color: var(--ink-0); }
 
+
+/* ================================================================
+   LEGACY OVERRIDE — neutralize components.css `.step` glass surface
+   ────────────────────────────────────────────────────────────────
+   components.css line ~394 paints every .step section with a 65%
+   white glass overlay + ::after highlight + huge padding. That was
+   designed for the old orb wizard; on the new dark surface it
+   reads as washed-out gray. We need to strip all of it for the
+   new wizard (body[data-step]) while leaving the legacy panel/
+   channels pages unaffected.
+   ================================================================ */
+body[data-step] .step,
+body[data-step] .step-welcome,
+body[data-step] .step-signin,
+body[data-step] .step-profile,
+body[data-step] .step-terms,
+body[data-step] .step-personalize,
+body[data-step] .step-permissions,
+body[data-step] .step-vision-tier,
+body[data-step] .step-install {
+    padding: 0;
+    background: transparent !important;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    overflow: visible;
+}
+body[data-step] .step::after,
+body[data-step] .step-welcome::before,
+body[data-step] .step-signin::before,
+body[data-step] .step-profile::before,
+body[data-step] .step-personalize::before,
+body[data-step] .step-permissions::before { content: none; }
+
+/* components.css line 189-190 forces light-mode text colors. Reset. */
+body[data-step] .step-title { color: var(--ink-0); text-align: left; }
+body[data-step] .step-sub   { color: var(--ink-1); text-align: left; }
+body[data-step] .step-actions { justify-content: flex-start; }
+
+/* The .step .btn-primary blue-gradient override is already beaten by the
+   `body[data-step] .btn-primary` rules earlier in this file. */
