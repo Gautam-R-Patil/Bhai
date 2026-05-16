@@ -53,6 +53,8 @@ contextBridge.exposeInMainWorld("atlas", {
     googleOAuth: () => ipcRenderer.invoke("setup:google-oauth"),
     isSetupComplete: () => ipcRenderer.invoke("setup:is-complete"),
     setupDetect: () => ipcRenderer.invoke("setup:detect"),
+    // W3: Magic Moment rich detection (running-app snapshot)
+    detectMagicMoment: () => ipcRenderer.invoke("setup:detect-magic-moment"),
     setupPollPermissions: () => ipcRenderer.invoke("setup:poll-permissions"),
     setupRequestPermission: (name) => ipcRenderer.invoke("setup:request-permission", name),
     setupMarkPermissionSkipped: (name, skipped) => ipcRenderer.invoke("setup:mark-permission-skipped", name, skipped),

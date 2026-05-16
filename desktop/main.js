@@ -3264,6 +3264,21 @@ function registerIPC() {
         }
     });
 
+    // W3: Magic Moment rich detection. Returns running-app snapshot.
+    // Called once per Ready Hub mount. Best-effort: empty array on
+    // failure or when ATLAS_NO_MAGIC_MOMENT_RICH=true.
+    ipcMain.handle("setup:detect-magic-moment", async () => {
+        if (process.env.ATLAS_NO_MAGIC_MOMENT_RICH === "true") {
+            return { names: [], platform: process.platform, disabled: true };
+        }
+        try {
+            const { getRunningApps } = require(path.join(__dirname, "detection", "running-apps.js"));
+            return await getRunningApps(process.platform);
+        } catch (err) {
+            return { names: [], platform: process.platform, error: err.message };
+        }
+    });
+
     // Setup: persist legal acceptance (clickwrap evidence record).
     // Trust nothing from the renderer for the evidentiary record:
     //   - acceptedAt is set in main (un-spoofable)
