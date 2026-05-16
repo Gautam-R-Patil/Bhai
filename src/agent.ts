@@ -1704,8 +1704,25 @@ STRATEGY: Execute in as few tool calls as possible.
             }
 
             try {
+                // W2: pull persona from identity.extra.persona once per turn,
+                // narrow via asPersona, and pass into the dynamic context.
+                // ATLAS_NO_PERSONA_BIAS=true short-circuits both this read
+                // and the eventual prompt module (in dynamic-assembler).
+                let _personaForCtx: import("./prompts/persona-bias.js").Persona | undefined;
+                if (process.env.ATLAS_NO_PERSONA_BIAS !== "true") {
+                    try {
+                        const idMod = await import("./memory/identity.js");
+                        const biasMod = await import("./prompts/persona-bias.js");
+                        const idProfile = idMod.getIdentityProfile() as { extra?: { persona?: unknown } };
+                        const p = biasMod.asPersona(idProfile?.extra?.persona);
+                        if (p) _personaForCtx = p;
+                    } catch {
+                        /* persona injection is best-effort — skip on read failure */
+                    }
+                }
                 const dynCtx = buildDynamicContextReminder(rawUserMessage, {
                     hour: localHour,
+                    persona: _personaForCtx,
                 });
                 if (dynCtx) parts.push(dynCtx);
             } catch {
