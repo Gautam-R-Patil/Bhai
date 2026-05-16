@@ -8,31 +8,37 @@
         "ollama", "ui-tars-model", "omniparser-deps",
         "data-dir", "workspace", "setup-state-finalize",
     ];
-    const LABELS = {
-        "node": "Node.js 20",
-        "playwright-chromium": "Browser engine",
-        "embedding-model": "AI model",
-        "sox": "Audio toolkit",
-        "ollama": "Local model runtime",
-        "ui-tars-model": "Vision model",
-        "omniparser-deps": "Vision deps",
-        "data-dir": "Data directory",
-        "workspace": "Workspace folder",
-        "setup-state-finalize": "Finalize",
-    };
-
     function clearChildren(el) {
         while (el && el.firstChild) el.removeChild(el.firstChild);
     }
 
     async function render(root, ctx) {
+        // LABELS is built per-render so window.Copy is guaranteed loaded.
+        const LABELS = {
+            "node":               window.Copy.get("install", "phase_node"),
+            "playwright-chromium":window.Copy.get("install", "phase_playwright"),
+            "embedding-model":    window.Copy.get("install", "phase_embedding"),
+            "sox":                window.Copy.get("install", "phase_sox"),
+            "ollama":             window.Copy.get("install", "phase_ollama"),
+            "ui-tars-model":      window.Copy.get("install", "phase_vision_model"),
+            "omniparser-deps":    window.Copy.get("install", "phase_vision_deps"),
+            "data-dir":           window.Copy.get("install", "phase_data_dir"),
+            "workspace":          window.Copy.get("install", "phase_workspace"),
+            "setup-state-finalize": window.Copy.get("install", "phase_finalize"),
+        };
+
         // Build static scaffolding.
         const section = document.createElement("section");
         section.className = "step step-install";
 
-        const title = document.createElement("h2");
+        const eyebrow = document.createElement("div");
+        eyebrow.className = "eyebrow";
+        eyebrow.innerHTML = '<span class="iri-dot"></span>' + window.Copy.get("install", "eyebrow");
+        section.appendChild(eyebrow);
+
+        const title = document.createElement("h1");
         title.className = "step-title";
-        title.textContent = "Finishing up";
+        title.textContent = window.Copy.get("install", "title");
         section.appendChild(title);
 
         const listEl = document.createElement("ul");
@@ -69,7 +75,7 @@
         factCard.id = "fun-fact";
         const factLabel = document.createElement("div");
         factLabel.className = "fun-fact-label";
-        factLabel.textContent = "\u2728 Did you know?";
+        factLabel.textContent = window.Copy.get("install", "fact_eyebrow");
         const factBody = document.createElement("div");
         factBody.className = "fun-fact-body";
         factBody.id = "fun-fact-body";
