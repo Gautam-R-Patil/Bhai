@@ -8,6 +8,85 @@
    ═══════════════════════════════════════════════ */
 
 :root {
+    /* ════════════════════════════════════════════════════════════════
+       LEGACY PANEL TOKENS — warm-glass aesthetic for panel.html,
+       channels.html, pages/under-the-hood.html and any non-wizard
+       surface. DO NOT REMOVE these — the panel UI is built on them
+       (every var(--accent-primary), var(--orb-*), var(--glass-*),
+       var(--text-*) reference resolves here). Adding/changing tokens
+       here is fine; deleting any is a regression.
+       ════════════════════════════════════════════════════════════════ */
+
+    /* ── Backgrounds ────────────────────────────────── */
+    --bg-window: #fdfbf7;
+
+    /* ── Glass Surfaces ─────────────────────────────── */
+    --glass-bg: rgba(255, 253, 249, 0.70);
+    --glass-hover: rgba(255, 253, 249, 0.90);
+    --glass-input: rgba(255, 253, 249, 0.62);
+    --glass-input-focus: rgba(255, 255, 255, 0.94);
+
+    /* ── Glass Effects ──────────────────────────────── */
+    --glass-blur: 40px;
+    --glass-border: 1px solid rgba(255, 255, 255, 0.60);
+    --glass-border-strong: 1px solid rgba(255, 255, 255, 0.85);
+    --shadow-glass: 0 10px 32px rgba(75, 45, 90, 0.10);
+    --shadow-glass-lg: 0 18px 48px rgba(75, 45, 90, 0.14);
+    --shadow-inner: inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+
+    /* ── Floating Orbs — Arc / Apple Welcome energy ── */
+    --orb-coral:    #ff7a6b;
+    --orb-amber:    #f9b34d;
+    --orb-peach:    #ffa27a;
+    --orb-cobalt:   #4d7bff;
+    --orb-mint:     #39d9b6;
+    --orb-lavender: #b58cff;
+    /* Compatibility aliases used by components.css for the hub Launch button. */
+    --orb-purple:   #b58cff;
+    --orb-pink:     #ff7a9c;
+
+    /* ── Accent — coral, warm, energetic (Arc-style) ── */
+    --accent-primary: #e8533f;
+    --accent-hover:   #d3402c;
+    --accent-tint:    rgba(232, 83, 63, 0.13);
+    --accent-ring:    rgba(232, 83, 63, 0.30);
+    --accent-success: #2fb06a;
+    --accent-warning: #e3a31f;
+    --accent-danger:  #c5392f;
+
+    /* ── Radii ──────────────────────────────────────── */
+    --radius-sm: 10px;
+    --radius-md: 14px;
+    --radius-lg: 24px;
+    --radius-window: 18px;
+
+    /* ── Text — warm grays ──────────────────────────── */
+    --text-primary:   #1d1a1a;
+    --text-secondary: #585253;
+    --text-muted:     #8c8689;
+
+    /* ── Spacing ────────────────────────────────────── */
+    --space-xs: 4px;
+    --space-sm: 8px;
+    --space-md: 16px;
+    --space-lg: 24px;
+    --space-xl: 40px;
+
+    /* ── z-index scale ──────────────────────────────── */
+    --z-base:      1;
+    --z-dropdown:  100;
+    --z-sticky:    200;
+    --z-overlay:   800;
+    --z-modal:     1000;
+    --z-toast:     2000;
+    --z-tooltip:   3000;
+
+    /* ════════════════════════════════════════════════════════════════
+       WIZARD TOKENS — Apple-quiet-futurism for the W1 cinematic. Only
+       active when body has [data-step] attribute (the wizard pages).
+       Coexist with the legacy tokens above; no collision.
+       ════════════════════════════════════════════════════════════════ */
+
     --bg-0:         #08090b;
     --bg-1:         #0b0c0f;
     --bg-2:         #11131a;
