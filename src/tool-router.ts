@@ -1144,6 +1144,31 @@ async function classifyToolNeeds(
         }
     }
 
+    // ── W2: persona-bias overlay ─────────────────────────────────
+    // Multiplies each category's score by the persona-specific weight
+    // (~0.7-1.4). Default = 1.0 (unbiased). Reads persona lazily from
+    // identity.extra.persona so a cold tool-router call (before identity
+    // init) just skips the overlay. ATLAS_NO_PERSONA_BIAS=true short-
+    // circuits the entire block. Best-effort: a thrown identity read
+    // never blocks tool routing.
+    if (process.env.ATLAS_NO_PERSONA_BIAS !== "true") {
+        try {
+            const { getIdentityProfile } = await import("./memory/identity.js");
+            const { asPersona, getPersonaToolWeights } = await import("./prompts/persona-bias.js");
+            const idProfile = getIdentityProfile() as { extra?: { persona?: unknown } };
+            const persona = asPersona(idProfile?.extra?.persona);
+            if (persona) {
+                const weights = getPersonaToolWeights(persona);
+                for (const sc of scores) {
+                    const w = weights[sc.category];
+                    if (typeof w === "number") sc.score *= w;
+                }
+            }
+        } catch {
+            /* persona overlay is best-effort — never block tool routing */
+        }
+    }
+
     scores.sort((a, b) => b.score - a.score);
     return scores;
 }
