@@ -177,7 +177,14 @@ impl Worker {
 }
 
 fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max { s.to_string() } else { format!("{}…", &s[..max]) }
+    if s.len() <= max {
+        return s.to_string();
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &s[..end])
 }
 
 #[cfg(test)]
@@ -287,5 +294,31 @@ mod tests {
             Err(InvokeError::Pipe(_)) => {},
             other => panic!("expected EOF-style error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn truncate_handles_multibyte_utf8() {
+        // 2-byte: é (U+00E9). Slicing at a non-boundary byte would panic.
+        let s = "é".repeat(150);
+        let t = truncate(&s, 200);
+        assert!(t.ends_with('…'));
+        assert!(t.len() < s.len());
+    }
+
+    #[test]
+    fn truncate_handles_4byte_emoji() {
+        // 4-byte: 🎉 (U+1F389). 60 emoji = 240 bytes; max=201 splits mid-codepoint.
+        let s = "🎉".repeat(60);
+        let t = truncate(&s, 201);
+        assert!(t.ends_with('…'));
+        // The walk-back must have stepped to a char boundary (multiple of 4).
+        let body = &t[..t.len() - "…".len()];
+        assert_eq!(body.len() % 4, 0, "body must be on a codepoint boundary");
+    }
+
+    #[test]
+    fn truncate_under_max_returns_as_is() {
+        let s = "hello";
+        assert_eq!(truncate(s, 100), "hello");
     }
 }
