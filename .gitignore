@@ -213,6 +213,8 @@ desktop/hostinger-upload/
 !src/forge/__tests__/phase3-smoke.test.ts
 !src/forge/__tests__/capabilities.test.ts
 !src/forge/__tests__/manifest.test.ts
+!src/forge/__tests__/capability-bypass.test.ts
+!src/forge/__tests__/phase4-smoke.test.ts
 
 # Compiled Swift helpers (built by npm run build:location / build:ocr / build:ax)
 scripts/get_location_bin
