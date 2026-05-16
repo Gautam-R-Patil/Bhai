@@ -48,22 +48,19 @@ function getSteps(state) {
     const header = s.isReconfigure ? "Reconfigure" : "Welcome";
     const out = [];
     const signedIn = s.account && s.account.signedIn;
-    if (!s.isReconfigure && needsAwakening(s)) out.push("awakening");
-    // Welcome step is now redundant — the awakening cinematic IS the welcome.
-    // Kept the file in the codebase but never inserted into the flow.
-    if (needsTerms(s)) out.push("terms");
-    if (!signedIn) out.push("signin");
-    if (s.isReconfigure || !(s.profile && s.profile.name && s.profile.tone)) out.push("profile");
-    if (s.isReconfigure || needsPersonalize(s)) out.push("personalize");
-    if (s.platform !== "win32") {
-        const perms = s.permissions || {};
-        const all = ["accessibility", "screen", "microphone", "location"].every((k) => perms[k] === "granted");
-        if (s.isReconfigure || !all) out.push("permissions");
-    }
-    // Vision-tier step — always show on first install (and reconfigure) so the
-    // user can opt in to optional ML deps. Skips itself silently if every dep
-    // that the chosen tier would install is already present.
-    if (s.isReconfigure || needsVisionTierChoice(s)) out.push("vision-tier");
+
+    // First-install flow: show every step in order so users see the whole
+    // cinematic, even when some state is already satisfied. Reconfigure
+    // also shows every step (so chips can deep-link cleanly). The only
+    // dynamic gate is awakening (returning users / signed-in skip the
+    // cinematic; controlled by needsAwakening).
+    if (needsAwakening(s)) out.push("awakening");
+    if (needsTerms(s) || s.isReconfigure) out.push("terms");
+    if (!signedIn || s.isReconfigure) out.push("signin");
+    out.push("profile");
+    out.push("personalize");
+    if (s.platform !== "win32") out.push("permissions");
+    out.push("vision-tier");
     if (s.isReconfigure || needsInstall(s)) out.push("install");
     return { steps: out, header };
 }

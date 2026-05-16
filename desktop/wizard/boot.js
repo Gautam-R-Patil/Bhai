@@ -159,6 +159,28 @@
             }, 220);
         }
 
+        // Auto-advance once OTPless sign-in completes. The signin step opens
+        // a popup that resolves asynchronously; main.js fires this event when
+        // account:login succeeds.
+        if (typeof atlas.onAccountStatusChange === "function") {
+            atlas.onAccountStatusChange(async function (data) {
+                if (!data || data.signedIn !== true) return;
+                await refreshState();
+                // If we're currently on signin and the router has moved past it,
+                // skip forward to the next pending step.
+                const currentId = document.body.getAttribute("data-step");
+                if (currentId === "signin") {
+                    // Find the next step in the freshly-recomputed list.
+                    const idx = steps.indexOf("signin");
+                    if (idx >= 0 && idx + 1 < steps.length) renderIndex(idx + 1);
+                    else if (steps.indexOf("signin") === -1 && steps.length > 0) {
+                        // Signin dropped from the flow entirely — go to first remaining step.
+                        renderIndex(0);
+                    }
+                }
+            });
+        }
+
         // Audio toggle
         const audioBtn = document.getElementById("audio-toggle");
         if (audioBtn) {

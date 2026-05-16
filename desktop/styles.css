@@ -4929,3 +4929,70 @@ body[data-step] .step-actions { justify-content: flex-start; }
 
 /* The .step .btn-primary blue-gradient override is already beaten by the
    `body[data-step] .btn-primary` rules earlier in this file. */
+
+/* ── More legacy overrides — caught in real-device smoke ─────────── */
+
+/* components.css `.field input` is glass-on-light with massive padding;
+   reset for dark wizard. */
+body[data-step] .field input[type="text"],
+body[data-step] .field input[type="email"] {
+    background: var(--surface-1);
+    border: 1px solid var(--hairline-2);
+    border-radius: 12px;
+    padding: 14px 16px;
+    font-size: 17px;
+    font-weight: 500;
+    color: var(--ink-0);
+    box-shadow: none;
+    max-width: 420px;
+    width: 100%;
+}
+body[data-step] .field input:hover {
+    background: var(--surface-2);
+    border-color: var(--hairline-3);
+}
+body[data-step] .field input:focus {
+    outline: none;
+    background: var(--surface-2);
+    border-color: rgba(196,140,255,0.6);
+    box-shadow: 0 0 0 4px rgba(196,140,255,0.10);
+}
+body[data-step] .field input::placeholder { color: var(--ink-3); }
+body[data-step] .field span,
+body[data-step] .field .field-label { color: var(--ink-2); font-size: 12px; font-weight: 500; letter-spacing: 0.02em; }
+
+/* Install fun-fact body — legacy paints it #1d1d1f (dark on dark). */
+body[data-step] .fun-fact-card {
+    background: var(--surface-1);
+    border: 1px solid var(--hairline-1);
+    border-radius: 14px;
+}
+body[data-step] .fun-fact-label {
+    color: hsla(var(--accent-h, 228), 92%, 80%, 0.9);
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    font-weight: 600;
+}
+body[data-step] .fun-fact-body {
+    color: var(--ink-1);
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+/* Install phase list legacy — components.css paints them light too. */
+body[data-step] .phase-row,
+body[data-step] .phase-list .phase-row {
+    color: var(--ink-1);
+    background: transparent;
+}
+body[data-step] .phase-row.done    { color: var(--ink-2); }
+body[data-step] .phase-row.pending { color: var(--ink-3); }
+
+/* Install header + ETA legacy color overrides */
+body[data-step] .progress-percent,
+body[data-step] .progress-eta {
+    color: var(--ink-1);
+}
+
+/* "Begin install" / install primary CTA inherits .btn-primary scoping above. */
