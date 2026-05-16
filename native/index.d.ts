@@ -93,7 +93,8 @@ export const enum TaskType {
   AudioAnalysis = 'AudioAnalysis',
   Vision = 'Vision',
   FirstIteration = 'FirstIteration',
-  ErrorRecovery = 'ErrorRecovery'
+  ErrorRecovery = 'ErrorRecovery',
+  ToolSynthesis = 'ToolSynthesis'
 }
 export const enum ThinkingLevel {
   Off = 'Off',

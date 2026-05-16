@@ -372,6 +372,7 @@ pub enum TaskType {
     Vision,
     FirstIteration,
     ErrorRecovery,
+    ToolSynthesis,
 }
 
 fn task_type_to_str(t: &TaskType) -> &'static str {
@@ -390,6 +391,7 @@ fn task_type_to_str(t: &TaskType) -> &'static str {
         TaskType::Vision => "vision",
         TaskType::FirstIteration => "first_iteration",
         TaskType::ErrorRecovery => "error_recovery",
+        TaskType::ToolSynthesis => "tool_synthesis",
     }
 }
 
@@ -1399,6 +1401,7 @@ fn task_model_map(task: &TaskType) -> &'static str {
         TaskType::Vision => "anthropic/claude-sonnet-4.6",
         TaskType::FirstIteration => "anthropic/claude-haiku-4.5",
         TaskType::ErrorRecovery => "anthropic/claude-opus-4.6",
+        TaskType::ToolSynthesis => "anthropic/claude-sonnet-4.6",
     }
 }
 
@@ -1453,6 +1456,7 @@ fn task_thinking_map(task: &TaskType, score: i32) -> ThinkingLevel {
         },
         TaskType::FirstIteration => ThinkingLevel::Off, // handled by score_to_thinking_ref
         TaskType::ErrorRecovery => ThinkingLevel::Max,
+        TaskType::ToolSynthesis => ThinkingLevel::High,
     }
 }
 
