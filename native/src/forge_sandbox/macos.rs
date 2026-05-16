@@ -82,8 +82,23 @@ pub fn build_sbpl_profile(node_path: &Path, caps: &Capabilities) -> String {
     buf.push_str("(allow signal (target self))\n");
 
     buf.push_str("(allow file-read* (literal \"/dev/null\") (literal \"/dev/zero\") (literal \"/dev/random\") (literal \"/dev/urandom\"))\n");
+    // Node's dyld stats the root inode at boot — without this it aborts in V8.
+    buf.push_str("(allow file-read* (literal \"/\"))\n");
+    // Node's realpathSync lstats every component (`/`, `/private`, `/private/var`,
+    // ...) when resolving the entry-point script. Allow metadata reads tree-wide
+    // so the path-walk doesn't EPERM; data reads stay restricted to the subpaths
+    // below.
+    buf.push_str("(allow file-read-metadata)\n");
     buf.push_str("(allow file-read* (subpath \"/usr/lib\") (subpath \"/System/Library\") (subpath \"/Library/Frameworks\"))\n");
-    if let Some(parent) = node_path.parent() {
+    // Homebrew node dlopens transitive deps via /opt/homebrew/opt/<pkg> (symlinks
+    // into ../Cellar/<pkg>/<ver>). Allow the entire prefix so dyld can resolve
+    // both the symlink path and its target.
+    let node_str = node_path.to_string_lossy();
+    if node_str.starts_with("/opt/homebrew/") {
+        buf.push_str("(allow file-read* (subpath \"/opt/homebrew\"))\n");
+    } else if node_str.starts_with("/usr/local/") {
+        buf.push_str("(allow file-read* (subpath \"/usr/local\"))\n");
+    } else if let Some(parent) = node_path.parent() {
         buf.push_str(&format!("(allow file-read* (subpath \"{}\"))\n", escape_sbpl_string(&parent.to_string_lossy())));
         if let Some(prefix) = parent.parent() {
             buf.push_str(&format!("(allow file-read* (subpath \"{}\"))\n", escape_sbpl_string(&prefix.to_string_lossy())));
@@ -94,6 +109,24 @@ pub fn build_sbpl_profile(node_path: &Path, caps: &Capabilities) -> String {
 
     buf.push_str("(allow mach-lookup (global-name \"com.apple.system.notification_center\"))\n");
     buf.push_str("(allow mach-lookup (global-name \"com.apple.distributed_notifications.2\"))\n");
+
+    // V8 / Node runtime needs — without these, Node aborts at startup.
+    // - JIT pages: V8 mmaps executable memory; macOS sandbox gates this via
+    //   the wider "system-info" primitive on modern macOS.
+    // - syscall allows: V8 issues several mach_thread_self / task_self.
+    // - iokit: V8 reads device characteristics for cpu detection.
+    buf.push_str("(allow iokit-open)\n");
+    buf.push_str("(allow mach-priv-task-port)\n");
+    buf.push_str("(allow system-info)\n");
+    buf.push_str("(allow sysctl-read)\n");
+    buf.push_str("(allow process-info*)\n");
+    // Broader mach-lookup — Node touches more services than the two we listed.
+    buf.push_str("(allow mach-lookup)\n");
+    // V8 wants /System/Library and the rest of the OS libs. We already added
+    // (subpath "/System/Library") but Node also dlopens from /usr/lib/system.
+    buf.push_str("(allow file-read* (subpath \"/usr/share\") (subpath \"/private/var/db\"))\n");
+    // Allow signals broadly to self — V8's threading needs this.
+    buf.push_str("(allow signal)\n");
 
     for path in &caps.fs_read {
         buf.push_str(&format!("(allow file-read* (subpath \"{}\"))\n", escape_sbpl_string(path)));
