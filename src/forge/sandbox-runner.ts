@@ -140,7 +140,16 @@ export function scoreResult(result: SandboxResult, test: SynthesisTest): TestSco
         case "returns_matches_regex": {
             if (!result.ok) return { pass: false, explanation: `expected return; got error`, actual: result.error };
             const str = typeof result.result === "string" ? result.result : JSON.stringify(result.result);
-            const re = new RegExp(String(test.expected_value));
+            let re: RegExp;
+            try {
+                re = new RegExp(String(test.expected_value));
+            } catch (e) {
+                return {
+                    pass: false,
+                    explanation: `invalid regex: ${(e as Error).message}`,
+                    actual: str.slice(0, 200),
+                };
+            }
             const matches = re.test(str);
             return {
                 pass: matches,

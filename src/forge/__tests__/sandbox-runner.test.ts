@@ -33,6 +33,15 @@ describe("sandbox test runner", () => {
         expect(r.ok).toBe(false);
         if (!r.ok) expect(r.error).toMatch(/timeout/i);
     });
+
+    it("captures console.log output to stdout", async () => {
+        const r = await runTestInSandbox({
+            handlerCode: `console.log("hello"); return 1;`,
+            input: {}, timeoutMs: 1000,
+        });
+        expect(r.ok).toBe(true);
+        if (r.ok) expect(r.stdout).toContain("hello");
+    });
 });
 
 describe("score result", () => {
@@ -75,5 +84,22 @@ describe("score result", () => {
         expect(pass.pass).toBe(true);
         const fail = scoreResult({ ok: false, error: "any", stdout: "", stderr: "" }, { expected_kind: "returns_no_error", expected_value: null, input: {}, description: "" });
         expect(fail.pass).toBe(false);
+    });
+
+    it("returns pass:false with explanation when regex is invalid", () => {
+        const r = scoreResult(
+            { ok: true, result: "x", stdout: "", stderr: "" },
+            { expected_kind: "returns_matches_regex", expected_value: "[unclosed", input: {}, description: "" },
+        );
+        expect(r.pass).toBe(false);
+        expect(r.explanation).toMatch(/invalid regex/i);
+    });
+
+    it("side-effect stubs pass when handler succeeded", () => {
+        const r = scoreResult(
+            { ok: true, result: null, stdout: "", stderr: "" },
+            { expected_kind: "side_effect_file_exists", expected_value: "/tmp/x", input: {}, description: "" },
+        );
+        expect(r.pass).toBe(true);
     });
 });
