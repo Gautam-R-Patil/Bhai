@@ -10,10 +10,11 @@
 //   - forgeClearStrikes(slug) → void
 //   - forgeSetPoolSize(size) → void
 
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { rm, writeFile } from "node:fs/promises";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
 
 import { asJSON, type Capabilities } from "./capabilities.js";
 import { manifestDir, readManifest, writeManifest } from "./manifest.js";
@@ -141,6 +142,45 @@ export async function invokePersistedTool(
         };
     }
     const dir = manifestDir(slug);
+    // Verify on-disk handler.js matches the manifest's handlerHash. Defeats
+    // post-approval handler swap: agent's `edit`/`write` tools could
+    // theoretically rewrite handler.js under ~/.atlas/store/dynamic/<slug>/.
+    try {
+        const handlerPath = path.join(dir, "handler.js");
+        if (!existsSync(handlerPath)) {
+            return {
+                ok: false,
+                error: {
+                    kind: "spawn_failed",
+                    message: `handler.js missing for slug ${slug}`,
+                },
+            };
+        }
+        const handlerBytes = readFileSync(handlerPath);
+        const recomputed = createHash("sha256")
+            .update(handlerBytes)
+            .digest("hex")
+            .substring(0, 16);
+        if (recomputed !== manifest.handlerHash) {
+            return {
+                ok: false,
+                error: {
+                    kind: "spawn_failed",
+                    message:
+                        `handler.js tamper detected: manifest=${manifest.handlerHash}, ` +
+                        `on-disk=${recomputed}. Refusing invocation.`,
+                },
+            };
+        }
+    } catch (err) {
+        return {
+            ok: false,
+            error: {
+                kind: "spawn_failed",
+                message: `handler hash check failed: ${(err as Error).message}`,
+            },
+        };
+    }
     const capsJson = asJSON(manifest.capabilities);
     const inputJson = JSON.stringify(input);
     const raw = await native.forgeInvokeTool(slug, dir, capsJson, inputJson);
@@ -153,16 +193,42 @@ export async function installPersistedTool(
     manifest: PersistedToolManifest,
 ): Promise<void> {
     const dir = manifestDir(slug);
-    if (!existsSync(dir)) {
+    if (existsSync(dir)) {
+        // Refuse to follow symlinks at the slug-dir level. An attacker who
+        // can drop a symlink at ~/.atlas/store/dynamic/<slug>/ before install
+        // could otherwise divert handler.js writes anywhere user-writable.
+        const stat = lstatSync(dir);
+        if (stat.isSymbolicLink()) {
+            throw new Error(
+                `installPersistedTool: refusing to write through symlinked slug dir ${dir}`,
+            );
+        }
+    } else {
         mkdirSync(dir, { recursive: true });
     }
     // Write handler.js. Wrapped in the synthesizer's canonical form.
     const wrappedHandler = `module.exports = async function(input) {\n${handlerCode}\n};\n`;
-    await writeFile(path.join(dir, "handler.js"), wrappedHandler, { encoding: "utf-8", mode: 0o644 });
-    await writeManifest(slug, manifest);
-    if (native) {
-        const capsJson = asJSON(manifest.capabilities);
-        await native.forgeSpawnWarm(slug, dir, capsJson);
+    const handlerPath = path.join(dir, "handler.js");
+    let handlerWritten = false;
+    try {
+        await writeFile(handlerPath, wrappedHandler, { encoding: "utf-8", mode: 0o644 });
+        handlerWritten = true;
+        await writeManifest(slug, manifest);
+        if (native) {
+            const capsJson = asJSON(manifest.capabilities);
+            await native.forgeSpawnWarm(slug, dir, capsJson);
+        }
+    } catch (err) {
+        // Roll back partial install — orphaned handler.js with no/invalid manifest
+        // would leave the slug dir in an inconsistent state.
+        if (handlerWritten) {
+            try {
+                await rm(handlerPath, { force: true });
+            } catch {
+                /* best-effort */
+            }
+        }
+        throw err;
     }
 }
 

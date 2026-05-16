@@ -180,7 +180,8 @@ mod tests {
     #[test]
     fn allowed_syscalls_exclude_dangerous_ops() {
         let denied = [
-            libc::SYS_execve,
+            // SYS_execve is NOT in the denied list — the kernel needs it to
+            // switch the process image after seccomp loads in pre_exec.
             libc::SYS_ptrace,
             libc::SYS_mount,
             libc::SYS_umount2,

@@ -45,6 +45,9 @@ const HARD_DENY_SUBSTRINGS = [
     "/convex/",
     "/.env",
     "/data/google-credentials.json",
+    "/.atlas/store/dynamic/", // self-tamper: tools must not modify other tool dirs
+    "/.atlas/data/",
+    "/.atlas/dynamic-tools/",
     "/data/google-tokens/",
     "/.atlas/data/",
     "/.atlas/dynamic-tools/",
@@ -122,6 +125,32 @@ export function isPrivateOrLoopbackIp(addr: string): boolean {
     return false;
 }
 
+// Control chars + SBPL/landlock-injecting metachars rejected in all paths.
+// Newlines/parens flow verbatim into the macOS SBPL profile and could allow
+// rule injection if not blocked here.
+const CONTROL_OR_INJECT_RE = /[\x00-\x1f\x7f()]/;
+
+function rejectControlChars(p: string, field: string, errors: string[]): void {
+    if (CONTROL_OR_INJECT_RE.test(p)) {
+        errors.push(`${field} contains control chars or SBPL metacharacters: ${JSON.stringify(p)}`);
+    }
+}
+
+/**
+ * Reject `..` traversal AND double-slash collapse vectors. Without this,
+ * `"/.."` (length 3, not in OVERLY_BROAD_PREFIXES, no hard-deny substring)
+ * passes validation but canonicalizes to `/` — the synthesized tool gets
+ * read/write of the entire filesystem.
+ */
+function rejectTraversal(p: string, field: string, errors: string[]): void {
+    if (p.includes("..")) {
+        errors.push(`${field} contains '..' traversal: ${p}`);
+    }
+    if (p.includes("//")) {
+        errors.push(`${field} contains '//' collapse: ${p}`);
+    }
+}
+
 export function validateCapabilities(caps: Capabilities): ValidationResult {
     const errors: string[] = [];
 
@@ -129,14 +158,18 @@ export function validateCapabilities(caps: Capabilities): ValidationResult {
         if (OVERLY_BROAD_PREFIXES.includes(p)) errors.push(`fs_read overly broad: ${p}`);
         if (p.length < 3) errors.push(`fs_read path too short / risky: ${p}`);
         if (isPathHardDenied(p)) errors.push(`fs_read hits hard-deny list: ${p}`);
+        rejectControlChars(p, "fs_read", errors);
     }
     for (const p of caps.fs_write) {
         if (OVERLY_BROAD_PREFIXES.includes(p)) errors.push(`fs_write overly broad: ${p}`);
         if (p.length < 3) errors.push(`fs_write path too short / risky: ${p}`);
         if (isPathHardDenied(p)) errors.push(`fs_write hits hard-deny list: ${p}`);
+        rejectControlChars(p, "fs_write", errors);
     }
     for (const host of caps.net) {
-        const trimmed = host.trim();
+        // Strip surrounding brackets for IPv6-bracketed form before comparing.
+        const raw = host.trim();
+        const trimmed = raw.startsWith("[") && raw.endsWith("]") ? raw.slice(1, -1) : raw;
         if (
             trimmed === "*" ||
             trimmed === "0.0.0.0" ||
@@ -151,6 +184,7 @@ export function validateCapabilities(caps: Capabilities): ValidationResult {
         if (isPrivateOrLoopbackIp(trimmed)) {
             errors.push(`net hostname in private/loopback/link-local range: ${host}`);
         }
+        rejectControlChars(host, "net", errors);
     }
     for (const cmd of caps.exec) {
         const bare = cmd.trim().split(/\s+/)[0] ?? "";

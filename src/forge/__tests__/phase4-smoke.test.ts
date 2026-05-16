@@ -35,10 +35,15 @@ describe.skipIf(!NATIVE)("Phase 4 end-to-end smoke", () => {
         const { installPersistedTool, invokePersistedTool, uninstallPersistedTool } = await import(
             "../sandbox-supervisor.js"
         );
+        const { createHash } = await import("node:crypto");
         const slug = "phase4_doubler";
+        const handlerCode = "return { doubled: input.x * 2 };";
+        // Hash must match what sandbox-supervisor writes (the wrapped form).
+        const wrapped = `module.exports = async function(input) {\n${handlerCode}\n};\n`;
+        const handlerHash = createHash("sha256").update(wrapped).digest("hex").substring(0, 16);
         await installPersistedTool(
             slug,
-            "return { doubled: input.x * 2 };",
+            handlerCode,
             {
                 slug,
                 description: "Doubles input.x",
@@ -47,7 +52,7 @@ describe.skipIf(!NATIVE)("Phase 4 end-to-end smoke", () => {
                 version: "0.1.0",
                 approvedAt: Date.now(),
                 userQuote: "yes please install the doubler for phase 4 smoke",
-                handlerHash: "deadbeefcafe1234",
+                handlerHash,
             },
         );
 

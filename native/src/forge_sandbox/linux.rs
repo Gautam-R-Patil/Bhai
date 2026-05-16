@@ -54,13 +54,21 @@ impl Sandbox for LinuxSandbox {
                 build_ruleset(caps, self.strict)
                     .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("landlock: {e}")))?,
             )
-        } else if self.strict && !landlock_optional {
+        } else if !landlock_optional {
+            // SECURE DEFAULT: refuse to spawn without Landlock unless the
+            // operator has explicitly opted out via ATLAS_FORGE_LANDLOCK_OPTIONAL=true.
+            // seccomp-only mode has no path-level filesystem isolation —
+            // a synthesized handler can read /etc/passwd, ~/.ssh/, etc.
             return Err(io::Error::new(
                 io::ErrorKind::Other,
-                "Landlock unavailable on this kernel and ATLAS_FORGE_STRICT=true",
+                "Landlock unavailable on this kernel (<5.13). Refusing to spawn without fs isolation. \
+                 Upgrade kernel or set ATLAS_FORGE_LANDLOCK_OPTIONAL=true to allow seccomp-only mode (UNSAFE).",
             ));
         } else {
-            tracing_warn(slug, "Landlock unavailable — seccomp-only enforcement");
+            tracing_warn(
+                slug,
+                "Landlock unavailable AND ATLAS_FORGE_LANDLOCK_OPTIONAL=true — seccomp-only enforcement, NO filesystem isolation",
+            );
             None
         };
 
@@ -80,11 +88,18 @@ impl Sandbox for LinuxSandbox {
         let shim_path = handler_dir.join(".handler-shim.js");
         let mut cmd = Command::new(&self.node_path);
         cmd.arg(&shim_path)
-            .env("ATLAS_FORGE_SLUG", slug)
-            .env("ATLAS_FORGE_HANDLER_PATH", handler_dir.join("handler.js"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stderr(Stdio::piped())
+            // CRITICAL: env_clear() FIRST — synthesized handlers must not
+            // inherit ATLAS's OPENAI_API_KEY / TELEGRAM_BOT_TOKEN / etc.
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("HOME", handler_dir)
+            .env("ATLAS_FORGE_SLUG", slug)
+            .env("ATLAS_FORGE_HANDLER_PATH", handler_dir.join("handler.js"))
+            // Reap on Drop — prevents zombies on boot-fail paths.
+            .kill_on_drop(true);
 
         // ── pre_exec: async-signal-safe closure ──
 

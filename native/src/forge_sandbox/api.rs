@@ -133,6 +133,15 @@ pub async fn forge_invoke_tool(
     worker.release_inflight();
 
     use crate::forge_sandbox::worker::InvokeError;
+    // Track whether the worker is dead/unusable after this call so we can
+    // evict it from the pool (timeout kills the child, pipe/ipc imply
+    // corrupted state). Recovers cleanly on the next call instead of
+    // burning 3 strikes against a zombie.
+    let evict_after = matches!(
+        &result,
+        Err(InvokeError::Timeout { .. }) | Err(InvokeError::Pipe(_)) | Err(InvokeError::Ipc(_))
+    );
+
     let response = match result {
         Ok(resp) => {
             let ok = resp.get("ok").and_then(|o| o.as_bool()).unwrap_or(false);
@@ -171,6 +180,9 @@ pub async fn forge_invoke_tool(
     };
 
     drop(guard);
+    if evict_after {
+        pool.evict(&slug).await;
+    }
     Ok(response)
 }
 

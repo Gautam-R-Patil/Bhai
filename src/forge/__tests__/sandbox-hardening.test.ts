@@ -648,8 +648,9 @@ describe("F9: private/loopback/link-local IP rejection", () => {
         expect(isPathHardDenied("/Users/x/.docker/config.json")).toBe(true);
         expect(isPathHardDenied("/Users/x/.kube/config")).toBe(true);
         expect(isPathHardDenied("/Users/x/.atlas/data/forge-pending.json")).toBe(true);
-        // legit ATLAS dynamic-store paths still allowed
-        expect(isPathHardDenied("/Users/x/.atlas/store/dynamic/foo/handler.js")).toBe(false);
+        // Phase 4 security review: dynamic-store paths are now hard-denied —
+        // tools must NOT declare fs_write to any tool dir (their own or others').
+        expect(isPathHardDenied("/Users/x/.atlas/store/dynamic/foo/handler.js")).toBe(true);
     });
 });
 

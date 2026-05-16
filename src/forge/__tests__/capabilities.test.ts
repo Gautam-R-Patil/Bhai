@@ -196,8 +196,12 @@ describe("isPathHardDenied", () => {
         expect(isPathHardDenied("/Users/x/Desktop/ATLAS/convex/http.ts")).toBe(true);
     });
 
-    it("does NOT flag ~/.atlas/store/dynamic (the legit tool home)", () => {
-        expect(isPathHardDenied("/Users/x/.atlas/store/dynamic/foo/handler.js")).toBe(false);
+    it("DOES flag ~/.atlas/store/dynamic (tools must not self-tamper or cross-tamper)", () => {
+        // Tools cannot declare fs_write caps to any tool dir (including their
+        // own). The supervisor writes handler.js via direct FS calls outside
+        // the capability layer; tool-declared fs_write to that prefix is
+        // always rejected to prevent self-tampering / other-tool overwriting.
+        expect(isPathHardDenied("/Users/x/.atlas/store/dynamic/foo/handler.js")).toBe(true);
     });
 
     it("does NOT flag arbitrary user paths", () => {

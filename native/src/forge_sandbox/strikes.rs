@@ -54,6 +54,12 @@ impl StrikeRecord {
     pub fn clear(&mut self) {
         self.timestamps.clear();
     }
+
+    /// Const-correct length probe — does NOT drain. Used by StrikeBoard
+    /// pruning under a shared-ref closure.
+    pub fn count_in_window_const(&self) -> usize {
+        self.timestamps.len()
+    }
 }
 
 // ─── StrikeBoard ─────────────────────────────────────────
@@ -91,8 +97,21 @@ impl StrikeBoard {
     }
 
     pub fn count(&self, slug: &str, window: Duration) -> usize {
-        let mut entry = self.strikes.entry(slug.to_string()).or_default();
-        entry.count_in_window(window)
+        // Use a scoped block so the entry guard drops before we attempt the
+        // remove(). DashMap's entry API holds a write lock on the shard;
+        // removing without dropping deadlocks.
+        let remaining = {
+            let mut entry = self.strikes.entry(slug.to_string()).or_default();
+            entry.count_in_window(window)
+        };
+        if remaining == 0 {
+            // Prune empty entries so a "1 strike each on 10k slugs" attacker
+            // can't pin unbounded VecDeques in the map. We rely on
+            // count_in_window having already drained expired timestamps.
+            self.strikes
+                .remove_if(slug, |_, rec| rec.count_in_window_const() == 0);
+        }
+        remaining
     }
 
     /// Reset on user-revoke. Removes the slug entry entirely so the next

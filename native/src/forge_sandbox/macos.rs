@@ -46,6 +46,10 @@ impl Sandbox for MacosSandbox {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            // SIGKILL the child if its Command/Child is dropped without explicit
+            // wait. Critical for boot-failure paths where the Child is dropped
+            // mid-spawn — without this, killed children become zombies.
+            .kill_on_drop(true)
             .env_clear()
             .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
             .env("HOME", handler_dir)

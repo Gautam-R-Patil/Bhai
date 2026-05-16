@@ -337,6 +337,24 @@ export async function synthesizeTool(req: SynthesisRequest): Promise<SynthesisRe
     // registering in the agent's tool registry. The user must approve via
     // approveDynamicTool before the tool becomes callable.
     if (req.persistent) {
+        // Refuse to clobber an already-pending approval slug — the user
+        // needs to act on it (approve/revoke) before we start another.
+        const existingPending = getAwaitingDynamicToolSlug();
+        if (existingPending && existingPending !== req.name) {
+            return {
+                kind: "failed",
+                report: {
+                    requestedName: req.name,
+                    description: req.description,
+                    attempts: result.attempts,
+                    finalDiagnosis:
+                        `another persistent tool is already awaiting approval: '${existingPending}'. ` +
+                        `Approve or revoke it first, then retry.`,
+                    failureReason: "exhausted_attempts",
+                    reportPath: "",
+                },
+            };
+        }
         // Wire envelope's capabilities_declared through. The verifier already
         // validated they parse + don't request hard-denied paths; the approval
         // gate is the user's chance to refuse if anything looks too broad.
@@ -358,6 +376,15 @@ export async function synthesizeTool(req: SynthesisRequest): Promise<SynthesisRe
             setLifecycleState(req.name, "awaiting_approval");
             enterAwaitingDynamicToolApproval(req.name);
         } catch (err) {
+            // Orphan the library row to keep state consistent — manifest
+            // failed to write, so the tool is not actually available; mark
+            // archived so subsequent synthesize attempts of the same slug
+            // can proceed (and so getToolBySlug returns archived).
+            try {
+                setLifecycleState(req.name, "archived");
+            } catch {
+                /* unknown slug */
+            }
             return {
                 kind: "failed",
                 report: {
@@ -572,6 +599,41 @@ async function scanAndRegisterApprovedTools(): Promise<{ registered: number; arc
         if (manifest.approvedAt === 0) continue; // awaiting_approval — don't register
         const meta = getToolBySlug(slug);
         if (!meta || meta.lifecycleState !== "active") continue;
+
+        // Recompute handler.js sha256 prefix and compare against the manifest.
+        // Refuse to register tools whose handler has been swapped on disk
+        // post-approval — archive instead.
+        try {
+            const handlerPath = join(manifestDir(slug), "handler.js");
+            if (!existsSync(handlerPath)) {
+                setLifecycleState(slug, "archived");
+                archived++;
+                continue;
+            }
+            const handlerBytes = readFileSync(handlerPath);
+            const recomputedHash = createHash("sha256")
+                .update(handlerBytes)
+                .digest("hex")
+                .substring(0, 16);
+            if (recomputedHash !== manifest.handlerHash) {
+                console.warn(
+                    `[forge] boot-scan: handler hash mismatch for ${slug} ` +
+                        `(manifest=${manifest.handlerHash}, on-disk=${recomputedHash}); archiving`,
+                );
+                setLifecycleState(slug, "archived");
+                archived++;
+                continue;
+            }
+        } catch (err) {
+            console.error(`[forge] boot-scan: hash check failed for ${slug}:`, (err as Error).message);
+            try {
+                setLifecycleState(slug, "archived");
+                archived++;
+            } catch {
+                /* unknown slug */
+            }
+            continue;
+        }
         if (registry) {
             const handler = async (input: Record<string, unknown>) => {
                 const res = await invokePersistedTool(slug, input);
