@@ -3,7 +3,20 @@
 // Browser: attaches to window.WizardRouter. Main process: required from main.js.
 "use strict";
 
-const ALL_STEPS = ["welcome", "terms", "signin", "profile", "personalize", "permissions", "vision-tier", "install"];
+const ALL_STEPS = ["awakening", "welcome", "terms", "signin", "profile", "personalize", "permissions", "vision-tier", "install"];
+
+function envFlag(name) {
+    try { if (typeof process !== "undefined" && process.env && process.env[name] === "true") return true; }
+    catch (_) { /* renderer — no process */ }
+    return false;
+}
+
+function needsAwakening(s) {
+    if (envFlag("ATLAS_NO_AWAKENING")) return false;
+    if (s && s.isReconfigure) return false;
+    if (s && s.account && s.account.signedIn) return false;
+    return true;
+}
 
 // Bump when the legal documents (Terms / Privacy / Acceptable Use / Disclaimer /
 // Refund) materially change. Users whose stored acceptance.version is older
@@ -35,6 +48,7 @@ function getSteps(state) {
     const header = s.isReconfigure ? "Reconfigure" : "Welcome";
     const out = [];
     const signedIn = s.account && s.account.signedIn;
+    if (!s.isReconfigure && needsAwakening(s)) out.push("awakening");
     if (!s.isReconfigure && !signedIn) out.push("welcome");
     if (needsTerms(s)) out.push("terms");
     if (!signedIn) out.push("signin");
@@ -66,6 +80,6 @@ function needsVisionTierChoice(s) {
 function next(i, s) { return (i + 1 < s.length ? i + 1 : -1); }
 function prev(i) { return (i - 1 >= 0 ? i - 1 : -1); }
 
-const api = { getSteps, next, prev, ALL_STEPS, CURRENT_ACCEPTANCE_VERSION, needsTerms };
+const api = { getSteps, next, prev, ALL_STEPS, CURRENT_ACCEPTANCE_VERSION, needsTerms, needsAwakening };
 if (typeof module !== "undefined" && module.exports) module.exports = api;
 if (typeof window !== "undefined") window.WizardRouter = api;
