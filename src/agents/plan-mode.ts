@@ -122,6 +122,22 @@ export function approveAndExit(): void {
     emit();
 }
 
+/**
+ * Enter "awaiting dynamic tool approval" after synthesizeTool persists a
+ * tool with persistent=true. The agent can render the approval message +
+ * send to the user + accept their explicit approval via approve_dynamic_tool.
+ * Cannot run other code, cannot edit files, cannot invoke any other tools.
+ */
+export function enterAwaitingDynamicToolApproval(slug: string, source: "user" | "auto" = "auto"): void {
+    state = { mode: "awaiting_dynamic_tool_approval", enteredAt: Date.now(), slug, source };
+    emit();
+}
+
+/** Returns the slug awaiting approval, if any. */
+export function getAwaitingDynamicToolSlug(): string | null {
+    return state.mode === "awaiting_dynamic_tool_approval" ? state.slug : null;
+}
+
 export function onPlanModeChange(listener: Listener): () => void {
     listeners.add(listener);
     return () => listeners.delete(listener);

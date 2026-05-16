@@ -407,7 +407,7 @@ function jsonReplacer(_key: string, value: unknown): unknown {
  * also reject any entry that doesn't parse via this function (returning the
  * permissive empty shape is correct: no capability declared = nothing to grant).
  */
-function parseCapabilitiesLooseInput(
+export function parseCapabilitiesLooseInput(
     declared: string[],
 ): { fs_read: string[]; fs_write: string[]; net: string[]; exec: string[] } {
     const out = { fs_read: [] as string[], fs_write: [] as string[], net: [] as string[], exec: [] as string[] };

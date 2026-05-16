@@ -7,6 +7,11 @@ import { dirname, join } from "node:path";
 import type { LLMClient } from "../llm.js";
 import { selectForToolSynthesis } from "../model-router.js";
 import type { FunctionGemmaResult } from "../models/function-gemma.js";
+import {
+    enterAwaitingDynamicToolApproval,
+    getAwaitingDynamicToolSlug,
+    getPlanModeState,
+} from "../agents/plan-mode.js";
 import { getRegistryRef } from "../tools/create-tool.js";
 import { parseCapabilities, type Capabilities } from "./capabilities.js";
 import {
@@ -36,7 +41,7 @@ import type {
     SynthesisResult,
     ToolMetadata,
 } from "./types.js";
-import { runVerifier } from "./verifier.js";
+import { parseCapabilitiesLooseInput, runVerifier } from "./verifier.js";
 
 type FunctionGemmaFn = (
     query: string,
@@ -332,15 +337,12 @@ export async function synthesizeTool(req: SynthesisRequest): Promise<SynthesisRe
     // registering in the agent's tool registry. The user must approve via
     // approveDynamicTool before the tool becomes callable.
     if (req.persistent) {
-        const capabilities = parseCapabilities({
-            // Phase 3's envelope ships capabilities_declared as a string array.
-            // Empty array becomes default ({fs_read:[],...}) — caller must
-            // surface a "no capabilities declared" warning in the approval UI.
-            fs_read: [],
-            fs_write: [],
-            net: [],
-            exec: [],
-        });
+        // Wire envelope's capabilities_declared through. The verifier already
+        // validated they parse + don't request hard-denied paths; the approval
+        // gate is the user's chance to refuse if anything looks too broad.
+        const capabilities = parseCapabilities(
+            parseCapabilitiesLooseInput(result.envelope.capabilities_declared ?? []),
+        );
         const manifest: PersistedToolManifest = {
             slug: req.name,
             description: req.description,
@@ -354,6 +356,7 @@ export async function synthesizeTool(req: SynthesisRequest): Promise<SynthesisRe
         try {
             await installPersistedTool(req.name, result.envelope.handler_code, manifest);
             setLifecycleState(req.name, "awaiting_approval");
+            enterAwaitingDynamicToolApproval(req.name);
         } catch (err) {
             return {
                 kind: "failed",
@@ -380,6 +383,8 @@ export async function synthesizeTool(req: SynthesisRequest): Promise<SynthesisRe
         attempts: result.attempts,
         testsPassed: result.envelope.tests.length,
         testsTotal: result.envelope.tests.length,
+        handlerCode: result.envelope.handler_code,
+        parametersSchema: req.parametersSchema,
     };
 }
 
@@ -413,12 +418,53 @@ async function synthesizeWithStubLLM(req: SynthesisRequest): Promise<SynthesisRe
     return { kind: "synthesized", slug: req.name, attempts: 1, testsPassed: 1, testsTotal: 1 };
 }
 
+// Server-side banned-word list — mirrors src/tools/forge-approval.ts so the
+// agent-side check can't be bypassed by manipulating the wrapper.
+const SERVER_BANNED_USER_QUOTE_WORDS = new Set([
+    "ok",
+    "yes",
+    "sure",
+    "approved",
+    "approve",
+    "lgtm",
+    "ship it",
+    "looks good",
+    "go ahead",
+    "do it",
+    "good",
+    "fine",
+]);
+
 export async function approveDynamicTool(
     slug: string,
     userQuote: string,
 ): Promise<{ ok: true; toolName: string } | { ok: false; error: string }> {
+    // State-gate: approval is ONLY valid when the agent is in
+    // awaiting_dynamic_tool_approval mode AND the slug matches the one the
+    // user is being asked about. This blocks LLM-self-approval via a direct
+    // call from act mode immediately after create_tool returns awaiting_approval.
+    const planState = getPlanModeState();
+    const awaitingSlug = getAwaitingDynamicToolSlug();
+    if (planState.mode !== "awaiting_dynamic_tool_approval" || awaitingSlug !== slug) {
+        return {
+            ok: false,
+            error:
+                `approval refused — plan-mode must be 'awaiting_dynamic_tool_approval' with slug='${slug}'; ` +
+                `current mode='${planState.mode}', awaiting_slug='${awaitingSlug ?? "(none)"}'`,
+        };
+    }
     if (!userQuote || userQuote.trim().length < 10) {
         return { ok: false, error: "user_quote too short or empty (must be ≥10 non-whitespace chars)" };
+    }
+    // Server-side banned-word recheck (defence in depth — TS-side gate in
+    // forge-approval.ts can be bypassed if anyone calls approveDynamicTool
+    // directly).
+    const trimmed = userQuote.trim().toLowerCase();
+    if (SERVER_BANNED_USER_QUOTE_WORDS.has(trimmed)) {
+        return {
+            ok: false,
+            error: `user_quote "${userQuote}" is too generic — paste the user's actual verbatim approval text`,
+        };
     }
     const manifest = readManifest(slug);
     if (!manifest) {
@@ -457,6 +503,12 @@ export async function approveDynamicTool(
         });
     }
     emitForgeEvent({ event: "tool_approved", ts: Date.now(), slug } as never);
+    // Return to act mode so the agent can use the newly-approved tool.
+    if (getPlanModeState().mode === "awaiting_dynamic_tool_approval") {
+        // exitPlanMode flips back to act
+        const pm = await import("../agents/plan-mode.js");
+        pm.exitPlanMode();
+    }
     return { ok: true, toolName: slug };
 }
 
@@ -496,10 +548,15 @@ async function scanAndRegisterApprovedTools(): Promise<{ registered: number; arc
     const registry = getRegistryRef();
     for (const slug of entries) {
         if (slug === "_failed") continue;
-        // If no manifest.json exists, this is a Phase 1-3 legacy tool (or a
-        // freshly-migrated one). Skip silently — only Phase 4 persistent tools
-        // are managed here.
-        const manifestPath = join(manifestDir(slug), "manifest.json");
+        // Skip non-slug-shaped names (.DS_Store, .tmp, foo-bar, etc.).
+        // `manifestDir` throws on invalid slugs; one bad entry shouldn't
+        // abort registration of the rest.
+        let manifestPath: string;
+        try {
+            manifestPath = join(manifestDir(slug), "manifest.json");
+        } catch {
+            continue;
+        }
         if (!existsSync(manifestPath)) continue;
         const manifest = readManifest(slug);
         if (!manifest) {

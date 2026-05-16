@@ -456,12 +456,34 @@ export const createTool: ToolDefinition = {
                         });
                     }
                     if (result.kind === "synthesized") {
+                        // Register the in-process handler so the agent can
+                        // immediately call the synthesized tool. Persistent
+                        // tools take a different path (awaiting_approval +
+                        // sandboxed registration on approve_dynamic_tool).
+                        if (result.handlerCode && registryRef && !registryRef.has(result.slug)) {
+                            const sessionHandler = buildHandler(result.handlerCode);
+                            registryRef.set(result.slug, {
+                                schema: {
+                                    type: "function",
+                                    function: {
+                                        name: result.slug,
+                                        description,
+                                        parameters:
+                                            (result.parametersSchema as Record<string, unknown>) ??
+                                            paramsSchema ??
+                                            { type: "object", properties: {}, required: [] },
+                                    },
+                                },
+                                handler: sessionHandler,
+                            });
+                            dynamicToolNames.add(result.slug);
+                        }
                         return JSON.stringify({
                             success: true,
                             synthesized: true,
                             tool_name: result.slug,
                             attempts: result.attempts,
-                            message: `Tool "${result.slug}" synthesized and verified (${result.testsPassed}/${result.testsTotal} tests passed).`,
+                            message: `Tool "${result.slug}" synthesized, verified (${result.testsPassed}/${result.testsTotal} tests passed), and registered.`,
                         });
                     }
                     if (result.kind === "awaiting_approval") {

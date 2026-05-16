@@ -63,6 +63,7 @@ const ALLOWED_SYSCALLS: &[i64] = &[
     libc::SYS_stat,
     libc::SYS_fstat,
     libc::SYS_lstat,
+    libc::SYS_newfstatat,
     libc::SYS_poll,
     libc::SYS_lseek,
     libc::SYS_pread64,
@@ -98,6 +99,9 @@ const ALLOWED_SYSCALLS: &[i64] = &[
     libc::SYS_sched_yield,
     libc::SYS_set_tid_address,
     libc::SYS_clone3,
+    libc::SYS_clone, // glibc <2.34 fallback when clone3 returns ENOSYS
+    libc::SYS_rseq,  // required by glibc ≥2.35 pthread_create
+    libc::SYS_sigaltstack,
     // Process + signal
     libc::SYS_rt_sigaction,
     libc::SYS_rt_sigprocmask,
@@ -105,6 +109,7 @@ const ALLOWED_SYSCALLS: &[i64] = &[
     libc::SYS_ioctl,
     libc::SYS_prctl,
     libc::SYS_arch_prctl,
+    libc::SYS_execve, // REQUIRED — seccomp loads before kernel execs the child
     libc::SYS_exit,
     libc::SYS_exit_group,
     libc::SYS_wait4,
@@ -135,6 +140,9 @@ const ALLOWED_SYSCALLS: &[i64] = &[
     // Sockets — network-namespace gates outbound at L3.
     libc::SYS_socket,
     libc::SYS_connect,
+    libc::SYS_bind,
+    libc::SYS_listen,
+    libc::SYS_accept4,
     libc::SYS_setsockopt,
     libc::SYS_getsockopt,
     libc::SYS_recvfrom,

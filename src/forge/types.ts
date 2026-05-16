@@ -36,7 +36,19 @@ export type SynthesisResult =
           slug: string;
           reusedFrom: { matchSimilarity: number; source: "function_gemma" | "library_embedding" };
       }
-    | { kind: "synthesized"; slug: string; attempts: number; testsPassed: number; testsTotal: number }
+    | {
+        kind: "synthesized";
+        slug: string;
+        attempts: number;
+        testsPassed: number;
+        testsTotal: number;
+        /** Phase 4: when non-persistent synthesis succeeds, the handler_code
+         * is returned here so create-tool.ts can register a session-only
+         * in-process handler. Persistent tools register via the sandbox
+         * supervisor and don't use this field. */
+        handlerCode?: string;
+        parametersSchema?: Record<string, unknown>;
+    }
     | { kind: "awaiting_approval"; slug: string; capabilitiesRequested: Capabilities }
     | { kind: "failed"; report: SynthesisFailureReport };
 
