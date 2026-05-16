@@ -7,7 +7,7 @@
 
 use std::io;
 use std::path::Path;
-use std::process::Child;
+use tokio::process::Child;
 
 pub mod api;
 pub mod common;

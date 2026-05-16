@@ -3,7 +3,7 @@
 
 use std::io;
 use std::path::Path;
-use std::process::Child;
+use tokio::process::Child;
 use crate::forge_sandbox::{Capabilities, Sandbox};
 
 pub struct MacosSandbox;
