@@ -212,16 +212,31 @@ Dual-backend browser automation. The `BrowserBackend` interface (`browser-backen
 - **Tool intelligence** — Per-tool caching (TTL-based: web_search 2min, read_file 1min, system_info 5min), rate limiting, audit logging, confirmation gates
 - **Dynamic tools** (`create-tool.ts`) — Agent-created tools that persist to `~/.atlas/store/tools` and hot-reload at runtime. Generated handlers run inside a `vm.createContext` sandbox with a restricted require shim.
 
-### Skill Forge (`src/forge/` — Phases 1+2 shipped)
-ATLAS-specific dynamic-tool reliability layer. Phase 1: foundation (SQLite library, manifest, hot-reload). Phase 2: lookup-first short-circuit so `create_tool` reuses existing tools before synthesizing. Kill switches: `ATLAS_NO_FORGE`, `ATLAS_NO_FORGE_LOOKUP`, `ATLAS_NO_FORGE_AUTO_SYNTHESIS`.
+### Skill Forge (`src/forge/` — Phases 1+2+3 shipped)
+ATLAS-specific dynamic-tool reliability layer. Phase 1: foundation (SQLite library, manifest, hot-reload). Phase 2: lookup-first short-circuit so `create_tool` reuses existing tools before synthesizing. Phase 3: closed-loop verifier — LLM generates a `{handler_code, tests, capabilities_declared, side_effects, synthesis_notes}` envelope, sandbox runs the tests, critics check compile + lint + SAST, diagnose prompt drives retries up to 3× (Track A / sync) or 10× (Track B / dream-replay). Pro-tier routing through the new `tool_synthesis` TaskType (Sonnet by default; Opus + max with `ATLAS_FORGE_DREAM_OPUS=true`).
 
 Lookup pipeline: FunctionGemma 270M (zero cost when Ollama+model present) → FTS5 BM25 over description+schema_keys → cosine rerank against embeddings (threshold 0.85). Dedup at write time at 0.85 / 0.92 thresholds (warn vs merge).
 
+Verifier pipeline at `src/forge/verifier.ts`: `parseEnvelope` → `runCompileCheck` (acorn, hard-fail) → `runSastCritic` (11 regex rules, hard-fail on errors) → `runTestInSandbox` per test (vm.createContext, 10s each) → `scoreResult` against `expected_kind` (8 variants: returns_equals/contains/matches_regex, throws/throws_contains/no_error, side_effect_*). On any failure the loop builds a `buildDiagnosePrompt` and retries. Wall-clock cap via `ATLAS_POST_SYNTHESIS_BUDGET_MS` (default 90s). Failure reports go to `~/.atlas/store/dynamic/_failed/<ts>_<slug>.json` with safe-stringified actuals (BigInt/circular/Symbol-safe).
+
 Public API at `src/forge/orchestrator.ts`:
-- `initForge({ embedFn })` / `isForgeReady()` / `getForgeStats()` — boot + introspection
+- `initForge({ embedFn })` / `isForgeReady()` / `getForgeStats()` / `shutdownForge()` — boot + introspection + teardown
+- `setForgeLLM(client)` — inject the `LLMClient` used by `synthesizeTool` (call once at boot)
 - `lookupTool(description, schema)` — Phase 2 lookup, returns `ToolMetadata | null`
+- `synthesizeTool(req)` — Phase 3 real impl: lookup short-circuit → `ATLAS_FORGE_STUB_LLM` test path → `runVerifier` → `insertTool` on success. Returns `SynthesisResult` discriminated union (`lookup_hit` | `synthesized` | `awaiting_approval` | `failed`)
 - `queueSynthesisCandidate(req)` / `consumeNextPendingCandidate()` — Phase 2 auto-synthesis queue
-- `synthesizeTool`, `approveDynamicTool`, `runDreamReplaySynthesis` — Phase 3+ stubs
+- `runDreamReplaySynthesis` — Phase 6 stub
+
+Plus consumer + agent wiring:
+- `src/forge/pending-consumer.ts::consumeOnePending()` — pulls one queued candidate and synthesizes it
+- `src/agent.ts` end-of-turn hook fires `consumeOnePending()` fire-and-forget after each user turn (disable via `ATLAS_NO_FORGE_VERIFIER=true`)
+- `src/tools/create-tool.ts` routes through `synthesizeTool` when forge is ready; falls back to legacy in-memory handler registration when `ATLAS_NO_FORGE_VERIFIER=true` or forge is offline
+
+Model router additions (`src/model-router.ts`):
+- `TaskType` union extended with `"tool_synthesis"`; `VALID_TASK_TYPES` updated; native `TaskType` enum (PascalCase `ToolSynthesis`) and `task_model_map`/`task_type_to_str`/`task_thinking_map` arms added in `native/src/model_router.rs`
+- `maybeEscalateForSynthesis(base, isDreamReplay)` — Track A: Sonnet + high thinking. Track B: Sonnet + high (or Opus + max if `ATLAS_FORGE_DREAM_OPUS=true`)
+- `selectForToolSynthesis(isDreamReplay?)` — public entry that wraps base selection + escalation, single-source `reason` string
+- `selectForAgent` inserts synthesis escalation BEFORE browser/coding when `lastToolCalls` contains `create_tool`
 
 Spec: `docs/superpowers/specs/2026-05-15-forge-tool-creation-overhaul-design.md`. Deep dives in `docs/superpowers/specs/forge-deep-dives/`.
 
@@ -367,6 +382,12 @@ Most entries default to the feature ON; set to `"true"` (or the named sentinel) 
 - `ATLAS_NO_FORGE` — disables the Skill Forge subsystem entirely (no migration, no library, no synthesis). Phase 1 default-off; flip to default-on after soak (per spec §14).
 - `ATLAS_NO_FORGE_LOOKUP` — disables the lookup short-circuit. `create_tool` always proceeds to synthesis. Default-off in Phase 2.
 - `ATLAS_NO_FORGE_AUTO_SYNTHESIS` — disables the auto-queue path in `handleToolRequest`. Falls back to the old "you have three options" message.
+- `ATLAS_NO_FORGE_VERIFIER` — disables the Phase 3 closed-loop verifier path. `synthesizeTool` short-circuits to the legacy stub-insert; `create_tool` skips the forge route and registers the user-provided handler directly in `registryRef`; the agent end-of-turn hook becomes a no-op. Use as a soft kill switch when investigating verifier-introduced regressions.
+- `ATLAS_NO_SYNTHESIS_ESCALATION` — `maybeEscalateForSynthesis` becomes a no-op; synthesis stays on whatever tier the base router picked. Disables both Track A (Sonnet bump) and Track B (Sonnet/Opus + thinking).
+- `ATLAS_NO_SYNTHESIS_THINKING` — skip the extended-thinking bump (`thinkingLevel: "high"|"max"`) on synthesis routing while still applying the model upgrade.
+- `ATLAS_FORGE_DREAM_OPUS` — Track B (dream-replay) routes to Opus + max thinking instead of the default Sonnet + high. Only meaningful when `selectForToolSynthesis(true)` or `synthesizeTool({source: "dream_replay"})` is the caller.
+- `ATLAS_FORGE_STUB_LLM` — **TEST-ONLY**. Makes `synthesizeTool` skip the LLM call and insert a stub library row directly. Never set in production; tests use it to exercise the wiring deterministically without burning credits.
+- `ATLAS_POST_SYNTHESIS_BUDGET_MS` (already documented above) — also caps the verifier's wall-clock budget. Default 90s.
 - `ATLAS_NATIVE_AX` — opt-IN (off by default); routes AX tree flatten/find through `native/src/ax_walker.rs`. Per the empirical Rust rules, JSON round-trip dominates for trees <200 nodes — TS is often faster. Enable only for AX-heavy workloads where the tree is consistently large. Bench TBD before flipping default ON.
 - `ATLAS_VISION_PROFILE=lite|standard|full` — override the capability-detector's auto-picked vision-nav profile (`src/screen/capability-detector.ts`). Use for testing the tier-specific code paths or forcing Lite on a workstation.
 - `ATLAS_NO_CLICK_MEMORY` — disables persistent click-memory recall/record (`src/screen/click-memory.ts`). On `"true"`, `recallClickSite` returns null and `recordClickSuccess`/`recordClickMiss` are no-ops. Use to rule out a poisoned `data/click-memory.db` as the cause of recurring wrong-target clicks.
