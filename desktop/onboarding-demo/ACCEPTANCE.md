@@ -1,0 +1,69 @@
+# W1 Cinematic Spine — Acceptance Checklist
+
+> Run on a clean `~/.atlas/setup-state.json`. Walk every line. Anything
+> not green is a blocker.
+
+## Awakening
+- [ ] Opening the app on a fresh setup state lands directly on the awakening.
+- [ ] The glyph spring-scales in ~120ms after page load.
+- [ ] The greeting reveals word-by-word with ~110ms between words.
+- [ ] If `profile.name` exists, it appears. Otherwise OS user name (capitalized). Otherwise no name.
+- [ ] The iridescent rule draws from center, outward, after the greeting completes.
+- [ ] Status text rotates through three phrases over ~3.9s.
+- [ ] CTA fades in around 1.9s.
+- [ ] Pressing ESC during animation jumps everything to the final state.
+- [ ] Clicking Begin transitions to the next step (welcome on first install, terms on returning user).
+- [ ] The indicator dot strip is hidden on awakening.
+
+## Step transitions
+- [ ] Every step transition: outgoing fades + lifts + blurs over 220ms.
+- [ ] Iridescent rule scribes across the top during the transition (left→right→retreat over 1.4s).
+- [ ] Incoming step's children stagger-fade in at 70ms intervals.
+- [ ] The folio in the chrome reads the current step number (e.g. "03 / 09").
+- [ ] The indicator pill is on the current step's dot, with `done` dots before and `inactive` dots after.
+
+## Copy
+- [ ] Every step title matches `desktop/wizard/copy.js`.
+- [ ] No inline string literals in any step file (`grep -rn 'textContent = "' desktop/wizard/steps/` returns nothing meaningful).
+- [ ] Phase labels on the install step match the new "Browser engine / Semantic memory / etc." names.
+
+## Permissions
+- [ ] Permissions step renders the new list-of-rows layout.
+- [ ] Granting a permission turns the row green.
+- [ ] Skipping a permission turns the row amber.
+- [ ] "Skip all" link skips every remaining permission and advances.
+- [ ] The footnote "No worries. We can still work together." reads below the list.
+
+## Sign-in
+- [ ] Sign-in step has NO "Skip for now" CTA.
+- [ ] Two big option buttons: "Continue with email" / "Continue with phone".
+- [ ] A "Back" link at the bottom.
+
+## Theme
+- [ ] On a system in light mode: page is warm off-white with dark ink.
+- [ ] On a system in dark mode: page is warm near-black with light ink.
+- [ ] In Personalize → Appearance, picking Light/Dark/System applies live (page flips immediately).
+- [ ] Personalize choice persists across wizard reload.
+
+## Ready Hub
+- [ ] Title reads "Ready, **Name**." with the name in iridescent gradient.
+- [ ] Dek reads "Press {hotkey} anywhere on your computer. I'll be there." with a hotkey badge.
+- [ ] Magic-moment card appears below the dek with one observation.
+- [ ] Magic-moment rotates every ~7s (give it time).
+- [ ] Settings index shows 6 cells (Account, Workspace, Hotkey, Voice, Persona, Permissions) in a 3-col grid.
+- [ ] Persona cell reads "Explorer" with a "Pick a shape in Settings" secondary line.
+- [ ] Launch button is a white pill (in dark mode) or dark pill (in light mode), with an animated chevron on hover.
+- [ ] Try this lines reveal an arrow on hover.
+
+## Audio
+- [ ] Audio is OFF by default (no sound on advance).
+- [ ] Toggling the speaker in the chrome enables confirm chimes on advance.
+- [ ] With audio enabled, the awakening plays a bell ~1.45s in.
+- [ ] `ATLAS_NO_ONBOARDING_AUDIO=true` silences everything regardless of toggle.
+
+## Kill-switches
+- [ ] `ATLAS_NO_AWAKENING=true` → awakening skipped, welcome is first.
+- [ ] `ATLAS_NO_MAGIC_MOMENT=true` → magic-moment card hidden on Ready Hub.
+
+## Comparison to demo
+- [ ] Open `desktop/onboarding-demo/index.html` side by side. The production wizard's visuals match the demo within ~2% (font sizes, weights, padding, motion timing). Any divergence is a bug in the production code, not the demo.
