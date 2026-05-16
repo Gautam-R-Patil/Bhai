@@ -49,6 +49,9 @@ export async function runVerifier(opts: VerifierOpts): Promise<VerifierResult> {
     let lastSastFindings: CriticFinding[] = [];
 
     for (let attempt = 1; attempt <= opts.maxAttempts; attempt++) {
+        lastFailures = [];
+        lastSastFindings = [];
+
         if (Date.now() - start > budgetMs) {
             const reportPath = await writeFailureReport(
                 opts,
@@ -71,20 +74,40 @@ export async function runVerifier(opts: VerifierOpts): Promise<VerifierResult> {
         try {
             raw = await opts.llmFn(prompt);
         } catch (err) {
-            // Treat LLM errors as parse failures — retry
-            prompt = buildDiagnosePrompt({
-                priorHandlerCode: lastEnvelope?.handler_code ?? "",
-                failures: [],
-                sastFindings: [{ ruleId: "llm_error", severity: "ERROR", message: (err as Error).message }],
-                attemptNumber: attempt + 1,
-                maxAttempts: opts.maxAttempts,
-            });
+            const msg = (err as Error).message;
+            if (attempt === opts.maxAttempts) {
+                const reportPath = await writeFailureReport(
+                    opts,
+                    attempt,
+                    "exhausted_attempts",
+                    lastEnvelope,
+                    lastFailures,
+                    [{ ruleId: "llm_error", severity: "ERROR", message: msg }],
+                );
+                return {
+                    ok: false,
+                    failureReason: "exhausted_attempts",
+                    attempts: attempt,
+                    reportPath,
+                    durationMs: Date.now() - start,
+                };
+            }
+            if (lastEnvelope) {
+                prompt = buildDiagnosePrompt({
+                    priorHandlerCode: lastEnvelope.handler_code,
+                    failures: [],
+                    sastFindings: [{ ruleId: "llm_error", severity: "ERROR", message: msg }],
+                    attemptNumber: attempt + 1,
+                    maxAttempts: opts.maxAttempts,
+                });
+            } else {
+                prompt = `${opts.initialPrompt}\n\n# Previous LLM call failed: ${msg}\nReturn the JSON object as specified.`;
+            }
             continue;
         }
 
         const parsed = parseEnvelope(raw);
         if (!parsed.ok) {
-            // One retry to recover JSON shape; if attempt is the last, fail
             if (attempt === opts.maxAttempts) {
                 const reportPath = await writeFailureReport(
                     opts,
@@ -109,10 +132,26 @@ export async function runVerifier(opts: VerifierOpts): Promise<VerifierResult> {
         const env = parsed.envelope;
         lastEnvelope = env;
 
-        // Critic stack — fail fast on compile or SAST hard fail
         const compile = runCompileCheck(env.handler_code);
         if (!compile.pass) {
             lastSastFindings = [{ ruleId: "compile", severity: "ERROR", message: compile.error ?? "compile failed" }];
+            if (attempt === opts.maxAttempts) {
+                const reportPath = await writeFailureReport(
+                    opts,
+                    attempt,
+                    "sast_unrecoverable",
+                    env,
+                    lastFailures,
+                    lastSastFindings,
+                );
+                return {
+                    ok: false,
+                    failureReason: "sast_unrecoverable",
+                    attempts: attempt,
+                    reportPath,
+                    durationMs: Date.now() - start,
+                };
+            }
             prompt = buildDiagnosePrompt({
                 priorHandlerCode: env.handler_code,
                 failures: [],
@@ -126,6 +165,23 @@ export async function runVerifier(opts: VerifierOpts): Promise<VerifierResult> {
         const sast = await runSastCritic(env.handler_code, { rulesPath: null });
         if (!sast.pass) {
             lastSastFindings = sast.findings;
+            if (attempt === opts.maxAttempts) {
+                const reportPath = await writeFailureReport(
+                    opts,
+                    attempt,
+                    "sast_unrecoverable",
+                    env,
+                    lastFailures,
+                    lastSastFindings,
+                );
+                return {
+                    ok: false,
+                    failureReason: "sast_unrecoverable",
+                    attempts: attempt,
+                    reportPath,
+                    durationMs: Date.now() - start,
+                };
+            }
             prompt = buildDiagnosePrompt({
                 priorHandlerCode: env.handler_code,
                 failures: [],
@@ -136,7 +192,6 @@ export async function runVerifier(opts: VerifierOpts): Promise<VerifierResult> {
             continue;
         }
 
-        // Run each test
         const scores: { score: TestScore; test: (typeof env.tests)[number] }[] = [];
         for (const test of env.tests) {
             const sandboxResult = await runTestInSandbox({
@@ -158,7 +213,6 @@ export async function runVerifier(opts: VerifierOpts): Promise<VerifierResult> {
             };
         }
 
-        // Some failures — diagnose and retry
         lastFailures = failures.map(({ score, test }) => ({
             description: test.description,
             input: test.input,
@@ -194,6 +248,7 @@ export async function runVerifier(opts: VerifierOpts): Promise<VerifierResult> {
         });
     }
 
+    // Defensive: reachable only when maxAttempts === 0
     const reportPath = await writeFailureReport(
         opts,
         opts.maxAttempts,
@@ -234,7 +289,7 @@ async function writeFailureReport(
         sast_findings: sastFindings,
         parse_errors: parseErrors,
     };
-    await writeFile(fullPath, JSON.stringify(report, null, 2), "utf-8");
+    await writeFile(fullPath, safeJsonStringify(report, 2), "utf-8");
     return fullPath;
 }
 
@@ -243,4 +298,43 @@ function parseEnvBudget(): number | undefined {
     if (!raw) return undefined;
     const n = Number(raw);
     return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+function safeJsonStringify(v: unknown, indent?: number): string {
+    try {
+        const s = JSON.stringify(v, jsonReplacer, indent);
+        if (s === undefined) return "null";
+        return s;
+    } catch {
+        return safeFallbackStringify(v, indent);
+    }
+}
+
+function jsonReplacer(_key: string, value: unknown): unknown {
+    if (typeof value === "bigint") return `${value.toString()}n`;
+    if (typeof value === "symbol") return value.toString();
+    if (typeof value === "function") return `[function ${value.name || "anonymous"}]`;
+    return value;
+}
+
+function safeFallbackStringify(v: unknown, indent?: number): string {
+    const seen = new WeakSet<object>();
+    try {
+        return (
+            JSON.stringify(
+                v,
+                (_k, val) => {
+                    const replaced = jsonReplacer(_k, val);
+                    if (typeof replaced === "object" && replaced !== null) {
+                        if (seen.has(replaced as object)) return "[circular]";
+                        seen.add(replaced as object);
+                    }
+                    return replaced;
+                },
+                indent,
+            ) ?? "null"
+        );
+    } catch {
+        return JSON.stringify({ unserializable: true, typeOf: typeof v }, null, indent);
+    }
 }

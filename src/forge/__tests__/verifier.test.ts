@@ -100,7 +100,7 @@ describe("verifier", () => {
             failedReportDir: tmpDir,
         });
         expect(r.ok).toBe(false);
-        if (!r.ok) expect(r.failureReason).toBe("exhausted_attempts");
+        if (!r.ok) expect(r.failureReason).toBe("sast_unrecoverable");
     });
 
     it("respects wall-clock budget", async () => {
@@ -118,5 +118,127 @@ describe("verifier", () => {
         });
         expect(r.ok).toBe(false);
         if (!r.ok) expect(r.failureReason).toBe("budget_exceeded");
+    });
+
+    it("LLM throw on first attempt does not crash and uses initialPrompt for retry", async () => {
+        let calls = 0;
+        const prompts: string[] = [];
+        const llmFn = async (p: string) => {
+            prompts.push(p);
+            calls++;
+            if (calls === 1) throw new Error("network gone");
+            return JSON.stringify(SUCCESSFUL_ENVELOPE);
+        };
+        const r = await runVerifier({
+            slug: "x",
+            initialPrompt: "INIT_PROMPT_MARKER",
+            llmFn,
+            maxAttempts: 3,
+            failedReportDir: tmpDir,
+        });
+        expect(r.ok).toBe(true);
+        if (r.ok) expect(r.attempts).toBe(2);
+        expect(prompts[1]).toContain("INIT_PROMPT_MARKER");
+        expect(prompts[1]).toContain("network gone");
+        expect(prompts[1]).not.toMatch(/produced this handler:\s*```js\s*```/);
+    });
+
+    it("compile failure on final attempt returns sast_unrecoverable", async () => {
+        const llmFn = async () => JSON.stringify({
+            ...SUCCESSFUL_ENVELOPE,
+            handler_code: "function (((( syntactically broken",
+        });
+        const r = await runVerifier({
+            slug: "x",
+            initialPrompt: "build",
+            llmFn,
+            maxAttempts: 2,
+            failedReportDir: tmpDir,
+        });
+        expect(r.ok).toBe(false);
+        if (!r.ok) expect(r.failureReason).toBe("sast_unrecoverable");
+    });
+
+    it("parse failure on final attempt returns parse_unrecoverable", async () => {
+        const llmFn = async () => "not json at all";
+        const r = await runVerifier({
+            slug: "x",
+            initialPrompt: "build",
+            llmFn,
+            maxAttempts: 2,
+            failedReportDir: tmpDir,
+        });
+        expect(r.ok).toBe(false);
+        if (!r.ok) expect(r.failureReason).toBe("parse_unrecoverable");
+    });
+
+    it("failure report file actually exists and contains expected fields", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const llmFn = async () => JSON.stringify({
+            ...SUCCESSFUL_ENVELOPE,
+            handler_code: "return -999;",
+        });
+        const r = await runVerifier({
+            slug: "myslug",
+            initialPrompt: "build",
+            llmFn,
+            maxAttempts: 2,
+            failedReportDir: tmpDir,
+        });
+        expect(r.ok).toBe(false);
+        if (!r.ok) {
+            const body = await readFile(r.reportPath, "utf-8");
+            const obj = JSON.parse(body);
+            expect(obj.slug).toBe("myslug");
+            expect(obj.attempts).toBe(2);
+            expect(obj.reason).toBe("exhausted_attempts");
+            expect(Array.isArray(obj.last_failures)).toBe(true);
+        }
+    });
+
+    it("safeJsonStringify handles BigInt and circular actuals in the report", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const llmFn = async () => JSON.stringify({
+            ...SUCCESSFUL_ENVELOPE,
+            handler_code: "return 999n;",
+        });
+        const r = await runVerifier({
+            slug: "bigint",
+            initialPrompt: "build",
+            llmFn,
+            maxAttempts: 1,
+            failedReportDir: tmpDir,
+        });
+        expect(r.ok).toBe(false);
+        if (!r.ok) {
+            const body = await readFile(r.reportPath, "utf-8");
+            expect(body).toContain("999n");
+        }
+    });
+
+    it("stale failures across heterogeneous attempts do not leak into final report", async () => {
+        const { readFile } = await import("node:fs/promises");
+        let calls = 0;
+        const llmFn = async () => {
+            calls++;
+            if (calls === 1) {
+                return JSON.stringify({ ...SUCCESSFUL_ENVELOPE, handler_code: "return -1;" });
+            }
+            return JSON.stringify({ ...SUCCESSFUL_ENVELOPE, handler_code: "function (((((" });
+        };
+        const r = await runVerifier({
+            slug: "het",
+            initialPrompt: "build",
+            llmFn,
+            maxAttempts: 2,
+            failedReportDir: tmpDir,
+        });
+        expect(r.ok).toBe(false);
+        if (!r.ok) {
+            const body = await readFile(r.reportPath, "utf-8");
+            const obj = JSON.parse(body);
+            expect(obj.last_failures).toEqual([]);
+            expect(obj.sast_findings.some((f: { ruleId: string }) => f.ruleId === "compile")).toBe(true);
+        }
     });
 });
