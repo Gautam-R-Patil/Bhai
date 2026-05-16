@@ -33,6 +33,19 @@ import { InlineKeyboard } from "grammy";
 
 // ── Markdown → Telegram HTML ──────────────────
 
+// Sanitize attacker-controlled inbound text before wrapping in delimiters.
+function sanitizeIncomingChannelText(text: string): string {
+    if (!text) return text;
+    return text
+        .replace(/\[SYSTEM NOTE:/gi, "[user-quoted-text:")
+        .replace(/\[ATLAS-INTERNAL\b/gi, "[user-quoted-text")
+        .replace(/<system_log>/gi, "&lt;system_log&gt;")
+        .replace(/<\/system_log>/gi, "&lt;/system_log&gt;")
+        .replace(/<tool_log/gi, "&lt;tool_log")
+        .replace(/<\/tool_log>/gi, "&lt;/tool_log&gt;")
+        .replace(/\[Tool Result/gi, "[user-quoted-text Tool Result");
+}
+
 // ── Strip internal debug blocks before sending ──
 // Cleans out any <system_log>...</system_log> blocks that may leak from
 // context-pruning compressed messages into the LLM's final reply.
@@ -219,11 +232,29 @@ export function getTelegramConfig(): Config | null {
     return _moduleConfig;
 }
 
+// F3: distinguish channel-allowed from platform-owner. OWNER_TELEGRAM_IDS
+// is a strict subset of ALLOWED_USER_IDS; defaults to ALLOWED_USER_IDS (with
+// a warning) for back-compat.
+function parseTelegramOwners(config: Config): Set<number> {
+    const raw = process.env.OWNER_TELEGRAM_IDS;
+    if (!raw) {
+        console.warn("[TG] OWNER_TELEGRAM_IDS not set — defaulting owner set to ALLOWED_USER_IDS. Narrow this by setting OWNER_TELEGRAM_IDS to a strict subset.");
+        return new Set(config.allowedUserIds);
+    }
+    return new Set(raw.split(",").map(s => Number(s.trim())).filter(n => Number.isFinite(n)));
+}
+
+export function isPlatformOwner(channel: "telegram", userId: number, config: Config): boolean {
+    if (channel !== "telegram") return false;
+    return parseTelegramOwners(config).has(userId);
+}
+
 export function createTelegramBot(config: Config, llm: LLMClient): Bot {
     const bot = new Bot(config.telegramBotToken);
     _moduleBot = bot;
     _moduleConfig = config;
     const startTime = Date.now();
+    const telegramOwners = parseTelegramOwners(config);
 
     // Initialize slash commands
     initCommands({
@@ -238,12 +269,33 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
         sendProgress: async (msg: string) => { await sendProactiveMessage(bot, config, msg); },
     });
 
+    // ── Per-sender inbound rate limit (F7) ──
+    const RATE_WINDOW_MS = 60_000;
+    const RATE_MAX = 20;
+    const rateBuckets = new Map<number, number[]>();
+    function rateLimitAllow(userId: number): boolean {
+        const now = Date.now();
+        const arr = rateBuckets.get(userId) || [];
+        const fresh = arr.filter(ts => now - ts < RATE_WINDOW_MS);
+        if (fresh.length >= RATE_MAX) {
+            rateBuckets.set(userId, fresh);
+            return false;
+        }
+        fresh.push(now);
+        rateBuckets.set(userId, fresh);
+        return true;
+    }
+
     // ── Security: User ID whitelist middleware ──
     bot.use(async (ctx, next) => {
         const userId = ctx.from?.id;
         if (!userId) return;
         if (!config.allowedUserIds.has(userId)) {
             console.log(`🚫 Blocked message from unauthorized user: ${userId}`);
+            return;
+        }
+        if (!rateLimitAllow(userId)) {
+            console.log(`🚫 Rate limit hit for telegram user ${userId} — dropping message`);
             return;
         }
         await next();
@@ -288,7 +340,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
     (globalThis as Record<string, unknown>).__atlasProactiveLog = proactiveMessageLog;
 
     // ── Message batching (debounce rapid messages) ──
-    const messageBuffer = new Map<number, { messages: string[]; timer: ReturnType<typeof setTimeout>; triggerMessageId: number; replyToText?: string; ctx: typeof bot extends { on: (e: string, cb: (c: infer C) => void) => void } ? C : never }>();
+    const messageBuffer = new Map<number, { messages: string[]; timer: ReturnType<typeof setTimeout>; triggerMessageId: number; replyToText?: string; replyToAuthor?: string; ctx: typeof bot extends { on: (e: string, cb: (c: infer C) => void) => void } ? C : never }>();
     const BATCH_DELAY_MS = 500;     // Initial delay: 500ms (reduced from 1500ms)
     const BATCH_EXTEND_MS = 1000;   // Extend by 1s if more messages arrive
 
@@ -299,9 +351,18 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
         const triggerMessageId = ctx.message.message_id;
 
         // ── Extract reply context if user swiped to reply ──
+        // F10: in groups a user can reply to a non-bot message and forge an
+        // "earlier message from me" prefix. Carry the replied-to author so the
+        // framing reflects who actually said it.
         let replyToText: string | undefined;
+        let replyToAuthor: string | undefined;
         if (ctx.message.reply_to_message && 'text' in ctx.message.reply_to_message) {
-            replyToText = (ctx.message.reply_to_message as { text?: string }).text;
+            const rep = ctx.message.reply_to_message as { text?: string; from?: { id?: number; first_name?: string } };
+            replyToText = rep.text;
+            const botId = ctx.me?.id;
+            if (rep.from?.id && botId && rep.from.id !== botId) {
+                replyToAuthor = rep.from.first_name || `user ${rep.from.id}`;
+            }
         }
         const chatId = ctx.chat.id;
 
@@ -466,6 +527,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
             existing.messages.push(userMessage);
             existing.ctx = ctx as typeof existing.ctx;
             if (replyToText && !existing.replyToText) existing.replyToText = replyToText;
+            if (replyToAuthor && !existing.replyToAuthor) existing.replyToAuthor = replyToAuthor;
             clearTimeout(existing.timer);
             existing.timer = setTimeout(() => processBuffered(chatId, triggerMessageId), BATCH_EXTEND_MS);
         } else {
@@ -475,6 +537,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 timer: setTimeout(() => processBuffered(chatId, triggerMessageId), BATCH_DELAY_MS),
                 triggerMessageId,
                 replyToText,
+                replyToAuthor,
                 ctx: ctx as never,
             });
         }
@@ -487,6 +550,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         let ctx: any;
         let replyToText: string | undefined;
+        let replyToAuthor: string | undefined;
 
         if (directMessage && directCtx) {
             // Called directly from callback query handler — bypass buffer
@@ -501,6 +565,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
             combinedMessage = buf.messages.join("\n");
             ctx = buf.ctx as any;
             replyToText = buf.replyToText;
+            replyToAuthor = buf.replyToAuthor;
 
             if (buf.messages.length > 1) {
                 console.log(`  📦 Batched ${buf.messages.length} messages into one`);
@@ -509,10 +574,12 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
 
         // ── Inject reply context if user swiped to reply ──
         if (replyToText) {
-            combinedMessage = `[Replying to your earlier message: "${replyToText.substring(0, 500)}"]
-
-${combinedMessage}`;
-            console.log(`  ↩️ Reply context injected: "${replyToText.substring(0, 80)}..."`);
+            const preview = replyToText.substring(0, 500);
+            const prefix = replyToAuthor
+                ? `[Replying to ${replyToAuthor}'s message: "${preview}"]`
+                : `[Replying to your earlier message: "${preview}"]`;
+            combinedMessage = `${prefix}\n\n${combinedMessage}`;
+            console.log(`  ↩️ Reply context injected (${replyToAuthor || "self"}): "${preview.substring(0, 80)}..."`);
         }
 
         // ── Record user activity + proactive response tracking ──
@@ -820,7 +887,8 @@ ${combinedMessage}`;
                 setSwarmProgress(progressCallback);
                 setDeepResearchProgress(progressCallback);
                 setLongTaskProgress(progressCallback);
-                const response = await runAgent(llm, agentMessage, progressCallback, undefined, controller.signal, historyFork, modelHint, undefined, { channel: "telegram", userId: String(ctx.from?.id || ""), userName: ctx.from?.first_name, isOwner: true });
+                const senderIsOwner = !!ctx.from?.id && telegramOwners.has(ctx.from.id);
+                const response = await runAgent(llm, agentMessage, progressCallback, undefined, controller.signal, historyFork, modelHint, undefined, { channel: "telegram", userId: String(ctx.from?.id || ""), userName: ctx.from?.first_name, isOwner: senderIsOwner });
                 clearSwarmProgress();
                 clearDeepResearchProgress();
                 clearLongTaskProgress();
@@ -1172,7 +1240,7 @@ ${combinedMessage}`;
 // ── Media Message Handler ─────────────────────
 
 async function handleMediaMessage(
-    ctx: { message: { caption?: string; photo?: Array<{ file_id: string }>; video?: { file_id: string; mime_type?: string }; document?: { file_id: string; mime_type?: string } }; from: { first_name?: string }; chat: { id: number }; reply: Function; replyWithChatAction: Function },
+    ctx: { message: { caption?: string; photo?: Array<{ file_id: string }>; video?: { file_id: string; mime_type?: string }; document?: { file_id: string; mime_type?: string } }; from: { id?: number; first_name?: string }; chat: { id: number }; reply: Function; replyWithChatAction: Function },
     bot: Bot,
     config: Config,
     llm: LLMClient,
@@ -1282,10 +1350,9 @@ async function handleMediaMessage(
         await fs.writeFile(tmpFilePath, downloadedBuffer, { mode: 0o600 });
         console.log(`  💾 Saved media to atlas_media/...`);
 
-        // Append the file path to the caption so the LLM knows it has a local file.
-        // (Path leaks to LLM context but only inside trusted system-prompt boundary;
-        // do NOT echo the random filename in any user-facing message.)
-        caption += `\n\n[SYSTEM NOTE: This ${mediaType} has been temporarily saved to: ${tmpFilePath}. You can use this absolute path if the user asks you to edit the media in DaVinci Resolve or Filmora.]`;
+        // Wrap attacker-controlled caption in delimiters and strip framing tokens.
+        // The tmp file path is ATLAS-internal hint, separately marked.
+        caption = `<channel_message_content>\n${sanitizeIncomingChannelText(caption)}\n</channel_message_content>\n\n[ATLAS-INTERNAL — not from user: This ${mediaType} is saved at ${tmpFilePath}. Use this absolute path for DaVinci Resolve or Filmora edits.]`;
 
         // Build media attachment
         const media: MediaAttachment[] = [{ type: mediaType, base64, mimeType }];
@@ -1301,7 +1368,8 @@ async function handleMediaMessage(
             console.log(`  📊 [progress] ${msg}`);
         };
 
-        const result = await runAgent(llm, caption, progressCallback, media, undefined, undefined, undefined, undefined, { channel: "telegram", userId: String(ctx.chat.id), userName: ctx.from?.first_name, isOwner: true });
+        const senderIsOwner = !!ctx.from?.id && isPlatformOwner("telegram", ctx.from.id, config);
+        const result = await runAgent(llm, caption, progressCallback, media, undefined, undefined, undefined, undefined, { channel: "telegram", userId: String(ctx.chat.id), userName: ctx.from?.first_name, isOwner: senderIsOwner });
 
         console.log(`🤖 A.T.L.A.S: ${result.text.substring(0, 200)}...`);
 
@@ -1448,7 +1516,8 @@ Respond naturally. If music was identified, tell them the song. NEVER mention Ge
             console.log(`  📊 [progress] ${msg}`);
         };
 
-        const result = await runAgent(llm, enrichedPrompt, progressCallback, undefined, undefined, undefined, undefined, undefined, { channel: "telegram", userId: String(ctx.from?.id || ""), userName: ctx.from?.first_name, isOwner: true });
+        const senderIsOwner = !!ctx.from?.id && isPlatformOwner("telegram", ctx.from.id as number, config);
+        const result = await runAgent(llm, enrichedPrompt, progressCallback, undefined, undefined, undefined, undefined, undefined, { channel: "telegram", userId: String(ctx.from?.id || ""), userName: ctx.from?.first_name, isOwner: senderIsOwner });
 
         console.log(`🤖 A.T.L.A.S: ${result.text.substring(0, 200)}...`);
 

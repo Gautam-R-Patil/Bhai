@@ -315,8 +315,27 @@ export function verifyOTP(jid: string, code: string): boolean {
 // Role checks
 // ---------------------------------------------------------------------------
 
+// Strip Baileys device-suffix (`:NN`) so `1234567890:99@s.whatsapp.net` and
+// `1234567890@s.whatsapp.net` resolve to the same owner. `@lid` is a separate
+// namespace; leave it intact for callers to dispatch by domain.
+export function normalizeJid(jid: string): string {
+    if (!jid) return jid;
+    const atIdx = jid.indexOf("@");
+    if (atIdx < 0) return jid;
+    const local = jid.substring(0, atIdx);
+    const domain = jid.substring(atIdx);
+    const cleanLocal = local.split(":")[0];
+    return `${cleanLocal}${domain}`;
+}
+
 export function isOwner(jid: string): boolean {
-    return owners.has(jid);
+    if (owners.has(jid)) return true;
+    const normalized = normalizeJid(jid);
+    if (normalized !== jid && owners.has(normalized)) return true;
+    for (const ownerJid of owners.keys()) {
+        if (normalizeJid(ownerJid) === normalized) return true;
+    }
+    return false;
 }
 
 export function isContact(jid: string): boolean {

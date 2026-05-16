@@ -93,6 +93,8 @@ function buildResultEmbed(
 
 // ── Download Discord attachment to base64 ──
 
+const DISCORD_MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
 async function downloadAttachment(attachment: Attachment): Promise<MediaAttachment | null> {
     const mime = attachment.contentType || "";
     let type: "image" | "video" | "audio" | null = null;
@@ -105,10 +107,25 @@ async function downloadAttachment(attachment: Attachment): Promise<MediaAttachme
 
     if (!type) return null;
 
+    // F6: 3-layer size cap — metadata, Content-Length, final body length.
+    if (typeof attachment.size === "number" && attachment.size > DISCORD_MAX_ATTACHMENT_BYTES) {
+        console.warn(`  [DISCORD] Rejecting oversized attachment ${attachment.name}: ${attachment.size} bytes`);
+        return null;
+    }
+
     try {
         const response = await fetch(attachment.url, { signal: AbortSignal.timeout(30_000) });
         if (!response.ok) return null;
+        const cl = response.headers.get("content-length");
+        if (cl && Number(cl) > DISCORD_MAX_ATTACHMENT_BYTES) {
+            console.warn(`  [DISCORD] Rejecting oversized attachment ${attachment.name}: content-length ${cl}`);
+            return null;
+        }
         const buffer = Buffer.from(await response.arrayBuffer());
+        if (buffer.length > DISCORD_MAX_ATTACHMENT_BYTES) {
+            console.warn(`  [DISCORD] Rejecting oversized attachment ${attachment.name}: body ${buffer.length} bytes`);
+            return null;
+        }
         const base64 = buffer.toString("base64");
         console.log(`  [DISCORD] Downloaded attachment: ${attachment.name} (${Math.round(buffer.length / 1024)}KB)`);
         return { type, base64, mimeType: mime || `${type}/${type === "image" ? "jpeg" : "mp4"}` };
@@ -116,6 +133,23 @@ async function downloadAttachment(attachment: Attachment): Promise<MediaAttachme
         console.warn(`  [DISCORD] Failed to download attachment ${attachment.name}:`, (err as Error).message);
         return null;
     }
+}
+
+// F7: per-sender inbound rate limit.
+const DISCORD_RATE_WINDOW_MS = 60_000;
+const DISCORD_RATE_MAX = 20;
+const discordRateBuckets = new Map<string, number[]>();
+function discordRateLimitAllow(userId: string): boolean {
+    const now = Date.now();
+    const arr = discordRateBuckets.get(userId) || [];
+    const fresh = arr.filter(ts => now - ts < DISCORD_RATE_WINDOW_MS);
+    if (fresh.length >= DISCORD_RATE_MAX) {
+        discordRateBuckets.set(userId, fresh);
+        return false;
+    }
+    fresh.push(now);
+    discordRateBuckets.set(userId, fresh);
+    return true;
 }
 
 // ── Send a response, splitting if needed ──
@@ -187,7 +221,8 @@ async function runAndReply(
     setLongTaskProgress(progressCallback);
 
     try {
-        const result = await runAgent(llm, message, progressCallback, media, undefined, undefined, modelHint, undefined, { channel: "discord", userId: interaction.user.id, userName: interaction.user.username, isOwner: true });
+        const senderIsOwner = isPlatformOwner("discord", interaction.user.id);
+        const result = await runAgent(llm, message, progressCallback, media, undefined, undefined, modelHint, undefined, { channel: "discord", userId: interaction.user.id, userName: interaction.user.username, isOwner: senderIsOwner });
 
         if (result.text.trim() === "[NO_REPLY]") {
             await interaction.editReply("Done -- no additional output.");
@@ -264,7 +299,8 @@ async function runInThread(
     setLongTaskProgress(progressCallback);
 
     try {
-        const result = await runAgent(llm, message, progressCallback, undefined, undefined, undefined, modelHint, undefined, { channel: "discord", userId: interaction.user.id, userName: interaction.user.username, isOwner: true });
+        const senderIsOwner = isPlatformOwner("discord", interaction.user.id);
+        const result = await runAgent(llm, message, progressCallback, undefined, undefined, undefined, modelHint, undefined, { channel: "discord", userId: interaction.user.id, userName: interaction.user.username, isOwner: senderIsOwner });
 
         if (result.text.trim() === "[NO_REPLY]") {
             await thread.send("Completed -- no additional output.");
@@ -379,6 +415,19 @@ function parseDiscordAllowedUsers(): Set<string> {
     return new Set(ids);
 }
 
+// F3: OWNER_DISCORD_IDS is a strict subset of DISCORD_ALLOWED_USER_IDS;
+// only these IDs get isOwner: true.
+function parseDiscordOwners(): Set<string> {
+    const raw = process.env.OWNER_DISCORD_IDS;
+    if (!raw) return new Set();
+    return new Set(raw.split(",").map(s => s.trim()).filter(Boolean));
+}
+
+export function isPlatformOwner(channel: "discord", userId: string): boolean {
+    if (channel !== "discord") return false;
+    return parseDiscordOwners().has(userId);
+}
+
 // ── Init Discord Bot ─────────────────────────
 
 let discordClient: Client | null = null;
@@ -438,6 +487,10 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
         const userId = interaction.user.id;
         if (!isAllowed(userId)) {
             await interaction.reply({ content: "You are not authorized to use A.T.L.A.S.", ephemeral: true });
+            return;
+        }
+        if (!discordRateLimitAllow(userId)) {
+            console.log(`  [DISCORD] Rate limit hit for user ${userId} — dropping`);
             return;
         }
 
@@ -578,6 +631,10 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
             console.log(`  [DISCORD] Blocked message from unauthorized user: ${message.author.tag}`);
             return;
         }
+        if (!discordRateLimitAllow(message.author.id)) {
+            console.log(`  [DISCORD] Rate limit hit for user ${message.author.tag} — dropping`);
+            return;
+        }
 
         // Strip the bot mention from the message content
         let content = message.content;
@@ -626,7 +683,8 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
             setDeepResearchProgress(progressCallback);
             setLongTaskProgress(progressCallback);
 
-            const result = await runAgent(llm, content, progressCallback, media, undefined, undefined, undefined, undefined, { channel: "discord", userId: message.author.id, userName: message.author.username, isOwner: true });
+            const senderIsOwner = isPlatformOwner("discord", message.author.id);
+            const result = await runAgent(llm, content, progressCallback, media, undefined, undefined, undefined, undefined, { channel: "discord", userId: message.author.id, userName: message.author.username, isOwner: senderIsOwner });
 
             clearSwarmProgress();
             clearDeepResearchProgress();
