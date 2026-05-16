@@ -29,7 +29,8 @@ export type TaskType =
     | "classify" | "simple_chat" | "complex_chat" | "tool_loop"
     | "coding" | "planning" | "synthesis" | "final_answer"
     | "research" | "sub_agent" | "audio_analysis" | "vision"
-    | "first_iteration" | "error_recovery";
+    | "first_iteration" | "error_recovery"
+    | "tool_synthesis";
 
 export interface ConversationContext {
     recentScores: number[];
@@ -131,6 +132,7 @@ const VALID_TASK_TYPES: Set<string> = new Set([
     "classify", "simple_chat", "complex_chat", "tool_loop", "coding",
     "planning", "synthesis", "final_answer", "research", "sub_agent",
     "audio_analysis", "vision", "first_iteration", "error_recovery",
+    "tool_synthesis",
 ]);
 
 function convertSelection(raw: any): ModelSelection {
@@ -274,6 +276,7 @@ export function selectModel(opts: {
     lastToolCalls?: Array<{ function: { name: string } }>;
     urgency?: "realtime" | "background";
 } = {}): ModelSelection {
+    let result: ModelSelection;
     if (native) {
         const toolNames = opts.lastToolCalls?.map(tc => tc.function.name) || null;
         const raw = native.selectModel(
@@ -286,20 +289,32 @@ export function selectModel(opts: {
             opts.urgency || null,
             toolNames,
         );
-        return convertSelection(raw);
+        result = convertSelection(raw);
+    } else {
+        // Native model router is required. Return Haiku as a minimum-cost safe default
+        // and log a clear error so misconfigured builds are immediately visible.
+        console.error("[ModelRouter] Native module unavailable — falling back to Haiku. Run: npm run build:native");
+        result = {
+            modelId: "anthropic/claude-haiku-4.5",
+            displayName: "Haiku 4.5 (native-unavailable fallback)",
+            thinkingLevel: "off" as ThinkingLevel,
+            reason: "fallback:native_required",
+            complexityScore: 10,
+            taskType: opts.taskType || "simple_chat",
+            estimatedCostPerCall: 0.001,
+        };
     }
-    // Native model router is required. Return Haiku as a minimum-cost safe default
-    // and log a clear error so misconfigured builds are immediately visible.
-    console.error("[ModelRouter] Native module unavailable — falling back to Haiku. Run: npm run build:native");
-    return {
-        modelId: "anthropic/claude-haiku-4.5",
-        displayName: "Haiku 4.5 (native-unavailable fallback)",
-        thinkingLevel: "off" as ThinkingLevel,
-        reason: "fallback:native_required",
-        complexityScore: 10,
-        taskType: opts.taskType || "simple_chat",
-        estimatedCostPerCall: 0.001,
-    };
+
+    // tool_synthesis ⇒ always Pro tier (Sonnet) unless ATLAS_NO_SYNTHESIS_ESCALATION
+    // is set. Native router may not yet recognize the new task type (Task 7
+    // adds it), so this TS-side guard keeps the contract intact.
+    if (opts.taskType === "tool_synthesis") {
+        try {
+            const escalated = maybeEscalateForSynthesis(result, false);
+            if (escalated) return escalated;
+        } catch { /* additive — fall through */ }
+    }
+    return result;
 }
 
 export function shouldCascadeEscalate(response: string, originalMessage: string, currentModelId: string): CascadeResult {
@@ -350,6 +365,17 @@ export function selectForAgent(
         modelHint,
         lastToolCalls,
     });
+
+    // ── Synthesis escalation ──
+    // When the agent is about to invoke create_tool (or just did), bump to
+    // Pro tier so the Forge verifier loop runs against Sonnet. Disable with
+    // ATLAS_NO_SYNTHESIS_ESCALATION=true. Runs FIRST — most specific match wins.
+    try {
+        if (lastToolCalls?.some((t) => t.function.name === "create_tool")) {
+            const escalated = maybeEscalateForSynthesis(base, false);
+            if (escalated) return escalated;
+        }
+    } catch { /* additive — fall through */ }
 
     // ── Browser automation escalation ──
     // Browser tasks (multi-step form fill, CAPTCHA, design tools like Figma/Canva)
@@ -620,6 +646,60 @@ function maybeEscalateForCoding(
         thinkingLevel,
         reason: `${base.reason} → coding escalation (${trigger}${thinkingLevel !== base.thinkingLevel ? `, thinking=${thinkingLevel}` : ""})`,
     };
+}
+
+// ── Tool-synthesis escalation (Skill Forge) ──
+// Tool synthesis is structurally a coding task: produce an exact JSON envelope
+// with a working handler + tests. Forge's verifier loop runs against this
+// LLM, so we pin it to Pro tier (Sonnet) by default; Track B opts into Opus
+// for dream-replay batch synthesis via ATLAS_FORGE_DREAM_OPUS=true.
+// Disable globally with ATLAS_NO_SYNTHESIS_ESCALATION=true.
+export function maybeEscalateForSynthesis(
+    base: ModelSelection,
+    isDreamReplay: boolean = false,
+): ModelSelection | null {
+    if (process.env.ATLAS_NO_SYNTHESIS_ESCALATION === "true") return null;
+    const tier = MODEL_REGISTRY[base.modelId]?.tier ?? 99;
+
+    if (isDreamReplay) {
+        // Track B — Sonnet + high thinking by default; ATLAS_FORGE_DREAM_OPUS opts into Opus + max.
+        const wantOpus = process.env.ATLAS_FORGE_DREAM_OPUS === "true";
+        const target = wantOpus
+            ? Object.values(MODEL_REGISTRY).find((m) => m.tier === 0 && m.supportsTools !== false)
+            : Object.values(MODEL_REGISTRY).find((m) => m.tier === 2 && m.supportsTools !== false);
+        if (!target || tier <= target.tier) return null;
+        const thinking = process.env.ATLAS_NO_SYNTHESIS_THINKING === "true"
+            ? base.thinkingLevel
+            : (wantOpus ? "max" : "high");
+        return {
+            ...base,
+            modelId: target.id,
+            displayName: target.displayName || target.id,
+            thinkingLevel: thinking,
+            reason: `${base.reason} → forge dream-replay (${target.displayName || target.id} + ${thinking})`,
+        };
+    }
+
+    // Track A — Sonnet + high. Already Sonnet-or-better? Don't downgrade.
+    if (tier <= 2) return null;
+    const sonnet = Object.values(MODEL_REGISTRY).find((m) => m.tier === 2 && m.supportsTools !== false);
+    if (!sonnet) return null;
+    const thinking = process.env.ATLAS_NO_SYNTHESIS_THINKING === "true"
+        ? base.thinkingLevel
+        : "high";
+    return {
+        ...base,
+        modelId: sonnet.id,
+        displayName: sonnet.displayName || sonnet.id,
+        thinkingLevel: thinking,
+        reason: `${base.reason} → forge synthesis escalation`,
+    };
+}
+
+export function selectForToolSynthesis(isDreamReplay: boolean = false): ModelSelection {
+    const base = selectModel({ taskType: "tool_synthesis" });
+    const escalated = maybeEscalateForSynthesis(base, isDreamReplay);
+    return escalated ?? base;
 }
 
 /**
