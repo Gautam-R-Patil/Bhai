@@ -25,6 +25,15 @@ pub mod linux_landlock;
 #[cfg(target_os = "linux")]
 pub mod linux;
 
+#[cfg(target_os = "windows")]
+pub mod windows_appcontainer;
+#[cfg(target_os = "windows")]
+pub mod windows_jobobject;
+#[cfg(target_os = "windows")]
+pub mod windows_managed_process;
+#[cfg(target_os = "windows")]
+pub mod windows;
+
 /// Validated set of resources a persisted tool may touch. Mirrors the TS
 /// `Capabilities` shape in `src/forge/capabilities.ts` exactly — Plan 4 wires
 /// the parser, but the Rust side does its own parse to avoid trusting whatever
@@ -62,19 +71,27 @@ pub fn make_sandbox() -> Box<dyn Sandbox> {
 
 #[cfg(target_os = "linux")]
 pub fn make_sandbox() -> Box<dyn Sandbox> {
-    let node_path = which::which("node").unwrap_or_else(|_| std::path::PathBuf::from("/usr/bin/node"));
+    let node_path =
+        which::which("node").unwrap_or_else(|_| std::path::PathBuf::from("/usr/bin/node"));
     Box::new(linux::LinuxSandbox::new(node_path))
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(target_os = "windows")]
+pub fn make_sandbox() -> Box<dyn Sandbox> {
+    let node_path = which::which("node")
+        .unwrap_or_else(|_| std::path::PathBuf::from("C:\\Program Files\\nodejs\\node.exe"));
+    Box::new(windows::WindowsSandbox::new(node_path))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 pub fn make_sandbox() -> Box<dyn Sandbox> {
     Box::new(UnsupportedSandbox)
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 pub struct UnsupportedSandbox;
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 impl Sandbox for UnsupportedSandbox {
     fn spawn(
         &self,
@@ -84,7 +101,7 @@ impl Sandbox for UnsupportedSandbox {
     ) -> io::Result<Child> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
-            "forge sandbox: platform_unsupported (Plan 3 Windows backend pending)",
+            "forge sandbox: platform_unsupported",
         ))
     }
 }
