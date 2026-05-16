@@ -69,19 +69,48 @@ describe("orchestrator.synthesizeTool real impl", () => {
         expect(r.kind).toBe("lookup_hit");
     });
 
-    it("ATLAS_NO_FORGE_VERIFIER=true falls back gracefully", async () => {
+    it("ATLAS_NO_FORGE_VERIFIER=true falls back via stub path", async () => {
+        delete process.env.ATLAS_FORGE_STUB_LLM;
         process.env.ATLAS_NO_FORGE_VERIFIER = "true";
         try {
             const r = await synthesizeTool({
                 name: "fallback_x",
-                description: "any",
+                description: "fallback description",
                 parametersSchema: {},
                 persistent: false,
                 source: "synchronous",
             });
-            expect(["synthesized", "failed"]).toContain(r.kind);
+            expect(r.kind).toBe("synthesized");
         } finally {
             delete process.env.ATLAS_NO_FORGE_VERIFIER;
+            process.env.ATLAS_FORGE_STUB_LLM = "true";
+        }
+    });
+
+    it("returns failed result instead of throwing on duplicate slug", async () => {
+        await synthesizeTool({
+            name: "dup_slug",
+            description: "first description",
+            parametersSchema: {},
+            persistent: false,
+            source: "synchronous",
+        });
+
+        process.env.ATLAS_NO_FORGE_LOOKUP = "true";
+        try {
+            const r = await synthesizeTool({
+                name: "dup_slug",
+                description: "completely different description bypasses cosine match",
+                parametersSchema: {},
+                persistent: false,
+                source: "synchronous",
+            });
+            expect(r.kind).toBe("failed");
+            if (r.kind === "failed") {
+                expect(r.report.finalDiagnosis).toContain("library insert failed");
+            }
+        } finally {
+            delete process.env.ATLAS_NO_FORGE_LOOKUP;
         }
     });
 });

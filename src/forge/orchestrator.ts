@@ -239,7 +239,7 @@ export async function synthesizeTool(req: SynthesisRequest): Promise<SynthesisRe
                 requestedName: req.name,
                 description: req.description,
                 attempts: result.attempts,
-                finalDiagnosis: result.failureReason,
+                finalDiagnosis: `verifier ${result.failureReason} after ${result.attempts} attempts; see ${result.reportPath}`,
                 failureReason: result.failureReason,
                 reportPath: result.reportPath,
             },
@@ -248,16 +248,30 @@ export async function synthesizeTool(req: SynthesisRequest): Promise<SynthesisRe
 
     if (!_embedFn) throw new Error("embedFn not set");
     const embedding = await _embedFn(req.description);
-    insertTool({
-        slug: req.name,
-        description: req.description,
-        schemaJson: JSON.stringify(req.parametersSchema),
-        handlerHash: hashSync(result.envelope.handler_code),
-        embedding,
-        source: req.source,
-        originIntent: req.originIntent,
-        createdAt: Date.now(),
-    });
+    try {
+        insertTool({
+            slug: req.name,
+            description: req.description,
+            schemaJson: JSON.stringify(req.parametersSchema),
+            handlerHash: hashSync(result.envelope.handler_code),
+            embedding,
+            source: req.source,
+            originIntent: req.originIntent,
+            createdAt: Date.now(),
+        });
+    } catch (err) {
+        return {
+            kind: "failed",
+            report: {
+                requestedName: req.name,
+                description: req.description,
+                attempts: result.attempts,
+                finalDiagnosis: `library insert failed: ${(err as Error).message}`,
+                failureReason: "exhausted_attempts",
+                reportPath: "",
+            },
+        };
+    }
 
     return {
         kind: "synthesized",
@@ -271,16 +285,30 @@ export async function synthesizeTool(req: SynthesisRequest): Promise<SynthesisRe
 async function synthesizeWithStubLLM(req: SynthesisRequest): Promise<SynthesisResult> {
     if (!_embedFn) throw new Error("embedFn not set");
     const embedding = await _embedFn(req.description);
-    insertTool({
-        slug: req.name,
-        description: req.description,
-        schemaJson: JSON.stringify(req.parametersSchema),
-        handlerHash: "stub",
-        embedding,
-        source: req.source,
-        originIntent: req.originIntent,
-        createdAt: Date.now(),
-    });
+    try {
+        insertTool({
+            slug: req.name,
+            description: req.description,
+            schemaJson: JSON.stringify(req.parametersSchema),
+            handlerHash: "stub",
+            embedding,
+            source: req.source,
+            originIntent: req.originIntent,
+            createdAt: Date.now(),
+        });
+    } catch (err) {
+        return {
+            kind: "failed",
+            report: {
+                requestedName: req.name,
+                description: req.description,
+                attempts: 1,
+                finalDiagnosis: `library insert failed: ${(err as Error).message}`,
+                failureReason: "exhausted_attempts",
+                reportPath: "",
+            },
+        };
+    }
     return { kind: "synthesized", slug: req.name, attempts: 1, testsPassed: 1, testsTotal: 1 };
 }
 
