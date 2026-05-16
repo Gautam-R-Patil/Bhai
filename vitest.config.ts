@@ -26,6 +26,7 @@ export default defineConfig({
             "src/voice/**/*.test.ts",
             "src/forge/**/*.test.ts",
             "src/screen/**/*.test.ts",
+            "src/__tests__/**/*.test.ts",
             "convex/**/*.test.ts",
         ],
         environment: "node",

@@ -417,10 +417,34 @@ export function getWidgetPage(host: string): string {
 
 /**
  * Validates widget token against the configured WIDGET_TOKEN env var.
- * Returns true if no WIDGET_TOKEN is set (open access) or token matches.
+ * Fail-CLOSED: when WIDGET_TOKEN is unset OR shorter than 32 chars, refuse all
+ * widget connections. Uses crypto.timingSafeEqual to avoid timing side-channels.
  */
+import { timingSafeEqual } from "node:crypto";
+
+const MIN_TOKEN_LEN = 32;
+let _widgetWarnLogged = false;
+
 export function validateWidgetToken(token: string | null): boolean {
     const expected = process.env.WIDGET_TOKEN;
-    if (!expected) return true; // No token configured = open access
-    return token === expected;
+    if (!expected || expected.length < MIN_TOKEN_LEN) {
+        if (!_widgetWarnLogged) {
+            if (!expected) {
+                console.warn("⚠️  [WIDGET] WIDGET_TOKEN unset — widget WS/HTTP refused. Set WIDGET_TOKEN (≥32 chars) to enable.");
+            } else {
+                console.error(`❌ [WIDGET] WIDGET_TOKEN too short (${expected.length} < ${MIN_TOKEN_LEN}) — widget disabled.`);
+            }
+            _widgetWarnLogged = true;
+        }
+        return false;
+    }
+    if (!token || token.length !== expected.length) return false;
+    try {
+        const a = Buffer.from(token, "utf-8");
+        const b = Buffer.from(expected, "utf-8");
+        if (a.length !== b.length) return false;
+        return timingSafeEqual(a, b);
+    } catch {
+        return false;
+    }
 }
