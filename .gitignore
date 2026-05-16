@@ -175,6 +175,7 @@ desktop/hostinger-upload/
 !src/proactive/sources/news-morning.test.ts
 !src/proactive/sources/stale-email.test.ts
 !src/proactive/sources/deep-work-gap.test.ts
+!src/proactive/sources/onboarding-graduation.test.ts
 !src/proactive/composer-morning-batch.test.ts
 !src/proactive/composer-templates.test.ts
 !src/proactive/heartbeat-wake-adaptation.test.ts
