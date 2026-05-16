@@ -2,185 +2,88 @@
 (function () {
     "use strict";
 
-    function getAcceptanceVersion() {
-        if (typeof window !== "undefined" && window.WizardRouter && typeof window.WizardRouter.CURRENT_ACCEPTANCE_VERSION === "string") {
-            return window.WizardRouter.CURRENT_ACCEPTANCE_VERSION;
-        }
-        try {
-            const r = require("../router.js");
-            if (r && typeof r.CURRENT_ACCEPTANCE_VERSION === "string") return r.CURRENT_ACCEPTANCE_VERSION;
-        } catch { /* renderer-only environments fall through */ }
-        return "1.0.0";
-    }
-    const ACCEPTANCE_VERSION = getAcceptanceVersion();
-    const DOCUMENTS = [
-        { id: "terms", label: "Terms of Service", url: "https://tryatlasagi.com/terms" },
-        { id: "privacy", label: "Privacy Policy", url: "https://tryatlasagi.com/privacy" },
-        { id: "acceptableUse", label: "Acceptable Use Policy", url: "https://tryatlasagi.com/acceptable-use" },
-        { id: "disclaimer", label: "Disclaimer", url: "https://tryatlasagi.com/disclaimer" },
-        { id: "refund", label: "Refund Policy", url: "https://tryatlasagi.com/refund" },
-    ];
-
-    const SUMMARY_BULLETS = [
-        "We don't reverse-engineer or share your data — and you agree not to reverse-engineer, decompile, or extract our prompts, models, or training data.",
-        "You won't use ATLAS to build a competing AI service or scrape it for behaviour to train other models.",
-        "Your conversations stay yours. We don't train foundation models on them.",
-        "ATLAS can take autonomous actions on your behalf — you remain responsible for reviewing and overseeing them.",
-        "Disputes are resolved by arbitration in Thiruvananthapuram, India under Indian law. Indian consumer protection rights are preserved.",
-    ];
-
-    function buildLink(doc) {
-        const a = document.createElement("a");
-        a.className = "terms-doc-link";
-        a.href = doc.url;
-        a.textContent = doc.label;
-        a.setAttribute("data-doc-id", doc.id);
-        a.setAttribute("rel", "noopener noreferrer");
-        a.addEventListener("click", function (ev) {
-            ev.preventDefault();
-            if (window.atlas && typeof window.atlas.openExternalUrl === "function") {
-                window.atlas.openExternalUrl(doc.url).catch(function () {});
-            }
-        });
-        return a;
-    }
+    const TERMS_HTML = `
+        <h4>Terms of service</h4>
+        <p>A.T.L.A.S is a personal AI agent that acts on your behalf across the channels you connect. By accepting, you authorize the agent to read, write, and execute within the scopes you grant.</p>
+        <h4>Privacy</h4>
+        <p>Memory and conversation history are stored locally on this device. Telemetry is anonymized and aggregated.</p>
+        <h4>Acceptable use</h4>
+        <p>You agree not to use A.T.L.A.S for activities that violate applicable law or the rights of others.</p>
+        <h4>Disclaimer</h4>
+        <p>A.T.L.A.S is software and can make mistakes. You retain responsibility for actions it takes on your behalf.</p>
+        <h4>Refund</h4>
+        <p>Subscriptions are refundable within 7 days of purchase, no questions asked.</p>
+    `;
 
     function render(root, ctx) {
+        const Copy = window.Copy;
         const section = document.createElement("section");
         section.className = "step step-terms";
 
-        const title = document.createElement("h2");
+        const eyebrow = document.createElement("div");
+        eyebrow.className = "eyebrow";
+        eyebrow.innerHTML = '<span class="iri-dot"></span>' + Copy.get("terms", "eyebrow");
+        section.appendChild(eyebrow);
+
+        const title = document.createElement("h1");
         title.className = "step-title";
-        title.textContent = "Terms & Privacy";
+        title.textContent = Copy.get("terms", "title");
         section.appendChild(title);
 
         const sub = document.createElement("p");
         sub.className = "step-sub";
-        sub.textContent = "Before continuing, please review and accept the following.";
+        sub.textContent = Copy.get("terms", "sub");
         section.appendChild(sub);
 
-        const summary = document.createElement("ul");
-        summary.className = "terms-summary";
-        SUMMARY_BULLETS.forEach(function (text) {
-            const li = document.createElement("li");
-            li.textContent = text;
-            summary.appendChild(li);
-        });
-        section.appendChild(summary);
+        const doc = document.createElement("div");
+        doc.className = "terms-doc";
+        doc.innerHTML = TERMS_HTML;
+        section.appendChild(doc);
 
-        const linksHeading = document.createElement("p");
-        linksHeading.className = "step-sub";
-        linksHeading.textContent = "Read the full text:";
-        section.appendChild(linksHeading);
-
-        const linksList = document.createElement("div");
-        linksList.className = "terms-links";
-        DOCUMENTS.forEach(function (doc) {
-            const row = document.createElement("div");
-            row.className = "terms-link-row";
-            row.appendChild(buildLink(doc));
-            linksList.appendChild(row);
-        });
-        section.appendChild(linksList);
-
-        const consentBox = document.createElement("div");
-        consentBox.className = "terms-consent";
-
-        const docList = DOCUMENTS.map(function (d) { return d.label; }).join(", ").replace(/, ([^,]*)$/, ", and $1");
-
-        function buildCheckbox(id, labelText) {
-            const wrap = document.createElement("label");
-            wrap.className = "terms-checkbox";
+        const checks = document.createElement("div");
+        checks.className = "terms-checks";
+        const keys = ["check1", "check2", "check3", "check4", "check5"];
+        const inputs = keys.map(function (k) {
             const cb = document.createElement("input");
             cb.type = "checkbox";
-            cb.id = id;
+            cb.className = "checkbox";
+            cb.checked = true;
             const span = document.createElement("span");
-            span.textContent = labelText;
-            wrap.appendChild(cb);
-            wrap.appendChild(span);
-            return { wrap: wrap, input: cb };
-        }
-
-        const consent1 = buildCheckbox("terms-consent-docs", "I have read and agree to the " + docList + ".");
-        const consent2 = buildCheckbox("terms-consent-age", "I am 18 or older, or I have the authority to bind the entity I represent.");
-        consentBox.appendChild(consent1.wrap);
-        consentBox.appendChild(consent2.wrap);
-        section.appendChild(consentBox);
+            span.textContent = Copy.get("terms", k);
+            const row = document.createElement("label");
+            row.className = "check-row";
+            row.appendChild(cb);
+            row.appendChild(span);
+            checks.appendChild(row);
+            return cb;
+        });
+        section.appendChild(checks);
 
         const actions = document.createElement("div");
         actions.className = "step-actions";
-        const back = document.createElement("button");
-        back.id = "terms-back"; back.type = "button"; back.className = "btn-ghost"; back.textContent = "Back";
-        const acceptBtn = document.createElement("button");
-        acceptBtn.id = "terms-accept"; acceptBtn.type = "button"; acceptBtn.className = "btn-primary";
-        acceptBtn.textContent = "Accept and Continue";
-        acceptBtn.disabled = true;
-        actions.appendChild(back);
-        actions.appendChild(acceptBtn);
-        section.appendChild(actions);
-
-        const err = document.createElement("p");
-        err.id = "terms-err"; err.className = "step-error"; err.setAttribute("aria-live", "polite");
-        section.appendChild(err);
-
-        const footer = document.createElement("p");
-        footer.className = "terms-footer";
-        footer.textContent = "Acceptance version " + ACCEPTANCE_VERSION + ". Your acceptance will be recorded with a timestamp.";
-        section.appendChild(footer);
-
-        root.appendChild(section);
-
-        function updateButton() {
-            acceptBtn.disabled = !(consent1.input.checked && consent2.input.checked);
-        }
-        consent1.input.addEventListener("change", updateButton);
-        consent2.input.addEventListener("change", updateButton);
-
-        back.addEventListener("click", function () {
-            if (ctx && typeof ctx.onBack === "function") ctx.onBack();
-        });
-
-        acceptBtn.addEventListener("click", async function () {
-            if (acceptBtn.disabled) return;
-            err.textContent = "";
-            if (!window.atlas || typeof window.atlas.saveLegalAcceptance !== "function") {
-                err.textContent = "Cannot record acceptance (IPC not ready). Please restart setup.";
-                return;
-            }
-            acceptBtn.disabled = true;
-            const documents = {};
-            DOCUMENTS.forEach(function (d) { documents[d.id] = d.url; });
-            const payload = {
-                accepted: true,
-                acceptedAt: new Date().toISOString(),
-                version: ACCEPTANCE_VERSION,
-                documents: documents,
-                consents: {
-                    documents: !!consent1.input.checked,
-                    ageOrAuthority: !!consent2.input.checked,
-                },
-            };
-            let res;
-            try { res = await window.atlas.saveLegalAcceptance(payload); }
-            catch (e) {
-                acceptBtn.disabled = false;
-                err.textContent = "Save failed: " + (e.message || e);
-                return;
-            }
-            if (!res || !res.success) {
-                acceptBtn.disabled = false;
-                err.textContent = (res && res.error) || "Save failed.";
-                return;
+        const grow = document.createElement("div");
+        grow.className = "grow";
+        const cta = document.createElement("button");
+        cta.type = "button";
+        cta.className = "btn btn-primary";
+        cta.innerHTML = Copy.get("terms", "accept") + ' <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline points="9 6 15 12 9 18"/></svg></span>';
+        cta.addEventListener("click", async function () {
+            if (!inputs.every(function (i) { return i.checked; })) return;
+            if (window.atlas && typeof window.atlas.setupSaveTermsAcceptance === "function") {
+                try { await window.atlas.setupSaveTermsAcceptance({ accepted: true, version: window.WizardRouter.CURRENT_ACCEPTANCE_VERSION }); }
+                catch (_) { /* best-effort */ }
             }
             if (ctx && typeof ctx.refreshState === "function") await ctx.refreshState();
             if (ctx && typeof ctx.onAdvance === "function") ctx.onAdvance();
         });
+        actions.appendChild(grow);
+        actions.appendChild(cta);
+        section.appendChild(actions);
+
+        root.appendChild(section);
     }
 
     window.WizardSteps = window.WizardSteps || {};
     window.WizardSteps.terms = { render: render };
-
-    if (typeof module !== "undefined" && module.exports) {
-        module.exports = { render: render, DOCUMENTS: DOCUMENTS, ACCEPTANCE_VERSION: ACCEPTANCE_VERSION };
-    }
+    if (typeof module !== "undefined" && module.exports) module.exports = { render: render };
 })();
