@@ -61,7 +61,7 @@ pub struct Worker {
     pub inflight: AtomicBool,
 
     child: Child,
-    stdin: ChildStdin,
+    stdin: Option<ChildStdin>,
     stdout_lines: Lines<BufReader<ChildStdout>>,
 }
 
@@ -101,7 +101,7 @@ impl Worker {
             last_used: now,
             inflight: AtomicBool::new(false),
             child,
-            stdin,
+            stdin: Some(stdin),
             stdout_lines,
         })
     }
@@ -139,11 +139,9 @@ impl Worker {
         let mut line = serde_json::to_string(&request).map_err(|e| InvokeError::Other(e.to_string()))?;
         line.push('\n');
 
-        self.stdin
-            .write_all(line.as_bytes())
-            .await
-            .map_err(InvokeError::Pipe)?;
-        self.stdin.flush().await.map_err(InvokeError::Pipe)?;
+        let stdin = self.stdin.as_mut().ok_or_else(|| InvokeError::Pipe(io::Error::new(io::ErrorKind::BrokenPipe, "stdin closed")))?;
+        stdin.write_all(line.as_bytes()).await.map_err(InvokeError::Pipe)?;
+        stdin.flush().await.map_err(InvokeError::Pipe)?;
 
         let read = tokio::time::timeout(deadline, self.stdout_lines.next_line()).await;
         let raw = match read {
@@ -170,10 +168,26 @@ impl Worker {
         Ok(value)
     }
 
-    /// Drop-in placeholder; Task 9 fills the body.
+    /// Graceful shutdown: close stdin (the shim sees EOF on its readline and
+    /// exits cleanly), wait up to 1s for the child to exit, SIGKILL if alive.
+    /// Idempotent — safe to call multiple times.
     pub async fn shutdown(&mut self) -> io::Result<()> {
-        let _ = self.child.kill().await;
-        Ok(())
+        if let Some(mut stdin) = self.stdin.take() {
+            let _ = stdin.write_all(b"{\"kind\":\"shutdown\"}\n").await;
+            let _ = stdin.flush().await;
+            drop(stdin);
+        }
+
+        let waited = tokio::time::timeout(Duration::from_secs(1), self.child.wait()).await;
+        match waited {
+            Ok(Ok(_status)) => Ok(()),
+            Ok(Err(e)) => Err(e),
+            Err(_) => {
+                let _ = self.child.start_kill();
+                let _ = self.child.wait().await;
+                Ok(())
+            }
+        }
     }
 }
 
@@ -372,5 +386,46 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(200)).await;
         let kill_check = unsafe { libc::kill(pid as i32, 0) };
         assert!(kill_check != 0, "child pid {pid} should be reaped after Worker drop");
+    }
+
+    #[tokio::test]
+    async fn shutdown_grace_period_lets_child_exit_cleanly() {
+        let child = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(r#"echo '{"id":"__boot__","ok":true}'; cat >/dev/null"#)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn");
+        let paths = Sandpath { handler_dir: std::env::temp_dir() };
+        let mut w = Worker::from_child("graceful".into(), paths, child).await.expect("boot");
+
+        let start = Instant::now();
+        let r = w.shutdown().await;
+        let elapsed = start.elapsed();
+        assert!(r.is_ok(), "shutdown should succeed cleanly, got {:?}", r.err());
+        assert!(elapsed < Duration::from_secs(1), "expected clean exit < 1s, took {elapsed:?}");
+    }
+
+    #[tokio::test]
+    async fn shutdown_sigkills_child_that_ignores_grace() {
+        let child = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(r#"echo '{"id":"__boot__","ok":true}'; sleep 60"#)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn");
+        let paths = Sandpath { handler_dir: std::env::temp_dir() };
+        let mut w = Worker::from_child("stubborn".into(), paths, child).await.expect("boot");
+
+        let start = Instant::now();
+        let r = w.shutdown().await;
+        let elapsed = start.elapsed();
+        assert!(r.is_ok());
+        assert!(elapsed < Duration::from_secs(3), "shutdown should be fast, took {elapsed:?}");
+        assert!(elapsed >= Duration::from_millis(900), "should wait grace period, took {elapsed:?}");
     }
 }
