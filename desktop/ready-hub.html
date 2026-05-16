@@ -8,34 +8,39 @@
 <link rel="stylesheet" href="styles.css"/>
 <link rel="stylesheet" href="components/components.css"/>
 </head>
-<body>
-<div class="bg-canvas">
-    <div class="orb orb-1"></div>
-    <div class="orb orb-2"></div>
-    <div class="orb orb-3"></div>
-    <div class="orb orb-4"></div>
-    <div class="orb orb-5"></div>
-    <div class="orb orb-6"></div>
+<body data-step="ready-hub">
+
+<div class="atmosphere" aria-hidden="true">
+    <div class="atmosphere-wash"></div>
+    <div class="atmosphere-grain"></div>
 </div>
 
-<div class="title-bar">
-    <span class="title-bar-text">A.T.L.A.S</span>
-    <div class="title-bar-buttons">
-        <button class="title-btn" onclick="atlas.minimize()">─</button>
-        <button class="title-btn close" onclick="atlas.close()">✕</button>
+<header class="chrome">
+    <div class="chrome-mark">A.T.L.A.S</div>
+    <div class="chrome-folio">READY</div>
+    <div class="chrome-tools">
+        <button class="chrome-btn" title="Minimize" onclick="atlas.minimize()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+        <button class="chrome-btn" title="Close" onclick="atlas.close()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
     </div>
-</div>
+</header>
 
-<div class="wizard-container">
-    <div class="wizard-content">
-        <div id="hub-root"></div>
-    </div>
-</div>
+<div class="iridescent-rule" id="iridescent-rule" aria-hidden="true"></div>
 
+<main class="stage">
+    <div id="hub-root" class="step-root"></div>
+</main>
+
+<script src="wizard/copy.js"></script>
+<script src="wizard/cinematic.js"></script>
 <script src="components/tile-model.js"></script>
 <script src="components/diff-tiles.js"></script>
 <script src="components/status-tile.js"></script>
 <script src="components/try-this.js"></script>
+<script src="components/magic-moment.js"></script>
 <script src="components/ready-hub-body.js"></script>
 <script src="components/hub-boot.js"></script>
 </body>
