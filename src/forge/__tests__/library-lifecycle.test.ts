@@ -56,4 +56,19 @@ describe("setLifecycleState", () => {
     it("setLifecycleState throws on unknown slug", () => {
         expect(() => setLifecycleState("does_not_exist", "active")).toThrow(/unknown slug/);
     });
+
+    it("setLifecycleState('active') from prior graduated+archived returns 'active'", () => {
+        setLifecycleState("lc_test", "graduated");
+        setLifecycleState("lc_test", "archived");
+        setLifecycleState("lc_test", "active");
+        const tool = getToolBySlug("lc_test");
+        expect(tool?.lifecycleState).toBe("active");
+    });
+
+    it("setLifecycleState('graduated') from published demotes correctly", () => {
+        setLifecycleState("lc_test", "published");
+        setLifecycleState("lc_test", "graduated");
+        const tool = getToolBySlug("lc_test");
+        expect(tool?.lifecycleState).toBe("graduated");
+    });
 });

@@ -115,7 +115,6 @@ export function openLibrary(path: string = DEFAULT_DB_PATH): Database.Database {
 
         _db.exec(SCHEMA_DDL);
 
-        // Phase 4: awaiting_approval_at column added
         try {
             _db.exec("ALTER TABLE tools ADD COLUMN awaiting_approval_at INTEGER");
         } catch (err) {
@@ -437,16 +436,17 @@ export function setLifecycleState(slug: string, state: ToolLifecycleState): void
             params.push(now, now, slug);
             break;
         case "active":
-            sql = "UPDATE tools SET awaiting_approval_at = NULL, archived_at = NULL, updated_at = ? WHERE slug = ?";
+            sql =
+                "UPDATE tools SET awaiting_approval_at = NULL, archived_at = NULL, graduated_at = NULL, published_at = NULL, updated_at = ? WHERE slug = ?";
             params.push(now, slug);
             break;
         case "archived":
-            sql = "UPDATE tools SET archived_at = ?, updated_at = ? WHERE slug = ?";
+            sql = "UPDATE tools SET archived_at = ?, awaiting_approval_at = NULL, updated_at = ? WHERE slug = ?";
             params.push(now, now, slug);
             break;
         case "graduated":
             sql =
-                "UPDATE tools SET graduated_at = ?, archived_at = NULL, awaiting_approval_at = NULL, updated_at = ? WHERE slug = ?";
+                "UPDATE tools SET graduated_at = ?, archived_at = NULL, awaiting_approval_at = NULL, published_at = NULL, updated_at = ? WHERE slug = ?";
             params.push(now, now, slug);
             break;
         case "published":
