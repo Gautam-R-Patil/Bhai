@@ -4538,3 +4538,340 @@ body[data-step="awakening"].atmosphere-on .atmosphere-wash { opacity: 1; }
 }
 .try-line:hover .arrow { opacity: 1; transform: translateX(0); }
 
+/* ================================================================
+   LIGHT MODE — auto via prefers-color-scheme, manual via [data-theme]
+   ────────────────────────────────────────────────────────────────
+   Tokens flip first (so anything that uses var(--x) updates for free).
+   Then specific components that hard-code black/white get overrides.
+   ================================================================ */
+
+/* Shared light-mode tokens — applied when EITHER the OS prefers light
+   AND the user hasn't forced dark, OR the user has forced light.
+   Punched up: cleaner near-white surface, true-black ink, deeper accents. */
+@media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+        --bg-0:         #f8f7f3;
+        --bg-1:         #f0eee8;
+        --bg-2:         #e7e4dc;
+
+        --surface-1:    rgba(10,10,14,0.025);
+        --surface-2:    rgba(10,10,14,0.05);
+        --surface-3:    rgba(10,10,14,0.09);
+
+        --hairline-1:   rgba(10,10,14,0.09);
+        --hairline-2:   rgba(10,10,14,0.17);
+        --hairline-3:   rgba(10,10,14,0.28);
+
+        --ink-0:        #07080c;
+        --ink-1:        rgba(7,8,12,0.78);
+        --ink-2:        rgba(7,8,12,0.56);
+        --ink-3:        rgba(7,8,12,0.38);
+        --ink-4:        rgba(7,8,12,0.22);
+
+        --good:         #0e7c4e;
+        --warn:         #8a5500;
+
+        --grad: linear-gradient(90deg,
+            rgba(20,100,210,0)    0%,
+            rgba(20,100,210,0.95) 22%,
+            rgba(105,40,185,1)    50%,
+            rgba(220,90,50,0.95)  78%,
+            rgba(220,90,50,0)     100%);
+    }
+}
+:root[data-theme="light"] {
+    --bg-0:         #f8f7f3;
+    --bg-1:         #f0eee8;
+    --bg-2:         #e7e4dc;
+
+    --surface-1:    rgba(10,10,14,0.025);
+    --surface-2:    rgba(10,10,14,0.05);
+    --surface-3:    rgba(10,10,14,0.09);
+
+    --hairline-1:   rgba(10,10,14,0.09);
+    --hairline-2:   rgba(10,10,14,0.17);
+    --hairline-3:   rgba(10,10,14,0.28);
+
+    --ink-0:        #07080c;
+    --ink-1:        rgba(7,8,12,0.78);
+    --ink-2:        rgba(7,8,12,0.56);
+    --ink-3:        rgba(7,8,12,0.38);
+    --ink-4:        rgba(7,8,12,0.22);
+
+    --good:         #0e7c4e;
+    --warn:         #8a5500;
+
+    --grad: linear-gradient(90deg,
+        rgba(20,100,210,0)    0%,
+        rgba(20,100,210,0.95) 22%,
+        rgba(105,40,185,1)    50%,
+        rgba(220,90,50,0.95)  78%,
+        rgba(220,90,50,0)     100%);
+}
+
+/* ── Light-mode component overrides ─────────────────────────────── */
+
+/* Selection */
+@media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) ::selection { background: rgba(60,120,200,0.28); color: var(--ink-0); }
+}
+:root[data-theme="light"] ::selection { background: rgba(60,120,200,0.28); color: var(--ink-0); }
+
+/* Scrollbar */
+@media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) body[data-step]::-webkit-scrollbar-thumb { background: rgba(20,18,12,0.16); background-clip: padding-box; }
+    :root:not([data-theme="dark"]) body[data-step]::-webkit-scrollbar-thumb:hover { background-color: rgba(20,18,12,0.28); background-clip: padding-box; }
+}
+:root[data-theme="light"] body[data-step]::-webkit-scrollbar-thumb { background: rgba(20,18,12,0.16); background-clip: padding-box; }
+:root[data-theme="light"] body[data-step]::-webkit-scrollbar-thumb:hover { background-color: rgba(20,18,12,0.28); background-clip: padding-box; }
+
+/* Atmosphere — clean near-white with subtle iridescent washes that echo
+   the accent gradient. Grain dialled back so it doesn't dirty the surface. */
+@media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) .atmosphere {
+        background:
+            radial-gradient(ellipse 1400px 900px at 50% 0%, rgba(120,70,210,0.07) 0%, transparent 60%),
+            radial-gradient(ellipse 1100px 700px at 80% 100%, rgba(40,100,210,0.06) 0%, transparent 65%),
+            radial-gradient(ellipse 900px 600px at 15% 80%, rgba(220,110,60,0.04) 0%, transparent 65%),
+            var(--bg-0);
+    }
+    :root:not([data-theme="dark"]) .atmosphere-grain {
+        background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence baseFrequency='0.9' numOctaves='1' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.06  0 0 0 0 0.06  0 0 0 0 0.08  0 0 0 0.08 0'/></filter><rect width='240' height='240' filter='url(%23n)'/></svg>");
+        mix-blend-mode: multiply;
+        opacity: 0.32;
+    }
+}
+:root[data-theme="light"] .atmosphere {
+    background:
+        radial-gradient(ellipse 1400px 900px at 50% 0%, rgba(120,70,210,0.07) 0%, transparent 60%),
+        radial-gradient(ellipse 1100px 700px at 80% 100%, rgba(40,100,210,0.06) 0%, transparent 65%),
+        radial-gradient(ellipse 900px 600px at 15% 80%, rgba(220,110,60,0.04) 0%, transparent 65%),
+        var(--bg-0);
+}
+:root[data-theme="light"] .atmosphere-grain {
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence baseFrequency='0.9' numOctaves='1' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.06  0 0 0 0 0.06  0 0 0 0 0.08  0 0 0 0.08 0'/></filter><rect width='240' height='240' filter='url(%23n)'/></svg>");
+    mix-blend-mode: multiply;
+    opacity: 0.32;
+}
+
+/* Chrome background fade (was dark-tinted) */
+@media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) .chrome {
+        background: linear-gradient(180deg, rgba(248,247,243,0.92) 0%, rgba(248,247,243,0) 100%);
+    }
+}
+:root[data-theme="light"] .chrome {
+    background: linear-gradient(180deg, rgba(248,247,243,0.92) 0%, rgba(248,247,243,0) 100%);
+}
+
+/* Primary button — flips from white-pill to dark-pill in light */
+@media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) body[data-step] .btn-primary {
+        background: var(--ink-0);
+        color: var(--bg-0);
+        box-shadow:
+            inset 0 1px 0 rgba(255,255,255,0.10),
+            inset 0 -1px 0 rgba(0,0,0,0.18),
+            0 1px 3px rgba(0,0,0,0.18);
+    }
+    :root:not([data-theme="dark"]) body[data-step] .btn-primary:hover {
+        background: var(--ink-0);
+        box-shadow:
+            inset 0 1px 0 rgba(255,255,255,0.10),
+            0 8px 20px rgba(20,23,26,0.18),
+            0 2px 6px rgba(20,23,26,0.10);
+    }
+    :root:not([data-theme="dark"]) body[data-step] .hub-launch:hover {
+        background: var(--accent, var(--ink-0));
+    }
+}
+:root[data-theme="light"] body[data-step] .btn-primary {
+    background: var(--ink-0);
+    color: var(--bg-0);
+    box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.10),
+        inset 0 -1px 0 rgba(0,0,0,0.18),
+        0 1px 3px rgba(0,0,0,0.18);
+}
+:root[data-theme="light"] body[data-step] .btn-primary:hover {
+    background: var(--ink-0);
+    box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.10),
+        0 8px 20px rgba(20,23,26,0.18),
+        0 2px 6px rgba(20,23,26,0.10);
+}
+
+/* Tile/cell backgrounds (hub-index) — slightly raised paper above bg-0 */
+@media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) .hub-cell { background: rgba(255,255,253,0.7); }
+}
+:root[data-theme="light"] .hub-cell { background: rgba(255,255,253,0.7); }
+
+/* Hotkey badge — invert */
+@media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) .hub-dek .hotkey,
+    :root:not([data-theme="dark"]) .nudge-body .hotkey {
+        background: rgba(20,18,12,0.06);
+    }
+}
+:root[data-theme="light"] .hub-dek .hotkey,
+:root[data-theme="light"] .nudge-body .hotkey {
+    background: rgba(20,18,12,0.06);
+}
+
+/* Nudge — bright glass on light bg */
+@media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) .nudge {
+        background: rgba(255,255,253,0.95);
+        border-color: var(--hairline-2);
+        box-shadow:
+            0 1px 0 rgba(255,255,255,0.7) inset,
+            0 24px 56px rgba(7,8,12,0.16),
+            0 6px 14px rgba(7,8,12,0.08);
+    }
+}
+:root[data-theme="light"] .nudge {
+    background: rgba(255,255,253,0.95);
+    border-color: var(--hairline-2);
+    box-shadow:
+        0 1px 0 rgba(255,255,255,0.7) inset,
+        0 24px 56px rgba(7,8,12,0.16),
+        0 6px 14px rgba(7,8,12,0.08);
+}
+
+/* Demo controls — light glass */
+@media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) .demo-controls {
+        background: rgba(255,255,253,0.94);
+        border-color: var(--hairline-2);
+        box-shadow: 0 18px 44px rgba(7,8,12,0.14);
+    }
+    :root:not([data-theme="dark"]) .dc-row select {
+        background: rgba(10,10,14,0.04);
+        border-color: var(--hairline-1);
+    }
+    :root:not([data-theme="dark"]) .dc-btn {
+        background: rgba(10,10,14,0.05);
+        border-color: var(--hairline-2);
+        color: var(--ink-0);
+    }
+    :root:not([data-theme="dark"]) .dc-btn:hover { background: rgba(10,10,14,0.10); }
+}
+:root[data-theme="light"] .demo-controls {
+    background: rgba(255,255,253,0.94);
+    border-color: var(--hairline-2);
+    box-shadow: 0 18px 44px rgba(7,8,12,0.14);
+}
+:root[data-theme="light"] .dc-row select {
+    background: rgba(10,10,14,0.04);
+    border-color: var(--hairline-1);
+}
+:root[data-theme="light"] .dc-btn {
+    background: rgba(10,10,14,0.05);
+    border-color: var(--hairline-2);
+    color: var(--ink-0);
+}
+:root[data-theme="light"] .dc-btn:hover { background: rgba(10,10,14,0.10); }
+
+/* Indicator dots — slightly stronger contrast on cream */
+@media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) .indicator-dot { background: var(--ink-4); }
+    :root:not([data-theme="dark"]) .indicator-dot.done { background: var(--ink-3); }
+}
+:root[data-theme="light"] .indicator-dot { background: var(--ink-4); }
+:root[data-theme="light"] .indicator-dot.done { background: var(--ink-3); }
+
+/* Glyph halo + checkbox check stay on the iridescent gradient — looks
+   good against both surfaces. Don't override. */
+
+/* Active states (persona, tier, radio, input focus, mm border) — use
+   deeper violet on light so the selection actually reads. */
+@media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) .persona-card.active,
+    :root:not([data-theme="dark"]) .tier.active {
+        border-color: rgba(105,40,185,0.55);
+        box-shadow: 0 0 0 1px rgba(105,40,185,0.35), 0 12px 28px rgba(105,40,185,0.10);
+    }
+    :root:not([data-theme="dark"]) .persona-card.active .persona-icon {
+        background: linear-gradient(135deg, rgba(20,100,210,0.14), rgba(105,40,185,0.18));
+        border-color: rgba(105,40,185,0.5);
+        color: var(--ink-0);
+    }
+    :root:not([data-theme="dark"]) .radio-row.active .radio-mark { border-color: rgba(105,40,185,0.7); }
+    :root:not([data-theme="dark"]) .radio-row.active .radio-mark::after { background: linear-gradient(135deg, #1464d2, #6928b9); }
+    :root:not([data-theme="dark"]) .tier.active .tier-radio { border-color: rgba(105,40,185,0.7); }
+    :root:not([data-theme="dark"]) .tier.active .tier-radio::after { background: linear-gradient(135deg, #1464d2, #6928b9); }
+    :root:not([data-theme="dark"]) .tier.active .tier-name em,
+    :root:not([data-theme="dark"]) .persona-card.active .persona-caps li::before { background: linear-gradient(135deg, #1464d2, #6928b9); }
+    :root:not([data-theme="dark"]) .chip.active {
+        background: rgba(105,40,185,0.12);
+        border-color: rgba(105,40,185,0.45);
+        color: #07080c;
+    }
+    :root:not([data-theme="dark"]) .theme-tile.active { border-color: rgba(105,40,185,0.45); color: var(--ink-0); }
+    :root:not([data-theme="dark"]) .field input:focus {
+        border-color: rgba(105,40,185,0.5);
+        box-shadow: 0 0 0 4px rgba(105,40,185,0.1);
+        background: var(--surface-2);
+    }
+    :root:not([data-theme="dark"]) .checkbox:checked { background: linear-gradient(135deg, #1464d2, #6928b9); }
+    :root:not([data-theme="dark"]) .switch:checked { background: linear-gradient(135deg, #1464d2, #6928b9); }
+    :root:not([data-theme="dark"]) .iri-dot,
+    :root:not([data-theme="dark"]) .nudge-from .iri-dot,
+    :root:not([data-theme="dark"]) .magic-eyebrow .iri-dot {
+        background: linear-gradient(135deg, #1464d2, #6928b9, #dc5a32);
+    }
+    :root:not([data-theme="dark"]) .indicator-dot.active {
+        background: linear-gradient(90deg, #1464d2, #6928b9, #dc5a32);
+    }
+    :root:not([data-theme="dark"]) .progress-fill {
+        background: linear-gradient(90deg, #1464d2, #6928b9 50%, #dc5a32);
+    }
+    :root:not([data-theme="dark"]) .phase.running .phase-dot { border-color: rgba(105,40,185,0.7); }
+    :root:not([data-theme="dark"]) .phase.running .phase-dot::after { background: linear-gradient(135deg, #1464d2, #6928b9); }
+    :root:not([data-theme="dark"]) ::selection { background: rgba(105,40,185,0.22); color: var(--ink-0); }
+}
+:root[data-theme="light"] .persona-card.active,
+:root[data-theme="light"] .tier.active {
+    border-color: rgba(105,40,185,0.55);
+    box-shadow: 0 0 0 1px rgba(105,40,185,0.35), 0 12px 28px rgba(105,40,185,0.10);
+}
+:root[data-theme="light"] .persona-card.active .persona-icon {
+    background: linear-gradient(135deg, rgba(20,100,210,0.14), rgba(105,40,185,0.18));
+    border-color: rgba(105,40,185,0.5);
+    color: var(--ink-0);
+}
+:root[data-theme="light"] .radio-row.active .radio-mark { border-color: rgba(105,40,185,0.7); }
+:root[data-theme="light"] .radio-row.active .radio-mark::after { background: linear-gradient(135deg, #1464d2, #6928b9); }
+:root[data-theme="light"] .tier.active .tier-radio { border-color: rgba(105,40,185,0.7); }
+:root[data-theme="light"] .tier.active .tier-radio::after { background: linear-gradient(135deg, #1464d2, #6928b9); }
+:root[data-theme="light"] .tier.active .tier-name em,
+:root[data-theme="light"] .persona-card.active .persona-caps li::before { background: linear-gradient(135deg, #1464d2, #6928b9); }
+:root[data-theme="light"] .chip.active {
+    background: rgba(105,40,185,0.12);
+    border-color: rgba(105,40,185,0.45);
+    color: #07080c;
+}
+:root[data-theme="light"] .theme-tile.active { border-color: rgba(105,40,185,0.45); color: var(--ink-0); }
+:root[data-theme="light"] .field input:focus {
+    border-color: rgba(105,40,185,0.5);
+    box-shadow: 0 0 0 4px rgba(105,40,185,0.1);
+    background: var(--surface-2);
+}
+:root[data-theme="light"] .checkbox:checked { background: linear-gradient(135deg, #1464d2, #6928b9); }
+:root[data-theme="light"] .switch:checked { background: linear-gradient(135deg, #1464d2, #6928b9); }
+:root[data-theme="light"] .iri-dot,
+:root[data-theme="light"] .nudge-from .iri-dot,
+:root[data-theme="light"] .magic-eyebrow .iri-dot {
+    background: linear-gradient(135deg, #1464d2, #6928b9, #dc5a32);
+}
+:root[data-theme="light"] .indicator-dot.active {
+    background: linear-gradient(90deg, #1464d2, #6928b9, #dc5a32);
+}
+:root[data-theme="light"] .progress-fill {
+    background: linear-gradient(90deg, #1464d2, #6928b9 50%, #dc5a32);
+}
+:root[data-theme="light"] .phase.running .phase-dot { border-color: rgba(105,40,185,0.7); }
+:root[data-theme="light"] .phase.running .phase-dot::after { background: linear-gradient(135deg, #1464d2, #6928b9); }
+:root[data-theme="light"] ::selection { background: rgba(105,40,185,0.22); color: var(--ink-0); }
+
