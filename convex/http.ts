@@ -11,7 +11,7 @@ import {
   encryptResponse,
   decryptRequest,
   validateTimestamp,
-  KDF_VERSION_LEGACY,
+  KDF_VERSION_LATEST,
   SUPPORTED_KDF_VERSIONS,
   type EncryptedEnvelope,
 } from "./crypto.js";
@@ -478,33 +478,67 @@ http.route({
       m.content.some((b: any) => b && (b.type === "image" || b.type === "image_url")),
     );
 
-    // 3b. Precise credit pre-check — reject before calling the LLM if the
-    //     account can't afford the selected model. The earlier `<= 0` gate
-    //     is a cheap fast-path; this catches e.g. a 0.5-credit account
-    //     trying to invoke a 3-credit model.
+    // 3b. Atomic PRE-deduction — Convex mutations are serializable, so N
+    //     concurrent requests with low balance no longer all pass the
+    //     pre-check and reach OpenRouter; only the ones whose deduction
+    //     wins do. Refunded below on OpenRouter error or fetch exception.
     const cost = getCreditCost(model);
-    if (account.ai_credits < cost) {
+    let creditsDeducted = false;
+    const preDeduct = await ctx.runMutation(internal.accounts.deductCreditsInternal, {
+      otplessUserId: account.otplessUserId,
+      amount: cost,
+    });
+    if (!preDeduct || !preDeduct.success) {
       await logCall({
         model: String(model),
         status: "rejected",
-        errorType: "insufficient_credits",
-        errorMessage: `cost=${cost} available=${account.ai_credits}`,
+        errorType: preDeduct?.error ?? "insufficient_credits",
+        errorMessage: `cost=${cost} available=${preDeduct?.remaining ?? account.ai_credits}`,
         hasMedia,
       });
       return new Response(
         JSON.stringify({
           error: "Insufficient credits",
           required: cost,
-          available: account.ai_credits,
+          available: preDeduct?.remaining ?? account.ai_credits,
         }),
         { status: 402, headers: { "Content-Type": "application/json" } },
       );
     }
+    creditsDeducted = true;
+
+    const refundIfDeducted = async (reason: string) => {
+      if (!creditsDeducted) return;
+      creditsDeducted = false;
+      try {
+        await ctx.runMutation(internal.accounts.addCreditsInternal, {
+          id: account.accountId,
+          amount: cost,
+        });
+      } catch (err) {
+        console.error(
+          `[HTTP Proxy] REFUND FAILED for user=${account.otplessUserId} cost=${cost} reason=${reason}:`,
+          err,
+        );
+        try {
+          await ctx.runMutation(internal.errorLog.record, {
+            source: "llm_proxy",
+            type: "credit_refund_failed",
+            message: `Refund of ${cost} credits failed: ${(err as Error).message}`,
+            metadata: JSON.stringify({ model, cost, reason }),
+            accountId: account.accountId,
+            otplessUserId: account.otplessUserId,
+            severity: "error",
+          });
+        } catch { /* best effort */ }
+      }
+    };
 
     // 4. Get OpenRouter API key from Convex env (NEVER leaves server)
     const openrouterKey = process.env.OPENROUTER_API_KEY;
     if (!openrouterKey) {
       console.error("[HTTP Proxy] OPENROUTER_API_KEY not set in Convex environment");
+      await refundIfDeducted("missing_openrouter_key");
       await logCall({
         model: String(model),
         status: "failed",
@@ -692,10 +726,13 @@ http.route({
 
       const responseData = await orResponse.json();
 
-      // 8. If OpenRouter returned an error, log it and pass it through
+      // 8. If OpenRouter returned an error, refund the pre-deduction and
+      //    pass through. Credits were already taken atomically at 3b, so
+      //    the refund must run before returning.
       if (!orResponse.ok) {
         const snippet = JSON.stringify(responseData).slice(0, 500);
         console.error(`[HTTP Proxy] OpenRouter error ${orResponse.status} for ${model}:`, snippet);
+        await refundIfDeducted(`openrouter_${orResponse.status}`);
         await logCall({
           model: String(model),
           status: "failed",
@@ -709,57 +746,9 @@ http.route({
         });
       }
 
-      // 9. Deduct credits atomically (server-side).
-      //    Pre-checked at step 3b, so under normal conditions this succeeds.
-      //    If it still fails (e.g. extreme concurrency race across parallel
-      //    tool calls) the provider tokens have already been burned — log
-      //    loudly for manual reconciliation, but return the response anyway
-      //    since the user got value.
-      try {
-        const deductResult = await ctx.runMutation(internal.accounts.deductCreditsInternal, {
-          otplessUserId: account.otplessUserId,
-          amount: cost,
-        });
-        if (deductResult && !deductResult.success) {
-          console.error(
-            `[HTTP Proxy] POST-LLM credit deduction REJECTED for user=${account.otplessUserId} ` +
-              `model=${model} cost=${cost} remaining=${deductResult.remaining}: ${deductResult.error}. ` +
-              `Tokens already consumed on provider — manual reconciliation may be required.`,
-          );
-          // Reconciliation flag for the dashboard. The user still got the
-          // response, so the per-call row below logs as success — this is
-          // purely the billing-side anomaly.
-          try {
-            await ctx.runMutation(internal.errorLog.record, {
-              source: "llm_proxy",
-              type: "credit_deduction_rejected",
-              message: `Deduction rejected after successful LLM call: ${deductResult.error}`,
-              metadata: JSON.stringify({ model, cost, remaining: deductResult.remaining }),
-              accountId: account.accountId,
-              otplessUserId: account.otplessUserId,
-              severity: "error",
-            });
-          } catch { /* best effort */ }
-        }
-      } catch (err) {
-        console.error(
-          `[HTTP Proxy] POST-LLM credit deduction THREW for user=${account.otplessUserId} ` +
-            `model=${model} cost=${cost}. Tokens already consumed on provider — manual reconciliation may be required. ` +
-            `Error:`,
-          err,
-        );
-        try {
-          await ctx.runMutation(internal.errorLog.record, {
-            source: "llm_proxy",
-            type: "credit_deduction_threw",
-            message: (err as Error).message ?? "deduction threw",
-            metadata: JSON.stringify({ model, cost }),
-            accountId: account.accountId,
-            otplessUserId: account.otplessUserId,
-            severity: "error",
-          });
-        } catch { /* best effort */ }
-      }
+      // 9. Credits were already deducted atomically at step 3b before the
+      //    fetch — the response is on the success path so we keep the
+      //    deduction. No post-call deduction needed.
 
       // 9b. Bump per-model usage counter for the admin dashboard.
       //     Best-effort — never blocks or fails the LLM response.
@@ -788,6 +777,7 @@ http.route({
       return await buildResponse(responseData, 200, isEncrypted, account.sharedKey, request);
     } catch (err: any) {
       console.error("[HTTP Proxy] OpenRouter request failed:", err.message);
+      await refundIfDeducted("openrouter_network");
       await logCall({
         model: String(model),
         status: "failed",
@@ -812,6 +802,21 @@ http.route({
   path: "/api/auth/session",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
+    // Per-IP rate limit BEFORE parsing — cheap shield against unauth flooders.
+    const ip = extractClientIp(request);
+    const rlKey = `auth_session|${ip}`;
+    const rl = await ctx.runMutation(internal.sessions.checkRequestRateLimit, {
+      key: rlKey,
+      windowMs: 60_000,
+      maxRequests: 10,
+    });
+    if (rl.limited) {
+      return new Response(
+        JSON.stringify({ error: "Rate limit exceeded" }),
+        { status: 429, headers: { "Content-Type": "application/json", "Retry-After": "60" } },
+      );
+    }
+
     let body: any;
     try {
       body = await request.json();
@@ -859,15 +864,15 @@ http.route({
       // Select KDF version. Accept the client's requested version if
       // it's one the server supports; otherwise fall back to v1 so
       // pre-rollout clients (no kdfVersion field) keep working.
-      const requestedKdf = typeof body.kdfVersion === "number" ? body.kdfVersion : KDF_VERSION_LEGACY;
+      const requestedKdf = typeof body.kdfVersion === "number" ? body.kdfVersion : KDF_VERSION_LATEST;
       const kdfVersion = (SUPPORTED_KDF_VERSIONS as readonly number[]).includes(requestedKdf)
         ? requestedKdf
-        : KDF_VERSION_LEGACY;
+        : KDF_VERSION_LATEST;
 
       if (clientPublicKey && typeof clientPublicKey === "string") {
         const serverKP = await generateServerKeyPair();
         serverPublicKey = serverKP.publicKey;
-        sharedKey = await deriveSharedKey(serverKP.privateKey, clientPublicKey, kdfVersion);
+        sharedKey = await deriveSharedKey(serverKP.privateKey, clientPublicKey, kdfVersion, serverPublicKey);
         // privateKey is NOT stored — only the derived sharedKey
       }
 
@@ -893,9 +898,10 @@ http.route({
         },
       );
     } catch (err: any) {
-      const status = err.message?.includes("not found") ? 404 : 403;
+      const msg = typeof err?.message === "string" ? err.message : "";
+      const status = msg.includes("not found") ? 404 : 403;
       return new Response(
-        JSON.stringify({ error: err.message }),
+        JSON.stringify({ error: "Session creation failed" }),
         { status, headers: { "Content-Type": "application/json" } }
       );
     }
@@ -1021,8 +1027,13 @@ http.route({
 // Any path not in the allowlist is rejected with 403.
 // ══════════════════════════════════════════════════════════════════════════
 
+// USER session-token reachable queries. Anything that returns per-user state,
+// developer/admin listings, or submission moderation data MUST NOT be here —
+// keep those on ADMIN_STORE_QUERY_ALLOWLIST. F2 moved the admin-only paths
+// out of this list to prevent session holders from enumerating developer/
+// admin/submission rows through /api/store/query.
 const STORE_QUERY_ALLOWLIST: Record<string, any> = {
-  // store/items
+  // store/items — public catalog
   "store/items:list":            internal.store.items.list,
   "store/items:search":          internal.store.items.search,
   "store/items:getBySlug":       internal.store.items.getBySlug,
@@ -1032,7 +1043,55 @@ const STORE_QUERY_ALLOWLIST: Record<string, any> = {
   "store/items:getFeatured":     internal.store.items.getFeatured,
   "store/items:getTrending":     internal.store.items.getTrending,
   "store/items:getCategories":   internal.store.items.getCategories,
-  // store/developers
+  // store/reviews — public read except per-user; per-user paths are
+  // rewritten by USER_BOUND_PATHS so callers can only see their own.
+  "store/reviews:getByItem":     internal.store.reviews.getByItem,
+  "store/reviews:getUserReview": internal.store.reviews.getUserReview,
+  "store/reviews:getSummary":    internal.store.reviews.getSummary,
+  "store/reviews:getByUser":     internal.store.reviews.getByUser,
+  // store/installs — per-user paths rewritten by USER_BOUND_PATHS so the
+  // session caller can only read their own install state. getInstallCount
+  // is item-keyed and returns a count, not user data.
+  "store/installs:getByUser":       internal.store.installs.getByUser,
+  "store/installs:isInstalled":     internal.store.installs.isInstalled,
+  "store/installs:get":             internal.store.installs.get,
+  "store/installs:checkUpdates":    internal.store.installs.checkUpdates,
+  "store/installs:getInstallCount": internal.store.installs.getInstallCount,
+  // store/storage — public file URL fetches
+  "store/storage:getFileUrl":  internal.store.storage.getFileUrl,
+  "store/storage:getFileUrls": internal.store.storage.getFileUrls,
+};
+
+// ADMIN-only store queries. Reachable ONLY via /api/admin/store-query
+// (ADMIN_API_KEY gated). Listing developers, admins, or submissions, or
+// reading a developer/admin by id, must require admin-key reach — a
+// session-token holder cannot enumerate or read these.
+const ADMIN_STORE_QUERY_ALLOWLIST: Record<string, any> = {
+  // All paths the user allowlist exposes (admin panel needs to read the
+  // public catalog too).
+  ...({
+    "store/items:list":            internal.store.items.list,
+    "store/items:search":          internal.store.items.search,
+    "store/items:getBySlug":       internal.store.items.getBySlug,
+    "store/items:getById":         internal.store.items.getById,
+    "store/items:getByDeveloper":  internal.store.items.getByDeveloper,
+    "store/items:listByDeveloper": internal.store.items.listByDeveloper,
+    "store/items:getFeatured":     internal.store.items.getFeatured,
+    "store/items:getTrending":     internal.store.items.getTrending,
+    "store/items:getCategories":   internal.store.items.getCategories,
+    "store/reviews:getByItem":     internal.store.reviews.getByItem,
+    "store/reviews:getUserReview": internal.store.reviews.getUserReview,
+    "store/reviews:getSummary":    internal.store.reviews.getSummary,
+    "store/reviews:getByUser":     internal.store.reviews.getByUser,
+    "store/installs:getByUser":       internal.store.installs.getByUser,
+    "store/installs:isInstalled":     internal.store.installs.isInstalled,
+    "store/installs:get":             internal.store.installs.get,
+    "store/installs:checkUpdates":    internal.store.installs.checkUpdates,
+    "store/installs:getInstallCount": internal.store.installs.getInstallCount,
+    "store/storage:getFileUrl":       internal.store.storage.getFileUrl,
+    "store/storage:getFileUrls":      internal.store.storage.getFileUrls,
+  }),
+  // Developer management — admin only.
   "store/developers:getByEmail":      internal.store.developers.getByEmail,
   "store/developers:getById":         internal.store.developers.getById,
   "store/developers:listByStatus":    internal.store.developers.listByStatus,
@@ -1040,32 +1099,16 @@ const STORE_QUERY_ALLOWLIST: Record<string, any> = {
   "store/developers:getStats":        internal.store.developers.getStats,
   "store/developers:getPasswordHash": internal.store.developers.getPasswordHash,
   "store/developers:list":            internal.store.developers.list,
-  // store/admins
+  // Admin management — admin only. getPasswordHash intentionally absent
+  // (routed via dedicated /api/admin/auth/get-password-hash).
   "store/admins:getByEmail":        internal.store.admins.getByEmail,
   "store/admins:getById":           internal.store.admins.getById,
   "store/admins:listAll":           internal.store.admins.listAll,
   "store/admins:hasPermission":     internal.store.admins.hasPermission,
   "store/admins:getDashboardStats": internal.store.admins.getDashboardStats,
-  // store/admins:getPasswordHash is INTENTIONALLY ABSENT.
-  // Exposing it via the generic query proxy lets any logged-in admin pull
-  // any other admin's bcrypt hash for offline cracking — see commit history
-  // for the round-4 finding. The login flow uses a dedicated
-  // /api/admin/auth/get-password-hash route that talks to
-  // internal.store.admins.getPasswordHash directly; it doesn't need this entry.
   "store/admins:list":              internal.store.admins.list,
   "store/admins:getActivityLogs":   internal.store.admins.getActivityLogs,
-  // store/reviews
-  "store/reviews:getByItem":    internal.store.reviews.getByItem,
-  "store/reviews:getUserReview": internal.store.reviews.getUserReview,
-  "store/reviews:getSummary":   internal.store.reviews.getSummary,
-  "store/reviews:getByUser":    internal.store.reviews.getByUser,
-  // store/installs
-  "store/installs:getByUser":       internal.store.installs.getByUser,
-  "store/installs:isInstalled":     internal.store.installs.isInstalled,
-  "store/installs:get":             internal.store.installs.get,
-  "store/installs:checkUpdates":    internal.store.installs.checkUpdates,
-  "store/installs:getInstallCount": internal.store.installs.getInstallCount,
-  // store/submissions
+  // Submission moderation — admin only.
   "store/submissions:getById":         internal.store.submissions.getById,
   "store/submissions:list":            internal.store.submissions.list,
   "store/submissions:listByStatus":    internal.store.submissions.listByStatus,
@@ -1073,9 +1116,6 @@ const STORE_QUERY_ALLOWLIST: Record<string, any> = {
   "store/submissions:getByDeveloper":  internal.store.submissions.getByDeveloper,
   "store/submissions:listByDeveloper": internal.store.submissions.listByDeveloper,
   "store/submissions:listPending":     internal.store.submissions.listPending,
-  // store/storage
-  "store/storage:getFileUrl":  internal.store.storage.getFileUrl,
-  "store/storage:getFileUrls": internal.store.storage.getFileUrls,
 };
 
 // Mutations reachable by a holder of a USER SESSION TOKEN (the desktop app /
@@ -1180,6 +1220,29 @@ const ADMIN_STORE_MUTATION_ALLOWLIST: Record<string, any> = {
   "store/installs:uninstall": internal.store.installs.uninstall,
 };
 
+// Function paths that take a per-user `userId` argument (otplessUserId).
+// The HTTP proxy MUST rewrite args.userId to the authenticated identity
+// before invoking these — otherwise a session holder can act as any other
+// user (IDOR). All other paths leave args alone.
+const USER_BOUND_PATHS: Set<string> = new Set([
+  // Mutations
+  "store/installs:startInstall",
+  "store/installs:confirmInstall",
+  "store/installs:uninstall",
+  "store/installs:updateVersion",
+  "store/installs:setAutoUpdate",
+  "store/installs:getUpdateDownload",
+  "store/reviews:submit",
+  "store/reviews:remove",
+  // Queries
+  "store/installs:getByUser",
+  "store/installs:checkUpdates",
+  "store/installs:get",
+  "store/installs:isInstalled",
+  "store/reviews:getUserReview",
+  "store/reviews:getByUser",
+]);
+
 // ── POST /api/store/query — Proxy Convex store queries via session auth ──
 
 http.route({
@@ -1188,6 +1251,7 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const validation = await validateRequest(ctx, request);
     if (validation instanceof Response) return validation;
+    const { account } = validation;
 
     let body: any;
     try {
@@ -1215,8 +1279,12 @@ http.route({
       );
     }
 
+    const safeArgs = USER_BOUND_PATHS.has(functionPath)
+      ? { ...(args || {}), userId: account.otplessUserId }
+      : (args || {});
+
     try {
-      const result = await ctx.runQuery(queryRef, args || {});
+      const result = await ctx.runQuery(queryRef, safeArgs);
       return new Response(
         JSON.stringify({ status: "success", value: result }),
         { status: 200, headers: { "Content-Type": "application/json" } }
@@ -1238,6 +1306,7 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const validation = await validateRequest(ctx, request);
     if (validation instanceof Response) return validation;
+    const { account } = validation;
 
     let body: any;
     try {
@@ -1270,8 +1339,14 @@ http.route({
       );
     }
 
+    // F1: rewrite userId to authenticated identity so a session holder cannot
+    // mutate another user's installs/reviews by spoofing args.userId.
+    const safeArgs = USER_BOUND_PATHS.has(functionPath)
+      ? { ...(args || {}), userId: account.otplessUserId }
+      : (args || {});
+
     try {
-      const result = await ctx.runMutation(mutationRef, args || {});
+      const result = await ctx.runMutation(mutationRef, safeArgs);
       return new Response(
         JSON.stringify({ status: "success", value: result }),
         { status: 200, headers: { "Content-Type": "application/json" } }
@@ -2084,6 +2159,18 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const auth = await validateRequest(ctx, request);
     if (auth instanceof Response) return auth;
+    const { account } = auth;
+
+    // Provider secrets are sensitive — refuse to ship them in cleartext.
+    // The caller MUST have an established E2E session (sharedKey present)
+    // AND must signal it on the request via X-Encryption header.
+    const isEncrypted = request.headers.get("X-Encryption") === "ecdh-aes-256-gcm";
+    if (!isEncrypted || !account.sharedKey) {
+      return new Response(
+        JSON.stringify({ error: "Encrypted transport required" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
 
     // Only return secrets that the client genuinely needs
     const secrets: Record<string, string> = {};
@@ -2099,10 +2186,7 @@ http.route({
     const captchaKey = process.env.CAPTCHA_API_KEY || process.env.TWO_CAPTCHA_API_KEY;
     if (captchaKey) secrets.CAPTCHA_API_KEY = captchaKey;
 
-    return new Response(JSON.stringify(secrets), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
+    return await buildResponse(secrets, 200, true, account.sharedKey, request);
   }),
 });
 
@@ -2119,6 +2203,16 @@ http.route({
     // Validate session (same auth as LLM proxy)
     const validation = await validateRequest(ctx, request);
     if (validation instanceof Response) return validation;
+    const { account } = validation;
+
+    // Voice provider keys are sensitive — refuse to ship them in cleartext.
+    const isEncrypted = request.headers.get("X-Encryption") === "ecdh-aes-256-gcm";
+    if (!isEncrypted || !account.sharedKey) {
+      return new Response(
+        JSON.stringify({ error: "Encrypted transport required" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
 
     // Return available voice API keys
     const keys: Record<string, string> = {};
@@ -2132,10 +2226,7 @@ http.route({
     const deepgramKey = process.env.DEEPGRAM_API_KEY;
     if (deepgramKey) keys.deepgramApiKey = deepgramKey;
 
-    return new Response(JSON.stringify(keys), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
+    return await buildResponse(keys, 200, true, account.sharedKey, request);
   }),
 });
 
@@ -2290,6 +2381,21 @@ http.route({
   path: "/api/otpless/validate-token",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
+    // Per-IP rate limit — unauthenticated bootstrap endpoint, must be
+    // gated against credential-stuffing / brute-force on OTPless tokens.
+    const ip = extractClientIp(request);
+    const rl = await ctx.runMutation(internal.sessions.checkRequestRateLimit, {
+      key: `otpless_validate|${ip}`,
+      windowMs: 60_000,
+      maxRequests: 10,
+    });
+    if (rl.limited) {
+      return new Response(
+        JSON.stringify({ error: "Rate limit exceeded" }),
+        { status: 429, headers: { "Content-Type": "application/json", "Retry-After": "60" } },
+      );
+    }
+
     let body: any;
     try { body = await request.json(); } catch {
       return new Response(JSON.stringify({ error: "Invalid JSON" }), { status: 400, headers: { "Content-Type": "application/json" } });
@@ -2937,7 +3043,7 @@ http.route({
         { status: 400, headers: { "Content-Type": "application/json" } },
       );
     }
-    const queryRef = STORE_QUERY_ALLOWLIST[functionPath];
+    const queryRef = ADMIN_STORE_QUERY_ALLOWLIST[functionPath];
     if (!queryRef) {
       return new Response(
         JSON.stringify({ error: "Forbidden: function path not in allowlist" }),

@@ -17,7 +17,7 @@ export const deriveRuntimeKey = internalAction({
   handler: async (_ctx, { otplessUserId, deviceFingerprint }): Promise<string> => {
     const masterSecret = process.env.ATLAS_RUNTIME_MASTER_SECRET;
     if (!masterSecret) {
-      return "ATLAS_PROTECTED_2026";
+      throw new Error("ATLAS_RUNTIME_MASTER_SECRET not configured");
     }
 
     const bindingMaterial = deviceFingerprint || otplessUserId;

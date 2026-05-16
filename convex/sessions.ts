@@ -306,6 +306,88 @@ export const checkRateLimit = internalMutation({
   },
 });
 
+// ── Per-IP rate limit for unauthenticated routes ─────────────────────
+// Sliding-window: up to `maxRequests` per `windowMs` per (route, ip).
+// Reused by /api/auth/session and /api/otpless/validate-token so unauth'd
+// flooders can't grind on either endpoint.
+export const checkRequestRateLimit = internalMutation({
+  args: {
+    key: v.string(),
+    windowMs: v.number(),
+    maxRequests: v.number(),
+  },
+  handler: async (ctx, { key, windowMs, maxRequests }): Promise<{ limited: boolean }> => {
+    const now = Date.now();
+    const existing = await ctx.db
+      .query("request_rate_limits")
+      .withIndex("by_key", (q) => q.eq("key", key))
+      .unique();
+
+    if (!existing) {
+      await ctx.db.insert("request_rate_limits", {
+        key,
+        windowStart: now,
+        requestCount: 1,
+      });
+      return { limited: false };
+    }
+
+    if (now - existing.windowStart >= windowMs) {
+      await ctx.db.patch(existing._id, { windowStart: now, requestCount: 1 });
+      return { limited: false };
+    }
+
+    if (existing.requestCount >= maxRequests) {
+      return { limited: true };
+    }
+
+    await ctx.db.patch(existing._id, { requestCount: existing.requestCount + 1 });
+    return { limited: false };
+  },
+});
+
+// ── Sweep expired sessions + orphan rate-limit rows ────────────────────
+// Called nightly by crons.ts. Bounded per run so a long-outage backlog
+// can't blow past the mutation row limit; remaining rows are picked up
+// the next night.
+export const sweepExpired = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<{ sessionsDeleted: number; rateLimitsDeleted: number }> => {
+    const now = Date.now();
+    const expiredSessions = await ctx.db
+      .query("sessions")
+      .withIndex("by_expires", (q) => q.lt("expiresAt", now))
+      .take(500);
+    const expiredTokens = new Set<string>();
+    for (const s of expiredSessions) {
+      expiredTokens.add(s.token);
+      await ctx.db.delete(s._id);
+    }
+
+    let rateLimitsDeleted = 0;
+    if (expiredTokens.size > 0) {
+      const rateRows = await ctx.db.query("rate_limits").take(2000);
+      for (const r of rateRows) {
+        if (expiredTokens.has(r.sessionToken)) {
+          await ctx.db.delete(r._id);
+          rateLimitsDeleted++;
+        }
+      }
+    }
+
+    // Also age out stale request-rate-limit rows whose window has long passed.
+    const STALE_REQUEST_RL_AFTER_MS = 24 * 60 * 60 * 1000;
+    const reqRows = await ctx.db.query("request_rate_limits").take(2000);
+    for (const r of reqRows) {
+      if (now - r.windowStart > STALE_REQUEST_RL_AFTER_MS) {
+        await ctx.db.delete(r._id);
+      }
+    }
+
+    return { sessionsDeleted: expiredSessions.length, rateLimitsDeleted };
+  },
+});
+
 /** Lightweight session lookup — returns only fields needed for key derivation. */
 export const getSessionByToken = internalQuery({
   args: { token: v.string() },

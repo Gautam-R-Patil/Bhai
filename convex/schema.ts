@@ -41,6 +41,14 @@ export default defineSchema({
   })
     .index("by_token", ["sessionToken"]),
 
+  // ── Request rate limits (per-IP sliding window for unauthenticated paths)
+  request_rate_limits: defineTable({
+    key: v.string(),                 // composite: "<route>|<ip>"
+    windowStart: v.number(),         // Start of the current window (Unix ms)
+    requestCount: v.number(),        // Number of requests in this window
+  })
+    .index("by_key", ["key"]),
+
   // ══════════════════════════════════════════════════════════════════════════
   // A.T.L.A.S STORE - Marketplace for Skills, MCP Servers, and Tools
   // ══════════════════════════════════════════════════════════════════════════
