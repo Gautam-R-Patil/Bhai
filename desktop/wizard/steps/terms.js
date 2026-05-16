@@ -69,8 +69,8 @@
         cta.innerHTML = Copy.get("terms", "accept") + ' <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline points="9 6 15 12 9 18"/></svg></span>';
         cta.addEventListener("click", async function () {
             if (!inputs.every(function (i) { return i.checked; })) return;
-            if (window.atlas && typeof window.atlas.setupSaveTermsAcceptance === "function") {
-                try { await window.atlas.setupSaveTermsAcceptance({ accepted: true, version: window.WizardRouter.CURRENT_ACCEPTANCE_VERSION }); }
+            if (window.atlas && typeof window.atlas.saveLegalAcceptance === "function") {
+                try { await window.atlas.saveLegalAcceptance({ accepted: true, version: window.WizardRouter.CURRENT_ACCEPTANCE_VERSION }); }
                 catch (_) { /* best-effort */ }
             }
             if (ctx && typeof ctx.refreshState === "function") await ctx.refreshState();
