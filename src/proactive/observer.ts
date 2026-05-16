@@ -52,6 +52,10 @@ const SOURCE_WEIGHTS: Record<IntentSource, number> = {
     goals_morning: 0.7,
     weather_morning: 0.6,
     news_morning: 0.5,
+    // W3: onboarding graduation nudges — ambient priority, intentionally low.
+    // They're soft, time-gated, and never urgent; the dispatcher should
+    // hold them when anything else competes for the same channel slot.
+    onboarding_graduation: 0.4,
 };
 
 const BOUNDARY_WINDOW_MS = 120_000;          // 2-minute window after a boundary
