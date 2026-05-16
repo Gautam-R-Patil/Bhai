@@ -187,6 +187,7 @@ desktop/hostinger-upload/
 !desktop/tests/router.test.js
 !desktop/tests/magic-moment.test.js
 !desktop/tests/awakening.snapshot.test.js
+!desktop/tests/wizard.persona.test.js
 !src/forge/__tests__/
 !src/forge/__tests__/types.test.ts
 !src/forge/__tests__/store-types-extension.test.ts
