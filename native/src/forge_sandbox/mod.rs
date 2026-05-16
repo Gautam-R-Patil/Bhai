@@ -18,6 +18,9 @@ pub mod worker;
 #[cfg(target_os = "macos")]
 pub mod macos;
 
+#[cfg(target_os = "linux")]
+pub mod linux_seccomp;
+
 /// Validated set of resources a persisted tool may touch. Mirrors the TS
 /// `Capabilities` shape in `src/forge/capabilities.ts` exactly — Plan 4 wires
 /// the parser, but the Rust side does its own parse to avoid trusting whatever
