@@ -90,13 +90,13 @@ const COPY = {
         "sub": "On-device vision lets me see your screen and reason about UI. Heavier tiers see more but take longer to install.",
         "tier_lite_name":     "Lite",
         "tier_lite_tag":      "Snappy",
-        "tier_lite_desc":     "I'll read text from your screen — what's open, what it says, what you're doing. Runs anywhere.",
+        "tier_lite_desc":     "I'll read the text on your screen — enough to answer questions about what's there and act on the things I can identify by name. Runs anywhere.",
         "tier_standard_name": "Standard",
         "tier_standard_tag":  "Recommended",
-        "tier_standard_desc": "I'll understand layouts and apps — not just text. Ask me about your dashboard and I'll know what I'm looking at.",
+        "tier_standard_desc": "I'll also understand layouts — which thing is a button, where the form is, what belongs to what. Smoother on most apps.",
         "tier_full_name":     "Full",
         "tier_full_tag":      "Heavy",
-        "tier_full_desc":     "I'll act for you — find buttons, click them, fill forms. Hand me a task and walk away. Needs a recent machine.",
+        "tier_full_desc":     "I'll see your screen pixel-precise — every icon, every widget, dense dashboards, custom interfaces. Most accurate. Needs a recent machine.",
     },
 
     "install": {
