@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS tools (
     origin_intent TEXT,
     created_at   INTEGER NOT NULL,
     updated_at   INTEGER NOT NULL,
+    awaiting_approval_at INTEGER,
     graduated_at INTEGER,
     published_at INTEGER,
     archived_at  INTEGER
@@ -113,6 +114,14 @@ export function openLibrary(path: string = DEFAULT_DB_PATH): Database.Database {
         }
 
         _db.exec(SCHEMA_DDL);
+
+        // Phase 4: awaiting_approval_at column added
+        try {
+            _db.exec("ALTER TABLE tools ADD COLUMN awaiting_approval_at INTEGER");
+        } catch (err) {
+            const msg = (err as Error).message;
+            if (!msg.includes("duplicate column name")) throw err;
+        }
 
         const existing = _db.prepare(`SELECT value FROM library_meta WHERE key = 'schema_version'`).get() as
             | { value: string }
@@ -218,16 +227,19 @@ interface ToolRow {
     origin_intent: string | null;
     created_at: number;
     updated_at: number;
+    awaiting_approval_at: number | null;
     graduated_at: number | null;
     published_at: number | null;
     archived_at: number | null;
 }
 
 function rowToMetadata(row: ToolRow): ToolMetadata {
-    let state: ToolLifecycleState = "active";
+    let state: ToolLifecycleState;
     if (row.archived_at) state = "archived";
     else if (row.published_at) state = "published";
     else if (row.graduated_at) state = "graduated";
+    else if (row.awaiting_approval_at) state = "awaiting_approval";
+    else state = "active";
 
     let schema: ToolMetadata["schema"];
     try {
@@ -410,4 +422,48 @@ export function searchByEmbedding(
     }
     results.sort((a, b) => b.similarity - a.similarity);
     return results;
+}
+
+export function setLifecycleState(slug: string, state: ToolLifecycleState): void {
+    const db = getLibrary();
+    const now = Date.now();
+
+    let sql: string;
+    const params: (string | number | null)[] = [];
+    switch (state) {
+        case "awaiting_approval":
+            sql =
+                "UPDATE tools SET awaiting_approval_at = ?, archived_at = NULL, graduated_at = NULL, published_at = NULL, updated_at = ? WHERE slug = ?";
+            params.push(now, now, slug);
+            break;
+        case "active":
+            sql = "UPDATE tools SET awaiting_approval_at = NULL, archived_at = NULL, updated_at = ? WHERE slug = ?";
+            params.push(now, slug);
+            break;
+        case "archived":
+            sql = "UPDATE tools SET archived_at = ?, updated_at = ? WHERE slug = ?";
+            params.push(now, now, slug);
+            break;
+        case "graduated":
+            sql =
+                "UPDATE tools SET graduated_at = ?, archived_at = NULL, awaiting_approval_at = NULL, updated_at = ? WHERE slug = ?";
+            params.push(now, now, slug);
+            break;
+        case "published":
+            sql =
+                "UPDATE tools SET published_at = ?, archived_at = NULL, awaiting_approval_at = NULL, updated_at = ? WHERE slug = ?";
+            params.push(now, now, slug);
+            break;
+        case "proposed":
+        case "verifying":
+            throw new Error(`setLifecycleState: '${state}' is not externally settable — set via synthesizeTool flow`);
+        default:
+            throw new Error(`setLifecycleState: unknown state '${state}'`);
+    }
+
+    const stmt = db.prepare(sql);
+    const result = stmt.run(...params);
+    if (result.changes === 0) {
+        throw new Error(`setLifecycleState: unknown slug '${slug}'`);
+    }
 }
