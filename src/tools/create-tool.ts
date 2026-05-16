@@ -347,6 +347,58 @@ export const createTool: ToolDefinition = {
             }
         }
 
+        // ── FORGE Phase 3: route through verifier when ready ──
+        if (process.env.ATLAS_NO_FORGE_VERIFIER !== "true") {
+            try {
+                const { synthesizeTool, isForgeReady } = await import("../forge/orchestrator.js");
+                if (isForgeReady()) {
+                    const result = await synthesizeTool({
+                        name,
+                        description,
+                        parametersSchema: paramsSchema ?? { type: "object", properties: {}, required: [] },
+                        persistent: !!persistent,
+                        source: "synchronous",
+                        originIntent: description,
+                    });
+
+                    if (result.kind === "lookup_hit") {
+                        return JSON.stringify({
+                            success: true,
+                            lookup_hit: true,
+                            tool_name: result.slug,
+                            message: `Reused existing tool "${result.slug}".`,
+                        });
+                    }
+                    if (result.kind === "synthesized") {
+                        return JSON.stringify({
+                            success: true,
+                            synthesized: true,
+                            tool_name: result.slug,
+                            attempts: result.attempts,
+                            message: `Tool "${result.slug}" synthesized and verified (${result.testsPassed}/${result.testsTotal} tests passed).`,
+                        });
+                    }
+                    if (result.kind === "awaiting_approval") {
+                        return JSON.stringify({
+                            success: true,
+                            awaiting_approval: true,
+                            tool_name: result.slug,
+                            capabilities_requested: result.capabilitiesRequested,
+                            message: `Tool "${result.slug}" synthesized. Awaiting user approval — call approve_dynamic_tool({slug, user_quote}) to activate.`,
+                        });
+                    }
+                    if (result.kind === "failed") {
+                        return JSON.stringify({
+                            error: `Synthesis failed after ${result.report.attempts} attempts: ${result.report.failureReason}`,
+                            report_path: result.report.reportPath,
+                        });
+                    }
+                }
+            } catch (err) {
+                console.warn("[forge] synthesis route failed:", (err as Error).message);
+            }
+        }
+
         // Check for conflicts with built-in tools
         if (registryRef.has(name) && !dynamicToolNames.has(name)) {
             return JSON.stringify({ error: `Cannot override built-in tool "${name}". Choose a different name.` });
