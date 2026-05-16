@@ -157,10 +157,9 @@
             }
         ],
         "win": {
-            "_TODO_signing": "F6: set `certificateFile` to the path of a .pfx code-signing cert (e.g. './build/certs/atlas-codesign.pfx') and `certificatePassword` via WIN_CSC_KEY_PASSWORD env var (electron-builder reads CSC_LINK + CSC_KEY_PASSWORD by default). signingHashAlgorithms must include sha256 — sha1 is no longer trusted by Windows. signDlls=true if any native .node modules need signing. SignTool requires the Windows SDK. Without these the build will produce an unsigned .exe — see desktop/build/check-signing.js.",
-            "certificateFile": null,
-            "signingHashAlgorithms": ["sha256"],
-            "signDlls": true,
+            "signtoolOptions": {
+                "signingHashAlgorithms": ["sha256"]
+            },
             "target": [
                 {
                     "target": "nsis",
@@ -188,7 +187,6 @@
             ]
         },
         "mac": {
-            "_TODO_signing": "F6: set `identity` to the Developer ID Application cert in the operator's keychain (e.g. 'Developer ID Application: XAGI Labs Private Limited (TEAMID)'). hardenedRuntime must be true for notarization. notarize requires APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID env vars at build time (electron-builder reads these via the `notarize: true` flag + env). Without these the build will produce an unsigned .app — see desktop/build/check-signing.js which now fails the build when CI=true and no identity is set.",
             "identity": null,
             "hardenedRuntime": true,
             "gatekeeperAssess": false,
