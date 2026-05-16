@@ -75,13 +75,23 @@ export function validateCapabilities(caps: Capabilities): ValidationResult {
         if (p.length < 3) errors.push(`fs_write path too short / risky: ${p}`);
     }
     for (const host of caps.net) {
-        if (host === "*" || host === "0.0.0.0" || host === "localhost" || host === "127.0.0.1") {
+        if (
+            host === "*" ||
+            host === "0.0.0.0" ||
+            host === "::" ||
+            host === "localhost" ||
+            host === "127.0.0.1" ||
+            host === "::1"
+        ) {
             errors.push(`net hostname too broad: ${host}`);
         }
     }
     for (const cmd of caps.exec) {
-        const bare = cmd.split(/\s+/)[0];
-        if (BANNED_EXEC.has(bare)) errors.push(`banned command in exec: ${bare}`);
+        const bare = cmd.trim().split(/\s+/)[0] ?? "";
+        const base = bare.split(/[/\\]/).pop() ?? bare;
+        if (BANNED_EXEC.has(bare) || BANNED_EXEC.has(base)) {
+            errors.push(`banned command in exec: ${cmd}`);
+        }
     }
 
     return { ok: errors.length === 0, errors };

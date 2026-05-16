@@ -132,4 +132,37 @@ describe("capabilities validate", () => {
         expect(r.ok).toBe(true);
         expect(r.errors).toEqual([]);
     });
+
+    it("validateCapabilities catches whitespace-prefixed banned commands", () => {
+        const r = validateCapabilities({
+            fs_read: [],
+            fs_write: [],
+            net: [],
+            exec: [" rm"],
+        });
+        expect(r.ok).toBe(false);
+        expect(r.errors[0]).toMatch(/banned.*command/i);
+    });
+
+    it("validateCapabilities catches absolute-path banned commands", () => {
+        const r = validateCapabilities({
+            fs_read: [],
+            fs_write: [],
+            net: [],
+            exec: ["/usr/bin/rm -rf /"],
+        });
+        expect(r.ok).toBe(false);
+        expect(r.errors[0]).toMatch(/banned.*command/i);
+    });
+
+    it("validateCapabilities rejects IPv6 loopback hosts", () => {
+        const r = validateCapabilities({
+            fs_read: [],
+            fs_write: [],
+            net: ["::1", "::"],
+            exec: [],
+        });
+        expect(r.ok).toBe(false);
+        expect(r.errors.length).toBe(2);
+    });
 });
