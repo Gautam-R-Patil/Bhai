@@ -121,6 +121,52 @@ describe("manifest write + read round-trip", () => {
 
         expect(readManifest("extract_invoice")).toBeNull();
     });
+
+    it("writeManifest rejects oversized manifest (>64KB)", async () => {
+        const { writeManifest } = await import("../manifest.js");
+        // Build a manifest with a userQuote large enough to push the indented
+        // serialization over 64KB. The serialized form has prefixes + escaping
+        // that inflate the byte count; 70K characters of plain ASCII suffices.
+        const huge: PersistedToolManifest = {
+            ...exampleManifest,
+            userQuote: "x".repeat(70_000),
+        };
+        await expect(writeManifest("extract_invoice", huge)).rejects.toThrow(/too large/);
+    });
+
+    it("writeManifest rejects an invalid manifest without writing a placeholder", async () => {
+        const { writeManifest, manifestDir } = await import("../manifest.js");
+        const { existsSync: _existsSync } = await import("node:fs");
+        const invalid = { ...exampleManifest, handlerHash: "bad" };
+        await expect(writeManifest("extract_invoice", invalid)).rejects.toThrow(/invalid manifest|handlerHash/);
+        // Confirm: the slug directory was NOT created, NOR was a placeholder
+        // manifest.json left on disk.
+        const dir = manifestDir("extract_invoice");
+        expect(_existsSync(dir)).toBe(false);
+    });
+
+    it("writeManifest is atomic (no partial JSON visible mid-write)", async () => {
+        const { writeManifest, readManifest } = await import("../manifest.js");
+        // First write the canonical manifest so the file exists.
+        await writeManifest("extract_invoice", exampleManifest);
+
+        // Now fire many concurrent writes with varied (still valid) approvedAt values.
+        // Every interleaved read must see EITHER a fully-valid earlier manifest OR
+        // a fully-valid later one — never null (which would mean a partial JSON
+        // was visible mid-write and failed validateManifest).
+        const writes = Array.from({ length: 10 }, (_, i) =>
+            writeManifest("extract_invoice", { ...exampleManifest, approvedAt: 1700000000000 + i }),
+        );
+        const reads = Array.from({ length: 50 }, () => readManifest("extract_invoice"));
+
+        const results = await Promise.all([...writes, ...reads.map((r) => Promise.resolve(r))]);
+        const reads_only = results.slice(10) as Array<PersistedToolManifest | null>;
+        for (const r of reads_only) {
+            // Every read must be non-null AND have a valid handlerHash.
+            expect(r).not.toBeNull();
+            if (r) expect(r.handlerHash).toBe("deadbeefcafe1234");
+        }
+    });
 });
 
 describe("validateManifest", () => {

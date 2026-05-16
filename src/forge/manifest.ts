@@ -1,6 +1,6 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import lockfile from "proper-lockfile";
@@ -126,10 +126,23 @@ export function readManifest(slug: string): PersistedToolManifest | null {
 }
 
 export async function writeManifest(slug: string, manifest: PersistedToolManifest): Promise<void> {
+    // Validate-and-serialize FIRST, so an invalid input never touches disk.
+    const check = validateManifest(manifest);
+    if (!check.ok) {
+        throw new Error(`refusing to write invalid manifest: ${check.errors.join("; ")}`);
+    }
+    if (check.manifest.slug !== slug) {
+        throw new Error(`manifest slug "${check.manifest.slug}" != requested slug "${slug}"`);
+    }
+    const serialized = JSON.stringify(manifest, null, 2);
+    const bytes = Buffer.byteLength(serialized, "utf-8");
+    if (bytes > 64 * 1024) throw new Error(`manifest too large: ${bytes} bytes (cap 64KB)`);
+
     const dir = manifestDir(slug);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
     const path = manifestPath(slug);
+    // lockfile needs the target to exist for advisory locking.
     if (!existsSync(path)) writeFileSync(path, "{}", "utf-8");
 
     let lastErr: unknown = null;
@@ -140,14 +153,12 @@ export async function writeManifest(slug: string, manifest: PersistedToolManifes
                 retries: { retries: 3, minTimeout: 100, maxTimeout: 100 },
             });
             try {
-                const check = validateManifest(manifest);
-                if (!check.ok) throw new Error(`refusing to write invalid manifest: ${check.errors.join("; ")}`);
-                if (check.manifest.slug !== slug) {
-                    throw new Error(`manifest slug "${check.manifest.slug}" != requested slug "${slug}"`);
-                }
-                const bytes = Buffer.byteLength(JSON.stringify(manifest), "utf-8");
-                if (bytes > 64 * 1024) throw new Error(`manifest too large: ${bytes} bytes (cap 64KB)`);
-                writeFileSync(path, JSON.stringify(manifest, null, 2), "utf-8");
+                // Atomic write: tmp file + rename. POSIX guarantees rename(2)
+                // is atomic on the same filesystem, so a concurrent reader sees
+                // EITHER the old contents or the new — never a partial buffer.
+                const tmpPath = `${path}.tmp`;
+                writeFileSync(tmpPath, serialized, "utf-8");
+                renameSync(tmpPath, path);
             } finally {
                 await release();
             }
