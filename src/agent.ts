@@ -2883,6 +2883,11 @@ PLAN:`,
 
             // Credits deducted per-API-call in llm.ts
             if (_harnessTraceId) finalizeTrace(_harnessTraceId, true);
+            if (process.env.ATLAS_NO_FORGE_VERIFIER !== "true") {
+                import("./forge/pending-consumer.js")
+                    .then(({ consumeOnePending }) => consumeOnePending())
+                    .catch((e: Error) => console.warn("[forge] pending consume failed:", e.message));
+            }
             return { text, toolCalls: totalToolCalls };
         }
 
