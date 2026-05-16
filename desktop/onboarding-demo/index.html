@@ -1,0 +1,116 @@
+<!-- A.T.L.A.S onboarding — quiet-futurism (Apple-grade restraint). -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="color-scheme" content="light dark"/>
+<title>A.T.L.A.S</title>
+<link rel="stylesheet" href="demo.css"/>
+</head>
+<body data-step="awakening">
+
+<!-- Ambient atmosphere — single soft wash, no orbs. -->
+<div class="atmosphere" aria-hidden="true">
+    <div class="atmosphere-wash"></div>
+    <div class="atmosphere-grain"></div>
+</div>
+
+<!-- Chrome -->
+<header class="chrome">
+    <div class="chrome-mark">A.T.L.A.S</div>
+    <div class="chrome-folio" id="chrome-folio">01 / 10</div>
+    <div class="chrome-tools">
+        <button class="chrome-btn" title="Audio" id="audio-toggle">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M11 5L6 9H2v6h4l5 4z"/><path d="M19.07 4.93a10 10 0 010 14.14"/><path d="M15.54 8.46a5 5 0 010 7.07"/>
+            </svg>
+        </button>
+        <button class="chrome-btn" title="Close">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+        </button>
+    </div>
+</header>
+
+<!-- Iridescent rule that scribes across on each transition -->
+<div class="iridescent-rule" id="iridescent-rule" aria-hidden="true"></div>
+
+<!-- Main stage -->
+<main class="stage">
+    <article id="step-root" class="step-root"></article>
+</main>
+
+<!-- Step indicator -->
+<footer class="indicator" id="indicator" aria-hidden="true"></footer>
+
+<!-- Demo controls -->
+<aside class="demo-controls" id="demo-controls">
+    <header class="demo-controls-head">
+        <span class="demo-tag">DEMO</span>
+        <button id="dc-toggle" class="dc-toggle" title="Collapse">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+    </header>
+    <div class="demo-controls-body" id="dc-body">
+        <label class="dc-row">
+            <span>Jump to</span>
+            <select id="dc-jump">
+                <option value="awakening">1 · Awakening</option>
+                <option value="terms">2 · Terms</option>
+                <option value="signin">3 · Sign in</option>
+                <option value="profile">4 · Name</option>
+                <option value="persona">5 · Persona</option>
+                <option value="personalize">6 · Personalize</option>
+                <option value="permissions">7 · Permissions</option>
+                <option value="vision-tier">8 · Vision</option>
+                <option value="install">9 · Install</option>
+                <option value="ready-hub">10 · Ready</option>
+            </select>
+        </label>
+        <label class="dc-row">
+            <span>Hour of day</span>
+            <select id="dc-tod">
+                <option value="morning">Morning</option>
+                <option value="afternoon">Afternoon</option>
+                <option value="evening" selected>Evening</option>
+                <option value="late-night">Late night</option>
+            </select>
+        </label>
+        <label class="dc-row">
+            <span>Name source</span>
+            <select id="dc-name-source">
+                <option value="profile" selected>Stored (Dheeraj)</option>
+                <option value="os">OS-detected (dheeraj → Dheeraj)</option>
+                <option value="none">None — anonymous greet</option>
+            </select>
+        </label>
+        <label class="dc-row">
+            <span>Theme</span>
+            <select id="dc-theme">
+                <option value="auto" selected>Auto (follow system)</option>
+                <option value="dark">Dark</option>
+                <option value="light">Light</option>
+            </select>
+        </label>
+        <label class="dc-row">
+            <span>Force persona</span>
+            <select id="dc-persona">
+                <option value="">— none —</option>
+                <option value="developer">Developer</option>
+                <option value="founder">Founder</option>
+                <option value="creator">Creator</option>
+                <option value="researcher">Researcher</option>
+                <option value="explorer">Explorer</option>
+            </select>
+        </label>
+        <button class="dc-btn" id="dc-nudge">Show Day-2 nudge</button>
+        <button class="dc-btn dc-btn-ghost" id="dc-reset">Reset</button>
+    </div>
+</aside>
+
+<div id="nudge-host" class="nudge-host"></div>
+
+<script src="demo.js"></script>
+</body>
+</html>
