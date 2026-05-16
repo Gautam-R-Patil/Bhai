@@ -554,6 +554,16 @@ export async function revokeDynamicTool(slug: string): Promise<void> {
     } catch {
         // unknown slug → no-op
     }
+    // Exit awaiting_dynamic_tool_approval mode if THIS was the pending slug.
+    // Without this the agent gets locked: can't approve (manifest gone),
+    // can't escape (mode persists).
+    if (
+        getPlanModeState().mode === "awaiting_dynamic_tool_approval" &&
+        getAwaitingDynamicToolSlug() === slug
+    ) {
+        const pm = await import("../agents/plan-mode.js");
+        pm.exitPlanMode();
+    }
     emitForgeEvent({ event: "tool_revoked", ts: Date.now(), slug } as never);
 }
 

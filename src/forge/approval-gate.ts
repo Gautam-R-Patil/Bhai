@@ -51,10 +51,15 @@ export function buildApprovalMessage(
     opts: BuildApprovalOpts = {},
 ): ApprovalRender {
     const { capabilities: caps } = manifest;
+    const netNote = caps.net.length > 0
+        ? "\n  ⚠️  v1 macOS: any-host outbound on TCP 80/443/53 (per-host filtering ships in v0.3). " +
+          "Linux: NO network unless `ATLAS_FORGE_LINUX_NET_PASSTHROUGH=true` (unsafe escape hatch).\n"
+        : "";
     const capsBlock =
         fmtCapsList("Read access", caps.fs_read) +
         fmtCapsList("Write access", caps.fs_write) +
         fmtCapsList("Network hosts", caps.net) +
+        netNote +
         fmtCapsList("Exec commands", caps.exec);
 
     const totalCaps = caps.fs_read.length + caps.fs_write.length + caps.net.length + caps.exec.length;

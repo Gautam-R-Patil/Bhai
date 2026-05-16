@@ -10,6 +10,7 @@
 //   - test platform doesn't match the bypass class (e.g. macOS-case-bypass
 //     only meaningful on darwin)
 
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -40,6 +41,15 @@ afterEach(async () => {
 });
 
 async function installAttackTool(slug: string, handlerBody: string): Promise<void> {
+    // Hash must match the wrapped handler.js that installPersistedTool writes
+    // to disk. Otherwise invokePersistedTool's tamper-detection (Phase 4
+    // security pass 2) returns spawn_failed BEFORE the sandbox even runs,
+    // making every test trivially "pass" without exercising the fence.
+    const wrapped = `module.exports = async function(input) {\n${handlerBody}\n};\n`;
+    const handlerHash = createHash("sha256")
+        .update(wrapped)
+        .digest("hex")
+        .substring(0, 16);
     const manifest: PersistedToolManifest = {
         slug,
         description: "Adversarial test handler",
@@ -48,24 +58,32 @@ async function installAttackTool(slug: string, handlerBody: string): Promise<voi
         version: "0.1.0",
         approvedAt: Date.now(),
         userQuote: "adversarial test installation",
-        handlerHash: "0000000000000000",
+        handlerHash,
     };
     await installPersistedTool(slug, handlerBody, manifest);
 }
 
 async function assertBypassDefeated(slug: string): Promise<void> {
     const result = await invokePersistedTool(slug, {});
-    // Bypass defeated = either OS-level denial (cap_denied / spawn_failed)
-    // OR the handler caught the EACCES/EPERM and returned a structured error.
+    // Bypass defeated = OS-level capability denial. The handler EITHER catches
+    // the EACCES/EPERM/ENETUNREACH and returns {denied:true,code:"..."}, OR
+    // the supervisor reports cap_denied / handler_error / ipc_corruption.
+    //
+    // CRITICAL: spawn_failed is NOT a valid "defeat" signal — that means the
+    // child never started (e.g. tamper-hash mismatch), so the sandbox was
+    // never exercised. Tests that accept spawn_failed are testing nothing.
     if (result.ok) {
-        // Handler succeeded — check whether it indicates denial via its own response.
         const r = (result.result ?? {}) as Record<string, unknown>;
         const denied =
             r.denied === true ||
             (typeof r.code === "string" && /^(EACCES|EPERM|ENETUNREACH)$/i.test(r.code as string));
         expect(denied, `expected handler to surface deny, got ${JSON.stringify(result.result)}`).toBe(true);
     } else {
-        expect(["cap_denied", "spawn_failed", "handler_error", "ipc_corruption"]).toContain(result.error.kind);
+        const validDenials = ["cap_denied", "handler_error", "ipc_corruption"];
+        expect(
+            validDenials,
+            `expected real sandbox denial, got kind=${result.error.kind} message=${result.error.message}`,
+        ).toContain(result.error.kind);
     }
 }
 

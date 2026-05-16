@@ -51,7 +51,9 @@ export async function lookupTool(opts: LookupOpts): Promise<LookupHit | null> {
                 const fgResult = await opts.functionGemmaFn(opts.description, schemas);
                 if (fgResult && fgResult.confidence >= FG_CONFIDENCE_THRESHOLD) {
                     const tool = getToolBySlug(fgResult.toolName);
-                    if (tool) {
+                    // Skip archived / awaiting_approval / graduated / published —
+                    // only `active` tools are callable from the registry.
+                    if (tool && tool.lifecycleState === "active") {
                         emitForgeEvent({
                             event: "lookup_attempted",
                             ts: Date.now(),
