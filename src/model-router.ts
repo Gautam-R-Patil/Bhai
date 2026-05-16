@@ -697,7 +697,7 @@ export function maybeEscalateForSynthesis(
 }
 
 export function selectForToolSynthesis(isDreamReplay: boolean = false): ModelSelection {
-    const base = selectModel({ taskType: "tool_synthesis" });
+    const base = selectModel({ taskType: "first_iteration" });
     const escalated = maybeEscalateForSynthesis(base, isDreamReplay);
     return escalated ?? base;
 }
