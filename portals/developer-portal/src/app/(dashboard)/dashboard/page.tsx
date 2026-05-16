@@ -1,3 +1,10 @@
+// TODO(F16): the convex/store/developers:* + store/submissions:* + store/items:*
+// functions are exported as internalQuery/internalMutation in the Convex
+// backend (Cluster 1). Direct convexQuery() calls from the dev-portal hit
+// `/api/query` which only sees public-facing wrappers. Until the developer
+// portal is routed through a server-side proxy (mirroring admin-panel's
+// /api/store), these calls will return null/empty in production. Local dev
+// against a Convex deploy that re-aliases these as `query` still works.
 import { getSession } from "@/lib/auth";
 import { convexQuery } from "@/lib/convex";
 import type { Developer, DeveloperStats, Submission, StoreItem } from "@/lib/types";

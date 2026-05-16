@@ -1,7 +1,9 @@
-// Convex API client for admin panel
+// Convex API client for developer portal
 // Direct HTTPS calls to Convex backend
+// F16: default URL is the prod deployment (avid-oyster-465). Override with
+// NEXT_PUBLIC_CONVEX_URL for staging/dev.
 
-const CONVEX_URL = process.env.NEXT_PUBLIC_CONVEX_URL || "https://zany-kudu-607.convex.cloud";
+const CONVEX_URL = process.env.NEXT_PUBLIC_CONVEX_URL || "https://avid-oyster-465.convex.cloud";
 
 interface ConvexResponse<T> {
   status: "success" | "error";

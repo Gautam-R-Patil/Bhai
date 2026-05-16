@@ -4,6 +4,10 @@
   "version": "1.0.0",
   "description": "Send page context to ATLAS overlay",
   "minimum_chrome_version": "116",
+  "_comments_F11": {
+    "debugger": "REQUIRED for chrome.debugger.attach + Runtime.evaluate fallback in background.js (~line 1203) — this is the only reliable way to run page-context JS on strict-CSP sites like Gmail/GitHub where chrome.scripting.executeScript world:MAIN fails. Also gates the rawCDP() pass-through with CDP_ALLOWED_METHODS allowlist (Input.insertText, DOM.setFileInputFiles, Page.captureScreenshot, Accessibility.getFullAXTree). Cannot drop without losing AX-tree extraction + CSP-safe JS injection.",
+    "host_permissions": "<all_urls> is required because the agent operates on whatever tab the user is on — we cannot enumerate a finite host list at install time. activeTab is insufficient: it only grants access on user-gesture-initiated invocations, not the agent-driven flows where the operator says 'use my Gmail tab' programmatically. Content-script injection is gated by chrome.tabs.query at runtime; debugger access requires explicit chrome.debugger.attach which surfaces an OS-level 'A.T.L.A.S started debugging this browser' banner."
+  },
   "permissions": [
     "activeTab",
     "tabs",

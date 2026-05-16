@@ -1,5 +1,8 @@
 "use client";
 
+// TODO(F16): see dashboard/page.tsx. store/developers:* are internalQuery /
+// internalMutation in Convex; direct calls fail in prod until a dev-portal
+// server proxy is added.
 import { useState, useEffect } from "react";
 import { convexQuery, convexMutation } from "@/lib/convex";
 import type { Developer } from "@/lib/types";

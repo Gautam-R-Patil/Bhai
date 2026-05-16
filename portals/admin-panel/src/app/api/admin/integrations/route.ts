@@ -14,7 +14,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { spawn } from "node:child_process";
 import path from "node:path";
-import { getSession } from "@/lib/auth";
+import { guard } from "@/lib/route-guards";
 
 // Allowlist of env vars manageable from the panel. Keep in sync with the
 // rows rendered on settings/page.tsx::Server-side integrations.
@@ -86,9 +86,14 @@ function runConvex(args: string[], extraEnv?: Record<string, string>): Promise<R
   });
 }
 
-export async function GET() {
-  const session = await getSession();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+export async function GET(request: NextRequest) {
+  // F12: route every state-checking endpoint through guard() so origin
+  // allowlist + body-size cap (and future hardening) is enforced uniformly.
+  // Permission check stays inline because guard()'s `permission` is role-based
+  // via hasPermission(); the super_admin role check is a different axis.
+  const g = await guard(request, { allowAnyBodySize: true });
+  if (!g.ok) return g.response;
+  const session = g.session;
   if (session.role !== "super_admin") {
     return NextResponse.json(
       { error: "Forbidden: super_admin role required to view integrations" },
@@ -132,8 +137,10 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const session = await getSession();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // F12: see GET — guard() enforces origin allowlist + body cap.
+  const g = await guard(request);
+  if (!g.ok) return g.response;
+  const session = g.session;
   if (session.role !== "super_admin") {
     return NextResponse.json(
       { error: "Forbidden: super_admin role required to rotate integrations" },
@@ -203,8 +210,10 @@ export async function POST(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
-  const session = await getSession();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // F12: see GET — guard() enforces origin allowlist + body cap.
+  const g = await guard(request);
+  if (!g.ok) return g.response;
+  const session = g.session;
   if (session.role !== "super_admin") {
     return NextResponse.json({ error: "Forbidden: super_admin role required" }, { status: 403 });
   }

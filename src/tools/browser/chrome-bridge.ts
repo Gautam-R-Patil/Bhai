@@ -49,6 +49,11 @@ try {
 const BRIDGE_PORT = 18800;
 const TOKEN_FILE = path.resolve("data", "chrome-bridge-token.txt");
 const DISCOVERY_FILE = path.join(homedir(), ".atlas", "chrome-bridge.json");
+// F10: local-only access token for CLI/native callers. Lives at 0o600 and
+// is required to call /discover-local. The chrome-extension /discover path
+// uses browser-set Origin instead (chrome-extension://...) which can't be
+// forged from a non-browser context.
+const LOCAL_TOKEN_FILE = path.join(homedir(), ".atlas", "data", "chrome-bridge-local-token");
 const AUTH_TIMEOUT_MS = 5000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 10000;
 const OPERATION_TIMEOUTS: Record<string, number> = {
@@ -144,6 +149,43 @@ function validateToken(token: string): boolean {
     let diff = 0;
     for (let i = 0; i < token.length; i++) {
         diff |= token.charCodeAt(i) ^ bridgeToken.charCodeAt(i);
+    }
+    return diff === 0;
+}
+
+// F10: local-only token. Loaded (or created) at server boot. Lives outside
+// the extension flow so we can keep the extension auth simple (browser-set
+// Origin) without locking out local CLI tools that legitimately need to
+// fetch the bridge token. Constant-time compare.
+let localToken: string = "";
+
+function loadOrCreateLocalToken(): string {
+    try {
+        const dir = path.dirname(LOCAL_TOKEN_FILE);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+        }
+        if (fs.existsSync(LOCAL_TOKEN_FILE)) {
+            const stored = fs.readFileSync(LOCAL_TOKEN_FILE, "utf-8").trim();
+            if (stored.length >= 32) return stored;
+        }
+    } catch {
+        /* generate new */
+    }
+    const tok = crypto.randomBytes(32).toString("hex");
+    try {
+        fs.writeFileSync(LOCAL_TOKEN_FILE, tok, { mode: 0o600 });
+    } catch (err) {
+        console.warn("⚠️  Could not save local bridge token:", (err as Error).message);
+    }
+    return tok;
+}
+
+function validateLocalToken(presented: string): boolean {
+    if (typeof presented !== "string" || presented.length !== localToken.length) return false;
+    let diff = 0;
+    for (let i = 0; i < presented.length; i++) {
+        diff |= presented.charCodeAt(i) ^ localToken.charCodeAt(i);
     }
     return diff === 0;
 }
@@ -303,6 +345,8 @@ function sendMessage(msg) {
 
 export function initChromeBridge(port = BRIDGE_PORT): void {
     bridgeToken = loadOrCreateToken();
+    // F10: load (or generate) the local-only auth token used by /discover-local.
+    localToken = loadOrCreateLocalToken();
 
     // Create HTTP server that handles both discovery requests and WS upgrades.
     // This allows the extension to auto-discover the token via HTTP GET /discover
@@ -317,16 +361,15 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
         // from a Chrome extension origin (`chrome-extension://...`) — which
         // is set by the browser, not by JS, and cannot be forged from a tab.
         if (req.method === "GET" && req.url === "/discover") {
+            // F10: extension-only path. Origin is browser-set and cannot be
+            // forged from a non-browser context. The previous Sec-Fetch-Site
+            // "none" fallback was unsafe — local CLI tools (curl, node) can
+            // omit the header entirely AND set Sec-Fetch-Site freely.
             const origin = (req.headers.origin as string | undefined) || "";
             const isExtension = origin.startsWith("chrome-extension://");
-            // Sec-Fetch-Site is also browser-set; "none" means a privileged
-            // direct fetch (e.g. background.js startup with no triggering
-            // page), which the extension uses on boot.
-            const fetchSite = (req.headers["sec-fetch-site"] as string | undefined) || "";
-            const isPrivilegedDirect = fetchSite === "none";
-            if (!isExtension && !isPrivilegedDirect) {
+            if (!isExtension) {
                 res.writeHead(403, { "Content-Type": "application/json" });
-                res.end(JSON.stringify({ error: "Forbidden — extension origin required" }));
+                res.end(JSON.stringify({ error: "Forbidden — chrome-extension origin required. Local callers use /discover-local with Bearer auth." }));
                 return;
             }
             const discovery = {
@@ -335,14 +378,39 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
                 wsUrl: `ws://127.0.0.1:${port}`,
                 pid: process.pid,
             };
-            const corsHeaders: Record<string, string> = {
+            res.writeHead(200, {
                 "Content-Type": "application/json",
                 "Cache-Control": "no-store",
                 Vary: "Origin",
-            };
-            if (isExtension) corsHeaders["Access-Control-Allow-Origin"] = origin;
-            res.writeHead(200, corsHeaders);
+                "Access-Control-Allow-Origin": origin,
+            });
             res.end(JSON.stringify(discovery));
+            return;
+        }
+
+        // F10: local CLI / native auth path. Auth via file-backed Bearer
+        // token at LOCAL_TOKEN_FILE (mode 0o600, generated at boot, only
+        // readable by the OS user running ATLAS). This replaces the
+        // Sec-Fetch-Site=none escape hatch — only callers that can read
+        // the file (i.e. the same UID) get a bridge token.
+        if (req.method === "GET" && req.url === "/discover-local") {
+            const authHeader = (req.headers.authorization as string | undefined) || "";
+            const presented = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+            if (!presented || !validateLocalToken(presented)) {
+                res.writeHead(401, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ error: "Unauthorized — provide local token in Authorization: Bearer header" }));
+                return;
+            }
+            res.writeHead(200, {
+                "Content-Type": "application/json",
+                "Cache-Control": "no-store",
+            });
+            res.end(JSON.stringify({
+                port,
+                token: bridgeToken,
+                wsUrl: `ws://127.0.0.1:${port}`,
+                pid: process.pid,
+            }));
             return;
         }
 
@@ -353,7 +421,7 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
             res.writeHead(204, {
                 "Access-Control-Allow-Origin": allowOrigin,
                 "Access-Control-Allow-Methods": "GET",
-                "Access-Control-Allow-Headers": "Content-Type",
+                "Access-Control-Allow-Headers": "Content-Type,Authorization",
                 Vary: "Origin",
             });
             res.end();
