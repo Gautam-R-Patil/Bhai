@@ -181,6 +181,7 @@ desktop/hostinger-upload/
 !src/proactive/heartbeat-morning-boundary.test.ts
 !desktop/tests/
 !desktop/tests/auth-helpers.test.js
+!desktop/tests/cinematic.test.js
 !src/forge/__tests__/
 !src/forge/__tests__/types.test.ts
 !src/forge/__tests__/store-types-extension.test.ts
