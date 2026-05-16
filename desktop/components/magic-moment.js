@@ -61,9 +61,11 @@
         return out.slice(0, 4);
     }
 
-    function mount(container, state) {
+    async function mount(container, state) {
         if (!container) return { stop: function () {} };
-        const observations = pickObservations(state);
+
+        // 1. Synchronous fallback (W1 static signals) so the card is never empty.
+        let observations = pickObservations(state);
         if (observations.length === 0) return { stop: function () {} };
 
         container.classList.add("magic-note");
@@ -80,16 +82,46 @@
             followEl.textContent = observations[idx].followup;
         }
         paint();
+
         let timer = null;
-        if (observations.length > 1) {
-            timer = setInterval(function () {
-                idx = (idx + 1) % observations.length;
-                obsEl.style.opacity = "0"; followEl.style.opacity = "0";
-                setTimeout(function () {
-                    paint();
-                    obsEl.style.opacity = "1"; followEl.style.opacity = "1";
-                }, 320);
-            }, 7000);
+        function scheduleRotation() {
+            if (observations.length > 1 && timer == null) {
+                timer = setInterval(function () {
+                    idx = (idx + 1) % observations.length;
+                    obsEl.style.opacity = "0"; followEl.style.opacity = "0";
+                    setTimeout(function () {
+                        paint();
+                        obsEl.style.opacity = "1"; followEl.style.opacity = "1";
+                    }, 320);
+                }, 7000);
+            }
+        }
+        scheduleRotation();
+
+        // 2. Async rich detection (best-effort).
+        if (typeof window !== "undefined" && window.atlas && typeof window.atlas.detectMagicMoment === "function"
+            && window.MagicMomentRanker) {
+            try {
+                const snapshot = await window.atlas.detectMagicMoment();
+                if (snapshot && Array.isArray(snapshot.names) && snapshot.names.length > 0) {
+                    const rich = window.MagicMomentRanker.rankSignals({
+                        snapshot: snapshot,
+                        persona: (state && state.profile && state.profile.persona) || null,
+                        hourOfDay: state && state.hourOfDay,
+                        monitorCount: state && state.monitorCount,
+                    });
+                    if (rich && rich.length > 0) {
+                        observations = rich;
+                        idx = 0;
+                        paint();
+                        // Reset the rotation timer in case observations length changed.
+                        if (timer) { clearInterval(timer); timer = null; }
+                        scheduleRotation();
+                    }
+                }
+            } catch (_) {
+                // Rich detection failed — stay with the W1 fallback.
+            }
         }
 
         return { stop: function () { if (timer) { clearInterval(timer); timer = null; } } };

@@ -190,6 +190,7 @@ desktop/hostinger-upload/
 !desktop/tests/wizard.persona.test.js
 !desktop/tests/profile-merge.test.js
 !desktop/tests/running-apps.test.js
+!desktop/tests/magic-moment-ranker.test.js
 !src/setup/wizard-seed.test.ts
 !src/prompts/persona-bias.test.ts
 !src/tool-router.persona.test.ts
