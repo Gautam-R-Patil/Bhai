@@ -18,7 +18,7 @@ vad = ["webrtc-vad"]
 
 [dependencies]
 # NAPI-RS for Node.js bindings
-napi = { version = "2", features = ["napi9"] }
+napi = { version = "2", features = ["napi9", "tokio_rt"] }
 napi-derive = "2"
 
 # Voice activity detection (Phase 3) — gated behind `vad` feature.
