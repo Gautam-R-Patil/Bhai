@@ -1,6 +1,7 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 
 import type { ChatCompletionTool } from "openai/resources/chat/completions.js";
+import type { Capabilities } from "./capabilities.js";
 
 // ── Lifecycle ─────────────────────────────────────
 
@@ -128,8 +129,6 @@ export interface ForgeStats {
 // later phases land, keeping field names consistent with what's already shipped.
 
 // ── Persisted dynamic tool manifest ───────────────
-
-import type { Capabilities } from "./capabilities.js";
 
 export interface PersistedToolManifest {
     /** Slug, must match /^[a-z][a-z0-9_]*$/ — same regex as create-tool.ts:324. */
