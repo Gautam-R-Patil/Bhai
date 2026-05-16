@@ -496,9 +496,14 @@ async function scanAndRegisterApprovedTools(): Promise<{ registered: number; arc
     const registry = getRegistryRef();
     for (const slug of entries) {
         if (slug === "_failed") continue;
+        // If no manifest.json exists, this is a Phase 1-3 legacy tool (or a
+        // freshly-migrated one). Skip silently — only Phase 4 persistent tools
+        // are managed here.
+        const manifestPath = join(manifestDir(slug), "manifest.json");
+        if (!existsSync(manifestPath)) continue;
         const manifest = readManifest(slug);
         if (!manifest) {
-            // Manifest unreadable/invalid → archive the row if present.
+            // Manifest present but invalid → archive the row.
             try {
                 setLifecycleState(slug, "archived");
                 archived++;

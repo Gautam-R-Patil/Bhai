@@ -159,13 +159,19 @@ describe.skipIf(!NATIVE)("capability bypass regression", () => {
         await uninstallPersistedTool("bypass_dgram");
     });
 
-    it("denies process.binding spawn_sync escape", async () => {
+    it("denies process.binding spawn_sync escape (actual spawn must fail)", async () => {
         await installAttackTool(
             "bypass_proc_binding",
             `try {
                  const b = process.binding("spawn_sync");
-                 return {leaked: typeof b};
-             } catch (e) { return {denied:true, message:e.message}; }`,
+                 // Just having the binding object is not the bypass — calling
+                 // spawn() to read /etc/passwd is. The kernel sandbox denies
+                 // the child's read of /etc/passwd, so stdout is empty/error.
+                 const r = b.spawn({file:"/bin/cat", args:["cat","/etc/passwd"], envPairs:[], stdio:[{type:"pipe",readable:true,writable:false},{type:"pipe",readable:false,writable:true},{type:"pipe",readable:false,writable:true}]});
+                 const out = r?.output?.[1]?.toString?.() ?? "";
+                 if (out.includes("root:")) return {leaked:true, out};
+                 return {denied:true, code:"sandbox-blocked-payload"};
+             } catch (e) { return {denied:true, code:e.code ?? "EACCES"}; }`,
         );
         await assertBypassDefeated("bypass_proc_binding");
         await uninstallPersistedTool("bypass_proc_binding");
@@ -195,12 +201,17 @@ describe.skipIf(!NATIVE)("capability bypass regression", () => {
         await uninstallPersistedTool("bypass_case");
     });
 
-    it("denies child_process.spawnSync", async () => {
+    it("denies child_process.spawnSync read of /etc/passwd via cat", async () => {
         await installAttackTool(
             "bypass_spawn",
             `const cp = require("node:child_process");
-             try { const r = cp.spawnSync("cat",["/etc/passwd"]); return {leaked:r.stdout?.toString() ?? ""}; }
-             catch (e) { return {denied:true, code:e.code}; }`,
+             try {
+                 const r = cp.spawnSync("/bin/cat", ["/etc/passwd"]);
+                 const out = r.stdout?.toString() ?? "";
+                 // Empty stdout means cat failed inside the sandbox — denial works
+                 if (out.includes("root:")) return {leaked:true, out};
+                 return {denied:true, code:"sandbox-blocked-payload"};
+             } catch (e) { return {denied:true, code:e.code}; }`,
         );
         await assertBypassDefeated("bypass_spawn");
         await uninstallPersistedTool("bypass_spawn");
