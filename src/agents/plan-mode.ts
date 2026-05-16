@@ -14,6 +14,9 @@
 // ATLAS is single-user per-process, so state lives at module scope. If/when
 // concurrent sessions ever matter, this becomes a Map<sessionId, State>.
 
+import fs from "node:fs";
+import path from "node:path";
+
 // ── State ─────────────────────────────────────
 
 export type PlanModeState =
@@ -247,13 +250,74 @@ export function isToolAllowedInCurrentMode(toolName: string): boolean {
  *
  * Returns { allowed: true } or { allowed: false, reason }.
  */
+function realResolveForGate(p: string): string {
+    const abs = path.resolve(p);
+    try {
+        return fs.realpathSync(abs);
+    } catch {
+        const parts = abs.split(path.sep);
+        const trailing: string[] = [];
+        while (parts.length > 1) {
+            const leaf = parts.pop();
+            if (leaf) trailing.unshift(leaf);
+            const candidate = parts.join(path.sep) || path.sep;
+            try {
+                const real = fs.realpathSync(candidate);
+                return trailing.length ? path.join(real, ...trailing) : real;
+            } catch {
+                // keep walking up
+            }
+        }
+        return abs;
+    }
+}
+
+/**
+ * Spec-mode path gate. Writes in spec mode are restricted to the
+ * directory containing the spec file (so the agent can write the spec
+ * and any sibling artifacts, but cannot touch arbitrary code).
+ */
+export function checkWritePathInSpecMode(absPath: string): { allowed: boolean; reason?: string } {
+    if (state.mode !== "spec") return { allowed: true };
+    try {
+        const lst = fs.lstatSync(absPath);
+        if (lst.isSymbolicLink()) {
+            return {
+                allowed: false,
+                reason: `Spec mode: refusing to write through symlink ${absPath}.`,
+            };
+        }
+    } catch {
+        // file doesn't exist yet — fine
+    }
+    const resolved = realResolveForGate(absPath);
+    const specDir = realResolveForGate(path.dirname(state.specPath));
+    if (resolved === specDir || resolved.startsWith(specDir + path.sep)) return { allowed: true };
+    return {
+        allowed: false,
+        reason: `Spec mode: writes are restricted to ${specDir}. Path ${absPath} is outside that directory.`,
+    };
+}
+
 export function checkWritePathInApprovalMode(absPath: string): { allowed: boolean; reason?: string } {
     if (state.mode !== "awaiting_approval") return { allowed: true };
     const dir = state.designDocsDir;
-    const sep = "/";
-    const normalized = absPath.replace(/\\/g, sep);
-    const root = dir.replace(/\\/g, sep);
-    if (normalized === root || normalized.startsWith(root + sep)) return { allowed: true };
+    // If the file itself is a symlink, refuse outright — writeFileSync would
+    // follow the link and could write into the dereferenced location.
+    try {
+        const lst = fs.lstatSync(absPath);
+        if (lst.isSymbolicLink()) {
+            return {
+                allowed: false,
+                reason: `While awaiting design-doc approval, refusing to write through symlink ${absPath}.`,
+            };
+        }
+    } catch {
+        // file doesn't exist yet — fine, we're about to create it
+    }
+    const resolved = realResolveForGate(absPath);
+    const root = realResolveForGate(dir);
+    if (resolved === root || resolved.startsWith(root + path.sep)) return { allowed: true };
     return {
         allowed: false,
         reason: `While awaiting design-doc approval, writes are restricted to ${dir}. Path ${absPath} is outside that directory.`,

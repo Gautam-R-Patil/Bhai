@@ -9,6 +9,52 @@ import path from "node:path";
 import { homedir } from "node:os";
 import type { ChatCompletionTool } from "openai/resources/chat/completions.js";
 
+// MCP tool descriptions arrive from third-party servers and feed straight
+// into the LLM context. Strip prompt-injection scaffolding (system tags,
+// instruction markers) and cap the length so a hostile server can't burn
+// the context window or override agent instructions.
+const PROMPT_INJECTION_TAGS = [
+    /<\/?system[^>]*>/gi,
+    /<\/?critical[^>]*>/gi,
+    /<\/?instructions?[^>]*>/gi,
+    /<\/?important[^>]*>/gi,
+    /<\/?user[^>]*>/gi,
+    /<\/?assistant[^>]*>/gi,
+    /\[INST\][\s\S]*?\[\/INST\]/gi,
+    /\[INST\]/gi,
+    /\[\/INST\]/gi,
+    /\[SYSTEM NOTE[^\]]*\]/gi,
+    /\[INSTRUCTIONS?\]/gi,
+];
+
+export function sanitizeMcpDescription(name: string, raw: string | undefined): string {
+    let s = raw && typeof raw === "string" ? raw : name;
+    for (const re of PROMPT_INJECTION_TAGS) {
+        s = s.replace(re, "");
+    }
+    s = s.replace(/\s+/g, " ").trim();
+    if (s.length > 500) s = s.slice(0, 500) + "…";
+    return `[MCP:${name} — third-party advertising, not authoritative] ${s}`;
+}
+
+// Only these env vars are inherited from the parent process when spawning an
+// MCP server. Server-specific overrides from config.env are layered on top.
+const MCP_ENV_ALLOWLIST = new Set(["PATH", "HOME", "USER", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TMPDIR"]);
+
+export function buildMcpEnv(serverEnv?: Record<string, string>): Record<string, string> {
+    const env: Record<string, string> = {};
+    for (const k of MCP_ENV_ALLOWLIST) {
+        const v = process.env[k];
+        if (typeof v === "string") env[k] = v;
+    }
+    if (serverEnv) {
+        for (const [k, v] of Object.entries(serverEnv)) {
+            if (typeof v === "string") env[k] = v;
+        }
+    }
+    return env;
+}
+
 // ── Types ─────────────────────────────────────
 
 interface MCPServerConfig {
@@ -79,7 +125,7 @@ async function connectServer(name: string, config: MCPServerConfig, isStoreItem 
     const transport = new StdioClientTransport({
         command: config.command,
         args: config.args || [],
-        env: { ...process.env, ...(config.env || {}) } as Record<string, string>,
+        env: buildMcpEnv(config.env),
     });
 
     const client = new Client({
@@ -95,7 +141,7 @@ async function connectServer(name: string, config: MCPServerConfig, isStoreItem 
         type: "function" as const,
         function: {
             name: `mcp_${name}__${t.name}`,
-            description: `[MCP:${name}] ${t.description || t.name}`,
+            description: sanitizeMcpDescription(name, t.description),
             parameters: (t.inputSchema as Record<string, unknown>) || { type: "object", properties: {} },
         },
     }));

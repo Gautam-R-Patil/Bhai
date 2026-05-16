@@ -161,11 +161,28 @@ export const designDocsTool: ToolDefinition = {
     async handler(input) {
         const task = typeof input.task === "string" ? input.task.trim() : "";
         if (!task) return JSON.stringify({ success: false, error: "task description required" });
-        const slug = typeof input.slug === "string" && input.slug ? slugify(input.slug) : slugify(task);
-        const parent =
-            typeof input.parent_dir === "string" && input.parent_dir
-                ? path.resolve(input.parent_dir)
-                : path.join(getWorkspaceSubdir("Documents"), "design-docs");
+        const rawSlug = typeof input.slug === "string" && input.slug ? slugify(input.slug) : slugify(task);
+        // After slugify, reject anything that would let the path escape upward.
+        if (rawSlug.includes("..") || rawSlug.includes(path.sep) || rawSlug.includes("/") || rawSlug.includes("\\")) {
+            return JSON.stringify({ success: false, error: "slug contains path-separator or traversal characters" });
+        }
+        const slug = rawSlug;
+        // Confine parent_dir to the workspace Documents tree — never honor an
+        // arbitrary attacker-supplied parent (prompt-injection / untrusted
+        // tool input could otherwise drop docs anywhere on disk).
+        const documentsRoot = path.resolve(getWorkspaceSubdir("Documents"));
+        const defaultParent = path.join(documentsRoot, "design-docs");
+        let parent = defaultParent;
+        if (typeof input.parent_dir === "string" && input.parent_dir) {
+            const candidate = path.resolve(input.parent_dir);
+            if (candidate !== documentsRoot && !candidate.startsWith(documentsRoot + path.sep)) {
+                return JSON.stringify({
+                    success: false,
+                    error: `parent_dir must resolve inside ${documentsRoot}; got ${candidate}.`,
+                });
+            }
+            parent = candidate;
+        }
         if (!existsSync(parent)) mkdirSync(parent, { recursive: true });
         const dir = path.join(parent, slug);
         mkdirSync(dir, { recursive: true });

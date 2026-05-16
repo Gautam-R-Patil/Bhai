@@ -9,8 +9,17 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { registerProtectedPath } from "./allowlist.js";
 
 const AUDIT_PATH = path.resolve("data", "audit.jsonl");
+
+// Make the audit log itself write/delete-protected — a tool that scrubs
+// audit.jsonl could otherwise hide its own tracks. Idempotent register.
+try {
+    registerProtectedPath(AUDIT_PATH);
+} catch {
+    /* allowlist module unavailable — non-fatal */
+}
 
 /**
  * Append a single audit entry to `data/audit.jsonl`.

@@ -9,6 +9,7 @@
 
 import { appendFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import path from "node:path";
+import { checkWritePathInApprovalMode, checkWritePathInSpecMode } from "../../agents/plan-mode.js";
 import { getPathBlockedReason, isPathAllowed, isProtectedPath } from "../../security/allowlist.js";
 import { auditLog } from "../../security/audit-log.js";
 import type { ToolDefinition } from "../get-current-time.js";
@@ -48,6 +49,14 @@ export const appendFile: ToolDefinition = {
         if (!isPathAllowed(filePath)) {
             const reason = getPathBlockedReason(filePath) ?? `Path "${filePath}" is not allowed.`;
             return JSON.stringify({ error: reason });
+        }
+        const approvalGate = checkWritePathInApprovalMode(filePath);
+        if (!approvalGate.allowed) {
+            return JSON.stringify({ error: approvalGate.reason });
+        }
+        const specGate = checkWritePathInSpecMode(filePath);
+        if (!specGate.allowed) {
+            return JSON.stringify({ error: specGate.reason });
         }
         if (isProtectedPath(filePath)) {
             return JSON.stringify({

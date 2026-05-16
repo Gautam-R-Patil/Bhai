@@ -391,6 +391,11 @@ describe("plan-mode — checkWritePathInApprovalMode", () => {
     });
 
     it("normalizes Windows-style backslash paths", () => {
+        // Windows-only: with realpath-based resolution, backslash semantics
+        // only hold under win32. On posix the path "C:\workspace\..." is a
+        // bogus relative segment and resolves through CWD — the new gate
+        // correctly refuses it, which is desired behaviour.
+        if (process.platform !== "win32") return;
         enterAwaitingApproval("task", "C:\\workspace\\design-docs\\auth");
         const r = checkWritePathInApprovalMode("C:\\workspace\\design-docs\\auth\\PRD.md");
         expect(r.allowed).toBe(true);

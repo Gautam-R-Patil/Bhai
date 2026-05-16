@@ -49,8 +49,8 @@ pub struct SanitizeResultNapi {
 // [REDACTED:JWT]`, not `[REDACTED:BEARER_TOKEN]`).
 const STANDARD_PATTERNS: &[(&str, &str)] = &[
     ("ANTHROPIC_API_KEY", r"sk-ant-(?:api|sid|admin)\d+-[A-Za-z0-9_-]{80,}"),
-    ("OPENAI_API_KEY", r"\bsk-(?:proj-)?[A-Za-z0-9_-]{32,}\b"),
     ("OPENROUTER_API_KEY", r"\bsk-or-v\d+-[A-Fa-f0-9]{32,}\b"),
+    ("OPENAI_API_KEY", r"\bsk-(?:proj-)?[A-Za-z0-9_-]{32,}\b"),
     ("AWS_ACCESS_KEY", r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
     ("STRIPE_LIVE_KEY", r"\b(?:sk|pk|rk)_live_[A-Za-z0-9]{24,}\b"),
     ("STRIPE_TEST_KEY", r"\b(?:sk|pk|rk)_test_[A-Za-z0-9]{24,}\b"),

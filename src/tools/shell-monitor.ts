@@ -9,12 +9,56 @@
 
 import { type ChildProcess, spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
-import { join } from "node:path";
-import { isCommandAllowed } from "../security/allowlist.js";
+import { basename, join } from "node:path";
+import { isShellBypass, isSystemDestructive, shellArgsTargetProtectedPath } from "../security/allowlist.js";
 import { auditLog } from "../security/audit-log.js";
+import { sanitizeSecrets } from "../security/secrets-sanitizer.js";
 import { resolveWindowsShell, wrapForShell } from "../utils/win-shell.js";
 import type { ToolDefinition } from "./get-current-time.js";
 import { IS_WIN } from "./platform.js";
+
+// Env vars that should NEVER be inherited into spawned children — these
+// are the credentials that, if echoed by the child (e.g. `env`, `printenv`,
+// `set`), would land in the LLM context. The sanitizer catches most
+// formats but stripping at the spawn boundary is the cheaper defence.
+const SENSITIVE_ENV_PATTERNS: RegExp[] = [
+    /API[_-]?KEY$/i,
+    /SECRET/i,
+    /TOKEN$/i,
+    /PASSWORD/i,
+    /PASSPHRASE/i,
+    /PRIVATE[_-]?KEY/i,
+    /^OPENROUTER_/i,
+    /^OPENAI_/i,
+    /^ANTHROPIC_/i,
+    /^GEMINI_/i,
+    /^GOOGLE_/i,
+    /^GROQ_/i,
+    /^MISTRAL_/i,
+    /^ELEVENLABS_/i,
+    /^HF_/i,
+    /^HUGGINGFACE_/i,
+    /^CONVEX_/i,
+    /^TELEGRAM_BOT_TOKEN/i,
+    /^DISCORD_/i,
+    /^SLACK_/i,
+    /^MATRIX_/i,
+    /^WHATSAPP_/i,
+    /^GITHUB_TOKEN/i,
+    /^GH_TOKEN/i,
+    /^ADMIN_API_KEY/i,
+    /^OTPLESS_/i,
+];
+
+function scrubEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(env)) {
+        if (typeof v !== "string") continue;
+        if (SENSITIVE_ENV_PATTERNS.some((re) => re.test(k))) continue;
+        out[k] = v;
+    }
+    return out;
+}
 
 // ── Constants ─────────────────────────────────
 
@@ -111,11 +155,29 @@ Returns a process_id that you can use with shell_check_process and shell_wait_pr
 
         auditLog("shell_exec_background", { command, args, cwd });
 
-        // Security check
-        if (!isCommandAllowed(command)) {
+        // Mirror shell.ts's triple-check: system-destructive base command,
+        // shell-bypass for destructive inline command, and protected-path
+        // codebase targeting via destructive utilities.
+        const fullCommand = args.length > 0 ? `${command} ${args.join(" ")}` : command;
+        if (isSystemDestructive(fullCommand)) {
             return JSON.stringify({
-                error: `Command "${command}" is not in the allowlist. Blocked for security.`,
+                error: `Blocked: command would cause irreversible damage to the operating system.`,
             });
+        }
+        if (isShellBypass(command, args)) {
+            return JSON.stringify({
+                error: `Blocked: inline command contains a system-destructive operation.`,
+            });
+        }
+        const DESTRUCTIVE_CMDS = new Set(["rm", "mv", "cp", "rsync", "dd"]);
+        const baseCmd = basename(command).replace(/\.exe$/i, "");
+        if (DESTRUCTIVE_CMDS.has(baseCmd)) {
+            const hit = shellArgsTargetProtectedPath([command, ...args]);
+            if (hit) {
+                return JSON.stringify({
+                    error: `Blocked: command "${command}" targets the bot's own codebase path "${hit}".`,
+                });
+            }
         }
 
         await ensureLogDir();
@@ -137,7 +199,7 @@ Returns a process_id that you can use with shell_check_process and shell_wait_pr
             const child = spawn(spawnCmd, spawnArgs, {
                 cwd,
                 shell: !IS_WIN, // Git Bash / PowerShell handle their own quoting; don't double-shell on Windows
-                env: { ...process.env },
+                env: scrubEnv(process.env),
                 stdio: ["ignore", "pipe", "pipe"],
             });
 
@@ -156,22 +218,24 @@ Returns a process_id that you can use with shell_check_process and shell_wait_pr
                 logFile,
             };
 
-            // Stream stdout
+            // Stream stdout — sanitize before storing in the in-memory buffer
+            // that ships to the LLM. Raw text goes to disk so the user retains
+            // the unredacted log.
             child.stdout?.on("data", (data: Buffer) => {
                 const text = data.toString();
-                bp.stdout += text;
-                // Keep only last 50K chars to avoid memory issues
+                const clean = sanitizeSecrets(text).sanitized;
+                bp.stdout += clean;
                 if (bp.stdout.length > 50000) {
                     bp.stdout = bp.stdout.slice(-40000);
                 }
-                // Append to log file (fire and forget)
                 fs.appendFile(logFile, text).catch(() => {});
             });
 
             // Stream stderr
             child.stderr?.on("data", (data: Buffer) => {
                 const text = data.toString();
-                bp.stderr += text;
+                const clean = sanitizeSecrets(text).sanitized;
+                bp.stderr += clean;
                 if (bp.stderr.length > 50000) {
                     bp.stderr = bp.stderr.slice(-40000);
                 }
@@ -243,9 +307,11 @@ export const shellCheckProcess: ToolDefinition = {
             return JSON.stringify({ error: `Process "${processId}" not found` });
         }
 
-        // Get last N lines of output
+        // Get last N lines of output. Buffers are already sanitized on
+        // ingestion; sanitize once more in case a secret was split across
+        // chunk boundaries during streaming.
         const allOutput = bp.stdout + (bp.stderr ? `\n[STDERR]\n${bp.stderr}` : "");
-        const lines = allOutput.split("\n");
+        const lines = sanitizeSecrets(allOutput).sanitized.split("\n");
         const tail = lines.slice(-tailLines).join("\n");
 
         const elapsed = bp.endedAt

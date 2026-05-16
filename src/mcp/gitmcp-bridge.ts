@@ -10,13 +10,30 @@ export interface GitMCPServer {
 }
 
 const activeServers = new Map<string, GitMCPServer>();
+const MAX_ACTIVE_SERVERS = 50;
+
+// owner / repo names per GitHub policy: alphanumerics + `._-`, 1-39 chars.
+// Must contain at least one alphanumeric so "..." / "---" can't pass.
+const SLUG_RE = /^(?=[A-Za-z0-9._-]{1,39}$)[A-Za-z0-9._-]*[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 export function getGitMCPEndpoint(repoUrl: string): string {
-    // GitMCP converts GitHub URLs to MCP endpoints
-    // github.com/owner/repo → owner.repo.gitmcp.io
-    const match = repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
-    if (!match) return "";
-    return `https://${match[1]}.${match[2]}.gitmcp.io`;
+    // Strict URL parse so attacker-supplied strings like
+    // "evil.com/foo/bar/?github.com/owner/repo" can't masquerade as a
+    // github.com URL via substring matching.
+    let url: URL;
+    try {
+        url = new URL(repoUrl);
+    } catch {
+        return "";
+    }
+    if (url.hostname !== "github.com" && url.hostname !== "www.github.com") return "";
+    // Pathname is `/owner/repo[/...]`. Reject anything else.
+    const parts = url.pathname.split("/").filter(Boolean);
+    if (parts.length < 2) return "";
+    const [owner, repo] = parts;
+    const cleanRepo = repo.replace(/\.git$/, "");
+    if (!SLUG_RE.test(owner) || !SLUG_RE.test(cleanRepo)) return "";
+    return `https://${owner}.${cleanRepo}.gitmcp.io`;
 }
 
 export async function connectGitMCPServer(repoUrl: string): Promise<GitMCPServer | null> {
@@ -24,6 +41,7 @@ export async function connectGitMCPServer(repoUrl: string): Promise<GitMCPServer
     if (!endpoint) return null;
 
     if (activeServers.has(repoUrl)) return activeServers.get(repoUrl)!;
+    if (activeServers.size >= MAX_ACTIVE_SERVERS) return null;
 
     try {
         const resp = await fetch(endpoint, { method: "HEAD", signal: AbortSignal.timeout(5000) });

@@ -11,6 +11,8 @@ import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { getPathBlockedReason, isPathAllowed } from "../../security/allowlist.js";
 import { auditLog } from "../../security/audit-log.js";
+import { sanitizeSecrets } from "../../security/secrets-sanitizer.js";
+import { isSensitivePath } from "../../security/sensitive-paths.js";
 import type { ToolDefinition } from "../get-current-time.js";
 import { hashContent, recordRead } from "./read-registry.js";
 
@@ -113,6 +115,12 @@ export const read: ToolDefinition = {
             const reason = getPathBlockedReason(filePath) ?? `Path "${filePath}" is not allowed.`;
             return JSON.stringify({ error: reason });
         }
+        const sensitive = isSensitivePath(filePath);
+        if (sensitive.denied) {
+            return JSON.stringify({
+                error: `Refusing to read sensitive path. ${sensitive.reason ?? ""} If you genuinely need this file, ask the user to surface the relevant value directly.`,
+            });
+        }
 
         let stats;
         try {
@@ -155,7 +163,7 @@ export const read: ToolDefinition = {
                 }
                 const data = await pdfParse(buf, opts);
                 const text = data.text || "";
-                const numbered = formatWithLineNumbers(text);
+                const numbered = sanitizeSecrets(formatWithLineNumbers(text)).sanitized;
                 recordRead(filePath, hashContent(buf));
                 return JSON.stringify({
                     success: true,
@@ -172,7 +180,7 @@ export const read: ToolDefinition = {
         // ── Jupyter branch ───────────────────────
         if (lowerName.endsWith(".ipynb")) {
             const rendered = renderNotebook(buf.toString("utf-8"));
-            const numbered = formatWithLineNumbers(rendered);
+            const numbered = sanitizeSecrets(formatWithLineNumbers(rendered)).sanitized;
             recordRead(filePath, hashContent(buf));
             return JSON.stringify({
                 success: true,
@@ -200,7 +208,7 @@ export const read: ToolDefinition = {
         const startIdx = offset1 - 1; // 0-based
         const endIdx = Math.min(allLines.length, startIdx + limit);
         const slice = allLines.slice(startIdx, endIdx).join("\n");
-        const numbered = formatWithLineNumbers(slice, offset1);
+        const numbered = sanitizeSecrets(formatWithLineNumbers(slice, offset1)).sanitized;
 
         recordRead(filePath, hashContent(buf));
 
