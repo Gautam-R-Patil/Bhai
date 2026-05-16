@@ -67,3 +67,35 @@
 
 ## Comparison to demo
 - [ ] Open `desktop/onboarding-demo/index.html` side by side. The production wizard's visuals match the demo within ~2% (font sizes, weights, padding, motion timing). Any divergence is a bug in the production code, not the demo.
+
+---
+
+# W2 Persona Specialization — Acceptance Checklist
+
+> Walk on a clean `~/Library/Application Support/atlas-desktop/config.json`.
+
+## Persona step renders
+- [ ] After Profile (name), the wizard shows the new Persona step with five cards.
+- [ ] Continue button is disabled until a card is selected.
+- [ ] Clicking a card highlights it; clicking another moves the highlight.
+
+## Selection persists
+- [ ] Selecting Developer + Continue lands on Personalize.
+- [ ] Quit and relaunch from setup-state: the Persona step pre-selects Developer.
+
+## Tone defaults work
+- [ ] Fresh state + Developer → profile.tone becomes "professional" (verify via `cat ~/Library/Application\ Support/atlas-desktop/config.json | jq .prefs.profile` or the equivalent `.user-profile.json` in userData).
+- [ ] Fresh state + Creator → profile.tone becomes "friendly".
+- [ ] If you set Personalize → Personality preset first and then change Persona, the existing tone wins (NOT overridden by persona default).
+
+## Identity-line injection
+- [ ] With persona=developer set and bot running, send any message via Telegram or overlay.
+- [ ] Check the log: the dynamic-context block should contain a line starting "The user describes themselves as a developer."
+- [ ] Set `ATLAS_NO_PERSONA_BIAS=true` and restart. Send a message. The line should NOT appear.
+
+## Tool-router overlay
+- [ ] With persona=developer set, send "explain my codebase" — agent should choose code-cluster tools.
+- [ ] Set `ATLAS_NO_PERSONA_BIAS=true` and restart — the overlay block should be skipped (confirm via absence of related entries in tool-router logs).
+
+## Comparison to demo
+- [ ] Open `desktop/onboarding-demo/index.html` — the persona step in the demo and the production wizard should match within ~2% (sizes, padding, hover behaviour).
