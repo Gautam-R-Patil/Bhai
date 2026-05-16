@@ -99,3 +99,36 @@
 
 ## Comparison to demo
 - [ ] Open `desktop/onboarding-demo/index.html` — the persona step in the demo and the production wizard should match within ~2% (sizes, padding, hover behaviour).
+
+---
+
+# W3 Magic Moment (rich) + Adaptive Nudges — Acceptance Checklist
+
+> Walk on a clean state. Magic Moment requires permissions granted;
+> nudges require the wizard to have completed at least once + a clock
+> rollback or real-time wait for day boundaries.
+
+## Magic Moment (rich)
+- [ ] On Ready Hub mount with multiple apps open (Cursor + Chrome, or Figma + Slack):
+  - The W1 static signal renders first (no flicker).
+  - Within ~1s, the card swaps to a rich observation matching your open apps
+    (e.g. "Looks like you're building something." for dev-cluster).
+- [ ] Persona-aware filler: if persona=developer, the rotation should include
+  "I'll prioritize codebase context."
+- [ ] Late-night session adds a "minimal mode" signal.
+- [ ] `ATLAS_NO_MAGIC_MOMENT_RICH=true` → card stays on W1 static signals.
+- [ ] `ATLAS_NO_MAGIC_MOMENT=true` → card hidden entirely.
+
+## Adaptive Nudges
+- [ ] Open the bot 2 days after first install. The personalize-shortcuts
+  nudge should fire as an overlay message.
+- [ ] Day 3: browser-memory nudge fires.
+- [ ] Day 5: voice-speed nudge fires.
+- [ ] After all three fire, no further onboarding nudges (graduatedAt set).
+- [ ] `ATLAS_NO_ONBOARDING_NUDGES=true` → no nudges fire ever.
+- [ ] Tapping "Don't suggest more" on any nudge → graduatedAt set immediately;
+  no further nudges.
+
+## State inspection
+- [ ] `identity.extra.onboardingNudges` reflects each fire's timestamp.
+- [ ] `identity.extra.onboardingNudges.graduatedAt` is set after all three.
