@@ -4,7 +4,7 @@ const Copy = mod.Copy || mod.default;
 
 describe("Copy.get", () => {
     it("returns the string for a valid (step, key) pair", () => {
-        expect(Copy.get("terms", "title")).toBe("Read once. We won't ask again.");
+        expect(Copy.get("terms", "title")).toBe("Read the terms once. We'll remember.");
     });
 
     it("returns null for an unknown step", () => {
