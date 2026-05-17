@@ -2895,14 +2895,51 @@
             }
         }
 
+        // Persona-tagged greeting — fires once, the first time the user
+        // lands on the panel after picking a persona in the wizard. Toast
+        // is the lightest surface that's clearly "this is for you".
+        const PERSONA_GREETINGS = {
+            developer:  "Welcome, developer. I'll keep code, terminal, and git context warm — try \"explain this codebase\".",
+            founder:    "Welcome, founder. I'll watch your calendar and inbox — try \"prep me for my next meeting\".",
+            creator:    "Welcome, creator. I'll keep references organized — drop a link or asset any time.",
+            researcher: "Welcome, researcher. I'll chase citations for you — try \"find the strongest sources on X\".",
+            explorer:   null, // no greeting for explorer — by design
+        };
+        async function showPersonaWelcomeIfNeeded() {
+            try {
+                if (!atlas || typeof atlas.getPrefs !== 'function') return;
+                const prefs = await atlas.getPrefs() || {};
+                if (prefs.personaWelcomed) return;
+                let persona = null;
+                if (typeof atlas.setupDetect === 'function') {
+                    try {
+                        const state = await atlas.setupDetect();
+                        persona = state && state.profile && state.profile.persona;
+                    } catch { /* no-op */ }
+                }
+                if (!persona) return;
+                const msg = PERSONA_GREETINGS[persona];
+                if (!msg) {
+                    // Explorer or unknown — still mark welcomed so we don't keep checking.
+                    if (typeof atlas.setPref === 'function') atlas.setPref('personaWelcomed', true);
+                    return;
+                }
+                // Slight delay so the panel finishes laying out before the toast pops.
+                setTimeout(function () { showToast(msg); }, 600);
+                if (typeof atlas.setPref === 'function') await atlas.setPref('personaWelcomed', true);
+            } catch { /* best-effort */ }
+        }
+
         // Trigger initial load now — the inline script runs after DOMContentLoaded
         // when this panel is opened post-boot, so an addEventListener would never fire.
         // Run inline + also listen, to cover both timings.
         if (typeof window !== 'undefined') {
             if (document.readyState === 'loading') {
                 window.addEventListener('DOMContentLoaded', loadPersonalityFromPrefs);
+                window.addEventListener('DOMContentLoaded', showPersonaWelcomeIfNeeded);
             } else {
                 loadPersonalityFromPrefs();
+                showPersonaWelcomeIfNeeded();
             }
         }
 
