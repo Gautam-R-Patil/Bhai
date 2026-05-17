@@ -1,7 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Plus, Ban, Copy, Check, AlertCircle, Building2 } from "lucide-react";
+import {
+  Plus,
+  Ban,
+  Copy,
+  Check,
+  AlertCircle,
+  Building2,
+  BarChart3,
+  Activity,
+} from "lucide-react";
 
 interface License {
   _id: string;
@@ -16,6 +25,19 @@ interface License {
   revokedReason?: string;
 }
 
+interface UsageEntry {
+  license_id: string;
+  license_key: string;
+  client_name: string;
+  contact_email: string;
+  license_status: string;
+  seat_limit: number;
+  total_calls: number;
+  active_days: number;
+  last_active_day: string | null;
+  top_tools: Array<{ tool_name: string; count: number }>;
+}
+
 const statusColors: Record<string, string> = {
   active: "bg-green-500/10 text-green-300 border-green-500/20",
   suspended: "bg-yellow-500/10 text-yellow-300 border-yellow-500/20",
@@ -24,11 +46,103 @@ const statusColors: Record<string, string> = {
 };
 
 export default function EnterprisePage() {
+  const [tab, setTab] = useState<"licenses" | "usage">("licenses");
+  const [showCreate, setShowCreate] = useState(false);
+
+  return (
+    <div className="p-8 max-w-7xl mx-auto">
+      <div className="flex items-start justify-between mb-6">
+        <div>
+          <div className="flex items-center gap-3 mb-2">
+            <Building2 className="w-7 h-7 text-blue-400" />
+            <h1 className="text-3xl font-semibold text-white">Enterprise</h1>
+          </div>
+          <p className="text-white/60 text-sm">
+            ATLAS Tools MCP — manage customer licenses and usage on the isolated
+            <span className="font-mono text-white/80 ml-1">sincere-caiman-611</span> Convex deployment.
+          </p>
+        </div>
+        {tab === "licenses" && (
+          <button
+            type="button"
+            onClick={() => setShowCreate(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition"
+          >
+            <Plus className="w-4 h-4" />
+            New Customer License
+          </button>
+        )}
+      </div>
+
+      <div className="flex items-center gap-1 mb-6 border-b border-white/[0.08]">
+        <TabButton
+          active={tab === "licenses"}
+          onClick={() => setTab("licenses")}
+          icon={<Building2 className="w-4 h-4" />}
+        >
+          Licenses
+        </TabButton>
+        <TabButton
+          active={tab === "usage"}
+          onClick={() => setTab("usage")}
+          icon={<BarChart3 className="w-4 h-4" />}
+        >
+          Usage
+        </TabButton>
+      </div>
+
+      {tab === "licenses" ? (
+        <LicensesView
+          showCreate={showCreate}
+          onShowCreate={setShowCreate}
+        />
+      ) : (
+        <UsageView />
+      )}
+    </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  children,
+  icon,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+  icon: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex items-center gap-2 px-4 py-2.5 text-sm border-b-2 -mb-px transition ${
+        active
+          ? "text-white border-blue-500"
+          : "text-white/60 hover:text-white border-transparent"
+      }`}
+    >
+      {icon}
+      {children}
+    </button>
+  );
+}
+
+// ─── Licenses ─────────────────────────────────────────────────────────
+
+function LicensesView({
+  showCreate,
+  onShowCreate,
+}: {
+  showCreate: boolean;
+  onShowCreate: (v: boolean) => void;
+}) {
   const [licenses, setLicenses] = useState<License[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "active" | "revoked" | "expired">("all");
-  const [showCreate, setShowCreate] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   const load = async () => {
@@ -38,9 +152,7 @@ export default function EnterprisePage() {
       const res = await fetch("/api/enterprise/licenses");
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
       const data = (await res.json()) as { licenses: License[] };
-      setLicenses(
-        data.licenses.sort((a, b) => b.issuedAt - a.issuedAt),
-      );
+      setLicenses(data.licenses.sort((a, b) => b.issuedAt - a.issuedAt));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load licenses");
     } finally {
@@ -87,28 +199,7 @@ export default function EnterprisePage() {
     .reduce((s, l) => s + l.seatLimit, 0);
 
   return (
-    <div className="p-8 max-w-7xl mx-auto">
-      <div className="flex items-start justify-between mb-8">
-        <div>
-          <div className="flex items-center gap-3 mb-2">
-            <Building2 className="w-7 h-7 text-blue-400" />
-            <h1 className="text-3xl font-semibold text-white">Enterprise Licenses</h1>
-          </div>
-          <p className="text-white/60 text-sm">
-            ATLAS Tools MCP — manage enterprise customer licenses on the isolated
-            <span className="font-mono text-white/80 ml-1">sincere-caiman-611</span> Convex deployment.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => setShowCreate(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition"
-        >
-          <Plus className="w-4 h-4" />
-          New Customer License
-        </button>
-      </div>
-
+    <>
       <div className="grid grid-cols-3 gap-4 mb-6">
         <StatCard label="Active licenses" value={activeCount} />
         <StatCard label="Total active seats" value={totalSeats} />
@@ -132,18 +223,7 @@ export default function EnterprisePage() {
         ))}
       </div>
 
-      {error && (
-        <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-lg flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
-          <div>
-            <div className="font-medium text-red-300 mb-1">Failed to talk to enterprise Convex</div>
-            <div className="text-sm text-red-300/80">{error}</div>
-            <div className="text-xs text-red-300/60 mt-2">
-              Check that <code>ATLAS_MCP_ADMIN_KEY</code> and <code>ATLAS_MCP_CONVEX_SITE_URL</code> are set in the admin-panel env.
-            </div>
-          </div>
-        </div>
-      )}
+      {error && <ErrorBanner message={error} />}
 
       {loading ? (
         <div className="text-white/60 text-center py-12">Loading…</div>
@@ -223,13 +303,193 @@ export default function EnterprisePage() {
 
       {showCreate && (
         <CreateLicenseModal
-          onClose={() => setShowCreate(false)}
+          onClose={() => onShowCreate(false)}
           onCreated={async () => {
-            setShowCreate(false);
+            onShowCreate(false);
             await load();
           }}
         />
       )}
+    </>
+  );
+}
+
+// ─── Usage ────────────────────────────────────────────────────────────
+
+function UsageView() {
+  const [usage, setUsage] = useState<UsageEntry[]>([]);
+  const [windowDays, setWindowDays] = useState(30);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = async (days: number) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/enterprise/usage?days=${days}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+      const data = (await res.json()) as { usage: UsageEntry[]; window_days: number };
+      setUsage(data.usage);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load usage");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load(windowDays);
+  }, [windowDays]);
+
+  const totalCalls = usage.reduce((s, u) => s + u.total_calls, 0);
+  const activeCustomers = usage.filter((u) => u.total_calls > 0).length;
+  const totalLicenses = usage.length;
+
+  return (
+    <>
+      <div className="grid grid-cols-3 gap-4 mb-6">
+        <StatCard label={`Tool calls (last ${windowDays}d)`} value={totalCalls} />
+        <StatCard label="Active customers" value={activeCustomers} />
+        <StatCard label="Total licenses tracked" value={totalLicenses} />
+      </div>
+
+      <div className="flex items-center gap-2 mb-4">
+        <span className="text-xs text-white/50 uppercase tracking-wide mr-2">Window</span>
+        {[7, 14, 30, 90, 365].map((d) => (
+          <button
+            type="button"
+            key={d}
+            onClick={() => setWindowDays(d)}
+            className={`px-3 py-1.5 text-sm rounded-md transition ${
+              windowDays === d
+                ? "bg-white/10 text-white"
+                : "text-white/60 hover:text-white hover:bg-white/[0.04]"
+            }`}
+          >
+            {d}d
+          </button>
+        ))}
+        <div className="flex-1" />
+        <button
+          type="button"
+          onClick={() => void load(windowDays)}
+          className="px-3 py-1.5 text-sm text-white/60 hover:text-white hover:bg-white/[0.04] rounded-md transition"
+        >
+          Refresh
+        </button>
+      </div>
+
+      {error && <ErrorBanner message={error} />}
+
+      {loading ? (
+        <div className="text-white/60 text-center py-12">Loading…</div>
+      ) : usage.length === 0 ? (
+        <div className="text-white/60 text-center py-12 border border-white/[0.08] rounded-lg">
+          No licenses or usage data yet.
+        </div>
+      ) : (
+        <div className="border border-white/[0.08] rounded-lg overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-white/[0.03] text-white/60 text-xs uppercase tracking-wide">
+              <tr>
+                <th className="px-4 py-3 text-left font-medium">Customer</th>
+                <th className="px-4 py-3 text-left font-medium">License</th>
+                <th className="px-4 py-3 text-right font-medium">Total Calls</th>
+                <th className="px-4 py-3 text-right font-medium">Active Days</th>
+                <th className="px-4 py-3 text-left font-medium">Last Active</th>
+                <th className="px-4 py-3 text-left font-medium">Top Tools</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/[0.04]">
+              {usage.map((u) => (
+                <tr key={u.license_id} className="hover:bg-white/[0.02]">
+                  <td className="px-4 py-3">
+                    <div className="text-white text-sm">{u.client_name}</div>
+                    <div className="text-white/40 text-xs">{u.contact_email}</div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="font-mono text-xs text-white/90">{u.license_key}</div>
+                    <div className="text-xs text-white/40 mt-0.5">
+                      <span
+                        className={`inline-block px-1.5 py-0.5 text-[10px] rounded border ${
+                          statusColors[u.license_status] ?? statusColors.expired
+                        }`}
+                      >
+                        {u.license_status}
+                      </span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <span
+                      className={`font-mono ${
+                        u.total_calls > 0 ? "text-white" : "text-white/30"
+                      }`}
+                    >
+                      {u.total_calls.toLocaleString()}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <span className="font-mono text-white/70">{u.active_days}</span>
+                    <span className="text-white/30 text-xs">/{windowDays}</span>
+                  </td>
+                  <td className="px-4 py-3 text-white/60 text-xs">
+                    {u.last_active_day ? (
+                      <span className="flex items-center gap-1.5">
+                        <Activity className="w-3 h-3 text-green-400" />
+                        {u.last_active_day}
+                      </span>
+                    ) : (
+                      <span className="text-white/30">never</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    {u.top_tools.length === 0 ? (
+                      <span className="text-white/30 text-xs">—</span>
+                    ) : (
+                      <div className="flex flex-wrap gap-1">
+                        {u.top_tools.slice(0, 4).map((t) => (
+                          <span
+                            key={t.tool_name}
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] rounded bg-white/[0.04] border border-white/[0.06] text-white/70"
+                            title={`${t.count} calls`}
+                          >
+                            <span className="font-mono">{t.tool_name}</span>
+                            <span className="text-white/50">{t.count}</span>
+                          </span>
+                        ))}
+                        {u.top_tools.length > 4 && (
+                          <span className="text-[10px] text-white/40 self-center">
+                            +{u.top_tools.length - 4}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ─── Shared bits ──────────────────────────────────────────────────────
+
+function ErrorBanner({ message }: { message: string }) {
+  return (
+    <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-lg flex items-start gap-3">
+      <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+      <div>
+        <div className="font-medium text-red-300 mb-1">
+          Failed to talk to enterprise Convex
+        </div>
+        <div className="text-sm text-red-300/80">{message}</div>
+        <div className="text-xs text-red-300/60 mt-2">
+          Check that <code>ATLAS_MCP_ADMIN_KEY</code> and <code>ATLAS_MCP_CONVEX_SITE_URL</code> are set in the admin-panel env.
+        </div>
+      </div>
     </div>
   );
 }
@@ -238,7 +498,7 @@ function StatCard({ label, value }: { label: string; value: number }) {
   return (
     <div className="p-4 border border-white/[0.08] rounded-lg bg-white/[0.02]">
       <div className="text-xs text-white/50 uppercase tracking-wide mb-1">{label}</div>
-      <div className="text-2xl font-semibold text-white">{value}</div>
+      <div className="text-2xl font-semibold text-white">{value.toLocaleString()}</div>
     </div>
   );
 }

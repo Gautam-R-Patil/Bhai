@@ -91,3 +91,32 @@ export async function revokeEnterpriseLicense(
   });
   return await jsonOrThrow<{ ok: boolean; revoked_activations: number }>(res);
 }
+
+export interface UsageEntry {
+  license_id: string;
+  license_key: string;
+  client_id: string;
+  client_name: string;
+  contact_email: string;
+  license_status: string;
+  seat_limit: number;
+  total_calls: number;
+  active_days: number;
+  last_active_day: string | null;
+  top_tools: Array<{ tool_name: string; count: number }>;
+}
+
+export interface UsageResponse {
+  window_days: number;
+  cutoff_day: string;
+  usage: UsageEntry[];
+}
+
+export async function listEnterpriseUsage(days: number): Promise<UsageResponse> {
+  const clamped = Math.max(1, Math.min(365, Math.floor(days)));
+  const res = await fetch(`${baseUrl()}/v1/admin/usage?days=${clamped}`, {
+    headers: { "x-admin-key": adminKey() },
+    cache: "no-store",
+  });
+  return await jsonOrThrow<UsageResponse>(res);
+}
