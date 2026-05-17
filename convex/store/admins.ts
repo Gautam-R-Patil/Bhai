@@ -14,6 +14,7 @@ export const PERMISSIONS = {
   FEATURE_APPS: "feature_apps",
   VIEW_ANALYTICS: "view_analytics",
   MANAGE_SETTINGS: "manage_settings",
+  MANAGE_ENTERPRISE: "manage_enterprise",
 } as const;
 
 export const ROLES = {

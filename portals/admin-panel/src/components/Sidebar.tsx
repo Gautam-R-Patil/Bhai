@@ -16,6 +16,7 @@ import {
   UserPlus,
   Zap,
   AlertTriangle,
+  Building2,
 } from "lucide-react";
 
 // Permissions strings come from convex/store/admins.ts::PERMISSIONS. Adding a
@@ -40,6 +41,7 @@ const NAVIGATION: NavItem[] = [
   { name: "Activity Logs", href: "/activity", icon: Activity, requiredPermission: "view_analytics" },
   { name: "LLM Logs", href: "/llm-logs", icon: Zap, requiredPermission: "view_analytics" },
   { name: "Error Logs", href: "/error-logs", icon: AlertTriangle, requiredPermission: "view_analytics" },
+  { name: "Enterprise", href: "/enterprise", icon: Building2, requiredPermission: "manage_enterprise" },
   { name: "Settings", href: "/settings", icon: Settings },
   { name: "Admins", href: "/admins", icon: Shield, requiredPermission: "manage_admins" },
 ];
