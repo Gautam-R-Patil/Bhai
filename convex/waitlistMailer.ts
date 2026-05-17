@@ -20,6 +20,21 @@ function escapeHtml(input: string): string {
     .replace(/'/g, "&#39;");
 }
 
+// nodemailer/SMTP error strings can echo back the AUTH PLAIN payload or the
+// password itself ("535 5.7.8 ... <password>"). Scrub before storing into the
+// waitlist row (which is surfaced in the admin UI on failure).
+function sanitizeSmtpError(message: string): string {
+  let out = message;
+  const pass = process.env.SMTP_PASS;
+  const user = process.env.SMTP_USER;
+  if (pass && pass.length > 2) out = out.split(pass).join("***");
+  if (user && user.length > 2) out = out.split(user).join("<smtp-user>");
+  // Strip base64 AUTH PLAIN blobs (>=16 chars of base64 after "AUTH PLAIN ").
+  out = out.replace(/AUTH\s+PLAIN\s+[A-Za-z0-9+/=]{16,}/gi, "AUTH PLAIN ***");
+  out = out.replace(/AUTH\s+LOGIN\s+[A-Za-z0-9+/=]{16,}/gi, "AUTH LOGIN ***");
+  return out.slice(0, 500);
+}
+
 export const sendNewEntryNotification = internalAction({
   args: { entryId: v.id("waitlist") },
   handler: async (ctx, args) => {
@@ -103,7 +118,7 @@ export const sendNewEntryNotification = internalAction({
 
     try {
       await transporter.sendMail({
-        from: { name: "ATLAS", address: fromAddress },
+        from: { name: "XAGI Labs", address: fromAddress },
         to: toAddress,
         replyTo: fromAddress,
         sender: fromAddress,
@@ -119,6 +134,311 @@ export const sendNewEntryNotification = internalAction({
       return { sent: true };
     } catch (err: any) {
       console.error("[waitlistMailer] sendMail failed:", err?.message || err);
+      return { sent: false, reason: "send_failed", error: err?.message };
+    }
+  },
+});
+
+// Triggered when an admin flips a waitlist entry to "accepted" via the panel.
+// Sends the alpha-access invitation directly to the applicant's address.
+export const sendAcceptanceEmail = internalAction({
+  args: { entryId: v.id("waitlist") },
+  handler: async (ctx, args) => {
+    const host = process.env.SMTP_HOST;
+    const port = Number(process.env.SMTP_PORT ?? 465);
+    const user = process.env.SMTP_USER;
+    const pass = process.env.SMTP_PASS;
+    if (!host || !user || !pass) {
+      console.warn(
+        "[waitlistMailer] SMTP not configured — skipping acceptance email",
+      );
+      await ctx.runMutation(internal.waitlist.recordEmailOutcome, {
+        entryId: args.entryId,
+        kind: "accepted",
+        status: "failed",
+        error: "SMTP not configured on Convex deployment",
+      });
+      return { sent: false, reason: "smtp_not_configured" };
+    }
+
+    const entry = await ctx.runQuery(internal.waitlist.getEntryById, {
+      entryId: args.entryId,
+    });
+    if (!entry) {
+      console.warn(`[waitlistMailer] entry ${args.entryId} not found`);
+      return { sent: false, reason: "entry_not_found" };
+    }
+
+    const fromAddress = process.env.WAITLIST_NOTIFY_FROM || user;
+    const fromDomain = (fromAddress.split("@")[1] || "xagilab.com").trim();
+
+    const transporter = nodemailer.createTransport({
+      host,
+      port,
+      secure: port === 465,
+      auth: { user, pass },
+      name: fromDomain,
+    });
+
+    const subject = "Welcome to ATLAS Alpha Testing – You’re In!";
+
+    const html = `<table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 20px;background:#f3f4f6;">
+  <tbody>
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="border-radius:14px; overflow:hidden; background:#ffffff; box-shadow:0 10px 30px rgba(0,0,0,0.25);">
+          <tbody>
+            <tr>
+              <td style="padding:30px; text-align:center; background:linear-gradient(135deg,#6366f1,#ec4899,#22c55e); color:#ffffff;">
+                <h1 style="margin:0; font-size:26px; letter-spacing:2px;">A.T.L.A.S</h1>
+                <p style="margin:6px 0 0; font-size:14px; opacity:0.9;">Alpha Access Invitation</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:35px; color:#111827; font-size:15px; line-height:1.7;">
+                <p><b>Congratulations.</b></p>
+                <p>You have been selected to be part of a <b>small, exclusive alpha testing group</b> for ATLAS by XAGI Labs &mdash; a platform built to redefine how humans interact with intelligence itself.</p>
+                <p><b>ATLAS is the world’s first AGI experience platform.</b><br>This is not just another tool or interface, but a new way of engaging with intelligence &mdash; one that moves beyond commands and responses into true interaction, adaptation, and understanding.</p>
+                <p>As an early tester, you are among a very limited group gaining access to something fundamentally new.</p>
+                <p>If you are interested in participating, please reply to this email confirming your interest. Along with your confirmation, kindly share:</p>
+                <ul style="padding-left:20px;">
+                  <li>Your Operating System</li>
+                  <li>Your OS Version (if available)</li>
+                </ul>
+                <p>Selected participants will receive a <b>complimentary Pro account</b> along with <b>250 AI credits</b> to explore ATLAS and experience its capabilities firsthand.</p>
+                <p>A follow-up email will include access details, usage instructions, and program guidelines, along with a feedback form for reporting issues and sharing insights.</p>
+                <p>For every valid issue or feedback submission, you will receive <b>10 additional AI credits</b>.<br>After 10 successful submissions, you will receive a <b>bonus of 100 AI credits</b>.</p>
+                <p style="margin-top:20px; font-weight:bold;">You are not just testing a product.<br>You are stepping into the earliest version of what comes next.</p>
+                <p style="margin-top:25px;">For any queries, contact us at <a href="mailto:hello@xagilab.com" style="color:#2563eb; text-decoration:none;">hello@xagilab.com</a>.</p>
+                <p style="margin-top:20px;">Welcome to ATLAS.</p>
+                <p>Best regards,<br><b>XAGI Labs Private Limited</b></p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:20px; font-size:11px; line-height:1.6; color:#6b7280; background:#f9fafb;">
+                <b>Confidentiality Notice:</b><br>
+                This email and any attachments are intended solely for the addressed recipient and may contain confidential, proprietary, or sensitive information belonging to XAGI Labs Private Limited. If you are not the intended recipient, you are hereby notified that any review, dissemination, distribution, copying, or use of this communication is strictly prohibited.<br><br>
+                If you have received this email in error, please notify the sender immediately and delete this email from your system. Unauthorized use or disclosure of the contents may be unlawful.<br><br>
+                &copy; XAGI Labs Private Limited. All rights reserved.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </td>
+    </tr>
+  </tbody>
+</table>`;
+
+    const text = [
+      "Congratulations.",
+      "",
+      "You have been selected to be part of a small, exclusive alpha testing group for ATLAS by XAGI Labs.",
+      "",
+      "ATLAS is the world’s first AGI experience platform.",
+      "",
+      "If you are interested in participating, please reply to this email confirming your interest. Along with your confirmation, kindly share:",
+      "  - Your Operating System",
+      "  - Your OS Version (if available)",
+      "",
+      "Selected participants will receive a complimentary Pro account along with 250 AI credits.",
+      "",
+      "For every valid issue or feedback submission, you will receive 10 additional AI credits. After 10 successful submissions, you will receive a bonus of 100 AI credits.",
+      "",
+      "Welcome to ATLAS.",
+      "",
+      "Best regards,",
+      "XAGI Labs Private Limited",
+      "hello@xagilab.com",
+    ].join("\n");
+
+    const messageId = `<accept-${args.entryId}-${Date.now()}@${fromDomain}>`;
+
+    try {
+      await transporter.sendMail({
+        from: { name: "XAGI Labs", address: fromAddress },
+        to: entry.email,
+        replyTo: fromAddress,
+        sender: fromAddress,
+        envelope: { from: fromAddress, to: entry.email },
+        messageId,
+        subject,
+        text,
+        html,
+        headers: {
+          "X-Mailer": "ATLAS",
+        },
+      });
+      console.log(`[waitlistMailer] acceptance email sent to ${entry.email}`);
+      await ctx.runMutation(internal.waitlist.recordEmailOutcome, {
+        entryId: args.entryId,
+        kind: "accepted",
+        status: "sent",
+      });
+      return { sent: true };
+    } catch (err: any) {
+      console.error("[waitlistMailer] acceptance sendMail failed:", err?.message || err);
+      await ctx.runMutation(internal.waitlist.recordEmailOutcome, {
+        entryId: args.entryId,
+        kind: "accepted",
+        status: "failed",
+        error: sanitizeSmtpError(String(err?.message || err)),
+      });
+      return { sent: false, reason: "send_failed", error: err?.message };
+    }
+  },
+});
+
+// Triggered when an admin flips a waitlist entry to "contacted" via the panel.
+// Sends the 1:1 walkthrough booking invite to the applicant's address.
+export const sendContactedEmail = internalAction({
+  args: { entryId: v.id("waitlist") },
+  handler: async (ctx, args) => {
+    const host = process.env.SMTP_HOST;
+    const port = Number(process.env.SMTP_PORT ?? 465);
+    const user = process.env.SMTP_USER;
+    const pass = process.env.SMTP_PASS;
+    if (!host || !user || !pass) {
+      console.warn(
+        "[waitlistMailer] SMTP not configured — skipping contacted email",
+      );
+      await ctx.runMutation(internal.waitlist.recordEmailOutcome, {
+        entryId: args.entryId,
+        kind: "contacted",
+        status: "failed",
+        error: "SMTP not configured on Convex deployment",
+      });
+      return { sent: false, reason: "smtp_not_configured" };
+    }
+
+    const entry = await ctx.runQuery(internal.waitlist.getEntryById, {
+      entryId: args.entryId,
+    });
+    if (!entry) {
+      console.warn(`[waitlistMailer] entry ${args.entryId} not found`);
+      return { sent: false, reason: "entry_not_found" };
+    }
+
+    const fromAddress = process.env.WAITLIST_NOTIFY_FROM || user;
+    const fromDomain = (fromAddress.split("@")[1] || "xagilab.com").trim();
+
+    const transporter = nodemailer.createTransport({
+      host,
+      port,
+      secure: port === 465,
+      auth: { user, pass },
+      name: fromDomain,
+    });
+
+    const subject = "Important Update: Book Your 1:1 Session for ATLAS Alpha";
+
+    const html = `<table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 20px;background:#f3f4f6;">
+  <tbody>
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="border-radius:14px; overflow:hidden; background:#ffffff; box-shadow:0 10px 30px rgba(0,0,0,0.25);">
+          <tbody>
+            <tr>
+              <td style="padding:30px; text-align:center; background:linear-gradient(135deg,#6366f1,#ec4899,#22c55e); color:#ffffff;">
+                <h1 style="margin:0; font-size:26px; letter-spacing:2px;">A.T.L.A.S</h1>
+                <p style="margin:6px 0 0; font-size:14px; opacity:0.9;">Alpha Walkthrough Session</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:35px; color:#111827; font-size:15px; line-height:1.7;">
+                <p><b>Hey,</b></p>
+                <p>Welcome to the next step of your ATLAS alpha access.</p>
+                <p>As part of the onboarding process, we are inviting you to a <b>one-on-one Google Meet session directly with the founders of XAGI Labs</b>.</p>
+                <p>This session is designed to give you a complete walkthrough of ATLAS, including:</p>
+                <ul style="padding-left:20px;">
+                  <li>How to set up the platform</li>
+                  <li>How to use its core capabilities effectively</li>
+                  <li>How to report issues and provide feedback</li>
+                  <li>Best practices to get the most out of your access</li>
+                </ul>
+                <p>This is a personalized session to ensure you have a smooth and powerful start with ATLAS.</p>
+                <table cellpadding="0" cellspacing="0" style="margin:25px 0;">
+                  <tbody>
+                    <tr>
+                      <td align="center">
+                        <a href="https://cal.id/xagilabs/product-walkthrough" style="background:linear-gradient(135deg,#6366f1,#ec4899); color:#ffffff; padding:14px 24px; text-decoration:none; border-radius:8px; font-weight:bold; display:inline-block;">Book Your Time Slot</a>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p>Once you book your slot, you will receive the meeting details automatically.</p>
+                <p>We look forward to having you on this journey and helping you experience ATLAS the way it was meant to be.</p>
+                <p style="margin-top:20px;">Best regards,<br><b><a href="https://xagilab.com/" rel="noopener noreferrer" style="color:#000000; text-decoration:underline;">XAGI Labs Private Limited</a></b></p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:20px; font-size:11px; line-height:1.6; color:#6b7280; background:#f9fafb;">
+                <b>Confidentiality Notice:</b><br>
+                This email and any attachments are intended solely for the addressed recipient and may contain confidential, proprietary, or sensitive information belonging to XAGI Labs Private Limited. If you are not the intended recipient, you are hereby notified that any review, dissemination, distribution, copying, or use of this communication is strictly prohibited.<br><br>
+                If you have received this email in error, please notify the sender immediately and delete this email from your system. Unauthorized use or disclosure of the contents may be unlawful.<br><br>
+                &copy; XAGI Labs Private Limited. All rights reserved.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </td>
+    </tr>
+  </tbody>
+</table>`;
+
+    const text = [
+      "Hey,",
+      "",
+      "Welcome to the next step of your ATLAS alpha access.",
+      "",
+      "As part of the onboarding process, we are inviting you to a one-on-one Google Meet session directly with the founders of XAGI Labs.",
+      "",
+      "This session will cover:",
+      "  - How to set up the platform",
+      "  - How to use its core capabilities effectively",
+      "  - How to report issues and provide feedback",
+      "  - Best practices to get the most out of your access",
+      "",
+      "Book your slot here: https://cal.id/xagilabs/product-walkthrough",
+      "",
+      "Once you book your slot, you will receive the meeting details automatically.",
+      "",
+      "Best regards,",
+      "XAGI Labs Private Limited",
+      "https://xagilab.com/",
+    ].join("\n");
+
+    const messageId = `<contacted-${args.entryId}-${Date.now()}@${fromDomain}>`;
+
+    try {
+      await transporter.sendMail({
+        from: { name: "XAGI Labs", address: fromAddress },
+        to: entry.email,
+        replyTo: fromAddress,
+        sender: fromAddress,
+        envelope: { from: fromAddress, to: entry.email },
+        messageId,
+        subject,
+        text,
+        html,
+        headers: {
+          "X-Mailer": "ATLAS",
+        },
+      });
+      console.log(`[waitlistMailer] contacted email sent to ${entry.email}`);
+      await ctx.runMutation(internal.waitlist.recordEmailOutcome, {
+        entryId: args.entryId,
+        kind: "contacted",
+        status: "sent",
+      });
+      return { sent: true };
+    } catch (err: any) {
+      console.error("[waitlistMailer] contacted sendMail failed:", err?.message || err);
+      await ctx.runMutation(internal.waitlist.recordEmailOutcome, {
+        entryId: args.entryId,
+        kind: "contacted",
+        status: "failed",
+        error: sanitizeSmtpError(String(err?.message || err)),
+      });
       return { sent: false, reason: "send_failed", error: err?.message };
     }
   },

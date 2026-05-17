@@ -170,6 +170,9 @@ export interface CreditUsageUser {
 
 export type WaitlistStatus = "new" | "contacted" | "accepted" | "rejected";
 
+export type WaitlistEmailKind = "contacted" | "accepted";
+export type WaitlistEmailStatus = "sent" | "failed";
+
 export interface WaitlistEntry {
   _id: string;
   _creationTime: number;
@@ -185,6 +188,10 @@ export interface WaitlistEntry {
   userAgent?: string;
   referrer?: string;
   submittedAt: number;
+  lastEmailKind?: WaitlistEmailKind;
+  lastEmailStatus?: WaitlistEmailStatus;
+  lastEmailError?: string;
+  lastEmailAt?: number;
 }
 
 export interface WaitlistStats {

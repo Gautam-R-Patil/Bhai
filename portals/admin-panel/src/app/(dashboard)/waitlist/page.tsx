@@ -34,6 +34,8 @@ import {
   Mail,
   Download,
   RefreshCw,
+  AlertTriangle,
+  Send,
 } from "lucide-react";
 
 const STATUS_FILTERS: Array<WaitlistStatus | "all"> = [
@@ -158,6 +160,37 @@ export default function WaitlistPage() {
     }
   };
 
+  const resendEmail = async (
+    entryId: string,
+    kind: "contacted" | "accepted",
+    email: string,
+  ) => {
+    if (!confirm(`Resend the ${kind} email to ${email}?`)) return;
+    try {
+      await fetchJson<{ success: boolean; scheduled?: string }>(
+        "/api/waitlist/resend",
+        {
+          method: "POST",
+          body: JSON.stringify({ entryId, kind }),
+        },
+      );
+      // Optimistic: clear the failure pill locally so the UI reflects the
+      // re-queue immediately. The next reload will show the real outcome
+      // once the action runs (~seconds).
+      setEntries((prev) =>
+        prev.map((e) =>
+          e._id === entryId
+            ? { ...e, lastEmailStatus: undefined, lastEmailError: undefined }
+            : e,
+        ),
+      );
+      // Schedule a refresh shortly after — the Convex action runs async.
+      setTimeout(() => load(activeFilter), 2500);
+    } catch (err) {
+      alert(`Resend failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
   const deleteEntry = async (entryId: string, email: string) => {
     if (!confirm(`Delete waitlist entry for ${email}? This can't be undone.`)) return;
     try {
@@ -277,7 +310,22 @@ export default function WaitlistPage() {
                         >
                           {e.status}
                         </span>
+                        {e.lastEmailStatus === "failed" && (
+                          <span
+                            className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full bg-red-100 text-red-800"
+                            title={e.lastEmailError || "Send failed"}
+                          >
+                            <AlertTriangle className="h-3 w-3" />
+                            {e.lastEmailKind || "email"} send failed
+                          </span>
+                        )}
                       </div>
+                      {e.lastEmailStatus === "failed" && (
+                        <p className="text-xs text-red-600 mt-1 max-w-md truncate" title={e.lastEmailError}>
+                          {e.lastEmailError || "Unknown error"}
+                          {e.lastEmailAt ? ` · ${new Date(e.lastEmailAt).toLocaleString()}` : ""}
+                        </p>
+                      )}
                       <div className="flex items-center gap-2 mt-1 text-sm text-gray-600">
                         <Mail className="h-3.5 w-3.5" />
                         <a href={`mailto:${e.email}`} className="hover:underline">
@@ -304,6 +352,16 @@ export default function WaitlistPage() {
                   </div>
 
                   <div className="flex items-center gap-1">
+                    {e.lastEmailStatus === "failed" && e.lastEmailKind && (
+                      <button
+                        onClick={() => resendEmail(e._id, e.lastEmailKind!, e.email)}
+                        className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg"
+                        title={`Resend ${e.lastEmailKind} email`}
+                      >
+                        <Send className="h-3.5 w-3.5" />
+                        Resend
+                      </button>
+                    )}
                     {e.status !== "contacted" && (
                       <button
                         onClick={() => updateEntry(e._id, { status: "contacted" })}

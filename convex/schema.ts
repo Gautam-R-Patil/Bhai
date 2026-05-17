@@ -344,6 +344,12 @@ export default defineSchema({
     userAgent: v.optional(v.string()),
     referrer: v.optional(v.string()),
     submittedAt: v.number(),
+    // Applicant-facing email delivery status (separate from status-change history).
+    // Surfaced in the admin panel so failures get a Resend button.
+    lastEmailKind: v.optional(v.string()),    // "contacted" | "accepted"
+    lastEmailStatus: v.optional(v.string()),  // "sent" | "failed"
+    lastEmailError: v.optional(v.string()),
+    lastEmailAt: v.optional(v.number()),
   })
     .index("by_status", ["status"])
     .index("by_email", ["email"])

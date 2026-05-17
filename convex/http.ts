@@ -2619,11 +2619,32 @@ http.route({
     }
 
     try {
+      // Pre-read only when the patch could trigger an applicant-facing email,
+      // so we can detect a real status transition (not an idempotent re-click
+      // or an adminNotes-only edit).
+      const before = (status === "accepted" || status === "contacted")
+        ? await ctx.runQuery(internal.waitlist.getEntryById, { entryId })
+        : null;
+
       const result = await ctx.runMutation(internal.waitlist.updateWaitlistEntry, {
         entryId,
         status,
         adminNotes,
       });
+
+      // Scheduled async — a flaky SMTP shouldn't fail the patch.
+      if (before && before.status !== status) {
+        if (status === "accepted") {
+          await ctx.scheduler.runAfter(0, internal.waitlistMailer.sendAcceptanceEmail, {
+            entryId,
+          });
+        } else if (status === "contacted") {
+          await ctx.scheduler.runAfter(0, internal.waitlistMailer.sendContactedEmail, {
+            entryId,
+          });
+        }
+      }
+
       return new Response(JSON.stringify(result), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -2634,6 +2655,66 @@ http.route({
         { status: 500, headers: { "Content-Type": "application/json" } },
       );
     }
+  }),
+});
+
+// POST /api/admin/waitlist/resend — re-fires the applicant-facing email for
+// an entry. Used by the admin panel's Resend button when lastEmailStatus is
+// "failed". `kind` is optional and defaults to the entry's current status.
+http.route({
+  path: "/api/admin/waitlist/resend",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authErr = await validateAdminRequest(request);
+    if (authErr) return authErr;
+
+    let body: any;
+    try {
+      body = await request.json();
+    } catch {
+      return new Response(
+        JSON.stringify({ error: "Invalid JSON body" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    const { entryId, kind } = body || {};
+    if (!entryId) {
+      return new Response(
+        JSON.stringify({ error: "entryId is required" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    const entry = await ctx.runQuery(internal.waitlist.getEntryById, { entryId });
+    if (!entry) {
+      return new Response(
+        JSON.stringify({ error: "Entry not found" }),
+        { status: 404, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    // Caller can override which template to send; default to whatever the
+    // last delivery tried (or the current entry status as a fallback for
+    // entries that never got a first attempt).
+    const which = (kind ?? entry.lastEmailKind ?? entry.status) as string;
+    if (which !== "contacted" && which !== "accepted") {
+      return new Response(
+        JSON.stringify({
+          error: `Nothing to resend for status "${entry.status}" (only "contacted" or "accepted" have applicant-facing emails)`,
+        }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    const action = which === "accepted"
+      ? internal.waitlistMailer.sendAcceptanceEmail
+      : internal.waitlistMailer.sendContactedEmail;
+    await ctx.scheduler.runAfter(0, action, { entryId });
+
+    return new Response(
+      JSON.stringify({ success: true, scheduled: which }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
   }),
 });
 

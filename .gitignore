@@ -251,3 +251,8 @@ scripts/test-speaker-multiturn.ts
 models/
 scripts/test-speaker-streaming.ts
 !src/forge/__tests__/library-lifecycle.test.ts
+
+# Backup archives — never commit (GitHub blocks >100MB; bloats repo permanently)
+portals/admin-panel.zip
+portals/*.zip
+*.bak.zip

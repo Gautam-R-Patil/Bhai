@@ -231,3 +231,24 @@ export const getEntryById = internalQuery({
     return await ctx.db.get(args.entryId);
   },
 });
+
+// Records the outcome of an applicant-facing send so the admin panel can
+// flag failures and offer a Resend button. Called by the mailer actions.
+export const recordEmailOutcome = internalMutation({
+  args: {
+    entryId: v.id("waitlist"),
+    kind: v.union(v.literal("contacted"), v.literal("accepted")),
+    status: v.union(v.literal("sent"), v.literal("failed")),
+    error: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.entryId, {
+      lastEmailKind: args.kind,
+      lastEmailStatus: args.status,
+      // Wipe stale error on success; preserve on failure.
+      lastEmailError: args.status === "sent" ? undefined : (args.error ?? "unknown_error"),
+      lastEmailAt: Date.now(),
+    });
+    return { success: true };
+  },
+});
