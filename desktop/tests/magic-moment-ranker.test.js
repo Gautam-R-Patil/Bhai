@@ -45,12 +45,20 @@ describe("rankSignals — clusters", () => {
     });
 });
 
-describe("rankSignals — persona filler", () => {
-    it("appends developer line when persona=developer", () => {
+describe("rankSignals — persona lead", () => {
+    it("leads with the developer line when persona=developer", () => {
         const out = rankSignals({ snapshot: { names: ["finder"] }, persona: "developer" });
-        const personaSig = out.find((s) => s.id === "persona-developer");
-        expect(personaSig).toBeTruthy();
-        expect(personaSig.observation).toContain("codebase");
+        expect(out[0].id).toBe("persona-developer");
+        expect(out[0].observation.toLowerCase()).toContain("developer mode");
+    });
+
+    it("persona leads even when a cluster also matches", () => {
+        // Cursor + Chrome would match dev-cluster; persona must still lead.
+        const out = rankSignals({ snapshot: { names: ["cursor", "chrome"] }, persona: "founder" });
+        expect(out[0].id).toBe("persona-founder");
+        // Cluster signal still appears, just demoted to second position.
+        const clusterIdx = out.findIndex((s) => s.id === "dev-cluster");
+        expect(clusterIdx).toBeGreaterThan(0);
     });
 
     it("explorer adds no persona filler", () => {

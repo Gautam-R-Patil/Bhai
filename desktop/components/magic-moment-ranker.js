@@ -109,14 +109,16 @@ const AMBIENT_SIGNAL = {
     source: "ambient",
 };
 
-/* Persona-aware fillers — added after the cluster match (or after
-   the ambient signal) to deepen the rotation. Each persona maps to a
-   single line; explorer is empty so we don't double-tip. */
+/* Persona-aware leads. When the user has explicitly picked a persona,
+   we lead with this observation BEFORE any cluster signal — the user
+   should immediately see that their choice matters. Each entry names
+   the persona, locks in a capability, and ends with a concrete prompt
+   they can speak. Explorer stays empty (no bias by design). */
 const PERSONA_LINES = {
-    developer:   { observation: "I'll prioritize codebase context.",     followup: "Ask 'explain this codebase' any time.",     source: "ambient", confidence: 0.6 },
-    founder:     { observation: "I'll watch your calendar and inbox.",   followup: "Say 'prep me for my 10am' any time.",       source: "ambient", confidence: 0.6 },
-    creator:     { observation: "I'll keep references organized.",        followup: "Drop a link and I'll file it.",             source: "ambient", confidence: 0.6 },
-    researcher:  { observation: "I'll chase citations for you.",          followup: "Say 'find the strongest sources on X'.",    source: "ambient", confidence: 0.6 },
+    developer:   { observation: "Developer mode — I'll keep code, terminal, and git context warm.", followup: "Try \"explain this codebase\" or \"run the tests\".",    source: "persona", confidence: 0.85 },
+    founder:     { observation: "Founder mode — I'll watch your calendar and inbox.",                followup: "Try \"prep me for my next meeting\".",                  source: "persona", confidence: 0.85 },
+    creator:     { observation: "Creator mode — I'll keep references and assets organized.",         followup: "Drop a link or asset anytime — I'll file it.",          source: "persona", confidence: 0.85 },
+    researcher:  { observation: "Researcher mode — I'll chase citations and widen the net.",          followup: "Try \"find the strongest sources on X\".",              source: "persona", confidence: 0.85 },
     explorer:    null,
 };
 
@@ -150,7 +152,14 @@ function rankSignals(state) {
 
     const out = [];
 
-    // First: highest-priority cluster (if any).
+    // Persona lead — when the user explicitly picked a non-explorer
+    // persona, the first observation names it. This is the user's most
+    // visible signal that their wizard choice landed.
+    if (persona && PERSONA_LINES[persona]) {
+        out.push(Object.assign({ id: "persona-" + persona }, PERSONA_LINES[persona]));
+    }
+
+    // Next: highest-priority cluster (if any).
     for (const cluster of CLUSTERS) {
         if (cluster.match(snapshot.names)) {
             out.push(Object.assign({ id: cluster.id }, cluster.signal));
@@ -158,14 +167,9 @@ function rankSignals(state) {
         }
     }
 
-    // If no cluster matched, lead with ambient.
+    // If neither persona nor cluster fired, lead with ambient.
     if (out.length === 0) {
         out.push(AMBIENT_SIGNAL);
-    }
-
-    // Persona-aware filler (skip explorer).
-    if (persona && PERSONA_LINES[persona]) {
-        out.push(Object.assign({ id: "persona-" + persona }, PERSONA_LINES[persona]));
     }
 
     // Time-of-day signal.
