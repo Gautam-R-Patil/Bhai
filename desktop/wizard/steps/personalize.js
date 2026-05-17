@@ -53,8 +53,10 @@
         const themeMount = document.createElement("div");
         spec.appendChild(row(Copy.get("personalize", "label_theme"), themeMount));
 
+        // Voice picker hidden — backend still picks defaults; surface returns
+        // when voice selection is reliable end-to-end. Keep the mount div so
+        // any code that grabs it doesn't crash; just don't append to the DOM.
         const voiceMount = document.createElement("div");
-        spec.appendChild(row(Copy.get("personalize", "label_voice"), voiceMount));
 
         // Personality presets (kept inline — small radio list).
         const presetWrap = document.createElement("div");
@@ -84,37 +86,10 @@
         }
         spec.appendChild(row(Copy.get("personalize", "label_personality"), presetWrap));
 
-        // Wake word
-        const wakeWrap = document.createElement("div");
-        const switchRow = document.createElement("div");
-        switchRow.className = "switch-row";
-        const switchLabel = document.createElement("span");
-        switchLabel.className = "switch-label";
-        switchLabel.textContent = Copy.get("personalize", "wake_toggle");
-        const sw = document.createElement("input");
-        sw.type = "checkbox";
-        sw.className = "switch";
-        sw.checked = !!defaultWake.enabled;
-        switchRow.appendChild(switchLabel);
-        switchRow.appendChild(sw);
-        wakeWrap.appendChild(switchRow);
-
-        const phraseField = document.createElement("div");
-        phraseField.className = "field";
-        phraseField.style.marginTop = "12px";
-        const phraseLabel = document.createElement("span");
-        phraseLabel.className = "field-label";
-        phraseLabel.textContent = Copy.get("personalize", "wake_phrase_label");
-        const phraseInput = document.createElement("input");
-        phraseInput.type = "text";
-        phraseInput.value = defaultWake.phrase || "Hey Atlas";
-        phraseField.appendChild(phraseLabel);
-        phraseField.appendChild(phraseInput);
-        if (!sw.checked) phraseField.style.display = "none";
-        sw.addEventListener("change", function () { phraseField.style.display = sw.checked ? "" : "none"; });
-        wakeWrap.appendChild(phraseField);
-
-        spec.appendChild(row(Copy.get("personalize", "label_wake"), wakeWrap));
+        // Wake word hidden — feature isn't reliable yet. Hold the values
+        // off-DOM so the save payload still carries sensible defaults.
+        const sw = { checked: !!defaultWake.enabled };
+        const phraseInput = { value: defaultWake.phrase || "Hey Atlas" };
 
         section.appendChild(spec);
 
