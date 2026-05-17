@@ -1309,6 +1309,20 @@
                         </div>
                     </div>
 
+                    <div class="about-details surface-card" style="margin-top:16px;">
+                        <div class="about-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
+                            <span class="about-label">Legal documents</span>
+                            <span class="about-value" style="font-size:13px;line-height:1.6;">
+                                <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/legal');">Legal Hub (index)</a> ·
+                                <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/terms');">Terms</a> ·
+                                <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/privacy');">Privacy</a> ·
+                                <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/acceptable-use');">Acceptable Use</a> ·
+                                <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/disclaimer');">Disclaimer</a> ·
+                                <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/refund');">Refund</a>
+                            </span>
+                        </div>
+                    </div>
+
                     <div class="copyright" style="margin-top: 16px;">
                         Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
                     </div>
@@ -2405,6 +2419,23 @@
                 toast.classList.remove('error');
             }, isError ? 5000 : 3500); // Errors show longer
         }
+
+        // Routes the click through the main-process allowlist so panel
+        // links can only resolve to first-party tryatlasagi.com / xagilab.com
+        // pages — see ipcMain.handle("util:open-external") in main.js.
+        async function openLegalDoc(url) {
+            try {
+                if (atlas && typeof atlas.openExternalUrl === 'function') {
+                    const res = await atlas.openExternalUrl(url);
+                    if (res && res.success === false) {
+                        showToast('Could not open document: ' + (res.error || 'unknown'), true);
+                    }
+                }
+            } catch (err) {
+                showToast('Could not open document: ' + (err.message || err), true);
+            }
+        }
+        window.openLegalDoc = openLegalDoc;
 
         async function openSignIn() {
             const btn = document.getElementById('signInBtn');
