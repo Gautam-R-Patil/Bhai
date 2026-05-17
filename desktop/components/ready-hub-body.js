@@ -92,12 +92,35 @@
         trySec.className = "try-section";
         const tryHead = document.createElement("p");
         tryHead.className = "try-heading";
-        tryHead.textContent = Copy.get("ready-hub", "try_heading") || "Try this";
+        const persona = state && state.profile && state.profile.persona;
+        const personaLabel = persona && persona !== "explorer"
+            ? (persona.charAt(0).toUpperCase() + persona.slice(1))
+            : null;
+        tryHead.textContent = personaLabel
+            ? "Try this — " + personaLabel + " mode"
+            : (Copy.get("ready-hub", "try_heading") || "Try this");
         trySec.appendChild(tryHead);
         const tryBox = document.createElement("div");
         tryBox.id = "hub-try-this";
         tryBox.className = "try-list";
         trySec.appendChild(tryBox);
+
+        // Persona-suggested skills strip — small line under "Try this" with
+        // 2-3 role-relevant capability hints. Visible signal that the persona
+        // choice flavors the assistant's defaults.
+        const PERSONA_SKILLS = {
+            developer:  "Skills loaded: codebase comprehension · code review · test runner",
+            founder:    "Skills loaded: calendar · email orchestration · meeting prep",
+            creator:    "Skills loaded: image generation · reference filing · video edit",
+            researcher: "Skills loaded: citation chase · paper summary · literature map",
+        };
+        if (persona && PERSONA_SKILLS[persona]) {
+            const skillsLine = document.createElement("p");
+            skillsLine.className = "try-persona-skills";
+            skillsLine.textContent = PERSONA_SKILLS[persona];
+            trySec.appendChild(skillsLine);
+        }
+
         root.appendChild(trySec);
 
         return root;
@@ -147,8 +170,9 @@
         if (!TM) return;
         while (tilesWrap.firstChild) tilesWrap.removeChild(tilesWrap.firstChild);
 
-        // Cells we render in the new hub-index grid. 6 cells, 3 columns.
-        const cellOrder = ["account", "workspace", "hotkey", "voice", "persona", "permissions"];
+        // Cells we render in the new hub-index grid. Voice tile hidden until
+        // voice selection is reliable end-to-end (see personalize.js note).
+        const cellOrder = ["account", "workspace", "hotkey", "persona", "permissions"];
         for (const id of cellOrder) {
             const model = TM.tileModel(state, id);
             if (!model) continue;
@@ -244,13 +268,24 @@
         if (!container) return { stop: function () {} };
         const atlas = atlasApi || (typeof window !== "undefined" ? window.atlas : null) || {};
 
-        // Enrich with real account info before first render.
-        const enriched = await mergeRealAccount(state || {}, atlas);
-
+        // Render synchronously with whatever state we have. Account-info
+        // enrichment runs in the background and refreshes tiles when it
+        // lands. Awaiting it before the first paint blocks the whole hub
+        // on a Convex round-trip, which on a slow / unreachable network
+        // leaves the user staring at the chrome with an empty body.
+        const initial = state || {};
         while (container.firstChild) container.removeChild(container.firstChild);
-        const body = renderHubBody(enriched);
+        const body = renderHubBody(initial);
         container.appendChild(body);
-        renderTiles(body.querySelector("#hub-tiles"), enriched, atlas);
+        renderTiles(body.querySelector("#hub-tiles"), initial, atlas);
+
+        // Kick off enrichment in the background; never block the paint on it.
+        let enriched = initial;
+        mergeRealAccount(initial, atlas).then(function (next) {
+            if (!next || next === initial) return;
+            enriched = next;
+            applyDiff(body.querySelector("#hub-tiles"), initial, next, atlas);
+        }).catch(function () { /* best-effort */ });
 
         // Mount magic-moment if available + not killed by env.
         let mmHandle = null;
