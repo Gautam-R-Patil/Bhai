@@ -64,23 +64,23 @@ import { createRequire as _modelCreateRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 interface NativeModelRouter {
-    selectModel(
-        message: string,
-        iteration: number,
-        errorCount: number,
-        hasMedia: boolean,
-        taskType: string | null,
-        modelHint: string | null,
-        urgency: string | null,
-        lastToolCallNames: string[] | null,
-    ): {
-        model_id: string;
-        display_name: string;
-        thinking_level: string;
+    selectModel(opts: {
+        taskType?: string | null;
+        message?: string;
+        iteration?: number;
+        errorCount?: number;
+        hasMedia?: boolean;
+        modelHint?: string | null;
+        lastToolCalls?: Array<{ function: { name: string } }>;
+        urgency?: string | null;
+    }): {
+        modelId: string;
+        displayName: string;
+        thinkingLevel: string;
         reason: string;
-        complexity_score: number;
-        task_type: string;
-        estimated_cost_per_call: number;
+        complexityScore: number;
+        taskType: string;
+        estimatedCostPerCall: number;
     };
     selectForClassify(): any;
     selectForAgent(message: string, iteration: number, errorCount: number, modelHint: string | null, lastToolCallNames: string[] | null, hasMedia: boolean): any;
@@ -135,9 +135,42 @@ const VALID_TASK_TYPES: Set<string> = new Set([
     "tool_synthesis",
 ]);
 
+// Convert TS snake_case TaskType to the Rust PascalCase enum variant.
+// napi-rs strict-validates enum strings; mismatched casing throws InvalidArg.
+const TS_TO_NATIVE_TASK_TYPE: Record<string, string> = {
+    classify: "Classify",
+    simple_chat: "SimpleChat",
+    complex_chat: "ComplexChat",
+    tool_loop: "ToolLoop",
+    coding: "Coding",
+    planning: "Planning",
+    synthesis: "Synthesis",
+    final_answer: "FinalAnswer",
+    research: "Research",
+    sub_agent: "SubAgent",
+    audio_analysis: "AudioAnalysis",
+    vision: "Vision",
+    first_iteration: "FirstIteration",
+    error_recovery: "ErrorRecovery",
+    tool_synthesis: "ToolSynthesis",
+};
+
+function tsTaskTypeToNative(tt?: string | null): string | null {
+    if (!tt) return null;
+    return TS_TO_NATIVE_TASK_TYPE[tt] ?? null;
+}
+
+// Invert TS_TO_NATIVE_TASK_TYPE for the response path. Rust returns PascalCase
+// enum strings; downstream TS callers expect snake_case.
+const NATIVE_TO_TS_TASK_TYPE: Record<string, string> = Object.fromEntries(
+    Object.entries(TS_TO_NATIVE_TASK_TYPE).map(([ts, native]) => [native, ts]),
+);
+
 function convertSelection(raw: any): ModelSelection {
     const thinkRaw = ((raw.thinking_level ?? raw.thinkingLevel ?? "off") as string).toLowerCase();
-    const taskRaw = (raw.task_type ?? raw.taskType ?? "first_iteration") as string;
+    const taskRawRaw = (raw.task_type ?? raw.taskType ?? "first_iteration") as string;
+    // Rust returns PascalCase enum names; downconvert if needed.
+    const taskRaw = NATIVE_TO_TS_TASK_TYPE[taskRawRaw] ?? taskRawRaw;
 
     return {
         modelId: raw.model_id ?? raw.modelId,
@@ -278,17 +311,24 @@ export function selectModel(opts: {
 } = {}): ModelSelection {
     let result: ModelSelection;
     if (native) {
-        const toolNames = opts.lastToolCalls?.map(tc => tc.function.name) || null;
-        const raw = native.selectModel(
-            opts.message || "",
-            opts.iteration || 1,
-            opts.errorCount || 0,
-            opts.hasMedia || false,
-            opts.taskType || null,
-            opts.modelHint || null,
-            opts.urgency || null,
-            toolNames,
-        );
+        // napi-rs binding takes a single options object (see native/index.d.ts:
+        // `selectModel(opts: SelectModelOptions)`). The previous positional-arg
+        // call worked by accident — the first positional became opts.taskType.
+        // The Rust TaskType enum is PascalCase ("FirstIteration") while the
+        // TS surface uses snake_case ("first_iteration"); convert at the boundary.
+        // napi-rs Option<String> demands `undefined` (omit), not `null`.
+        const nativeTaskType = tsTaskTypeToNative(opts.taskType);
+        const nativeOpts: Record<string, unknown> = {
+            message: opts.message ?? "",
+            iteration: opts.iteration ?? 1,
+            errorCount: opts.errorCount ?? 0,
+            hasMedia: opts.hasMedia ?? false,
+        };
+        if (nativeTaskType) nativeOpts.taskType = nativeTaskType;
+        if (opts.modelHint) nativeOpts.modelHint = opts.modelHint;
+        if (opts.urgency) nativeOpts.urgency = opts.urgency;
+        if (opts.lastToolCalls?.length) nativeOpts.lastToolCalls = opts.lastToolCalls;
+        const raw = native.selectModel(nativeOpts as Parameters<typeof native.selectModel>[0]);
         result = convertSelection(raw);
     } else {
         // Native model router is required. Return Haiku as a minimum-cost safe default
