@@ -22,14 +22,9 @@ const COPY = {
 
     "terms": {
         "eyebrow": "Trust",
-        "title": "Read once. We won't ask again.",
-        "sub": "A short set of terms covering what A.T.L.A.S can do, what it stores, and how to back out.",
-        "accept": "Accept",
-        "check1": "I accept the Terms of service",
-        "check2": "I accept the Privacy policy",
-        "check3": "I accept the Acceptable use policy",
-        "check4": "I accept the Disclaimer",
-        "check5": "I accept the Refund terms",
+        "title": "Read the terms once. We'll remember.",
+        "sub": "Open each document, tick the box, and you're done. Every checkbox is optional in the sense that nothing's pre-ticked — your acceptance is recorded with the exact document version you saw.",
+        "accept": "Accept and continue",
     },
 
     "signin": {

@@ -21,7 +21,12 @@ function needsAwakening(s) {
 // Bump when the legal documents (Terms / Privacy / Acceptable Use / Disclaimer /
 // Refund) materially change. Users whose stored acceptance.version is older
 // will be re-prompted to re-accept on next launch — including on reconfigure.
-const CURRENT_ACCEPTANCE_VERSION = "1.0.0";
+//
+// 2.0.0 — Trust surface rewritten to per-document clickwrap with unchecked
+//         boxes, links to the canonical https://tryatlasagi.com/legal hub,
+//         separate age/authority consent, and document URLs recorded in the
+//         audit record. 1.0.0 accepters re-confirm against the new surface.
+const CURRENT_ACCEPTANCE_VERSION = "2.0.0";
 
 function needsInstall(s) {
     const i = s.installed || {};
