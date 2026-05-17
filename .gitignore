@@ -192,6 +192,7 @@ desktop/hostinger-upload/
 !desktop/tests/profile-merge.test.js
 !desktop/tests/running-apps.test.js
 !desktop/tests/magic-moment-ranker.test.js
+!desktop/tests/try-this.test.js
 !src/setup/wizard-seed.test.ts
 !src/prompts/persona-bias.test.ts
 !src/tool-router.persona.test.ts

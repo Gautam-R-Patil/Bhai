@@ -23,6 +23,36 @@
             "Send Mom a weather forecast",
             "Reply to the most recent Telegram message",
         ],
+        // Persona-specific prompts get prepended when a persona is set.
+        // Kept short (3-4 each) so they show up before the generic pool
+        // dilutes them.
+        byPersona: {
+            developer: [
+                "Explain this codebase",
+                "Run the test suite and triage failures",
+                "Open a PR for the changes on this branch",
+                "Search the repo for TODO comments",
+            ],
+            founder: [
+                "Prep me for my next meeting",
+                "Summarize unread Slack and surface decisions",
+                "Draft a follow-up to my last investor email",
+                "What's the most important thing on my calendar today?",
+            ],
+            creator: [
+                "Open my latest Figma file",
+                "Organize references from this week into a moodboard",
+                "Generate three logo directions for <brief>",
+                "Cut the highlights from this video",
+            ],
+            researcher: [
+                "Find the strongest sources on <topic>",
+                "Summarize the abstracts of these papers",
+                "Build a literature map for <area>",
+                "Chase down the citations in this PDF",
+            ],
+            // explorer intentionally empty — no bias applied
+        },
     };
 
     // Mulberry32 PRNG — deterministic given a seed.
@@ -47,16 +77,39 @@
     function pickPrompts(state, catalog, seed) {
         const s = state || {};
         const cat = catalog || CATALOG;
-        const pool = (cat.overlay || []).slice();
-        if (s.google && s.google.connected) pool.push.apply(pool, cat.google || []);
-        if (_hasAnyChannel(s.channels)) pool.push.apply(pool, cat.messaging || []);
+        const persona = (s.profile && s.profile.persona) || null;
+
+        // Persona-specific prompts go in their own shuffled head so the
+        // user sees a clear "this is for you" signal before generic prompts.
         const rand = rng(seed);
-        const shuffled = pool.slice();
-        for (let i = shuffled.length - 1; i > 0; i--) {
-            const j = Math.floor(rand() * (i + 1));
-            const tmp = shuffled[i]; shuffled[i] = shuffled[j]; shuffled[j] = tmp;
+        function shuffleCopy(arr) {
+            const out = arr.slice();
+            for (let i = out.length - 1; i > 0; i--) {
+                const j = Math.floor(rand() * (i + 1));
+                const tmp = out[i]; out[i] = out[j]; out[j] = tmp;
+            }
+            return out;
         }
-        return shuffled.slice(0, 3);
+
+        const personaPool = (persona && cat.byPersona && cat.byPersona[persona]) || [];
+        const genericPool = (cat.overlay || []).slice();
+        if (s.google && s.google.connected) genericPool.push.apply(genericPool, cat.google || []);
+        if (_hasAnyChannel(s.channels)) genericPool.push.apply(genericPool, cat.messaging || []);
+
+        const personaShuffled = shuffleCopy(personaPool);
+        const genericShuffled = shuffleCopy(genericPool);
+
+        // Take up to 2 persona prompts first, fill the rest from generic.
+        const out = personaShuffled.slice(0, 2);
+        for (const p of genericShuffled) {
+            if (out.length >= 3) break;
+            if (out.indexOf(p) >= 0) continue;
+            out.push(p);
+        }
+        // Fallback: if persona had nothing and generic was empty, return
+        // whatever generic produced (caller expects an array).
+        if (out.length === 0) return genericShuffled.slice(0, 3);
+        return out;
     }
 
     // Builds 3 prompt pill buttons via createElement + textContent (no innerHTML).
