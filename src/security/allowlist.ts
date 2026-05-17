@@ -286,7 +286,15 @@ export function addAllowedPath(_dirPath: string): void {
 }
 
 // ── Network Allowlist ─────────────────────────
-// Keep network restrictions for security (prevent data exfiltration)
+// ATLAS is a general-purpose agent and DEFAULTS to open network access —
+// the LLM, browser, web_search, and shell layers all need it. This
+// allowlist is therefore advisory: callers can consult it when they
+// want a tight egress policy (e.g. running an untrusted sub-agent). It
+// is NOT wired into browserNavigate/webSearch/fetch by design.
+//
+// Decision: keep the function rather than delete. Used in tests today;
+// reserved for future opt-IN sub-agent egress policy controlled by
+// ATLAS_NO_DOMAIN_ALLOWLIST=true (off by default).
 
 const ALLOWED_DOMAINS = new Set([
     "api.openai.com",

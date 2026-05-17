@@ -226,7 +226,10 @@ desktop/hostinger-upload/
 !src/forge/__tests__/pending-consumer.test.ts
 !src/forge/__tests__/create-tool-verifier-route.test.ts
 !src/forge/__tests__/phase3-smoke.test.ts
-!src/forge/__tests__/runner-asset.test.ts
+!src/forge/__tests__/capabilities.test.ts
+!src/forge/__tests__/manifest.test.ts
+!src/forge/__tests__/capability-bypass.test.ts
+!src/forge/__tests__/phase4-smoke.test.ts
 
 # Compiled Swift helpers (built by npm run build:location / build:ocr / build:ax)
 scripts/get_location_bin
@@ -247,3 +250,4 @@ scripts/test-speaker-multiturn.ts
 # Bundled Kokoro ONNX model — staged locally, copied into DMG, never committed
 models/
 scripts/test-speaker-streaming.ts
+!src/forge/__tests__/library-lifecycle.test.ts

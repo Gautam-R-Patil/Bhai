@@ -6,7 +6,9 @@
     "dev": "next dev -p 3001",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test": "vitest run",
+    "postinstall": "node -e \"const fs=require('fs');try{fs.chmodSync('.env.local',0o600);console.log('[postinstall] chmod 600 .env.local');}catch(e){if(e.code!=='ENOENT')console.warn('[postinstall] chmod failed:',e.message);}\""
   },
   "dependencies": {
     "next": "^14.2.35",
@@ -27,6 +29,7 @@
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.16",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^2.1.9"
   }
 }

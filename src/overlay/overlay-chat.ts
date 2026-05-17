@@ -8,12 +8,14 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
-import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { readFileSync, writeFileSync, mkdirSync, realpathSync } from "node:fs";
+import { join, dirname, resolve as resolvePath, sep as pathSep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { tmpdir } from "node:os";
-import { spawn, type ChildProcess } from "node:child_process";
+import { tmpdir, homedir } from "node:os";
+import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { existsSync, unlinkSync } from "node:fs";
+import { randomBytes, timingSafeEqual } from "node:crypto";
+import { getWorkspaceDir } from "../config/paths.js";
 import type { LLMClient } from "../llm.js";
 import { runAgent, type MediaAttachment, type ChannelContext } from "../agent.js";
 import { classifyQuery } from "../memory/classifier.js";
@@ -44,6 +46,103 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const OVERLAY_PORT = 18792;
 
+// ── Local-bootstrap auth token ──────────────────
+// Written 0o600 to ~/.atlas/overlay-local-token at boot.
+// The native Swift overlay reads this file and supplies it as `Bearer <token>`
+// for HTTP endpoints OR `?localToken=<token>` for the WS handshake.
+// Distinct from WIDGET_TOKEN (which gates the web-widget surface).
+
+let _localToken: string | null = null;
+
+export function getOverlayLocalToken(): string {
+    if (_localToken) return _localToken;
+    const tokenPath = join(homedir(), ".atlas", "overlay-local-token");
+    try {
+        if (existsSync(tokenPath)) {
+            const existing = readFileSync(tokenPath, "utf-8").trim();
+            if (existing.length >= 32) {
+                _localToken = existing;
+                return _localToken;
+            }
+        }
+    } catch { /* fallthrough — regenerate */ }
+    _localToken = randomBytes(32).toString("hex");
+    try {
+        mkdirSync(dirname(tokenPath), { recursive: true, mode: 0o700 });
+        writeFileSync(tokenPath, _localToken, { mode: 0o600 });
+    } catch (err) {
+        console.warn(`[OVERLAY] Could not persist local token: ${(err as Error).message}`);
+    }
+    return _localToken;
+}
+
+function safeEqualStr(a: string, b: string): boolean {
+    if (a.length !== b.length) return false;
+    try {
+        const ba = Buffer.from(a, "utf-8");
+        const bb = Buffer.from(b, "utf-8");
+        if (ba.length !== bb.length) return false;
+        return timingSafeEqual(ba, bb);
+    } catch { return false; }
+}
+
+function extractBearer(req: IncomingMessage): string | null {
+    const h = req.headers["authorization"];
+    if (!h || typeof h !== "string") return null;
+    const m = h.match(/^Bearer\s+(.+)$/i);
+    return m ? m[1].trim() : null;
+}
+
+/**
+ * Authorizes an HTTP request against either:
+ *   - Local overlay bootstrap token (native Swift overlay) — Authorization: Bearer
+ *   - Widget token (WIDGET_TOKEN env) — Authorization: Bearer
+ * Returns the matched scope so callers can apply scope-specific policy.
+ */
+function authorizeRequest(req: IncomingMessage): "native-overlay" | "web-widget" | null {
+    const bearer = extractBearer(req);
+    if (!bearer) return null;
+    const local = getOverlayLocalToken();
+    if (safeEqualStr(bearer, local)) return "native-overlay";
+    const widgetExp = process.env.WIDGET_TOKEN;
+    if (widgetExp && widgetExp.length >= 32 && safeEqualStr(bearer, widgetExp)) return "web-widget";
+    return null;
+}
+
+// Deny-list patterns enforced even when the resolved path is under workspace.
+// Mix of full-segment matches (dot-files) AND substring matches (credentials,
+// id_rsa, private_key) — the latter is intentionally broad per spec.
+const SENSITIVE_SEGMENT_REGEX = /(?:^|\/)(\.env(?:\..+)?|\.ssh|chrome-bridge-token\.txt|audit\.jsonl|google-credentials\.json|google-tokens)(?:$|\/)/i;
+const SENSITIVE_SUBSTRING_REGEX = /(credentials|id_rsa|id_dsa|id_ecdsa|id_ed25519|private[_-]?key)/i;
+
+/**
+ * Validate that `userPath` resolves under the workspace dir and is not deny-listed.
+ * Follows symlinks via realpath. Returns the canonical absolute path or null.
+ */
+function resolveSafePath(userPath: string): string | null {
+    try {
+        let p = userPath;
+        if (p.startsWith("~/")) p = join(homedir(), p.slice(2));
+        const abs = resolvePath(p);
+        const workspace = realpathSync(getWorkspaceDir());
+        let real: string;
+        try {
+            real = realpathSync(abs);
+        } catch {
+            return null;
+        }
+        const wsWithSep = workspace.endsWith(pathSep) ? workspace : workspace + pathSep;
+        if (real !== workspace && !real.startsWith(wsWithSep)) return null;
+        if (SENSITIVE_SEGMENT_REGEX.test(real)) return null;
+        if (SENSITIVE_SUBSTRING_REGEX.test(real)) return null;
+        return real;
+    } catch {
+        return null;
+    }
+}
+
+export { resolveSafePath as _resolveSafePathForTest };
+
 let httpServer: ReturnType<typeof createServer> | null = null;
 let wss: WebSocketServer | null = null;
 let llmClient: LLMClient | null = null;
@@ -57,6 +156,14 @@ let nativeOverlayProcess: ChildProcess | null = null;
 
 export function initOverlayChat(llm: LLMClient): void {
     llmClient = llm;
+    // Ensure the local bootstrap token exists on disk so the native Swift
+    // overlay (and any other local-process client) can authenticate.
+    try {
+        getOverlayLocalToken();
+        console.log(`🔐 [OVERLAY] local-auth token at ~/.atlas/overlay-local-token (0o600)`);
+    } catch (err) {
+        console.warn(`[OVERLAY] Failed to init local-auth token: ${(err as Error).message}`);
+    }
 
     // HTTP server — serves the overlay HTML page
     httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
@@ -107,37 +214,66 @@ export function initOverlayChat(llm: LLMClient): void {
             res.end(JSON.stringify({ tools, skills, homeDir: homedir() }));
 
         } else if (url.pathname === "/api/browse") {
-            // Browse filesystem for @ file/folder picker
-            const { homedir: hd } = await import("node:os");
-            const dir = url.searchParams.get("dir") || hd();
+            // Browse filesystem for @ file/folder picker — workspace-only, auth required
+            const scope = authorizeRequest(req);
+            if (!scope) {
+                res.writeHead(401, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ error: "Authorization required" }));
+                return;
+            }
+            const requestedDir = url.searchParams.get("dir") || getWorkspaceDir();
+            const safeDir = resolveSafePath(requestedDir);
+            if (!safeDir) {
+                res.writeHead(403, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ error: "Path outside workspace or denied" }));
+                return;
+            }
             try {
-                const { readdirSync } = await import("node:fs");
-                const entries = readdirSync(dir, { withFileTypes: true })
+                const { readdirSync, statSync } = await import("node:fs");
+                const stat = statSync(safeDir);
+                if (!stat.isDirectory()) {
+                    res.writeHead(400, { "Content-Type": "application/json" });
+                    res.end(JSON.stringify({ error: "Not a directory" }));
+                    return;
+                }
+                const entries = readdirSync(safeDir, { withFileTypes: true })
                     .filter(e => !e.name.startsWith("."))
                     .map(e => ({
                         name: e.name,
-                        path: join(dir, e.name),
+                        path: join(safeDir, e.name),
                         isDir: e.isDirectory(),
                     }))
                     .sort((a, b) => (b.isDir ? 1 : 0) - (a.isDir ? 1 : 0) || a.name.localeCompare(b.name));
-                res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "http://127.0.0.1:18792" });
-                res.end(JSON.stringify({ dir, entries }));
+                res.writeHead(200, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ dir: safeDir, entries }));
             } catch {
                 res.writeHead(200, { "Content-Type": "application/json" });
-                res.end(JSON.stringify({ dir, entries: [] }));
+                res.end(JSON.stringify({ dir: safeDir, entries: [] }));
             }
         } else if (url.pathname === "/api/file") {
+            const scope = authorizeRequest(req);
+            if (!scope) {
+                res.writeHead(401, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ error: "Authorization required" }));
+                return;
+            }
             const filePath = url.searchParams.get("path");
             if (!filePath) {
                 res.writeHead(400);
                 res.end("Path required");
                 return;
             }
+            const safePath = resolveSafePath(filePath);
+            if (!safePath) {
+                res.writeHead(403, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ error: "Path outside workspace or denied" }));
+                return;
+            }
             try {
                 const { statSync, createReadStream } = await import("node:fs");
-                const stat = statSync(filePath);
+                const stat = statSync(safePath);
                 if (stat.isFile()) {
-                    const ext = filePath.split(".").pop()?.toLowerCase() || "";
+                    const ext = safePath.split(".").pop()?.toLowerCase() || "";
                     const mimeTypes: Record<string, string> = {
                         png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
                         gif: "image/gif", svg: "image/svg+xml", webp: "image/webp",
@@ -147,9 +283,8 @@ export function initOverlayChat(llm: LLMClient): void {
                     res.writeHead(200, {
                         "Content-Type": contentType,
                         "Content-Length": stat.size.toString(),
-                        "Access-Control-Allow-Origin": "http://127.0.0.1:18792"
                     });
-                    createReadStream(filePath).pipe(res);
+                    createReadStream(safePath).pipe(res);
                 } else {
                     res.writeHead(404);
                     res.end("Not a file");
@@ -182,6 +317,11 @@ export function initOverlayChat(llm: LLMClient): void {
 
         // ── Push notification subscription endpoint ──
         } else if (url.pathname === "/api/push/subscribe" && req.method === "POST") {
+            if (!authorizeRequest(req)) {
+                res.writeHead(401, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ error: "Authorization required" }));
+                return;
+            }
             let body = "";
             req.on("data", (chunk: Buffer) => { body += chunk.toString(); });
             req.on("end", () => {
@@ -274,17 +414,34 @@ export function initOverlayChat(llm: LLMClient): void {
     });
 
     wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
-        // Validate widget token for web-widget connections
+        // Identify connection origin and require auth.
+        // - source=web-widget → must present valid WIDGET_TOKEN (?token=...)
+        // - native overlay     → must present overlay-local-token (?localToken=...)
+        // - any other handshake without a valid token is rejected.
         const connUrl = new URL(req.url || "/", `http://127.0.0.1:${OVERLAY_PORT}`);
         const source = connUrl.searchParams.get("source");
-        const token = connUrl.searchParams.get("token");
+        const widgetToken = connUrl.searchParams.get("token");
+        const localToken = connUrl.searchParams.get("localToken");
 
-        if (source === "web-widget" && !validateWidgetToken(token)) {
-            ws.close(4001, "Invalid widget token");
+        let connKind: "native-overlay" | "web-widget" | null = null;
+        if (source === "web-widget") {
+            if (!validateWidgetToken(widgetToken)) {
+                ws.close(4001, "Invalid widget token");
+                return;
+            }
+            connKind = "web-widget";
+        } else if (localToken && safeEqualStr(localToken, getOverlayLocalToken())) {
+            connKind = "native-overlay";
+        } else {
+            // No valid credential — reject. The native Swift overlay supplies localToken;
+            // legacy clients that connected without auth must be updated.
+            ws.close(4001, "Authorization required (localToken or widget token)");
             return;
         }
 
-        const isWidget = source === "web-widget";
+        const isWidget = connKind === "web-widget";
+        // Tag the socket with its origin for downstream dispatch.
+        (ws as unknown as { _connKind: typeof connKind })._connKind = connKind;
         overlayClients.add(ws);
         console.log(`💬 ${isWidget ? "Widget" : "Overlay"} chat connected (${overlayClients.size} client${overlayClients.size > 1 ? "s" : ""})`);
 
@@ -573,6 +730,13 @@ async function captureScreen(): Promise<{ base64: string; mimeType: string } | n
     }
 }
 
+// Owner is the local user on the native overlay. Web-widget connections are
+// NEVER treated as the owner — they get the same privilege level as any
+// external chat surface.
+function wsIsOwner(ws: WebSocket): boolean {
+    return (ws as unknown as { _connKind?: string })._connKind === "native-overlay";
+}
+
 // ── Handle Overlay Message ────────────────────
 
 async function handleOverlayMessage(ws: WebSocket, userMessage: string): Promise<void> {
@@ -666,7 +830,7 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
         // Use the SAME shared conversation history (no fork)
         // Fast-path: pass "simple" hint for greetings so model router picks a lighter model
         const overlayHint = !media && classifyQuery(userMessage) === "llm_only" ? "simple" as const : undefined;
-        const result = await runAgent(llmClient, taggedMessage, onProgress, media, undefined, undefined, overlayHint, undefined, { channel: "overlay", userId: "local", isOwner: true });
+        const result = await runAgent(llmClient, taggedMessage, onProgress, media, undefined, undefined, overlayHint, undefined, { channel: "overlay", userId: "local", isOwner: wsIsOwner(ws) });
 
         // Clear timeout warning timer
         if (timeoutWarningTimer) clearTimeout(timeoutWarningTimer);
@@ -760,7 +924,7 @@ async function handleFileAttachment(
             sendToClient(ws, { type: "progress", text: humanizeForOverlay(msg) });
         };
 
-        const result = await runAgent(llmClient, prompt, onProgress, media, undefined, undefined, undefined, undefined, { channel: "overlay", userId: "local", isOwner: true });
+        const result = await runAgent(llmClient, prompt, onProgress, media, undefined, undefined, undefined, undefined, { channel: "overlay", userId: "local", isOwner: wsIsOwner(ws) });
         const cleanText = result.text
             .replace(/<system_log>[\s\S]*?<\/system_log>/g, '')
             .replace(/<tool_log[\s\S]*?<\/tool_log>/g, '')
@@ -1183,11 +1347,18 @@ async function startVoiceCapture(ws: WebSocket): Promise<void> {
             console.warn("[OVERLAY] rec (sox) not found — trying macOS system recording...");
             // Fallback: use macOS `say` to at least not crash, or try /usr/bin/rec
             // The primary approach is sox via self-heal above.
-            // If we get here, sox install failed. Use osascript as last resort.
+            // If we get here, sox install failed. Last resort: try `rec` directly
+            // via execFile (shell:false) — same args as the primary path. No
+            // osascript shell-script wrapper (avoids any quoting/injection
+            // brittleness even though the path is server-generated).
             try {
-                activeRecording = spawn("osascript", [
-                    "-e", `do shell script "rec '${recordingPath}' rate 16000 channels 1 trim 0 30"`,
-                ], { stdio: "ignore" });
+                if (!recordingPath) throw new Error("recording path lost");
+                activeRecording = execFile("rec", [
+                    recordingPath,
+                    "rate", "16000",
+                    "channels", "1",
+                    "trim", "0", "30",
+                ], { shell: false });
                 activeRecording.on("error", () => {
                     console.error("[OVERLAY] All recording methods failed");
                     sendToClient(ws, { type: "voice_status", status: "error", error: "sox not installed. Install with: brew install sox" });

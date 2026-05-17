@@ -6,6 +6,8 @@
 // WebSocket server pushing interactive widgets to connected clients
 
 import { WebSocketServer, type WebSocket } from "ws";
+import { timingSafeEqual } from "node:crypto";
+import { getOverlayLocalToken } from "../overlay/overlay-chat.js";
 
 // ── Types ─────────────────────────────────────
 
@@ -18,10 +20,32 @@ interface CanvasWidget {
 
 // ── State ─────────────────────────────────────
 
+const MAX_WIDGETS = 100;
+const AUTH_TIMEOUT_MS = 5000;
+
 let wss: WebSocketServer | null = null;
 const clients = new Set<WebSocket>();
 const widgets: CanvasWidget[] = [];
 let widgetCounter = 0;
+
+function safeEqualStr(a: string, b: string): boolean {
+    if (typeof a !== "string" || typeof b !== "string") return false;
+    if (a.length !== b.length) return false;
+    try {
+        const ba = Buffer.from(a, "utf-8");
+        const bb = Buffer.from(b, "utf-8");
+        if (ba.length !== bb.length) return false;
+        return timingSafeEqual(ba, bb);
+    } catch { return false; }
+}
+
+function tokenMatchesAny(t: string): boolean {
+    if (!t) return false;
+    if (safeEqualStr(t, getOverlayLocalToken())) return true;
+    const w = process.env.WIDGET_TOKEN;
+    if (w && w.length >= 32 && safeEqualStr(t, w)) return true;
+    return false;
+}
 
 // ── Initialize ────────────────────────────────
 
@@ -41,28 +65,47 @@ export function initCanvas(port = 18791): void {
     wss = server;
 
     server.on("connection", (ws) => {
-        clients.add(ws);
-        console.log(`🎨 Canvas client connected (${clients.size} total)`);
-
-        // Send existing widgets
-        ws.send(JSON.stringify({ type: "init", widgets }));
+        // Unauthenticated until the client sends {type:"auth", token:"..."}.
+        // Holds connection in a pre-auth state with a short timeout; existing
+        // widgets are NOT sent until auth succeeds.
+        let authed = false;
+        const authTimer: NodeJS.Timeout = setTimeout(() => {
+            if (!authed) {
+                try { ws.close(4001, "auth timeout"); } catch { /* */ }
+            }
+        }, AUTH_TIMEOUT_MS);
+        // Don't keep the event loop alive on this timer.
+        (authTimer as unknown as { unref?: () => void }).unref?.();
 
         ws.on("close", () => {
+            clearTimeout(authTimer);
             clients.delete(ws);
-            console.log(`🎨 Canvas client disconnected (${clients.size} total)`);
+            if (authed) console.log(`🎨 Canvas client disconnected (${clients.size} total)`);
         });
 
         ws.on("error", (err) => {
+            clearTimeout(authTimer);
             console.warn(`🎨 Canvas client error:`, (err as Error).message);
             clients.delete(ws);
             try { ws.terminate(); } catch { /* already dead */ }
         });
 
         ws.on("message", (data) => {
-            try {
-                const msg = JSON.parse(data.toString());
-                handleClientMessage(msg);
-            } catch { /* ignore invalid messages */ }
+            let msg: Record<string, unknown>;
+            try { msg = JSON.parse(data.toString()); } catch { return; }
+            if (!authed) {
+                if (msg.type === "auth" && typeof msg.token === "string" && tokenMatchesAny(msg.token)) {
+                    authed = true;
+                    clearTimeout(authTimer);
+                    clients.add(ws);
+                    console.log(`🎨 Canvas client connected (${clients.size} total)`);
+                    try { ws.send(JSON.stringify({ type: "init", widgets })); } catch { /* */ }
+                } else {
+                    try { ws.close(4001, "unauthorized"); } catch { /* */ }
+                }
+                return;
+            }
+            handleClientMessage(msg);
         });
     });
 
@@ -84,6 +127,11 @@ export function pushWidget(
     };
 
     widgets.push(widget);
+    // FIFO-cap the buffer so a long-lived server doesn't grow unbounded.
+    while (widgets.length > MAX_WIDGETS) {
+        const dropped = widgets.shift();
+        if (dropped) broadcast({ type: "remove", id: dropped.id });
+    }
     broadcast({ type: "widget", widget });
     return id;
 }

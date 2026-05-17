@@ -19,6 +19,31 @@ const execFileAsync = promisify(execFile);
 const MAX_OUTPUT = 10000; // characters
 const DEFAULT_TIMEOUT = 30000; // 30s
 
+// CLAUDE.md policy: never let the agent rewrite git config, since that
+// affects user identity, hooks, signing, and remote auth. Block at the
+// shell layer so the rule applies to shell_exec, sub-agents, and any
+// new tool that funnels through here.
+export function isGitConfigCall(command: string, args: string[]): boolean {
+    const base = command.split(/[\\/]/).pop()?.replace(/\.exe$/i, "") || "";
+    if (base !== "git") return false;
+    // Reject `git -c config.X=Y …` and `git config …` in any subcommand.
+    for (let i = 0; i < args.length; i++) {
+        const a = args[i];
+        if (a === "-c" || a === "--config-env") return true;
+        if (a === "config") return true;
+        // Stop after the first non-flag arg — that's the subcommand.
+        if (!a.startsWith("-")) break;
+    }
+    return false;
+}
+
+export function hasGitConfigEnvOverride(env: NodeJS.ProcessEnv): boolean {
+    for (const k of Object.keys(env)) {
+        if (/^GIT_CONFIG(_|$)/.test(k)) return true;
+    }
+    return false;
+}
+
 // ── Cross-Platform Command Executor ──────────
 
 async function execCommand(
@@ -91,6 +116,14 @@ export const shellExec: ToolDefinition = {
         if (isShellBypass(command, args)) {
             return JSON.stringify({
                 error: `Blocked: The inline command contains a system-destructive operation that could damage the OS.`,
+            });
+        }
+
+        // Block `git config` / `git -c …` / GIT_CONFIG_* env overrides. CLAUDE.md
+        // policy: never modify user git config (identity, hooks, signing).
+        if (isGitConfigCall(command, args) || hasGitConfigEnvOverride(process.env)) {
+            return JSON.stringify({
+                error: `Blocked: git config / -c flag / GIT_CONFIG_* env overrides are not permitted.`,
             });
         }
 

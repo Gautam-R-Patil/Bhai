@@ -62,15 +62,16 @@ const PATTERNS: Pattern[] = [
         regex: /sk-ant-(?:api|sid|admin)\d+-[A-Za-z0-9_-]{80,}/g,
     },
     {
+        name: "OPENROUTER_API_KEY",
+        // sk-or-v1-<hex>. Listed before OPENAI_API_KEY so the generic
+        // sk-… pattern doesn't swallow OpenRouter keys.
+        regex: /\bsk-or-v\d+-[A-Fa-f0-9]{32,}\b/g,
+    },
+    {
         name: "OPENAI_API_KEY",
         // Legacy: sk-<48 chars>.  New project keys: sk-proj-<long>.
         // Anchored with \b so it doesn't match inside sk-ant- / sk_live_.
         regex: /\bsk-(?:proj-)?[A-Za-z0-9_-]{32,}\b/g,
-    },
-    {
-        name: "OPENROUTER_API_KEY",
-        // sk-or-v1-<hex>
-        regex: /\bsk-or-v\d+-[A-Fa-f0-9]{32,}\b/g,
     },
     {
         name: "AWS_ACCESS_KEY",

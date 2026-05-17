@@ -32,8 +32,109 @@ export function setRegistryRef(reg: Map<string, ToolDefinition>): void {
     registryRef = reg;
 }
 
+export function getRegistryRef(): Map<string, ToolDefinition> | null {
+    return registryRef;
+}
+
 // ── Tracked dynamic tool names for listing ───────────────
 const dynamicToolNames = new Set<string>();
+
+// ── Persisted-handler integrity key (F8) ──────────────────
+//
+// Threat: a malicious actor (or another tool) that can write to
+// ~/.atlas/dynamic-tools/*.json could swap a tool's handler_code for an
+// arbitrary payload that auto-loads on next ATLAS boot. The verifier never
+// re-runs, the SAST never re-scans, and the user never re-approves — so
+// the only defense is a tamper-detection signature.
+//
+// Strategy: at first call, lazily generate (or load) a 32-byte key at
+// ~/.atlas/data/forge-persist-key (mode 0o600). At persist time, sign the
+// canonical JSON of {name, handler_code, parameters_schema}. At load time,
+// verify the signature; on mismatch or missing signature, move the file
+// to ~/.atlas/store/dynamic/_failed/ and skip loading.
+//
+// Failure mode: if the key file gets deleted, ALL existing persisted tools
+// are quarantined (correct — we cannot prove they're still safe). User has
+// to re-create them via the verifier path.
+
+const PERSIST_KEY_PATH = path.join(homedir(), ".atlas", "data", "forge-persist-key");
+const FAILED_DIR = path.join(homedir(), ".atlas", "store", "dynamic", "_failed");
+
+let _persistKey: Buffer | null = null;
+function getPersistKey(): Buffer {
+    if (_persistKey) return _persistKey;
+    try {
+        if (fs.existsSync(PERSIST_KEY_PATH)) {
+            const buf = fs.readFileSync(PERSIST_KEY_PATH);
+            if (buf.length === 32) {
+                _persistKey = buf;
+                return _persistKey;
+            }
+        }
+    } catch {
+        /* fall through to regenerate */
+    }
+    const fresh = crypto.randomBytes(32);
+    fs.mkdirSync(path.dirname(PERSIST_KEY_PATH), { recursive: true });
+    fs.writeFileSync(PERSIST_KEY_PATH, fresh, { mode: 0o600 });
+    try {
+        fs.chmodSync(PERSIST_KEY_PATH, 0o600);
+    } catch {
+        /* best-effort on platforms without POSIX chmod semantics */
+    }
+    _persistKey = fresh;
+    return _persistKey;
+}
+
+function canonicalToolJson(o: { name: string; handler_code: string; parameters_schema: unknown }): string {
+    return JSON.stringify({
+        canon_version: 1,
+        name: o.name,
+        handler_code: o.handler_code,
+        parameters_schema: o.parameters_schema ?? null,
+    });
+}
+
+function signPersistedTool(o: { name: string; handler_code: string; parameters_schema: unknown }): string {
+    return crypto.createHmac("sha256", getPersistKey()).update(canonicalToolJson(o)).digest("hex");
+}
+
+function verifyPersistedTool(data: {
+    name?: unknown;
+    handler_code?: unknown;
+    parameters_schema?: unknown;
+    hmac?: unknown;
+}): boolean {
+    if (typeof data.name !== "string" || typeof data.handler_code !== "string" || typeof data.hmac !== "string") {
+        return false;
+    }
+    if (data.hmac.length !== 64) return false;
+    const expected = signPersistedTool({
+        name: data.name,
+        handler_code: data.handler_code,
+        parameters_schema: data.parameters_schema,
+    });
+    const a = Buffer.from(data.hmac, "hex");
+    const b = Buffer.from(expected, "hex");
+    if (a.length !== b.length) return false;
+    try {
+        return crypto.timingSafeEqual(a, b);
+    } catch {
+        return false;
+    }
+}
+
+function quarantineCorruptTool(srcPath: string, reason: string): void {
+    try {
+        fs.mkdirSync(FAILED_DIR, { recursive: true });
+        const base = path.basename(srcPath);
+        const dst = path.join(FAILED_DIR, `${Date.now()}_${base}`);
+        fs.renameSync(srcPath, dst);
+        console.error(`⚠️ Quarantined persisted tool "${base}" → ${dst} (${reason})`);
+    } catch (err) {
+        console.error(`⚠️ Failed to quarantine "${srcPath}":`, (err as Error).message);
+    }
+}
 
 // ── Read-only fs subset ─────────────────────────────────
 // Dynamic tools may read files but not create, write, or delete them.
@@ -90,7 +191,8 @@ function validateShellCommand(cmd: string, args?: string[]): void {
     }
 }
 
-const safeFetch = globalThis.fetch;
+// Note: host `fetch` is not exposed to the sandbox until Phase-4 kernel sandbox
+// ships capability enforcement. utils.fetch refuses outright.
 
 // ── Require shim for the sandbox ────────────────────────
 // Only a curated set of safe, side-effect-free modules are allowed.
@@ -149,73 +251,62 @@ function buildHandler(code: string): (input: Record<string, unknown>) => Promise
         filename: "dynamic-tool-sandbox.vm",
     });
 
-    // The utils object exposed inside the sandbox — restricted to safe operations
+    // The utils object exposed inside the sandbox.
+    //
+    // Phase-4 plan: capabilities (fs/net/exec) enforced by an OS-level kernel
+    // sandbox (seccomp/sandbox-exec/AppContainer). Until then, the interim
+    // vm.createContext sandbox is NOT strong enough to safely expose
+    // exec/execFile/fetch/Buffer/URL — those let LLM-supplied code reach
+    // arbitrary host code via constructor chains or shell escape.
+    //
+    // Read-only fs stays (the allowlist gates protected paths) and is the
+    // single privileged capability available to legacy synthesized handlers.
+    const sandboxConsole = Object.freeze({
+        log: console.log.bind(console),
+        warn: console.warn.bind(console),
+        error: console.error.bind(console),
+        info: console.info.bind(console),
+    });
+    const denyExec = () => {
+        throw new Error(
+            "utils.exec/execFile denied — exec capability requires the Phase-4 kernel sandbox. " +
+                "Declare an `exec` capability in your forge envelope; the verifier will provision it.",
+        );
+    };
+    const denyFetch = () => {
+        throw new Error(
+            "utils.fetch denied — net capability requires the Phase-4 kernel sandbox. " +
+                "Declare a `net` capability in your forge envelope; the verifier will provision it.",
+        );
+    };
     const utils = Object.freeze({
-        // Read-only filesystem access
+        // Read-only filesystem access (path-gated by allowlist at write sites).
         fs: readOnlyFs,
         path,
         homedir: homedir(),
-        // Shell execution — validated through the allowlist before running
-        exec: async (cmd: string, options?: Record<string, unknown>) => {
-            if (typeof cmd !== "string") {
-                throw new Error("utils.exec expects a command string, e.g. utils.exec('ls -la')");
-            }
-            validateShellCommand(cmd);
-            return execAsync(cmd, { timeout: 30000, ...options });
-        },
-        // execFile for when command + args are separate: utils.execFile('git', ['status'])
-        execFile: async (command: string, args?: string[], options?: Record<string, unknown>) => {
-            if (typeof command !== "string") {
-                throw new Error("utils.execFile expects a command string as first argument");
-            }
-            validateShellCommand(command, args);
-            return execFileAsync(command, args, { timeout: 30000, ...options });
-        },
-        fetch: safeFetch,
+        exec: denyExec,
+        execFile: denyExec,
+        fetch: denyFetch,
         JSON,
-        Buffer,
-        // Safe console — only log, warn, error (no access to host stdout directly)
-        console: Object.freeze({
-            log: console.log.bind(console),
-            warn: console.warn.bind(console),
-            error: console.error.bind(console),
-            info: console.info.bind(console),
-        }),
+        console: sandboxConsole,
         setTimeout: globalThis.setTimeout,
-        URL,
-        URLSearchParams,
         require: sandboxRequire,
     });
 
     return async (input: Record<string, unknown>): Promise<string> => {
         try {
-            // Create a fresh V8 context for each execution — no access to host globals.
-            // Each property here is explicitly chosen; nothing else leaks in.
+            // Bootstrap-only globals. Host-realm constructors (Buffer, URL, Promise,
+            // Error, Map, Set, WeakMap, RegExp, Array, Object) are NOT passed in:
+            // their .constructor chains all resolve back to the host Function
+            // constructor and enable `({}).constructor.constructor("...")()` style
+            // escapes. The new vm context's own realm provides realm-isolated
+            // copies of Array/Object/Date/Promise/Error/RegExp/Map/Set/etc
+            // — code inside the sandbox uses those, not these.
             const sandbox: Record<string, unknown> = {
-                // Safe built-in constructors (copies, not references to host globals)
+                // Static value-only globals — no constructor exposed back to host.
                 JSON,
                 Math,
-                Date,
-                String,
-                Number,
-                Boolean,
-                Array,
-                Object,
-                RegExp,
-                Map,
-                Set,
-                WeakMap,
-                WeakSet,
-                Promise,
-                Error,
-                TypeError,
-                RangeError,
-                SyntaxError,
-                URIError,
-                Buffer,
-                URL,
-                URLSearchParams,
-                // Safe global functions
+                // Safe global functions (do not expose a useful .constructor surface).
                 parseInt,
                 parseFloat,
                 isNaN,
@@ -224,19 +315,14 @@ function buildHandler(code: string): (input: Record<string, unknown>) => Promise
                 decodeURIComponent,
                 encodeURI,
                 decodeURI,
+                // Timers stay (handlers commonly await delays). These are host refs,
+                // but they don't expose a constructor-escape chain the way Buffer does.
                 setTimeout: globalThis.setTimeout,
                 clearTimeout: globalThis.clearTimeout,
                 setInterval: globalThis.setInterval,
                 clearInterval: globalThis.clearInterval,
-                // Explicitly blocked — these will be undefined in the sandbox
-                // process: undefined,
-                // globalThis: undefined,
-                // global: undefined,
-                // require: undefined (the real one — our shim is passed as a parameter)
-                // __dirname: undefined,
-                // __filename: undefined,
+                // Console is a sanitized object literal (no host method backrefs).
                 console: utils.console,
-                fetch: safeFetch,
             };
 
             const context = vm.createContext(sandbox, {
@@ -275,7 +361,7 @@ export const createTool: ToolDefinition = {
         type: "function",
         function: {
             name: "create_tool",
-            description: `Create a new tool at runtime. The handler code runs in a sandboxed async context with two variables: 'input' (parameters) and 'utils' (fs [read-only: readFile/readdir/stat/existsSync], path, exec [validated against security allowlist], execFile [validated], fetch, JSON, Buffer, console.log, URL, URLSearchParams, homedir, require [path/url/querystring/crypto only]). Built-in globals available: Math, Date, String, Array, Object, RegExp, Map, Set, Promise, setTimeout, parseInt, etc. Use utils.exec("command string") for shell commands. Example: "const {stdout} = await utils.exec('ls -la ' + input.dir); return stdout;"`,
+            description: `Create a new tool at runtime. The handler runs in a sandboxed async context with two variables: 'input' (parameters) and 'utils' (fs [read-only: readFile/readdir/stat/existsSync], path, homedir, JSON, console.log, setTimeout, require [path/url/querystring/crypto/os only]). Built-in sandbox globals: Math, JSON, parseInt, parseFloat, isNaN, isFinite, encode/decodeURIComponent, plus the vm-realm's own Array/Object/Date/Promise/Error/RegExp/Map/Set (use these — host Buffer/URL/fetch are NOT exposed). Shell/network capabilities (utils.exec/execFile/fetch) are DENIED in this sandbox; they require the Phase-4 kernel-sandbox. Use the forge envelope (capabilities_declared) for those.`,
             parameters: {
                 type: "object",
                 properties: {
@@ -370,12 +456,34 @@ export const createTool: ToolDefinition = {
                         });
                     }
                     if (result.kind === "synthesized") {
+                        // Register the in-process handler so the agent can
+                        // immediately call the synthesized tool. Persistent
+                        // tools take a different path (awaiting_approval +
+                        // sandboxed registration on approve_dynamic_tool).
+                        if (result.handlerCode && registryRef && !registryRef.has(result.slug)) {
+                            const sessionHandler = buildHandler(result.handlerCode);
+                            registryRef.set(result.slug, {
+                                schema: {
+                                    type: "function",
+                                    function: {
+                                        name: result.slug,
+                                        description,
+                                        parameters:
+                                            (result.parametersSchema as Record<string, unknown>) ??
+                                            paramsSchema ??
+                                            { type: "object", properties: {}, required: [] },
+                                    },
+                                },
+                                handler: sessionHandler,
+                            });
+                            dynamicToolNames.add(result.slug);
+                        }
                         return JSON.stringify({
                             success: true,
                             synthesized: true,
                             tool_name: result.slug,
                             attempts: result.attempts,
-                            message: `Tool "${result.slug}" synthesized and verified (${result.testsPassed}/${result.testsTotal} tests passed).`,
+                            message: `Tool "${result.slug}" synthesized, verified (${result.testsPassed}/${result.testsTotal} tests passed), and registered.`,
                         });
                     }
                     if (result.kind === "awaiting_approval") {
@@ -404,22 +512,28 @@ export const createTool: ToolDefinition = {
             return JSON.stringify({ error: `Cannot override built-in tool "${name}". Choose a different name.` });
         }
 
-        // Build the handler
+        // Static-only validation: confirm the handler syntactically parses.
+        // We do NOT execute the handler here — LLM-supplied code is untrusted and
+        // the test-execution path lives inside buildHandler's vm sandbox, which is
+        // not strong enough to safely run unknown code at registration time. The
+        // proper test-execution path is the verifier (Phase 3); this branch is
+        // reached only when the verifier is disabled or unavailable.
+        try {
+            const acorn = await import("acorn");
+            acorn.parse(`(async function() { ${handlerCode} })`, {
+                ecmaVersion: "latest",
+                sourceType: "script",
+            });
+        } catch (err) {
+            return JSON.stringify({ error: `Invalid handler code: ${(err as Error).message}` });
+        }
+
+        // Build the handler (lazy — only compiles, does not execute).
         let handler: (input: Record<string, unknown>) => Promise<string>;
         try {
             handler = buildHandler(handlerCode);
         } catch (err) {
             return JSON.stringify({ error: `Invalid handler code: ${(err as Error).message}` });
-        }
-
-        // Quick validation — try calling with empty input
-        try {
-            await Promise.race([
-                handler({}),
-                new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 3000)),
-            ]);
-        } catch {
-            // Validation failure is OK — the tool may need real inputs to work
         }
 
         // Build schema
@@ -447,12 +561,21 @@ export const createTool: ToolDefinition = {
         if (persistent) {
             try {
                 fs.mkdirSync(DYNAMIC_TOOLS_DIR, { recursive: true });
+                const paramsSchemaValue = paramsSchema || { type: "object", properties: {}, required: [] };
                 const toolData = {
                     name,
                     description,
-                    parameters_schema: paramsSchema || { type: "object", properties: {}, required: [] },
+                    parameters_schema: paramsSchemaValue,
                     handler_code: handlerCode,
                     created_at: new Date().toISOString(),
+                    // F8: tamper-detection signature over the executable subset of the file.
+                    // If anything mutates the handler_code or parameters_schema on disk,
+                    // loadDynamicTools() will refuse to load it on next boot.
+                    hmac: signPersistedTool({
+                        name,
+                        handler_code: handlerCode,
+                        parameters_schema: paramsSchemaValue,
+                    }),
                 };
                 fs.writeFileSync(path.join(DYNAMIC_TOOLS_DIR, `${name}.json`), JSON.stringify(toolData, null, 2));
                 console.log(`💾 Dynamic tool persisted: ${name}`);
@@ -521,16 +644,45 @@ export async function loadDynamicTools(): Promise<void> {
 
     if (!fs.existsSync(DYNAMIC_TOOLS_DIR)) return;
 
+    // F8 integrity check + F4 re-SAST. Dynamically import the SAST runner so
+    // create-tool.ts doesn't pull in the entire forge graph at module-load time.
+    const { runSastCritic } = await import("../forge/critics.js");
+
     const files = fs.readdirSync(DYNAMIC_TOOLS_DIR).filter((f) => f.endsWith(".json"));
     let loaded = 0;
+    let quarantined = 0;
 
     for (const file of files) {
+        const filePath = path.join(DYNAMIC_TOOLS_DIR, file);
         try {
-            const data = JSON.parse(fs.readFileSync(path.join(DYNAMIC_TOOLS_DIR, file), "utf-8"));
+            const data = JSON.parse(fs.readFileSync(filePath, "utf-8"));
             const { name, description, parameters_schema, handler_code } = data;
 
             if (!name || !handler_code) continue;
             if (registryRef.has(name) && !dynamicToolNames.has(name)) continue; // Don't override built-in
+
+            // F8: HMAC verification. Refuse unsigned / tampered files.
+            if (!verifyPersistedTool({
+                name,
+                handler_code,
+                parameters_schema,
+                hmac: data.hmac,
+            })) {
+                quarantineCorruptTool(filePath, "missing or bad HMAC");
+                quarantined++;
+                continue;
+            }
+
+            // F4: re-run SAST on load — new rules may flag legacy payloads.
+            const sast = await runSastCritic(handler_code, { rulesPath: null });
+            if (!sast.pass) {
+                quarantineCorruptTool(
+                    filePath,
+                    `SAST rejected on reload: ${sast.findings.find((f) => f.severity === "ERROR")?.ruleId ?? "unknown"}`,
+                );
+                quarantined++;
+                continue;
+            }
 
             const handler = buildHandler(handler_code);
             const schema: ChatCompletionTool = {
@@ -552,5 +704,8 @@ export async function loadDynamicTools(): Promise<void> {
 
     if (loaded > 0) {
         console.log(`🔧 ${loaded} persisted dynamic tool(s) loaded`);
+    }
+    if (quarantined > 0) {
+        console.warn(`⚠️ ${quarantined} persisted tool(s) quarantined due to integrity failure`);
     }
 }

@@ -6,7 +6,12 @@
 // Analyze, extract, runJS, wait, select, upload, strategies
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { getPathBlockedReason, isPathAllowed } from "../../security/allowlist.js";
+import { auditLog } from "../../security/audit-log.js";
+import { isSensitivePath } from "../../security/sensitive-paths.js";
+import { getWorkspaceDir } from "../../config/paths.js";
 import { addDomainTip, findStrategy, getDomainTips, recordStrategy } from "../browser-memory.js";
 import type { ToolDefinition } from "../get-current-time.js";
 import type { CachedActionStep } from "./action-cache.js";
@@ -381,7 +386,45 @@ export const browserUploadFile: ToolDefinition = {
     async handler(input) {
         try {
             const page = await getActivePage();
-            const filePath = input.file_path as string;
+            const rawPath = input.file_path as string;
+            if (!rawPath) {
+                return JSON.stringify({ error: "file_path is required" });
+            }
+            const filePath = path.resolve(rawPath);
+
+            auditLog("browser_upload_file", { path: filePath });
+
+            if (!isPathAllowed(filePath)) {
+                const reason = getPathBlockedReason(filePath) ?? `Path "${filePath}" is not allowed.`;
+                return JSON.stringify({ error: reason });
+            }
+            const sensitive = isSensitivePath(filePath);
+            if (sensitive.denied) {
+                return JSON.stringify({
+                    error: `Refusing to upload sensitive path. ${sensitive.reason ?? ""}`,
+                });
+            }
+            // Confine uploads to the workspace dir + ~/Downloads (override-friendly).
+            const allowedRoots = [
+                path.resolve(getWorkspaceDir()),
+                path.join(os.homedir(), "Downloads"),
+            ];
+            const extra = process.env.ATLAS_BROWSER_UPLOAD_ROOTS;
+            if (extra) {
+                for (const p of extra.split(path.delimiter)) {
+                    if (p.trim()) allowedRoots.push(path.resolve(p.trim()));
+                }
+            }
+            const inAllowedRoot = allowedRoots.some(
+                (root) => filePath === root || filePath.startsWith(root + path.sep),
+            );
+            if (!inAllowedRoot) {
+                return JSON.stringify({
+                    error:
+                        `browser_upload_file: ${filePath} is outside the allowed upload roots ` +
+                        `(${allowedRoots.join(", ")}). Move the file into the workspace or ~/Downloads first.`,
+                });
+            }
 
             if (!fs.existsSync(filePath)) {
                 return JSON.stringify({ error: `File not found: ${filePath}` });

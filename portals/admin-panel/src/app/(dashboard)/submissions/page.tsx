@@ -47,9 +47,10 @@ export default function SubmissionsPage() {
 
   const handleAction = async (subId: string, action: string, notes?: string) => {
     try {
+      // F13: adminId is now injected server-side by /api/store from the
+      // verified session — never trust a client-supplied value.
       await storeProxy("mutation", `store/submissions:${action}`, {
         submissionId: subId,
-        adminId: "admin", // TODO: get from session
         ...(notes ? { notes } : {}),
       });
       loadSubmissions(activeFilter);

@@ -187,11 +187,35 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: authz.error }, { status: authz.status });
   }
 
+  // F13: server-derive adminId from the session for any mutation that needs
+  // to audit which admin took the action. Previously the client passed
+  // adminId: "admin" — a literal string — which silently bypassed any
+  // server-side audit of "who approved this submission". Overwrite any
+  // client-supplied adminId so a misbehaving panel can't impersonate.
+  const ADMIN_ID_CONSUMERS = new Set<string>([
+    "store/submissions:approve",
+    "store/submissions:reject",
+    "store/submissions:requestRevision",
+    "store/submissions:startReview",
+    "store/developers:approve",
+    "store/developers:reject",
+    "store/developers:suspend",
+    "store/developers:ban",
+    "store/developers:reinstate",
+    "store/items:setFeatured",
+    "store/items:updateStatus",
+    "store/reviews:adminDelete",
+  ]);
+  const finalArgs: Record<string, unknown> = { ...(args ?? {}) };
+  if (kind === "mutation" && ADMIN_ID_CONSUMERS.has(functionPath)) {
+    finalArgs.adminId = session.adminId;
+  }
+
   try {
     const value =
       kind === "query"
-        ? await adminStoreQuery<unknown>(functionPath, args ?? {})
-        : await adminStoreMutation<unknown>(functionPath, args ?? {});
+        ? await adminStoreQuery<unknown>(functionPath, finalArgs)
+        : await adminStoreMutation<unknown>(functionPath, finalArgs);
     return NextResponse.json({ value });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Proxy failed";

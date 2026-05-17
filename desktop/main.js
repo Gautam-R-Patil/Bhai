@@ -1383,20 +1383,34 @@ function startLocalServer() {
             ".ttf": "font/ttf",
         };
         const desktopDir = __dirname;
+        const desktopDirResolved = path.resolve(desktopDir);
         const server = http.createServer((req, res) => {
             let filePath = path.join(desktopDir, req.url === "/" ? "/panel.html" : req.url);
             // Strip query strings
             filePath = filePath.split("?")[0];
-            const ext = path.extname(filePath).toLowerCase();
-            fs.readFile(filePath, (err, data) => {
+            // F1: path-traversal containment. Resolve to absolute path and
+            // assert the result is inside desktopDir. Without this, a request
+            // like `GET /../../etc/passwd` would let any local process or
+            // origin reachable via http://127.0.0.1:7421 read arbitrary files.
+            const resolved = path.resolve(filePath);
+            if (!resolved.startsWith(desktopDirResolved + path.sep) && resolved !== desktopDirResolved) {
+                res.writeHead(403);
+                res.end("Forbidden");
+                return;
+            }
+            const ext = path.extname(resolved).toLowerCase();
+            fs.readFile(resolved, (err, data) => {
                 if (err) {
                     res.writeHead(404);
                     res.end("Not found: " + req.url);
                     return;
                 }
+                // F1: ACAO:* removed. Same-origin loads from the BrowserWindow
+                // (which is on the same 127.0.0.1:port) need no CORS header.
+                // The wildcard previously let any webpage in any user browser
+                // tab fetch from here cross-origin.
                 res.writeHead(200, {
                     "Content-Type": mime[ext] || "application/octet-stream",
-                    "Access-Control-Allow-Origin": "*",
                 });
                 res.end(data);
             });
@@ -1422,6 +1436,29 @@ function startLocalServer() {
 
 // ── Window Creation ───────────────────────────
 
+// F4: applied to every BrowserWindow we create. Denies window.open(), blocks
+// arbitrary navigations, and pins webPreferences to the safe defaults that
+// shouldn't be opt-in. Pass `allowedNavigateOrigins` to permit specific
+// remote loads (e.g. the OTPless-hosted auth page on tryatlasagi.com).
+function hardenBrowserWindow(win, opts = {}) {
+    const allowed = Array.isArray(opts.allowedNavigateOrigins) ? opts.allowedNavigateOrigins : [];
+    const allowLocal = opts.allowLocal !== false; // file:// + http://127.0.0.1 by default
+    win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    win.webContents.on("will-navigate", (e, url) => {
+        try {
+            const u = new URL(url);
+            if (allowLocal && (u.protocol === "file:" || u.hostname === "127.0.0.1" || u.hostname === "localhost")) {
+                return;
+            }
+            if (allowed.includes(u.host)) return;
+            e.preventDefault();
+            console.warn(`[Window] Blocked navigation to ${url}`);
+        } catch {
+            e.preventDefault();
+        }
+    });
+}
+
 function createWizardWindow() {
     mainWindow = new BrowserWindow({
         width: 820,
@@ -1436,11 +1473,15 @@ function createWizardWindow() {
             preload: path.join(__dirname, "preload.js"),
             nodeIntegration: false,
             contextIsolation: true,
+            sandbox: true,
+            webSecurity: true,
+            allowRunningInsecureContent: false,
             devTools: IS_DEV,
         },
         title: "A.T.L.A.S Setup — © XAGI Labs",
     });
 
+    hardenBrowserWindow(mainWindow);
     mainWindow.loadFile(path.join(__dirname, "wizard.html"));
     if (IS_DEV) mainWindow.webContents.openDevTools({ mode: "detach" });
 }
@@ -1459,11 +1500,15 @@ async function createPanelWindow() {
             preload: path.join(__dirname, "preload.js"),
             nodeIntegration: false,
             contextIsolation: true,
+            sandbox: true,
+            webSecurity: true,
+            allowRunningInsecureContent: false,
             devTools: IS_DEV,
         },
         title: "A.T.L.A.S — © XAGI Labs",
     });
 
+    hardenBrowserWindow(mainWindow);
     // Load from local HTTP server so OTPless SDK origin check passes
     const port = await startLocalServer();
     if (port) {
@@ -1515,10 +1560,17 @@ function createOverlayWindow() {
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
+            sandbox: true,
+            webSecurity: true,
+            allowRunningInsecureContent: false,
             devTools: IS_DEV,
             preload: path.join(__dirname, "overlay-preload.js"),
         },
     });
+
+    // F4: deny window.open() and constrain navigation. Overlay loads from
+    // 127.0.0.1 (the bot's overlay server), so allowLocal=true is sufficient.
+    hardenBrowserWindow(overlayWindow);
 
     // macOS: show on all Spaces and in fullscreen
     if (process.platform === "darwin") {
@@ -1810,12 +1862,24 @@ function registerIPC() {
                 preload: path.join(__dirname, "auth-preload.js"),
                 nodeIntegration: false,
                 contextIsolation: true,
+                // F3: sandbox=true puts the renderer in OS-level sandbox.
+                // webSecurity=true (default, but explicit) keeps SOP enforced.
+                // allowRunningInsecureContent=false rejects mixed content on
+                // the HTTPS auth page.
+                sandbox: true,
+                webSecurity: true,
+                allowRunningInsecureContent: false,
                 devTools: IS_DEV,
             },
         });
+        // F3: lock down the auth window — it's the only window we load remote
+        // content into. setWindowOpenHandler denies window.open() from the
+        // page; will-navigate confines the renderer to tryatlasagi.com.
+        const authUrl = process.env.ATLAS_AUTH_URL || "https://tryatlasagi.com/auth-login";
+        const authHost = (() => { try { return new URL(authUrl).host; } catch { return "tryatlasagi.com"; } })();
+        hardenBrowserWindow(authWindow, { allowedNavigateOrigins: [authHost], allowLocal: false });
         // OTPless SDK requires a real HTTPS origin; auth-login/ hosts the
         // headless SDK page and hands the token back via the preload bridge.
-        const authUrl = process.env.ATLAS_AUTH_URL || "https://tryatlasagi.com/auth-login";
         authWindow.loadURL(authUrl);
         authWindow.on("closed", () => { authWindow = null; });
         if (IS_DEV) authWindow.webContents.openDevTools({ mode: "detach" });
@@ -3521,13 +3585,19 @@ function registerIPC() {
     });
 
     // Shared helper — finds google-credentials.json across all possible locations.
+    // F7: the installer no longer bundles google-credentials.json. Operators
+    // must drop their own credentials at ~/Downloads/google-credentials.json
+    // (or DATA_DIR), and the wizard's Google setup step documents this.
+    // TODO(F7): replace this entirely with per-installation OAuth obtained
+    // via Convex on first run — eliminates the need for the user to handle
+    // any client_secret at all.
     // Checks the writable userData dir first (survives reinstalls), then the
-    // bundled read-only resources (works when packed on Mac/Windows), then the
-    // user's Downloads folder as a last resort.
+    // (legacy) bundled-resources path for backward compat with older installs,
+    // then the user's Downloads folder as the documented operator drop-zone.
     function findGoogleCredentials() {
         const candidates = [
             path.join(DATA_DIR, "google-credentials.json"),           // writable userData
-            path.join(BOT_DIR, "data", "google-credentials.json"),    // bundled resources
+            path.join(BOT_DIR, "data", "google-credentials.json"),    // legacy bundled (no longer shipped)
             // Downloads — supports both POSIX ($HOME) and Windows ($USERPROFILE)
             path.join(process.env.HOME || process.env.USERPROFILE || "", "Downloads", "google-credentials.json"),
         ];
@@ -3558,10 +3628,19 @@ function registerIPC() {
                 return { success: false, error: "Google credentials file not found." };
             }
 
+            // F2: random state — 32 bytes hex. Stored in closure (main process
+            // memory) and validated on the callback. Without this, a malicious
+            // local page could navigate the user to the OAuth flow with its
+            // own code= param and bind a foreign Google account.
+            const { generateOAuthState, safeStringEqual } = require(path.join(__dirname, "auth-helpers.js"));
+            const expectedState = generateOAuthState();
+            let codeConsumed = false;
+
             const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
                 `client_id=${clientCreds.client_id}` +
-                `&redirect_uri=${encodeURIComponent("http://localhost:8844")}` +
+                `&redirect_uri=${encodeURIComponent("http://127.0.0.1:8844")}` +
                 `&response_type=code` +
+                `&state=${encodeURIComponent(expectedState)}` +
                 `&scope=${encodeURIComponent("openid email profile https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.modify")}` +
                 `&access_type=offline&prompt=consent`;
 
@@ -3570,9 +3649,10 @@ function registerIPC() {
 
             return new Promise((resolve) => {
                 const server = http.createServer((req, res) => {
-                    const url = new URL(req.url || "/", "http://localhost:8844");
+                    const url = new URL(req.url || "/", "http://127.0.0.1:8844");
                     const code = url.searchParams.get("code");
                     const error = url.searchParams.get("error");
+                    const stateParam = url.searchParams.get("state") || "";
 
                     if (error) {
                         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -3583,6 +3663,22 @@ function registerIPC() {
                     }
 
                     if (code) {
+                        // F2: per-flow single-use code. Reject any second
+                        // callback after a code has already been consumed.
+                        if (codeConsumed) {
+                            res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+                            res.end("Code already consumed");
+                            return;
+                        }
+                        // F2: validate state with constant-time compare.
+                        if (!safeStringEqual(stateParam, expectedState)) {
+                            res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+                            res.end("Invalid OAuth state");
+                            server.close();
+                            resolve({ success: false, error: "Invalid OAuth state" });
+                            return;
+                        }
+                        codeConsumed = true;
                         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
                         res.end(renderOAuthCallbackPage({ kind: "success" }));
                         server.close();
@@ -3593,7 +3689,7 @@ function registerIPC() {
                             client_secret: clientCreds.client_secret,
                             code: code,
                             grant_type: "authorization_code",
-                            redirect_uri: "http://localhost:8844"
+                            redirect_uri: "http://127.0.0.1:8844"
                         }).toString();
 
                         const pReq = https.request("https://oauth2.googleapis.com/token", {
@@ -3639,7 +3735,12 @@ function registerIPC() {
                     }
                 });
 
-                server.listen(8844, () => {
+                // F2: bind explicitly to 127.0.0.1 so the callback server
+                // is not reachable from other hosts on the LAN. Without
+                // this, http.createServer().listen(port) binds to 0.0.0.0
+                // on Linux/Windows and accepts callbacks from any peer
+                // that can reach this machine.
+                server.listen(8844, "127.0.0.1", () => {
                     shell.openExternal(authUrl);
                 });
 
@@ -3909,8 +4010,16 @@ function registerIPC() {
         const popup = new BrowserWindow({
             width: 520,
             height: 720,
-            webPreferences: { nodeIntegration: false, contextIsolation: true },
+            webPreferences: {
+                nodeIntegration: false,
+                contextIsolation: true,
+                sandbox: true,
+                webSecurity: true,
+                allowRunningInsecureContent: false,
+            },
         });
+        // F4: confine the Slack OAuth popup to slack.com.
+        hardenBrowserWindow(popup, { allowedNavigateOrigins: ["slack.com"], allowLocal: false });
         popup.loadURL(url);
         return { ok: true };
     });
@@ -4491,10 +4600,89 @@ function registerIPC() {
         return { canceled: false, filePath: result.filePaths[0] };
     });
 
-    ipcMain.handle("store:sideload-install", async (_, filePath) => {
+    // F8: trusted Ed25519 publisher public keys, hex-encoded. Start with
+    // ATLAS's own key; add more as ecosystem partners are vetted. Stored as
+    // an env-overridable allowlist so we don't ship a hardcoded list that's
+    // tedious to rotate.
+    const TRUSTED_PUBLISHER_KEYS = (process.env.ATLAS_TRUSTED_PUBLISHER_KEYS || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+
+    // F8: pre-validate every ZIP entry. AdmZip exposes attributes (`attr`)
+    // and we additionally check the entryName looks sane. Used to reject
+    // path traversal, absolute paths, and symlink entries before extraction.
+    function validateZipEntries(entries) {
+        const safePattern = /^[A-Za-z0-9_./-]+$/;
+        for (const e of entries) {
+            const name = e.entryName || "";
+            if (!safePattern.test(name)) {
+                return { ok: false, error: `Invalid ZIP entry name: ${name}` };
+            }
+            if (name.startsWith("/") || name.startsWith("..") || name.includes("/../")) {
+                return { ok: false, error: `Unsafe ZIP entry path: ${name}` };
+            }
+            // adm-zip surfaces UNIX file mode in `attr` (upper 16 bits).
+            // Symlinks have mode bits 0xA000. Reject any entry that looks
+            // like one — they let a malicious zip plant files outside the
+            // extraction dir after extraction.
+            const mode = (e.attr >>> 16) & 0o170000;
+            if (mode === 0o120000) {
+                return { ok: false, error: `Symlink entries not allowed: ${name}` };
+            }
+        }
+        return { ok: true };
+    }
+
+    // F8: verify Ed25519 signature against a canonical hash of all files.
+    // The signature.json schema:
+    //   { algo: "ed25519", publisherKey: "<hex>", signature: "<hex>",
+    //     files: [{ name: "...", sha256: "<hex>" }, ...] }
+    // Canonical hash = SHA-256 of the JSON-serialized sorted file list.
+    function verifySkillSignature(zip, entries) {
+        const sigEntry = entries.find((e) => e.entryName === "signature.json");
+        if (!sigEntry) {
+            return { ok: false, reason: "no_signature" };
+        }
+        let sig;
+        try {
+            sig = JSON.parse(sigEntry.getData().toString("utf-8"));
+        } catch {
+            return { ok: false, reason: "malformed_signature" };
+        }
+        if (sig.algo !== "ed25519" || typeof sig.publisherKey !== "string" ||
+            typeof sig.signature !== "string" || !Array.isArray(sig.files)) {
+            return { ok: false, reason: "malformed_signature" };
+        }
+        if (!TRUSTED_PUBLISHER_KEYS.includes(sig.publisherKey)) {
+            return { ok: false, reason: "untrusted_publisher" };
+        }
+        // Verify per-file hashes match the manifest.
+        const cryptoMod = require("node:crypto");
+        const filesSorted = [...sig.files].sort((a, b) => a.name.localeCompare(b.name));
+        for (const file of filesSorted) {
+            if (file.name === "signature.json") continue;
+            const entry = entries.find((e) => e.entryName === file.name);
+            if (!entry) return { ok: false, reason: `missing_file:${file.name}` };
+            const actual = cryptoMod.createHash("sha256").update(entry.getData()).digest("hex");
+            if (actual !== file.sha256) return { ok: false, reason: `hash_mismatch:${file.name}` };
+        }
+        // Verify the Ed25519 signature over the canonical file list.
+        const canonical = JSON.stringify(filesSorted.filter((f) => f.name !== "signature.json"));
+        const ok = cryptoMod.verify(
+            null,
+            Buffer.from(canonical, "utf-8"),
+            { key: Buffer.from(sig.publisherKey, "hex"), format: "der", type: "spki" },
+            Buffer.from(sig.signature, "hex"),
+        );
+        return ok ? { ok: true, publisherKey: sig.publisherKey } : { ok: false, reason: "bad_signature" };
+    }
+
+    ipcMain.handle("store:sideload-install", async (_, filePath, options) => {
         try {
             const ext = path.extname(filePath).toLowerCase();
             const AdmZip = require("adm-zip");
+            const acceptUnsigned = Boolean(options && options.acceptUnsigned);
 
             // Simple YAML frontmatter parser (avoids gray-matter dependency)
             function parseFrontmatter(content) {
@@ -4520,11 +4708,39 @@ function registerIPC() {
 
             let skillContent = null;
             let extractedFiles = [];
+            let signatureStatus = { signed: false, publisherKey: null };
 
             if (ext === ".zip") {
                 // Extract ZIP and look for SKILL.md or *.md with frontmatter
                 const zip = new AdmZip(filePath);
                 const entries = zip.getEntries();
+
+                // F8: pre-validate entries BEFORE touching disk. Rejects
+                // ../ traversal, absolute paths, symlinks, weird names.
+                const validation = validateZipEntries(entries);
+                if (!validation.ok) {
+                    return { success: false, error: `Sideload rejected: ${validation.error}` };
+                }
+
+                // F8: signature check. Two outcomes:
+                //   - signed + trusted key + hashes match  → install normally
+                //   - missing/invalid signature            → require explicit
+                //     opt-in via options.acceptUnsigned; mark install as
+                //     "unsigned" so it never auto-runs without user click.
+                const sigResult = verifySkillSignature(zip, entries);
+                if (sigResult.ok) {
+                    signatureStatus = { signed: true, publisherKey: sigResult.publisherKey };
+                } else {
+                    if (!acceptUnsigned) {
+                        return {
+                            success: false,
+                            error: "Skill is unsigned or signature invalid. Re-call with options.acceptUnsigned=true after warning the user.",
+                            requiresUnsignedConsent: true,
+                            signatureReason: sigResult.reason,
+                        };
+                    }
+                    console.warn(`[Sideload] Installing UNSIGNED skill (user accepted). Reason: ${sigResult.reason}`);
+                }
 
                 // Find skill markdown file
                 const skillEntry = entries.find(e =>
@@ -4646,11 +4862,17 @@ ${body}`;
                 version,
                 permissions: [],
                 sideloaded: true,
+                // F8: persist signature status so the agent's tool loader
+                // can refuse to auto-run unsigned skills and require an
+                // explicit user click each time.
+                signed: signatureStatus.signed,
+                publisherKey: signatureStatus.publisherKey,
+                autoRunAllowed: signatureStatus.signed,
                 installedAt: new Date().toISOString(),
             });
             fs.writeFileSync(installsPath, JSON.stringify(data, null, 2));
 
-            console.log(`[Sideload] Installed ${name} (${slug}) → ${skillDir}`);
+            console.log(`[Sideload] Installed ${name} (${slug}) → ${skillDir} (signed=${signatureStatus.signed})`);
 
             return {
                 success: true,
@@ -4659,6 +4881,8 @@ ${body}`;
                 type: itemType,
                 version,
                 categories,
+                signed: signatureStatus.signed,
+                publisherKey: signatureStatus.publisherKey,
                 warnings: warnings.length > 0 ? warnings : undefined,
             };
         } catch (err) {
@@ -5500,15 +5724,57 @@ app.whenReady().then(async () => {
         app.setAppUserModelId("com.xagilabs.atlas");
         console.log("[INIT] Windows AppUserModelID set: com.xagilabs.atlas");
 
-        // On Windows, set up permission handler for microphone/camera/geolocation access from webContents.
-        // This ensures the OS-level permission prompt appears rather than silently denying WebRTC requests.
+        // F5: permission handler with per-origin confirmation gate.
+        // Auto-granting microphone/camera/geolocation to any webContents
+        // meant a malicious remote page (loaded into a stray window) could
+        // silently turn on the user's mic. Now: localhost/file is trusted,
+        // any other origin must be confirmed via dialog and the choice is
+        // remembered in electron-store.
         const { session } = require("electron");
+        const PERMITTED_TYPES = new Set([
+            "microphone", "camera", "geolocation", "notifications", "media",
+        ]);
         session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-            const allowed = ["microphone", "camera", "geolocation", "notifications", "media"].includes(permission);
-            if (allowed) {
-                console.log(`[PERMISSIONS] Windows permission requested: ${permission} — granting`);
+            if (!PERMITTED_TYPES.has(permission)) {
+                return callback(false);
             }
-            callback(allowed);
+            let originHost = "";
+            try {
+                const u = new URL(webContents.getURL());
+                originHost = u.hostname;
+                if (u.protocol === "file:" || u.hostname === "127.0.0.1" || u.hostname === "localhost") {
+                    console.log(`[PERMISSIONS] ${permission} granted to trusted local origin (${u.hostname || "file"})`);
+                    return callback(true);
+                }
+            } catch {
+                return callback(false);
+            }
+            const grants = store.get("permissionGrants") || {};
+            const key = `${originHost}::${permission}`;
+            if (grants[key] === "allow") return callback(true);
+            if (grants[key] === "deny") return callback(false);
+            // Prompt the owner. dialog.showMessageBox is sync from a handler
+            // perspective — use the non-promise form to keep this callback fast.
+            const { dialog } = require("electron");
+            dialog.showMessageBox({
+                type: "question",
+                buttons: ["Deny", "Allow once", "Always allow"],
+                defaultId: 0,
+                cancelId: 0,
+                title: "A.T.L.A.S — Permission Request",
+                message: `Grant ${permission} access to ${originHost}?`,
+                detail: "Only allow if you trust this site. ATLAS will remember your choice for 'Always allow'.",
+            }).then(({ response }) => {
+                if (response === 2) {
+                    grants[key] = "allow";
+                    store.set("permissionGrants", grants);
+                    callback(true);
+                } else if (response === 1) {
+                    callback(true);
+                } else {
+                    callback(false);
+                }
+            }).catch(() => callback(false));
         });
 
         // Check if Windows Location Services are enabled via registry.

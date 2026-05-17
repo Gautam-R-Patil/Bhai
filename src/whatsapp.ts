@@ -184,6 +184,20 @@ function stopStateSweep(): void {
 // Kick off the sweep at module load; unref'd so it never blocks process exit.
 startStateSweep();
 
+// Sanitize attacker-controlled inbound text before wrapping in delimiters.
+// Strips framing tokens that the LLM treats as authoritative.
+function sanitizeIncomingChannelText(text: string): string {
+    if (!text) return text;
+    return text
+        .replace(/\[SYSTEM NOTE:/gi, "[user-quoted-text:")
+        .replace(/\[ATLAS-INTERNAL\b/gi, "[user-quoted-text")
+        .replace(/<system_log>/gi, "&lt;system_log&gt;")
+        .replace(/<\/system_log>/gi, "&lt;/system_log&gt;")
+        .replace(/<tool_log/gi, "&lt;tool_log")
+        .replace(/<\/tool_log>/gi, "&lt;/tool_log&gt;")
+        .replace(/\[Tool Result/gi, "[user-quoted-text Tool Result");
+}
+
 // ── Strip internal debug blocks before sending ──
 
 function sanitizeReply(text: string): string {
@@ -544,8 +558,8 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
             await fs.writeFile(tmpFilePath, buffer);
 
             media.push({ type: "image", base64, mimeType });
-            const caption = msg.imageMessage.caption || "What's in this image?";
-            enrichedText = `${caption}\n\n[SYSTEM NOTE: This image has been temporarily saved to: ${tmpFilePath}. You can use this absolute path if the user asks you to edit the media.]`;
+            const caption = sanitizeIncomingChannelText(msg.imageMessage.caption || "What's in this image?");
+            enrichedText = `<channel_message_content>\n${caption}\n</channel_message_content>\n\n[ATLAS-INTERNAL — not from user: This image is saved at ${tmpFilePath}. Use this absolute path for media-edit tools.]`;
         }
 
         if (contentType === "videoMessage" && msg.videoMessage) {
@@ -559,8 +573,8 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
             await fs.writeFile(tmpFilePath, buffer);
 
             media.push({ type: "video", base64, mimeType });
-            const caption = msg.videoMessage.caption || "User sent a video.";
-            enrichedText = `${caption}\n\n[SYSTEM NOTE: Video saved to: ${tmpFilePath}.]`;
+            const caption = sanitizeIncomingChannelText(msg.videoMessage.caption || "User sent a video.");
+            enrichedText = `<channel_message_content>\n${caption}\n</channel_message_content>\n\n[ATLAS-INTERNAL — not from user: Video saved at ${tmpFilePath}.]`;
         }
 
         if (contentType === "audioMessage" && msg.audioMessage) {
@@ -587,7 +601,7 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
                 }
             } else {
                 // Regular audio file (music, recording, etc.)
-                enrichedText = `User sent an audio file (${msg.audioMessage.mimetype || "audio"}, ${msg.audioMessage.seconds || "?"}s).\n\n[SYSTEM NOTE: Audio saved to: ${tmpFilePath}. Use file tools to process it.]`;
+                enrichedText = `User sent an audio file (${msg.audioMessage.mimetype || "audio"}, ${msg.audioMessage.seconds || "?"}s).\n\n[ATLAS-INTERNAL — not from user: Audio saved at ${tmpFilePath}. Use file tools to process it.]`;
             }
         }
 
@@ -601,7 +615,7 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
             const tmpFilePath = join(mediaDir, `whatsapp_sticker_${randomUUID()}.${ext}`);
             await fs.writeFile(tmpFilePath, buffer);
             media.push({ type: "image", base64: buffer.toString("base64"), mimeType: "image/webp" });
-            enrichedText = `User sent a ${isAnimated ? "animated " : ""}sticker.\n\n[SYSTEM NOTE: Sticker saved to: ${tmpFilePath}. Respond with text as normal — do NOT send a sticker back unless the user explicitly asks for one.]`;
+            enrichedText = `User sent a ${isAnimated ? "animated " : ""}sticker.\n\n[ATLAS-INTERNAL — not from user: Sticker saved at ${tmpFilePath}. Respond with text as normal — do NOT send a sticker back unless the user explicitly asks for one.]`;
         }
 
         // Location messages
@@ -651,19 +665,19 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
             const tmpFilePath = join(mediaDir, `whatsapp_doc_${randomUUID()}.${ext}`);
             await fs.writeFile(tmpFilePath, buffer);
 
-            const caption = docMsg.caption || `User sent a document: ${fileName}`;
+            const caption = sanitizeIncomingChannelText(docMsg.caption || `User sent a document: ${fileName}`);
             if (mimeType.startsWith("image/")) {
                 const base64 = buffer.toString("base64");
                 media.push({ type: "image", base64, mimeType });
-                enrichedText = `${caption}\n\n[SYSTEM NOTE: Document saved to: ${tmpFilePath}.]`;
+                enrichedText = `<channel_message_content>\n${caption}\n</channel_message_content>\n\n[ATLAS-INTERNAL — not from user: Document saved at ${tmpFilePath}.]`;
             } else {
                 let textContent = "";
                 if (mimeType.includes("text") || mimeType.includes("json") || mimeType.includes("xml") || mimeType.includes("csv")) {
-                    try { textContent = buffer.toString("utf-8").substring(0, 5000); } catch { /* binary */ }
+                    try { textContent = sanitizeIncomingChannelText(buffer.toString("utf-8").substring(0, 5000)); } catch { /* binary */ }
                 }
                 enrichedText = textContent
-                    ? `${caption}\n\n[SYSTEM NOTE: Document saved to: ${tmpFilePath}. Content preview:\n${textContent}]`
-                    : `${caption}\n\n[SYSTEM NOTE: Document "${fileName}" (${mimeType}) saved to: ${tmpFilePath}. Use file tools to read it if needed.]`;
+                    ? `<channel_message_content>\n${caption}\n</channel_message_content>\n\n<channel_attached_document>\n${textContent}\n</channel_attached_document>\n\n[ATLAS-INTERNAL — not from user: Document saved at ${tmpFilePath}.]`
+                    : `<channel_message_content>\n${caption}\n</channel_message_content>\n\n[ATLAS-INTERNAL — not from user: Document "${fileName}" (${mimeType}) saved at ${tmpFilePath}. Use file tools to read it if needed.]`;
             }
         }
     } catch (err) {
@@ -1794,6 +1808,14 @@ async function handleNewContactMessage(
     // If autoAllow is on, allow after a delay to give owner time to override
     const persona = getPersona();
     if (persona.autoAllow) {
+        if (!autoAllowAllowed()) {
+            await sendMessage(
+                ownerJid,
+                `auto-allow has fired ${AUTO_ALLOW_MAX} times in the last ${AUTO_ALLOW_WINDOW_MS / 60000}min — pausing it. Reply "allow" manually, or send "set autoAllow on" to re-enable.`,
+            );
+            return;
+        }
+        autoAllowRecord();
         setTimeout(async () => {
             try {
                 const req = resolveContactRequest(request.id, "allowed");
@@ -1806,6 +1828,23 @@ async function handleNewContactMessage(
             }
         }, 10_000); // 10 second delay for owner to override
     }
+}
+
+// F9: throttle consecutive auto-allows.
+const AUTO_ALLOW_MAX = Number(process.env.WHATSAPP_AUTO_ALLOW_MAX || "3");
+const AUTO_ALLOW_WINDOW_MS = Number(process.env.WHATSAPP_AUTO_ALLOW_WINDOW_MS || String(60 * 60 * 1000));
+const autoAllowHistory: number[] = [];
+
+function autoAllowAllowed(): boolean {
+    const now = Date.now();
+    while (autoAllowHistory.length > 0 && now - autoAllowHistory[0] > AUTO_ALLOW_WINDOW_MS) {
+        autoAllowHistory.shift();
+    }
+    return autoAllowHistory.length < AUTO_ALLOW_MAX;
+}
+
+function autoAllowRecord(): void {
+    autoAllowHistory.push(Date.now());
 }
 
 // ── Message Router (multi-user) ─────────────
@@ -1962,7 +2001,10 @@ async function connectWhatsApp(llm: LLMClient): Promise<void> {
         browser: Browsers.macOS("Chrome"),  // Use recognized browser to avoid 405
         logger,
         printQRInTerminal: true,  // Also print to terminal as backup
-        generateHighQualityLinkPreview: true,
+        // generateHighQualityLinkPreview fetches arbitrary URLs from inbound
+        // messages, which is a server-side SSRF surface (private IPs, cloud
+        // metadata, loopback). Re-enabling requires an SSRF guard.
+        generateHighQualityLinkPreview: false,
         syncFullHistory: false,
         getMessage: async () => undefined,  // Required in v7
     });

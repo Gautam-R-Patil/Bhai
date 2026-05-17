@@ -14,6 +14,9 @@
 // ATLAS is single-user per-process, so state lives at module scope. If/when
 // concurrent sessions ever matter, this becomes a Map<sessionId, State>.
 
+import fs from "node:fs";
+import path from "node:path";
+
 // ── State ─────────────────────────────────────
 
 export type PlanModeState =
@@ -38,6 +41,12 @@ export type PlanModeState =
         task: string;
         /** Directory containing PRD.md / TECHNICAL.md / ARCHITECTURE.md */
         designDocsDir: string;
+        source: "user" | "auto";
+    }
+    | {
+        mode: "awaiting_dynamic_tool_approval";
+        enteredAt: number;
+        slug: string;
         source: "user" | "auto";
     };
 
@@ -111,6 +120,22 @@ export function enterAwaitingApproval(task: string, designDocsDir: string, sourc
 export function approveAndExit(): void {
     state = { mode: "act" };
     emit();
+}
+
+/**
+ * Enter "awaiting dynamic tool approval" after synthesizeTool persists a
+ * tool with persistent=true. The agent can render the approval message +
+ * send to the user + accept their explicit approval via approve_dynamic_tool.
+ * Cannot run other code, cannot edit files, cannot invoke any other tools.
+ */
+export function enterAwaitingDynamicToolApproval(slug: string, source: "user" | "auto" = "auto"): void {
+    state = { mode: "awaiting_dynamic_tool_approval", enteredAt: Date.now(), slug, source };
+    emit();
+}
+
+/** Returns the slug awaiting approval, if any. */
+export function getAwaitingDynamicToolSlug(): string | null {
+    return state.mode === "awaiting_dynamic_tool_approval" ? state.slug : null;
 }
 
 export function onPlanModeChange(listener: Listener): () => void {
@@ -228,6 +253,23 @@ export function filterToolsForAwaitingApproval<T extends { function: { name: str
     return tools.filter((t) => AWAITING_APPROVAL_ALLOWED_TOOLS.has(t.function.name));
 }
 
+// Mode-allowlist for awaiting_dynamic_tool_approval — agent can render the
+// manifest, send to the user, accept approval/rejection.
+export const AWAITING_DYNAMIC_TOOL_APPROVAL_ALLOWED_TOOLS: ReadonlySet<string> = new Set([
+    ...PLAN_MODE_ALLOWED_TOOLS,
+    "render_md_to_pdf",
+    "send_message_on_channel",
+    "send_push_notification",
+    "approve_dynamic_tool",
+    "revoke_dynamic_tool",
+]);
+
+export function filterToolsForDynamicApproval<T extends { function: { name: string } }>(
+    tools: T[],
+): T[] {
+    return tools.filter((t) => AWAITING_DYNAMIC_TOOL_APPROVAL_ALLOWED_TOOLS.has(t.function.name));
+}
+
 /**
  * Is this a tool the agent can call right now, given the current mode?
  * Used as a last-resort safety check in the tool executor.
@@ -236,6 +278,8 @@ export function isToolAllowedInCurrentMode(toolName: string): boolean {
     if (state.mode === "act") return true;
     if (state.mode === "spec") return SPEC_MODE_ALLOWED_TOOLS.has(toolName);
     if (state.mode === "awaiting_approval") return AWAITING_APPROVAL_ALLOWED_TOOLS.has(toolName);
+    if (state.mode === "awaiting_dynamic_tool_approval")
+        return AWAITING_DYNAMIC_TOOL_APPROVAL_ALLOWED_TOOLS.has(toolName);
     return PLAN_MODE_ALLOWED_TOOLS.has(toolName);
 }
 
@@ -247,13 +291,74 @@ export function isToolAllowedInCurrentMode(toolName: string): boolean {
  *
  * Returns { allowed: true } or { allowed: false, reason }.
  */
+function realResolveForGate(p: string): string {
+    const abs = path.resolve(p);
+    try {
+        return fs.realpathSync(abs);
+    } catch {
+        const parts = abs.split(path.sep);
+        const trailing: string[] = [];
+        while (parts.length > 1) {
+            const leaf = parts.pop();
+            if (leaf) trailing.unshift(leaf);
+            const candidate = parts.join(path.sep) || path.sep;
+            try {
+                const real = fs.realpathSync(candidate);
+                return trailing.length ? path.join(real, ...trailing) : real;
+            } catch {
+                // keep walking up
+            }
+        }
+        return abs;
+    }
+}
+
+/**
+ * Spec-mode path gate. Writes in spec mode are restricted to the
+ * directory containing the spec file (so the agent can write the spec
+ * and any sibling artifacts, but cannot touch arbitrary code).
+ */
+export function checkWritePathInSpecMode(absPath: string): { allowed: boolean; reason?: string } {
+    if (state.mode !== "spec") return { allowed: true };
+    try {
+        const lst = fs.lstatSync(absPath);
+        if (lst.isSymbolicLink()) {
+            return {
+                allowed: false,
+                reason: `Spec mode: refusing to write through symlink ${absPath}.`,
+            };
+        }
+    } catch {
+        // file doesn't exist yet — fine
+    }
+    const resolved = realResolveForGate(absPath);
+    const specDir = realResolveForGate(path.dirname(state.specPath));
+    if (resolved === specDir || resolved.startsWith(specDir + path.sep)) return { allowed: true };
+    return {
+        allowed: false,
+        reason: `Spec mode: writes are restricted to ${specDir}. Path ${absPath} is outside that directory.`,
+    };
+}
+
 export function checkWritePathInApprovalMode(absPath: string): { allowed: boolean; reason?: string } {
     if (state.mode !== "awaiting_approval") return { allowed: true };
     const dir = state.designDocsDir;
-    const sep = "/";
-    const normalized = absPath.replace(/\\/g, sep);
-    const root = dir.replace(/\\/g, sep);
-    if (normalized === root || normalized.startsWith(root + sep)) return { allowed: true };
+    // If the file itself is a symlink, refuse outright — writeFileSync would
+    // follow the link and could write into the dereferenced location.
+    try {
+        const lst = fs.lstatSync(absPath);
+        if (lst.isSymbolicLink()) {
+            return {
+                allowed: false,
+                reason: `While awaiting design-doc approval, refusing to write through symlink ${absPath}.`,
+            };
+        }
+    } catch {
+        // file doesn't exist yet — fine, we're about to create it
+    }
+    const resolved = realResolveForGate(absPath);
+    const root = realResolveForGate(dir);
+    if (resolved === root || resolved.startsWith(root + path.sep)) return { allowed: true };
     return {
         allowed: false,
         reason: `While awaiting design-doc approval, writes are restricted to ${dir}. Path ${absPath} is outside that directory.`,

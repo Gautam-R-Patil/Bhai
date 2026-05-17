@@ -100,7 +100,8 @@ export async function migrateLegacyDynamicTools(opts: MigrationOpts): Promise<Mi
                 failed++;
                 continue;
             }
-            if (!/^[a-z][a-z0-9_]*$/.test(parsed.name)) {
+            // F5: tighten to the same 63-char-ceiling slug rule used at synthesizeTool entry.
+            if (!/^[a-z][a-z0-9_]{0,62}$/.test(parsed.name)) {
                 failed++;
                 continue;
             }

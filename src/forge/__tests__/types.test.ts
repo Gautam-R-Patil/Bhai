@@ -1,9 +1,15 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import type {
-    SynthesisRequest, SynthesisResult, SynthesisFailureReport,
-    ToolMetadata, ForgeStats, DynamicManifestEntry, ToolLifecycleState,
+    DynamicManifestEntry,
+    ForgeStats,
+    PersistedToolManifest,
+    SynthesisFailureReport,
+    SynthesisRequest,
+    SynthesisResult,
+    ToolLifecycleState,
+    ToolMetadata,
 } from "../types.js";
 
 describe("forge types compile", () => {
@@ -30,9 +36,33 @@ describe("forge types compile", () => {
 
     it("ToolLifecycleState enumerates 7 states", () => {
         const states: ToolLifecycleState[] = [
-            "proposed", "verifying", "awaiting_approval",
-            "active", "graduated", "published", "archived",
+            "proposed",
+            "verifying",
+            "awaiting_approval",
+            "active",
+            "graduated",
+            "published",
+            "archived",
         ];
         expect(states).toHaveLength(7);
+    });
+});
+
+describe("PersistedToolManifest type", () => {
+    it("has the expected runtime-checkable shape", () => {
+        const example: PersistedToolManifest = {
+            slug: "extract_invoice",
+            description: "Extract invoice fields from a PDF",
+            capabilities: { fs_read: ["~/Downloads/"], fs_write: [], net: [], exec: [] },
+            parametersSchema: { type: "object", properties: { pdfPath: { type: "string" } } },
+            version: "0.1.0",
+            approvedAt: 1700000000000,
+            userQuote: "yes go ahead and approve this tool",
+            handlerHash: "deadbeefcafe1234",
+        };
+        const cloned = structuredClone(example);
+        expect(cloned.slug).toBe("extract_invoice");
+        expect(cloned.handlerHash).toHaveLength(16);
+        expect(cloned.capabilities.fs_read).toEqual(["~/Downloads/"]);
     });
 });

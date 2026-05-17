@@ -28,6 +28,7 @@ import {
     isAwaitingApproval,
     isPlanMode,
     isSpecMode,
+    isToolAllowedInCurrentMode,
     planModeReminderBody,
 } from "./agents/plan-mode.js";
 import { offloadIfLarge } from "./agents/tool-output-offload.js";
@@ -576,6 +577,25 @@ async function executeAndProcessToolCall(
             };
         }
     } catch { /* preflight module failure is non-fatal — fall through */ }
+
+    // Plan-mode runtime gate. The schema filter strips mutation tools BEFORE
+    // the LLM sees them, but a determined model (or a stale tool-call from a
+    // prior iteration) can still emit a blocked name — refuse here so the
+    // execution layer is the last line of defense.
+    if (!isToolAllowedInCurrentMode(fnName)) {
+        const err = JSON.stringify({
+            error: `Tool "${fnName}" is not allowed in the current plan-mode state.`,
+        });
+        return {
+            toolCallId: toolCall.id,
+            fnName,
+            fnArgs,
+            result: err,
+            finalContent: err,
+            isBrowser: false,
+            isError: true,
+        };
+    }
 
     let rawResult = await executeTool(fnName, fnArgs);
 

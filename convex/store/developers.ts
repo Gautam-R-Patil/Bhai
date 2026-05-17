@@ -6,16 +6,30 @@ import { internalQuery as query, internalMutation as mutation } from "../_genera
 
 // ── Queries ────────────────────────────────────────────────────────────────
 
+// Strip the bcrypt hash before returning a developer row to any caller other
+// than getPasswordHash. Exposing the hash anywhere else lets an attacker who
+// reaches a developer-returning endpoint pull hashes for offline cracking.
+type DeveloperDoc = {
+  passwordHash?: string;
+  [k: string]: unknown;
+};
+function stripPasswordHash<T extends DeveloperDoc | null | undefined>(dev: T): T {
+  if (!dev) return dev;
+  const { passwordHash: _ph, ...rest } = dev;
+  return rest as unknown as T;
+}
+
 /**
  * Get developer by email (for login)
  */
 export const getByEmail = query({
   args: { email: v.string() },
   handler: async (ctx, args) => {
-    return await ctx.db
+    const dev = await ctx.db
       .query("developers")
       .withIndex("by_email", (q) => q.eq("email", args.email.toLowerCase()))
       .first();
+    return stripPasswordHash(dev);
   },
 });
 
@@ -34,7 +48,7 @@ export const getById = query({
       avatarUrl = await ctx.storage.getUrl(developer.avatarFileId);
     }
 
-    return { ...developer, avatarUrl };
+    return stripPasswordHash({ ...developer, avatarUrl });
   },
 });
 
@@ -49,10 +63,11 @@ export const listByStatus = query({
   handler: async (ctx, args) => {
     const limit = args.limit ?? 50;
 
-    return await ctx.db
+    const rows = await ctx.db
       .query("developers")
       .withIndex("by_status", (q) => q.eq("status", args.status))
       .take(limit);
+    return rows.map(stripPasswordHash);
   },
 });
 
@@ -64,10 +79,11 @@ export const listAll = query({
   handler: async (ctx, args) => {
     const limit = args.limit ?? 100;
 
-    return await ctx.db
+    const rows = await ctx.db
       .query("developers")
       .order("desc")
       .take(limit);
+    return rows.map(stripPasswordHash);
   },
 });
 
@@ -443,9 +459,10 @@ export const list = query({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
     const limit = args.limit ?? 50;
-    return await ctx.db
+    const rows = await ctx.db
       .query("developers")
       .order("desc")
       .take(limit);
+    return rows.map(stripPasswordHash);
   },
 });

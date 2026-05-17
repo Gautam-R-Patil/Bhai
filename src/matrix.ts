@@ -37,6 +37,35 @@ const activeRooms = new Set<string>();
 // Transaction counter for message sending
 let txnCounter = 0;
 
+// F3: OWNER_MATRIX_IDS strict subset of allowed senders.
+function parseMatrixOwners(): Set<string> {
+    const raw = process.env.OWNER_MATRIX_IDS;
+    if (!raw) return new Set();
+    return new Set(raw.split(",").map(s => s.trim()).filter(Boolean));
+}
+
+export function isPlatformOwner(channel: "matrix", userId: string): boolean {
+    if (channel !== "matrix") return false;
+    return parseMatrixOwners().has(userId);
+}
+
+// F7: per-sender inbound rate limit.
+const MATRIX_RATE_WINDOW_MS = 60_000;
+const MATRIX_RATE_MAX = 20;
+const matrixRateBuckets = new Map<string, number[]>();
+function matrixRateLimitAllow(sender: string): boolean {
+    const now = Date.now();
+    const arr = matrixRateBuckets.get(sender) || [];
+    const fresh = arr.filter(ts => now - ts < MATRIX_RATE_WINDOW_MS);
+    if (fresh.length >= MATRIX_RATE_MAX) {
+        matrixRateBuckets.set(sender, fresh);
+        return false;
+    }
+    fresh.push(now);
+    matrixRateBuckets.set(sender, fresh);
+    return true;
+}
+
 // ── Strip internal debug blocks before sending ──
 
 function sanitizeReply(text: string): string {
@@ -192,6 +221,12 @@ async function handleMessage(roomId: string, sender: string, body: string): Prom
         return;
     }
 
+    // F7: per-sender rate limit
+    if (!matrixRateLimitAllow(sender)) {
+        console.log(`[MATRIX] Rate limit hit for ${sender} — dropping`);
+        return;
+    }
+
     // Skip if already processing a message in this room
     if (activeRooms.has(roomId)) {
         console.log(`[MATRIX] Already processing a message in ${roomId}, queuing...`);
@@ -204,10 +239,11 @@ async function handleMessage(roomId: string, sender: string, body: string): Prom
     try {
         await setTyping(roomId, true);
 
+        const senderIsOwner = isPlatformOwner("matrix", sender);
         const result = await runAgent(llmClient, body, async (progress) => {
             // Send progress updates as typing indicators
             await setTyping(roomId, true);
-        }, undefined, undefined, undefined, undefined, undefined, { channel: "matrix", userId: sender, userName: undefined, isOwner: true });
+        }, undefined, undefined, undefined, undefined, undefined, { channel: "matrix", userId: sender, userName: undefined, isOwner: senderIsOwner });
 
         await setTyping(roomId, false);
 

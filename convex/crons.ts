@@ -26,4 +26,11 @@ crons.daily(
     {},
 );
 
+crons.daily(
+    "sweep sessions+rate_limits",
+    { hourUTC: 4, minuteUTC: 45 },
+    internal.sessions.sweepExpired,
+    {},
+);
+
 export default crons;

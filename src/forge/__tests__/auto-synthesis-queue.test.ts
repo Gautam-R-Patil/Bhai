@@ -47,9 +47,12 @@ describe("auto-synthesis queue", () => {
         const pendingPath = join(process.env.ATLAS_HOME!, "data", "forge-pending.json");
         expect(existsSync(pendingPath)).toBe(true);
         const pending = JSON.parse(readFileSync(pendingPath, "utf-8"));
+        // F6: entries are now HMAC-wrapped {candidate, queuedAt, hmac}.
         expect(pending.candidates).toHaveLength(1);
-        expect(pending.candidates[0].description).toBe("Send SMS via Twilio");
-        expect(pending.candidates[0].name).toBe("auto_sms");
+        expect(pending.candidates[0].candidate.description).toBe("Send SMS via Twilio");
+        expect(pending.candidates[0].candidate.name).toBe("auto_sms");
+        expect(typeof pending.candidates[0].hmac).toBe("string");
+        expect(pending.candidates[0].hmac.length).toBe(64);
     });
 
     it("queueing the same description twice does not create duplicate entries", async () => {

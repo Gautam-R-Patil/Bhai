@@ -13,7 +13,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { checkWritePathInApprovalMode } from "../../agents/plan-mode.js";
+import { checkWritePathInApprovalMode, checkWritePathInSpecMode } from "../../agents/plan-mode.js";
 import { getPathBlockedReason, isPathAllowed, isProtectedPath } from "../../security/allowlist.js";
 import { auditLog } from "../../security/audit-log.js";
 import { logToolAction } from "../../utils/debug-log.js";
@@ -70,6 +70,10 @@ export const write: ToolDefinition = {
         const approvalGate = checkWritePathInApprovalMode(filePath);
         if (!approvalGate.allowed) {
             return JSON.stringify({ error: approvalGate.reason });
+        }
+        const specGate = checkWritePathInSpecMode(filePath);
+        if (!specGate.allowed) {
+            return JSON.stringify({ error: specGate.reason });
         }
 
         const fileExists = existsSync(filePath);

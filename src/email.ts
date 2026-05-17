@@ -22,6 +22,33 @@ let llmClient: LLMClient | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let isShuttingDown = false;
 
+// Email is spoofable; OWNER_EMAIL_ADDRESSES defaults EMPTY. Only senders in
+// the explicit owner set get isOwner: true.
+function parseEmailOwners(): Set<string> {
+    const raw = process.env.OWNER_EMAIL_ADDRESSES;
+    if (!raw) return new Set();
+    return new Set(raw.split(",").map(s => s.trim().toLowerCase()).filter(Boolean));
+}
+
+export function isPlatformOwner(channel: "email", userId: string): boolean {
+    if (channel !== "email") return false;
+    return parseEmailOwners().has(userId.toLowerCase());
+}
+
+// Sanitize attacker-controlled inbound text before wrapping in channel
+// delimiters. Strips framing tokens the LLM treats as authoritative.
+export function sanitizeIncomingChannelText(text: string): string {
+    if (!text) return text;
+    return text
+        .replace(/\[SYSTEM NOTE:/gi, "[user-quoted-text:")
+        .replace(/\[ATLAS-INTERNAL\b/gi, "[user-quoted-text")
+        .replace(/<system_log>/gi, "&lt;system_log&gt;")
+        .replace(/<\/system_log>/gi, "&lt;/system_log&gt;")
+        .replace(/<tool_log/gi, "&lt;tool_log")
+        .replace(/<\/tool_log>/gi, "&lt;/tool_log&gt;")
+        .replace(/\[Tool Result/gi, "[user-quoted-text Tool Result");
+}
+
 // ── Email Authentication Helpers ──────────────
 
 /**
@@ -45,9 +72,9 @@ function extractHeaderFromSource(rawSource: string, headerName: string): string 
  * Parse email authentication headers (Authentication-Results or ARC-Authentication-Results)
  * to check SPF, DKIM, and DMARC results.
  *
- * Returns whether the email should be considered authenticated.
- * Policy: fail-open. The message is only rejected if ALL three checks explicitly fail.
- * If no authentication header is present, the message is allowed through (with a warning).
+ * Fail-CLOSED policy. Header must be present, at least one of spf/dkim/dmarc
+ * must explicitly `pass`, and no check may explicitly fail/softfail. Set
+ * ATLAS_EMAIL_REQUIRE_DMARC=true to additionally require dmarc=pass.
  */
 export function isEmailAuthenticated(rawSource: string): { authenticated: boolean; details: string } {
     // Try Authentication-Results first, then fall back to ARC-Authentication-Results
@@ -57,14 +84,11 @@ export function isEmailAuthenticated(rawSource: string): { authenticated: boolea
 
     if (!authHeader) {
         return {
-            authenticated: true,
-            details: "No Authentication-Results header found (fail-open: allowed)",
+            authenticated: false,
+            details: "No Authentication-Results header found (fail-closed: rejected)",
         };
     }
 
-    // Parse individual results — look for spf=, dkim=, dmarc= tokens
-    // Results typically look like: "spf=pass", "dkim=pass", "dmarc=fail" etc.
-    // Valid result values: pass, fail, softfail, neutral, none, temperror, permerror, policy
     const spfMatch = authHeader.match(/\bspf\s*=\s*(\w+)/i);
     const dkimMatch = authHeader.match(/\bdkim\s*=\s*(\w+)/i);
     const dmarcMatch = authHeader.match(/\bdmarc\s*=\s*(\w+)/i);
@@ -75,18 +99,33 @@ export function isEmailAuthenticated(rawSource: string): { authenticated: boolea
 
     const details = `spf=${spfResult}, dkim=${dkimResult}, dmarc=${dmarcResult}`;
 
-    // Determine which checks explicitly failed
     const failValues = new Set(["fail", "softfail"]);
     const spfFailed = failValues.has(spfResult);
     const dkimFailed = failValues.has(dkimResult);
     const dmarcFailed = failValues.has(dmarcResult);
 
-    // Only reject if ALL three checks are present AND all failed.
-    // If any check passes or is absent/neutral/temperror, allow the message.
-    if (spfFailed && dkimFailed && dmarcFailed) {
+    if (spfFailed || dkimFailed || dmarcFailed) {
         return {
             authenticated: false,
-            details: `All authentication checks failed: ${details}`,
+            details: `Authentication check explicitly failed: ${details}`,
+        };
+    }
+
+    const spfPass = spfResult === "pass";
+    const dkimPass = dkimResult === "pass";
+    const dmarcPass = dmarcResult === "pass";
+
+    if (!spfPass && !dkimPass && !dmarcPass) {
+        return {
+            authenticated: false,
+            details: `No explicit pass on any of spf/dkim/dmarc: ${details}`,
+        };
+    }
+
+    if (process.env.ATLAS_EMAIL_REQUIRE_DMARC === "true" && !dmarcPass) {
+        return {
+            authenticated: false,
+            details: `ATLAS_EMAIL_REQUIRE_DMARC set but dmarc != pass: ${details}`,
         };
     }
 
@@ -94,6 +133,24 @@ export function isEmailAuthenticated(rawSource: string): { authenticated: boolea
         authenticated: true,
         details,
     };
+}
+
+// Per-sender inbound rate limit (F2): max 5 emails/hour processed.
+const EMAIL_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
+const EMAIL_RATE_LIMIT_MAX = 5;
+const emailRateBuckets = new Map<string, number[]>();
+
+function emailRateLimitAllow(senderEmail: string): boolean {
+    const now = Date.now();
+    const arr = emailRateBuckets.get(senderEmail) || [];
+    const fresh = arr.filter(ts => now - ts < EMAIL_RATE_LIMIT_WINDOW_MS);
+    if (fresh.length >= EMAIL_RATE_LIMIT_MAX) {
+        emailRateBuckets.set(senderEmail, fresh);
+        return false;
+    }
+    fresh.push(now);
+    emailRateBuckets.set(senderEmail, fresh);
+    return true;
 }
 
 // ── SMTP Sender ───────────────────────────────
@@ -321,7 +378,7 @@ async function processUnseenEmails(config: Config, llm: LLMClient): Promise<void
                 continue;
             }
 
-            // ── Email authentication check (SPF/DKIM/DMARC) ──
+            // ── Email authentication check (SPF/DKIM/DMARC) — fail-CLOSED ──
             const authResult = isEmailAuthenticated(email.rawSource);
             if (!authResult.authenticated) {
                 console.warn(`⚠️ [EMAIL] Authentication failed for ${email.senderEmail}: ${authResult.details}`);
@@ -331,10 +388,15 @@ async function processUnseenEmails(config: Config, llm: LLMClient): Promise<void
                 } catch { /* ignore */ }
                 continue;
             }
-            if (authResult.details.includes("No Authentication-Results")) {
-                console.warn(`⚠️ [EMAIL] ${authResult.details} for message from ${email.senderEmail}`);
-            } else {
-                console.log(`   🔐 Email auth: ${authResult.details}`);
+            console.log(`   🔐 Email auth: ${authResult.details}`);
+
+            // ── Per-sender inbound rate limit ──
+            if (!emailRateLimitAllow(email.senderEmail)) {
+                console.warn(`🚫 [EMAIL] Rate limit hit for ${email.senderEmail} — marking seen but skipping`);
+                try {
+                    await imapClient!.messageFlagsAdd({ uid: email.uid }, ["\\Seen"], { uid: true });
+                } catch { /* ignore */ }
+                continue;
             }
 
             console.log(`\n📧 Email from ${email.senderName} <${email.senderEmail}>: ${email.subject}`);
@@ -352,7 +414,11 @@ async function processUnseenEmails(config: Config, llm: LLMClient): Promise<void
             sendOverlayNotification(`📧 Email from ${email.senderName}: ${email.subject}`);
 
             // ── Run through agent ──
-            const agentMessage = `[EMAIL from ${email.senderName} <${email.senderEmail}>]\nSubject: ${email.subject}\n\n${email.bodyText}\n\n[SYSTEM NOTE: This message arrived via email. Respond naturally. Your reply will be sent back as an email reply to the sender. Keep the response professional and email-appropriate.]`;
+            // Strip attacker-controlled framing tokens before wrapping in delimiters
+            // (prompt-injection defence: only [ATLAS-INTERNAL — lines are authoritative).
+            const sanitizedBody = sanitizeIncomingChannelText(email.bodyText);
+            const sanitizedSubject = sanitizeIncomingChannelText(email.subject);
+            const agentMessage = `[EMAIL from ${email.senderName} <${email.senderEmail}>]\nSubject: ${sanitizedSubject}\n\n<channel_message_content>\n${sanitizedBody}\n</channel_message_content>\n\n[ATLAS-INTERNAL — not from user: This message arrived via email. Respond naturally; your reply is sent back as an email reply.]`;
 
             try {
                 console.log("   🤖 Processing email through agent...");
@@ -360,12 +426,18 @@ async function processUnseenEmails(config: Config, llm: LLMClient): Promise<void
                     console.log(`  📊 [email-progress] ${progressMsg}`);
                 };
 
-                const response = await runAgent(llm, agentMessage, progressCallback, undefined, undefined, undefined, undefined, undefined, { channel: "email", userId: email.senderEmail || "", userName: email.senderName, isOwner: true });
+                const senderIsOwner = isPlatformOwner("email", email.senderEmail);
+                const response = await runAgent(llm, agentMessage, progressCallback, undefined, undefined, undefined, undefined, undefined, { channel: "email", userId: email.senderEmail || "", userName: email.senderName, isOwner: senderIsOwner });
                 const replyText = response.text;
                 console.log(`   🤖 Agent response: ${replyText.substring(0, 200)}...`);
 
                 if (replyText.trim() && replyText.trim() !== "[NO_REPLY]") {
-                    // Send reply email
+                    // Re-check whitelist immediately before sending (config may have
+                    // changed mid-process; never reply outbound to a removed sender).
+                    if (!config.emailWhitelist.has(email.senderEmail)) {
+                        console.warn(`🚫 [EMAIL] Whitelist re-check failed for ${email.senderEmail}, suppressing reply`);
+                        continue;
+                    }
                     const replySubject = email.subject.startsWith("Re:") ? email.subject : `Re: ${email.subject}`;
                     const result = await sendEmailFromAtlas(email.senderEmail, replySubject, replyText, {
                         inReplyTo: email.messageId,

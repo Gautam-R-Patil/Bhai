@@ -7,7 +7,11 @@ import { internalQuery as query, internalMutation as mutation } from "../_genera
 // ── Queries ────────────────────────────────────────────────────────────────
 
 /**
- * Get reviews for an item
+ * Get reviews for an item.
+ *
+ * Does NOT enrich with reviewer names — reviewers haven't opted into
+ * having their account name shown alongside their reviews, and exposing
+ * it lets any caller correlate userId → name across the catalog.
  */
 export const getByItem = query({
   args: {
@@ -34,22 +38,7 @@ export const getByItem = query({
         .take(limit);
     }
 
-    // Enrich with user info from accounts
-    const enriched = await Promise.all(
-      reviews.map(async (review) => {
-        const account = await ctx.db
-          .query("accounts")
-          .withIndex("by_otpless_id", (q) => q.eq("otplessUserId", review.userId))
-          .first();
-
-        return {
-          ...review,
-          userName: account?.name || "Anonymous",
-        };
-      })
-    );
-
-    return enriched;
+    return reviews;
   },
 });
 

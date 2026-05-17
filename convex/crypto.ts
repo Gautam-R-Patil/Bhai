@@ -58,7 +58,8 @@ export const SUPPORTED_KDF_VERSIONS = [KDF_VERSION_LEGACY, KDF_VERSION_HKDF] as 
 export async function deriveSharedKey(
   serverPrivateKeyJwk: string,
   clientPublicKeyBase64: string,
-  version: number = KDF_VERSION_LATEST
+  version: number = KDF_VERSION_LATEST,
+  serverPublicKeyBase64?: string,
 ): Promise<string> {
   // Import server private key
   const privKey = await crypto.subtle.importKey(
@@ -71,6 +72,10 @@ export async function deriveSharedKey(
 
   // Import client public key from raw base64
   const clientPubRaw = base64ToBuf(clientPublicKeyBase64);
+  // Length + format check: uncompressed P-256 point is 65 bytes, first byte 0x04.
+  if (clientPubRaw.byteLength !== 65 || new Uint8Array(clientPubRaw)[0] !== 0x04) {
+    throw new Error("Invalid client public key");
+  }
   const clientPubKey = await crypto.subtle.importKey(
     "raw",
     clientPubRaw,
@@ -87,7 +92,14 @@ export async function deriveSharedKey(
   );
 
   const salt = new TextEncoder().encode("atlas-e2e-salt");
-  const info = new TextEncoder().encode("atlas-e2e-aes256-key");
+  // Bind both pubkeys into info so any key-substitution under TLS MITM breaks
+  // decryption on both ends. Server pubkey is optional for backward compat
+  // with callers that haven't been updated yet; when present, both ends MUST
+  // include identical pubkey strings.
+  const infoBase = serverPublicKeyBase64
+    ? `atlas-e2e-aes256-key|${clientPublicKeyBase64}|${serverPublicKeyBase64}`
+    : "atlas-e2e-aes256-key";
+  const info = new TextEncoder().encode(infoBase);
 
   if (version === KDF_VERSION_LEGACY) {
     // Legacy: SHA-256(shared_secret + salt + info) — the original

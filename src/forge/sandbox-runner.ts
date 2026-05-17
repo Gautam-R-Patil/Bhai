@@ -20,37 +20,27 @@ export async function runTestInSandbox(opts: SandboxRunOpts): Promise<SandboxRes
     let stdout = "";
     let stderr = "";
 
-    const wrappedSource = `(async function __test(__input, __utils) {
-        const input = __input;
-        const utils = __utils;
-        ${opts.handlerCode}
-    })`;
-
+    // Bootstrap-only globals (primitives + reusable safe values). DO NOT pass
+    // host-realm constructors here — Buffer/URL/Promise/Error/etc all carry
+    // .constructor chains that resolve to the host Function ctor, enabling
+    // `Buffer.constructor("...")()` style escapes. The new vm context will
+    // get its OWN realm copies of those builtins on creation.
     const sandbox: Record<string, unknown> = {
-        JSON,
+        // Static value-only globals — no constructor reachable to host realm.
         Math,
-        Date,
-        String,
-        Number,
-        Boolean,
-        Array,
-        Object,
-        RegExp,
-        Map,
-        Set,
-        Promise,
-        Error,
+        JSON,
+        // Static function refs only — these are safe because they don't expose
+        // a .constructor that points back to the host realm in a useful way
+        // through the normal call surface.
         parseInt,
         parseFloat,
         isNaN,
         isFinite,
-        setTimeout,
-        clearTimeout,
         encodeURIComponent,
         decodeURIComponent,
-        URL,
-        URLSearchParams,
-        Buffer,
+        // Pass Date.now() factory via a wrapper so host Date constructor isn't reachable.
+        // Inside the sandbox, code can still use `new Date(...)` — that resolves to the
+        // vm-realm's own Date constructor (added below by the bootstrap script).
         console: {
             log: (...args: unknown[]) => {
                 stdout += `${args.map((a) => String(a)).join(" ")}\n`;
@@ -71,25 +61,35 @@ export async function runTestInSandbox(opts: SandboxRunOpts): Promise<SandboxRes
         codeGeneration: { strings: false, wasm: false },
     });
 
+    // Wrap the handler so that all values it touches (Array, RegExp, Date, Promise,
+    // Error, etc) come from the new context's realm — never from the host. The
+    // wrapper also defines an "isArray" helper that does NOT expose the Array ctor.
+    const wrappedSource = `(async function __test(__input, __utils) {
+        const input = __input;
+        const utils = __utils;
+        const isArray = (x) => Array.isArray(x);
+        ${opts.handlerCode}
+    })`;
+
     try {
         const script = new vm.Script(wrappedSource, { filename: "forge-test.vm" });
         const testFn = script.runInContext(ctx, { timeout }) as (
             i: Record<string, unknown>,
             u: Record<string, unknown>,
         ) => Promise<unknown>;
+        // Utils inside the sandbox — fetch/exec/execFile refuse outright. The
+        // kernel-sandbox in Phase 4 will enforce capabilities at the syscall
+        // level; until then, the interim verifier sandbox has no shell/net.
         const utils = {
             JSON,
-            Buffer,
-            URL,
-            URLSearchParams,
             fetch: async () => {
-                throw new Error("fetch denied in test sandbox; declare net capability");
+                throw new Error("fetch denied in test sandbox (Phase 4 kernel-sandbox required for net capability)");
             },
             exec: async () => {
-                throw new Error("exec denied in test sandbox; declare exec capability");
+                throw new Error("exec denied in test sandbox (Phase 4 kernel-sandbox required for exec capability)");
             },
             execFile: async () => {
-                throw new Error("execFile denied in test sandbox");
+                throw new Error("execFile denied in test sandbox (Phase 4 kernel-sandbox required)");
             },
             fs: {},
         };

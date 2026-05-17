@@ -1,5 +1,8 @@
 "use client";
 
+// TODO(F16): see dashboard/page.tsx. store/submissions:* are internalQuery
+// in Convex; this client-side direct call will fail in prod until a
+// dev-portal server proxy is added.
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { convexQuery } from "@/lib/convex";

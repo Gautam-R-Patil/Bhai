@@ -3112,6 +3112,12 @@ export declare function axFlattenInteractive(dumpJson: string): string
  * Returns the matching element JSON, or "" if nothing meets min_score.
  */
 export declare function axFindByLabel(elementsJson: string, query: string, minScore: number): string
+export declare function forgeInvokeTool(slug: string, handlerDir: string, capabilitiesJson: string, inputJson: string): Promise<string>
+export declare function forgeSpawnWarm(slug: string, handlerDir: string, capabilitiesJson: string): Promise<void>
+export declare function forgeEvict(slug: string): Promise<void>
+export declare function forgeStrikes(slug: string): number
+export declare function forgeClearStrikes(slug: string): void
+export declare function forgeSetPoolSize(size: number): void
 /** Get the native module version */
 export declare function getVersion(): string
 /** Check if SIMD is available on this platform */

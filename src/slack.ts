@@ -31,6 +31,37 @@ function parseSlackAllowedUsers(): Set<string> {
     return new Set(raw.split(",").map((s) => s.trim()).filter(Boolean));
 }
 
+// F3: OWNER_SLACK_IDS strict subset.
+function parseSlackOwners(): Set<string> {
+    const raw = process.env.OWNER_SLACK_IDS;
+    if (!raw) return new Set();
+    return new Set(raw.split(",").map((s) => s.trim()).filter(Boolean));
+}
+
+export function isPlatformOwner(channel: "slack", userId: string): boolean {
+    if (channel !== "slack") return false;
+    return parseSlackOwners().has(userId);
+}
+
+// F7: per-sender inbound rate limit.
+const SLACK_RATE_WINDOW_MS = 60_000;
+const SLACK_RATE_MAX = 20;
+const slackRateBuckets = new Map<string, number[]>();
+function slackRateLimitAllow(userId: string): boolean {
+    const now = Date.now();
+    const arr = slackRateBuckets.get(userId) || [];
+    const fresh = arr.filter(ts => now - ts < SLACK_RATE_WINDOW_MS);
+    if (fresh.length >= SLACK_RATE_MAX) {
+        slackRateBuckets.set(userId, fresh);
+        return false;
+    }
+    fresh.push(now);
+    slackRateBuckets.set(userId, fresh);
+    return true;
+}
+
+const SLACK_MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
 export async function initSlack(llm: LLMClient): Promise<void> {
     const botToken = process.env.SLACK_BOT_TOKEN;
     const appToken = process.env.SLACK_APP_TOKEN;
@@ -59,6 +90,10 @@ export async function initSlack(llm: LLMClient): Promise<void> {
             console.log(`[SLACK] Ignored @mention from non-allowlisted user: ${event.user}`);
             return;
         }
+        if (event.user && !slackRateLimitAllow(event.user)) {
+            console.log(`[SLACK] Rate limit hit for user ${event.user} — dropping`);
+            return;
+        }
         const text = stripMention(event.text);
         const threadTs = event.thread_ts || event.ts;
 
@@ -80,6 +115,10 @@ export async function initSlack(llm: LLMClient): Promise<void> {
         const userId = msg.user as string | undefined;
         if (!isAllowed(userId)) {
             console.log(`[SLACK] Ignored DM from non-allowlisted user: ${userId}`);
+            return;
+        }
+        if (userId && !slackRateLimitAllow(userId)) {
+            console.log(`[SLACK] Rate limit hit for DM user ${userId} — dropping`);
             return;
         }
 
@@ -152,7 +191,8 @@ async function handleSlackMessage(
             }
         };
 
-        const result = await runAgent(llm, taggedMessage, onProgress, media, undefined, undefined, modelHint, undefined, { channel: "slack", userId: slackUserId || "", userName: undefined, isOwner: true });
+        const senderIsOwner = isPlatformOwner("slack", slackUserId || "");
+        const result = await runAgent(llm, taggedMessage, onProgress, media, undefined, undefined, modelHint, undefined, { channel: "slack", userId: slackUserId || "", userName: undefined, isOwner: senderIsOwner });
 
         // Clean the response
         const cleanText = result.text
@@ -321,6 +361,12 @@ async function extractMedia(event: Record<string, unknown>): Promise<MediaAttach
     for (const file of files.slice(0, 3)) { // Limit to 3 files
         const url = file.url_private_download;
         const mimeType = file.mimetype || "";
+        // F6: metadata size cap
+        const fileSize = (file as { size?: number }).size;
+        if (typeof fileSize === "number" && fileSize > SLACK_MAX_ATTACHMENT_BYTES) {
+            console.warn(`[SLACK] Rejecting oversized file ${file.name}: ${fileSize} bytes`);
+            continue;
+        }
 
         if (!url) continue;
 
@@ -342,7 +388,17 @@ async function extractMedia(event: Record<string, unknown>): Promise<MediaAttach
 
             if (!response.ok) continue;
 
+            const cl = response.headers.get("content-length");
+            if (cl && Number(cl) > SLACK_MAX_ATTACHMENT_BYTES) {
+                console.warn(`[SLACK] Rejecting oversized file ${file.name}: content-length ${cl}`);
+                continue;
+            }
+
             const buffer = Buffer.from(await response.arrayBuffer());
+            if (buffer.length > SLACK_MAX_ATTACHMENT_BYTES) {
+                console.warn(`[SLACK] Rejecting oversized file ${file.name}: body ${buffer.length} bytes`);
+                continue;
+            }
             const base64 = buffer.toString("base64");
 
             if (isImage) {
