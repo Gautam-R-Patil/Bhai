@@ -12,6 +12,8 @@ interface IssueRequest {
 export interface EnterpriseLicense {
   _id: string;
   clientId: string;
+  clientName: string;
+  contactEmail: string;
   licenseKey: string;
   status: "active" | "suspended" | "revoked" | "expired";
   seatLimit: number;

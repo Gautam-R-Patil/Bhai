@@ -17,6 +17,8 @@ interface License {
   _id: string;
   licenseKey: string;
   clientId: string;
+  clientName: string;
+  contactEmail: string;
   status: "active" | "suspended" | "revoked" | "expired";
   seatLimit: number;
   features: string[];
@@ -237,6 +239,7 @@ function LicensesView({
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Customer</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">License Key</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Seats</th>
@@ -249,6 +252,10 @@ function LicensesView({
             <tbody className="bg-white divide-y divide-gray-200">
               {visible.map((l) => (
                 <tr key={l._id} className="hover:bg-gray-50">
+                  <td className="px-6 py-4">
+                    <div className="text-sm font-medium text-gray-900">{l.clientName}</div>
+                    <div className="text-xs text-gray-500">{l.contactEmail}</div>
+                  </td>
                   <td className="px-6 py-4">
                     <button
                       type="button"
