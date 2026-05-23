@@ -355,6 +355,10 @@ Default ON unless marked opt-IN. Set `"true"` (or sentinel) to disable. `grep -r
 - `ATLAS_FORGE_DREAM_OPUS` — Track B → Opus + max thinking (else Sonnet + high)
 - `ATLAS_FORGE_STUB_LLM` — **TEST-ONLY**; skip LLM, insert stub row. Never in prod.
 
+**Memory write-gate:**
+- `ATLAS_NO_MEMORY_GATE=true` — disables the value-gate entirely; `remember()` reverts to direct-write behavior. Emergency rollback only.
+- `ATLAS_MEMORY_GATE_SHADOW=true` (default during rollout) — gate decides and logs to `data/memory-gate.jsonl` but always inserts. Set to `"false"` explicitly to enable enforcing mode (rejected writes return `null`).
+
 **Vision-nav:**
 - `ATLAS_VISION_PROFILE=lite|standard|full` — override capability-detector pick (`src/screen/capability-detector.ts`)
 - `ATLAS_NO_CLICK_MEMORY` — disables `src/screen/click-memory.ts`; rules out poisoned `data/click-memory.db`
