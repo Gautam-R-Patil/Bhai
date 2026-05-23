@@ -57,7 +57,7 @@ import { getSelfModelSnippet, recordOutcome as recordSelfModelOutcome } from "./
 import { getSelfStateSnippet } from "./memory/self-state.js";
 import { appendTurn, getSessionSummary, shouldReflect, touchSession } from "./memory/session.js";
 // ── Dynamic Context Injections ────────────────
-import { getCoreMemory, recall, recallConversation, remember } from "./memory/sqlite.js";
+import { getCoreMemory, recall, recallConversation } from "./memory/sqlite.js";
 import { getStrategyContext, saveStrategy } from "./memory/strategy-library.js";
 import { getTaskLearningsContext } from "./memory/task-learnings.js";
 import { getTraitsForInjection, resetSessionTraitCaps } from "./memory/traits.js";
@@ -1005,20 +1005,6 @@ async function _runAgentBody(
         const nonSystemMsgs = workingHistory.filter((m) => m.role !== "system");
         const keepCount = MAX_CONVERSATION_HISTORY - systemMsgs.length;
         const trimmed = nonSystemMsgs.length - keepCount;
-        // ── Auto-flush: save key facts from messages being dropped ──
-        const droppedMsgs = nonSystemMsgs.slice(0, nonSystemMsgs.length - keepCount);
-        for (const msg of droppedMsgs) {
-            try {
-                if (msg.role !== "user" && msg.role !== "tool") continue;
-                const text = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
-                if (!text || text.length < 50) continue;
-                if (text.startsWith("{") && text.endsWith("}")) continue;
-                const content = text.length > 500 ? `${text.substring(0, 497)}...` : text;
-                remember(content, "auto_flush", "hard_cap,auto", 5, "tool");
-            } catch {
-                /* auto-flush non-fatal */
-            }
-        }
         workingHistory = [...systemMsgs, ...nonSystemMsgs.slice(-keepCount)];
         conversationHistory = workingHistory;
         console.log(
