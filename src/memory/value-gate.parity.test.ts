@@ -81,3 +81,66 @@ describe("value-gate hardReject", () => {
         expect(toolResult.reject).toBe(true);
     });
 });
+
+import { hardAllow } from "./value-gate.js";
+
+describe("value-gate hardAllow", () => {
+    it("allows source=reflection", () => {
+        const result = hardAllow("anything", "reflection", 5, "general");
+        expect(result.allow).toBe(true);
+        expect(result.reason).toBe("source_reflection");
+    });
+
+    it("allows source=consolidation", () => {
+        const result = hardAllow("anything", "consolidation", 5, "general");
+        expect(result.allow).toBe(true);
+        expect(result.reason).toBe("source_consolidation");
+    });
+
+    it("allows importance >= 8 regardless of source", () => {
+        const result = hardAllow("anything", "user", 8, "general");
+        expect(result.allow).toBe(true);
+        expect(result.reason).toBe("high_importance");
+    });
+
+    it("allows curated category 'identity'", () => {
+        const result = hardAllow("any", "user", 5, "identity");
+        expect(result.allow).toBe(true);
+        expect(result.reason).toBe("curated_category");
+    });
+
+    it("allows curated category 'person'", () => {
+        const result = hardAllow("any", "user", 5, "person");
+        expect(result.allow).toBe(true);
+    });
+
+    it("allows curated category 'session_summary'", () => {
+        const result = hardAllow("any", "user", 5, "session_summary");
+        expect(result.allow).toBe(true);
+    });
+
+    it("allows curated category 'knowledge_crystal'", () => {
+        const result = hardAllow("any", "user", 5, "knowledge_crystal");
+        expect(result.allow).toBe(true);
+    });
+
+    it("allows curated category 'recovery_reflection'", () => {
+        const result = hardAllow("any", "user", 5, "recovery_reflection");
+        expect(result.allow).toBe(true);
+    });
+
+    it("allows curated category 'voice'", () => {
+        const result = hardAllow("any", "user", 5, "voice");
+        expect(result.allow).toBe(true);
+    });
+
+    it("does not allow uncurated category with low importance", () => {
+        const result = hardAllow("any", "user", 5, "general");
+        expect(result.allow).toBe(false);
+    });
+
+    it("does not allow source=tool at importance 5", () => {
+        const result = hardAllow("any", "tool", 5, "general");
+        expect(result.allow).toBe(false);
+    });
+});

@@ -57,3 +57,29 @@ function isPureJson(content: string): boolean {
         return false;
     }
 }
+
+const CURATED_CATEGORIES = new Set([
+    "identity",
+    "person",
+    "session_summary",
+    "knowledge_crystal",
+    "recovery_reflection",
+    "brand",
+    "research",
+    "voice",
+]);
+
+const HIGH_IMPORTANCE_THRESHOLD = 8;
+
+export function hardAllow(
+    _content: string,
+    source: Source,
+    importance: number,
+    category: string,
+): AllowDecision {
+    if (source === "reflection") return { allow: true, reason: "source_reflection" };
+    if (source === "consolidation") return { allow: true, reason: "source_consolidation" };
+    if (importance >= HIGH_IMPORTANCE_THRESHOLD) return { allow: true, reason: "high_importance" };
+    if (CURATED_CATEGORIES.has(category)) return { allow: true, reason: "curated_category" };
+    return { allow: false, reason: "" };
+}
