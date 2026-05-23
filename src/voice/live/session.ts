@@ -647,14 +647,18 @@ export class LiveVoiceSession extends EventEmitter {
                 try {
                     const memMatch = detectMemoryVerb(finalText);
                     if (memMatch) {
-                        import("../../memory/sqlite.js").then(({ remember }) => {
+                        import("../../memory/sqlite.js").then(async ({ remember }) => {
                             try {
                                 // Importance 5 (not 7): casual "remember milk"
                                 // shouldn't compete with real identity facts
                                 // in core-memory rails (importance>=7 is the
                                 // core-memory promotion threshold).
-                                const id = remember(memMatch.content, "voice", "voice-capture", 5, "user");
-                                console.log(`[HYBRID] memory-verb saved id=${id} content="${memMatch.content.slice(0, 60)}"`);
+                                const id = await remember(memMatch.content, "voice", "voice-capture", 5, "user");
+                                if (id === null) {
+                                    console.log("[HYBRID] memory-verb content rejected by value gate");
+                                } else {
+                                    console.log(`[HYBRID] memory-verb saved id=${id} content="${memMatch.content.slice(0, 60)}"`);
+                                }
                             } catch (err) {
                                 console.warn("[HYBRID] memory-verb save failed:", (err as Error).message);
                             }

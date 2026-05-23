@@ -263,7 +263,7 @@ export const coreMemoryReplace: ToolDefinition = {
                         if (mem.content.includes(oldContent)) {
                             const updatedContent = mem.content.replace(oldContent, newContent);
                             forgetMemory(mem.id);
-                            remember(updatedContent, section, "", mem.importance);
+                            void remember(updatedContent, section, "", mem.importance);
                             replaced = true;
                             break;
                         }
@@ -407,7 +407,10 @@ export const coreMemoryAppend: ToolDefinition = {
                 }
                 default: {
                     // Custom section: store as a memory with category = section
-                    const id = remember(content, section, "", importance);
+                    const id = await remember(content, section, "", importance);
+                    if (id === null) {
+                        return JSON.stringify({ success: false, reason: "rejected_by_value_gate" });
+                    }
                     return JSON.stringify({
                         success: true,
                         message: `Content appended to section "${section}" (memory ID: ${id})`,

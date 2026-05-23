@@ -41,7 +41,7 @@ export const memoryStore: ToolDefinition = {
         const imp = (input.importance as number) || 5;
         // Use smart write (LLM deduplication) for important memories (>= 7)
         const useSmartWrite = imp >= 7;
-        const id = remember(
+        const id = await remember(
             input.content as string,
             (input.category as string) || "general",
             (input.tags as string) || "",
@@ -49,6 +49,9 @@ export const memoryStore: ToolDefinition = {
             "user",
             useSmartWrite,
         );
+        if (id === null) {
+            return JSON.stringify({ success: false, reason: "rejected_by_value_gate" });
+        }
         return JSON.stringify({ success: true, id, message: "Memory stored." });
     },
 };

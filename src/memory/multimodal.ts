@@ -20,7 +20,7 @@ export interface MultimodalItem {
 
 export async function processAndStoreMultimodal(
     item: MultimodalItem
-): Promise<number> {
+): Promise<number | null> {
     const content = [
         `[${item.type.toUpperCase()}] ${item.source}`,
         item.extractedText,
@@ -29,7 +29,7 @@ export async function processAndStoreMultimodal(
         .filter(Boolean)
         .join("\n");
 
-    return remember(content, `multimodal_${item.type}`, item.type, 5);
+    return await remember(content, `multimodal_${item.type}`, item.type, 5);
 }
 
 // ── Image Description ─────────────────────────
@@ -65,7 +65,7 @@ export async function describeImage(
 export async function extractFromAudio(
     transcribedText: string,
     source: string
-): Promise<number> {
+): Promise<number | null> {
     return processAndStoreMultimodal({
         type: "audio",
         source,
@@ -79,7 +79,7 @@ export async function extractFromAudio(
 export async function extractFromDocument(
     text: string,
     filename: string
-): Promise<number> {
+): Promise<number | null> {
     return processAndStoreMultimodal({
         type: "document",
         source: filename,

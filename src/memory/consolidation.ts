@@ -230,7 +230,11 @@ export async function consolidateMemories(
         allTags.add("crystal");
         allTags.add("consolidated");
 
-        const crystalId = remember(crystal, "knowledge_crystal", Array.from(allTags).join(","), maxImportance);
+        const crystalId = await remember(crystal, "knowledge_crystal", Array.from(allTags).join(","), maxImportance);
+        if (crystalId === null) {
+            console.warn("[CONSOLIDATION] Knowledge crystal rejected by value gate (unexpected — category is curated)");
+            continue;
+        }
 
         // Embed the crystal and add to HNSW
         try {
