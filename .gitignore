@@ -140,6 +140,7 @@ desktop/hostinger-upload/
 !src/tools/tool-result.test.ts
 !src/utils/atomic-io.test.ts
 !src/memory/fts5-query.test.ts
+!src/memory/gate-audit.test.ts
 !src/proactive/dreaming-self-edit.test.ts
 !src/proactive/observer-scheduled-fire.test.ts
 !src/proactive/observer-morning-fan-in.test.ts
