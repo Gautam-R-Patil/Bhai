@@ -35,59 +35,77 @@ export function estimateMessagesTokens(messages: ChatCompletionMessageParam[]): 
 // ── Auto-Flush: Save Key Facts Before Pruning ─
 
 /**
- * Extract significant content from messages about to be pruned and
- * persist them as memories. Prevents information loss during long
- * conversations when older messages are removed.
+ * Extract durable facts from messages about to be pruned and persist
+ * them as memories. Replaces the previous per-message length/JSON filter
+ * which leaked tool results and screenshot blobs into the memory DB.
  *
- * Non-blocking: fires remember() calls without awaiting, using .catch()
- * to swallow errors silently.
+ * Runs one Haiku extraction call over the full window; emitted facts go
+ * through remember() with source="reflection" (auto-allowed by the gate).
  */
-function flushToMemory(messages: ChatCompletionMessageParam[]): void {
+async function flushToMemory(
+    messages: ChatCompletionMessageParam[],
+    llm: LLMClient,
+): Promise<void> {
     try {
+        if (messages.length === 0) return;
+
+        const transcript = messages
+            .map((m) => {
+                const role = m.role;
+                const content = typeof m.content === "string"
+                    ? m.content
+                    : JSON.stringify(m.content);
+                return `${role}: ${content.slice(0, 800)}`;
+            })
+            .join("\n");
+
+        if (transcript.length < 200) return;
+
+        const response = await llm.chat({
+            messages: [
+                {
+                    role: "user",
+                    content:
+                        "Read this conversation excerpt. Extract any durable facts about the user, their projects, decisions, or preferences. Skip tool calls, errors, system noise, screenshots, and execution telemetry. Return a JSON array of short fact strings (each under 200 chars), or [] if nothing durable.\n\nExcerpt:\n" +
+                        transcript,
+                },
+            ],
+            systemPrompt:
+                "You are a memory extractor. Output ONLY a JSON array of fact strings. No prose, no markdown, no explanations.",
+            modelOverride: "anthropic/claude-haiku-4.5",
+        });
+
+        const raw = response.choices[0]?.message?.content;
+        if (typeof raw !== "string") return;
+
+        let facts: unknown;
+        try {
+            const stripped = raw.trim().replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
+            facts = JSON.parse(stripped);
+        } catch {
+            return;
+        }
+
+        if (!Array.isArray(facts)) return;
+
         let flushed = 0;
-        for (const msg of messages) {
-            // Only flush user messages and tool results with substantive content
-            if (msg.role !== "user" && msg.role !== "tool") continue;
-
-            const text = typeof msg.content === "string"
-                ? msg.content
-                : (Array.isArray(msg.content)
-                    ? msg.content.filter((p) => typeof p === "object" && p !== null && "type" in p && (p as any).type === "text").map(p => (p as any).text as string).join(" ")
-                    : JSON.stringify(msg.content));
-
-            // Skip short/trivial content (greetings, acknowledgements, etc.)
-            if (!text || text.length < 50) continue;
-
-            // Skip content that looks like pure tool JSON or system noise
-            if (text.startsWith("{") && text.endsWith("}")) continue;
-            if (text.startsWith("<tool_log") || text.startsWith("<system_log")) continue;
-
-            // Truncate very long content to a reasonable summary length
-            const content = text.length > 500
-                ? text.substring(0, 497) + "..."
-                : text;
-
-            const prefix = msg.role === "tool" ? "[tool result] " : "";
-
-            // Non-blocking fire-and-forget
+        for (const fact of facts) {
+            if (typeof fact !== "string") continue;
+            const trimmed = fact.trim();
+            if (trimmed.length < 10 || trimmed.length > 200) continue;
             try {
-                remember(
-                    `${prefix}${content}`,
-                    "auto_flush",
-                    "context_pruning,auto",
-                    5,  // moderate importance
-                    "tool"
-                );
+                await remember(trimmed, "session_summary", "context_pruning,auto", 5, "reflection");
                 flushed++;
-            } catch { /* remember() failure non-fatal */ }
+            } catch {
+                /* remember() failure non-fatal */
+            }
         }
 
         if (flushed > 0) {
-            console.log(`  [AUTO_FLUSH] Saved ${flushed} facts from pruned messages to memory`);
+            console.log(`  [AUTO_FLUSH] Saved ${flushed} extracted facts from pruned messages`);
         }
     } catch (err) {
-        // Entire flush pipeline failed — pruning proceeds regardless
-        console.warn("[AUTO_FLUSH] Failed (non-fatal):", (err as Error).message);
+        console.warn("[AUTO_FLUSH] Extractor failed (non-fatal):", (err as Error).message);
     }
 }
 
@@ -141,8 +159,9 @@ export async function pruneContext(
     let recentMessages = messages.slice(safeSplit);
 
     // ── Auto-flush key facts from messages about to be pruned ──
-    // Non-blocking: runs synchronously but remember() itself is fire-and-forget for embeddings
-    flushToMemory(oldMessages);
+    // One Haiku extraction call over the full window; runs on the pruning
+    // bg path so the ~200-500ms latency doesn't stall the agent turn.
+    await flushToMemory(oldMessages, llm);
 
     // Compress old tool outputs in the recent messages array
     recentMessages = compressToolHistory(recentMessages);
