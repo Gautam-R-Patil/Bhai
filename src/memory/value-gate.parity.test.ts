@@ -55,6 +55,12 @@ describe("value-gate hardReject", () => {
         expect(result.reason).toBe("oversize");
     });
 
+    it("does not reject content of exactly 2000 chars", () => {
+        const content = "x".repeat(2000);
+        const result = hardReject(content, "user", 5, "general");
+        expect(result.reject).toBe(false);
+    });
+
     it("does not reject short user prose", () => {
         const content = "User prefers dark mode in the desktop overlay.";
         const result = hardReject(content, "user", 5, "general");
