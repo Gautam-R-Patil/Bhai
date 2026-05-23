@@ -236,21 +236,7 @@ export async function reflect(currentQuery: string): Promise<void> {
 function spillItem(itemId: string): void {
     const idx = state.items.findIndex(i => i.id === itemId);
     if (idx === -1) return;
-
-    const item = state.items[idx];
     state.items.splice(idx, 1);
-
-    // Store in LTM via memory system (async, non-blocking)
-    try {
-        import("./sqlite.js").then(({ remember }) => {
-            remember(
-                `[WM-Spill] ${item.contentType}: ${item.summary}`,
-                "working_memory",
-                "",
-                Math.round(item.importance * 10),
-            );
-        }).catch(() => { /* LTM not available */ });
-    } catch { /* */ }
 }
 
 // ── Access Tracking ───────────────────────────
