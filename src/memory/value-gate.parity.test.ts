@@ -2,7 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { hardReject } from "./value-gate.js";
 
 describe("value-gate hardReject", () => {
@@ -142,5 +142,91 @@ describe("value-gate hardAllow", () => {
     it("does not allow source=tool at importance 5", () => {
         const result = hardAllow("any", "tool", 5, "general");
         expect(result.allow).toBe(false);
+    });
+});
+
+import { __clearLlmGateCacheForTesting, llmGate } from "./value-gate.js";
+
+describe("value-gate llmGate", () => {
+    beforeEach(() => {
+        __clearLlmGateCacheForTesting();
+    });
+
+    it("returns DROP when llm is null (fail-closed)", async () => {
+        const result = await llmGate("any content", null);
+        expect(result.decision).toBe("DROP");
+        expect(result.reason).toBe("no_llm");
+    });
+
+    it("returns ADD when llm replies ADD", async () => {
+        const stub = {
+            chat: async () => ({
+                choices: [{ message: { content: "ADD" } }],
+            }),
+        } as any;
+        const result = await llmGate("User prefers dark mode", stub);
+        expect(result.decision).toBe("ADD");
+        expect(result.reason).toBe("llm_add");
+    });
+
+    it("returns DROP when llm replies DROP", async () => {
+        const stub = {
+            chat: async () => ({
+                choices: [{ message: { content: "DROP" } }],
+            }),
+        } as any;
+        const result = await llmGate("tool noise", stub);
+        expect(result.decision).toBe("DROP");
+        expect(result.reason).toBe("llm_drop");
+    });
+
+    it("returns DROP on malformed llm response", async () => {
+        const stub = {
+            chat: async () => ({
+                choices: [{ message: { content: "maybe?" } }],
+            }),
+        } as any;
+        const result = await llmGate("content", stub);
+        expect(result.decision).toBe("DROP");
+        expect(result.reason).toBe("llm_malformed");
+    });
+
+    it("returns DROP on llm timeout/throw", async () => {
+        const stub = {
+            chat: async () => {
+                throw new Error("timeout");
+            },
+        } as any;
+        const result = await llmGate("content", stub);
+        expect(result.decision).toBe("DROP");
+        expect(result.reason).toBe("llm_error");
+    });
+
+    it("caches by sha256 — second call does not hit llm", async () => {
+        let callCount = 0;
+        const stub = {
+            chat: async () => {
+                callCount++;
+                return { choices: [{ message: { content: "ADD" } }] };
+            },
+        } as any;
+        await llmGate("same content", stub);
+        await llmGate("same content", stub);
+        expect(callCount).toBe(1);
+    });
+
+    it("does not cache when first call failed (so retries are possible)", async () => {
+        let callCount = 0;
+        const stub = {
+            chat: async () => {
+                callCount++;
+                if (callCount === 1) throw new Error("transient");
+                return { choices: [{ message: { content: "ADD" } }] };
+            },
+        } as any;
+        const first = await llmGate("retryable content", stub);
+        expect(first.decision).toBe("DROP");
+        const second = await llmGate("retryable content", stub);
+        expect(second.decision).toBe("ADD");
     });
 });
