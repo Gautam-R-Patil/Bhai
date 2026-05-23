@@ -571,6 +571,18 @@ export async function initMemoryDB(): Promise<CompatDatabase> {
         console.error("  FTS5 error:", (err as Error).message);
     }
 
+    const gateDisabled = process.env.ATLAS_NO_MEMORY_GATE === "true";
+    const shadow = process.env.ATLAS_MEMORY_GATE_SHADOW !== "false";
+    if (gateDisabled) {
+        console.log("[MEMORY] Value-gate: DISABLED (ATLAS_NO_MEMORY_GATE=true)");
+    } else if (shadow) {
+        console.log(
+            "[MEMORY] Value-gate: SHADOW (decisions logged to data/memory-gate.jsonl, all writes still insert)",
+        );
+    } else {
+        console.log("[MEMORY] Value-gate: ENFORCING");
+    }
+
     // ── Initialize brain-inspired modules ──
     initProspectiveDB(db);
 
