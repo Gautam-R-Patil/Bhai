@@ -773,7 +773,7 @@ export async function remember(
                 gateDecision = "allow";
                 gateReason = allow.reason;
             } else {
-                const llmResult = await llmGate(content, memoryLLM as Parameters<typeof llmGate>[1]);
+                const llmResult = await llmGate(content, memoryLLM);
                 gateDecision = llmResult.decision === "ADD" ? "allow" : "reject";
                 gateReason = llmResult.reason;
             }

@@ -86,10 +86,13 @@ export interface LlmGateResult {
 }
 
 interface LlmClientLike {
+    // biome-ignore lint/suspicious/noExplicitAny: parameter type is bivariant so any[] is the only way to accept both
+    // the real LLMClient (whose messages is the OpenAI ChatCompletionMessageParam[]) and test stubs that pass simpler shapes.
     chat: (params: {
-        messages: Array<{ role: string; content: string }>;
+        messages: any[];
         systemPrompt?: string;
         modelOverride?: string;
+        [key: string]: unknown;
     }) => Promise<{ choices: Array<{ message: { content: string | null } }> }>;
 }
 
