@@ -24,6 +24,8 @@ import { getTemporalCache } from "./temporal-cache.js";
 // ── Brain-Inspired Module Imports ─────────────
 import { buildIndexFromDB, getHNSWIndex } from "./vector-index.js";
 import { buildTrigramQuery, containsCjk, sanitizeFts5Query } from "./fts5-query.js";
+import { hardAllow, hardReject, llmGate } from "./value-gate.js";
+import { logGateDecision } from "./gate-audit.js";
 
 // ── Constants ─────────────────────────────────
 
@@ -741,7 +743,7 @@ export function backfillFTS5(): void {
 
 // ── Memory CRUD ───────────────────────────────
 
-export function remember(
+export async function remember(
     content: string,
     category = "general",
     tags = "",
@@ -749,20 +751,49 @@ export function remember(
     source: "user" | "tool" | "reflection" | "consolidation" = "user",
     smartWrite = false,
     scope: string = "global",
-): number {
+): Promise<number | null> {
     if (!db) throw new Error("Memory DB not initialized");
 
-    // Validate scope format: must be "global" or "type:value"
     const validScope = /^(global|user:.+|session:.+|task:.+)$/.test(scope) ? scope : "global";
 
-    // ── Smart Write: LLM-driven ADD/UPDATE/DELETE decision ──
-    // When smartWrite=true and an LLM client is available, fire an async
-    // pipeline that checks for similar memories and lets the LLM decide.
-    // The direct write still happens synchronously below (fail-open), but
-    // the async decision can upgrade/deduplicate after the fact.
+    const gateDisabled = process.env.ATLAS_NO_MEMORY_GATE === "true";
+    const shadow = process.env.ATLAS_MEMORY_GATE_SHADOW !== "false"; // default ON during rollout
+
+    let gateDecision: "allow" | "reject" = "allow";
+    let gateReason = "gate_disabled";
+
+    if (!gateDisabled) {
+        const reject = hardReject(content, source, importance, category);
+        if (reject.reject) {
+            gateDecision = "reject";
+            gateReason = reject.reason;
+        } else {
+            const allow = hardAllow(content, source, importance, category);
+            if (allow.allow) {
+                gateDecision = "allow";
+                gateReason = allow.reason;
+            } else {
+                const llmResult = await llmGate(content, memoryLLM as Parameters<typeof llmGate>[1]);
+                gateDecision = llmResult.decision === "ADD" ? "allow" : "reject";
+                gateReason = llmResult.reason;
+            }
+        }
+
+        logGateDecision({
+            decision: gateDecision,
+            reason: gateReason,
+            source,
+            category,
+            content,
+        });
+
+        if (gateDecision === "reject" && !shadow) {
+            return null;
+        }
+    }
+
     if (smartWrite && memoryLLM && isEmbeddingReady()) {
         const directId = _rememberDirect(content, category, tags, importance, source, validScope);
-        // Fire-and-forget: the LLM decision runs in the background
         _smartWriteDecision(directId, content, category, tags, importance, source).catch((err) =>
             console.warn("[MEMORY][SMART_WRITE] Decision pipeline failed (non-fatal):", (err as Error).message),
         );
