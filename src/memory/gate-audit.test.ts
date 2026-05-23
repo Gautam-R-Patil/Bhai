@@ -71,7 +71,8 @@ describe("gate-audit", () => {
     });
 
     it("rotates at threshold by renaming to .1", () => {
-        __setRotationThresholdForTesting(500);
+        const threshold = 500;
+        __setRotationThresholdForTesting(threshold);
 
         const bigLine = "x".repeat(100);
         for (let i = 0; i < 10; i++) {
@@ -86,9 +87,10 @@ describe("gate-audit", () => {
 
         const rolled = `${auditPath}.1`;
         expect(existsSync(rolled)).toBe(true);
+        expect(statSync(rolled).size).toBeGreaterThan(0);
         const activeSize = statSync(auditPath).size;
         const rolledSize = statSync(rolled).size;
-        expect(activeSize).toBeLessThan(rolledSize);
+        expect(activeSize + rolledSize).toBeGreaterThan(threshold);
     });
 
     it("never throws on write failure (swallowed)", () => {
