@@ -3282,4 +3282,337 @@ http.route({
   }),
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// CONTACT FORM (xagilab.com) — Public submit + admin manage
+// Isolated from /api/waitlist/submit. Uses its own table (contact_submissions),
+// its own per-IP rate limit, its own CORS allowlist. No coupling to session/
+// credit machinery. hCaptcha optional — gated by HCAPTCHA_SECRET as elsewhere.
+// ══════════════════════════════════════════════════════════════════════════
+
+const CONTACT_IP_WINDOW_MS = 10 * 60_000;
+const CONTACT_IP_MAX = 4;
+const contactIpHits = new Map<string, { count: number; windowStart: number }>();
+
+function checkContactIpRateLimit(ip: string): boolean {
+  if (!ip || ip === "unknown") return true;
+  const now = Date.now();
+  const existing = contactIpHits.get(ip);
+  if (contactIpHits.size > 1024) {
+    for (const [k, v] of contactIpHits) {
+      if (now - v.windowStart > CONTACT_IP_WINDOW_MS) contactIpHits.delete(k);
+    }
+  }
+  if (!existing || now - existing.windowStart > CONTACT_IP_WINDOW_MS) {
+    contactIpHits.set(ip, { count: 1, windowStart: now });
+    return true;
+  }
+  if (existing.count >= CONTACT_IP_MAX) return false;
+  existing.count++;
+  return true;
+}
+
+const CONTACT_ALLOWED_ORIGINS = new Set([
+  "https://xagilab.com",
+  "https://www.xagilab.com",
+  "https://tryatlasagi.com",
+  "https://www.tryatlasagi.com",
+  // Local dev — only allowed when ATLAS_ENV !== 'prod'
+  ...(process.env.ATLAS_ENV === "prod" ? [] : [
+    "http://localhost:8088",
+    "http://localhost:3000",
+    "http://127.0.0.1:8088",
+  ]),
+]);
+
+function contactCorsHeaders(origin: string | null): Record<string, string> {
+  const allow = origin && CONTACT_ALLOWED_ORIGINS.has(origin) ? origin : "https://xagilab.com";
+  return {
+    "Access-Control-Allow-Origin": allow,
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Max-Age": "86400",
+    "Vary": "Origin",
+  };
+}
+
+const CONTACT_INQUIRY_VALUES = new Set([
+  "partnerships",
+  "enterprise",
+  "investors",
+  "press",
+  "hiring",
+  "other",
+]);
+
+// OPTIONS preflight
+http.route({
+  path: "/api/contact/submit",
+  method: "OPTIONS",
+  handler: httpAction(async (_ctx, request) => {
+    const origin = request.headers.get("Origin");
+    return new Response(null, { status: 204, headers: contactCorsHeaders(origin) });
+  }),
+});
+
+// POST /api/contact/submit — PUBLIC. No session auth. IP rate-limited.
+// hCaptcha verified when HCAPTCHA_SECRET is set; otherwise (dev/local) the
+// captcha check is skipped so local previews don't get 403s — production
+// SHOULD set HCAPTCHA_SECRET + a token-bound site.
+http.route({
+  path: "/api/contact/submit",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const origin = request.headers.get("Origin");
+    const corsHeaders = contactCorsHeaders(origin);
+    const jsonHeaders = { ...corsHeaders, "Content-Type": "application/json" };
+
+    if (!origin || !CONTACT_ALLOWED_ORIGINS.has(origin)) {
+      return new Response(
+        JSON.stringify({ error: "Origin not allowed" }),
+        { status: 403, headers: jsonHeaders },
+      );
+    }
+
+    const ip = extractClientIp(request);
+    if (!checkContactIpRateLimit(ip)) {
+      return new Response(
+        JSON.stringify({ error: "Too many submissions. Please try again later." }),
+        { status: 429, headers: { ...jsonHeaders, "Retry-After": "600" } },
+      );
+    }
+
+    let body: any;
+    try {
+      body = await request.json();
+    } catch {
+      return new Response(
+        JSON.stringify({ error: "Invalid JSON body" }),
+        { status: 400, headers: jsonHeaders },
+      );
+    }
+
+    const name = typeof body.name === "string" ? body.name.trim().slice(0, 200) : "";
+    const email = typeof body.email === "string" ? body.email.trim().toLowerCase().slice(0, 320) : "";
+    const company = typeof body.company === "string" ? body.company.trim().slice(0, 200) : "";
+    const inquiryRaw = typeof body.inquiry === "string" ? body.inquiry.trim().toLowerCase() : "";
+    const inquiry = CONTACT_INQUIRY_VALUES.has(inquiryRaw) ? inquiryRaw : "other";
+    const message = typeof body.message === "string" ? body.message.trim().slice(0, 8000) : "";
+    const hcaptchaToken = typeof body.hcaptchaToken === "string" ? body.hcaptchaToken : "";
+
+    if (!name || !email || !message) {
+      return new Response(
+        JSON.stringify({ error: "Missing required fields (name, email, message)" }),
+        { status: 400, headers: jsonHeaders },
+      );
+    }
+    if (!EMAIL_RE.test(email)) {
+      return new Response(
+        JSON.stringify({ error: "Invalid email" }),
+        { status: 400, headers: jsonHeaders },
+      );
+    }
+    if (message.length < 10) {
+      return new Response(
+        JSON.stringify({ error: "Message is too short — a sentence or two helps us route it." }),
+        { status: 400, headers: jsonHeaders },
+      );
+    }
+
+    // Contact-form captcha is opt-in via CONTACT_REQUIRE_HCAPTCHA=true.
+    // Decoupled from waitlist's HCAPTCHA_SECRET. Even when not required,
+    // CORS allowlist + per-IP rate-limit still protect this endpoint.
+    if (process.env.CONTACT_REQUIRE_HCAPTCHA === "true") {
+      if (!hcaptchaToken) {
+        return new Response(
+          JSON.stringify({ error: "Captcha token missing" }),
+          { status: 400, headers: jsonHeaders },
+        );
+      }
+      const ok = await verifyContactHCaptcha(hcaptchaToken, ip);
+      if (!ok) {
+        return new Response(
+          JSON.stringify({ error: "Captcha verification failed" }),
+          { status: 403, headers: jsonHeaders },
+        );
+      }
+    }
+
+    // Soft dedup — same email + same message within 30 min collapses.
+    const dup = await ctx.runQuery(internal.contact.getRecentDuplicate, { email, message });
+    if (dup) {
+      return new Response(
+        JSON.stringify({ ok: true, duplicate: true }),
+        { status: 200, headers: jsonHeaders },
+      );
+    }
+
+    const userAgent = request.headers.get("User-Agent") || undefined;
+    const referrer = request.headers.get("Referer") || undefined;
+
+    const { id } = await ctx.runMutation(internal.contact.insertContactSubmission, {
+      name,
+      email,
+      company: company || undefined,
+      inquiry,
+      message,
+      ipAddress: ip !== "unknown" ? ip : undefined,
+      userAgent,
+      referrer,
+      origin,
+    });
+
+    return new Response(
+      JSON.stringify({ ok: true, id }),
+      { status: 200, headers: jsonHeaders },
+    );
+  }),
+});
+
+async function verifyContactHCaptcha(token: string, remoteIp?: string): Promise<boolean> {
+  const secret = process.env.HCAPTCHA_SECRET;
+  if (!secret) return true; // never called when secret is missing — defensive
+  if (!checkAndRecordHcaptchaToken(token)) return false;
+  const body = new URLSearchParams({ secret, response: token });
+  if (remoteIp) body.append("remoteip", remoteIp);
+  const sitekey = process.env.HCAPTCHA_SITEKEY_XAGI || process.env.HCAPTCHA_SITEKEY;
+  if (sitekey) body.append("sitekey", sitekey);
+  try {
+    const resp = await fetch("https://api.hcaptcha.com/siteverify", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    });
+    const data: any = await resp.json().catch(() => null);
+    if (!data?.success) return false;
+    // Accept either xagilab.com or tryatlasagi.com by default; override with
+    // a comma-separated list via CONTACT_HCAPTCHA_HOSTNAMES.
+    const allowed = (process.env.CONTACT_HCAPTCHA_HOSTNAMES
+      || "xagilab.com,www.xagilab.com,tryatlasagi.com,www.tryatlasagi.com"
+    ).split(",").map(h => h.trim()).filter(Boolean);
+    if (data.hostname && !allowed.includes(data.hostname)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// GET /api/admin/contact?status=&inquiry=&limit=&cursor= — admin list
+http.route({
+  path: "/api/admin/contact",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authErr = await validateAdminRequest(request);
+    if (authErr) return authErr;
+
+    const url = new URL(request.url);
+    const status = url.searchParams.get("status") || undefined;
+    const inquiry = url.searchParams.get("inquiry") || undefined;
+    const limitRaw = url.searchParams.get("limit");
+    const limit = limitRaw ? Number(limitRaw) : undefined;
+    const cursor = url.searchParams.get("cursor") || undefined;
+
+    const result = await ctx.runQuery(internal.contact.listContactSubmissions, {
+      status,
+      inquiry,
+      limit: Number.isFinite(limit) ? limit : undefined,
+      cursor: cursor ?? null,
+    });
+
+    return new Response(JSON.stringify(result), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
+
+// GET /api/admin/contact/stats — admin stats
+http.route({
+  path: "/api/admin/contact/stats",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authErr = await validateAdminRequest(request);
+    if (authErr) return authErr;
+    const stats = await ctx.runQuery(internal.contact.getContactStats, {});
+    return new Response(JSON.stringify({ stats }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
+
+// POST /api/admin/contact/update — admin patch status / notes
+http.route({
+  path: "/api/admin/contact/update",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authErr = await validateAdminRequest(request);
+    if (authErr) return authErr;
+
+    let body: any;
+    try {
+      body = await request.json();
+    } catch {
+      return new Response(
+        JSON.stringify({ error: "Invalid JSON body" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    const { entryId, status, adminNotes } = body || {};
+    if (!entryId) {
+      return new Response(
+        JSON.stringify({ error: "entryId is required" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (status !== undefined && !["new", "replied", "archived"].includes(status)) {
+      return new Response(
+        JSON.stringify({ error: "Invalid status" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    await ctx.runMutation(internal.contact.updateContactSubmission, {
+      entryId,
+      status,
+      adminNotes,
+    });
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
+
+// POST /api/admin/contact/delete — admin delete entry
+http.route({
+  path: "/api/admin/contact/delete",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authErr = await validateAdminRequest(request);
+    if (authErr) return authErr;
+
+    let body: any;
+    try {
+      body = await request.json();
+    } catch {
+      return new Response(
+        JSON.stringify({ error: "Invalid JSON body" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    const { entryId } = body || {};
+    if (!entryId) {
+      return new Response(
+        JSON.stringify({ error: "entryId is required" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    await ctx.runMutation(internal.contact.deleteContactSubmission, { entryId });
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
+
 export default http;

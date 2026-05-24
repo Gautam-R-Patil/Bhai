@@ -10,6 +10,7 @@
 
 import type * as accounts from "../accounts.js";
 import type * as appRuntime from "../appRuntime.js";
+import type * as contact from "../contact.js";
 import type * as credit_cost from "../credit_cost.js";
 import type * as crons from "../crons.js";
 import type * as crypto from "../crypto.js";
@@ -41,6 +42,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   accounts: typeof accounts;
   appRuntime: typeof appRuntime;
+  contact: typeof contact;
   credit_cost: typeof credit_cost;
   crons: typeof crons;
   crypto: typeof crypto;

@@ -355,6 +355,27 @@ export default defineSchema({
     .index("by_email", ["email"])
     .index("by_submittedAt", ["submittedAt"]),
 
+  // ── Contact form submissions from xagilab.com (marketing site)
+  // Isolated from waitlist (different funnel, different reply SLA).
+  contact_submissions: defineTable({
+    name: v.string(),
+    email: v.string(),
+    company: v.optional(v.string()),
+    inquiry: v.string(),                 // partnerships|enterprise|investors|press|hiring|other
+    message: v.string(),
+    status: v.string(),                  // "new" | "replied" | "archived"
+    adminNotes: v.optional(v.string()),
+    ipAddress: v.optional(v.string()),
+    userAgent: v.optional(v.string()),
+    referrer: v.optional(v.string()),
+    origin: v.optional(v.string()),
+    submittedAt: v.number(),
+  })
+    .index("by_status", ["status"])
+    .index("by_email", ["email"])
+    .index("by_submittedAt", ["submittedAt"])
+    .index("by_inquiry", ["inquiry"]),
+
   // ── Per-user bot-authored prompt addenda (layered on top of core prompts)
   // Bot CANNOT edit system_prompts/system_skills. It writes here instead, per
   // user, and the assembler appends these after the core prompts.

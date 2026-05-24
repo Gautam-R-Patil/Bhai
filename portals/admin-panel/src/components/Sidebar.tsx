@@ -17,6 +17,7 @@ import {
   Zap,
   AlertTriangle,
   Building2,
+  Inbox,
 } from "lucide-react";
 
 // Permissions strings come from convex/store/admins.ts::PERMISSIONS. Adding a
@@ -35,6 +36,7 @@ const NAVIGATION: NavItem[] = [
   { name: "Observability", href: "/dashboard/observability", icon: BarChart3, requiredPermission: "view_analytics" },
   { name: "Users", href: "/users", icon: Users, requiredPermission: "manage_users" },
   { name: "Waitlist", href: "/waitlist", icon: UserPlus, requiredPermission: "manage_users" },
+  { name: "Contact inbox", href: "/contact", icon: Inbox, requiredPermission: "manage_users" },
   { name: "Developers", href: "/developers", icon: Code2, requiredPermission: "approve_devs" },
   { name: "Submissions", href: "/submissions", icon: FileCheck, requiredPermission: "approve_apps" },
   { name: "Published Apps", href: "/apps", icon: Package, requiredPermission: "approve_apps" },

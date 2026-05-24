@@ -211,6 +211,51 @@ export interface WaitlistListResponse {
   continueCursor: string | null;
 }
 
+// ── Contact form (xagilab.com marketing site) ─────
+export type ContactStatus = "new" | "replied" | "archived";
+export type ContactInquiry =
+  | "partnerships"
+  | "enterprise"
+  | "investors"
+  | "press"
+  | "hiring"
+  | "other";
+
+export interface ContactEntry {
+  _id: string;
+  _creationTime: number;
+  name: string;
+  email: string;
+  company?: string;
+  inquiry: ContactInquiry;
+  message: string;
+  status: ContactStatus;
+  adminNotes?: string;
+  ipAddress?: string;
+  userAgent?: string;
+  referrer?: string;
+  origin?: string;
+  submittedAt: number;
+}
+
+export interface ContactStats {
+  total: number;
+  new: number;
+  replied: number;
+  archived: number;
+  last24h: number;
+  last7d: number;
+  scanCapped?: boolean;
+  byInquiry?: Record<string, number>;
+  bySource?: { xagilab: number; tryatlasagi: number; other: number };
+}
+
+export interface ContactListResponse {
+  entries: ContactEntry[];
+  isDone: boolean;
+  continueCursor: string | null;
+}
+
 // ── System Overview ──────────────────────────────
 
 export interface SystemOverview {

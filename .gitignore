@@ -259,3 +259,6 @@ scripts/test-speaker-streaming.ts
 portals/admin-panel.zip
 portals/*.zip
 *.bak.zip
+
+# Sensitive: IP strategy, patent filings, trade-secret inventories, NDA templates
+ip-filings-india/
