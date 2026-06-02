@@ -10,95 +10,12 @@
 // the local path, size, and dimensions (for images) so the agent can
 // drop a ready-to-use `<img src="..." />` reference.
 
-import dns from "node:dns/promises";
 import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { getPathBlockedReason, isPathAllowed, isProtectedPath } from "../../security/allowlist.js";
 import { auditLog } from "../../security/audit-log.js";
+import { fetchWithRedirectGuard } from "../../security/url-safety.js";
 import type { ToolDefinition } from "../get-current-time.js";
-
-// ── SSRF guard ────────────────────────────────
-// Hostnames and IP ranges the agent must never reach. Covers loopback,
-// link-local (incl. AWS/GCP/Azure metadata 169.254.169.254), RFC1918
-// private LANs, IPv6 equivalents, and .local / .internal suffixes.
-
-const BLOCKED_HOSTNAMES = new Set([
-    "localhost",
-    "metadata.google.internal",
-    "metadata.goog",
-    "instance-data",
-    "metadata.azure.com",
-]);
-
-function isPrivateIPv4(ip: string): boolean {
-    const parts = ip.split(".").map(Number);
-    if (parts.length !== 4 || parts.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return false;
-    const [a, b] = parts;
-    if (a === 10) return true; // 10.0.0.0/8
-    if (a === 127) return true; // loopback
-    if (a === 0) return true; // 0.0.0.0/8
-    if (a === 169 && b === 254) return true; // link-local incl. cloud metadata
-    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
-    if (a === 192 && b === 168) return true; // 192.168.0.0/16
-    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64.0.0/10
-    if (a >= 224) return true; // multicast + reserved
-    return false;
-}
-
-function isPrivateIPv6(ip: string): boolean {
-    const lower = ip.toLowerCase();
-    if (lower === "::1" || lower === "::") return true;
-    if (
-        lower.startsWith("fe80:") ||
-        lower.startsWith("fe8") ||
-        lower.startsWith("fe9") ||
-        lower.startsWith("fea") ||
-        lower.startsWith("feb")
-    )
-        return true; // link-local fe80::/10
-    if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // ULA fc00::/7
-    // IPv4-mapped IPv6: ::ffff:<ipv4>
-    const mapped = lower.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-    if (mapped && isPrivateIPv4(mapped[1])) return true;
-    return false;
-}
-
-async function assertPublicHost(urlStr: string): Promise<string | null> {
-    let u: URL;
-    try {
-        u = new URL(urlStr);
-    } catch {
-        return "invalid URL";
-    }
-    const proto = u.protocol.toLowerCase();
-    if (proto !== "http:" && proto !== "https:") return `blocked protocol: ${proto}`;
-    const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-    if (!host) return "empty host";
-    if (BLOCKED_HOSTNAMES.has(host)) return `blocked hostname: ${host}`;
-    if (host.endsWith(".local") || host.endsWith(".internal")) return `blocked suffix: ${host}`;
-
-    // Literal-IP shortcut — skip DNS
-    if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
-        if (isPrivateIPv4(host)) return `blocked private IPv4: ${host}`;
-        return null;
-    }
-    if (host.includes(":") || /^[0-9a-f]*::/.test(host)) {
-        if (isPrivateIPv6(host)) return `blocked private IPv6: ${host}`;
-        return null;
-    }
-
-    // DNS-resolve and verify EVERY address falls outside the blocklist.
-    try {
-        const records = await dns.lookup(host, { all: true, verbatim: true });
-        for (const r of records) {
-            if (r.family === 4 && isPrivateIPv4(r.address)) return `blocked via DNS to private IPv4: ${r.address}`;
-            if (r.family === 6 && isPrivateIPv6(r.address)) return `blocked via DNS to private IPv6: ${r.address}`;
-        }
-    } catch (err) {
-        return `DNS lookup failed: ${(err as Error).message}`;
-    }
-    return null;
-}
 
 const MAX_BYTES_DEFAULT = 8 * 1024 * 1024; // 8 MB per asset
 const MAX_BYTES_HARD = 32 * 1024 * 1024; // 32 MB absolute ceiling
@@ -283,37 +200,23 @@ export const webAssetDownload: ToolDefinition = {
 
         auditLog("web_asset_download", { url: url.slice(0, 200), dest: absDest });
 
-        // Manual redirect loop — re-validate every hop against the SSRF blocklist.
+        // Redirect-following fetch with the shared SSRF guard re-checked on every hop.
         const controller = new AbortController();
         const killTimer = setTimeout(() => controller.abort(), timeoutMs);
-        const MAX_HOPS = 5;
-        let currentUrl = url;
         let res: Response;
+        let currentUrl: string;
         try {
-            let hop = 0;
-            while (true) {
-                const ssrfErr = await assertPublicHost(currentUrl);
-                if (ssrfErr) {
-                    clearTimeout(killTimer);
-                    return JSON.stringify({ error: `SSRF guard: ${ssrfErr}` });
-                }
-                res = await fetch(currentUrl, {
-                    signal: controller.signal,
-                    headers: { "User-Agent": "ATLAS/1.0 asset-downloader" },
-                    redirect: "manual",
-                });
-                if (res.status >= 300 && res.status < 400) {
-                    const loc = res.headers.get("location");
-                    if (!loc) break;
-                    if (++hop > MAX_HOPS) {
-                        clearTimeout(killTimer);
-                        return JSON.stringify({ error: `Too many redirects (>${MAX_HOPS})` });
-                    }
-                    currentUrl = new URL(loc, currentUrl).toString();
-                    continue;
-                }
-                break;
+            const guarded = await fetchWithRedirectGuard(
+                url,
+                { signal: controller.signal, headers: { "User-Agent": "ATLAS/1.0 asset-downloader" } },
+                5,
+            );
+            if ("error" in guarded) {
+                clearTimeout(killTimer);
+                return JSON.stringify({ error: guarded.error });
             }
+            res = guarded.response;
+            currentUrl = guarded.finalUrl;
         } catch (err) {
             clearTimeout(killTimer);
             return JSON.stringify({ error: `Fetch failed: ${(err as Error).message}` });

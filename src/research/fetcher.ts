@@ -3,6 +3,7 @@
 
 import type { SearchResult } from "./types.js";
 import { randomUA, sleep, MAX_CONTENT_PER_PAGE, CONCURRENT_FETCHES } from "./profiles.js";
+import { isSafeUrl, isAlwaysBlockedUrl, fetchWithRedirectGuard } from "../security/url-safety.js";
 
 // ── Domain Quality Scoring ───────────────────
 
@@ -94,19 +95,27 @@ export function getDomain(url: string): string {
 // ── Page Content Extraction ──────────────────
 
 async function fetchPageContentOnce(url: string): Promise<string> {
+    // SSRF guard. Attacker-supplied URLs (search results, outbound links) must
+    // not reach private/loopback/metadata targets. Fail-open: research continues.
+    if (isAlwaysBlockedUrl(url) || !(await isSafeUrl(url)).safe) return "";
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);
 
     try {
-        const response = await fetch(url, {
-            headers: {
-                "User-Agent": randomUA(),
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
+        const guarded = await fetchWithRedirectGuard(
+            url,
+            {
+                headers: {
+                    "User-Agent": randomUA(),
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "en-US,en;q=0.5",
+                },
+                signal: controller.signal,
             },
-            signal: controller.signal,
-            redirect: "follow",
-        });
+        );
+        if ("error" in guarded) { clearTimeout(timeout); return ""; }
+        const response = guarded.response;
 
         // Don't clear the timeout yet — it should also cover response.text()
         if (!response.ok) { clearTimeout(timeout); return ""; }

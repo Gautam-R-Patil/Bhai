@@ -2003,7 +2003,10 @@ async function connectWhatsApp(llm: LLMClient): Promise<void> {
         printQRInTerminal: true,  // Also print to terminal as backup
         // generateHighQualityLinkPreview fetches arbitrary URLs from inbound
         // messages, which is a server-side SSRF surface (private IPs, cloud
-        // metadata, loopback). Re-enabling requires an SSRF guard.
+        // metadata, loopback). Left disabled: Baileys does the fetch internally
+        // with no per-URL hook, so the shared guard in src/security/url-safety.ts
+        // (isSafeUrl / isAlwaysBlockedUrl) can't gate it here. Re-enabling needs
+        // a custom getMessage/preview path that runs isSafeUrl before fetching.
         generateHighQualityLinkPreview: false,
         syncFullHistory: false,
         getMessage: async () => undefined,  // Required in v7

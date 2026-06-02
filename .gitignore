@@ -84,11 +84,13 @@ desktop/hostinger-upload/
 # test you want to keep.
 !src/memory/embedding-cache.test.ts
 !src/memory/resolve-embedding.test.ts
+!src/memory/reflection-cache.test.ts
 !src/whatsapp-sweep.test.ts
 !convex/credit-cost.test.ts
 !convex/credit_cost.test.ts
 !convex/otpless.test.ts
 !src/security/secrets-sanitizer.test.ts
+!src/security/url-safety.test.ts
 !src/crypto-kdf.test.ts
 !src/tools/coding/evidence-phrase.test.ts
 !src/security/allowlist.test.ts
@@ -128,6 +130,7 @@ desktop/hostinger-upload/
 !src/agents/role-analyzer.test.ts
 !src/agents/handoff.test.ts
 !src/agents/circuit-breaker.test.ts
+!src/agents/tool-call-guardrail.test.ts
 !src/agents/complexity-classifier.test.ts
 !src/agents/blackboard.test.ts
 !src/memory/spreading-activation.parity.test.ts
