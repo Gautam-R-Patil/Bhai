@@ -18,6 +18,23 @@ export type { ChatCompletionMessageParam, ChatCompletionTool, ChatCompletion };
 
 export type ThinkingLevel = "off" | "low" | "medium" | "high" | "max";
 
+// Builds the client-side dynamic system block (clock + widget hint + optional
+// language instruction). The clock is bucketed to the hour so this block is
+// byte-stable across requests within a session — it rides ahead of the
+// server-side history cache breakpoint (convex/http.ts ~:666), and a
+// to-the-second timestamp busted the Anthropic prefix cache on every call.
+// The live clock widget renders exact time to the user regardless.
+export function buildDynamicContextBlock(
+    languageContext = "",
+    now: Date = new Date(),
+): string {
+    const hourBucket = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours());
+    const timeContext = `[SYSTEM CLOCK: Current date/time is approximately ${hourBucket.toLocaleString("en-US", { dateStyle: "full", timeStyle: "short" } as Intl.DateTimeFormatOptions)} ${Intl.DateTimeFormat().resolvedOptions().timeZone}]`;
+    const widgetContext = `[UI WIDGETS]\nIf the user asks for the current time, DO NOT output the time in plain text. Instead, output EXACTLY this hidden tag so the UI renders a beautiful real-time animated clock widget:\n<!--WIDGET: {"type": "clock"}-->\nIf they ask for the date, you can use the clock widget too, or just say the date.`;
+    const lang = languageContext ? `\n\n${languageContext}` : "";
+    return `${timeContext}\n\n${widgetContext}${lang}`;
+}
+
 export interface LLMClient {
     chat(params: {
         messages: ChatCompletionMessageParam[];
@@ -166,13 +183,9 @@ export function createLLMClient(config: Config): LLMClient {
                 // Resolve language instruction from middleware (if detected)
                 const languageContext = (params as unknown as Record<string, unknown>)._languageInstruction as string || "";
 
-                // Dynamic context (non-sensitive, stays client-side)
+                // Dynamic context (non-sensitive, stays client-side).
                 // Server will prepend the system prompt from its DB before this.
-                const now = new Date();
-                const timeContext = `[SYSTEM CLOCK: Current date/time is ${now.toLocaleString("en-US", { timeZoneName: "short" })}]`;
-                const widgetContext = `[UI WIDGETS]\nIf the user asks for the current time, DO NOT output the time in plain text. Instead, output EXACTLY this hidden tag so the UI renders a beautiful real-time animated clock widget:\n<!--WIDGET: {"type": "clock"}-->\nIf they ask for the date, you can use the clock widget too, or just say the date.`;
-
-                const dynamicContext = timeContext + "\n\n" + widgetContext + (languageContext ? "\n\n" + languageContext : "");
+                const dynamicContext = buildDynamicContextBlock(languageContext);
 
                 // Prepend dynamic context as first system message.
                 const allMessages: ChatCompletionMessageParam[] = [
