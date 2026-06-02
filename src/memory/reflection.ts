@@ -35,6 +35,97 @@ const MAX_RETRIES = 1;
 const HMAC_SECRET = "atlas-sacdr-audit-v1";  // Derived key for signing
 const CONSOLIDATION_EVERY_N_REFLECTIONS = 5; // Run lightweight consolidation every 5th reflection
 
+// ── Frozen reflection instructions ────────────
+// These are byte-stable module-level constants used verbatim as the
+// systemPrompt of each reflection LLM call. The instruction/schema/rules
+// (the bulk of the prompt tokens) ride here so the Anthropic prefix-cache key
+// stays identical run-to-run; only per-session volatile content (transcript,
+// identity, traits) goes in the user message, which is never part of the
+// cached prefix. NEVER interpolate session id, timestamps, names, or counts.
+
+const REFLECTION_SUMMARY_INSTRUCTION = `You are a JSON-only summarizer. Input: a session transcript provided in the user message.
+Output: a concise factual summary (50–150 tokens) returning ONLY valid JSON:
+{"summary":"...", "highlights":["...", "..."]}
+
+Do NOT include any text outside the JSON object. Output valid JSON only, no markdown, no explanation.`;
+
+const REFLECTION_SIGNALS_INSTRUCTION = `You are a JSON-only extractor. Input: a session transcript provided in the user message.
+Output ONLY valid JSON. Schema:
+{
+  "traits": [
+    {"key": "likes_detailed_answers", "value": "true", "evidence": 0.85, "explicit": false, "topics": ["dev"]}
+  ],
+  "identity_updates": [
+    {"field": "email", "value": "x@y.com", "explicit": true}
+  ],
+  "emotions": [
+    {"emotion": "excited", "context": "launching new product", "intensity": 0.8}
+  ],
+  "episodes": [
+    {"type": "milestone", "description": "Launched MVP", "importance": 0.9}
+  ],
+  "dominant_tone": "driven"
+}
+
+Rules:
+- Only CLEAR signals, not guesses
+- "explicit" = true if user directly stated it
+- Snake_case trait keys, evidence 0.0-1.0
+- Emotions: excited, frustrated, stressed, driven, curious, neutral
+- Episodes: milestone, achievement, struggle, decision, project_launch
+- dominant_tone: overall session mood
+- Return empty arrays if nothing observed
+- NO text outside JSON, no markdown, no explanation`;
+
+const REFLECTION_LEARNINGS_INSTRUCTION = `You are a JSON-only automation analyst. Read the agent session transcript provided in the user message and extract structured learnings for future browser and OS automation tasks.
+
+Rules:
+- Only extract if there were actual browser_* or OS (apple_script, os_click, os_type, shell_exec) tool calls
+- Identify what approaches worked and what failed
+- Be specific: name the exact element, selector, button, or step
+- "category": "browser" for web tasks, "os" for native Mac app interactions, "app" for a specific installed app
+- "context": the domain (e.g. "accounts.google.com") or app name (e.g. "WhatsApp")
+- "success_score": 1.0 if task fully completed, 0.5 if partial, 0.0 if failed
+- Ignore chitchat, memory, or search-only sessions
+- If nothing worth recording, return {"learnings": []}
+- Output ONLY valid JSON, no markdown, no explanation
+
+Schema:
+{
+  "learnings": [
+    {
+      "category": "browser",
+      "task_pattern": "create google account",
+      "context": "accounts.google.com",
+      "what_worked": ["browser_navigate to accounts.google.com/signup works directly", "label-based browser_type for first/last name fields"],
+      "what_failed": ["clicking Terms link opened new tab instead of Next button"],
+      "tips": ["Look for <button> tag not <a> for Next step", "Phone verification may block completion without real number"],
+      "success_score": 0.5
+    }
+  ]
+}`;
+
+const REFLECTION_CODING_INSTRUCTION = `You are a JSON-only coding strategy extractor. Read the session transcript provided in the user message and identify reusable PATTERNS the agent discovered — things that worked, things that failed, and generalizable tips for similar future coding tasks.
+
+Only extract GENERALIZABLE patterns (not one-off file edits). Examples of good patterns:
+- "When editing TS files with union types, read the full type definition first"
+- "Running vitest with a --testPathPattern is faster than full suite for targeted fixes"
+- "For Rust lifetimes errors, refactor to clone() before re-architecting ownership"
+
+Output ONLY valid JSON, no markdown:
+{"strategies": [
+  {"pattern": "<short rule>", "context": "<tech/language/domain>", "whatWorked": ["<concrete step>"], "whatFailed": ["<approach that failed, if any>"], "tips": ["<standalone takeaway>"], "successScore": 0.0-1.0}
+]}
+
+Rules:
+- Return at most 3 strategies
+- Skip the session entirely if no coding happened — output {"strategies": []}
+- successScore reflects whether the overall task succeeded (1.0 = shipped and verified, 0.5 = partial, 0.0 = abandoned)
+- Patterns must be reusable across projects, not "I fixed foo.ts line 42"`;
+
+const REFLECTION_NARRATIVE_INSTRUCTION = `You compress a user profile and traits (provided in the user message) into a single-sentence identity narrative (max 50 words).
+Output ONLY the narrative text, no JSON, no quotes, nothing else.`;
+
 // ── Reflection Counter (for periodic consolidation) ──
 let _reflectionCounter = 0;
 
@@ -511,16 +602,13 @@ async function generateNarrativeCompression(llm: LLMClient): Promise<void> {
         return;
     }
 
-    const prompt = `Compress the following user profile and traits into a single-sentence identity narrative (max 50 words).
-Output ONLY the narrative text, no JSON, no quotes.
-
-Identity: ${JSON.stringify(identity)}
+    const userContent = `Identity: ${JSON.stringify(identity)}
 Traits: ${traits.map(t => `${t.trait_key}=${t.value} (${(t.confidence * 100).toFixed(0)}%)`).join(", ")}`;
 
     try {
         const response = await llm.chat({
-            messages: [{ role: "user", content: prompt }],
-            systemPrompt: "You compress context into ultra-concise identity narratives. Output only the narrative, nothing else.",
+            messages: [{ role: "user", content: userContent }],
+            systemPrompt: REFLECTION_NARRATIVE_INSTRUCTION,
         });
 
         const narrative = (response.choices[0]?.message?.content || "").trim();
@@ -554,41 +642,13 @@ async function extractTaskLearnings(
     llm: LLMClient,
     transcript: string,
 ): Promise<void> {
-    const prompt = `You are an analyst. Read the following agent session transcript and extract structured learnings for future browser and OS automation tasks.
-
-Rules:
-- Only extract if there were actual browser_* or OS (apple_script, os_click, os_type, shell_exec) tool calls
-- Identify what approaches worked and what failed
-- Be specific: name the exact element, selector, button, or step
-- "category": "browser" for web tasks, "os" for native Mac app interactions, "app" for a specific installed app
-- "context": the domain (e.g. "accounts.google.com") or app name (e.g. "WhatsApp")
-- "success_score": 1.0 if task fully completed, 0.5 if partial, 0.0 if failed
-- Ignore chitchat, memory, or search-only sessions
-- If nothing worth recording, return {"learnings": []}
-- Output ONLY valid JSON, no markdown, no explanation
-
-Schema:
-{
-  "learnings": [
-    {
-      "category": "browser",
-      "task_pattern": "create google account",
-      "context": "accounts.google.com",
-      "what_worked": ["browser_navigate to accounts.google.com/signup works directly", "label-based browser_type for first/last name fields"],
-      "what_failed": ["clicking Terms link opened new tab instead of Next button"],
-      "tips": ["Look for <button> tag not <a> for Next step", "Phone verification may block completion without real number"],
-      "success_score": 0.5
-    }
-  ]
-}
-
-Transcript:
+    const userContent = `Transcript:
 ${transcript.substring(0, 8000)}`;
 
     try {
         const response = await llm.chat({
-            messages: [{ role: "user", content: prompt }],
-            systemPrompt: "You are a JSON-only automation analyst. Output valid JSON only.",
+            messages: [{ role: "user", content: userContent }],
+            systemPrompt: REFLECTION_LEARNINGS_INSTRUCTION,
         });
 
         const text = response.choices[0]?.message?.content || "";
@@ -637,20 +697,14 @@ async function extractSummary(
     llm: LLMClient,
     input: string
 ): Promise<ReflectionSummary | null> {
-    const prompt = `You are a summarizer. Input: a session transcript.
-Output: a concise factual summary (50–150 tokens) returning ONLY valid JSON:
-{"summary":"...", "highlights":["...", "..."]}
-
-Do NOT include any text outside the JSON object.
-
-Transcript:
+    const userContent = `Transcript:
 ${input}`;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         try {
             const response = await llm.chat({
-                messages: [{ role: "user", content: prompt }],
-                systemPrompt: "You are a JSON-only summarizer. Output valid JSON only, no markdown, no explanation.",
+                messages: [{ role: "user", content: userContent }],
+                systemPrompt: REFLECTION_SUMMARY_INSTRUCTION,
             });
 
             const text = response.choices[0]?.message?.content || "";
@@ -675,42 +729,14 @@ async function extractSignals(
     llm: LLMClient,
     input: string
 ): Promise<ExtractionResult | null> {
-    const prompt = `You are an extractor. Input: session transcript.
-Output ONLY valid JSON. Schema:
-{
-  "traits": [
-    {"key": "likes_detailed_answers", "value": "true", "evidence": 0.85, "explicit": false, "topics": ["dev"]}
-  ],
-  "identity_updates": [
-    {"field": "email", "value": "x@y.com", "explicit": true}
-  ],
-  "emotions": [
-    {"emotion": "excited", "context": "launching new product", "intensity": 0.8}
-  ],
-  "episodes": [
-    {"type": "milestone", "description": "Launched MVP", "importance": 0.9}
-  ],
-  "dominant_tone": "driven"
-}
-
-Rules:
-- Only CLEAR signals, not guesses
-- "explicit" = true if user directly stated it
-- Snake_case trait keys, evidence 0.0-1.0
-- Emotions: excited, frustrated, stressed, driven, curious, neutral
-- Episodes: milestone, achievement, struggle, decision, project_launch
-- dominant_tone: overall session mood
-- Return empty arrays if nothing observed
-- NO text outside JSON
-
-Session:
+    const userContent = `Session:
 ${input}`;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         try {
             const response = await llm.chat({
-                messages: [{ role: "user", content: prompt }],
-                systemPrompt: "You are a JSON-only extractor. Output valid JSON only, no markdown, no explanation.",
+                messages: [{ role: "user", content: userContent }],
+                systemPrompt: REFLECTION_SIGNALS_INSTRUCTION,
             });
 
             const text = response.choices[0]?.message?.content || "";
@@ -771,31 +797,13 @@ function clampStr(s: string): string {
 }
 
 async function extractCodingStrategies(llm: LLMClient, input: string): Promise<CodingStrategy[]> {
-    const prompt = `You are a coding strategy extractor. Read the session transcript and identify reusable PATTERNS the agent discovered — things that worked, things that failed, and generalizable tips for similar future coding tasks.
-
-Only extract GENERALIZABLE patterns (not one-off file edits). Examples of good patterns:
-- "When editing TS files with union types, read the full type definition first"
-- "Running vitest with a --testPathPattern is faster than full suite for targeted fixes"
-- "For Rust lifetimes errors, refactor to clone() before re-architecting ownership"
-
-Output ONLY valid JSON:
-{"strategies": [
-  {"pattern": "<short rule>", "context": "<tech/language/domain>", "whatWorked": ["<concrete step>"], "whatFailed": ["<approach that failed, if any>"], "tips": ["<standalone takeaway>"], "successScore": 0.0-1.0}
-]}
-
-Rules:
-- Return at most 3 strategies
-- Skip the session entirely if no coding happened — output {"strategies": []}
-- successScore reflects whether the overall task succeeded (1.0 = shipped and verified, 0.5 = partial, 0.0 = abandoned)
-- Patterns must be reusable across projects, not "I fixed foo.ts line 42"
-
-Transcript:
+    const userContent = `Transcript:
 ${input.slice(0, 6000)}`;
 
     try {
         const response = await llm.chat({
-            messages: [{ role: "user", content: prompt }],
-            systemPrompt: "You are a JSON-only coding strategy extractor. Output valid JSON, no markdown.",
+            messages: [{ role: "user", content: userContent }],
+            systemPrompt: REFLECTION_CODING_INSTRUCTION,
             modelOverride: "openai/gpt-4.1-nano",
             responseFormat: "json_object",
         });
