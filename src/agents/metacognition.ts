@@ -28,6 +28,12 @@ export interface MetaSignals {
     avgResponseLength: number;
     clarificationCount: number;
     emptyToolResults: number;
+    // Content-aware loop signal (A1): hashes of (toolName + canonical args)
+    // for the last N calls, so identical-args spirals are visible where pure
+    // tool-name matching is blind. Kept TS-side; native scorer is unchanged.
+    recentStepKeys: string[];
+    // Max times any single step key repeated consecutively this turn.
+    maxIdenticalStepRepeats: number;
 }
 
 export interface MetaAssessment {
@@ -59,6 +65,8 @@ export function createMetacognitionState(): MetacognitionState {
             avgResponseLength: 0,
             clarificationCount: 0,
             emptyToolResults: 0,
+            recentStepKeys: [],
+            maxIdenticalStepRepeats: 0,
         },
         assessmentHistory: [],
         responseLengths: [],
@@ -76,7 +84,9 @@ export function updateSignals(
         wasEmpty?: boolean;
         askedClarification?: boolean;
         wasEscalated?: boolean;
-    }
+        // Content-aware step key (A1): hash of toolName + canonical args.
+        stepKey?: string;
+    },
 ): void {
     state.signals.iteration++;
 
@@ -86,6 +96,18 @@ export function updateSignals(
         // Keep last 20 tool names
         if (state.signals.recentToolNames.length > 20) {
             state.signals.recentToolNames.shift();
+        }
+    }
+
+    if (update.stepKey) {
+        const keys = state.signals.recentStepKeys;
+        keys.push(update.stepKey);
+        if (keys.length > 20) keys.shift();
+        // Track the longest run of the SAME step key (identical tool+args).
+        let run = 1;
+        for (let i = keys.length - 2; i >= 0 && keys[i] === update.stepKey; i--) run++;
+        if (run > state.signals.maxIdenticalStepRepeats) {
+            state.signals.maxIdenticalStepRepeats = run;
         }
     }
 
@@ -140,20 +162,49 @@ export function assess(state: MetacognitionState): MetaAssessment {
                 reasoning: result.reasoning,
             };
 
-            state.assessmentHistory.push(assessment);
-            return assessment;
+            const boosted = applyContentAwareLoop(state, assessment);
+            state.assessmentHistory.push(boosted);
+            return boosted;
         }
-    } catch { /* native not available */ }
+    } catch {
+        /* native not available */
+    }
 
     // JS fallback
     return assessJS(state);
+}
+
+// A1: the native/JS scorers detect loops by tool NAME only. This OR-s in a
+// content-aware signal — the same tool called with identical args several times
+// in a row — which name-matching is blind to. Runs on every assess() path so the
+// signal exists regardless of whether the native module loaded.
+const IDENTICAL_STEP_LOOP_AT = 3;
+
+function applyContentAwareLoop(state: MetacognitionState, a: MetaAssessment): MetaAssessment {
+    const repeats = state.signals.maxIdenticalStepRepeats;
+    if (repeats < IDENTICAL_STEP_LOOP_AT) return a;
+    const confidence = Math.max(0, Math.min(a.confidence, 0.3));
+    return {
+        ...a,
+        confidence,
+        loopDetected: true,
+        struggleDetected: true,
+        intervention: a.intervention === "none" ? "replan" : a.intervention,
+        reasoning: `${a.reasoning}; identical tool+args repeated ${repeats}×`,
+    };
 }
 
 function assessJS(state: MetacognitionState): MetaAssessment {
     const s = state.signals;
 
     if (s.iteration < 3) {
-        return { confidence: 0.7, struggleDetected: false, loopDetected: false, intervention: "none", reasoning: "Too early" };
+        return {
+            confidence: 0.7,
+            struggleDetected: false,
+            loopDetected: false,
+            intervention: "none",
+            reasoning: "Too early",
+        };
     }
 
     let confidence = 1.0;
@@ -161,23 +212,41 @@ function assessJS(state: MetacognitionState): MetaAssessment {
 
     // Error ratio
     const errorRatio = s.toolCallCount > 0 ? s.errorCount / s.toolCallCount : 0;
-    if (errorRatio > 0.4) { confidence -= 0.3; reasons.push(`High error ratio: ${(errorRatio * 100).toFixed(0)}%`); }
-    else if (errorRatio > 0.2) { confidence -= 0.15; }
+    if (errorRatio > 0.4) {
+        confidence -= 0.3;
+        reasons.push(`High error ratio: ${(errorRatio * 100).toFixed(0)}%`);
+    } else if (errorRatio > 0.2) {
+        confidence -= 0.15;
+    }
 
     // Consecutive errors
-    if (s.consecutiveErrors >= 3) { confidence -= 0.25; reasons.push(`${s.consecutiveErrors} consecutive errors`); }
-    else if (s.consecutiveErrors >= 2) { confidence -= 0.1; }
+    if (s.consecutiveErrors >= 3) {
+        confidence -= 0.25;
+        reasons.push(`${s.consecutiveErrors} consecutive errors`);
+    } else if (s.consecutiveErrors >= 2) {
+        confidence -= 0.1;
+    }
 
     // Empty results
-    if (s.emptyToolResults > 2) { confidence -= 0.15; reasons.push(`${s.emptyToolResults} empty tool results`); }
+    if (s.emptyToolResults > 2) {
+        confidence -= 0.15;
+        reasons.push(`${s.emptyToolResults} empty tool results`);
+    }
 
     // High iteration count
-    if (s.iteration > 15) { confidence -= 0.2; reasons.push(`High iteration count (${s.iteration})`); }
-    else if (s.iteration > 10) { confidence -= 0.1; }
+    if (s.iteration > 15) {
+        confidence -= 0.2;
+        reasons.push(`High iteration count (${s.iteration})`);
+    } else if (s.iteration > 10) {
+        confidence -= 0.1;
+    }
 
     // Loop detection
     const loopDetected = detectLoopJS(s.recentToolNames);
-    if (loopDetected) { confidence -= 0.25; reasons.push("Repeating tool-call pattern"); }
+    if (loopDetected) {
+        confidence -= 0.25;
+        reasons.push("Repeating tool-call pattern");
+    }
 
     confidence = Math.max(0, Math.min(1, confidence));
     const struggleDetected = confidence < 0.5 || s.consecutiveErrors >= 3;
@@ -192,11 +261,15 @@ function assessJS(state: MetacognitionState): MetaAssessment {
         struggleDetected,
         loopDetected,
         intervention,
-        reasoning: reasons.length > 0 ? `Confidence ${confidence.toFixed(2)} — ${reasons.join("; ")}` : `Confidence ${confidence.toFixed(2)} — OK`,
+        reasoning:
+            reasons.length > 0
+                ? `Confidence ${confidence.toFixed(2)} — ${reasons.join("; ")}`
+                : `Confidence ${confidence.toFixed(2)} — OK`,
     };
 
-    state.assessmentHistory.push(assessment);
-    return assessment;
+    const boosted = applyContentAwareLoop(state, assessment);
+    state.assessmentHistory.push(boosted);
+    return boosted;
 }
 
 function detectLoopJS(tools: string[]): boolean {
@@ -233,18 +306,64 @@ export function computeReasoningQuality(state: MetacognitionState, taskCompleted
                 state.signals.iteration,
                 state.signals.errorCount,
                 state.signals.toolCallCount,
-                state.assessmentHistory.filter(a => a.intervention === "escalate").length,
-                state.assessmentHistory.filter(a => a.intervention === "replan").length,
-                taskCompleted
+                state.assessmentHistory.filter((a) => a.intervention === "escalate").length,
+                state.assessmentHistory.filter((a) => a.intervention === "replan").length,
+                taskCompleted,
             );
         }
-    } catch { /* */ }
+    } catch {
+        /* */
+    }
 
     // JS fallback
     if (!taskCompleted) return 0.2;
     const efficiency = 1 - Math.min(state.signals.iteration / 50, 1);
     const errorRate = state.signals.errorCount / Math.max(state.signals.toolCallCount, 1);
     return Math.max(0, Math.min(1, 0.6 + efficiency * 0.15 + (1 - errorRate) * 0.15));
+}
+
+// ── A3: Outcome log ───────────────────────────
+// Persist one row per turn so confidence/intervention quality can be analyzed
+// and (later) calibrated against real outcomes — the signal computeReasoningQuality
+// produced was previously never recorded. Append-only JSONL, fail-open, mirrors
+// the value-gate audit-log pattern. Disable with ATLAS_NO_METACOG_LOG=true.
+export function logOutcome(
+    state: MetacognitionState,
+    taskCompleted: boolean,
+    meta: { taskType?: string; modelTier?: string } = {},
+): void {
+    if (process.env.ATLAS_NO_METACOG_LOG === "true") return;
+    try {
+        const s = state.signals;
+        const last = state.assessmentHistory[state.assessmentHistory.length - 1];
+        const interventions = state.assessmentHistory.reduce<Record<string, number>>((acc, a) => {
+            if (a.intervention !== "none") acc[a.intervention] = (acc[a.intervention] ?? 0) + 1;
+            return acc;
+        }, {});
+        const row = {
+            iterations: s.iteration,
+            toolCalls: s.toolCallCount,
+            errors: s.errorCount,
+            maxConsecutiveErrors: s.consecutiveErrors,
+            maxIdenticalStepRepeats: s.maxIdenticalStepRepeats,
+            loopEverDetected: state.assessmentHistory.some((a) => a.loopDetected),
+            finalConfidence: last ? Number(last.confidence.toFixed(3)) : null,
+            interventions,
+            qualityScore: Number(computeReasoningQuality(state, taskCompleted).toFixed(3)),
+            taskCompleted,
+            taskType: meta.taskType ?? null,
+            modelTier: meta.modelTier ?? null,
+        };
+        // Lazy node:fs/path require keeps this module import-light (it is loaded
+        // on the hot path) and avoids a top-level fs dependency in tests.
+        const fs = require("node:fs") as typeof import("node:fs");
+        const path = require("node:path") as typeof import("node:path");
+        const dir = path.join(process.cwd(), "data");
+        fs.mkdirSync(dir, { recursive: true });
+        fs.appendFileSync(path.join(dir, "metacog-outcomes.jsonl"), `${JSON.stringify(row)}\n`, "utf8");
+    } catch {
+        /* outcome logging is best-effort — never break a turn over it */
+    }
 }
 
 // ── Native Module ─────────────────────────────
@@ -261,5 +380,7 @@ function loadNative(): any {
         const path = require("node:path");
         _native = nativeRequire(path.join(process.cwd(), "native", "index.js"));
         return _native;
-    } catch { return null; }
+    } catch {
+        return null;
+    }
 }

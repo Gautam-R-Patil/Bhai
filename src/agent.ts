@@ -19,8 +19,8 @@ import {
 } from "./agents/circuit-breaker.js";
 import { classifyComplexity } from "./agents/complexity-classifier.js";
 import { listActiveLongTasks } from "./agents/long-task.js";
-import { assess, createMetacognitionState, updateSignals } from "./agents/metacognition.js";
-import { createGuardrailState, recordToolCall as recordGuardrailCall } from "./agents/tool-call-guardrail.js";
+import { assess, createMetacognitionState, logOutcome, updateSignals } from "./agents/metacognition.js";
+import { canonicalArgsHash, createGuardrailState, recordToolCall as recordGuardrailCall } from "./agents/tool-call-guardrail.js";
 import {
     enterPlanMode,
     filterToolsForAwaitingApproval,
@@ -1134,6 +1134,7 @@ STRATEGY: Execute in as few tool calls as possible.
     // Metacognition state — self-monitoring for loop/struggle detection
     const metaState = createMetacognitionState();
     let metaNudged = false;
+    let lastMetaNudgeIter = -100;
 
     // Per-turn loop guardrail — catches a single tool retrying identical args
     // (a spiral the whole-batch no-progress guard below misses). Warn-only
@@ -1155,11 +1156,22 @@ STRATEGY: Execute in as few tool calls as possible.
     const circuitBreaker = createCircuitBreaker();
 
     while (true) {
-        // Metacognition-driven nudge: replaces the old fixed ITERATION_NUDGE_THRESHOLD
-        if (!metaNudged && iterations > 3) {
+        // Metacognition-driven nudge. A2: instead of a single one-shot nudge,
+        // re-fire when struggle/loop PERSISTS — a stuck agent that ignored the
+        // first nudge gets steered again — but on a cooldown so we never spam.
+        // Disable the repeat behavior entirely with ATLAS_NO_META_INTERVENTIONS=true
+        // (reverts to the original one-shot nudge).
+        if (iterations > 3) {
             const metaCheck = assess(metaState);
-            if (metaCheck.loopDetected || metaCheck.struggleDetected) {
+            const interventionsOff = process.env.ATLAS_NO_META_INTERVENTIONS === "true";
+            const NUDGE_COOLDOWN = 5;
+            const cooldownPassed = iterations - lastMetaNudgeIter >= NUDGE_COOLDOWN;
+            const shouldNudge = metaCheck.loopDetected || metaCheck.struggleDetected;
+            // One-shot when interventions are off; cooldown-gated repeat otherwise.
+            const fire = shouldNudge && (interventionsOff ? !metaNudged : (!metaNudged || cooldownPassed));
+            if (fire) {
                 metaNudged = true;
+                lastMetaNudgeIter = iterations;
                 const nudge = `[SYSTEM — METACOGNITION] ${metaCheck.reasoning}. You have been running for ${iterations} iterations and ${totalToolCalls} tool calls. ${metaCheck.loopDetected ? "A repeating tool-call pattern was detected." : "You appear to be struggling."} Please reflect: are you stuck in a loop or making actual progress? If you are stuck, summarize what you have accomplished so far and present it to the user. If you are making real progress, continue with a different approach.`;
                 messages.push({ role: "system", content: nudge });
                 console.warn(`  ⚠️ Metacognition nudge: ${metaCheck.reasoning} (iteration ${iterations})`);
@@ -2945,6 +2957,9 @@ PLAN:`,
                 }
             }
 
+            // A3: record the metacognition outcome for this turn (best-effort).
+            logOutcome(metaState, true, { taskType: selection?.taskType, modelTier: model });
+
             // Credits deducted per-API-call in llm.ts
             if (_harnessTraceId) finalizeTrace(_harnessTraceId, true);
             if (process.env.ATLAS_NO_FORGE_VERIFIER !== "true") {
@@ -3102,6 +3117,9 @@ PLAN:`,
                 hadError: r.isError,
                 responseLength: r.result.length,
                 wasEmpty: r.result.length === 0 || r.result === "{}",
+                // A1: content-aware step key (toolName + canonical args) so the
+                // metacognition loop detector sees identical-args spirals.
+                stepKey: canonicalArgsHash(r.fnName, r.fnArgs),
             });
         }
 

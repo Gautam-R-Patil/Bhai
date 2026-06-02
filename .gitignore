@@ -131,6 +131,7 @@ desktop/hostinger-upload/
 !src/agents/handoff.test.ts
 !src/agents/circuit-breaker.test.ts
 !src/agents/tool-call-guardrail.test.ts
+!src/agents/metacognition.test.ts
 !src/agents/complexity-classifier.test.ts
 !src/agents/blackboard.test.ts
 !src/memory/spreading-activation.parity.test.ts
