@@ -2,7 +2,9 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import type { LLMClient, ChatCompletionMessageParam } from "../llm.js";
+import { createHash } from "node:crypto";
+import { pruneJsonValues, smartTruncate } from "../agents/smart-truncate.js";
+import type { ChatCompletionMessageParam, LLMClient } from "../llm.js";
 import { remember } from "./sqlite.js";
 
 // ── Types ─────────────────────────────────────
@@ -42,19 +44,14 @@ export function estimateMessagesTokens(messages: ChatCompletionMessageParam[]): 
  * Runs one Haiku extraction call over the full window; emitted facts go
  * through remember() with source="reflection" (auto-allowed by the gate).
  */
-async function flushToMemory(
-    messages: ChatCompletionMessageParam[],
-    llm: LLMClient,
-): Promise<void> {
+async function flushToMemory(messages: ChatCompletionMessageParam[], llm: LLMClient): Promise<void> {
     try {
         if (messages.length === 0) return;
 
         const transcript = messages
             .map((m) => {
                 const role = m.role;
-                const content = typeof m.content === "string"
-                    ? m.content
-                    : JSON.stringify(m.content);
+                const content = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
                 return `${role}: ${content.slice(0, 800)}`;
             })
             .join("\n");
@@ -80,7 +77,11 @@ async function flushToMemory(
 
         let facts: unknown;
         try {
-            const stripped = raw.trim().replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
+            const stripped = raw
+                .trim()
+                .replace(/^```(?:json)?/i, "")
+                .replace(/```$/i, "")
+                .trim();
             facts = JSON.parse(stripped);
         } catch {
             return;
@@ -111,10 +112,7 @@ async function flushToMemory(
 
 // ── Prune Context ─────────────────────────────
 
-export async function pruneContext(
-    messages: ChatCompletionMessageParam[],
-    llm: LLMClient
-): Promise<PruneResult> {
+export async function pruneContext(messages: ChatCompletionMessageParam[], llm: LLMClient): Promise<PruneResult> {
     if (messages.length <= MAX_MESSAGES) {
         return { messages, pruned: 0 };
     }
@@ -187,7 +185,8 @@ export async function pruneContext(
                     content: `Summarize this conversation concisely, preserving key facts, decisions, and context:\n\n${summaryText}`,
                 },
             ],
-            systemPrompt: "You are a conversation summarizer. Be concise but preserve all important details, decisions, and facts.",
+            systemPrompt:
+                "You are a conversation summarizer. Be concise but preserve all important details, decisions, and facts.",
         });
 
         const summary = summaryResponse.choices[0]?.message?.content || "Previous conversation context.";
@@ -220,7 +219,7 @@ export async function pruneContext(
 
 export async function compactConversation(
     messages: ChatCompletionMessageParam[],
-    llm: LLMClient
+    llm: LLMClient,
 ): Promise<PruneResult> {
     if (messages.length <= 4) {
         return { messages, pruned: 0 };
@@ -257,10 +256,7 @@ export async function compactConversation(
         const summary = summaryResponse.choices[0]?.message?.content || "Previous context.";
 
         return {
-            messages: [
-                { role: "system" as const, content: `[Compacted context]\n${summary}` },
-                ...recentMessages,
-            ],
+            messages: [{ role: "system" as const, content: `[Compacted context]\n${summary}` }, ...recentMessages],
             pruned: oldMessages.length,
             summary,
         };
@@ -278,10 +274,30 @@ export async function compactConversation(
 export function compressToolHistory(messages: ChatCompletionMessageParam[]): ChatCompletionMessageParam[] {
     const compressed: ChatCompletionMessageParam[] = [];
 
+    // Free (zero-LLM) pre-pass: dedup identical tool results, truncate tool-call
+    // args to valid JSON, smart-cut oversized tool results, and (opt-in) strip
+    // historical image base64. Master gate for emergency rollback.
+    const prepass = process.env.ATLAS_NO_HISTORY_PREPASS !== "true";
+    const stripMedia = process.env.ATLAS_HISTORY_STRIP_MEDIA === "true";
+
     // Only compress up to the 2nd most recent user message's block.
     // Keep the absolute latest user turn untouched.
     let lastUserIndex = messages.length - 1;
     while (lastUserIndex >= 0 && messages[lastUserIndex].role !== "user") lastUserIndex--;
+
+    // Build a tool_call_id → tool name map from every assistant tool_calls block
+    // so each tool response can pick its tool-specific truncation strategy.
+    const idToName = new Map<string, string>();
+    for (const m of messages) {
+        const calls = (m as { tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }> })
+            .tool_calls;
+        if (calls) {
+            for (const tc of calls) idToName.set(tc.id, tc.function.name);
+        }
+    }
+
+    // Dedup state: sha256(content).slice(0,12) → first tool_call_id that produced it.
+    const seenHashes = new Map<string, string>();
 
     for (let i = 0; i < messages.length; i++) {
         const msg = messages[i];
@@ -292,12 +308,35 @@ export function compressToolHistory(messages: ChatCompletionMessageParam[]): Cha
             continue;
         }
 
+        // Media strip (opt-in, default-OFF): replace historical image_url base64
+        // parts with a text placeholder. Tail messages are never reached here, so
+        // the active turn's images survive.
+        if (prepass && stripMedia && Array.isArray(msg.content)) {
+            const parts = msg.content as unknown as Array<Record<string, unknown>>;
+            const rewritten = parts.map((part) =>
+                part && part.type === "image_url" ? { type: "text", text: "[image omitted from history]" } : part,
+            );
+            compressed.push({ ...msg, content: rewritten as unknown as string });
+            continue;
+        }
+
         // If it's an assistant message with tool calls, compress it into a system message
         // (role:system is never echoed back by the LLM in its reply, preventing leakage)
         if (msg.role === "assistant" && msg.tool_calls) {
             let toolSummary = (msg.content ? msg.content + "\n\n" : "") + "[Tools Used]:\n";
-            msg.tool_calls.forEach(tc => {
-                toolSummary += `- ${tc.function.name}(${tc.function.arguments})\n`;
+            msg.tool_calls.forEach((tc) => {
+                let argStr = tc.function.arguments;
+                if (prepass) {
+                    // Parse → prune long string values → re-stringify so args stay
+                    // valid JSON (providers 400 on malformed tool_call arguments).
+                    // Fail-open: unparseable args fall back to a strategy char-cut.
+                    try {
+                        argStr = JSON.stringify(pruneJsonValues(JSON.parse(tc.function.arguments), 200));
+                    } catch {
+                        argStr = smartTruncate(tc.function.name, tc.function.arguments, 500);
+                    }
+                }
+                toolSummary += `- ${tc.function.name}(${argStr})\n`;
             });
             compressed.push({ role: "system", content: toolSummary.trim() });
             continue;
@@ -307,7 +346,44 @@ export function compressToolHistory(messages: ChatCompletionMessageParam[]): Cha
         // Use <tool_log> tags so sanitizeReply strips them if echoed back
         if (msg.role === "tool") {
             const content = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
-            compressed.push({ role: "system", content: `<tool_log call_id="${msg.tool_call_id}">${content.substring(0, 500)}${content.length > 500 ? "...(truncated)" : ""}</tool_log>` });
+            const callId = msg.tool_call_id ?? "";
+
+            if (prepass) {
+                // Dedup: identical results back-reference the first occurrence.
+                let hash = "";
+                try {
+                    hash = createHash("sha256").update(content).digest("hex").slice(0, 12);
+                } catch {
+                    hash = "";
+                }
+                if (hash) {
+                    const firstId = seenHashes.get(hash);
+                    if (firstId) {
+                        compressed.push({
+                            role: "system",
+                            content: `<tool_log call_id="${callId}">[duplicate of call ${firstId} — sha256:${hash}]</tool_log>`,
+                        });
+                        continue;
+                    }
+                    seenHashes.set(hash, callId);
+                }
+
+                // Smart, tool-aware cut (replaces the old flat 500-char head cut).
+                // smartTruncate returns content unchanged when <= maxChars, so short
+                // results stay byte-identical; unknown tools use the default head cut.
+                const toolName = idToName.get(callId) ?? "";
+                const cut = smartTruncate(toolName, content, 500);
+                compressed.push({
+                    role: "system",
+                    content: `<tool_log call_id="${callId}">${cut}${cut.length < content.length ? "...(truncated)" : ""}</tool_log>`,
+                });
+                continue;
+            }
+
+            compressed.push({
+                role: "system",
+                content: `<tool_log call_id="${callId}">${content.substring(0, 500)}${content.length > 500 ? "...(truncated)" : ""}</tool_log>`,
+            });
             continue;
         }
 
@@ -318,8 +394,13 @@ export function compressToolHistory(messages: ChatCompletionMessageParam[]): Cha
     const merged: ChatCompletionMessageParam[] = [];
     for (const msg of compressed) {
         const last = merged[merged.length - 1];
-        if (last && last.role === "system" && msg.role === "system" &&
-            typeof last.content === "string" && typeof msg.content === "string") {
+        if (
+            last &&
+            last.role === "system" &&
+            msg.role === "system" &&
+            typeof last.content === "string" &&
+            typeof msg.content === "string"
+        ) {
             last.content = last.content + "\n" + msg.content;
         } else {
             merged.push(msg);

@@ -86,7 +86,7 @@ function truncateJsonPrune(output: string, maxChars: number): string {
 }
 
 /** Recursively prune long string values in JSON objects/arrays. */
-function pruneJsonValues(obj: unknown, maxValueLen: number): unknown {
+export function pruneJsonValues(obj: unknown, maxValueLen: number): unknown {
     if (typeof obj === "string") {
         if (obj.length > maxValueLen) {
             return obj.substring(0, maxValueLen) + "...";
