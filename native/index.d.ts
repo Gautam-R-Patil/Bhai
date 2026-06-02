@@ -3084,10 +3084,10 @@ export interface SanitizeResultNapi {
   totalRedactions: number
 }
 /**
- * Scan `input` for all 24 well-known secret formats (23 standard + ENV_VAR_SECRET)
- * and replace each match with a typed `[REDACTED:NAME]` marker. Returns the
- * sanitized string plus a per-type hit count (JSON-encoded to keep the napi
- * ABI flat).
+ * Scan `input` for all 27 well-known secret formats (20 prefix + DB_URI_PASSWORD
+ * + URL_USERINFO + 3 structured + ENV_VAR_SECRET) and replace each match with a
+ * typed `[REDACTED:NAME]` marker. Returns the sanitized string plus a per-type
+ * hit count (JSON-encoded to keep the napi ABI flat).
  */
 export declare function sanitizeSecrets(input: string): SanitizeResultNapi
 /**
