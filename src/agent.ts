@@ -639,8 +639,23 @@ async function executeAndProcessToolCall(
         /* offload failure leaves workingResult = rawResult */
     }
 
-    const result = truncateToolResult(fnName, workingResult);
+    let result = truncateToolResult(fnName, workingResult);
     console.log(`  ✅ Tool result: ${result.substring(0, 500)}`);
+
+    // Fence attacker-influenceable tool output (web/browser/MCP/research) so the
+    // model treats it as data, not instructions (indirect prompt-injection
+    // defense). Applied after offload/truncate so both the inline result and any
+    // disk-offload preview are covered. Disable with ATLAS_NO_UNTRUSTED_WRAP=true.
+    if (process.env.ATLAS_NO_UNTRUSTED_WRAP !== "true") {
+        try {
+            const { isUntrustedToolResult, wrapUntrustedToolResult } = await import("./context-scrubber.js");
+            if (isUntrustedToolResult(fnName)) {
+                result = wrapUntrustedToolResult(fnName, result);
+            }
+        } catch {
+            /* scrubber unavailable — leave result unfenced */
+        }
+    }
 
     // Feed the PASTE pattern speculator so it can learn recurring tool
     // sequences. Cheap (rolling list push + native batch); if the module

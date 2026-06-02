@@ -152,6 +152,7 @@ desktop/hostinger-upload/
 !src/proactive/observer-inbox-routing.test.ts
 !src/proactive/telemetry.test.ts
 !src/context-scrubber.test.ts
+!src/context-scrubber.untrusted.test.ts
 !src/voice/live/types.test.ts
 !src/voice/live/tool-bridge.test.ts
 !src/voice/live/transcript-speaker.test.ts
