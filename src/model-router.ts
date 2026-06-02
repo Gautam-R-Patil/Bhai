@@ -497,8 +497,11 @@ const CODING_MULTIFILE_PATTERNS: RegExp[] = [
 const CODING_INTENT_PATTERNS: RegExp[] = [
     // Debugging / fixing
     /\b(?:debug|diagnose|fix|solve|resolve|troubleshoot|investigate)\s+(?:this|the|a|an|my)?\s*(?:bug|issue|error|problem|crash|failure|race|deadlock|leak)\b/i,
-    /\bwhy\s+(?:is|isn'?t|does(?:n'?t)?|won'?t|can'?t)\b/i,
-    /\bnot\s+working\b/i,
+    // "why is/isn't ..." ONLY when anchored to a code/runtime object — bare
+    // "why is X" matched every non-coding question (e.g. "why is Documents
+    // taking 113gb") and false-escalated shell/disk tasks to Sonnet.
+    /\bwhy\s+(?:is|isn'?t|does(?:n'?t)?|won'?t|can'?t)\b.*\b(?:code|function|test|build|compile|error|exception|crash|null|undefined|type|import|module|component|api|endpoint|query|server|request|render|state|prop|variable|loop|async|promise|return)\b/i,
+    /\b(?:code|build|tests?|compile|server|app|function|script)\s+(?:is\s+)?not\s+working\b/i,
     // Building
     /\b(?:implement|build|create|add|write|design|architect)\s+(?:a|an|the|new)?\s*(?:feature|system|service|endpoint|api|function|class|module|component|page|hook|cli|daemon|worker|middleware|pipeline|handler|resolver)\b/i,
     // Tests

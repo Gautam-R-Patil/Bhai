@@ -1438,7 +1438,7 @@ fn task_model_map(task: &TaskType) -> &'static str {
         TaskType::Classify => "amazon/nova-micro-v1",
         TaskType::SimpleChat => "openai/gpt-4.1-nano",
         TaskType::ComplexChat => "anthropic/claude-opus-4.6",
-        TaskType::ToolLoop => "google/gemini-2.5-flash",
+        TaskType::ToolLoop => "openai/gpt-5-mini",
         TaskType::Coding => "anthropic/claude-sonnet-4.6",
         TaskType::Planning => "anthropic/claude-sonnet-4.6",
         TaskType::Synthesis => "deepseek/deepseek-chat-v3.1",
