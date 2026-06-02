@@ -359,6 +359,102 @@ describe("sanitizeSecrets", () => {
         });
     });
 
+    describe("DB connection-string passwords", () => {
+        it("redacts ONLY the password in a postgres URI, keeping scheme/user/host", () => {
+            const input = "postgres://appuser:s3cr3tPw@db.internal:5432/mydb";
+            const { sanitized, redactionsByType } = sanitizeSecrets(input);
+            expect(redactionsByType.DB_URI_PASSWORD).toEqual(1);
+            expect(sanitized).toEqual(
+                "postgres://appuser:[REDACTED:DB_URI_PASSWORD]@db.internal:5432/mydb",
+            );
+            expect(sanitized).not.toContain("s3cr3tPw");
+        });
+
+        it("redacts mysql, mongodb+srv, redis, and amqps schemes", () => {
+            for (const uri of [
+                "mysql://root:rootpass123@127.0.0.1:3306/app",
+                "mongodb+srv://svc:M0ng0Secret@cluster0.abcde.mongodb.net/test",
+                "redis://default:redisPass99@cache.host:6379",
+                "amqps://guest:rabbitpw1234@broker.host:5671/vhost",
+            ]) {
+                const { redactionsByType } = sanitizeSecrets(uri);
+                expect(redactionsByType.DB_URI_PASSWORD).toEqual(1);
+            }
+        });
+
+        it("does NOT redact a DB URI with no password (user@host)", () => {
+            const input = "postgres://appuser@db.internal:5432/mydb";
+            const { totalRedactions } = sanitizeSecrets(input);
+            expect(totalRedactions).toEqual(0);
+        });
+    });
+
+    describe("Generic URL userinfo", () => {
+        it("redacts ONLY the password in an https userinfo URL", () => {
+            const input = "fetch https://alice:tok3nValue@example.com/path ok";
+            const { sanitized, redactionsByType } = sanitizeSecrets(input);
+            expect(redactionsByType.URL_USERINFO).toEqual(1);
+            expect(sanitized).toContain("https://alice:[REDACTED:URL_USERINFO]@example.com/path");
+            expect(sanitized).not.toContain("tok3nValue");
+        });
+
+        it("redacts DB password as DB_URI_PASSWORD and http one as URL_USERINFO in one string", () => {
+            const input =
+                "db postgres://u:dbSecretPw@h/db and api https://svc:apiTok123@api.example.com/v1";
+            const { sanitized, redactionsByType } = sanitizeSecrets(input);
+            expect(redactionsByType.DB_URI_PASSWORD).toEqual(1);
+            expect(redactionsByType.URL_USERINFO).toEqual(1);
+            expect(sanitized).toContain("postgres://u:[REDACTED:DB_URI_PASSWORD]@h/db");
+            expect(sanitized).toContain("https://svc:[REDACTED:URL_USERINFO]@api.example.com/v1");
+        });
+
+        it("does NOT re-redact an already-redacted DB password (idempotent guard)", () => {
+            const input = "postgres://u:[REDACTED:DB_URI_PASSWORD]@h/db";
+            const { sanitized, redactionsByType } = sanitizeSecrets(input);
+            expect(redactionsByType.URL_USERINFO).toBeUndefined();
+            expect(sanitized).toEqual(input);
+        });
+
+        it("does NOT match a bare email (no scheme://)", () => {
+            const input = "contact user@host.com for info";
+            const { totalRedactions } = sanitizeSecrets(input);
+            expect(totalRedactions).toEqual(0);
+        });
+
+        it("does NOT match a URL with no userinfo password", () => {
+            const input = "open https://example.com/page now";
+            const { totalRedactions } = sanitizeSecrets(input);
+            expect(totalRedactions).toEqual(0);
+        });
+    });
+
+    describe("Env-var DB/DSN suffix expansion", () => {
+        it("redacts DATABASE_URL= assignments", () => {
+            const input = "DATABASE_URL=postgres://u:longpasswordvalue@host:5432/db";
+            const { sanitized } = sanitizeSecrets(input);
+            // DB_URI_PASSWORD fires first, then ENV_VAR_SECRET wraps the whole value.
+            expect(sanitized).toContain("[REDACTED:");
+            expect(sanitized).not.toContain("longpasswordvalue");
+        });
+
+        it("redacts CONNECTION_STRING= and DSN= assignments", () => {
+            const conn = sanitizeSecrets(
+                'CONNECTION_STRING="Server=db;Database=app;User Id=sa;Password=verysecret123;"',
+            );
+            expect(conn.redactionsByType.ENV_VAR_SECRET).toEqual(1);
+            const dsn = sanitizeSecrets("DSN=postgresql://svc:dsnPasswordHere@host/db");
+            expect(dsn.sanitized).not.toContain("dsnPasswordHere");
+            expect(dsn.totalRedactions).toBeGreaterThan(0);
+        });
+
+        it("does NOT redact a benign SITE_URL=https://host/page (no userinfo)", () => {
+            const input = "SITE_URL=https://example.com/page";
+            const { totalRedactions, sanitized } = sanitizeSecrets(input);
+            expect(totalRedactions).toEqual(0);
+            expect(sanitized).toEqual(input);
+        });
+    });
+
     describe("no false positives on benign text", () => {
         it("passes through ordinary command output", () => {
             const input = [

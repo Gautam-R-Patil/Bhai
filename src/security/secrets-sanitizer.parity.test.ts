@@ -145,6 +145,52 @@ const REFERENCE_INPUTS: Array<{ name: string; input: string }> = [
         input:
             "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
     },
+    // ── DB connection-string passwords (group-preserving) ──────
+    {
+        name: "db-uri postgres password",
+        input: "postgres://appuser:s3cr3tPw@db.internal:5432/mydb",
+    },
+    { name: "db-uri postgresql long scheme", input: "postgresql://u:p4ssw0rd@host/db" },
+    { name: "db-uri mysql password", input: "connect mysql://root:rootpass123@127.0.0.1:3306/app" },
+    {
+        name: "db-uri mongodb+srv password",
+        input: "mongodb+srv://svc:M0ng0Secret@cluster0.abcde.mongodb.net/test",
+    },
+    { name: "db-uri redis password", input: "redis://default:redisPass99@cache.host:6379" },
+    { name: "db-uri amqps password", input: "amqps://guest:rabbitpw1234@broker.host:5671/vhost" },
+    {
+        name: "db-uri no password (user@host) — not redacted",
+        input: "postgres://appuser@db.internal:5432/mydb",
+    },
+    // ── Generic URL userinfo (group-preserving) ────────────────
+    { name: "url-userinfo https", input: "fetch https://alice:tok3nValue@example.com/path ok" },
+    { name: "url-userinfo http with at in password", input: "proxy http://user:passw0rd1@10.0.0.1:8080" },
+    {
+        name: "ordering: DB connstring + http userinfo in one string",
+        input: "db postgres://u:dbSecretPw@h/db and api https://svc:apiTok123@api.example.com/v1",
+    },
+    {
+        name: "url-userinfo already-redacted DB password not re-hit",
+        input: "postgres://u:[REDACTED:DB_URI_PASSWORD]@h/db",
+    },
+    // ── ENV_VAR_SECRET suffix expansion ────────────────────────
+    {
+        name: "env DATABASE_URL with connstring",
+        input: "DATABASE_URL=postgres://u:longpasswordvalue@host:5432/db",
+    },
+    {
+        name: "env CONNECTION_STRING quoted",
+        input: 'CONNECTION_STRING="Server=db;Database=app;User Id=sa;Password=verysecret123;"',
+    },
+    { name: "env DSN value", input: "DSN=postgresql://svc:dsnPasswordHere@host/db" },
+    {
+        name: "env MY_DATABASE_URL prefixed",
+        input: "MY_DATABASE_URL=mysql://a:plainpassword99@h/db",
+    },
+    // ── Negatives (must stay unchanged on both sides) ──────────
+    { name: "benign SITE_URL no userinfo", input: "SITE_URL=https://example.com/page" },
+    { name: "benign FOO_URL with query", input: "FOO_URL=https://host/page?x=1&y=2 done" },
+    { name: "email not a scheme userinfo", input: "contact user@host.com for info" },
 ];
 
 describe("Secrets-sanitizer Rust ↔ TS parity (Phase 1.1)", () => {

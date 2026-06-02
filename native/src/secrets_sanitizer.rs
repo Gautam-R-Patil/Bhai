@@ -17,7 +17,7 @@
 // alphabet. Alternation picks BEARER (leftmost start) and swallows the JWT.
 // Sequential passes preserve the contained-first behaviour for free.
 //
-// The 24th pattern, ENV_VAR_SECRET, originally uses a `(?!\[REDACTED:)`
+// ENV_VAR_SECRET (and URL_USERINFO) originally use a `(?!\[REDACTED:)`
 // negative lookahead. `regex` has no lookarounds, so we drop the lookahead
 // and emulate it with a post-match prefix check on the captured value. The
 // lookahead fires immediately after `\s*=\s*` and only rejects the literal
@@ -25,6 +25,17 @@
 // rejected by the lookahead (the next char is `"`, not `[`), so the post-
 // match check must NOT include quoted-prefix branches. Parity-tested with
 // fixtures covering both quoted and unquoted shapes.
+//
+// Two patterns redact ONLY a password segment, not the whole match:
+// DB_URI_PASSWORD and URL_USERINFO keep the scheme://user: prefix and the
+// @host suffix and replace only the middle group. The flat-marker loop
+// can't do this, so they run as dedicated group-rebuild passes. They sit in
+// the iteration order between SQUARE_ACCESS_TOKEN (last prefix pattern) and
+// JWT (first structured-token pattern), mirroring the TS PATTERNS array. The
+// ordering invariant is load-bearing: DB_URI_PASSWORD runs first so DB
+// schemes redact with their specific marker, then URL_USERINFO (with the
+// `[REDACTED:` skip) covers generic http/https/ftp userinfo without
+// re-hitting an already-redacted DB password.
 
 use lazy_static::lazy_static;
 use napi_derive::napi;
@@ -42,12 +53,18 @@ pub struct SanitizeResultNapi {
     pub total_redactions: u32,
 }
 
-// 23 standard patterns (no lookarounds). Order MUST match the TS PATTERNS
-// array in `src/security/secrets-sanitizer.ts` exactly — sequential semantics
-// depend on more-specific patterns running before more-permissive ones (e.g.
-// JWT before BEARER_TOKEN so a bearer-wrapped JWT redacts as `Bearer
-// [REDACTED:JWT]`, not `[REDACTED:BEARER_TOKEN]`).
-const STANDARD_PATTERNS: &[(&str, &str)] = &[
+// Standard (flat-marker) patterns. Order MUST match the TS PATTERNS array in
+// `src/security/secrets-sanitizer.ts` exactly — sequential semantics depend on
+// more-specific patterns running before more-permissive ones (e.g. JWT before
+// BEARER_TOKEN so a bearer-wrapped JWT redacts as `Bearer [REDACTED:JWT]`, not
+// `[REDACTED:BEARER_TOKEN]`).
+//
+// Split into a HEAD group (prefix tokens, TS indices 0..=19, ending at
+// SQUARE_ACCESS_TOKEN) and a TAIL group (structured tokens, TS indices
+// 22..=24: JWT, BEARER_TOKEN, PRIVATE_KEY_PEM). Between the two run the
+// group-preserving DB_URI_PASSWORD / URL_USERINFO passes (TS indices 20, 21).
+// `sanitize_secrets` dispatches HEAD → DB/URL → TAIL → ENV_VAR in this order.
+const STANDARD_PATTERNS_HEAD: &[(&str, &str)] = &[
     ("ANTHROPIC_API_KEY", r"sk-ant-(?:api|sid|admin)\d+-[A-Za-z0-9_-]{80,}"),
     ("OPENROUTER_API_KEY", r"\bsk-or-v\d+-[A-Fa-f0-9]{32,}\b"),
     ("OPENAI_API_KEY", r"\bsk-(?:proj-)?[A-Za-z0-9_-]{32,}\b"),
@@ -68,31 +85,57 @@ const STANDARD_PATTERNS: &[(&str, &str)] = &[
     ("NPM_TOKEN", r"\bnpm_[A-Za-z0-9]{36}\b"),
     ("NOTION_SECRET", r"\b(?:secret_[A-Za-z0-9]{43}|ntn_[A-Za-z0-9]{45,})\b"),
     ("SQUARE_ACCESS_TOKEN", r"\bEAAA[A-Za-z0-9_-]{60,}\b"),
+];
+
+const STANDARD_PATTERNS_TAIL: &[(&str, &str)] = &[
     ("JWT", r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b"),
     ("BEARER_TOKEN", r"\b[Bb]earer\s+[A-Za-z0-9\-._~+/]{20,}=*"),
     ("PRIVATE_KEY_PEM", r"(?s)-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----.+?-----END (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----"),
 ];
 
-const ENV_VAR_PATTERN: &str = r#"\b[A-Z0-9_]*(?:SECRET|PASSWORD|PASSPHRASE|API[_-]?KEY|PRIVATE[_-]?KEY|ACCESS[_-]?KEY|TOKEN|CLIENT[_-]?SECRET)\s*=\s*(?P<value>"[^"\n]{8,}"|'[^'\n]{8,}'|[^\s"'\n]{8,})"#;
+// Group-preserving patterns. Group 1 = scheme://user: prefix, group 2 =
+// password, group 3 = `@`. Only group 2 is replaced; 1 and 3 are kept verbatim.
+// `regex` has no lookbehind, so the prefix `\b` and the structure live in the
+// pattern; the `(?!\[REDACTED:)` of the TS URL_USERINFO is emulated by the
+// post-match `value_is_already_redacted` skip in `apply_url_userinfo`.
+const DB_URI_PASSWORD_PATTERN: &str =
+    r"\b((?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|rediss|amqp|amqps)://[^\s:@/]+:)([^@\s/]+)(@)";
+const URL_USERINFO_PATTERN: &str = r"\b([a-z][a-z0-9+.-]*://[^\s:@/]+:)([^@\s/]+)(@)";
 
-lazy_static! {
-    /// Compile every standard pattern once at first use. Stored alongside the
-    /// pre-built `[REDACTED:NAME]` marker String so the hot loop avoids
-    /// `format!()` per match.
-    static ref STANDARD: Vec<(&'static str, Regex, String)> = STANDARD_PATTERNS
+const ENV_VAR_PATTERN: &str = r#"\b[A-Z0-9_]*(?:SECRET|PASSWORD|PASSPHRASE|API[_-]?KEY|PRIVATE[_-]?KEY|ACCESS[_-]?KEY|TOKEN|CLIENT[_-]?SECRET|DATABASE[_-]?URL|CONNECTION[_-]?STRING|DSN)\s*=\s*(?P<value>"[^"\n]{8,}"|'[^'\n]{8,}'|[^\s"'\n]{8,})"#;
+
+fn compile_group(patterns: &[(&'static str, &str)]) -> Vec<(&'static str, Regex, String)> {
+    patterns
         .iter()
         .map(|(name, pat)| {
             let re = Regex::new(pat).unwrap_or_else(|e| panic!("compile {name}: {e}"));
             let marker = format!("[REDACTED:{name}]");
             (*name, re, marker)
         })
-        .collect();
+        .collect()
+}
+
+lazy_static! {
+    /// Compile every standard pattern once at first use. Stored alongside the
+    /// pre-built `[REDACTED:NAME]` marker String so the hot loop avoids
+    /// `format!()` per match.
+    static ref STANDARD_HEAD: Vec<(&'static str, Regex, String)> =
+        compile_group(STANDARD_PATTERNS_HEAD);
+    static ref STANDARD_TAIL: Vec<(&'static str, Regex, String)> =
+        compile_group(STANDARD_PATTERNS_TAIL);
+
+    static ref DB_URI_PASSWORD_REGEX: Regex =
+        Regex::new(DB_URI_PASSWORD_PATTERN).expect("DB_URI_PASSWORD_PATTERN must compile");
+    static ref URL_USERINFO_REGEX: Regex =
+        Regex::new(URL_USERINFO_PATTERN).expect("URL_USERINFO_PATTERN must compile");
 
     static ref ENV_VAR_REGEX: Regex =
         Regex::new(ENV_VAR_PATTERN).expect("ENV_VAR_PATTERN must compile");
 }
 
 const ENV_VAR_MARKER: &str = "[REDACTED:ENV_VAR_SECRET]";
+const DB_URI_PASSWORD_MARKER: &str = "[REDACTED:DB_URI_PASSWORD]";
+const URL_USERINFO_MARKER: &str = "[REDACTED:URL_USERINFO]";
 
 /// Mirror of the TS lookahead `(?!\[REDACTED:)`. The lookahead fires at the
 /// position right after `\s*=\s*`, BEFORE quote consumption — so it only
@@ -162,10 +205,52 @@ fn apply_env_var<'a>(text: &'a str) -> (Cow<'a, str>, u32) {
     (Cow::Owned(out), hits)
 }
 
-/// Scan `input` for all 24 well-known secret formats (23 standard + ENV_VAR_SECRET)
-/// and replace each match with a typed `[REDACTED:NAME]` marker. Returns the
-/// sanitized string plus a per-type hit count (JSON-encoded to keep the napi
-/// ABI flat).
+/// Group-preserving replace: keeps capture groups 1 and 3, replaces group 2
+/// with `marker`. Mirrors the TS `replace: (_full, pre, _pw, at) =>
+/// `${pre}MARKER${at}`` path. When `skip_if_redacted` is set (URL_USERINFO),
+/// a match whose group 2 already starts with `[REDACTED:` is left untouched —
+/// the byte-for-byte emulation of the TS `(?!\[REDACTED:)` lookahead. Same
+/// zero-alloc fast path as `replace_with_count` when nothing matches.
+fn apply_group_password<'a>(
+    text: &'a str,
+    re: &Regex,
+    marker: &str,
+    skip_if_redacted: bool,
+) -> (Cow<'a, str>, u32) {
+    let mut iter = re.captures_iter(text).peekable();
+    if iter.peek().is_none() {
+        return (Cow::Borrowed(text), 0);
+    }
+
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0usize;
+    let mut hits = 0u32;
+    for caps in iter {
+        let m = caps.get(0).expect("group 0 always present on a match");
+        let pre = caps.get(1).map(|g| g.as_str()).unwrap_or("");
+        let pw = caps.get(2).map(|g| g.as_str()).unwrap_or("");
+        let at = caps.get(3).map(|g| g.as_str()).unwrap_or("");
+        if skip_if_redacted && value_is_already_redacted(pw) {
+            continue;
+        }
+        out.push_str(&text[last..m.start()]);
+        out.push_str(pre);
+        out.push_str(marker);
+        out.push_str(at);
+        last = m.end();
+        hits += 1;
+    }
+    out.push_str(&text[last..]);
+    if hits == 0 {
+        return (Cow::Borrowed(text), 0);
+    }
+    (Cow::Owned(out), hits)
+}
+
+/// Scan `input` for all 27 well-known secret formats (20 prefix + DB_URI_PASSWORD
+/// + URL_USERINFO + 3 structured + ENV_VAR_SECRET) and replace each match with a
+/// typed `[REDACTED:NAME]` marker. Returns the sanitized string plus a per-type
+/// hit count (JSON-encoded to keep the napi ABI flat).
 #[napi]
 pub fn sanitize_secrets(input: String) -> SanitizeResultNapi {
     if input.is_empty() {
@@ -179,7 +264,31 @@ pub fn sanitize_secrets(input: String) -> SanitizeResultNapi {
     let mut counts: HashMap<&'static str, u32> = HashMap::new();
     let mut current: Cow<'_, str> = Cow::Borrowed(&input);
 
-    for (name, re, marker) in STANDARD.iter() {
+    for (name, re, marker) in STANDARD_HEAD.iter() {
+        let (next, hits) = replace_with_count(&current, re, marker);
+        if hits > 0 {
+            counts.insert(*name, hits);
+            current = Cow::Owned(next.into_owned());
+        }
+    }
+
+    // DB_URI_PASSWORD then URL_USERINFO (group-preserving). Order mirrors the
+    // TS PATTERNS array: DB schemes redact first with their specific marker,
+    // then the generic URL pass skips any already-redacted password.
+    let (after_db, db_hits) =
+        apply_group_password(&current, &DB_URI_PASSWORD_REGEX, DB_URI_PASSWORD_MARKER, false);
+    if db_hits > 0 {
+        counts.insert("DB_URI_PASSWORD", db_hits);
+        current = Cow::Owned(after_db.into_owned());
+    }
+    let (after_url, url_hits) =
+        apply_group_password(&current, &URL_USERINFO_REGEX, URL_USERINFO_MARKER, true);
+    if url_hits > 0 {
+        counts.insert("URL_USERINFO", url_hits);
+        current = Cow::Owned(after_url.into_owned());
+    }
+
+    for (name, re, marker) in STANDARD_TAIL.iter() {
         let (next, hits) = replace_with_count(&current, re, marker);
         if hits > 0 {
             counts.insert(*name, hits);
@@ -212,8 +321,20 @@ pub fn contains_secrets(input: String) -> bool {
     if input.is_empty() {
         return false;
     }
-    for (_, re, _) in STANDARD.iter() {
+    for (_, re, _) in STANDARD_HEAD.iter().chain(STANDARD_TAIL.iter()) {
         if re.is_match(&input) {
+            return true;
+        }
+    }
+    // DB_URI_PASSWORD: any match is a secret. URL_USERINFO: a match counts
+    // only if its password isn't already a `[REDACTED:` marker (mirrors the
+    // TS inline `(?!\[REDACTED:)` which makes `.test()` false on such input).
+    if DB_URI_PASSWORD_REGEX.is_match(&input) {
+        return true;
+    }
+    for caps in URL_USERINFO_REGEX.captures_iter(&input) {
+        let pw = caps.get(2).map(|g| g.as_str()).unwrap_or("");
+        if !value_is_already_redacted(pw) {
             return true;
         }
     }

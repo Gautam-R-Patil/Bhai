@@ -52,6 +52,15 @@ interface Pattern {
     name: string;
     /** Must use the `g` flag — replaceAll is used for counting matches. */
     regex: RegExp;
+    /**
+     * Optional group-preserving replacement. When set, `_sanitizeSecretsTs`
+     * calls this with the full match + capture groups instead of substituting
+     * the flat `[REDACTED:NAME]` marker. Used by DB_URI_PASSWORD and
+     * URL_USERINFO to redact ONLY the password segment while keeping the
+     * scheme/user/host groups intact (e.g. `postgres://u:[REDACTED:...]@h`).
+     * The Rust mirror reproduces this via a dedicated group-rebuild pass.
+     */
+    replace?: (full: string, ...groups: string[]) => string;
 }
 
 const PATTERNS: Pattern[] = [
@@ -163,6 +172,30 @@ const PATTERNS: Pattern[] = [
     // ENV_VAR_SECRET patterns already catch them in the two real-world
     // shapes (Authorization: Bearer header, CF_API_TOKEN= env var).
 
+    // ── Connection-string / URL userinfo passwords ────────────
+    // These two redact ONLY the password segment between `:` and `@`,
+    // keeping scheme://user: and @host intact so the agent can still
+    // reason about which service. They use group-preserving `replace`
+    // (the flat-marker loop can't keep capture groups). DB_URI_PASSWORD
+    // MUST run before URL_USERINFO so the DB schemes redact with their
+    // specific marker; URL_USERINFO then carries a `(?!\[REDACTED:)`
+    // guard so it never double-redacts a DB password an earlier pass
+    // already replaced.
+    {
+        name: "DB_URI_PASSWORD",
+        // scheme://user:PASSWORD@host — redact group 2 only.
+        regex: /\b((?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|rediss|amqp|amqps):\/\/[^\s:@/]+:)([^@\s/]+)(@)/g,
+        replace: (_full, pre, _pw, at) => `${pre}[REDACTED:DB_URI_PASSWORD]${at}`,
+    },
+    {
+        name: "URL_USERINFO",
+        // Generic scheme://user:PASSWORD@host (http/https/ftp/etc.). The
+        // `(?!\[REDACTED:)` after the colon stops this from re-matching a
+        // DB password DB_URI_PASSWORD already turned into a marker.
+        regex: /\b([a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:)(?!\[REDACTED:)([^@\s/]+)(@)/g,
+        replace: (_full, pre, _pw, at) => `${pre}[REDACTED:URL_USERINFO]${at}`,
+    },
+
     // ── Standard structured tokens ─────────────────────────────
     {
         name: "JWT",
@@ -208,7 +241,7 @@ const PATTERNS: Pattern[] = [
         // — without the guard, ENV_VAR_SECRET would then match the
         // TOKEN=[REDACTED:...] sequence and overwrite the specific
         // marker with a generic one).
-        regex: /\b[A-Z0-9_]*(?:SECRET|PASSWORD|PASSPHRASE|API[_-]?KEY|PRIVATE[_-]?KEY|ACCESS[_-]?KEY|TOKEN|CLIENT[_-]?SECRET)\s*=\s*(?!\[REDACTED:)(?:"[^"\n]{8,}"|'[^'\n]{8,}'|[^\s"'\n]{8,})/g,
+        regex: /\b[A-Z0-9_]*(?:SECRET|PASSWORD|PASSPHRASE|API[_-]?KEY|PRIVATE[_-]?KEY|ACCESS[_-]?KEY|TOKEN|CLIENT[_-]?SECRET|DATABASE[_-]?URL|CONNECTION[_-]?STRING|DSN)\s*=\s*(?!\[REDACTED:)(?:"[^"\n]{8,}"|'[^'\n]{8,}'|[^\s"'\n]{8,})/g,
     },
 ];
 
@@ -230,14 +263,27 @@ export function _sanitizeSecretsTs(input: string): SanitizeResult {
     const counts: Record<string, number> = {};
     let total = 0;
 
-    for (const { name, regex } of PATTERNS) {
+    for (const { name, regex, replace } of PATTERNS) {
         // `replace` with a function lets us count matches in one pass.
-        const marker = `[REDACTED:${name}]`;
         let hits = 0;
-        current = current.replace(regex, () => {
-            hits++;
-            return marker;
-        });
+        if (replace) {
+            // Group-preserving pattern (DB_URI_PASSWORD / URL_USERINFO):
+            // rebuild the match from its capture groups so only the
+            // password segment is redacted.
+            current = current.replace(regex, (full: string, ...args: unknown[]) => {
+                // .replace passes (match, p1, p2, …, offset, string[, groups]).
+                // Strip the trailing offset/string/groups; keep capture groups.
+                const groups = args.filter((a) => typeof a === "string") as string[];
+                hits++;
+                return replace(full, ...groups);
+            });
+        } else {
+            const marker = `[REDACTED:${name}]`;
+            current = current.replace(regex, () => {
+                hits++;
+                return marker;
+            });
+        }
         if (hits > 0) {
             counts[name] = hits;
             total += hits;
@@ -254,7 +300,7 @@ export function _sanitizeSecretsTs(input: string): SanitizeResult {
  * Routes through the native Rust impl by default — bench shows native at
  * 1.44x–2.00x of TS across input sizes from 50B to 100KB. Force the TS
  * fallback with `ATLAS_NO_NATIVE_SANITIZER=true` (debugging / missing binary).
- * Native and TS paths are byte-identical (39 parity tests in
+ * Native and TS paths are byte-identical (parity battery in
  * `secrets-sanitizer.parity.test.ts`); falls back to TS on any native error.
  */
 export function sanitizeSecrets(input: string): SanitizeResult {
