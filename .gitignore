@@ -126,6 +126,8 @@ desktop/hostinger-upload/
 !src/utils/win-shell.test.ts
 !src/utils/platform-capabilities.test.ts
 !src/commands/index.test.ts
+!src/commands/recap.test.ts
+!src/diagnostics/doctor.test.ts
 !src/agents/plan-mode.test.ts
 !src/agents/smart-truncate.test.ts
 !src/agents/error-types.test.ts

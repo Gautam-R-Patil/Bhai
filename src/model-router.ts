@@ -125,6 +125,10 @@ try {
     // Native module not available, will use JS fallback
 }
 
+export function isNativeRouterLoaded(): boolean {
+    return native !== null;
+}
+
 // ── Helper: convert native result to TypeScript types ──
 
 const VALID_THINKING: Set<string> = new Set(["off", "low", "medium", "high", "max"]);

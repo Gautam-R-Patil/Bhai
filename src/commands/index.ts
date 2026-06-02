@@ -9,6 +9,8 @@ import { enterPlanMode, exitPlanMode, isPlanMode, isSpecMode, getPlanModeState, 
 import path from "node:path";
 import type { LLMClient } from "../llm.js";
 import { statusReport, pruneAll, clearAll } from "../tools/coding/checkpoint-manager.js";
+import { buildRecap } from "./recap.js";
+import { runDoctor, formatDoctor } from "../diagnostics/doctor.js";
 
 // ── Types ─────────────────────────────────────
 
@@ -65,6 +67,17 @@ export async function handleCommand(text: string): Promise<CommandResult> {
             return { handled: true, response: cmdCompact() };
         case "/usage":
             return { handled: true, response: cmdUsage() };
+        case "/recap": {
+            const n = parseInt(args[0] ?? "20", 10) || 20;
+            return { handled: true, response: buildRecap(n) };
+        }
+        case "/doctor": {
+            try {
+                return { handled: true, response: formatDoctor(await runDoctor()) };
+            } catch (e) {
+                return { handled: true, response: `🩺 Doctor failed: ${(e as Error).message}` };
+            }
+        }
         case "/think":
             return { handled: true, response: cmdThink(args) };
         case "/help":
@@ -157,6 +170,8 @@ function cmdHelp(): string {
         "`/compact` — Compress conversation context",
         "`/think off|low|medium|high` — Set reasoning depth",
         "`/usage` — Session usage stats",
+        "`/recap [n]` — Summarize the last n turns (default 20, zero AI cost)",
+        "`/doctor` — Run system diagnostics (Convex, session, credits, native, env, memory)",
         "`/plan [task]` — Enter plan mode (research before acting)",
         "`/spec <task>` — Enter spec mode (write acceptance criteria first)",
         "`/noplan` — Exit plan/spec mode",
