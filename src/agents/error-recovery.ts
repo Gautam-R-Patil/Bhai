@@ -148,7 +148,7 @@ export async function executeWithRecovery(
         for (let attempt = 0; attempt < p.maxRetries; attempt++) {
             if (Date.now() - recoveryStart > p.budgetMs) break;
 
-            const backoff = p.backoffMs * Math.pow(2, attempt);
+            const backoff = jitteredBackoff(p.backoffMs, attempt);
             console.log(`  🔄 Recovery: retrying step ${task.id} (attempt ${attempt + 1}/${p.maxRetries}, backoff ${backoff}ms)`);
             await sleep(backoff);
 
@@ -224,4 +224,12 @@ export async function executeWithRecovery(
 
 function sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Full jitter decorrelates parallel sub-agent recoveries that would otherwise
+// retry the same upstream fault in lockstep and re-collide.
+export function jitteredBackoff(backoffMs: number, attempt: number): number {
+    const base = backoffMs * 2 ** attempt;
+    if (process.env.ATLAS_NO_RECOVERY_JITTER === "true") return base;
+    return base + Math.random() * (base / 2);
 }
