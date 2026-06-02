@@ -103,6 +103,7 @@ desktop/hostinger-upload/
 !src/utils/json-extract.test.ts
 !src/memory/temporal-cache.test.ts
 !src/memory/context-pruning.test.ts
+!src/memory/compression-template.test.ts
 !src/config/paths.test.ts
 !src/tools/coding/checkpoint-manager.test.ts
 !src/language.test.ts

@@ -5,6 +5,8 @@
 import { createHash } from "node:crypto";
 import { pruneJsonValues, smartTruncate } from "../agents/smart-truncate.js";
 import type { ChatCompletionMessageParam, LLMClient } from "../llm.js";
+import { sanitizeSecrets } from "../security/secrets-sanitizer.js";
+import { buildCompressionUserPrompt, COMPRESSION_SYSTEM_PROMPT } from "./compression-template.js";
 import { remember } from "./sqlite.js";
 
 // ── Types ─────────────────────────────────────
@@ -197,14 +199,16 @@ export async function pruneContext(messages: ChatCompletionMessageParam[], llm: 
             messages: [
                 {
                     role: "user",
-                    content: `Summarize this conversation concisely, preserving key facts, decisions, and context:\n\n${summaryText}`,
+                    content: buildCompressionUserPrompt(summaryText),
                 },
             ],
-            systemPrompt:
-                "You are a conversation summarizer. Be concise but preserve all important details, decisions, and facts.",
+            systemPrompt: COMPRESSION_SYSTEM_PROMPT,
         });
 
-        const summary = summaryResponse.choices[0]?.message?.content || "Previous conversation context.";
+        // Sanitize before this summary re-enters context as a system message —
+        // the model may echo secrets from the transcript into the summary.
+        const rawSummary = summaryResponse.choices[0]?.message?.content || "Previous conversation context.";
+        const summary = sanitizeSecrets(rawSummary).sanitized;
 
         // Replace old messages with summary
         const prunedMessages: ChatCompletionMessageParam[] = [
