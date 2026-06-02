@@ -236,11 +236,32 @@ export function createLLMClient(config: Config): LLMClient {
                 }
 
             // Exclude already-tried models so each hop surfaces a new provider.
+            // Window-aware mode (opt-in): estimate the request's token size once
+            // and skip fallback candidates whose context window can't hold it,
+            // closing the silent 1M→200K hop on large-context turns. Zero LLM cost.
+            const windowAware = process.env.ATLAS_WINDOW_AWARE_PRUNE === "true";
+            let estTokens = 0;
+            if (windowAware) {
+                try {
+                    const { estimateMessagesTokens } = await import("./memory/context-pruning.js");
+                    estTokens = estimateMessagesTokens(allMessages);
+                } catch { estTokens = 0; }
+            }
             const modelsToTry: string[] = [model];
             for (let i = 0; i < 3; i++) {
                 const seed = modelsToTry[modelsToTry.length - 1];
                 const next = await getModelFallback(seed, modelsToTry);
                 if (!next || modelsToTry.includes(next)) break;
+                if (windowAware && estTokens > 0) {
+                    try {
+                        const { getContextWindow } = await import("./model-router.js");
+                        // Skip a candidate that can't hold the request (+headroom).
+                        if (getContextWindow(next) < estTokens * 1.1) {
+                            modelsToTry.push(next); // still record as tried so we don't re-pick it
+                            continue;
+                        }
+                    } catch { /* fail-open: keep the candidate */ }
+                }
                 modelsToTry.push(next);
             }
             let lastError: Error | null = null;

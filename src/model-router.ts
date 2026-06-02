@@ -19,6 +19,7 @@ export interface ModelInfo {
     speed: "slow" | "medium" | "fast" | "very_fast" | "ultra_fast";
     strengths: string[];
     maxTokens: number;
+    contextWindow: number;
     supportsTools: boolean;
     supportsVision: boolean;
     provider: "anthropic" | "google" | "openai" | "amazon";
@@ -107,6 +108,7 @@ interface NativeModelRouter {
     scoreToThinking(score: number, taskType: string): string;
     getModelInfo(modelId: string): any;
     getAllModelIds(): string[];
+    getContextWindow(modelId: string): number;
 }
 
 let native: NativeModelRouter | null = null;
@@ -209,6 +211,7 @@ if (native) {
                 speed: info.speed?.toLowerCase().replace(/([a-z])([A-Z])/g, "$1_$2").toLowerCase() || "medium",
                 strengths: info.strengths || [],
                 maxTokens: info.max_tokens,
+                contextWindow: info.context_window ?? 200000,
                 supportsTools: info.supports_tools,
                 supportsVision: info.supports_vision,
                 provider: info.provider?.toLowerCase() || "anthropic",
@@ -234,6 +237,15 @@ export function getConversationContext(): ConversationContext {
         };
     }
     return { recentScores: [], currentMood: "casual", escalatedThisSession: false, dominantTaskType: null, toolCallsThisSession: 0, turnsThisSession: 0, lastModelUsed: null };
+}
+
+// Total input context window (tokens) for a model. Fail-open to the registry,
+// then to 200K (smallest safe assumption) when native is unavailable/stale.
+export function getContextWindow(modelId: string): number {
+    if (native && typeof native.getContextWindow === "function") {
+        return native.getContextWindow(modelId);
+    }
+    return MODEL_REGISTRY[modelId]?.contextWindow ?? 200000;
 }
 
 export function updateConversationContext(updates: Partial<ConversationContext>): void {

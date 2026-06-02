@@ -113,7 +113,22 @@ async function flushToMemory(messages: ChatCompletionMessageParam[], llm: LLMCli
 // ── Prune Context ─────────────────────────────
 
 export async function pruneContext(messages: ChatCompletionMessageParam[], llm: LLMClient): Promise<PruneResult> {
-    if (messages.length <= MAX_MESSAGES) {
+    // Window-aware trigger (opt-in): prune when estimated tokens exceed ~70% of
+    // the last model's context window OR the legacy count cap. The token
+    // estimate is pure char arithmetic — zero LLM cost. Fail-open to count-only.
+    if (process.env.ATLAS_WINDOW_AWARE_PRUNE === "true") {
+        try {
+            const { getContextWindow, getConversationContext } = await import("../model-router.js");
+            const lastModel = getConversationContext().lastModelUsed ?? "anthropic/claude-sonnet-4.6";
+            const win = getContextWindow(lastModel);
+            const est = estimateMessagesTokens(messages);
+            if (est <= win * 0.7 && messages.length <= MAX_MESSAGES) {
+                return { messages, pruned: 0 };
+            }
+        } catch {
+            if (messages.length <= MAX_MESSAGES) return { messages, pruned: 0 };
+        }
+    } else if (messages.length <= MAX_MESSAGES) {
         return { messages, pruned: 0 };
     }
 

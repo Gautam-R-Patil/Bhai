@@ -47,6 +47,9 @@ pub struct ModelInfo {
     pub speed: Speed,
     pub strengths: Vec<String>,
     pub max_tokens: u32,
+    /// Total input context window (tokens). Used for token-aware pruning and to
+    /// guard failover against hops to a smaller-window model.
+    pub context_window: u32,
     pub supports_tools: bool,
     pub supports_parallel_tools: bool,
     pub supports_vision: bool,
@@ -66,6 +69,7 @@ fn build_model_registry() -> HashMap<String, ModelInfo> {
         speed: Speed::Slow,
         strengths: vec!["creative".into(), "emotional".into(), "nuanced".into(), "complex_reasoning".into(), "error_recovery".into()],
         max_tokens: 16384,
+        context_window: 1_000_000,
         supports_tools: true,
         supports_parallel_tools: true,
         supports_vision: true,
@@ -82,6 +86,7 @@ fn build_model_registry() -> HashMap<String, ModelInfo> {
         speed: Speed::Medium,
         strengths: vec!["conversational".into(), "balanced".into(), "personality".into(), "writing".into()],
         max_tokens: 8192,
+        context_window: 1_000_000,
         supports_tools: true,
         supports_parallel_tools: true,
         supports_vision: true,
@@ -97,6 +102,7 @@ fn build_model_registry() -> HashMap<String, ModelInfo> {
         speed: Speed::Medium,
         strengths: vec!["agentic".into(), "conversational".into(), "tool_use".into(), "personality".into()],
         max_tokens: 8192,
+        context_window: 1_000_000,
         supports_tools: true,
         supports_parallel_tools: true,
         supports_vision: true,
@@ -113,6 +119,7 @@ fn build_model_registry() -> HashMap<String, ModelInfo> {
         speed: Speed::Fast,
         strengths: vec!["tool_use".into(), "multimodal".into(), "long_context".into(), "agentic".into()],
         max_tokens: 8192,
+        context_window: 1_000_000,
         supports_tools: true,
         supports_parallel_tools: false,
         supports_vision: true,
@@ -129,6 +136,7 @@ fn build_model_registry() -> HashMap<String, ModelInfo> {
         speed: Speed::Fast,
         strengths: vec!["tool_use".into(), "balanced".into(), "agentic".into()],
         max_tokens: 8192,
+        context_window: 300_000,
         supports_tools: true,
         supports_parallel_tools: true,
         supports_vision: true,
@@ -145,6 +153,7 @@ fn build_model_registry() -> HashMap<String, ModelInfo> {
         speed: Speed::Fast,
         strengths: vec!["classification".into(), "simple_qa".into(), "fast_response".into(), "ack".into(), "conversational".into()],
         max_tokens: 4096,
+        context_window: 200_000,
         supports_tools: true,
         supports_parallel_tools: true,
         supports_vision: true,
@@ -160,6 +169,7 @@ fn build_model_registry() -> HashMap<String, ModelInfo> {
         speed: Speed::Fast,
         strengths: vec!["agentic".into(), "tool_use".into(), "reasoning".into(), "balanced".into()],
         max_tokens: 8192,
+        context_window: 1_000_000,
         supports_tools: true,
         supports_parallel_tools: true,
         supports_vision: true,
@@ -176,6 +186,7 @@ fn build_model_registry() -> HashMap<String, ModelInfo> {
         speed: Speed::VeryFast,
         strengths: vec!["synthesis".into(), "bulk_processing".into(), "data_extraction".into(), "summarization".into()],
         max_tokens: 8192,
+        context_window: 1_000_000,
         supports_tools: true,
         supports_parallel_tools: true,
         supports_vision: true,
@@ -192,6 +203,7 @@ fn build_model_registry() -> HashMap<String, ModelInfo> {
         speed: Speed::UltraFast,
         strengths: vec!["audio_analysis".into(), "video_analysis".into(), "transcription".into()],
         max_tokens: 2048,
+        context_window: 1_000_000,
         supports_tools: false,
         supports_parallel_tools: false,
         supports_vision: true,
@@ -207,6 +219,7 @@ fn build_model_registry() -> HashMap<String, ModelInfo> {
         speed: Speed::Fast,
         strengths: vec!["fast_response".into(), "tool_use".into(), "classification".into()],
         max_tokens: 8192,
+        context_window: 1_000_000,
         supports_tools: true,
         supports_parallel_tools: true,
         supports_vision: true,
@@ -222,6 +235,7 @@ fn build_model_registry() -> HashMap<String, ModelInfo> {
         speed: Speed::Fast,
         strengths: vec!["bulk_processing".into(), "fast_response".into(), "cheap_tools".into()],
         max_tokens: 8192,
+        context_window: 1_000_000,
         supports_tools: true,
         supports_parallel_tools: true,
         supports_vision: true,
@@ -238,6 +252,7 @@ fn build_model_registry() -> HashMap<String, ModelInfo> {
         speed: Speed::VeryFast,
         strengths: vec!["bulk_processing".into(), "fast_response".into(), "classification".into(), "simple_tools".into()],
         max_tokens: 8192,
+        context_window: 300_000,
         supports_tools: true,
         supports_parallel_tools: true,
         supports_vision: true,
@@ -253,6 +268,7 @@ fn build_model_registry() -> HashMap<String, ModelInfo> {
         speed: Speed::UltraFast,
         strengths: vec!["classification".into(), "fast_response".into(), "cheapest".into()],
         max_tokens: 4096,
+        context_window: 128_000,
         supports_tools: true,
         supports_parallel_tools: true,
         supports_vision: false,
@@ -268,6 +284,7 @@ fn build_model_registry() -> HashMap<String, ModelInfo> {
         speed: Speed::Fast,
         strengths: vec!["agentic".into(), "tool_use".into(), "reasoning".into(), "coding".into(), "balanced".into()],
         max_tokens: 8192,
+        context_window: 160_000,
         supports_tools: true,
         supports_parallel_tools: true,
         supports_vision: false,
@@ -283,6 +300,7 @@ fn build_model_registry() -> HashMap<String, ModelInfo> {
         speed: Speed::Fast,
         strengths: vec!["agentic".into(), "tool_use".into(), "reasoning".into(), "experimental".into()],
         max_tokens: 8192,
+        context_window: 160_000,
         supports_tools: true,
         supports_parallel_tools: true,
         supports_vision: false,
@@ -298,6 +316,7 @@ fn build_model_registry() -> HashMap<String, ModelInfo> {
         speed: Speed::Fast,
         strengths: vec!["tool_use".into(), "agentic".into(), "long_context".into(), "balanced".into()],
         max_tokens: 8192,
+        context_window: 200_000,
         supports_tools: true,
         supports_parallel_tools: true,
         supports_vision: false,
@@ -313,6 +332,7 @@ fn build_model_registry() -> HashMap<String, ModelInfo> {
         speed: Speed::Fast,
         strengths: vec!["reasoning".into(), "tool_use".into(), "coding".into(), "balanced".into()],
         max_tokens: 8192,
+        context_window: 400_000,
         supports_tools: true,
         supports_parallel_tools: true,
         supports_vision: true,
@@ -328,6 +348,7 @@ fn build_model_registry() -> HashMap<String, ModelInfo> {
         speed: Speed::Fast,
         strengths: vec!["fast_response".into(), "simple_qa".into(), "classification".into(), "conversational".into()],
         max_tokens: 4096,
+        context_window: 400_000,
         supports_tools: true,
         supports_parallel_tools: true,
         supports_vision: false,
@@ -346,6 +367,7 @@ fn build_model_registry() -> HashMap<String, ModelInfo> {
         speed: Speed::Fast,
         strengths: vec!["fast_response".into(), "simple_qa".into(), "ack".into(), "conversational".into(), "classification".into()],
         max_tokens: 4096,
+        context_window: 1_000_000,
         supports_tools: true,
         supports_parallel_tools: true,
         supports_vision: true,
@@ -393,6 +415,13 @@ fn signals_cache_key(message: &str, iteration: i32, error_count: i32, has_media:
 #[napi]
 pub fn get_model_info(model_id: String) -> Option<ModelInfo> {
     MODEL_REGISTRY.get(&model_id).cloned()
+}
+
+/// Total input context window (tokens) for a model. Fail-open default 200K
+/// (smallest safe assumption) for unknown ids.
+#[napi]
+pub fn get_context_window(model_id: String) -> u32 {
+    MODEL_REGISTRY.get(&model_id).map(|m| m.context_window).unwrap_or(200_000)
 }
 
 /// Get all model IDs in the registry

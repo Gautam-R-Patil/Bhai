@@ -169,6 +169,7 @@ desktop/hostinger-upload/
 !src/tools/preflight.test.ts
 !src/tools/swarm-gate.test.ts
 !src/model-router.coding.test.ts
+!src/model-router.window.test.ts
 !src/llm-cache.toolsig.test.ts
 !src/voice/live/backends/gemini-live.test.ts
 !src/tools/spotify-cache.test.ts

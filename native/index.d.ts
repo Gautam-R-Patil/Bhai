@@ -70,6 +70,11 @@ export interface ModelInfo {
   speed: Speed
   strengths: Array<string>
   maxTokens: number
+  /**
+   * Total input context window (tokens). Used for token-aware pruning and to
+   * guard failover against hops to a smaller-window model.
+   */
+  contextWindow: number
   supportsTools: boolean
   supportsParallelTools: boolean
   supportsVision: boolean
@@ -77,6 +82,11 @@ export interface ModelInfo {
 }
 /** Get model info from the registry by model ID */
 export declare function getModelInfo(modelId: string): ModelInfo | null
+/**
+ * Total input context window (tokens) for a model. Fail-open default 200K
+ * (smallest safe assumption) for unknown ids.
+ */
+export declare function getContextWindow(modelId: string): number
 /** Get all model IDs in the registry */
 export declare function getAllModelIds(): Array<string>
 export const enum TaskType {
