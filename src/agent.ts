@@ -1119,15 +1119,16 @@ STRATEGY: Execute in as few tool calls as possible.
     const metaState = createMetacognitionState();
     let metaNudged = false;
 
-    // Hard loop guard: count consecutive tool batches that produced no useful
-    // new result (errors or empty/identical output). The metacognition nudge
-    // only fires once and the model can ignore it — this forces the loop to
-    // end after sustained no-progress so a stuck task can't grind to the
-    // 200-iteration / token-burn ceiling (e.g. a shell loop returning empty
-    // stdout 38× in a row). Env-tunable; 0 disables.
-    const NO_PROGRESS_LIMIT = Number(process.env.ATLAS_NO_PROGRESS_LIMIT ?? "6");
+    // Hard loop guard: count consecutive tool batches where EVERY call failed
+    // or returned empty. The metacognition nudge only fires once and the model
+    // can ignore it — this forces the loop to end after sustained total failure
+    // so a stuck task can't grind to the 200-iteration / token-burn ceiling
+    // (e.g. a shell loop returning empty stdout 38× in a row). Deliberately
+    // narrow: only ALL-failed/empty batches count, polling tools are exempt,
+    // and any usable output resets the streak — so legitimate long/iterative
+    // work is never cut short. Env-tunable; 0 disables.
+    const NO_PROGRESS_LIMIT = Number(process.env.ATLAS_NO_PROGRESS_LIMIT ?? "8");
     let noProgressStreak = 0;
-    let lastBatchSignature = "";
 
     // Circuit breaker — trips after sustained failures or no-progress
     const circuitBreaker = createCircuitBreaker();
@@ -3068,28 +3069,39 @@ PLAN:`,
         }
 
         // ── Hard no-progress loop guard ───────────────────────────
-        // A batch makes "no progress" if every result errored or was empty, OR
-        // the batch is byte-identical to the previous one (same calls, same
-        // useless output). N such batches in a row → force-end with a summary
-        // instead of letting the model grind on.
-        if (NO_PROGRESS_LIMIT > 0 && batchResults.length > 0) {
-            const batchSig = batchResults
-                .map((r) => `${r.fnName}:${(r.result || "").slice(0, 200)}`)
-                .join("|");
+        // Narrow by design so it does NOT cut short legitimate long/iterative
+        // work: it ONLY counts batches where EVERY result genuinely failed or
+        // came back empty. A batch with any usable output resets the streak.
+        //
+        // Exemptions — these tools legitimately repeat with identical/empty
+        // output and must never feed the streak:
+        //   • polling/monitoring (shell_check_process, shell_wait_process,
+        //     check_long_task, check_deep_research) — "still running" is normal
+        //   • genuinely-empty-but-successful ops (mkdir, mv, grep-no-match)
+        // Long-running WORK delegates out via start_long_task (handled below)
+        // and never grinds this loop, so this only catches interactive spirals.
+        // Disable entirely with ATLAS_NO_PROGRESS_LIMIT=0.
+        const LOOP_EXEMPT_TOOLS = new Set([
+            "shell_check_process", "shell_wait_process", "shell_exec_background",
+            "check_long_task", "check_deep_research", "shell_kill_process",
+        ]);
+        const batchHasExemptTool = batchResults.some((r) => LOOP_EXEMPT_TOOLS.has(r.fnName));
+        if (NO_PROGRESS_LIMIT > 0 && batchResults.length > 0 && !batchHasExemptTool) {
+            // "Useless" = errored OR truly empty result. We do NOT trip on
+            // identical-but-non-empty output: a task that keeps reading similar
+            // data is making progress, not stuck.
             const allUseless = batchResults.every(
-                (r) => r.isError || !r.result || r.result.length === 0 || r.result === "{}" ||
-                    /"stdout"\s*:\s*""/.test(r.result),
+                (r) => r.isError || !r.result || r.result.length === 0 || r.result === "{}",
             );
-            if (allUseless || batchSig === lastBatchSignature) {
+            if (allUseless) {
                 noProgressStreak++;
             } else {
                 noProgressStreak = 0;
             }
-            lastBatchSignature = batchSig;
 
             if (noProgressStreak >= NO_PROGRESS_LIMIT) {
                 console.warn(
-                    `  🛑 No-progress loop guard tripped after ${noProgressStreak} batches — ending turn (iteration ${iterations})`,
+                    `  🛑 No-progress loop guard tripped after ${noProgressStreak} all-failed/empty batches — ending turn (iteration ${iterations})`,
                 );
                 const stuckMsg =
                     "I tried several approaches but couldn't get a useful result — the commands kept returning nothing or failing. Rather than keep retrying, here's where I got stuck: the tool calls aren't returning the data I need. Could you tell me a bit more, or try running it directly?";
