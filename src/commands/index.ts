@@ -8,6 +8,7 @@ import type { Config } from "../config.js";
 import { enterPlanMode, exitPlanMode, isPlanMode, isSpecMode, getPlanModeState, enterSpecMode } from "../agents/plan-mode.js";
 import path from "node:path";
 import type { LLMClient } from "../llm.js";
+import { statusReport, pruneAll, clearAll } from "../tools/coding/checkpoint-manager.js";
 
 // ── Types ─────────────────────────────────────
 
@@ -74,6 +75,8 @@ export async function handleCommand(text: string): Promise<CommandResult> {
             return { handled: true, response: cmdNoPlan() };
         case "/spec":
             return { handled: true, response: cmdSpec(args.join(" ")) };
+        case "/checkpoints":
+            return { handled: true, response: cmdCheckpoints(args) };
         case "/optimize-harness":
         case "/harness-optimize":
             return cmdOptimizeHarness(args);
@@ -159,6 +162,7 @@ function cmdHelp(): string {
         "`/noplan` — Exit plan/spec mode",
         "`/optimize-harness [n] [--fast]` — Run Meta-Harness optimization (n iterations)",
         "`/harness-status` — Show harness optimization history",
+        "`/checkpoints status|prune|clear` — Manage auto pre-edit filesystem snapshots",
         "`/help` — This message",
         "",
         "Or use the quick action buttons below.",
@@ -225,6 +229,19 @@ function cmdSpec(task: string): string {
         "",
         "The agent will write a specification (problem, acceptance criteria, test scenarios, out-of-scope) before planning implementation. Send your next message to start. Finalize with `finalize_spec` or `/noplan` to cancel.",
     ].join("\n");
+}
+
+function cmdCheckpoints(args: string[]): string {
+    const sub = (args[0] ?? "status").toLowerCase();
+    if (sub === "prune") {
+        const { pruned } = pruneAll();
+        return `🧹 Pruned ${pruned} checkpoint store(s) (gc + reflog expire).`;
+    }
+    if (sub === "clear") {
+        const { removed } = clearAll();
+        return `🗑️ Cleared ${removed} checkpoint store(s).`;
+    }
+    return statusReport();
 }
 
 async function cmdOptimizeHarness(args: string[]): Promise<CommandResult> {

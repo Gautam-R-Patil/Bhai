@@ -193,6 +193,22 @@ async function lspHoverBeforeEdit(payload: unknown): Promise<HookHandlerResult |
 
 // ── Export ────────────────────────────────────
 
+// Snapshot the target dir into the shadow-git checkpoint store before a file
+// mutation. Returns null (passthrough) — never blocks or modifies input; the
+// snapshot is a pure side effect. Fail-open inside ensureCheckpoint.
+async function autoCheckpointBeforeMutation(payload: unknown): Promise<HookHandlerResult | null> {
+    const p = payload as { tool?: string; input?: { file_path?: string } } | null;
+    const fp = p?.input?.file_path;
+    if (typeof fp !== "string" || !fp) return null;
+    try {
+        const { ensureCheckpoint } = await import("../tools/coding/checkpoint-manager.js");
+        await ensureCheckpoint(path.dirname(path.resolve(fp)), `pre-${p?.tool ?? "mutation"}`);
+    } catch {
+        /* fail-open */
+    }
+    return null;
+}
+
 export const BUILTIN_HOOKS: HookMap = {
     PreToolUse: [
         {
@@ -200,6 +216,12 @@ export const BUILTIN_HOOKS: HookMap = {
             matcher: "^edit$",
             handler: lspHoverBeforeEdit,
             timeout: 8000,
+        },
+        {
+            name: "builtin:auto-checkpoint",
+            matcher: "^(edit|write|append_file)$",
+            handler: autoCheckpointBeforeMutation,
+            timeout: 6000,
         },
     ],
 };

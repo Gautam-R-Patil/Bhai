@@ -102,6 +102,7 @@ desktop/hostinger-upload/
 !src/utils/json-extract.test.ts
 !src/memory/temporal-cache.test.ts
 !src/config/paths.test.ts
+!src/tools/coding/checkpoint-manager.test.ts
 !src/language.test.ts
 !src/llm-dynamic-context.test.ts
 !src/utils/uuid.test.ts
