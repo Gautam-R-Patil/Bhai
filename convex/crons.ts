@@ -33,4 +33,14 @@ crons.daily(
     {},
 );
 
+// Retire never-used user prompt addenda (hits === 0, stale). Self-gates on the
+// ATLAS_ADDENDA_HITS deployment flag — a no-op until hit-tracking is enabled,
+// so it can never retire addenda whose hits simply weren't being counted.
+crons.daily(
+    "sweep stale user addenda",
+    { hourUTC: 5, minuteUTC: 0 },
+    internal.userAddenda.sweepAllStaleAddenda,
+    {},
+);
+
 export default crons;

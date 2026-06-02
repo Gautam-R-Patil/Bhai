@@ -612,6 +612,19 @@ http.route({
           // which is exactly what kept the cache hit-rate at 0%. The client's
           // dynamic system message stays as a SEPARATE block right after.
           messages.unshift({ role: "system", content: serverPrompt });
+
+          // Record that this user's active addenda were exercised, so the
+          // nightly staleness sweep can retire never-used ones. Opt-in via the
+          // ATLAS_ADDENDA_HITS deployment env var; fire-and-forget, never blocks
+          // or fails the request. (The assembler is a read-only query and can't
+          // mutate, so the hit-bump happens here in the action.)
+          if (process.env.ATLAS_ADDENDA_HITS === "true" && account.otplessUserId) {
+            ctx
+              .runMutation(internal.userAddenda.incrementActiveAddendaHits, {
+                otplessUserId: account.otplessUserId,
+              })
+              .catch(() => {});
+          }
         }
       } catch (err: any) {
         // Non-fatal: if prompt assembly fails, proceed without server prompt

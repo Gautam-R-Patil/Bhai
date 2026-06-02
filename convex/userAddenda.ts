@@ -256,3 +256,75 @@ export const incrementHits = internalMutation({
     }
   },
 });
+
+// Bump the hits counter for every CURRENTLY-ACTIVE addendum of a user. The
+// system-prompt assembler is a read-only query and cannot mutate, so the HTTP
+// action fires this (fire-and-forget) after it assembles a prompt that included
+// the user's addenda. Records usage so the staleness sweep below can retire
+// addenda that are never actually exercised. Best-effort.
+export const incrementActiveAddendaHits = internalMutation({
+  args: { otplessUserId: v.string() },
+  handler: async (ctx, { otplessUserId }) => {
+    const rows = await ctx.db
+      .query("user_prompt_addenda")
+      .withIndex("by_user_active", (q) => q.eq("otplessUserId", otplessUserId).eq("isActive", true))
+      .take(12);
+    const now = Date.now();
+    for (const row of rows) {
+      await ctx.db.patch(row._id, { hits: (row.hits ?? 0) + 1, updatedAt: now });
+    }
+    return { bumped: rows.length };
+  },
+});
+
+// Retire addenda that are stale AND never used: active, hits === 0, and not
+// touched in maxAgeMs. Deactivation is recoverable (isActive=false, not delete),
+// matching the archive-never-delete discipline. Returns how many were retired.
+export const sweepStaleAddenda = internalMutation({
+  args: { otplessUserId: v.string(), maxAgeMs: v.number() },
+  handler: async (ctx, { otplessUserId, maxAgeMs }) => {
+    const rows = await ctx.db
+      .query("user_prompt_addenda")
+      .withIndex("by_user_active", (q) => q.eq("otplessUserId", otplessUserId).eq("isActive", true))
+      .collect();
+    const cutoff = Date.now() - maxAgeMs;
+    let retired = 0;
+    for (const row of rows) {
+      if ((row.hits ?? 0) === 0 && row.updatedAt < cutoff) {
+        await ctx.db.patch(row._id, { isActive: false, updatedAt: Date.now() });
+        retired++;
+      }
+    }
+    return { retired };
+  },
+});
+
+// Default staleness window for the nightly global sweep: 30 days unused.
+const STALE_ADDENDUM_MS = 30 * 24 * 60 * 60 * 1000;
+
+// Nightly global sweep (no-arg, matches the other crons in crons.ts). Retires
+// active addenda with hits === 0 not touched in STALE_ADDENDUM_MS. Bounded per
+// run so a backlog can't exceed the mutation row limit. Only meaningful once
+// ATLAS_ADDENDA_HITS is enabled in the deployment env (otherwise hits stay 0
+// and the sweep would retire everything) — so it self-gates on that flag.
+export const sweepAllStaleAddenda = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    if (process.env.ATLAS_ADDENDA_HITS !== "true") return { retired: 0, skipped: "hits-tracking-disabled" };
+    const cutoff = Date.now() - STALE_ADDENDUM_MS;
+    // No global by_active index exists (only user-scoped); a bounded full scan
+    // is fine for a nightly job and matches the other global sweeps in crons.ts.
+    const rows = await ctx.db
+      .query("user_prompt_addenda")
+      .filter((q) => q.eq(q.field("isActive"), true))
+      .take(500);
+    let retired = 0;
+    for (const row of rows) {
+      if ((row.hits ?? 0) === 0 && row.updatedAt < cutoff) {
+        await ctx.db.patch(row._id, { isActive: false, updatedAt: Date.now() });
+        retired++;
+      }
+    }
+    return { retired };
+  },
+});
