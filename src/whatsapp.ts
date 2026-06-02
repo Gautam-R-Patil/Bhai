@@ -1675,7 +1675,7 @@ Say NO if:
 - You responded recently
 
 Reply ONLY "YES" or "NO" then a 5-word reason.` }],
-            modelOverride: "anthropic/claude-haiku-4.5",
+            modelOverride: "openai/gpt-4.1-nano",
         });
 
         const answer = decisionResult.choices?.[0]?.message?.content?.trim() || "NO";

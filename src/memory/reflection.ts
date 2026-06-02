@@ -796,7 +796,7 @@ ${input.slice(0, 6000)}`;
         const response = await llm.chat({
             messages: [{ role: "user", content: prompt }],
             systemPrompt: "You are a JSON-only coding strategy extractor. Output valid JSON, no markdown.",
-            modelOverride: "anthropic/claude-haiku-4.5",
+            modelOverride: "openai/gpt-4.1-nano",
             responseFormat: "json_object",
         });
         const text = response.choices?.[0]?.message?.content || "";

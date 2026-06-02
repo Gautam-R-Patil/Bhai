@@ -101,7 +101,7 @@ PRIORITY: 1`,
         const response = await llm.chat({
             messages,
             systemPrompt: "You are a hierarchical planner. Decompose tasks into high-level goals, NOT detailed steps.",
-            modelOverride: "anthropic/claude-haiku-4.5",
+            modelOverride: "openai/gpt-5-mini",
         });
 
         const content = response.choices?.[0]?.message?.content || "";
@@ -136,7 +136,7 @@ DEPENDS: [step numbers this depends on, or "none"]`,
         const response = await llm.chat({
             messages,
             systemPrompt: "You are a task decomposer. Break goals into specific, actionable steps with tool hints.",
-            modelOverride: "anthropic/claude-haiku-4.5",
+            modelOverride: "openai/gpt-5-mini",
         });
 
         const content = response.choices?.[0]?.message?.content || "";

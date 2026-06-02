@@ -1691,7 +1691,7 @@ When in doubt about task ack → NONE (don't acknowledge casual chat as task).
 When in doubt about complexity → COMPLEX (better to use Pro than give a bad answer).
 
 Respond with EXACTLY two lines, nothing else.`,
-            modelOverride: MODELS.HAIKU,
+            modelOverride: MODELS.GPT41_NANO,
         });
 
         const text = (response.choices[0]?.message?.content || "NONE\nCOMPLEX").trim();

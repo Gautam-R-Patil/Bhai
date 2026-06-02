@@ -297,6 +297,7 @@ export default defineSchema({
     latencyMs: v.number(),
     inputTokens: v.optional(v.number()),
     outputTokens: v.optional(v.number()),
+    cachedTokens: v.optional(v.number()),
     errorMessage: v.optional(v.string()),
     hasMedia: v.optional(v.boolean()),
     timestamp: v.number(),

@@ -52,11 +52,20 @@ export function deriveSharedKey(
         );
     }
 
+    if (!_clientPublicKey) {
+        throw new Error("Client public key not staged — call generateKeyPair() before deriveSharedKey()");
+    }
+
     const serverPubKey = Buffer.from(serverPublicKeyBase64, "base64");
     const sharedSecret = _ecdh.computeSecret(serverPubKey);
 
     const salt = Buffer.from("atlas-e2e-salt");
-    const info = Buffer.from("atlas-e2e-aes256-key");
+    // Bind both pubkeys into the HKDF info so a key-substitution under a TLS
+    // MITM breaks derivation. MUST byte-match convex/crypto.ts::deriveSharedKey:
+    //   `atlas-e2e-aes256-key|${clientPublicKey}|${serverPublicKey}`
+    const info = Buffer.from(
+        `atlas-e2e-aes256-key|${_clientPublicKey}|${serverPublicKeyBase64}`,
+    );
     _sharedKey = deriveE2EKey(sharedSecret, salt, info, version);
 }
 

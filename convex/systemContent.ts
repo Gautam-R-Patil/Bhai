@@ -152,7 +152,23 @@ export const assembleSystemPrompt = internalQuery({
       parts.push(promptMap["rules-windows"]);
     }
 
-    if (promptMap["browsing"]) parts.push(promptMap["browsing"]);
+    // Browsing guidance — included only when the task signals browsing.
+    // The tool-router's `browser` category maps to these skill slugs
+    // (scripts/seed-system-content.ts), so the ~2.4K-token slug loads
+    // exactly when a browser_* tool is actually in play — never on a
+    // bare greeting. Keep this set in sync with the `browser`-category
+    // skills in the seed script.
+    const browsingSkills = new Set([
+      "web_browsing",
+      "full_stack_developer",
+      "research_analyst",
+      "security_auditor",
+      "ui_ux_designer",
+      "marketing",
+    ]);
+    if (promptMap["browsing"] && skillSlugs.some((s) => browsingSkills.has(s))) {
+      parts.push(promptMap["browsing"]);
+    }
 
     // Coding workflow + tool guidance — included when the task signals
     // coding. skillSlugs is the router's semantic match, so any coding-

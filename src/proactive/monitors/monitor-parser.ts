@@ -45,7 +45,7 @@ export async function parseMonitorRule(
         const res = await deps.llm.chat({
             messages: [{ role: "user", content: userPhrase }],
             systemPrompt,
-            modelOverride: "anthropic/claude-haiku-4.5",
+            modelOverride: "openai/gpt-4.1-nano",
             responseFormat: "json_object",
         });
         content = res?.choices?.[0]?.message?.content?.trim();

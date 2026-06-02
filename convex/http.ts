@@ -394,6 +394,7 @@ http.route({
       errorType?: string;
       inputTokens?: number;
       outputTokens?: number;
+      cachedTokens?: number;
       hasMedia?: boolean;
     }) => {
       const latencyMs = Date.now() - callStartedAt;
@@ -407,6 +408,7 @@ http.route({
           latencyMs,
           inputTokens: params.inputTokens,
           outputTokens: params.outputTokens,
+          cachedTokens: params.cachedTokens,
           errorMessage: params.errorMessage,
           hasMedia: params.hasMedia,
         });
@@ -602,17 +604,14 @@ http.route({
         );
 
         if (serverPrompt) {
-          // Merge with any existing system message from client (dynamic context like time, widgets)
-          if (messages.length > 0 && messages[0].role === "system") {
-            // Prepend server prompt to client's dynamic context
-            messages[0] = {
-              ...messages[0],
-              content: serverPrompt + "\n\n" + (messages[0].content || ""),
-            };
-          } else {
-            // No client system message — insert server prompt as first message
-            messages.unshift({ role: "system", content: serverPrompt });
-          }
+          // Keep the static server prompt as its OWN first system message so the
+          // prompt-cache breakpoint (added below, on messages[0]) covers a
+          // byte-stable prefix. Do NOT concatenate the client's dynamic context
+          // (SYSTEM CLOCK timestamp, widgets) into it — that volatile content
+          // changes every request and would bust the cache on every call,
+          // which is exactly what kept the cache hit-rate at 0%. The client's
+          // dynamic system message stays as a SEPARATE block right after.
+          messages.unshift({ role: "system", content: serverPrompt });
         }
       } catch (err: any) {
         // Non-fatal: if prompt assembly fails, proceed without server prompt
@@ -764,12 +763,14 @@ http.route({
       // 9c. Per-call audit row. Pulled out of the response payload so we
       //     don't keep prompts/responses — just token totals + latency.
       const usage = responseData?.usage ?? {};
+      const cachedTokens = usage.prompt_tokens_details?.cached_tokens;
       await logCall({
         model: String(model),
         status: "success",
         credits: cost,
         inputTokens: typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : undefined,
         outputTokens: typeof usage.completion_tokens === "number" ? usage.completion_tokens : undefined,
+        cachedTokens: typeof cachedTokens === "number" ? cachedTokens : undefined,
         hasMedia,
       });
 

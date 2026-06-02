@@ -327,7 +327,15 @@ export function selectModel(opts: {
         if (nativeTaskType) nativeOpts.taskType = nativeTaskType;
         if (opts.modelHint) nativeOpts.modelHint = opts.modelHint;
         if (opts.urgency) nativeOpts.urgency = opts.urgency;
-        if (opts.lastToolCalls?.length) nativeOpts.lastToolCalls = opts.lastToolCalls;
+        // Native ToolCallRef expects `{ name }`, but callers pass the OpenAI
+        // shape `{ function: { name } }`. Map it — passing the raw shape throws
+        // `Missing field 'name' on SelectModelOptions.lastToolCalls` on the
+        // 2nd iteration of any tool-using task (napi field-by-name binding).
+        if (opts.lastToolCalls?.length) {
+            nativeOpts.lastToolCalls = opts.lastToolCalls.map((tc) => ({
+                name: tc?.function?.name ?? (tc as unknown as { name?: string })?.name ?? "",
+            }));
+        }
         const raw = native.selectModel(nativeOpts as Parameters<typeof native.selectModel>[0]);
         result = convertSelection(raw);
     } else {
@@ -353,6 +361,25 @@ export function selectModel(opts: {
             const escalated = maybeEscalateForSynthesis(result, false);
             if (escalated) return escalated;
         } catch { /* additive — fall through */ }
+    }
+
+    // Cost-aware routing safety net (gated by ATLAS_NO_COST_ROUTING, default ON).
+    // Belt-and-suspenders cap: plain single-turn chat must not reach Opus even
+    // if the native binary is stale (pre-rebuild) and still routes upward. The
+    // Flash/GPT down-routing for casual chat lives in the native binary; this
+    // net only enforces the conservative Opus→Sonnet cap, which is the part
+    // we can re-derive purely from the selection without personality_need.
+    if (process.env.ATLAS_NO_COST_ROUTING !== "true") {
+        const plainSingleTurn =
+            result.taskType === "first_iteration" || result.taskType === "simple_chat";
+        if (plainSingleTurn && result.modelId === "anthropic/claude-opus-4.6") {
+            result = {
+                ...result,
+                modelId: "anthropic/claude-sonnet-4.6",
+                displayName: "Sonnet 4.6",
+                reason: `${result.reason}+cost_cap:opus_to_sonnet`,
+            };
+        }
     }
     return result;
 }

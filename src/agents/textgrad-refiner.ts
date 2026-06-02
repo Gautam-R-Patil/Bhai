@@ -76,7 +76,7 @@ Be precise and actionable — vague feedback is useless.`,
         const response = await llm.chat({
             messages,
             systemPrompt: "You are a textual gradient generator. Produce precise, actionable feedback for each weakness. Be specific about what's wrong and how to fix it.",
-            modelOverride: "anthropic/claude-haiku-4.5",
+            modelOverride: "openai/gpt-5-mini",
         });
 
         return parseGradients(response.choices?.[0]?.message?.content || "");

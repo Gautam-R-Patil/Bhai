@@ -59,7 +59,7 @@ SEARCH_AGAINST: [query to find contradicting evidence]`,
         const response = await llm.chat({
             messages,
             systemPrompt: "You are a scientific research planner. Generate falsifiable hypotheses with designed search strategies.",
-            modelOverride: "anthropic/claude-haiku-4.5",
+            modelOverride: "openai/gpt-5-mini",
         });
 
         const content = response.choices?.[0]?.message?.content || "";

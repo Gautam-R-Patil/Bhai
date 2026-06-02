@@ -119,7 +119,7 @@ SUGGESTIONS:
         const response = await llm.chat({
             messages,
             systemPrompt: perspective.systemPrompt,
-            modelOverride: "anthropic/claude-haiku-4.5",
+            modelOverride: "openai/gpt-5-mini",
         });
 
         const content = response.choices?.[0]?.message?.content || "";

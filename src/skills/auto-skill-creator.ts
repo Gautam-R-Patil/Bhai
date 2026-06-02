@@ -164,7 +164,7 @@ Output ONLY valid JSON.`;
     const response = await llm.chat({
         messages,
         systemPrompt: "You analyze task executions and extract reusable skill patterns. Output valid JSON only.",
-        modelOverride: "anthropic/claude-haiku-4.5",
+        modelOverride: "openai/gpt-4.1-nano",
     });
 
     const content = response.choices?.[0]?.message?.content || "";

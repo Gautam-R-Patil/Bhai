@@ -996,7 +996,7 @@ Respond with ONLY the action keyword (and ID if applicable), e.g.: "UPDATE 42" o
         const response = await memoryLLM.chat({
             messages: [{ role: "user", content: decisionPrompt }],
             systemPrompt: "You are a concise memory deduplication engine. Respond with only the action.",
-            modelOverride: "anthropic/claude-haiku-4.5",
+            modelOverride: "openai/gpt-4.1-nano",
         });
 
         const decision = (response.choices[0]?.message?.content || "ADD").trim().toUpperCase();
@@ -1775,7 +1775,7 @@ export async function recall(
                     },
                 ],
                 systemPrompt: "You generate hypothetical memory entries. Output only the memory text, no explanation.",
-                modelOverride: "anthropic/claude-haiku-4.5",
+                modelOverride: "openai/gpt-4.1-nano",
             });
             const hypothetical = hydeResponse?.choices?.[0]?.message?.content;
             if (hypothetical && hypothetical.length > 10) {

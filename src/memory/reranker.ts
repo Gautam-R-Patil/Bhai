@@ -58,7 +58,7 @@ ${toRerank.map((c, i) => `[${i + 1}] ${c.content.substring(0, 200)}`).join("\n")
         const response = await llm.chat({
             messages,
             systemPrompt: "You are a relevance reranker. Output only comma-separated numbers, nothing else.",
-            modelOverride: "anthropic/claude-haiku-4.5",
+            modelOverride: "openai/gpt-4.1-nano",
         });
 
         const content = response.choices?.[0]?.message?.content || "";

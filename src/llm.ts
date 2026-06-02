@@ -58,6 +58,9 @@ export const MODELS = {
     DEEPSEEK_V31: "deepseek/deepseek-chat-v3.1",
     DEEPSEEK_V32: "deepseek/deepseek-v3.2-exp",
     GLM_46: "z-ai/glm-4.6",
+    GPT5_MINI: "openai/gpt-5-mini",
+    GPT5_NANO: "openai/gpt-5-nano",
+    GPT41_NANO: "openai/gpt-4.1-nano",
 };
 
 export const MODEL_DISPLAY: Record<string, string> = {
@@ -210,6 +213,13 @@ export function createLLMClient(config: Config): LLMClient {
                 if (isThinking) {
                     const apiEffort = effort === "max" ? "high" : effort;
                     requestBody.reasoning = { effort: apiEffort };
+                } else if (model.startsWith("openai/gpt-5")) {
+                    // GPT-5 models reason by DEFAULT when no reasoning param is
+                    // sent — which made fast-path acks take ~11s. Force minimal
+                    // reasoning so greetings respond fast (Haiku-like latency)
+                    // while keeping the model's low cost. Anthropic/Gemini have
+                    // no such default, so this is scoped to gpt-5*.
+                    requestBody.reasoning = { effort: "minimal" };
                 }
 
             // Exclude already-tried models so each hop surfaces a new provider.

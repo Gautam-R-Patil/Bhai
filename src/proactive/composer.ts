@@ -77,7 +77,7 @@ export async function compose(
         const res = await deps.llm.chat({
             messages: [{ role: "user", content: JSON.stringify(userPayload) }],
             systemPrompt,
-            modelOverride: "anthropic/claude-haiku-4.5",
+            modelOverride: "openai/gpt-4.1-nano",
             responseFormat: "json_object",
         });
         content = res?.choices?.[0]?.message?.content?.trim();
@@ -236,7 +236,7 @@ Output ONLY the message text, nothing else.`;
     try {
         const res = await deps.llm.chat({
             messages: [{ role: "user", content: prompt }],
-            modelOverride: "anthropic/claude-haiku-4.5",
+            modelOverride: "openai/gpt-4.1-nano",
         });
         content = res?.choices?.[0]?.message?.content?.trim();
     } catch (e) {

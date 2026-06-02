@@ -65,7 +65,7 @@ Respond with ONLY the scores, one per line, as numbers 0-10:`,
         const response = await llm.chat({
             messages,
             systemPrompt: "You are a Process Reward Model. Score each reasoning step 0-10. Output only numbers, one per line.",
-            modelOverride: "anthropic/claude-haiku-4.5",
+            modelOverride: "openai/gpt-5-mini",
         });
 
         const content = response.choices?.[0]?.message?.content || "";

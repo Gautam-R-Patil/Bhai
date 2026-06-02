@@ -72,7 +72,7 @@ async function flushToMemory(
             ],
             systemPrompt:
                 "You are a memory extractor. Output ONLY a JSON array of fact strings. No prose, no markdown, no explanations.",
-            modelOverride: "anthropic/claude-haiku-4.5",
+            modelOverride: "openai/gpt-4.1-nano",
         });
 
         const raw = response.choices[0]?.message?.content;

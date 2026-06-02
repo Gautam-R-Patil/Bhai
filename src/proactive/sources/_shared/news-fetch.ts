@@ -35,7 +35,7 @@ async function extractHeadlines(searchText: string, llm: LLMClient): Promise<str
             ],
             systemPrompt: "You extract news headlines. Return only a JSON object with a headlines array (up to 5 strings). Each headline is one concise sentence.",
             responseFormat: "json_object",
-            modelOverride: "anthropic/claude-haiku-4.5",
+            modelOverride: "openai/gpt-4.1-nano",
         });
         const content = resp.choices[0]?.message?.content ?? "";
         const parsed = JSON.parse(content);

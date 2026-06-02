@@ -97,7 +97,7 @@ CONFIDENCE: [0.0-1.0]`,
         const response = await llm.chat({
             messages,
             systemPrompt: "Formalize reasoning steps into logical propositions. Be precise.",
-            modelOverride: "anthropic/claude-haiku-4.5",
+            modelOverride: "openai/gpt-5-mini",
         });
 
         const content = response.choices?.[0]?.message?.content || "";

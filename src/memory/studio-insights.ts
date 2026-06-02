@@ -146,7 +146,7 @@ async function computeRecurringTheme(llm: LLMClient | null, windowDays: number):
                     },
                 ],
                 systemPrompt: "You produce concise, friendly summaries. Output strict JSON only.",
-                modelOverride: "anthropic/claude-haiku-4.5",
+                modelOverride: "openai/gpt-4.1-nano",
                 responseFormat: "json_object",
             });
             const text = response.choices?.[0]?.message?.content || "";

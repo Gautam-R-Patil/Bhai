@@ -320,6 +320,9 @@ Default ON unless marked opt-IN. Set `"true"` (or sentinel) to disable. `grep -r
 - `ATLAS_POST_SYNTHESIS_BUDGET_MS` — critic+MoA wall-clock cap (default 90000); also caps verifier
 - `ATLAS_AUTO_PLAN_MODE` — opt-in auto-entry to plan mode
 
+**Model routing / cost:**
+- `ATLAS_NO_COST_ROUTING` — disables the cost-aware routing net in `src/model-router.ts::selectModel`. Default ON. When ON, plain single-turn chat (`first_iteration`/`simple_chat`) is capped at Sonnet (never Opus) as a belt-and-suspenders guard even if the native binary is stale. The cheap-model down-routing for casual chat (GPT-5 nano/mini for the two lowest user-facing rungs; DeepSeek/GLM/GPT in background) lives in the native `select_dynamic_model` and needs `npm run build:native` — `ATLAS_NO_COST_ROUTING=true` only disables the TS Opus-cap net, not the native picks. User-facing tiers: `pn≤3 & score≤15`→gpt-5-nano, `pn≤4 & score≤25`→gpt-5-mini, else Haiku→Sonnet→Opus (Opus gated to ComplexChat/explicit-complexity branches). Cost tables kept in sync across `native/src/model_router.rs` registry, `src/llm-middleware.ts` MODEL_COSTS, and `convex/credit_cost.ts`.
+
 **Codebase index:**
 - `ATLAS_NO_CODEBASE_INDEX` — `codebase_index build` returns disabled
 - `ATLAS_NO_ARCHITECTURE_INJECTION` — no first-iter `<architecture>` block

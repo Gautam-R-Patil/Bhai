@@ -177,7 +177,7 @@ If the task appears complete, respond with "DONE".`,
         const response = await llm.chat({
             messages,
             systemPrompt: "You are a planning module. Generate possible next actions for the task. Be diverse — explore different approaches.",
-            modelOverride: "anthropic/claude-haiku-4.5",
+            modelOverride: "openai/gpt-5-mini",
         });
 
         const content = response.choices?.[0]?.message?.content || "";

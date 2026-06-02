@@ -225,6 +225,7 @@ interface CostEntry {
     model: string;
     promptTokens: number;
     completionTokens: number;
+    cachedTokens: number;
     estimatedCost: number;
     timestamp: number;
 }
@@ -232,18 +233,32 @@ interface CostEntry {
 const costLog: CostEntry[] = [];
 const MAX_COST_LOG = 500;
 
-// Approximate costs per 1M tokens (USD) -- rough estimates for routing
+// Costs per 1M tokens (USD), verified against OpenRouter. Kept in sync with
+// the Rust registry in native/src/model_router.rs (build_model_registry).
 const MODEL_COSTS: Record<string, { input: number; output: number }> = {
-    "anthropic/claude-opus-4.6": { input: 15, output: 75 },
+    "anthropic/claude-opus-4.6": { input: 5, output: 25 },
     "anthropic/claude-sonnet-4.6": { input: 3, output: 15 },
     "anthropic/claude-sonnet-4.5": { input: 3, output: 15 },
-    "anthropic/claude-haiku-4.5": { input: 0.8, output: 4 },
-    "google/gemini-3.1-pro-preview-customtools": { input: 1.25, output: 10 },
-    "google/gemini-2.5-flash": { input: 0.15, output: 0.6 },
-    "google/gemini-3-flash-preview": { input: 0.15, output: 0.6 },
-    "google/gemini-3.1-flash-lite-preview": { input: 0.04, output: 0.15 },
-    "google/gemini-2.5-flash-lite": { input: 0.04, output: 0.15 },
+    "anthropic/claude-haiku-4.5": { input: 1, output: 5 },
+    "google/gemini-3.1-pro-preview-customtools": { input: 2, output: 12 },
+    "google/gemini-2.5-flash": { input: 0.3, output: 2.5 },
+    "google/gemini-3-flash-preview": { input: 0.5, output: 3 },
+    "google/gemini-3.1-flash-lite-preview": { input: 0.25, output: 1 },
+    "google/gemini-2.5-flash-lite": { input: 0.1, output: 0.4 },
+    "google/gemini-2.0-flash-001": { input: 0.1, output: 0.4 },
+    "amazon/nova-pro-v1": { input: 0.8, output: 3.2 },
+    "amazon/nova-lite-v1": { input: 0.06, output: 0.24 },
+    "amazon/nova-micro-v1": { input: 0.04, output: 0.16 },
+    "deepseek/deepseek-chat-v3.1": { input: 0.27, output: 1.1 },
+    "deepseek/deepseek-v3.2-exp": { input: 0.27, output: 0.4 },
+    "z-ai/glm-4.6": { input: 0.55, output: 2.2 },
+    "openai/gpt-5-mini": { input: 0.25, output: 2 },
+    "openai/gpt-5-nano": { input: 0.05, output: 0.4 },
+    "openai/gpt-4.1-nano": { input: 0.1, output: 0.4 },
 };
+
+// Fraction of full input price billed for cache-read (prompt-cache hit) tokens.
+const CACHE_READ_MULTIPLIER = 0.1;
 
 const DEFAULT_COST = { input: 1, output: 5 }; // Conservative default
 
@@ -259,16 +274,20 @@ export function createCostMiddleware(): LLMMiddleware {
         const usage = response.usage;
         const promptTokens = usage?.prompt_tokens ?? 0;
         const completionTokens = usage?.completion_tokens ?? 0;
+        const cachedTokens = usage?.prompt_tokens_details?.cached_tokens ?? 0;
+        const uncachedPrompt = Math.max(0, promptTokens - cachedTokens);
 
         const costs = MODEL_COSTS[model] || DEFAULT_COST;
         const estimatedCost =
-            (promptTokens / 1_000_000) * costs.input +
+            (uncachedPrompt / 1_000_000) * costs.input +
+            (cachedTokens / 1_000_000) * costs.input * CACHE_READ_MULTIPLIER +
             (completionTokens / 1_000_000) * costs.output;
 
         const entry: CostEntry = {
             model,
             promptTokens,
             completionTokens,
+            cachedTokens,
             estimatedCost,
             timestamp: Date.now(),
         };
@@ -289,17 +308,21 @@ export function getCostSummary(): {
     totalCalls: number;
     totalPromptTokens: number;
     totalCompletionTokens: number;
+    totalCachedTokens: number;
+    cacheHitRatio: number;
     totalEstimatedCost: number;
     byModel: Record<string, { calls: number; cost: number }>;
 } {
     const byModel: Record<string, { calls: number; cost: number }> = {};
     let totalPromptTokens = 0;
     let totalCompletionTokens = 0;
+    let totalCachedTokens = 0;
     let totalEstimatedCost = 0;
 
     for (const entry of costLog) {
         totalPromptTokens += entry.promptTokens;
         totalCompletionTokens += entry.completionTokens;
+        totalCachedTokens += entry.cachedTokens;
         totalEstimatedCost += entry.estimatedCost;
 
         if (!byModel[entry.model]) {
@@ -313,6 +336,8 @@ export function getCostSummary(): {
         totalCalls: costLog.length,
         totalPromptTokens,
         totalCompletionTokens,
+        totalCachedTokens,
+        cacheHitRatio: totalPromptTokens > 0 ? totalCachedTokens / totalPromptTokens : 0,
         totalEstimatedCost,
         byModel,
     };

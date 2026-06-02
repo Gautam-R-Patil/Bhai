@@ -226,7 +226,7 @@ Your thought:`,
         const response = await _llm.chat({
             messages,
             systemPrompt: "You're the internal reasoning module of a personal AI agent. Generate a brief proactive thought, or NOTHING if there's nothing worth saying.",
-            modelOverride: "anthropic/claude-haiku-4.5",
+            modelOverride: "openai/gpt-4.1-nano",
         });
 
         const content = response.choices?.[0]?.message?.content?.trim();

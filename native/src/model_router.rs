@@ -304,6 +304,54 @@ fn build_model_registry() -> HashMap<String, ModelInfo> {
         provider: Provider::Zai,
     });
 
+    m.insert("openai/gpt-5-mini".into(), ModelInfo {
+        id: "openai/gpt-5-mini".into(),
+        display_name: "GPT-5 mini".into(),
+        input_cost_per_1m: 0.25,
+        output_cost_per_1m: 2.00,
+        tier: 5,
+        speed: Speed::Fast,
+        strengths: vec!["reasoning".into(), "tool_use".into(), "coding".into(), "balanced".into()],
+        max_tokens: 8192,
+        supports_tools: true,
+        supports_parallel_tools: true,
+        supports_vision: true,
+        provider: Provider::Openai,
+    });
+
+    m.insert("openai/gpt-5-nano".into(), ModelInfo {
+        id: "openai/gpt-5-nano".into(),
+        display_name: "GPT-5 nano".into(),
+        input_cost_per_1m: 0.05,
+        output_cost_per_1m: 0.40,
+        tier: 7,
+        speed: Speed::Fast,
+        strengths: vec!["fast_response".into(), "simple_qa".into(), "classification".into(), "conversational".into()],
+        max_tokens: 4096,
+        supports_tools: true,
+        supports_parallel_tools: true,
+        supports_vision: false,
+        provider: Provider::Openai,
+    });
+
+    // GPT-4.1 nano — genuinely non-reasoning (no over-thinking latency),
+    // sub-second, cheap. Used for the ack fast-path where speed matters and
+    // gpt-5-nano's mandatory reasoning made greetings take ~11s.
+    m.insert("openai/gpt-4.1-nano".into(), ModelInfo {
+        id: "openai/gpt-4.1-nano".into(),
+        display_name: "GPT-4.1 nano".into(),
+        input_cost_per_1m: 0.10,
+        output_cost_per_1m: 0.40,
+        tier: 7,
+        speed: Speed::Fast,
+        strengths: vec!["fast_response".into(), "simple_qa".into(), "ack".into(), "conversational".into(), "classification".into()],
+        max_tokens: 4096,
+        supports_tools: true,
+        supports_parallel_tools: true,
+        supports_vision: true,
+        provider: Provider::Openai,
+    });
+
     m
 }
 
@@ -1388,18 +1436,18 @@ fn compute_complexity_score_ref(signals: &Signals) -> i32 {
 fn task_model_map(task: &TaskType) -> &'static str {
     match *task {
         TaskType::Classify => "amazon/nova-micro-v1",
-        TaskType::SimpleChat => "anthropic/claude-haiku-4.5",
+        TaskType::SimpleChat => "openai/gpt-4.1-nano",
         TaskType::ComplexChat => "anthropic/claude-opus-4.6",
         TaskType::ToolLoop => "google/gemini-2.5-flash",
         TaskType::Coding => "anthropic/claude-sonnet-4.6",
         TaskType::Planning => "anthropic/claude-sonnet-4.6",
-        TaskType::Synthesis => "google/gemini-2.5-flash",
-        TaskType::FinalAnswer => "anthropic/claude-haiku-4.5",
+        TaskType::Synthesis => "deepseek/deepseek-chat-v3.1",
+        TaskType::FinalAnswer => "openai/gpt-4.1-nano",
         TaskType::Research => "google/gemini-2.5-flash",
         TaskType::SubAgent => "google/gemini-2.5-flash",
-        TaskType::AudioAnalysis => "google/gemini-3.1-flash-lite-preview",
+        TaskType::AudioAnalysis => "google/gemini-2.5-flash-lite",
         TaskType::Vision => "anthropic/claude-sonnet-4.6",
-        TaskType::FirstIteration => "anthropic/claude-haiku-4.5",
+        TaskType::FirstIteration => "openai/gpt-4.1-nano",
         TaskType::ErrorRecovery => "anthropic/claude-opus-4.6",
         TaskType::ToolSynthesis => "anthropic/claude-sonnet-4.6",
     }
@@ -1565,30 +1613,45 @@ fn compute_personality_need(signals: &Signals, task_type: &TaskType, message: &s
 // ── Dynamic Model Selection ──────────────────
 
 fn select_dynamic_model(score: i32, personality_need: i32, task_type: &TaskType) -> &'static str {
-    // Background tasks: cost-optimized with cheap models
+    // Background tasks: cost-optimized across the cheap stable pool. The user
+    // never sees this prose, so optimize hard for cost-per-capability.
     if !is_user_facing_task(task_type) {
         if score <= 15 { return "amazon/nova-micro-v1"; }
-        if score <= 25 { return "amazon/nova-lite-v1"; }
-        if score <= 40 { return "google/gemini-2.5-flash"; }
+        if score <= 25 { return "openai/gpt-5-nano"; }
+        if score <= 40 { return "deepseek/deepseek-chat-v3.1"; }
         if score <= 55 { return "google/gemini-2.5-flash"; }
-        if score <= 70 { return "google/gemini-3.1-pro-preview-customtools"; }
-        if score <= 85 { return "google/gemini-3-flash-preview"; }
+        if score <= 70 { return "openai/gpt-5-mini"; }
+        if score <= 85 { return "z-ai/glm-4.6"; }
         return "anthropic/claude-sonnet-4.6";
     }
 
-    // User-facing: Claude family — Haiku primary, Sonnet for deeper, Opus for complex
+    // User-facing: the reply prose is seen by the user, so bias toward
+    // models with strong conversational voice. The two cheapest rungs use
+    // GPT-5 nano/mini, which benchmark at-or-above Haiku/Flash on
+    // intelligence-per-dollar — cheaper AND not a quality drop. Higher
+    // personality_need stays on Claude for voice consistency.
+    //
+    // Plain single-turn chat (FirstIteration / SimpleChat) caps at Sonnet:
+    // Opus is reserved for ComplexChat and the explicit-complexity branches,
+    // none of which reach this function.
+    let plain_single_turn =
+        matches!(task_type, TaskType::FirstIteration | TaskType::SimpleChat);
+
     if personality_need <= 4 {
-        return "anthropic/claude-haiku-4.5";
+        // Ultra-trivial → GPT-4.1 nano: fast, non-reasoning (no over-think
+        // latency), cheap. gpt-5-nano was slow here because it always reasons.
+        if personality_need <= 3 && score <= 15 { return "openai/gpt-4.1-nano"; }
+        return "openai/gpt-5-mini";
     }
     if personality_need <= 6 {
         return "anthropic/claude-sonnet-4.6";
     }
     if personality_need <= 8 {
-        if score <= 60 { return "anthropic/claude-sonnet-4.6"; }
+        if score <= 60 || plain_single_turn { return "anthropic/claude-sonnet-4.6"; }
         return "anthropic/claude-opus-4.6";
     }
     // 9-10: deep emotions / complex reasoning
-    if score <= 50 { return "anthropic/claude-sonnet-4.6"; }
+    if score <= 50 || plain_single_turn { return "anthropic/claude-sonnet-4.6"; }
     "anthropic/claude-opus-4.6"
 }
 
@@ -1787,13 +1850,13 @@ pub fn select_model(opts: SelectModelOptions) -> ModelSelection {
     // instead of a hardcoded word list — catches any language, slang, emoji, etc.
     if iteration <= 1 && !has_media && is_low_signal_ack(message) {
         return ModelSelection {
-            model_id: "anthropic/claude-haiku-4.5".to_string(),
-            display_name: "Haiku 4.5".to_string(),
+            model_id: "openai/gpt-4.1-nano".to_string(),
+            display_name: "GPT-4.1 nano".to_string(),
             thinking_level: ThinkingLevel::Off,
             reason: "fast_path:ack".to_string(),
             complexity_score: 0,
             task_type: TaskType::SimpleChat,
-            estimated_cost_per_call: 0.001,
+            estimated_cost_per_call: 0.0005,
         };
     }
 
@@ -1840,7 +1903,7 @@ pub fn select_model(opts: SelectModelOptions) -> ModelSelection {
             model_id = "anthropic/claude-sonnet-4.6".to_string();
             reason = format!("vision_complex:score{}", adjusted_score);
         } else {
-            model_id = "anthropic/claude-haiku-4.5".to_string();
+            model_id = "openai/gpt-4.1-nano".to_string();
             reason = format!("vision_standard:score{}", adjusted_score);
         }
     } else if task_type == TaskType::Research {

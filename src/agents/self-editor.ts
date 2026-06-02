@@ -44,7 +44,7 @@ If no edit would help, respond "NO_EDIT".`,
         const response = await llm.chat({
             messages,
             systemPrompt: "You are a self-improvement module. Suggest minimal instruction edits to fix recurring failures.",
-            modelOverride: "anthropic/claude-haiku-4.5",
+            modelOverride: "openai/gpt-5-mini",
         });
 
         const content = response.choices?.[0]?.message?.content || "";

@@ -42,7 +42,7 @@ async function parseWeatherFromSearch(
             ],
             systemPrompt: "You extract structured weather data. Return only a JSON object with summary (string), temp_c (number), rain_prob (0-1 float). No commentary.",
             responseFormat: "json_object",
-            modelOverride: "anthropic/claude-haiku-4.5",
+            modelOverride: "openai/gpt-4.1-nano",
         });
         const content = resp.choices[0]?.message?.content ?? "";
         const parsed = JSON.parse(content);

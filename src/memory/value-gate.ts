@@ -141,7 +141,7 @@ export async function llmGate(content: string, llm: LlmClientLike | null): Promi
                     },
                 ],
                 systemPrompt: "You are a concise memory admission classifier. Respond with only the word ADD or DROP.",
-                modelOverride: "anthropic/claude-haiku-4.5",
+                modelOverride: "openai/gpt-4.1-nano",
             }),
             timeoutPromise,
         ]);

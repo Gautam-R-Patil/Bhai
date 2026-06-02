@@ -127,7 +127,7 @@ Only suggest goals that are genuinely useful and actionable. If nothing is worth
         const response = await llm.chat({
             messages,
             systemPrompt: "You are the goal-generation module of a personal AI agent. Suggest autonomous goals based on user patterns.",
-            modelOverride: "anthropic/claude-haiku-4.5",
+            modelOverride: "openai/gpt-5-mini",
         });
 
         const content = response.choices?.[0]?.message?.content || "";

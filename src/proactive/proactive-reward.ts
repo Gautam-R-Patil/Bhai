@@ -71,7 +71,7 @@ Format: SCORE: [number] REASON: [explanation]`,
         const response = await llm.chat({
             messages,
             systemPrompt: "Score proactive suggestions. Be strict — only high scores for genuinely useful, well-timed suggestions.",
-            modelOverride: "anthropic/claude-haiku-4.5",
+            modelOverride: "openai/gpt-5-mini",
         });
 
         const content = response.choices?.[0]?.message?.content || "";

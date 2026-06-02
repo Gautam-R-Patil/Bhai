@@ -549,7 +549,7 @@ Respond with JSON only: {"intent":"short_label","categories":["cat1"],"specific_
             routerLLM.chat({
                 messages: [{ role: "user", content: message }],
                 systemPrompt,
-                modelOverride: MODELS.HAIKU,
+                modelOverride: MODELS.GPT41_NANO,
             }),
             new Promise<never>((_, reject) =>
                 setTimeout(() => reject(new Error("timeout")), LLM_CLASSIFIER_TIMEOUT_MS),

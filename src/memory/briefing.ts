@@ -69,7 +69,7 @@ Output ONLY the briefing, no preamble.`;
         const response = await llm.chat({
             messages: [{ role: "user", content: briefingPrompt }],
             systemPrompt: "You are a concise memory synthesis engine. Output only the briefing.",
-            modelOverride: "anthropic/claude-haiku-4.5",
+            modelOverride: "openai/gpt-4.1-nano",
         });
 
         const briefing = response.choices?.[0]?.message?.content?.trim();
