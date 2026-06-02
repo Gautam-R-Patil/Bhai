@@ -24,7 +24,7 @@ import { getTemporalCache } from "./temporal-cache.js";
 // ── Brain-Inspired Module Imports ─────────────
 import { buildIndexFromDB, getHNSWIndex } from "./vector-index.js";
 import { buildTrigramQuery, containsCjk, sanitizeFts5Query } from "./fts5-query.js";
-import { hardAllow, hardReject, llmGate } from "./value-gate.js";
+import { hardAllow, hardReject, llmGate, threatReject } from "./value-gate.js";
 import { logGateDecision } from "./gate-audit.js";
 
 // ── Constants ─────────────────────────────────
@@ -775,19 +775,25 @@ export async function remember(
     let gateReason = "gate_disabled";
 
     if (!gateDisabled) {
-        const reject = hardReject(content, source, importance, category);
-        if (reject.reject) {
+        const threat = threatReject(content);
+        if (threat.reject) {
             gateDecision = "reject";
-            gateReason = reject.reason;
+            gateReason = threat.reason;
         } else {
-            const allow = hardAllow(content, source, importance, category);
-            if (allow.allow) {
-                gateDecision = "allow";
-                gateReason = allow.reason;
+            const reject = hardReject(content, source, importance, category);
+            if (reject.reject) {
+                gateDecision = "reject";
+                gateReason = reject.reason;
             } else {
-                const llmResult = await llmGate(content, memoryLLM);
-                gateDecision = llmResult.decision === "ADD" ? "allow" : "reject";
-                gateReason = llmResult.reason;
+                const allow = hardAllow(content, source, importance, category);
+                if (allow.allow) {
+                    gateDecision = "allow";
+                    gateReason = allow.reason;
+                } else {
+                    const llmResult = await llmGate(content, memoryLLM);
+                    gateDecision = llmResult.decision === "ADD" ? "allow" : "reject";
+                    gateReason = llmResult.reason;
+                }
             }
         }
 

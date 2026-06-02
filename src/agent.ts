@@ -1439,8 +1439,27 @@ STRATEGY: Execute in as few tool calls as possible.
                     }
                 })();
                 const [repoMap, arch] = await Promise.all([repoMapTask, archTask]);
-                if (repoMap) parts.push(repoMap);
-                if (arch) parts.push(arch);
+                // Scan attacker-influenceable context (a poisoned repo file can
+                // surface in repo_map/architecture) for embedded instructions.
+                // Fails OPEN: scan error or kill-switch → inject as before.
+                const guardContext = async (label: string, body: string | null): Promise<string | null> => {
+                    if (!body || process.env.ATLAS_NO_THREAT_SCAN === "true") return body;
+                    try {
+                        const { scanForThreats } = await import("./security/threat-patterns.js");
+                        const r = scanForThreats(body, "context");
+                        if (r.detected) {
+                            console.warn(`[AGENT] ${label} injection blocked (threat:${r.categories.join(",")})`);
+                            return `<${label}>\n[context omitted: failed injection scan — ${r.categories.join(",")}]\n</${label}>`;
+                        }
+                    } catch {
+                        /* fail open — inject unscanned context as before */
+                    }
+                    return body;
+                };
+                const safeRepoMap = await guardContext("repo_map", repoMap);
+                const safeArch = await guardContext("architecture", arch);
+                if (safeRepoMap) parts.push(safeRepoMap);
+                if (safeArch) parts.push(safeArch);
             }
 
             // ── Platform capabilities (injected once per session) ──

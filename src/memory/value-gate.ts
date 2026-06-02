@@ -3,6 +3,7 @@
 // See LICENSE.md for details.
 
 import { createHash } from "node:crypto";
+import { scanForThreats } from "../security/threat-patterns.js";
 
 export type Source = "user" | "tool" | "reflection" | "consolidation";
 
@@ -36,6 +37,16 @@ export function hardReject(content: string, source: Source, _importance: number,
     if (isPureJson(content)) {
         return { reject: true, reason: "pure_json" };
     }
+    return { reject: false, reason: "" };
+}
+
+// Strict prompt-injection / exfil / tool-coercion scan for memory writes.
+// Fails open (ATLAS_NO_THREAT_SCAN=true → never rejects). Pure regex + Set,
+// zero LLM. Reason flows as `threat:<categories>` through logGateDecision.
+export function threatReject(content: string): GateDecision {
+    if (process.env.ATLAS_NO_THREAT_SCAN === "true") return { reject: false, reason: "" };
+    const r = scanForThreats(content, "strict");
+    if (r.detected) return { reject: true, reason: `threat:${r.categories.join(",")}` };
     return { reject: false, reason: "" };
 }
 

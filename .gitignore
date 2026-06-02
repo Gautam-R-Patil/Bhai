@@ -91,6 +91,7 @@ desktop/hostinger-upload/
 !convex/otpless.test.ts
 !src/security/secrets-sanitizer.test.ts
 !src/security/url-safety.test.ts
+!src/security/threat-patterns.test.ts
 !src/security/osv-check.test.ts
 !src/crypto-kdf.test.ts
 !src/tools/coding/evidence-phrase.test.ts
@@ -101,6 +102,7 @@ desktop/hostinger-upload/
 !src/tools/tool-intelligence.test.ts
 !src/utils/json-extract.test.ts
 !src/memory/temporal-cache.test.ts
+!src/memory/context-pruning.test.ts
 !src/config/paths.test.ts
 !src/tools/coding/checkpoint-manager.test.ts
 !src/language.test.ts
