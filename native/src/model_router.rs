@@ -1973,16 +1973,25 @@ pub fn select_model(opts: SelectModelOptions) -> ModelSelection {
     }
 
     // ── Creative / UI-UX detection ──
+    // Only fire on SHORT messages (real requests, not pasted logs/output) and
+    // on UNAMBIGUOUS design terms. Bare substrings like "visual"/"css"/"layout"
+    // matched pasted terminal output ("Visual Studio Code") and mis-routed disk
+    // tasks to the priciest model (Gemini 3.1 Pro). Generic words removed;
+    // remaining ones are design-specific.
     let msg_lower = message.to_lowercase();
-    let is_creative_task = msg_lower.contains("design") || msg_lower.contains("ui/ux")
-        || msg_lower.contains("ui ux") || msg_lower.contains("layout")
+    let is_creative_task = message.len() <= 600 && (
+        msg_lower.contains("ui/ux") || msg_lower.contains("ui ux")
         || msg_lower.contains("mockup") || msg_lower.contains("wireframe")
-        || msg_lower.contains("prototype") || msg_lower.contains("figma")
-        || msg_lower.contains("aesthetic") || msg_lower.contains("redesign")
-        || msg_lower.contains("visual") || msg_lower.contains("css")
-        || msg_lower.contains("styling") || msg_lower.contains("animation")
-        || msg_lower.contains("responsive") || msg_lower.contains("tailwind")
-        || msg_lower.contains("color scheme") || msg_lower.contains("typography");
+        || msg_lower.contains("figma") || msg_lower.contains("redesign")
+        || msg_lower.contains("color scheme") || msg_lower.contains("typography")
+        || msg_lower.contains("design system") || msg_lower.contains("landing page")
+        || msg_lower.contains("tailwind")
+        // verb + design-object intent, not bare keyword presence
+        || (msg_lower.contains("design") && (msg_lower.contains("ui")
+            || msg_lower.contains("page") || msg_lower.contains("interface")
+            || msg_lower.contains("screen") || msg_lower.contains("component")
+            || msg_lower.contains("app") || msg_lower.contains("website")))
+    );
 
     if is_creative_task && (task_type == TaskType::Coding || task_type == TaskType::ToolLoop || task_type == TaskType::FirstIteration) {
         model_id = "google/gemini-3.1-pro-preview-customtools".to_string();

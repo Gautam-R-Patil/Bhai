@@ -13,9 +13,10 @@ import { selectModel } from "./model-router.js";
 // fallback.
 
 describe("cost-aware routing tiers", () => {
-    it("trivial casual chat routes to a cheap GPT-5 rung, not Claude", () => {
+    it("trivial casual chat routes to a cheap OpenAI rung, not Claude", () => {
         const r = selectModel({ message: "tell me a bit about what you can do", iteration: 1 });
-        expect(["openai/gpt-5-nano", "openai/gpt-5-mini"]).toContain(r.modelId);
+        expect(["openai/gpt-4.1-nano", "openai/gpt-5-nano", "openai/gpt-5-mini"]).toContain(r.modelId);
+        expect(r.modelId).not.toContain("claude");
     });
 
     it("background synthesis routes to DeepSeek (cheap, user never sees prose)", () => {

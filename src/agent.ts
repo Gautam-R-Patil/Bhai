@@ -1119,6 +1119,16 @@ STRATEGY: Execute in as few tool calls as possible.
     const metaState = createMetacognitionState();
     let metaNudged = false;
 
+    // Hard loop guard: count consecutive tool batches that produced no useful
+    // new result (errors or empty/identical output). The metacognition nudge
+    // only fires once and the model can ignore it — this forces the loop to
+    // end after sustained no-progress so a stuck task can't grind to the
+    // 200-iteration / token-burn ceiling (e.g. a shell loop returning empty
+    // stdout 38× in a row). Env-tunable; 0 disables.
+    const NO_PROGRESS_LIMIT = Number(process.env.ATLAS_NO_PROGRESS_LIMIT ?? "6");
+    let noProgressStreak = 0;
+    let lastBatchSignature = "";
+
     // Circuit breaker — trips after sustained failures or no-progress
     const circuitBreaker = createCircuitBreaker();
 
@@ -2073,9 +2083,18 @@ STRATEGY: Execute in as few tool calls as possible.
         }
 
         // ── Orchestrator Planning: Sonnet 4.6 generates execution plan for interactive tasks ──
-        const needsPlanning = activeCategories.some((c) =>
-            ["os_control", "app_management", "browser", "media", "communication", "scheduling"].includes(c),
-        );
+        const planningCategories = ["os_control", "app_management", "browser", "media", "communication", "scheduling"];
+        const actionCategoryCount = activeCategories.filter((c) => planningCategories.includes(c)).length;
+        // Skip the ~14K-token Sonnet plan for UNAMBIGUOUS single-domain tasks:
+        // the classifier was confident AND only one action-category is in play.
+        // Genuinely multi-domain or ambiguous tasks still get a plan. Tunable
+        // via ATLAS_ALWAYS_ORCHESTRATE=true to restore the old always-on path.
+        const classifierConf = toolSelection.classification?.confidence ?? 0;
+        const unambiguousSingleStep =
+            process.env.ATLAS_ALWAYS_ORCHESTRATE !== "true" &&
+            actionCategoryCount <= 1 &&
+            classifierConf >= 0.85;
+        const needsPlanning = actionCategoryCount > 0 && !unambiguousSingleStep;
         if (iterations === 1 && needsPlanning && !musicFastPathActive) {
             try {
                 const planStart = Date.now();
@@ -3046,6 +3065,39 @@ PLAN:`,
                 responseLength: r.result.length,
                 wasEmpty: r.result.length === 0 || r.result === "{}",
             });
+        }
+
+        // ── Hard no-progress loop guard ───────────────────────────
+        // A batch makes "no progress" if every result errored or was empty, OR
+        // the batch is byte-identical to the previous one (same calls, same
+        // useless output). N such batches in a row → force-end with a summary
+        // instead of letting the model grind on.
+        if (NO_PROGRESS_LIMIT > 0 && batchResults.length > 0) {
+            const batchSig = batchResults
+                .map((r) => `${r.fnName}:${(r.result || "").slice(0, 200)}`)
+                .join("|");
+            const allUseless = batchResults.every(
+                (r) => r.isError || !r.result || r.result.length === 0 || r.result === "{}" ||
+                    /"stdout"\s*:\s*""/.test(r.result),
+            );
+            if (allUseless || batchSig === lastBatchSignature) {
+                noProgressStreak++;
+            } else {
+                noProgressStreak = 0;
+            }
+            lastBatchSignature = batchSig;
+
+            if (noProgressStreak >= NO_PROGRESS_LIMIT) {
+                console.warn(
+                    `  🛑 No-progress loop guard tripped after ${noProgressStreak} batches — ending turn (iteration ${iterations})`,
+                );
+                const stuckMsg =
+                    "I tried several approaches but couldn't get a useful result — the commands kept returning nothing or failing. Rather than keep retrying, here's where I got stuck: the tool calls aren't returning the data I need. Could you tell me a bit more, or try running it directly?";
+                messages.push({ role: "assistant", content: stuckMsg });
+                appendTurn("assistant", stuckMsg);
+                if (_harnessTraceId) finalizeTrace(_harnessTraceId, false);
+                return { text: stuckMsg, toolCalls: totalToolCalls };
+            }
         }
 
         // ── Delegation Detection ──────────────────────────────────

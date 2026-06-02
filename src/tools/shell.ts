@@ -3,6 +3,7 @@
 // See LICENSE.md for details.
 
 import { execFile } from "node:child_process";
+import { homedir } from "node:os";
 import { basename } from "node:path";
 import { promisify } from "node:util";
 import { isShellBypass, isSystemDestructive, shellArgsTargetProtectedPath } from "../security/allowlist.js";
@@ -97,7 +98,12 @@ export const shellExec: ToolDefinition = {
     async handler(input) {
         const command = input.command as string;
         const args = (input.args as string[]) || [];
-        const cwd = (input.cwd as string) || process.cwd();
+        // Default to the user's home dir, NOT process.cwd() — the bot runs from
+        // its own install dir (…/bot), so an unscoped `du`/`ls` returned the
+        // bot's node_modules instead of the user's files, causing the agent to
+        // loop. Security is unchanged: the destructive/protected-path/allowlist
+        // gates below still apply regardless of cwd.
+        const cwd = (input.cwd as string) || homedir() || process.cwd();
         const timeout = (input.timeout as number) || DEFAULT_TIMEOUT;
 
         auditLog("shell_exec", { command, args, cwd });
