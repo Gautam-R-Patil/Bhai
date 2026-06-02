@@ -91,6 +91,7 @@ desktop/hostinger-upload/
 !convex/otpless.test.ts
 !src/security/secrets-sanitizer.test.ts
 !src/security/url-safety.test.ts
+!src/security/osv-check.test.ts
 !src/crypto-kdf.test.ts
 !src/tools/coding/evidence-phrase.test.ts
 !src/security/allowlist.test.ts
@@ -127,6 +128,7 @@ desktop/hostinger-upload/
 !src/agents/plan-mode.test.ts
 !src/agents/smart-truncate.test.ts
 !src/agents/error-types.test.ts
+!src/agents/error-recovery.test.ts
 !src/agents/role-analyzer.test.ts
 !src/agents/handoff.test.ts
 !src/agents/circuit-breaker.test.ts

@@ -7,6 +7,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import fs from "node:fs";
 import path from "node:path";
 import { homedir } from "node:os";
+import { checkPackageForMalware } from "../security/osv-check.js";
 import type { ChatCompletionTool } from "openai/resources/chat/completions.js";
 
 // MCP tool descriptions arrive from third-party servers and feed straight
@@ -122,6 +123,13 @@ export async function initMCPServers(configPath = "mcp-servers.json"): Promise<v
 // ── Connect to MCP Server ─────────────────────
 
 async function connectServer(name: string, config: MCPServerConfig, isStoreItem = false): Promise<void> {
+    const mal = await checkPackageForMalware(config.command, config.args || []);
+    if (mal.blocked) {
+        const ids = mal.advisoryIds.join(", ");
+        console.error(`🛑 MCP server "${name}" blocked — OSV malware advisory (${ids}) for ${mal.pkg?.ecosystem} package`);
+        throw new Error(`OSV malware check blocked "${name}": ${ids}`);
+    }
+
     const transport = new StdioClientTransport({
         command: config.command,
         args: config.args || [],
