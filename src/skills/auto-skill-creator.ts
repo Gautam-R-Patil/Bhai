@@ -152,6 +152,8 @@ Rules:
 - Only create skills for GENERAL patterns, not user-specific tasks
 - Triggers should be generic phrases that would match future similar tasks
 - Procedure steps should be detailed enough to repeat the workflow
+- Describe the reusable procedure (what to do next time), NOT the actions you took this session — write "to do X, run Y" not "I ran Y and it worked"
+- Do NOT record that a tool failed or "doesn't work"; negative capability claims harden into false refusals the agent cites against itself for months
 - Include at least 1 pitfall and 1 verification step
 - Slug must be unique and descriptive (max 50 chars)
 

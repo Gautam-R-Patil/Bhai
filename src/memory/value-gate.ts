@@ -136,7 +136,7 @@ export async function llmGate(content: string, llm: LlmClientLike | null): Promi
                     {
                         role: "user",
                         content:
-                            "Is this a durable fact about the user, their projects, their preferences, or a generalizable learning? Or is it execution telemetry (tool calls, errors, system noise)?\n\nReply ADD or DROP only.\n\nContent:\n" +
+                            'Is this a durable fact about the user, their projects, their preferences, or a generalizable learning? Or is it execution telemetry (tool calls, errors, system noise)?\n\nAlways DROP if it narrates what was done this once ("I ran X and it worked") rather than stating what should be known or done — keep content, not actions.\nAlways DROP a negative capability claim about a tool ("tool Y doesn\'t work / can\'t do Z / returned an error"); these harden into false refusals the agent cites against itself for months.\n\nReply ADD or DROP only.\n\nContent:\n' +
                             content,
                     },
                 ],
