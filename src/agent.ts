@@ -20,6 +20,7 @@ import {
 import { classifyComplexity } from "./agents/complexity-classifier.js";
 import { listActiveLongTasks } from "./agents/long-task.js";
 import { assess, createMetacognitionState, updateSignals } from "./agents/metacognition.js";
+import { createGuardrailState, recordToolCall as recordGuardrailCall } from "./agents/tool-call-guardrail.js";
 import {
     enterPlanMode,
     filterToolsForAwaitingApproval,
@@ -1118,6 +1119,11 @@ STRATEGY: Execute in as few tool calls as possible.
     // Metacognition state — self-monitoring for loop/struggle detection
     const metaState = createMetacognitionState();
     let metaNudged = false;
+
+    // Per-turn loop guardrail — catches a single tool retrying identical args
+    // (a spiral the whole-batch no-progress guard below misses). Warn-only
+    // unless ATLAS_TOOL_LOOP_HARDSTOP=true.
+    const guardrailState = createGuardrailState();
 
     // Hard loop guard: count consecutive tool batches where EVERY call failed
     // or returned empty. The metacognition nudge only fires once and the model
@@ -3042,6 +3048,22 @@ PLAN:`,
             if (errorMsg) await sendProgress(errorMsg);
             // Track tool success/failure per model per task type for adaptive routing
             updateToolStats(model, !errorMsg, selection.taskType);
+
+            // ── Per-turn loop guardrail: identical-args repeat detection ──
+            // Appends a steering hint when the same tool keeps failing with the
+            // same args. Warn-only unless ATLAS_TOOL_LOOP_HARDSTOP=true.
+            const guard = recordGuardrailCall(guardrailState, {
+                fnName: r.fnName,
+                fnArgs: r.fnArgs,
+                isError: r.isError,
+            });
+            if ((guard.hint || guard.hardStop) && typeof r.finalContent === "string") {
+                const note = guard.hardStop
+                    ? `\n\n[SYSTEM — LOOP GUARD] \`${r.fnName}\` has failed ${guard.failureCount} times with identical arguments. STOP calling it with these arguments; change approach or report the blocker to the user.`
+                    : guard.hint;
+                r.finalContent = r.finalContent + note;
+            }
+
             messages.push({
                 role: "tool",
                 tool_call_id: r.toolCallId,
