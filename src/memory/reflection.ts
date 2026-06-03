@@ -27,6 +27,15 @@ import { consolidateMemories } from "./consolidation.js";
 import { cleanupTriggers } from "./prospective.js";
 import { getTemporalCache } from "./temporal-cache.js";
 import { getHNSWIndex } from "./vector-index.js";
+import {
+    type CalibratorBundle,
+    type CalibratorRow,
+    calibratorBeatsBaseline,
+    computeBinStats,
+    fitCalibrator,
+    scoreCalibrator,
+    tierBucket,
+} from "../agents/metacognition.js";
 
 // ── Constants ─────────────────────────────────
 
@@ -595,6 +604,21 @@ export async function runDreamReplay(llm: LLMClient): Promise<void> {
             console.error("[MEMORY][REPLAY] Studio insights failed (non-fatal):", err);
         }
 
+        // ── 5h. Metacog confidence calibration (P5.2 — ZERO LLM) ──
+        // Pure-stats fit over data/metacog-outcomes.jsonl → data/metacog-calibrators.json.
+        // Acting on the result is OFF until ATLAS_METACOG_SHADOW=false AND ECE/Brier
+        // beat the constant-base-rate baseline; until then this is instrumentation only.
+        try {
+            const r = runCalibrationFit();
+            if (r) {
+                console.log(
+                    `[MEMORY][REPLAY] 📐 Calibration: ${r.rows} rows, global ECE ${r.globalEce.toFixed(3)} → cal ${r.calEce.toFixed(3)} (${r.beatsBaseline ? "BEATS" : "below"} baseline)`,
+                );
+            }
+        } catch (err) {
+            console.error("[MEMORY][REPLAY] Calibration fit failed (non-fatal):", err);
+        }
+
         // ── 6. Narrative compression (every 30 days) ──
         await generateNarrativeCompression(llm);
 
@@ -602,6 +626,102 @@ export async function runDreamReplay(llm: LLMClient): Promise<void> {
     } catch (err) {
         console.error("[MEMORY][REPLAY] ❌ Failed (non-fatal):", err);
     }
+}
+
+// ── P5.2: Nightly confidence-calibration fit (ZERO LLM) ──
+// Reads the metacog outcome log, fits a per-(taskType × tierBucket) Platt
+// (cold-start) → isotonic (≥200 samples) calibrator, and persists ONLY the
+// cells that beat the constant-base-rate baseline. Atomic tmp+rename write.
+// Fully fail-open: any error returns null and the hot path simply finds no
+// (or a stale) bundle. Gated by ATLAS_NO_METACOG_LOG (no log → nothing to fit).
+const CALIBRATION_MAX_ROWS = 5000;
+const CALIBRATION_MIN_FIT_ROWS = 30;
+
+export function runCalibrationFit(): {
+    rows: number;
+    globalEce: number;
+    calEce: number;
+    beatsBaseline: boolean;
+} | null {
+    if (process.env.ATLAS_NO_METACOG_LOG === "true") return null;
+    const fs = require("node:fs") as typeof import("node:fs");
+    const path = require("node:path") as typeof import("node:path");
+    const dataDir = path.join(process.cwd(), "data");
+    const logFile = path.join(dataDir, "metacog-outcomes.jsonl");
+
+    let raw: string;
+    try {
+        raw = fs.readFileSync(logFile, "utf8");
+    } catch {
+        return null; // no log yet
+    }
+
+    const lines = raw.split("\n").filter((l) => l.trim().length > 0);
+    const recent = lines.slice(-CALIBRATION_MAX_ROWS);
+    const rows: CalibratorRow[] = [];
+    for (const line of recent) {
+        try {
+            const o = JSON.parse(line) as Record<string, unknown>;
+            if (typeof o.finalConfidence !== "number") continue;
+            rows.push({
+                finalConfidence: o.finalConfidence,
+                taskCompleted: o.taskCompleted === true,
+                taskType: typeof o.taskType === "string" ? o.taskType : null,
+                modelTier: typeof o.modelTier === "string" ? o.modelTier : null,
+            });
+        } catch {
+            /* skip malformed line */
+        }
+    }
+    if (rows.length < CALIBRATION_MIN_FIT_ROWS) return null;
+
+    const globalStats = computeBinStats(rows);
+    const globalCal = fitCalibrator(rows);
+    const globalScore = scoreCalibrator(globalCal, rows);
+    const globalBeats = calibratorBeatsBaseline(globalStats, globalScore.brier, globalScore.ece);
+
+    const perKey: CalibratorBundle["perKey"] = {};
+    const diagnostics: CalibratorBundle["diagnostics"] = { __global__: globalStats };
+
+    const groups = new Map<string, CalibratorRow[]>();
+    for (const r of rows) {
+        const key = `${r.taskType ?? "?"}|${tierBucket(r.modelTier)}`;
+        const g = groups.get(key);
+        if (g) g.push(r);
+        else groups.set(key, [r]);
+    }
+    for (const [key, g] of groups) {
+        if (g.length < CALIBRATION_MIN_FIT_ROWS) continue;
+        const stats = computeBinStats(g);
+        const cal = fitCalibrator(g);
+        const score = scoreCalibrator(cal, g);
+        diagnostics[key] = stats;
+        if (calibratorBeatsBaseline(stats, score.brier, score.ece)) perKey[key] = cal;
+    }
+
+    const bundle: CalibratorBundle = {
+        version: 1,
+        builtTs: new Date().toISOString(),
+        global: globalBeats ? globalCal : null,
+        perKey,
+        diagnostics,
+    };
+
+    try {
+        fs.mkdirSync(dataDir, { recursive: true });
+        const tmp = path.join(dataDir, `metacog-calibrators.json.tmp-${process.pid}`);
+        fs.writeFileSync(tmp, JSON.stringify(bundle), "utf8");
+        fs.renameSync(tmp, path.join(dataDir, "metacog-calibrators.json"));
+    } catch {
+        return null; // write failed — leave any existing bundle untouched
+    }
+
+    return {
+        rows: rows.length,
+        globalEce: globalStats.ece,
+        calEce: globalScore.ece,
+        beatsBaseline: globalBeats,
+    };
 }
 
 // ── Narrative Compression ─────────────────────

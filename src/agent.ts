@@ -26,8 +26,10 @@ import {
     createMetacognitionState,
     type InterventionState,
     logOutcome,
+    setCalibrationContext,
     updateSignals,
 } from "./agents/metacognition.js";
+import { judgeFixToIntervention, progressJudgeEnabled, runProgressJudge } from "./agents/progress-judge.js";
 import { canonicalArgsHash, createGuardrailState, recordToolCall as recordGuardrailCall } from "./agents/tool-call-guardrail.js";
 import {
     enterPlanMode,
@@ -1143,6 +1145,9 @@ STRATEGY: Execute in as few tool calls as possible.
     const metaState = createMetacognitionState();
     let metaNudged = false;
     let lastMetaNudgeIter = -100;
+    // P5.3: at most ONE adversarial progress-judge call per stuck turn (Haiku),
+    // and only when ATLAS_PROGRESS_JUDGE=true. Turn-scoped, reset per runAgent.
+    let judgeFired = false;
     // A2: cross-iteration dispatcher state — drives escalate/replan/critics/ask_user.
     const interventionState: InterventionState = createInterventionState();
     // Captures selection.taskType at the end of each iteration so the critics
@@ -1175,6 +1180,13 @@ STRATEGY: Execute in as few tool calls as possible.
         // Disable the repeat behavior entirely with ATLAS_NO_META_INTERVENTIONS=true
         // (reverts to the original one-shot nudge).
         if (iterations > 3) {
+            // C: stamp the (taskType, modelTier) the calibrator keys on. The model
+            // for THIS iteration isn't picked yet, so pass the prior taskType + any
+            // forced tier; absent → global calibrator (shadow no-op by default).
+            setCalibrationContext(metaState, {
+                taskType: lastSelectionTaskType,
+                modelTier: interventionState.forcedModel ?? undefined,
+            });
             const metaCheck = assess(metaState);
             const interventionsOff = process.env.ATLAS_NO_META_INTERVENTIONS === "true";
             const NUDGE_COOLDOWN = 5;
@@ -1194,6 +1206,33 @@ STRATEGY: Execute in as few tool calls as possible.
                 console.log(
                     `  🧠 Metacognition: low confidence (${metaCheck.confidence.toFixed(2)}) — may trigger cascade escalation`,
                 );
+            }
+            // P5.3 — opt-in adversarial progress judge. Fires AT MOST ONCE per stuck
+            // turn, and ONLY when ATLAS_PROGRESS_JUDGE=true (DEFAULT OFF). Healthy
+            // turns (no loop AND repeats<3 AND confidence≥0.35) never enter this
+            // branch → ZERO added LLM cost in the default config. When it fires it
+            // makes exactly ONE Haiku call; its likely_fix overrides the heuristic
+            // metaCheck.intervention so the SAME applyIntervention dispatcher acts.
+            if (
+                progressJudgeEnabled() &&
+                !judgeFired &&
+                iterations >= 4 &&
+                (metaCheck.loopDetected ||
+                    metaState.signals.maxIdenticalStepRepeats >= 3 ||
+                    metaCheck.confidence < 0.35)
+            ) {
+                judgeFired = true;
+                const verdict = await runProgressJudge(llm, rawUserMessage, messages);
+                if (verdict) {
+                    const judged = judgeFixToIntervention(verdict.likely_fix);
+                    console.warn(
+                        `  🧑‍⚖️ Progress judge: ${verdict.progress_0_100}/100 stalled=${verdict.stalled} → ${verdict.likely_fix} | ${verdict.one_line}`,
+                    );
+                    if (judged !== "none") {
+                        metaCheck.intervention = judged;
+                        metaCheck.reasoning = `progress judge: ${verdict.one_line}`;
+                    }
+                }
             }
             // A2: make MetaAssessment.intervention ACT. The text nudge above is the
             // fallback; this dispatches the computed enum (escalate/replan/critics/
@@ -1247,6 +1286,14 @@ STRATEGY: Execute in as few tool calls as possible.
                         .filter(Boolean);
                     const partialText =
                         partialResponses.length > 0 ? partialResponses[partialResponses.length - 1] : null;
+                    // P5.2 STEP-0: genuine reasoning-failure terminal exit (circuit
+                    // breaker tripped on sustained trouble) → true-negative label.
+                    // model not picked at this point → global-calibrator fallback.
+                    try {
+                        logOutcome(metaState, false, { taskType: lastSelectionTaskType });
+                    } catch {
+                        /* best-effort */
+                    }
                     if (_harnessTraceId) finalizeTrace(_harnessTraceId, false);
                     return {
                         text:
@@ -3223,6 +3270,13 @@ PLAN:`,
                     "I tried several approaches but couldn't get a useful result — the commands kept returning nothing or failing. Rather than keep retrying, here's where I got stuck: the tool calls aren't returning the data I need. Could you tell me a bit more, or try running it directly?";
                 messages.push({ role: "assistant", content: stuckMsg });
                 appendTurn("assistant", stuckMsg);
+                // P5.2 STEP-0: genuine reasoning-failure terminal exit (gave up after
+                // sustained no-progress) → true-negative label for calibration.
+                try {
+                    logOutcome(metaState, false, { taskType: selection?.taskType, modelTier: model });
+                } catch {
+                    /* best-effort */
+                }
                 if (_harnessTraceId) finalizeTrace(_harnessTraceId, false);
                 return { text: stuckMsg, toolCalls: totalToolCalls };
             }

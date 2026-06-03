@@ -48,6 +48,9 @@ export interface MetacognitionState {
     signals: MetaSignals;
     assessmentHistory: MetaAssessment[];
     responseLengths: number[];
+    // C: per-iteration (taskType, modelTier) the calibrator keys on. Stamped by
+    // the agent loop before assess(); absent → global calibrator fallback.
+    calibrationCtx?: { taskType?: string; modelTier?: string };
 }
 
 // ── Create State ──────────────────────────────
@@ -130,6 +133,12 @@ export function updateSignals(
     if (update.wasEscalated) state.signals.alreadyEscalated = true;
 }
 
+// C: stamp the (taskType, modelTier) the calibrator keys on. Called by the
+// agent loop before assess(); cheap, fail-open, no-op effect on behavior.
+export function setCalibrationContext(state: MetacognitionState, ctx: { taskType?: string; modelTier?: string }): void {
+    state.calibrationCtx = ctx;
+}
+
 // ── Assess ────────────────────────────────────
 
 /**
@@ -162,9 +171,9 @@ export function assess(state: MetacognitionState): MetaAssessment {
                 reasoning: result.reasoning,
             };
 
-            const boosted = applyContentAwareLoop(state, assessment);
-            state.assessmentHistory.push(boosted);
-            return boosted;
+            const final = finalizeAssessment(state, assessment);
+            state.assessmentHistory.push(final);
+            return final;
         }
     } catch {
         /* native not available */
@@ -192,6 +201,89 @@ function applyContentAwareLoop(state: MetacognitionState, a: MetaAssessment): Me
         intervention: a.intervention === "none" ? "replan" : a.intervention,
         reasoning: `${a.reasoning}; identical tool+args repeated ${repeats}×`,
     };
+}
+
+// ── Shared post-processor (B1 VOC + C calibration chokepoint) ──
+// Both assess() (native) and assessJS() funnel their raw assessment through
+// finalizeAssessment in ONE fixed order so the three P5 layers compose
+// deterministically and neither path can drift:
+//   calibrate (C, shadow) → applyContentAwareLoop (A1) → applyVocThreshold (B1)
+// calibrate runs first so the loop/VOC layers see the (eventually) calibrated
+// confidence; in shadow mode it is identity. VOC runs last so it can suppress
+// expensive arms after A1 has had its say. P5.3's judge override does NOT live
+// here — it overrides metaCheck.intervention in the agent.ts nudge block.
+export function finalizeAssessment(state: MetacognitionState, a: MetaAssessment): MetaAssessment {
+    return applyVocThreshold(state, applyContentAwareLoop(state, calibrate(state, a)));
+}
+
+// ── B1 (VOC): cost-aware intervention re-threshold τ = 1 − c_l/c_w ──
+// Credit tiers mirror convex/credit_cost.ts (Light 0.25 / Pro 1 / Heavy 3) —
+// hardcoded as scalars because intervention arms map to a COST CLASS, not a
+// model ID (MODEL_COSTS in llm-middleware.ts is USD/1M-tok, wrong units; and
+// credit_cost.ts is server-only Convex code we must not couple to the client).
+const INTERVENTION_CREDIT_COST: Record<MetaAssessment["intervention"], number> = {
+    none: 0,
+    ask_user: 0,
+    escalate: 1,
+    replan: 1,
+    critics: 3,
+};
+const RISK_COST = { read_only: 2, mutating: 3, irreversible: 12 } as const;
+const IRREVERSIBLE_TOOLS = new Set([
+    "delete_file",
+    "trash_manager",
+    "app_manager",
+    "git_op",
+    "shell_exec",
+    "shell_exec_background",
+    "wifi_control",
+]);
+const READ_ONLY_TOOLS = new Set([
+    "read",
+    "read_file",
+    "list_files",
+    "grep",
+    "glob",
+    "web_search",
+    "codebase_query",
+    "system_info",
+    "get_current_time",
+    "browser_extract",
+]);
+
+// Cost-of-acting-wrong proxy keyed on the most recent tool (best zero-cost
+// proxy for the pending action). Empty history → medium (mutating) bucket.
+function pendingRiskCost(recentToolNames: string[]): number {
+    const next = recentToolNames[recentToolNames.length - 1];
+    if (!next) return RISK_COST.mutating;
+    if (IRREVERSIBLE_TOOLS.has(next)) return RISK_COST.irreversible;
+    if (READ_ONLY_TOOLS.has(next)) return RISK_COST.read_only;
+    return RISK_COST.mutating;
+}
+
+// τ is the confidence above which paying for the expensive arm is not worth it.
+// Pending read-only work → high τ-headroom → downgrade expensive arms unless
+// confidence is genuinely low. Destructive pending → keep firing unless very
+// confident (P≥0.9). Pure arithmetic, ZERO LLM. Gate: ATLAS_NO_META_VOC.
+function applyVocThreshold(state: MetacognitionState, a: MetaAssessment): MetaAssessment {
+    if (process.env.ATLAS_NO_META_VOC === "true") return a;
+    if (a.intervention === "none" || a.intervention === "ask_user") return a;
+    const cL = INTERVENTION_CREDIT_COST[a.intervention];
+    const cW = pendingRiskCost(state.signals.recentToolNames);
+    const tau = 1 - cL / cW;
+    const P = a.confidence;
+    if (cW >= RISK_COST.irreversible) {
+        return P >= 0.9 ? downgrade(a, "very confident on irreversible action") : a;
+    }
+    if (P >= tau) return downgrade(a, `P=${P.toFixed(2)} ≥ τ=${tau.toFixed(2)} (c_l=${cL}/c_w=${cW})`);
+    return a;
+}
+
+// Downgrade ladder: critics/replan → escalate (free-ish); escalate → none.
+function downgrade(a: MetaAssessment, why: string): MetaAssessment {
+    const next: MetaAssessment["intervention"] =
+        a.intervention === "critics" || a.intervention === "replan" ? "escalate" : "none";
+    return { ...a, intervention: next, reasoning: `${a.reasoning}; VOC↓ ${a.intervention}→${next} (${why})` };
 }
 
 function assessJS(state: MetacognitionState): MetaAssessment {
@@ -267,9 +359,9 @@ function assessJS(state: MetacognitionState): MetaAssessment {
                 : `Confidence ${confidence.toFixed(2)} — OK`,
     };
 
-    const boosted = applyContentAwareLoop(state, assessment);
-    state.assessmentHistory.push(boosted);
-    return boosted;
+    const final = finalizeAssessment(state, assessment);
+    state.assessmentHistory.push(final);
+    return final;
 }
 
 function detectLoopJS(tools: string[]): boolean {
@@ -544,6 +636,285 @@ function recentAssistantText(messages: import("../llm.js").ChatCompletionMessage
         }
     }
     return chunks.join("\n\n").slice(-maxChars);
+}
+
+// ── C: Shadow-mode confidence calibration ─────
+// Reads a nightly-fit calibrator (data/metacog-calibrators.json) and, in shadow
+// mode (DEFAULT), computes + logs calibratedP vs the raw confidence WITHOUT
+// changing the returned assessment — proving zero behavior change before anyone
+// acts on it. Behavior only changes when ATLAS_METACOG_SHADOW=false AND a
+// calibrator that beat its baseline exists. Pure TS stats + one JSONL append;
+// ZERO LLM, ZERO native. Mirrors the value-gate shadow pattern (sqlite.ts).
+
+export type CalibratorKind = "platt" | "isotonic" | "identity";
+
+export interface Calibrator {
+    kind: CalibratorKind;
+    a?: number; // platt: sigmoid(a*x+b)
+    b?: number;
+    knots?: Array<{ x: number; y: number }>; // isotonic: ≤16 monotone knots
+    n: number;
+    fitTs: string;
+}
+
+export interface BinCalibrationStats {
+    n: number;
+    ece: number; // expected calibration error (10 equal-width bins)
+    brier: number; // mean (p − y)^2
+    baselineRate: number; // mean(y)
+    baselineBrier: number; // brier of predicting the constant base rate
+}
+
+export interface CalibratorBundle {
+    version: 1;
+    builtTs: string;
+    global: Calibrator | null;
+    perKey: Record<string, Calibrator>; // key = `${taskType}|${tierBucket(modelTier)}`
+    diagnostics: Record<string, BinCalibrationStats>;
+}
+
+// Coarse tier so per-key cells aren't sparse (16 taskTypes × 4 buckets max).
+export function tierBucket(modelTier: string | null): "heavy" | "pro" | "light" | "other" {
+    const m = (modelTier ?? "").toLowerCase();
+    if (m.includes("opus") || m.includes("gpt-5.4")) return "heavy";
+    if (m.includes("sonnet") || m.includes("gemini-3") || m.includes("gpt-5.3") || m.includes("nova-pro")) return "pro";
+    if (m.includes("haiku") || m.includes("flash") || m.includes("nano") || m.includes("mini")) return "light";
+    return "other";
+}
+
+// Apply a fitted calibrator to a raw confidence; clamps to [0,1]. Identity
+// passthrough on the degenerate/cold-start sentinel kind.
+export function applyCalibrator(cal: Calibrator, qRaw: number): number {
+    if (cal.kind === "identity") return qRaw;
+    if (cal.kind === "platt") {
+        const a = cal.a ?? 1;
+        const b = cal.b ?? 0;
+        const p = 1 / (1 + Math.exp(-(a * qRaw + b)));
+        return Math.max(0, Math.min(1, p));
+    }
+    const knots = cal.knots;
+    if (!knots || knots.length === 0) return qRaw;
+    if (qRaw <= knots[0].x) return clamp01(knots[0].y);
+    if (qRaw >= knots[knots.length - 1].x) return clamp01(knots[knots.length - 1].y);
+    let lo = 0;
+    let hi = knots.length - 1;
+    while (hi - lo > 1) {
+        const mid = (lo + hi) >> 1;
+        if (knots[mid].x <= qRaw) lo = mid;
+        else hi = mid;
+    }
+    const span = knots[hi].x - knots[lo].x;
+    const t = span > 0 ? (qRaw - knots[lo].x) / span : 0;
+    return clamp01(knots[lo].y + t * (knots[hi].y - knots[lo].y));
+}
+
+function clamp01(x: number): number {
+    return Math.max(0, Math.min(1, x));
+}
+
+// ── C: calibrator fitting (pure stats, used by the nightly reflection pass) ──
+
+export interface CalibratorRow {
+    finalConfidence: number | null;
+    taskCompleted: boolean;
+    taskType: string | null;
+    modelTier: string | null;
+}
+
+// ECE over 10 equal-width bins + Brier + the subtractive (constant base-rate)
+// baseline the calibrator must beat to be trusted.
+export function computeBinStats(rows: CalibratorRow[]): BinCalibrationStats {
+    const pts = rows
+        .filter((r) => r.finalConfidence != null && Number.isFinite(r.finalConfidence))
+        .map((r) => ({ p: clamp01(r.finalConfidence as number), y: r.taskCompleted ? 1 : 0 }));
+    const n = pts.length;
+    if (n === 0) return { n: 0, ece: 0, brier: 0, baselineRate: 0, baselineBrier: 0 };
+    const baselineRate = pts.reduce((s, q) => s + q.y, 0) / n;
+    const brier = pts.reduce((s, q) => s + (q.p - q.y) ** 2, 0) / n;
+    const baselineBrier = pts.reduce((s, q) => s + (baselineRate - q.y) ** 2, 0) / n;
+    const bins = Array.from({ length: 10 }, () => ({ sumP: 0, sumY: 0, n: 0 }));
+    for (const q of pts) {
+        const idx = Math.min(9, Math.floor(q.p * 10));
+        bins[idx].sumP += q.p;
+        bins[idx].sumY += q.y;
+        bins[idx].n++;
+    }
+    let ece = 0;
+    for (const b of bins) {
+        if (b.n === 0) continue;
+        ece += (b.n / n) * Math.abs(b.sumY / b.n - b.sumP / b.n);
+    }
+    return { n, ece, brier, baselineRate, baselineBrier };
+}
+
+const IDENTITY_CAL: Calibrator = { kind: "identity", n: 0, fitTs: "" };
+
+// 1D logistic regression via gradient descent. Cold-start safe: all-one-class
+// or n<10 → identity passthrough (the positive-only existing log demands this).
+export function fitPlatt(rows: CalibratorRow[]): Calibrator {
+    const pts = rows
+        .filter((r) => r.finalConfidence != null && Number.isFinite(r.finalConfidence))
+        .map((r) => ({ x: clamp01(r.finalConfidence as number), y: r.taskCompleted ? 1 : 0 }));
+    if (pts.length < 10) return { ...IDENTITY_CAL };
+    const classes = new Set(pts.map((q) => q.y));
+    if (classes.size < 2) return { ...IDENTITY_CAL };
+    let a = 1;
+    let b = 0;
+    const lr = 0.1;
+    for (let iter = 0; iter < 200; iter++) {
+        let ga = 0;
+        let gb = 0;
+        for (const q of pts) {
+            const pred = 1 / (1 + Math.exp(-(a * q.x + b)));
+            const err = pred - q.y;
+            ga += err * q.x;
+            gb += err;
+        }
+        a -= (lr * ga) / pts.length;
+        b -= (lr * gb) / pts.length;
+    }
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return { ...IDENTITY_CAL };
+    return { kind: "platt", a, b, n: pts.length, fitTs: new Date().toISOString() };
+}
+
+// Pool-Adjacent-Violators isotonic regression, downsampled to ≤16 knots.
+export function fitIsotonic(rows: CalibratorRow[]): Calibrator {
+    const pts = rows
+        .filter((r) => r.finalConfidence != null && Number.isFinite(r.finalConfidence))
+        .map((r) => ({ x: clamp01(r.finalConfidence as number), y: r.taskCompleted ? 1 : 0 }))
+        .sort((p, q) => p.x - q.x);
+    if (pts.length < 10) return { ...IDENTITY_CAL };
+    if (new Set(pts.map((q) => q.y)).size < 2) return { ...IDENTITY_CAL };
+    const blocks: Array<{ x: number; y: number; w: number }> = pts.map((q) => ({ x: q.x, y: q.y, w: 1 }));
+    let i = 0;
+    while (i < blocks.length - 1) {
+        if (blocks[i].y > blocks[i + 1].y) {
+            const w = blocks[i].w + blocks[i + 1].w;
+            const y = (blocks[i].y * blocks[i].w + blocks[i + 1].y * blocks[i + 1].w) / w;
+            blocks[i] = { x: blocks[i].x, y, w };
+            blocks.splice(i + 1, 1);
+            if (i > 0) i--;
+        } else {
+            i++;
+        }
+    }
+    let knots = blocks.map((blk) => ({ x: blk.x, y: clamp01(blk.y) }));
+    if (knots.length > 16) {
+        const step = (knots.length - 1) / 15;
+        const sampled: Array<{ x: number; y: number }> = [];
+        for (let k = 0; k < 16; k++) sampled.push(knots[Math.round(k * step)]);
+        knots = sampled;
+    }
+    return { kind: "isotonic", knots, n: pts.length, fitTs: new Date().toISOString() };
+}
+
+const ISOTONIC_MIN_SAMPLES = 200;
+
+export function fitCalibrator(rows: CalibratorRow[]): Calibrator {
+    return rows.length >= ISOTONIC_MIN_SAMPLES ? fitIsotonic(rows) : fitPlatt(rows);
+}
+
+// Subtractive-baseline gate: a calibrator only wins if it improves BOTH Brier
+// (below the constant base-rate predictor) AND ECE.
+export function calibratorBeatsBaseline(stats: BinCalibrationStats, calBrier: number, calEce: number): boolean {
+    if (stats.n === 0) return false;
+    return calBrier < stats.baselineBrier && calEce < stats.ece;
+}
+
+// Apply a calibrator over rows → its post-calibration ECE/Brier, so the runner
+// can compare against the raw-confidence baseline before persisting.
+export function scoreCalibrator(cal: Calibrator, rows: CalibratorRow[]): { ece: number; brier: number } {
+    const recalibrated: CalibratorRow[] = rows.map((r) => ({
+        ...r,
+        finalConfidence: r.finalConfidence == null ? null : applyCalibrator(cal, clamp01(r.finalConfidence)),
+    }));
+    const s = computeBinStats(recalibrated);
+    return { ece: s.ece, brier: s.brier };
+}
+
+let _calBundle: CalibratorBundle | null | undefined; // undefined=unloaded, null=absent
+function loadCalibrators(): CalibratorBundle | null {
+    if (_calBundle !== undefined) return _calBundle;
+    try {
+        const fs = require("node:fs") as typeof import("node:fs");
+        const path = require("node:path") as typeof import("node:path");
+        const file = path.join(process.cwd(), "data", "metacog-calibrators.json");
+        const raw = fs.readFileSync(file, "utf8");
+        _calBundle = JSON.parse(raw) as CalibratorBundle;
+    } catch {
+        _calBundle = null;
+    }
+    return _calBundle;
+}
+
+// Test hook — forces a bundle in-memory so the shadow/enforcing paths can be
+// exercised without writing a fixture file. Pass null to clear.
+export function __setCalibratorBundleForTesting(bundle: CalibratorBundle | null | undefined): void {
+    _calBundle = bundle;
+}
+
+function logCalibrationShadow(row: {
+    qRaw: number;
+    calibratedP: number;
+    taskType?: string;
+    modelTier?: string;
+    intervention: string;
+}): void {
+    if (process.env.ATLAS_NO_METACOG_LOG === "true") return;
+    try {
+        const fs = require("node:fs") as typeof import("node:fs");
+        const path = require("node:path") as typeof import("node:path");
+        const dir = path.join(process.cwd(), "data");
+        fs.mkdirSync(dir, { recursive: true });
+        const line = JSON.stringify({ ts: new Date().toISOString(), ...row });
+        fs.appendFileSync(path.join(dir, "metacog-calibration-shadow.jsonl"), `${line}\n`, "utf8");
+    } catch {
+        /* shadow log is best-effort */
+    }
+}
+
+// FIRST step of finalizeAssessment. In shadow mode (default) it logs the
+// calibrated probability but returns the assessment UNCHANGED. The (taskType,
+// modelTier) context is stamped onto state.signals by the agent loop so the
+// hot path stays a pure-state function; absent context → global calibrator.
+function calibrate(state: MetacognitionState, a: MetaAssessment): MetaAssessment {
+    const bundle = loadCalibrators();
+    if (!bundle) return a;
+    const ctx = state.calibrationCtx;
+    const cal = bundle.perKey[`${ctx?.taskType ?? "?"}|${tierBucket(ctx?.modelTier ?? null)}`] ?? bundle.global;
+    if (!cal) return a;
+    let calibratedP: number;
+    try {
+        calibratedP = applyCalibrator(cal, a.confidence);
+    } catch {
+        return a;
+    }
+    logCalibrationShadow({
+        qRaw: a.confidence,
+        calibratedP,
+        taskType: ctx?.taskType,
+        modelTier: ctx?.modelTier,
+        intervention: a.intervention,
+    });
+    const shadow = process.env.ATLAS_METACOG_SHADOW !== "false"; // DEFAULT ON
+    if (shadow) return a; // compute + log, DO NOT change behavior
+    // ENFORCING (only after ECE/Brier proven to beat baseline): rerun the same
+    // fixed cutoffs assessJS uses, against the calibrated probability.
+    return reconcileInterventionWithConfidence(state, a, calibratedP);
+}
+
+function reconcileInterventionWithConfidence(state: MetacognitionState, a: MetaAssessment, p: number): MetaAssessment {
+    const alreadyEscalated = state.signals.alreadyEscalated;
+    let intervention: MetaAssessment["intervention"] = "none";
+    if (p < 0.2) intervention = alreadyEscalated ? "ask_user" : "critics";
+    else if (p < 0.35) intervention = alreadyEscalated ? "replan" : "escalate";
+    else if (a.loopDetected) intervention = "replan";
+    return {
+        ...a,
+        confidence: p,
+        intervention,
+        reasoning: `${a.reasoning}; calibrated P=${p.toFixed(2)}`,
+    };
 }
 
 // ── Native Module ─────────────────────────────
