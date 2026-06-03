@@ -5,6 +5,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>A.T.L.A.S</title>
+  <script>
+    // Loopback auth token, injected server-side when this page is served (the
+    // server replaces %%ATLAS_LOCAL_TOKEN%% with the real token). The WebSocket
+    // handshake below sends it as ?localToken= so the server accepts the connection.
+    window.__ATLAS_LOCAL_TOKEN__ = "%%ATLAS_LOCAL_TOKEN%%";
+  </script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap');
 
@@ -2464,7 +2470,13 @@
       }
 
       function connect() {
-        ws = new WebSocket(`ws://${location.host}`);
+        // Authenticate the WS handshake with the server-injected loopback token.
+        // The server rejects token-less connections (4001), which previously left
+        // the overlay connected-but-mute. Fall back to a token-less URL only if
+        // injection didn't run (dev), so the failure mode is visible not silent.
+        const _tok = window.__ATLAS_LOCAL_TOKEN__;
+        const _q = (_tok && _tok.indexOf('%%') === -1) ? `?localToken=${encodeURIComponent(_tok)}` : '';
+        ws = new WebSocket(`ws://${location.host}/${_q}`);
         window._atlasWS = ws; // Expose for Electron IPC (live voice shortcut)
         ws.onopen = () => { blobs.forEach(b => b.classList.add('on')); grabFocus(); };
         ws.onmessage = (e) => { try { handle(JSON.parse(e.data)); } catch (err) { console.error('[OVERLAY] handle() error:', err); } };

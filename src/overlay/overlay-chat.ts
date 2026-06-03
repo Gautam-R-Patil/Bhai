@@ -187,7 +187,11 @@ export function initOverlayChat(llm: LLMClient): void {
             let served = false;
             for (const p of candidates) {
                 try {
-                    const html = readFileSync(p, "utf-8");
+                    let html = readFileSync(p, "utf-8");
+                    // Inject the loopback auth token so the page's WebSocket can
+                    // authenticate (the server rejects token-less WS handshakes).
+                    // Token only travels over 127.0.0.1 to a 0o600-gated client.
+                    html = html.replace(/%%ATLAS_LOCAL_TOKEN%%/g, getOverlayLocalToken());
                     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
                     res.end(html);
                     served = true;

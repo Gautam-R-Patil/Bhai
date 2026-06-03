@@ -166,6 +166,7 @@ desktop/hostinger-upload/
 !src/proactive/telemetry.test.ts
 !src/context-scrubber.test.ts
 !src/context-scrubber.untrusted.test.ts
+!src/overlay/overlay-token-injection.test.ts
 !src/voice/live/types.test.ts
 !src/voice/live/tool-bridge.test.ts
 !src/voice/live/transcript-speaker.test.ts

@@ -27,6 +27,7 @@ export default defineConfig({
             "src/forge/**/*.test.ts",
             "src/screen/**/*.test.ts",
             "src/diagnostics/**/*.test.ts",
+            "src/overlay/**/*.test.ts",
             "src/__tests__/**/*.test.ts",
             "convex/**/*.test.ts",
         ],
