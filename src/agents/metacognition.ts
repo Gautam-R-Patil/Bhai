@@ -366,6 +366,186 @@ export function logOutcome(
     }
 }
 
+// ── A2: Intervention Dispatcher ───────────────
+// Makes MetaAssessment.intervention ACT instead of being a dead enum. The
+// nudge block in agent.ts only ever read loopDetected/struggleDetected; the
+// computed escalate/replan/critics/ask_user value went nowhere. This dispatch
+// turns each enum value into a concrete, cooldown-gated, fail-open action.
+//
+// Hot-loop safety: on a healthy turn intervention === "none" → early return,
+// ZERO added cost. The paid arms (replan = one Pro call; critics = multi-critic)
+// fire at most once per their cooldown window and only when free struggle/loop
+// signals already flagged sustained trouble. escalate/ask_user are zero-cost
+// (next iteration runs a higher tier / a rephrase nudge — both already budgeted).
+//
+// Kill switch: ATLAS_NO_META_INTERVENTIONS=true reverts to today's pure
+// nudge-only behavior (the same env already gates the nudge cooldown-repeat).
+
+import { MODELS } from "../llm.js";
+
+export interface InterventionContext {
+    llm: import("../llm.js").LLMClient;
+    assessment: MetaAssessment;
+    iterations: number;
+    totalToolCalls: number;
+    originalRequest: string;
+    // Live LLM message array — push system/user nudges here.
+    messages: import("../llm.js").ChatCompletionMessageParam[];
+    recentToolNames: string[];
+    taskType?: string;
+    onProgress?: (m: string) => Promise<void> | void;
+    state: InterventionState;
+}
+
+export interface InterventionState {
+    forcedModel: string | null; // consumed by agent.ts at the model pick
+    lastReplanIter: number;
+    lastEscalateIter: number;
+    lastCriticsIter: number;
+    askUserNudges: number;
+    lastAskUserIter: number;
+}
+
+export function createInterventionState(): InterventionState {
+    return {
+        forcedModel: null,
+        lastReplanIter: -100,
+        lastEscalateIter: -100,
+        lastCriticsIter: -100,
+        askUserNudges: 0,
+        lastAskUserIter: -100,
+    };
+}
+
+const ESCALATE_COOLDOWN = 5;
+const REPLAN_COOLDOWN = 6;
+const CRITICS_COOLDOWN = 8;
+const MAX_ASK_USER_NUDGES = 2;
+
+export async function applyIntervention(ctx: InterventionContext): Promise<void> {
+    // GATE: env DISABLES the real dispatch and reverts to nudge-only.
+    if (process.env.ATLAS_NO_META_INTERVENTIONS === "true") return;
+    const iv = ctx.assessment.intervention;
+    // ZERO added cost on a healthy turn.
+    if (iv === "none") return;
+    try {
+        switch (iv) {
+            case "escalate":
+                return escalateArm(ctx);
+            case "replan":
+                return await replanArm(ctx);
+            case "critics":
+                return await criticsArm(ctx);
+            case "ask_user":
+                return await askUserArm(ctx);
+        }
+    } catch {
+        /* fail-open — never break a turn over an intervention */
+    }
+}
+
+// escalate — ZERO extra LLM call. Threads a higher-tier model into the NEXT
+// model pick via the existing modelOverride path. Cooldown-gated.
+function escalateArm(ctx: InterventionContext): void {
+    if (ctx.iterations - ctx.state.lastEscalateIter < ESCALATE_COOLDOWN) return;
+    const struggledHard =
+        ctx.assessment.struggleDetected || ctx.assessment.confidence < 0.25 || ctx.recentToolNames.length > 0;
+    const target = struggledHard ? MODELS.PRO : MODELS.SONNET;
+    ctx.state.forcedModel = target;
+    ctx.state.lastEscalateIter = ctx.iterations;
+    ctx.messages.push({
+        role: "system",
+        content: `[SYSTEM — ESCALATE] Sustained struggle detected (${ctx.assessment.reasoning}). The next step runs on a higher-tier model — reconsider the approach carefully.`,
+    });
+}
+
+// replan — exactly ONE gated Pro call. Builds a synthetic mesh-shaped summary
+// so the mesh-oriented replan() can steer this single-agent turn.
+async function replanArm(ctx: InterventionContext): Promise<void> {
+    if (ctx.iterations - ctx.state.lastReplanIter < REPLAN_COOLDOWN) return;
+    ctx.state.lastReplanIter = ctx.iterations;
+    const { replan } = await import("./replanner.js");
+    const recent = recentAssistantText(ctx.messages, 400);
+    const completedResults = new Map<string, import("./sub-agent.js").SubAgentResult>([
+        [
+            "turn_progress",
+            {
+                id: "turn_progress",
+                role: "general",
+                success: true,
+                output: recent || "(no assistant output yet)",
+                toolCalls: ctx.totalToolCalls,
+                durationMs: 0,
+                estimatedCost: 0,
+            },
+        ],
+    ]);
+    const remainingSteps: import("./mesh.js").MeshStep[] = [
+        { id: "remaining", role: "general", description: ctx.originalRequest, depends_on: [] },
+    ];
+    const decision = await replan(ctx.llm, ctx.originalRequest, completedResults, remainingSteps);
+    ctx.messages.push({
+        role: "system",
+        content: `[SYSTEM — REPLAN] ${decision.reason} — revise your approach accordingly.`,
+    });
+}
+
+// critics — existing multi-critic, ONLY with a tool-grounded verifier in scope.
+// Otherwise downgrades to the free escalate arm.
+async function criticsArm(ctx: InterventionContext): Promise<void> {
+    const verifierInScope =
+        ctx.recentToolNames.some((n) => n === "browser_verify" || n === "os_visual_verify") ||
+        ctx.taskType === "coding";
+    if (!verifierInScope) return escalateArm(ctx);
+    if (ctx.iterations - ctx.state.lastCriticsIter < CRITICS_COOLDOWN) return;
+    ctx.state.lastCriticsIter = ctx.iterations;
+    const { runMultiCriticDebate } = await import("./multi-critic.js");
+    const taskResult = recentAssistantText(ctx.messages, 3000) || "(no output produced yet)";
+    const budgetMs = Number(process.env.ATLAS_POST_SYNTHESIS_BUDGET_MS ?? "90000");
+    const adversarial = `Adversarially audit the work so far for the SPECIFIC failure the agent is stuck on. ORIGINAL REQUEST: ${ctx.originalRequest}`;
+    const consensus = await Promise.race([
+        runMultiCriticDebate(ctx.llm, adversarial, taskResult),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), budgetMs)),
+    ]);
+    if (!consensus) return;
+    const lines = [...consensus.key_issues, ...consensus.consensus_suggestions].filter(Boolean);
+    if (lines.length === 0) return;
+    ctx.messages.push({
+        role: "system",
+        content: `[SYSTEM — CRITICS] Adversarial audit found:\n- ${lines.join("\n- ")}\nAddress these before continuing.`,
+    });
+}
+
+// ask_user — FEEDBACK-FIRST. The first <=2 arms are free rephrase nudges; only
+// after the rephrase budget is spent do we surface a real clarifying question
+// (via onProgress — still no LLM call).
+async function askUserArm(ctx: InterventionContext): Promise<void> {
+    ctx.state.lastAskUserIter = ctx.iterations;
+    if (ctx.state.askUserNudges < MAX_ASK_USER_NUDGES) {
+        ctx.state.askUserNudges++;
+        ctx.messages.push({
+            role: "system",
+            content:
+                "[SYSTEM] You appear stuck. Re-read the user's request, restate your current understanding in one line, and try a materially different approach. Do NOT ask the user yet.",
+        });
+        return;
+    }
+    await ctx.onProgress?.(
+        `I'm having trouble with: ${ctx.assessment.reasoning}. Could you clarify what you're after, or should I summarize what I have so far?`,
+    );
+}
+
+function recentAssistantText(messages: import("../llm.js").ChatCompletionMessageParam[], maxChars: number): string {
+    const chunks: string[] = [];
+    for (let i = messages.length - 1; i >= 0 && chunks.join(" ").length < maxChars; i--) {
+        const m = messages[i];
+        if (m.role === "assistant" && typeof m.content === "string" && m.content.trim()) {
+            chunks.unshift(m.content.trim());
+        }
+    }
+    return chunks.join("\n\n").slice(-maxChars);
+}
+
 // ── Native Module ─────────────────────────────
 
 let _native: any = null;

@@ -104,6 +104,7 @@ desktop/hostinger-upload/
 !src/memory/temporal-cache.test.ts
 !src/memory/context-pruning.test.ts
 !src/memory/compression-template.test.ts
+!src/memory/corpus-persistence.test.ts
 !src/config/paths.test.ts
 !src/tools/coding/checkpoint-manager.test.ts
 !src/language.test.ts
@@ -135,6 +136,7 @@ desktop/hostinger-upload/
 !src/agents/smart-truncate.test.ts
 !src/agents/error-types.test.ts
 !src/agents/error-recovery.test.ts
+!src/agents/intervention-dispatcher.test.ts
 !src/agents/role-analyzer.test.ts
 !src/agents/handoff.test.ts
 !src/agents/circuit-breaker.test.ts
@@ -169,6 +171,7 @@ desktop/hostinger-upload/
 !src/voice/live/echo.test.ts
 !src/tools/preflight.test.ts
 !src/tools/swarm-gate.test.ts
+!src/tools/session-search.test.ts
 !src/model-router.coding.test.ts
 !src/model-router.window.test.ts
 !src/llm-cache.toolsig.test.ts

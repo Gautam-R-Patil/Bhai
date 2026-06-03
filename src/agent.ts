@@ -19,7 +19,15 @@ import {
 } from "./agents/circuit-breaker.js";
 import { classifyComplexity } from "./agents/complexity-classifier.js";
 import { listActiveLongTasks } from "./agents/long-task.js";
-import { assess, createMetacognitionState, logOutcome, updateSignals } from "./agents/metacognition.js";
+import {
+    applyIntervention,
+    assess,
+    createInterventionState,
+    createMetacognitionState,
+    type InterventionState,
+    logOutcome,
+    updateSignals,
+} from "./agents/metacognition.js";
 import { canonicalArgsHash, createGuardrailState, recordToolCall as recordGuardrailCall } from "./agents/tool-call-guardrail.js";
 import {
     enterPlanMode,
@@ -1135,6 +1143,11 @@ STRATEGY: Execute in as few tool calls as possible.
     const metaState = createMetacognitionState();
     let metaNudged = false;
     let lastMetaNudgeIter = -100;
+    // A2: cross-iteration dispatcher state — drives escalate/replan/critics/ask_user.
+    const interventionState: InterventionState = createInterventionState();
+    // Captures selection.taskType at the end of each iteration so the critics
+    // arm can detect the coding-verifier-in-scope case on the NEXT iteration.
+    let lastSelectionTaskType: string | undefined;
 
     // Per-turn loop guardrail — catches a single tool retrying identical args
     // (a spiral the whole-batch no-progress guard below misses). Warn-only
@@ -1182,6 +1195,24 @@ STRATEGY: Execute in as few tool calls as possible.
                     `  🧠 Metacognition: low confidence (${metaCheck.confidence.toFixed(2)}) — may trigger cascade escalation`,
                 );
             }
+            // A2: make MetaAssessment.intervention ACT. The text nudge above is the
+            // fallback; this dispatches the computed enum (escalate/replan/critics/
+            // ask_user) into concrete cooldown-gated, fail-open actions. On a healthy
+            // turn (intervention === "none") or with ATLAS_NO_META_INTERVENTIONS=true
+            // it is a no-op with ZERO added cost. Awaited because escalate/ask_user
+            // set state consumed by THIS iteration's model pick below.
+            await applyIntervention({
+                llm,
+                assessment: metaCheck,
+                iterations,
+                totalToolCalls,
+                originalRequest: rawUserMessage,
+                messages,
+                recentToolNames: metaState.signals.recentToolNames,
+                taskType: lastSelectionTaskType,
+                onProgress,
+                state: interventionState,
+            });
         }
 
         // ── Circuit Breaker Check ─────────────────
@@ -1277,8 +1308,19 @@ STRATEGY: Execute in as few tool calls as possible.
             rawUserMessage,
             hasMediaThisIter,
         );
-        // Circuit breaker half-open: force highest-tier model for recovery probe
-        const model = circuitBreaker.state === "half-open" ? MODELS.PRO : selection.modelId;
+        // Capture for the NEXT iteration's critics-arm verifier-scope check.
+        lastSelectionTaskType = selection.taskType;
+        // Circuit breaker half-open: force highest-tier model for recovery probe.
+        // A2: the metacog escalate arm threads a forced tier here via the same
+        // modelOverride path — consumed once, then cleared so it forces ONE iteration.
+        const model =
+            circuitBreaker.state === "half-open"
+                ? MODELS.PRO
+                : (interventionState.forcedModel ?? selection.modelId);
+        if (interventionState.forcedModel) {
+            console.log(`  🧠 Metacog escalate → ${interventionState.forcedModel}`);
+            interventionState.forcedModel = null;
+        }
         if (iterations <= 3 || iterations % 5 === 0) {
             console.log(`  🧠 Iteration ${iterations} using ${selection.displayName} [${selection.reason}]`);
         }
