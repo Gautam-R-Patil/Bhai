@@ -150,7 +150,6 @@ const overlayClients = new Set<WebSocket>();
 let placeholderInterval: ReturnType<typeof setInterval> | null = null;
 let activeRecording: ChildProcess | null = null;
 let recordingPath: string | null = null;
-let nativeOverlayProcess: ChildProcess | null = null;
 
 // ── Initialize ────────────────────────────────
 
@@ -600,7 +599,9 @@ export function initOverlayChat(llm: LLMClient): void {
 
     httpServer.listen(OVERLAY_PORT, "127.0.0.1", () => {
         console.log(`💬 Overlay chat on http://127.0.0.1:${OVERLAY_PORT}`);
-        launchNativeOverlay();
+        // The overlay window is owned by the Electron desktop app on ALL platforms
+        // (createOverlayWindow in desktop/main.js, toggled by the global hotkey).
+        // The server just hosts the HTTP+WS endpoint it connects to.
     });
 
     // ── Persistent Overlay Research Progress ──────
@@ -1641,65 +1642,13 @@ async function handleLiveVoiceMute(ws: WebSocket, muted: boolean): Promise<void>
 
 // ── Cleanup ───────────────────────────────────
 
-// ── Native Overlay Launcher ──────────────────
-// Spawns the native Swift overlay app as the overlay window.
-// The Swift app is a thin window shell — all logic stays in this server.
-
-function launchNativeOverlay(): void {
-    // The Swift native overlay is macOS-only.
-    // On Windows and Linux the Electron window in desktop/main.js serves as the overlay —
-    // no native binary is needed; the HTTP + WebSocket server is sufficient.
-    if (process.platform !== "darwin") {
-        console.log("💬 Overlay: using Electron window (macOS native overlay not required on this platform)");
-        return;
-    }
-
-    // Locate the binary across dev + packaged layouts. In dev the source
-    // tree lives at `<repo>/overlay-app/.build/...`; in the packaged Electron
-    // bundle the binary is next to the mjs bundle under `overlay-app/...`
-    // (see desktop/package.json extraResources).
-    const cwd = process.cwd();
-    const projectRoot = join(__dirname, "..", "..");
-    const candidateBins = [
-        join(projectRoot, "overlay-app", ".build", "release", "ATLASOverlay"),
-        join(projectRoot, "overlay-app", ".build", "debug", "ATLASOverlay"),
-        join(__dirname, "overlay-app", ".build", "release", "ATLASOverlay"),
-        join(cwd, "overlay-app", ".build", "release", "ATLASOverlay"),
-        join(cwd, "overlay-app", ".build", "debug", "ATLASOverlay"),
-    ];
-    const binary = candidateBins.find(existsSync) ?? null;
-
-    if (!binary) {
-        console.log("💬 Native overlay not built — run: cd overlay-app && ./build.sh");
-        return;
-    }
-
-    try {
-        nativeOverlayProcess = spawn(binary, [], {
-            detached: false,
-            stdio: "ignore",
-        });
-
-        nativeOverlayProcess.on("error", (err) => {
-            console.log(`💬 Native overlay failed to start: ${err.message}`);
-            nativeOverlayProcess = null;
-        });
-
-        nativeOverlayProcess.on("exit", (code) => {
-            if (code !== 0 && code !== null) {
-                console.log(`💬 Native overlay exited with code ${code}`);
-            }
-            nativeOverlayProcess = null;
-        });
-
-        console.log("💬 Native overlay launched");
-    } catch (err) {
-        console.log(`💬 Failed to launch native overlay: ${err}`);
-    }
-}
+// The overlay UI is the Electron BrowserWindow in desktop/main.js
+// (createOverlayWindow), unified across macOS/Windows/Linux — it loads this
+// server's token-injected overlay.html. No platform-native overlay binary is
+// spawned anymore; the Swift overlay was retired in favor of the single
+// Electron window.
 
 export function closeOverlayChat(): void {
-    if (nativeOverlayProcess) { try { nativeOverlayProcess.kill(); } catch { /* */ } nativeOverlayProcess = null; }
     if (activeRecording) { try { activeRecording.kill(); } catch { /* */ } activeRecording = null; }
     if (placeholderInterval) { clearInterval(placeholderInterval); placeholderInterval = null; }
     if (wss) { wss.close(); wss = null; }

@@ -107,10 +107,6 @@
                 "to": "bot/src/overlay/overlay.html"
             },
             {
-                "from": "../overlay-app/.build/release/ATLASOverlay",
-                "to": "bot/overlay-app/.build/release/ATLASOverlay"
-            },
-            {
                 "from": "../native",
                 "to": "bot/native",
                 "filter": [
