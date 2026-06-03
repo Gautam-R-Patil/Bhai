@@ -563,6 +563,14 @@ export async function initMemoryDB(): Promise<CompatDatabase> {
         // Backfill both FTS5 tables from existing memories (idempotent).
         backfillFTS5();
 
+        // ── Conversation transcript search (session_search) ──
+        // Per-message decomposition + FTS5 over raw transcript content.
+        // Gated by ATLAS_NO_SESSION_SEARCH; shares this try/catch fail-open.
+        if (process.env.ATLAS_NO_SESSION_SEARCH !== "true") {
+            initConversationSearchSchema(rawDb);
+            backfillConversationMessages();
+        }
+
         console.log(
             "🧠 Memory database initialized (WAL + FTS5 porter+trigram + Living Continuity)",
         );
@@ -750,6 +758,286 @@ export function backfillFTS5(): void {
         );
     } catch (err) {
         console.warn("[FTS5] Backfill failed (non-fatal):", (err as Error).message);
+    }
+}
+
+// ── Conversation Transcript Search (session_search) ───────────
+// Per-message decomposition of conversations.messages_json into
+// conversation_messages, mirrored into FTS5 (porter + trigram) for
+// zero-LLM BM25 keyword recall of what was literally said in past sessions.
+
+export interface SessionMessageHit {
+    conversation_id: number;
+    session_id: string;
+    role: string;
+    snippet: string;
+    content: string;
+    created_at: string | null;
+    rank: number;
+}
+
+/**
+ * Coalesce an OpenAI ChatCompletionMessageParam content into plain text.
+ * - string → as-is
+ * - array of content-parts → join the `.text` of `type:"text"` parts
+ * - null / tool-call-only / non-text → "" (caller skips empties)
+ */
+export function extractMsgText(msg: unknown): string {
+    if (typeof msg !== "object" || msg === null) return "";
+    const content = (msg as { content?: unknown }).content;
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+        const parts: string[] = [];
+        for (const p of content) {
+            if (
+                typeof p === "object" && p !== null &&
+                (p as { type?: unknown }).type === "text" &&
+                typeof (p as { text?: unknown }).text === "string"
+            ) {
+                parts.push((p as { text: string }).text);
+            }
+        }
+        return parts.join("\n").trim();
+    }
+    return "";
+}
+
+function getMsgRole(msg: unknown): string {
+    if (typeof msg !== "object" || msg === null) return "unknown";
+    const r = (msg as { role?: unknown }).role;
+    return typeof r === "string" ? r : "unknown";
+}
+
+/**
+ * Creates the conversation_messages backing table + the two FTS5 mirrors
+ * (porter unicode61 + trigram) and their sync triggers. Idempotent
+ * (CREATE ... IF NOT EXISTS). Exported so unit tests exercise the real DDL.
+ */
+export function initConversationSearchSchema(raw: BetterSqlite3.Database): void {
+    raw.exec(`
+    CREATE TABLE IF NOT EXISTS conversation_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      conversation_id INTEGER NOT NULL,
+      session_id TEXT NOT NULL,
+      msg_index INTEGER NOT NULL,
+      role TEXT NOT NULL,
+      content TEXT NOT NULL,
+      created_at TEXT,
+      UNIQUE(conversation_id, msg_index)
+    )`);
+    raw.exec(`CREATE INDEX IF NOT EXISTS idx_convmsg_conv ON conversation_messages(conversation_id)`);
+    raw.exec(`CREATE INDEX IF NOT EXISTS idx_convmsg_created ON conversation_messages(created_at DESC)`);
+
+    raw.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS conversations_fts USING fts5(
+      content, role, session_id UNINDEXED,
+      tokenize='porter unicode61'
+    )`);
+    raw.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS conversations_fts_trigram USING fts5(
+      content, role, session_id UNINDEXED,
+      tokenize='trigram'
+    )`);
+
+    raw.exec(`
+    CREATE TRIGGER IF NOT EXISTS conv_msg_ai AFTER INSERT ON conversation_messages BEGIN
+      INSERT OR REPLACE INTO conversations_fts(rowid, content, role, session_id)
+      VALUES (new.id, new.content, new.role, new.session_id);
+      INSERT OR REPLACE INTO conversations_fts_trigram(rowid, content, role, session_id)
+      VALUES (new.id, new.content, new.role, new.session_id);
+    END`);
+    raw.exec(`
+    CREATE TRIGGER IF NOT EXISTS conv_msg_ad AFTER DELETE ON conversation_messages BEGIN
+      INSERT INTO conversations_fts(conversations_fts, rowid, content, role, session_id)
+      VALUES('delete', old.id, old.content, old.role, old.session_id);
+      INSERT INTO conversations_fts_trigram(conversations_fts_trigram, rowid, content, role, session_id)
+      VALUES('delete', old.id, old.content, old.role, old.session_id);
+    END`);
+}
+
+/**
+ * Insert one conversation_messages row per non-empty text message of a single
+ * conversation. Triggers populate the FTS5 mirrors. Idempotent via
+ * UNIQUE(conversation_id, msg_index) + INSERT OR IGNORE. Used by reflection.ts
+ * for immediate write-side indexing and by backfill for existing rows.
+ */
+export function indexConversationMessages(
+    conversationId: number,
+    sessionId: string,
+    messages: unknown[],
+    createdAt?: string | null,
+): number {
+    if (!rawDb || !Array.isArray(messages)) return 0;
+    const stmt = rawDb.prepare(
+        `INSERT OR IGNORE INTO conversation_messages
+         (conversation_id, session_id, msg_index, role, content, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+    );
+    let inserted = 0;
+    for (let i = 0; i < messages.length; i++) {
+        const text = extractMsgText(messages[i]);
+        if (!text) continue;
+        try {
+            stmt.run(conversationId, sessionId, i, getMsgRole(messages[i]), text, createdAt ?? null);
+            inserted++;
+        } catch { /* skip malformed row */ }
+    }
+    return inserted;
+}
+
+/**
+ * Backfill conversation_messages from existing conversations rows that have
+ * not yet been decomposed. Idempotent (NOT-IN guard). Wrapped in a single
+ * transaction for speed; non-fatal on any error.
+ */
+export function backfillConversationMessages(): void {
+    if (!rawDb) return;
+    try {
+        const rows = rawDb
+            .prepare(
+                `SELECT id, session_id, messages_json, created_at FROM conversations
+                 WHERE id NOT IN (SELECT DISTINCT conversation_id FROM conversation_messages)`,
+            )
+            .all() as Array<{ id: number; session_id: string; messages_json: string; created_at: string | null }>;
+
+        if (rows.length === 0) {
+            console.log("  [session_search] conversation_messages already backfilled");
+            return;
+        }
+
+        let total = 0;
+        beginTransaction();
+        try {
+            for (const row of rows) {
+                try {
+                    const parsed = JSON.parse(row.messages_json);
+                    if (Array.isArray(parsed)) {
+                        total += indexConversationMessages(row.id, row.session_id, parsed, row.created_at);
+                    }
+                } catch { /* skip malformed messages_json */ }
+            }
+            commitTransaction();
+        } catch (err) {
+            rollbackTransaction();
+            throw err;
+        }
+        console.log(`  [session_search] Backfilled ${total} messages from ${rows.length} conversation(s)`);
+    } catch (err) {
+        console.warn("[session_search] Backfill failed (non-fatal):", (err as Error).message);
+    }
+}
+
+/**
+ * Keyword search over past conversation transcripts (per-message FTS5 + BM25).
+ * Reuses the keywordSearch CJK-routing logic. Returns ACTUAL stored message
+ * text with a highlighted snippet. Fail-open: returns [] on any error or
+ * missing table — never throws. Zero LLM / zero network.
+ */
+export function searchSessionMessages(query: string, limit = 10): SessionMessageHit[] {
+    if (!rawDb) return [];
+    try {
+        const rawQuery = (query ?? "").trim();
+        if (rawQuery.length < 2) return [];
+
+        const cjk = containsCjk(rawQuery);
+        let ftsQuery: string;
+        let ftsTable: "conversations_fts" | "conversations_fts_trigram";
+
+        if (cjk) {
+            ftsQuery = buildTrigramQuery(rawQuery);
+            ftsTable = "conversations_fts_trigram";
+            if (!ftsQuery) return [];
+        } else {
+            const sanitized = sanitizeFts5Query(rawQuery);
+            if (!sanitized) return [];
+            const stopWords = new Set([
+                "a", "an", "the", "is", "are", "do", "you", "know",
+                "who", "what", "where", "when", "why", "how",
+                "i", "am", "my", "me", "to", "for", "in", "on",
+                "of", "and", "or", "with",
+            ]);
+            const tokens: string[] = [];
+            const phraseRe = /"[^"]+"|\S+/g;
+            for (const m of sanitized.matchAll(phraseRe)) tokens.push(m[0]);
+            const terms = tokens.filter((w) => {
+                if (w.startsWith('"')) return true;
+                const lc = w.toLowerCase();
+                return lc.length > 2 && !stopWords.has(lc);
+            });
+            if (terms.length === 0) return [];
+            ftsQuery = terms.join(" OR ");
+            ftsTable = "conversations_fts";
+        }
+
+        const rows = rawDb
+            .prepare(
+                `SELECT cm.conversation_id AS conversation_id, cm.session_id AS session_id,
+                        cm.role AS role, cm.content AS content, cm.created_at AS created_at,
+                        snippet(${ftsTable}, 0, '«', '»', ' … ', 12) AS snip,
+                        bm25(${ftsTable}) AS rank
+                 FROM ${ftsTable} fts
+                 JOIN conversation_messages cm ON cm.id = fts.rowid
+                 WHERE ${ftsTable} MATCH ?
+                 ORDER BY rank
+                 LIMIT ?`,
+            )
+            .all(ftsQuery, limit) as Array<{
+                conversation_id: number;
+                session_id: string;
+                role: string;
+                content: string;
+                created_at: string | null;
+                snip: string;
+                rank: number;
+            }>;
+
+        return rows.map((r) => ({
+            conversation_id: r.conversation_id,
+            session_id: r.session_id,
+            role: r.role,
+            snippet: r.snip,
+            content: r.content,
+            created_at: r.created_at,
+            rank: r.rank,
+        }));
+    } catch {
+        // Missing table / FTS5 unavailable / malformed query → fail-open.
+        return [];
+    }
+}
+
+/**
+ * Browse the most recent conversation messages in reverse-chronological order.
+ * No FTS dependency. Fail-open: [] on any error. Zero LLM.
+ */
+export function browseRecentMessages(limit = 20): SessionMessageHit[] {
+    if (!rawDb) return [];
+    try {
+        const rows = rawDb
+            .prepare(
+                `SELECT conversation_id, session_id, role, content, created_at
+                 FROM conversation_messages
+                 ORDER BY created_at DESC, id DESC
+                 LIMIT ?`,
+            )
+            .all(limit) as Array<{
+                conversation_id: number;
+                session_id: string;
+                role: string;
+                content: string;
+                created_at: string | null;
+            }>;
+        return rows.map((r) => ({
+            conversation_id: r.conversation_id,
+            session_id: r.session_id,
+            role: r.role,
+            snippet: r.content.length > 200 ? `${r.content.slice(0, 200)} …` : r.content,
+            content: r.content,
+            created_at: r.created_at,
+            rank: 0,
+        }));
+    } catch {
+        return [];
     }
 }
 

@@ -9,7 +9,7 @@
 import crypto from "node:crypto";
 import { extractJSON } from "../utils/json-extract.js";
 import type { LLMClient, ChatCompletionMessageParam } from "../llm.js";
-import { remember, recall } from "./sqlite.js";
+import { remember, recall, indexConversationMessages } from "./sqlite.js";
 import { reinforceTrait, contradictTrait, decayTraits, recordSessionCoOccurrences, getAllTraits } from "./traits.js";
 import { updateIdentityProfile, getIdentityProfile } from "./identity.js";
 import { getShortSummary } from "./session.js";
@@ -34,6 +34,24 @@ const MAX_TRAIT_SIGNALS = 5;
 const MAX_RETRIES = 1;
 const HMAC_SECRET = "atlas-sacdr-audit-v1";  // Derived key for signing
 const CONSOLIDATION_EVERY_N_REFLECTIONS = 5; // Run lightweight consolidation every 5th reflection
+
+// Default 0 = persist FULL conversation history into conversations.messages_json.
+// Emergency rollback to the legacy cap: set ATLAS_CORPUS_MAX_MESSAGES="20".
+// Malformed / 0 / negative → treated as full.
+const CORPUS_MAX_MESSAGES = (() => {
+    const raw = process.env.ATLAS_CORPUS_MAX_MESSAGES;
+    if (!raw) return 0;
+    const n = Number.parseInt(raw, 10);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+})();
+
+/**
+ * Selects which messages to persist. max <= 0 → full history; max > 0 → last `max`.
+ * Pure + side-effect-free so the persistence policy can be unit-tested directly.
+ */
+export function selectCorpusMessages<T>(history: T[], max: number): T[] {
+    return max > 0 ? history.slice(-max) : history;
+}
 
 // ── Frozen reflection instructions ────────────
 // These are byte-stable module-level constants used verbatim as the
@@ -213,7 +231,8 @@ export async function runReflection(
                 const db = getKnowledgeGraphDB();
                 if (db) {
                     const sessionId = generateUUID();
-                    const messagesJson = JSON.stringify(conversationHistory.slice(-20));
+                    const messagesToStore = selectCorpusMessages(conversationHistory, CORPUS_MAX_MESSAGES);
+                    const messagesJson = JSON.stringify(messagesToStore);
                     db.run(
                         `INSERT INTO conversations (session_id, messages_json, summary) VALUES (?, ?, ?)`,
                         [sessionId, messagesJson, summary.summary]
@@ -223,6 +242,16 @@ export async function runReflection(
                     // ── Async: embed conversation summary for vector search ──
                     const convIdResult = db.exec("SELECT last_insert_rowid()");
                     const convId = convIdResult[0]?.values[0]?.[0] as number;
+
+                    // ── Incremental write-side sync: decompose into per-message
+                    // rows so session_search's FTS index picks up this session
+                    // immediately (the boot backfill is the fallback). Non-fatal. ──
+                    if (convId && process.env.ATLAS_NO_SESSION_SEARCH !== "true") {
+                        try {
+                            indexConversationMessages(convId, sessionId, messagesToStore);
+                        } catch { /* non-fatal — boot backfill will recover */ }
+                    }
+
                     if (convId && summary.summary) {
                         import("./embeddings.js").then(async ({ embedText, embeddingToBuffer, isReady }) => {
                             if (!isReady()) return;

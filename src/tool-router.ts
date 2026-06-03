@@ -85,12 +85,13 @@ const CATEGORIES: Record<string, CategoryDef> = {
     },
     memory: {
         description:
-            "Remembering information, storing facts, searching past memories, recalling what the user told me before, remembering preferences, saving notes, managing knowledge and identity information about the user. Self-editing core memory sections: reading, replacing, appending, and deleting content from identity, traits, preferences, or custom memory sections.",
+            "Remembering information, storing facts, searching past memories, recalling what the user told me before, remembering preferences, saving notes, managing knowledge and identity information about the user. Self-editing core memory sections: reading, replacing, appending, and deleting content from identity, traits, preferences, or custom memory sections. Searching the raw text of past conversation transcripts by keyword.",
         tools: [
             "memory_store",
             "memory_search",
             "memory_list",
             "memory_delete",
+            "session_search",
             "identity_view",
             "identity_update",
             "trait_update",

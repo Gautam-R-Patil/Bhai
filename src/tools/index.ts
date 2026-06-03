@@ -167,6 +167,7 @@ import {
     traitUpdate,
 } from "./memory-tools.js";
 import { coreMemoryAppend, coreMemoryDelete, coreMemoryRead, coreMemoryReplace } from "./memory-tools-advanced.js";
+import { sessionSearch } from "./session-search.js";
 import { osComputerAction } from "./os-computer-action.js";
 import { osGround, osVisualize } from "./os-grounding.js";
 import { osClickId, osInspect } from "./os-inspect.js";
@@ -284,6 +285,9 @@ registry.set(memoryStore.schema.function.name, memoryStore);
 registry.set(memorySearch.schema.function.name, memorySearch);
 registry.set(memoryList.schema.function.name, memoryList);
 registry.set(memoryDelete.schema.function.name, memoryDelete);
+if (process.env.ATLAS_NO_SESSION_SEARCH !== "true") {
+    registry.set(sessionSearch.schema.function.name, sessionSearch);
+}
 
 // Identity & trait tools
 registry.set(identityView.schema.function.name, identityView);
