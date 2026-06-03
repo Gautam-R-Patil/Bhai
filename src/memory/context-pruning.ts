@@ -7,6 +7,7 @@ import { pruneJsonValues, smartTruncate } from "../agents/smart-truncate.js";
 import type { ChatCompletionMessageParam, LLMClient } from "../llm.js";
 import { sanitizeSecrets } from "../security/secrets-sanitizer.js";
 import { buildCompressionUserPrompt, COMPRESSION_SYSTEM_PROMPT } from "./compression-template.js";
+import { getLastCompressionSummary, getSessionState, setLastCompressionSummary } from "./session.js";
 import { remember } from "./sqlite.js";
 
 // ── Types ─────────────────────────────────────
@@ -199,7 +200,11 @@ export async function pruneContext(messages: ChatCompletionMessageParam[], llm: 
             messages: [
                 {
                     role: "user",
-                    content: buildCompressionUserPrompt(summaryText),
+                    content: buildCompressionUserPrompt(
+                        summaryText,
+                        getLastCompressionSummary(),
+                        getSessionState()?.current_goal || undefined,
+                    ),
                 },
             ],
             systemPrompt: COMPRESSION_SYSTEM_PROMPT,
@@ -209,6 +214,9 @@ export async function pruneContext(messages: ChatCompletionMessageParam[], llm: 
         // the model may echo secrets from the transcript into the summary.
         const rawSummary = summaryResponse.choices[0]?.message?.content || "Previous conversation context.";
         const summary = sanitizeSecrets(rawSummary).sanitized;
+
+        // Persist for the NEXT prune so numbering continues instead of cold-restarting.
+        setLastCompressionSummary(summary);
 
         // Replace old messages with summary
         const prunedMessages: ChatCompletionMessageParam[] = [

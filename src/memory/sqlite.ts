@@ -473,6 +473,14 @@ export async function initMemoryDB(): Promise<CompatDatabase> {
       recent_turns_json TEXT DEFAULT '[]'
     )`);
 
+    // Persist the last structured compression summary so the next prune
+    // continues the numbered Completed Actions instead of cold-restarting.
+    try {
+        db.run("ALTER TABLE sessions ADD COLUMN last_compression_summary TEXT DEFAULT ''");
+    } catch {
+        /* exists */
+    }
+
     // ── FTS5 with Porter stemmer + Unicode tokenizer (Hybrid Search) ──
     // Standalone FTS5 table (not external-content mode) with porter stemming
     // for better keyword recall. Synced via triggers + explicit INSERT in remember().

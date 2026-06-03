@@ -25,6 +25,7 @@ export interface SessionState {
     turn_count: number;
     short_summary: string;        // Rolling compressed summary
     recent_turns: TurnEntry[];    // Buffer of recent turns
+    lastCompressionSummary?: string;  // Last structured prune summary (prune continuity)
 }
 
 // ── Constants ─────────────────────────────────
@@ -55,8 +56,8 @@ function persistSession(): void {
         try {
             raw.prepare(`
                 INSERT OR REPLACE INTO sessions
-                (session_id, current_goal, started_at, last_activity, turn_count, short_summary, recent_turns_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (session_id, current_goal, started_at, last_activity, turn_count, short_summary, recent_turns_json, last_compression_summary)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             `).run(
                 currentSession.session_id,
                 currentSession.current_goal,
@@ -65,6 +66,7 @@ function persistSession(): void {
                 currentSession.turn_count,
                 currentSession.short_summary,
                 JSON.stringify(currentSession.recent_turns),
+                currentSession.lastCompressionSummary ?? "",
             );
         } catch (err) {
             console.warn("[SESSION] Persist failed:", (err as Error).message);
@@ -78,12 +80,12 @@ function loadLastSession(): SessionState | null {
     if (!raw) return null;
     try {
         const row = raw.prepare(
-            `SELECT session_id, current_goal, started_at, last_activity, turn_count, short_summary, recent_turns_json
+            `SELECT session_id, current_goal, started_at, last_activity, turn_count, short_summary, recent_turns_json, last_compression_summary
              FROM sessions ORDER BY last_activity DESC LIMIT 1`
         ).get() as {
             session_id: string; current_goal: string; started_at: string;
             last_activity: string; turn_count: number; short_summary: string;
-            recent_turns_json: string;
+            recent_turns_json: string; last_compression_summary: string | null;
         } | undefined;
 
         if (!row) return null;
@@ -100,6 +102,7 @@ function loadLastSession(): SessionState | null {
             turn_count: row.turn_count,
             short_summary: row.short_summary,
             recent_turns: JSON.parse(row.recent_turns_json || "[]"),
+            lastCompressionSummary: row.last_compression_summary ?? "",
         };
     } catch {
         return null;
@@ -118,6 +121,7 @@ export function startSession(): SessionState {
         turn_count: 0,
         short_summary: "",
         recent_turns: [],
+        lastCompressionSummary: "",
     };
     console.log(`📋 Session started: ${currentSession.session_id}`);
     persistSession();
@@ -368,6 +372,24 @@ export function shouldReflect(): boolean {
 
     // Reflect every 15 turns (slightly more frequent than before)
     return session.turn_count > 0 && session.turn_count % 15 === 0;
+}
+
+// ── Structured Compression Summary ────────────
+// Zero-LLM continuity hook for context-pruning: the prune call reads the prior
+// structured summary so it can continue Completed Actions numbering, then writes
+// the new one back. Returns null (not "") when empty so buildCompressionUserPrompt
+// skips the continuation block. Killable via ATLAS_NO_PRUNE_CONTINUITY=true.
+
+export function getLastCompressionSummary(): string | null {
+    if (process.env.ATLAS_NO_PRUNE_CONTINUITY === "true") return null;
+    return currentSession?.lastCompressionSummary || null;
+}
+
+export function setLastCompressionSummary(summary: string): void {
+    if (process.env.ATLAS_NO_PRUNE_CONTINUITY === "true") return;
+    if (!currentSession || !summary) return;
+    currentSession.lastCompressionSummary = summary;
+    persistSession();
 }
 
 // ── Session Timeout Warning ────────────────────
