@@ -10,6 +10,7 @@
  * (desktop/installer/phases.js) — keep them in sync.
  */
 
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getDataDir } from "../config/paths.js";
 import { omniParserDepsPresent, omniParserWeightsPresent } from "./omniparser.js";
@@ -52,37 +53,44 @@ export async function ensureOmniParser(profile: string): Promise<void> {
     const venvDir = join(dataDir, "python-venv");
     const sysPy = process.platform === "win32" ? "python" : "python3";
 
-    // One shell pipeline so the detached process runs the full sequence. Bash on
-    // POSIX; on Windows fall back to a plain spawn of python (venv assumed) since
-    // the chained form needs a shell.
-    const dl =
-        "import os,shutil;from huggingface_hub import hf_hub_download;" +
-        "d=os.path.expanduser('~/.cache/omniparser');os.makedirs(d,exist_ok=True);" +
-        "p=hf_hub_download(repo_id='microsoft/OmniParser-v2.0',filename='icon_detect/model.pt');" +
-        "shutil.copy(p,os.path.join(d,'icon_detect.pt'));print('weights OK')";
+    // Write the weights-download Python to a FILE (not -c inline). Inline -c
+    // inside a bash -lc '...' wrapper had its single-quotes stripped by the
+    // outer shell quoting, producing a SyntaxError. A file sidesteps all
+    // nested-quote hazards and is identical cross-platform.
+    const dlScript =
+        "import os, shutil\n" +
+        "from huggingface_hub import hf_hub_download\n" +
+        "d = os.path.expanduser('~/.cache/omniparser')\n" +
+        "os.makedirs(d, exist_ok=True)\n" +
+        "p = hf_hub_download(repo_id='microsoft/OmniParser-v2.0', filename='icon_detect/model.pt')\n" +
+        "shutil.copy(p, os.path.join(d, 'icon_detect.pt'))\n" +
+        "print('weights OK')\n";
+    const dlPath = join(dataDir, "omniparser-fetch-weights.py");
+    try {
+        writeFileSync(dlPath, dlScript, { mode: 0o600 });
+    } catch {
+        logProvisionResult("error");
+        return;
+    }
 
+    const vp = venvPython();
     if (process.platform !== "win32") {
+        // `&&` chains; quoting only paths (no inline Python) is safe under bash -lc.
         const script = [
             `"${sysPy}" -m venv "${venvDir}" 2>/dev/null || true`,
-            `"${venvPython()}" -m pip install --quiet --upgrade pip`,
-            `"${venvPython()}" -m pip install --quiet ultralytics Pillow huggingface_hub`,
-            `"${venvPython()}" -c '${dl}'`,
+            `"${vp}" -m pip install --quiet --upgrade pip`,
+            `"${vp}" -m pip install --quiet ultralytics Pillow huggingface_hub`,
+            `"${vp}" "${dlPath}"`,
         ].join(" && ");
-        const r = spawnDetachedLogged("omniparser-setup", "bash", ["-lc", script]);
-        logProvisionResult(r);
+        logProvisionResult(spawnDetachedLogged("omniparser-setup", "bash", ["-lc", script]));
     } else {
-        // Windows: full sequence via PowerShell (creates venv if missing, installs
-        // deps, downloads weights) — mirrors the POSIX bash path. `;` chains;
-        // `2>$null` swallows the venv no-op error when it already exists.
-        const vp = venvPython();
         const psScript = [
             `& '${sysPy}' -m venv '${venvDir}' 2>$null`,
             `& '${vp}' -m pip install --quiet --upgrade pip`,
             `& '${vp}' -m pip install --quiet ultralytics Pillow huggingface_hub`,
-            `& '${vp}' -c "${dl.replace(/"/g, '\\"')}"`,
+            `& '${vp}' '${dlPath}'`,
         ].join("; ");
-        const r = spawnDetachedLogged("omniparser-setup", "powershell", ["-NoProfile", "-Command", psScript]);
-        logProvisionResult(r);
+        logProvisionResult(spawnDetachedLogged("omniparser-setup", "powershell", ["-NoProfile", "-Command", psScript]));
     }
 }
 
