@@ -2029,15 +2029,30 @@ pub fn select_model(opts: SelectModelOptions) -> ModelSelection {
 
     // ── Browser/OS tool detection ──
     let browser_os_prefixes = ["browser_", "os_"];
-    let has_browser_os_tools = opts.last_tool_calls
-        .as_ref()
-        .map(|calls| calls.iter().any(|tc|
-            browser_os_prefixes.iter().any(|prefix| tc.name.starts_with(prefix))
-        ))
-        .unwrap_or(false);
 
-    if has_browser_os_tools && task_type == TaskType::ToolLoop {
-        // Prefer Sonnet 4.5 for browser/OS automation (agentic + vision), respect circuit breaker
+    // Force Sonnet only for ACTION/automation browser-OS loops (clicking,
+    // typing, navigating — genuinely agentic + needs vision), NOT for
+    // read-only screen inspection (screenshot/context/ocr). "Can you see the
+    // screen?" only calls os_screenshot/os_context — gpt-4.1-nano is
+    // vision-capable and handles those fine. Forcing Sonnet on every os_/
+    // browser_ loop made trivial screen reads cost ~24K tokens/iter.
+    // Read-only tools that must NOT trigger the Sonnet upgrade:
+    let read_only_screen_tools = [
+        "os_screenshot", "os_context", "os_ocr", "os_ocr_click", "os_inspect",
+        "os_accessibility_tree", "os_scan", "screen_record", "browser_scan",
+        "browser_extract", "browser_extract_article", "browser_analyze",
+        "browser_chrome_status", "browser_network_requests", "browser_form_state",
+    ];
+    let has_action_browser_os = opts.last_tool_calls
+        .as_ref()
+        .map(|calls| calls.iter().any(|tc| {
+            let is_browser_os = browser_os_prefixes.iter().any(|p| tc.name.starts_with(p));
+            is_browser_os && !read_only_screen_tools.contains(&tc.name.as_str())
+        }))
+        .unwrap_or(false);
+    if has_action_browser_os && task_type == TaskType::ToolLoop {
+        // Prefer Sonnet for genuinely-agentic browser/OS automation, respect
+        // circuit breaker
         let preferred = "anthropic/claude-sonnet-4.6";
         if !is_circuit_open(preferred) {
             model_id = preferred.to_string();
