@@ -3097,8 +3097,9 @@
         })();
 
         // ── Store ────────────────────────────────────────
+        // All store data flows through the main process (IPC → authenticated
+        // /api/store/query proxy). The renderer never talks to Convex directly.
 
-        const CONVEX_URL = 'https://zany-kudu-607.convex.cloud';
         let storeItems = [];
         let filteredItems = [];
         let installedItems = [];
@@ -3156,41 +3157,6 @@
                         Failed to load store: ${escapeHtml(err.message)}
                         <button class="btn-secondary" onclick="loadStore()" style="margin-top: 12px;">Retry</button>
                     </div>`;
-            }
-        }
-
-        async function fetchStoreDirect() {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-            try {
-                const response = await fetch(`${CONVEX_URL}/api/query`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        path: 'store/items:list',
-                        args: {},
-                        format: 'json'
-                    }),
-                    signal: controller.signal
-                });
-
-                clearTimeout(timeoutId);
-
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
-                }
-
-                const data = await response.json();
-
-                if (data.status === 'error') {
-                    throw new Error(data.errorMessage || 'Query failed');
-                }
-
-                storeItems = data.value || [];
-            } catch (err) {
-                clearTimeout(timeoutId);
-                throw err;
             }
         }
 
@@ -3366,23 +3332,15 @@
                 progressText.textContent = 'Downloading...';
                 progressFill.style.width = '20%';
 
-                // Get content URL from Convex
-                const urlResponse = await fetch(`${CONVEX_URL}/api/mutation`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        path: 'store/storage:getItemContentUrl',
-                        args: {
-                            itemId: currentItem._id,
-                            userId: await atlas.getUserId() || 'anonymous'
-                        },
-                        format: 'json'
-                    })
+                // Start install via the authenticated proxy — returns the
+                // content download URL and validates availability. userId is
+                // bound server-side from the session.
+                const start = await atlas.startStoreInstall({
+                    itemId: currentItem._id,
+                    version: currentItem.version
                 });
-
-                const urlData = await urlResponse.json();
-                if (!urlData.value || !urlData.value.url) {
-                    throw new Error('Failed to get download URL');
+                if (!start.success || !start.contentUrl) {
+                    throw new Error(start.error || 'Failed to get download URL');
                 }
 
                 progressText.textContent = 'Installing...';
@@ -3394,7 +3352,7 @@
                     type: currentItem.type,
                     name: currentItem.name,
                     version: currentItem.version,
-                    downloadUrl: urlData.value.url,
+                    downloadUrl: start.contentUrl,
                     permissions: currentItem.permissions || []
                 });
 
@@ -3405,16 +3363,9 @@
                 progressText.textContent = 'Recording install...';
                 progressFill.style.width = '80%';
 
-                // Increment install count
-                await fetch(`${CONVEX_URL}/api/mutation`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        path: 'store/items:incrementInstallCount',
-                        args: { itemId: currentItem._id },
-                        format: 'json'
-                    })
-                });
+                // Confirm install — records the install row and atomically
+                // increments the install count.
+                await atlas.confirmStoreInstall({ itemId: currentItem._id });
 
                 progressFill.style.width = '100%';
                 progressText.textContent = 'Installed!';
