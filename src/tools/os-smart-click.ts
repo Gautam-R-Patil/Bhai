@@ -27,6 +27,7 @@ import { getScreenDimensions, isFallbackDims } from "../screen/screen-dimensions
 import type { LLMClient } from "../llm.js";
 import type { ToolDefinition } from "./get-current-time.js";
 import { osComputerAction } from "./os-computer-action.js";
+import { takeScreenshot } from "./platform-bridge.js";
 
 // LLM client for the cloud_grounding cascade tier (Lite/Standard + degraded
 // Full). Injected at boot via setSmartClickLLM(); null = cloud tier skipped.
@@ -156,6 +157,21 @@ export const osSmartClick: ToolDefinition = {
             if (input.screenshot_base64) {
                 tempPath = await base64ToTempFile(input.screenshot_base64 as string);
                 screenshotPath = tempPath;
+            } else {
+                // Auto-capture when the agent didn't supply one. Without this the
+                // cascade's vision tiers (OmniParser / UI-TARS / cloud_grounding)
+                // were silently skipped — agents routinely call os_smart_click
+                // without a screenshot, so AX-only would miss and the best
+                // grounding tiers never ran. This is the main cause of low click
+                // accuracy. Best-effort: on capture failure, fall back to AX-only.
+                try {
+                    const shot = await takeScreenshot();
+                    tempPath = join(tmpdir(), `atlas_smartclick_${randomBytes(6).toString("hex")}.png`);
+                    await fs.writeFile(tempPath, shot, { mode: 0o600 });
+                    screenshotPath = tempPath;
+                } catch (capErr) {
+                    console.warn(`[smart-click] auto-screenshot failed (AX-only cascade): ${(capErr as Error).message}`);
+                }
             }
 
             const skipTiers: CascadeTier[] = [];
