@@ -1305,11 +1305,14 @@ async function startBot() {
     botProcess.stderr.on("data", (data) => {
         const msg = data.toString().trim();
         if (msg) {
+            // stderr carries console.warn/info too, not just errors. Tag the log
+            // line by the bot's own severity marker so benign warnings (channel
+            // not configured, GPS→IP fallback) don't masquerade as [ERROR].
+            const isError = /\[ERROR\]|❌|Error:|Uncaught|Unhandled/.test(msg);
             console.error("[BOT ERR]", msg);
-            // Save error to log file
-            writeToLogFile(`[ERROR] ${msg}`);
+            writeToLogFile(`${isError ? "[ERROR]" : "[WARN]"} ${msg}`);
             if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send("bot-log", `⚠ ${msg}`);
+                mainWindow.webContents.send("bot-log", `${isError ? "❌" : "⚠"} ${msg}`);
             }
         }
     });

@@ -116,11 +116,14 @@ async function configureTransformersEnv(): Promise<void> {
         try {
             const { getConvexSiteUrl } = await import("../config/keys.js");
             const { getSessionTokenSync } = await import("../session.js");
+            const { encryptedFetch } = await import("../crypto-transport.js");
             const convexUrl = getConvexSiteUrl();
             const sessionToken = getSessionTokenSync();
             if (convexUrl && sessionToken) {
                 const secretsUrl = `${convexUrl}/api/config/secrets`;
-                const resp = await fetch(secretsUrl, {
+                // Must go through encryptedFetch: the endpoint refuses cleartext
+                // (400) and returns an encrypted response this unwraps.
+                const resp = await encryptedFetch(secretsUrl, {
                     headers: { Authorization: `Bearer ${sessionToken}` },
                 });
                 if (resp.ok) {

@@ -14,6 +14,7 @@ import { createRequire as _bridgeCreateRequire } from "node:module";
 import { homedir } from "node:os";
 import path from "node:path";
 import { type WebSocket, WebSocketServer } from "ws";
+import { getOverlayLocalToken } from "../../overlay/overlay-chat.js";
 import { resetBackend } from "./browser-backend.js";
 import type { ChromeBridgeCommand, ChromeBridgeEvent, ChromeBridgeResponse, ChromeTabInfo } from "./types.js";
 
@@ -190,6 +191,22 @@ function validateLocalToken(presented: string): boolean {
     return diff === 0;
 }
 
+// ── Overlay channel info ─────────────────────
+// The extension also drives the overlay chat socket (port 18792), which
+// authenticates via ?localToken=. That token only ever reaches a client over
+// loopback; surface it through the bridge's already-origin-gated /discover so
+// the extension can open the overlay socket without being served overlay.html.
+// Fail-open: if the overlay token can't be resolved, omit the field.
+function getOverlayInfo(): { port: number; wsUrl: string; localToken: string } | undefined {
+    try {
+        const localToken = getOverlayLocalToken();
+        if (!localToken) return undefined;
+        return { port: 18792, wsUrl: "ws://127.0.0.1:18792", localToken };
+    } catch {
+        return undefined;
+    }
+}
+
 // ── Discovery File ───────────────────────────
 
 function writeDiscoveryFile(port: number): void {
@@ -205,6 +222,7 @@ function writeDiscoveryFile(port: number): void {
             httpUrl: `http://127.0.0.1:${port}`,
             pid: process.pid,
             startedAt: new Date().toISOString(),
+            overlay: getOverlayInfo(),
         };
         fs.writeFileSync(DISCOVERY_FILE, JSON.stringify(discovery, null, 2), { mode: 0o600 });
     } catch (err) {
@@ -361,15 +379,25 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
         // from a Chrome extension origin (`chrome-extension://...`) — which
         // is set by the browser, not by JS, and cannot be forged from a tab.
         if (req.method === "GET" && req.url === "/discover") {
-            // F10: extension-only path. Origin is browser-set and cannot be
-            // forged from a non-browser context. The previous Sec-Fetch-Site
-            // "none" fallback was unsafe — local CLI tools (curl, node) can
-            // omit the header entirely AND set Sec-Fetch-Site freely.
+            // Reject only requests that carry a WEB origin (http/https) — that's
+            // the real threat: a malicious page in the user's browser fetching
+            // the token. A chrome-extension:// origin is allowed. So is a request
+            // with NO Origin header: when the extension SW fetches a URL that
+            // exactly matches its host_permissions, Chrome treats it as a
+            // privileged same-origin request and OMITS the Origin header — that
+            // was the cause of the extension getting 403 here. (A local CLI can
+            // also omit Origin, but it can already read ~/.atlas/chrome-bridge.json
+            // directly as the same UID, so the gate never meaningfully stopped it;
+            // the web-origin block is the protection that matters.)
             const origin = (req.headers.origin as string | undefined) || "";
-            const isExtension = origin.startsWith("chrome-extension://");
-            if (!isExtension) {
+            const isWebOrigin = origin.startsWith("http://") || origin.startsWith("https://");
+            if (isWebOrigin) {
                 res.writeHead(403, { "Content-Type": "application/json" });
-                res.end(JSON.stringify({ error: "Forbidden — chrome-extension origin required. Local callers use /discover-local with Bearer auth." }));
+                res.end(
+                    JSON.stringify({
+                        error: "Forbidden — web origins may not read the bridge token.",
+                    }),
+                );
                 return;
             }
             const discovery = {
@@ -377,13 +405,20 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
                 token: bridgeToken,
                 wsUrl: `ws://127.0.0.1:${port}`,
                 pid: process.pid,
+                overlay: getOverlayInfo(),
             };
-            res.writeHead(200, {
+            const discoverHeaders: Record<string, string> = {
                 "Content-Type": "application/json",
                 "Cache-Control": "no-store",
                 Vary: "Origin",
-                "Access-Control-Allow-Origin": origin,
-            });
+            };
+            // Only emit CORS headers when an extension origin is present. A
+            // privileged no-Origin fetch needs none (and ACAO must not be "").
+            if (origin.startsWith("chrome-extension://")) {
+                discoverHeaders["Access-Control-Allow-Origin"] = origin;
+                discoverHeaders["Access-Control-Allow-Private-Network"] = "true";
+            }
+            res.writeHead(200, discoverHeaders);
             res.end(JSON.stringify(discovery));
             return;
         }
@@ -398,32 +433,47 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
             const presented = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
             if (!presented || !validateLocalToken(presented)) {
                 res.writeHead(401, { "Content-Type": "application/json" });
-                res.end(JSON.stringify({ error: "Unauthorized — provide local token in Authorization: Bearer header" }));
+                res.end(
+                    JSON.stringify({ error: "Unauthorized — provide local token in Authorization: Bearer header" }),
+                );
                 return;
             }
             res.writeHead(200, {
                 "Content-Type": "application/json",
                 "Cache-Control": "no-store",
             });
-            res.end(JSON.stringify({
-                port,
-                token: bridgeToken,
-                wsUrl: `ws://127.0.0.1:${port}`,
-                pid: process.pid,
-            }));
+            res.end(
+                JSON.stringify({
+                    port,
+                    token: bridgeToken,
+                    wsUrl: `ws://127.0.0.1:${port}`,
+                    pid: process.pid,
+                    overlay: getOverlayInfo(),
+                }),
+            );
             return;
         }
 
         // CORS preflight for /discover — only echo the requesting extension origin.
         if (req.method === "OPTIONS") {
             const origin = (req.headers.origin as string | undefined) || "";
-            const allowOrigin = origin.startsWith("chrome-extension://") ? origin : "null";
-            res.writeHead(204, {
+            const isExtension = origin.startsWith("chrome-extension://");
+            const allowOrigin = isExtension ? origin : "null";
+            const headers: Record<string, string> = {
                 "Access-Control-Allow-Origin": allowOrigin,
                 "Access-Control-Allow-Methods": "GET",
                 "Access-Control-Allow-Headers": "Content-Type,Authorization",
                 Vary: "Origin",
-            });
+            };
+            // Private Network Access (Chrome 130+): a fetch from an extension to a
+            // loopback address triggers a preflight carrying this request header.
+            // The response MUST echo Access-Control-Allow-Private-Network or Chrome
+            // silently blocks the request — which made /discover unreachable from
+            // the extension service worker even though curl worked.
+            if (isExtension && req.headers["access-control-request-private-network"] === "true") {
+                headers["Access-Control-Allow-Private-Network"] = "true";
+            }
+            res.writeHead(204, headers);
             res.end();
             return;
         }

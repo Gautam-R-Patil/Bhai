@@ -9,6 +9,7 @@ import type { LiveVoiceConfig } from "./types.js";
 import { LiveVoiceSession } from "./session.js";
 import { getConvexSiteUrl } from "../../config/keys.js";
 import { getSessionToken } from "../../session.js";
+import { encryptedFetch } from "../../crypto-transport.js";
 
 // ── Singleton Session ────────────────────────────
 
@@ -22,7 +23,9 @@ async function fetchVoiceKeys(convexSiteUrl: string, sessionToken: string): Prom
     if (cachedKeys) return cachedKeys;
 
     try {
-        const response = await fetch(`${convexSiteUrl}/api/keys/voice`, {
+        // Must go through encryptedFetch: the endpoint refuses cleartext (400)
+        // and returns an encrypted response this unwraps.
+        const response = await encryptedFetch(`${convexSiteUrl}/api/keys/voice`, {
             headers: {
                 "Authorization": `Bearer ${sessionToken}`,
                 "Content-Type": "application/json",

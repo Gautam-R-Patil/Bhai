@@ -7,9 +7,11 @@
 
 // ── State ────────────────────────────────────
 
+// Bridge socket (port 18800): command/response channel that lets ATLAS drive
+// Chrome. Auth via first message {type:"auth", token}.
 let ws = null;
 let authenticated = false;
-let serverUrl = "ws://127.0.0.1:18792";
+let serverUrl = "ws://127.0.0.1:18800";
 let discoveryUrl = "http://127.0.0.1:18800/discover";
 let authToken = "";
 let reconnectDelay = 1000;
@@ -19,6 +21,16 @@ let discoveryTimer = null;
 let connectionAttempts = 0;
 let discoveryAttempts = 0;
 let lastAtlasResponse = "";
+
+// Overlay socket (port 18792): auxiliary chat/page-context relay. Separate
+// from the bridge so the two never share connection state. Auth via the
+// ?localToken= query param at handshake time (the overlay closes token-less
+// handshakes with code 4001), mirroring overlay.html.
+let overlayWs = null;
+let overlayUrl = "ws://127.0.0.1:18792";
+let overlayToken = "";
+let overlayReconnectTimer = null;
+let overlayReconnectDelay = 1000;
 
 const MAX_RECONNECT_DELAY = 60000;
 const HEARTBEAT_INTERVAL = 20000; // 20s keep-alive (within MV3 30s limit)
@@ -40,6 +52,13 @@ function connect() {
     return;
   }
 
+  // The bridge requires the auth token in its first message; connecting without
+  // one just trips the server's 5s auth timeout. Discover first instead.
+  if (!authToken) {
+    autoDiscover().then((found) => { if (!found) startDiscovery(); });
+    return;
+  }
+
   try {
     ws = new WebSocket(serverUrl);
   } catch (err) {
@@ -49,15 +68,10 @@ function connect() {
   }
 
   ws.onopen = () => {
-    console.log("[ATLAS Bridge] Connected to ATLAS server");
+    console.log("[ATLAS Bridge] Connected to ATLAS bridge");
     connectionAttempts = 0;
     reconnectDelay = 1000;
-
-    // Send auth token if available (for Browser Bridge mode)
-    if (authToken) {
-      ws.send(JSON.stringify({ type: "auth", token: authToken }));
-    }
-
+    ws.send(JSON.stringify({ type: "auth", token: authToken }));
     startHeartbeat();
     updateBadge(true);
   };
@@ -72,19 +86,27 @@ function connect() {
   };
 
   ws.onclose = (event) => {
-    console.log(`[ATLAS Bridge] Disconnected: code=${event.code} reason=${event.reason}`);
+    console.log(`[ATLAS Bridge] Bridge disconnected: code=${event.code} reason=${event.reason}`);
     authenticated = false;
     stopHeartbeat();
     updateBadge(false);
 
-    if (event.code !== 4003 && event.code !== 4001) {
-      scheduleReconnect();
+    // 4003 = invalid token: the cached token is stale, re-discover to refresh it.
+    if (event.code === 4003) {
+      authToken = "";
+      chrome.storage.local.remove(["authToken", "discoveredAt"]);
+      setTimeout(() => { autoDiscover().then((found) => { if (!found) startDiscovery(); }); }, 500);
+      return;
     }
+    // 4001 = single-connection conflict: another extension instance holds the
+    // bridge. Don't tight-loop reconnect.
+    if (event.code === 4001) return;
+    scheduleReconnect();
   };
 
   ws.onerror = () => {
     // The WS onerror event has no useful message; the real reason appears in onclose
-    console.warn("[ATLAS Bridge] WebSocket error (ATLAS may not be running yet)");
+    console.warn("[ATLAS Bridge] Bridge WebSocket error (ATLAS may not be running yet)");
   };
 }
 
@@ -100,6 +122,73 @@ function disconnect() {
   }
   authenticated = false;
   updateBadge(false);
+}
+
+// ── Overlay Socket (chat / page-context relay) ─
+
+function connectOverlay() {
+  if (overlayWs && (overlayWs.readyState === WebSocket.CONNECTING || overlayWs.readyState === WebSocket.OPEN)) {
+    return;
+  }
+  if (!overlayToken) return; // no credential yet — discovery supplies it
+
+  const url = `${overlayUrl}?localToken=${encodeURIComponent(overlayToken)}`;
+  try {
+    overlayWs = new WebSocket(url);
+  } catch (err) {
+    console.error("[ATLAS Bridge] Overlay WebSocket creation failed:", err);
+    scheduleOverlayReconnect();
+    return;
+  }
+
+  overlayWs.onopen = () => {
+    console.log("[ATLAS Bridge] Connected to ATLAS overlay");
+    overlayReconnectDelay = 1000;
+  };
+
+  overlayWs.onmessage = (event) => {
+    try {
+      handleOverlayMessage(JSON.parse(event.data));
+    } catch (err) {
+      console.error("[ATLAS Bridge] Invalid overlay message:", err);
+    }
+  };
+
+  overlayWs.onclose = (event) => {
+    console.log(`[ATLAS Bridge] Overlay disconnected: code=${event.code} reason=${event.reason}`);
+    // 4001 = rejected localToken; re-discover to refresh it rather than loop.
+    if (event.code === 4001) {
+      overlayToken = "";
+      setTimeout(() => { autoDiscover(); }, 500);
+      return;
+    }
+    scheduleOverlayReconnect();
+  };
+
+  overlayWs.onerror = () => {
+    console.warn("[ATLAS Bridge] Overlay WebSocket error");
+  };
+}
+
+function disconnectOverlay() {
+  if (overlayReconnectTimer) {
+    clearTimeout(overlayReconnectTimer);
+    overlayReconnectTimer = null;
+  }
+  if (overlayWs) {
+    overlayWs.close(1000, "User disconnect");
+    overlayWs = null;
+  }
+}
+
+function scheduleOverlayReconnect() {
+  if (overlayReconnectTimer) return;
+  const delay = Math.min(overlayReconnectDelay * 2, MAX_RECONNECT_DELAY);
+  overlayReconnectDelay = delay;
+  overlayReconnectTimer = setTimeout(() => {
+    overlayReconnectTimer = null;
+    connectOverlay();
+  }, delay);
 }
 
 function scheduleReconnect() {
@@ -176,8 +265,8 @@ function logAction(type, detail) {
 // detect browser context and prepend URL info for the agent.
 
 function sendToAtlas(text, meta = {}) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) {
-    console.warn("[ATLAS Bridge] Cannot send — not connected");
+  if (!overlayWs || overlayWs.readyState !== WebSocket.OPEN) {
+    console.warn("[ATLAS Bridge] Cannot send — overlay not connected");
     return false;
   }
 
@@ -190,29 +279,29 @@ function sendToAtlas(text, meta = {}) {
     },
   };
 
-  ws.send(JSON.stringify(payload));
+  overlayWs.send(JSON.stringify(payload));
   console.log(`[ATLAS Bridge] Sent to overlay: ${text.substring(0, 100)}...`);
   return true;
 }
 
 // ── Handle Messages from ATLAS Server ────────
 
+// Bridge socket (18800): auth handshake + command/response traffic only.
 function handleServerMessage(msg) {
-  // Auth response (Browser Bridge mode)
   if (msg.type === "auth_ok") {
     authenticated = true;
-    console.log("[ATLAS Bridge] Authenticated successfully");
+    console.log("[ATLAS Bridge] Bridge authenticated successfully");
     return;
   }
 
   if (msg.type === "auth_failed") {
-    console.error("[ATLAS Bridge] Authentication failed:", msg.error);
+    console.error("[ATLAS Bridge] Bridge authentication failed:", msg.error);
     authenticated = false;
     authToken = "";
     // Clear the stale cached token so the next boot doesn't reuse it
     chrome.storage.local.remove(["authToken", "discoveredAt"]);
     // Immediately re-discover to fetch the current session token
-    ws.close(1000, "re-auth");
+    if (ws) ws.close(1000, "re-auth");
     setTimeout(() => {
       autoDiscover().then((found) => { if (!found) startDiscovery(); });
     }, 500);
@@ -227,16 +316,21 @@ function handleServerMessage(msg) {
     return;
   }
 
-  // Ready signal from overlay chat
+  // Command from ATLAS (Browser Bridge mode)
+  if (msg.id && msg.type) {
+    handleCommand(msg);
+  }
+}
+
+// Overlay socket (18792): chat replies relayed to the popup.
+function handleOverlayMessage(msg) {
   if (msg.type === "ready") {
     console.log("[ATLAS Bridge] Overlay server ready");
     return;
   }
 
-  // Response from the agent (forwarded through overlay chat)
   if (msg.type === "response") {
     lastAtlasResponse = msg.text || "";
-    // Notify popup if it's open
     chrome.runtime.sendMessage({
       type: "atlas_response",
       text: lastAtlasResponse,
@@ -244,7 +338,6 @@ function handleServerMessage(msg) {
     return;
   }
 
-  // Progress/thinking updates from agent
   if (msg.type === "progress" || msg.type === "thinking" || msg.type === "thinking_content") {
     chrome.runtime.sendMessage({
       type: "atlas_progress",
@@ -253,18 +346,11 @@ function handleServerMessage(msg) {
     return;
   }
 
-  // Error from agent
   if (msg.type === "error") {
     chrome.runtime.sendMessage({
       type: "atlas_error",
       text: msg.text || "Something went wrong",
     }).catch(() => { /* popup not open */ });
-    return;
-  }
-
-  // Command from ATLAS (Browser Bridge mode)
-  if (msg.id && msg.type) {
-    handleCommand(msg);
   }
 }
 
@@ -1466,7 +1552,61 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 // ── Auto-Discovery ───────────────────────────
 
+// Apply a discovered config: bring up the bridge socket (primary) and, if the
+// server advertised an overlay channel, the overlay socket too.
+function applyDiscovery(config) {
+  const newToken = config.token;
+  const newUrl = config.wsUrl || `ws://127.0.0.1:${config.port}`;
+  const overlay = config.overlay;
+  const newOverlayToken = overlay && overlay.localToken ? overlay.localToken : overlayToken;
+  const newOverlayUrl = overlay && overlay.wsUrl ? overlay.wsUrl : overlayUrl;
+
+  authToken = newToken;
+  serverUrl = newUrl;
+  overlayToken = newOverlayToken;
+  overlayUrl = newOverlayUrl;
+
+  chrome.storage.local.set({
+    serverUrl,
+    authToken,
+    overlayUrl,
+    overlayToken,
+    discoveredAt: Date.now(),
+  });
+
+  stopDiscovery();
+  discoveryAttempts = 0;
+
+  // Idempotent: don't tear down a healthy socket that already holds the same
+  // credentials. A redundant disconnect()+connect() here would close the
+  // just-authenticated bridge (the server allows only one connection), which
+  // looks like a connect→drop loop. Only (re)connect when actually needed.
+  const bridgeHealthy = ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING);
+  if (!bridgeHealthy) {
+    connect();
+  }
+
+  const overlayHealthy = overlayWs && (overlayWs.readyState === WebSocket.OPEN || overlayWs.readyState === WebSocket.CONNECTING);
+  if (!overlayHealthy && overlayToken) {
+    connectOverlay();
+  }
+}
+
+let _discovering = false;
 async function autoDiscover() {
+  // Coalesce concurrent discovery (boot + a still-pending poll tick can both
+  // fire). Without this, two applyDiscovery() runs race and the second can
+  // tear down the socket the first just opened.
+  if (_discovering) return false;
+  _discovering = true;
+  try {
+    return await _autoDiscover();
+  } finally {
+    _discovering = false;
+  }
+}
+
+async function _autoDiscover() {
   try {
     const res = await fetch(discoveryUrl);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1474,20 +1614,14 @@ async function autoDiscover() {
 
     if (config.token && config.wsUrl) {
       console.log("[ATLAS Bridge] Auto-discovered ATLAS server");
-      authToken = config.token;
-      serverUrl = config.wsUrl;
-
-      chrome.storage.local.set({ serverUrl, authToken, discoveredAt: Date.now() });
-
-      stopDiscovery();
-      discoveryAttempts = 0;
-
-      disconnect();
-      connect();
+      applyDiscovery(config);
       return true;
     }
-  } catch {
-    // ATLAS not running or not reachable — will retry
+    console.warn("[ATLAS Bridge] /discover returned no token/wsUrl:", JSON.stringify(config));
+  } catch (err) {
+    // Surface the real reason — silent failure here was the root of a long
+    // "stuck Searching" debug. Network/CORS/PNA errors all land here.
+    console.warn("[ATLAS Bridge] /discover fetch failed:", err && err.message ? err.message : String(err));
   }
 
   // Try native messaging as fallback
@@ -1504,27 +1638,11 @@ async function autoDiscover() {
 
     if (response && response.success && response.token) {
       console.log("[ATLAS Bridge] Auto-discovered via native messaging");
-      authToken = response.token;
-      serverUrl = response.wsUrl || `ws://127.0.0.1:${response.port}`;
-
-      chrome.storage.local.set({ serverUrl, authToken, discoveredAt: Date.now() });
-
-      stopDiscovery();
-      discoveryAttempts = 0;
-
-      disconnect();
-      connect();
+      applyDiscovery(response);
       return true;
     }
   } catch {
     // Native messaging not available
-  }
-
-  // Direct connect to overlay port as fallback
-  // (overlay chat server does not require auth)
-  if (!ws || ws.readyState !== WebSocket.OPEN) {
-    serverUrl = "ws://127.0.0.1:18792";
-    connect();
   }
 
   return false;
@@ -1557,6 +1675,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse({
       connected: ws && ws.readyState === WebSocket.OPEN,
       authenticated,
+      overlayConnected: overlayWs && overlayWs.readyState === WebSocket.OPEN,
       serverUrl,
       hasToken: !!authToken,
       discoveryAttempts,
@@ -1572,6 +1691,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === "reconnect") {
     disconnect();
+    disconnectOverlay();
     stopDiscovery();
     discoveryAttempts = 0;
     autoDiscover().then((found) => {
@@ -1583,6 +1703,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === "disconnect") {
     disconnect();
+    disconnectOverlay();
     stopDiscovery();
     sendResponse({ ok: true });
     return true;
@@ -1645,29 +1766,47 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return false;
 });
 
-// ── Boot ─────────────────────────────────────
+// ── Connection bootstrap ─────────────────────
+// Discover first, always. The bridge token rotates per ATLAS session, so a
+// cached token can be stale; a fresh /discover yields both the current bridge
+// token and the overlay localToken and brings up both sockets. Cached creds
+// are only a last-resort fallback when discovery can't reach the server.
+//
+// Idempotent + cheap to call repeatedly: it's the single entry point used by
+// boot AND by every service-worker wake-up (onStartup / onInstalled / alarm),
+// because an MV3 service worker is frequently suspended and respawned — the
+// old "run once at top level" boot never re-ran after a respawn, which left
+// the extension permanently stuck "Searching".
+async function ensureConnected() {
+  const bridgeHealthy = ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING);
+  if (bridgeHealthy) return;
 
-chrome.storage.local.get(["serverUrl", "authToken", "discoveredAt"], async (data) => {
-  if (data.authToken && data.discoveredAt && (Date.now() - data.discoveredAt < 60 * 60 * 1000)) {
+  const found = await autoDiscover();
+  if (found) return;
+
+  // Discovery failed — fall back to cached creds (bridge alone is better than
+  // nothing) and keep polling for the server to come up.
+  const data = await chrome.storage.local.get(["serverUrl", "authToken", "overlayUrl", "overlayToken"]);
+  if (data.authToken) {
     authToken = data.authToken;
     serverUrl = data.serverUrl || serverUrl;
     connect();
-
-    setTimeout(() => {
-      if (!authenticated) {
-        autoDiscover().then((found) => {
-          if (!found) startDiscovery();
-        });
-      }
-    }, 3000);
-  } else {
-    // No saved token — try direct overlay connection first, then discover
-    connect();
-    setTimeout(async () => {
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        const found = await autoDiscover();
-        if (!found) startDiscovery();
-      }
-    }, 2000);
   }
+  if (data.overlayToken) {
+    overlayToken = data.overlayToken;
+    overlayUrl = data.overlayUrl || overlayUrl;
+    connectOverlay();
+  }
+  startDiscovery();
+}
+
+// Run on first load (top-level), on browser start, on install/update, and on a
+// periodic alarm so a respawned-then-idle service worker re-establishes the
+// connection instead of sitting dormant.
+ensureConnected();
+chrome.runtime.onStartup.addListener(() => { ensureConnected(); });
+chrome.runtime.onInstalled.addListener(() => { ensureConnected(); });
+chrome.alarms.create("atlas-keepalive", { periodInMinutes: 0.5 });
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === "atlas-keepalive") ensureConnected();
 });

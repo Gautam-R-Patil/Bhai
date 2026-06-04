@@ -232,6 +232,13 @@ export async function encryptedFetch(
     const headers = new Headers(options.headers);
     let aad: Buffer | undefined;
 
+    // Signal E2E capability on every request once a shared key exists, even
+    // bodyless GETs. Endpoints that ship sensitive secrets (e.g.
+    // /api/config/secrets, /api/keys/voice) refuse with 400 unless this header
+    // is present; the server then encrypts the response, which the decrypt
+    // path below unwraps. Endpoints that conditionally encrypt are unaffected.
+    headers.set("X-Encryption", "ecdh-aes-256-gcm");
+
     // Encrypt request body if present
     if (options.body && typeof options.body === "string") {
         // Pre-allocate ts/rid so we bind the same values into AAD.
@@ -253,7 +260,6 @@ export async function encryptedFetch(
             rid,
         };
         options.body = JSON.stringify(envelope);
-        headers.set("X-Encryption", "ecdh-aes-256-gcm");
         headers.set("Content-Type", "application/json");
     }
 

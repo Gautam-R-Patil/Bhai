@@ -1,25 +1,26 @@
 {
   "manifest_version": 3,
   "name": "ATLAS Bridge",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Send page context to ATLAS overlay",
   "minimum_chrome_version": "116",
-  "_comments_F11": {
-    "debugger": "REQUIRED for chrome.debugger.attach + Runtime.evaluate fallback in background.js (~line 1203) — this is the only reliable way to run page-context JS on strict-CSP sites like Gmail/GitHub where chrome.scripting.executeScript world:MAIN fails. Also gates the rawCDP() pass-through with CDP_ALLOWED_METHODS allowlist (Input.insertText, DOM.setFileInputFiles, Page.captureScreenshot, Accessibility.getFullAXTree). Cannot drop without losing AX-tree extraction + CSP-safe JS injection.",
-    "host_permissions": "<all_urls> is required because the agent operates on whatever tab the user is on — we cannot enumerate a finite host list at install time. activeTab is insufficient: it only grants access on user-gesture-initiated invocations, not the agent-driven flows where the operator says 'use my Gmail tab' programmatically. Content-script injection is gated by chrome.tabs.query at runtime; debugger access requires explicit chrome.debugger.attach which surfaces an OS-level 'A.T.L.A.S started debugging this browser' banner."
-  },
   "permissions": [
     "activeTab",
     "tabs",
     "scripting",
     "storage",
     "contextMenus",
-    "debugger"
+    "debugger",
+    "alarms"
   ],
   "host_permissions": [
     "<all_urls>",
-    "http://localhost:18792/*"
+    "http://127.0.0.1/*",
+    "http://localhost/*"
   ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' http://127.0.0.1:18800 http://127.0.0.1:18792 ws://127.0.0.1:18800 ws://127.0.0.1:18792 http://localhost:18800 http://localhost:18792 ws://localhost:18800 ws://localhost:18792"
+  },
   "background": {
     "service_worker": "background.js",
     "type": "module"
