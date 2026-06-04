@@ -156,6 +156,8 @@ contextBridge.exposeInMainWorld("atlas", {
     // ── Store ─────────────────────────────────────────────
     getStoreItems: () => ipcRenderer.invoke("store:list"),
     getInstalledStoreItems: () => ipcRenderer.invoke("store:installed"),
+    startStoreInstall: (args) => ipcRenderer.invoke("store:start-install", args),
+    confirmStoreInstall: (args) => ipcRenderer.invoke("store:confirm-install", args),
     installStoreItem: (item) => ipcRenderer.invoke("store:install", item),
     uninstallStoreItem: (item) => ipcRenderer.invoke("store:uninstall", item),
     getUserId: () => ipcRenderer.invoke("account:userId"),

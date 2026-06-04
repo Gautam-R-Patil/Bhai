@@ -4403,61 +4403,66 @@ function registerIPC() {
     // ── Store IPC ───────────────────────────────────────────────
     const STORE_DIR = path.join(app.getPath("home"), ".atlas", "store");
 
-    // Fetch store items via main process (works when renderer fetch fails due to network issues)
+    // Fetch store items via the session-authenticated proxy. Store Convex
+    // functions are internalQuery-only (security audit fb99bbf) and are not
+    // reachable on the public /api/query endpoint — they must go through
+    // /api/store/query, which validates the session token and runs the
+    // internal function via ctx.runQuery.
     ipcMain.handle("store:list", async () => {
         console.log("[Store] store:list IPC handler called");
         try {
-            // Use native https module directly for reliability
-            const items = await new Promise((resolve, reject) => {
-                const https = require("https");
-                const body = JSON.stringify({
-                    path: "store/items:list",
-                    args: {},
-                    format: "json"
-                });
-
-                console.log("[Store] Making HTTPS request to Convex...");
-
-                const req = https.request(`${CONVEX_API_URL}/api/query`, {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        "Content-Length": Buffer.byteLength(body),
-                    },
-                }, (res) => {
-                    let raw = "";
-                    res.on("data", c => raw += c);
-                    res.on("end", () => {
-                        try {
-                            console.log("[Store] Got response, parsing...");
-                            const data = JSON.parse(raw);
-                            if (data.status === "success") {
-                                console.log("[Store] Success! Items:", data.value?.length || 0);
-                                resolve(data.value || []);
-                            } else {
-                                console.error("[Store] Convex error:", data.errorMessage);
-                                reject(new Error(data.errorMessage || "Convex query failed"));
-                            }
-                        } catch (e) {
-                            console.error("[Store] Parse error:", e.message);
-                            reject(e);
-                        }
-                    });
-                });
-
-                req.on("error", (err) => {
-                    console.error("[Store] Request error:", err.message);
-                    reject(err);
-                });
-
-                req.write(body);
-                req.end();
+            const data = await convexSiteRequest("POST", "/api/store/query", {
+                functionPath: "store/items:list",
+                args: {},
             });
-
-            return { success: true, items: items || [] };
+            if (!data || data.status !== "success") {
+                throw new Error(data?.error || "Store query failed");
+            }
+            const items = data.value || [];
+            console.log("[Store] Success! Items:", items.length);
+            return { success: true, items };
         } catch (err) {
             console.error("[Store] Failed to fetch store items:", err.message);
             return { success: false, error: err.message, items: [] };
+        }
+    });
+
+    // Start an install via the authenticated proxy. startInstall validates
+    // the item is active, that the user hasn't already installed it, and
+    // returns the content download URL. userId is injected server-side from
+    // the session (USER_BOUND_PATHS), so it must not be passed here.
+    ipcMain.handle("store:start-install", async (_, { itemId, version }) => {
+        try {
+            const data = await convexSiteRequest("POST", "/api/store/mutation", {
+                functionPath: "store/installs:startInstall",
+                args: { itemId, version },
+            });
+            if (!data || data.status !== "success") {
+                throw new Error(data?.error || "Failed to start install");
+            }
+            return { success: true, ...data.value };
+        } catch (err) {
+            console.error("[Store] start-install failed:", err.message);
+            return { success: false, error: err.message };
+        }
+    });
+
+    // Confirm an install via the authenticated proxy. confirmInstall records
+    // the install row and atomically increments installCount/weeklyInstalls,
+    // replacing the old direct incrementInstallCount call.
+    ipcMain.handle("store:confirm-install", async (_, { itemId }) => {
+        try {
+            const data = await convexSiteRequest("POST", "/api/store/mutation", {
+                functionPath: "store/installs:confirmInstall",
+                args: { itemId },
+            });
+            if (!data || data.status !== "success") {
+                throw new Error(data?.error || "Failed to confirm install");
+            }
+            return { success: true };
+        } catch (err) {
+            console.error("[Store] confirm-install failed:", err.message);
+            return { success: false, error: err.message };
         }
     });
 
