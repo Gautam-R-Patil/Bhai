@@ -211,22 +211,6 @@ fn build_model_registry() -> HashMap<String, ModelInfo> {
         provider: Provider::Google,
     });
 
-    m.insert("google/gemini-2.0-flash-001".into(), ModelInfo {
-        id: "google/gemini-2.0-flash-001".into(),
-        display_name: "Gemini 2.0 Flash".into(),
-        input_cost_per_1m: 0.10,
-        output_cost_per_1m: 0.40,
-        tier: 7,
-        speed: Speed::Fast,
-        strengths: vec!["fast_response".into(), "tool_use".into(), "classification".into()],
-        max_tokens: 8192,
-        context_window: 1_000_000,
-        supports_tools: true,
-        supports_parallel_tools: true,
-        supports_vision: true,
-        provider: Provider::Google,
-    });
-
     m.insert("google/gemini-2.5-flash-lite".into(), ModelInfo {
         id: "google/gemini-2.5-flash-lite".into(),
         display_name: "Gemini 2.5 Flash Lite".into(),
@@ -2530,7 +2514,6 @@ fn get_cascade_next_internal(current_model_id: &str, task_type: &TaskType) -> Op
         "amazon/nova-micro-v1",
         "amazon/nova-lite-v1",
         "google/gemini-2.5-flash-lite",
-        "google/gemini-2.0-flash-001",
         "google/gemini-2.5-flash",
         "google/gemini-3-flash-preview",
         "anthropic/claude-haiku-4.5",

@@ -491,11 +491,14 @@ interface IntentClassification {
 
 const intentCache: Map<string, { result: IntentClassification; timestamp: number }> = new Map();
 const INTENT_CACHE_TTL_MS = 120_000; // 2 minutes
-// 12s — under load via Convex proxy, Haiku regularly takes 9-15s. The previous
-// 8s value caused near-100% timeout-fallback during busy sessions, which then
-// dumped the request into the keyword/embedding fallback that returns garbage
-// 1.00-everywhere scores. Better to wait the extra 4s and get a real answer.
-const LLM_CLASSIFIER_TIMEOUT_MS = Number(process.env.ATLAS_TOOL_ROUTER_TIMEOUT_MS) || 12000;
+// 5s — the classifier runs gpt-4.1-nano (modelOverride below), NOT Haiku, and a
+// tiny JSON intent label comes back in 1-3s. The old 12s budget was sized for a
+// Haiku classifier (9-15s via the Convex proxy) and is now pure dead-air: when
+// nano stalls (or its own chat() fallback chain is grinding), 12s of blocked
+// routing is worse than dropping to the keyword/embedding fallback. 5s catches
+// the rare slow nano while failing fast on a genuine stall. Override with
+// ATLAS_TOOL_ROUTER_TIMEOUT_MS.
+const LLM_CLASSIFIER_TIMEOUT_MS = Number(process.env.ATLAS_TOOL_ROUTER_TIMEOUT_MS) || 5000;
 
 async function classifyWithLLM(
     message: string,

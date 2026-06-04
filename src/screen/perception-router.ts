@@ -255,7 +255,7 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
                 );
                 if (healthy) {
                     uiTarsUsable = true;
-                    const grounded = await groundClick(opts.screenshotPath, instruction);
+                    const grounded = await groundClick(opts.screenshotPath, instruction, { keepAlive: "30m" });
                     elapsed.ui_tars = Date.now() - utStart;
                     if (!grounded.error && grounded.confidence >= thresholds.ui_tars) {
                         const screen = toScreenCoords(grounded.x, grounded.y, grounded.imageWidth, opts.screenDims);

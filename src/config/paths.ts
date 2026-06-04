@@ -9,6 +9,7 @@
 import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
+import { fileURLToPath } from "node:url";
 
 // ── ATLAS Workspace Directory ────────────────────────
 // This is where all bot-generated files should be saved.
@@ -71,6 +72,51 @@ export function getWorkspaceSubdir(subdir: string): string {
         fs.mkdirSync(dir, { recursive: true });
     }
     return dir;
+}
+
+// ── Bundled Helper Scripts ───────────────────────────
+// The packaged desktop app is a single esbuild bundle at
+// Contents/Resources/bot/bot-bundle.mjs, so import.meta.url resolves __dirname
+// to .../bot (flat) — NOT dist/src/config. A naive join(__dirname,"..","..")
+// overshoots and misses the scripts/ dir (electron-builder ships it at
+// <Resources>/bot/scripts via extraResources). These resolvers try every
+// layout and existsSync-pick the right one, fixing helper lookup (dump_ax_bin,
+// dump_uia.ps1, dump_atspi.py, omniparser_detect.py, OCR, vision overlays)
+// across dev, compiled dist, and the packaged app on macOS/Windows/Linux.
+
+const _scriptsHere = path.dirname(fileURLToPath(import.meta.url));
+
+function scriptCandidateDirs(): string[] {
+    const rp = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+    return [
+        path.join(_scriptsHere, "..", "..", "scripts"), // dev/dist: dist/src/config → repo root
+        path.join(_scriptsHere, "..", "scripts"),
+        path.join(_scriptsHere, "scripts"), // bundle: __dirname = .../bot → .../bot/scripts
+        path.join(process.cwd(), "scripts"), // Electron cwd = bot/
+        ...(rp ? [path.join(rp, "bot", "scripts"), path.join(rp, "scripts")] : []),
+    ];
+}
+
+/**
+ * Resolve the bundled `scripts/` directory across dev, compiled dist, and the
+ * single-file Electron bundle. Returns the first candidate that exists, or the
+ * dev path as a never-null fallback (callers gate on existsSync of the helper).
+ */
+export function getScriptsDir(): string {
+    const dirs = scriptCandidateDirs();
+    return dirs.find((d) => fs.existsSync(d)) ?? dirs[0];
+}
+
+/**
+ * Resolve a single helper script by name, picking the first candidate directory
+ * that actually contains it. Returns null when the helper isn't found anywhere.
+ */
+export function resolveScript(name: string): string | null {
+    for (const d of scriptCandidateDirs()) {
+        const p = path.join(d, name);
+        if (fs.existsSync(p)) return p;
+    }
+    return null;
 }
 
 // ── Specific Output Directories ──────────────────────

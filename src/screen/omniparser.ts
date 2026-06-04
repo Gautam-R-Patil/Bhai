@@ -21,10 +21,9 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { getDataDir } from "../config/paths.js";
+import { getDataDir, getScriptsDir } from "../config/paths.js";
 
 /**
  * Pick the Python binary the wizard's venv installed deps into, falling back
@@ -46,8 +45,6 @@ function resolvePythonBin(): string {
 }
 
 const execFileAsync = promisify(execFile);
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 /**
  * Reject screenshot paths outside known-safe directories (tmpdir + ATLAS Files/Screenshots).
@@ -114,7 +111,7 @@ export async function detectElements(screenshotPath: string, opts: OmniParserOpt
         return failureResult(`screenshot_path_rejected:must be under tmpdir or ATLAS Files directory`);
     }
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    const script = join(__dirname, "..", "..", "scripts", "omniparser_detect.py");
+    const script = join(getScriptsDir(), "omniparser_detect.py");
     const args = [script, screenshotPath];
     if (opts.captions) args.push("--captions");
     if (opts.maxElements) args.push("--max-elements", String(opts.maxElements));

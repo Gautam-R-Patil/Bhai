@@ -5,16 +5,13 @@
 import { execFile } from "node:child_process";
 import { existsSync, promises as fs, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { promisify } from "node:util";
+import { getScriptsDir } from "../config/paths.js";
 import { hideOverlayForAgent, showOverlayForAgent } from "../overlay/overlay-chat.js";
 import { getScreenDimensions, percentageToScreen, scaleImageToScreen } from "../screen/screen-dimensions.js";
 import type { ToolDefinition } from "./get-current-time.js";
 import { getTelegramContext } from "./send-file.js";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 const execFileAsync = promisify(execFile);
 
@@ -216,9 +213,7 @@ export const osScreenshot: ToolDefinition = {
             }
 
             // Add coordinate grid overlay using Python + Pillow for accurate LLM coordinate picking
-            // __dirname points to src/tools or dist/tools, so go up 2 levels to project root
-            const projectRoot = join(__dirname, "..", "..");
-            const gridScript = join(projectRoot, "scripts", "grid_overlay.py");
+            const gridScript = join(getScriptsDir(), "grid_overlay.py");
             try {
                 // Pass screen width so the grid renders labels in SCREEN-space coords.
                 // The LLM then reads the labels and emits clicks the runtime applies 1:1.
@@ -787,11 +782,11 @@ async function runOcr(
         }
     }
 
-    const projectRoot = join(__dirname, "..", "..");
-    const swiftScript = join(projectRoot, "scripts", "ocr_screen.swift");
+    const sdir = getScriptsDir();
+    const swiftScript = join(sdir, "ocr_screen.swift");
 
     // Prefer compiled binary for speed (saves 1-3s compilation overhead)
-    const compiledBin = join(projectRoot, "scripts", "ocr_screen_bin");
+    const compiledBin = join(sdir, "ocr_screen_bin");
     let ocrExecutable: string;
     let ocrArgs: string[];
     if (existsSync(compiledBin)) {
@@ -2048,8 +2043,7 @@ export const osScan: ToolDefinition = {
             }));
             await fs.writeFile(elementsJson, JSON.stringify(imageElements));
 
-            const projectRoot = join(__dirname, "..", "..");
-            const somScript = join(projectRoot, "scripts", "som_overlay.py");
+            const somScript = join(getScriptsDir(), "som_overlay.py");
             try {
                 await execFileAsync("python3", [somScript, tmpPng, elementsJson, tmpJpg], { timeout: 5000 });
             } catch {

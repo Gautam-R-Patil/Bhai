@@ -2236,7 +2236,48 @@ STRATEGY: Execute in as few tool calls as possible.
             process.env.ATLAS_ALWAYS_ORCHESTRATE !== "true" &&
             actionCategoryCount <= 1 &&
             classifierConf >= 0.85;
-        const needsPlanning = actionCategoryCount > 0 && !unambiguousSingleStep;
+
+        // ── Simple GUI/messaging fast-path gate ──
+        // "open WhatsApp and send a message" classifies as cats=[os_control,
+        // app_management, communication] (the classifier emits all three for any
+        // desktop-app driving — tool-router.ts), so actionCategoryCount>1 and the
+        // unambiguousSingleStep skip never fires → a ~14K-token, ~20s Sonnet plan
+        // runs for a one-shot GUI action (the bulk of per-task cost). These are
+        // still ONE clear action. If EVERY active action-category is in the simple
+        // GUI/app/messaging/media set (no browser/scheduling/coding/research/shell/
+        // file — those imply multi-step or web/dev work) and the task isn't chained
+        // or multi-step, skip the plan. Mirrors the music fast-path. Platform-agnostic.
+        const SIMPLE_ACTION_CATEGORIES = new Set([
+            "os_control",
+            "app_management",
+            "communication",
+            "media",
+            "system_controls",
+        ]);
+        const activeActionCats = activeCategories.filter(
+            (c) => planningCategories.includes(c) || c === "system_controls",
+        );
+        const allCatsSimple =
+            activeActionCats.length > 0 && activeActionCats.every((c) => SIMPLE_ACTION_CATEGORIES.has(c));
+        const intentStr = (toolSelection.classification?.intent || "").toLowerCase();
+        const multiStepIntent = /research|swarm|workflow|pipeline|then|after that|multi/.test(intentStr);
+        const multiAppOrChained =
+            / then |, then|after that| followed by /i.test(rawUserMessage) ||
+            (rawUserMessage.match(/\b(?:and|&)\b/gi)?.length ?? 0) >= 2;
+        const simpleGuiFastPath =
+            process.env.ATLAS_ALWAYS_ORCHESTRATE !== "true" &&
+            process.env.ATLAS_NO_GUI_FASTPATH !== "true" &&
+            allCatsSimple &&
+            !multiStepIntent &&
+            !multiAppOrChained &&
+            classifierConf >= 0.7;
+
+        const needsPlanning = actionCategoryCount > 0 && !unambiguousSingleStep && !simpleGuiFastPath;
+        if (iterations === 1 && simpleGuiFastPath && !unambiguousSingleStep) {
+            console.log(
+                `  ⚡ Simple GUI/messaging fast-path — skipping Sonnet orchestrator (cats=[${activeActionCats.join(",")}] intent="${intentStr}" conf=${classifierConf.toFixed(2)})`,
+            );
+        }
         if (iterations === 1 && needsPlanning && !musicFastPathActive) {
             try {
                 const planStart = Date.now();

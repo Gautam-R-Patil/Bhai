@@ -22,7 +22,7 @@ import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { detectElements } from "../screen/omniparser.js";
-import { groundClick, isUITarsAvailable } from "../screen/ui-tars.js";
+import { DEFAULT_UI_TARS_TAG, groundClick, isUITarsAvailable } from "../screen/ui-tars.js";
 import type { ToolDefinition } from "./get-current-time.js";
 
 /** Write a base64-encoded image to a temp file. Returns the absolute path. Caller must unlink. */
@@ -166,7 +166,7 @@ export const osGround: ToolDefinition = {
                         description:
                             'Natural-language target description (e.g. "the Save button", "the X to close the dialog").',
                     },
-                    model: { type: "string", description: 'Ollama model tag (default: "ui-tars:7b").' },
+                    model: { type: "string", description: "Ollama model tag (defaults to the configured UI-TARS tag, ATLAS_UI_TARS_TAG)." },
                 },
                 required: ["instruction"],
             },
@@ -175,7 +175,11 @@ export const osGround: ToolDefinition = {
 
     async handler(input) {
         const instruction = input.instruction as string;
-        const model = (input.model as string) || "ui-tars:7b";
+        // Use the SAME tag the cascade + groundClick use (ATLAS_UI_TARS_TAG, else
+        // the verified-working DEFAULT_UI_TARS_TAG). The old hardcoded "ui-tars:7b"
+        // never matched the pulled GGUF, so os_ground always reported
+        // model_not_pulled and told the user to pull a tag the system never uses.
+        const model = (input.model as string) || process.env.ATLAS_UI_TARS_TAG || DEFAULT_UI_TARS_TAG;
         if (!instruction) return JSON.stringify({ success: false, error: "instruction required" });
 
         // Fast availability check (60s cached) BEFORE the image read + Ollama round-trip.

@@ -5,17 +5,15 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { promisify } from "node:util";
+import { getScriptsDir } from "../config/paths.js";
 
 // ESM-safe require via createRequire — `require` is not defined in compiled ESM output
 // (only available in tsx dev mode). Found via DEEP R3 review.
 const _esmRequire = createRequire(import.meta.url);
 
 const execFileAsync = promisify(execFile);
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 export interface AxNode {
     role: string | null;
@@ -145,14 +143,10 @@ function failureResult(start: number, source: AxDump["source"], message: string)
     };
 }
 
-function projectRoot(): string {
-    return join(__dirname, "..", "..");
-}
-
 async function dumpMacOS(opts: AxDumpOptions, timeoutMs: number): Promise<AxDump> {
-    const root = projectRoot();
-    const bin = join(root, "scripts", "dump_ax_bin");
-    const script = join(root, "scripts", "dump_ax.swift");
+    const sdir = getScriptsDir();
+    const bin = join(sdir, "dump_ax_bin");
+    const script = join(sdir, "dump_ax.swift");
     let exec: string;
     let args: string[];
     if (existsSync(bin)) {
@@ -174,7 +168,7 @@ async function dumpMacOS(opts: AxDumpOptions, timeoutMs: number): Promise<AxDump
 }
 
 async function dumpWindows(opts: AxDumpOptions, timeoutMs: number): Promise<AxDump> {
-    const script = join(projectRoot(), "scripts", "dump_uia.ps1");
+    const script = join(getScriptsDir(), "dump_uia.ps1");
     const args = ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script];
     if (opts.pid && opts.pid > 0) args.push("-Pid", String(opts.pid));
     if (opts.depth) args.push("-MaxDepth", String(opts.depth));
@@ -184,7 +178,7 @@ async function dumpWindows(opts: AxDumpOptions, timeoutMs: number): Promise<AxDu
 }
 
 async function dumpLinux(opts: AxDumpOptions, timeoutMs: number): Promise<AxDump> {
-    const script = join(projectRoot(), "scripts", "dump_atspi.py");
+    const script = join(getScriptsDir(), "dump_atspi.py");
     const args = [script];
     if (opts.pid && opts.pid > 0) args.push("--pid", String(opts.pid));
     if (opts.depth) args.push("--depth", String(opts.depth));
@@ -304,6 +298,43 @@ export function flattenInteractive(dump: AxDump): AxFlatElement[] {
 // Match the Rust walker's MAX_WALK_DEPTH=64 to prevent stack-overflow on adversarial JSON.
 const MAX_WALK_DEPTH = 64;
 
+// Roles whose VALUE/title is the human-readable text we want to inherit. Many
+// container rows (AXRow/AXCell/AXGroup, Win ListItem/DataItem) carry no title of
+// their own — the visible text lives in child static-text nodes. Without
+// surfacing it, those rows flatten to empty and get dropped, so a literal label
+// like "Downloads" in a Finder sidebar row (or a WhatsApp chat row) never
+// matches and the click falls through to the slow vision path. macOS + Windows
+// + Linux text roles.
+const _TEXT_ROLES = new Set([
+    "AXStaticText", "AXText", "AXTextField", "AXHeading",
+    "Text", "Edit", "Document", "Hyperlink",
+    "label", "text", "static", "heading", "push button",
+]);
+
+/**
+ * Derive a label for an interactive node that has no title/value of its own by
+ * collecting the text of its nearest static-text descendants. Bounded depth +
+ * count so a big container (a whole table/window) doesn't slurp unrelated text.
+ */
+function deriveLabelFromDescendants(node: AxNode): string {
+    const parts: string[] = [];
+    const MAX_SUBDEPTH = 4;
+    const MAX_PARTS = 4;
+    function collect(n: AxNode, d: number) {
+        if (d > MAX_SUBDEPTH || parts.length >= MAX_PARTS) return;
+        if (_TEXT_ROLES.has(n.role || "")) {
+            const t = (n.label || n.value || "").trim();
+            if (t && t !== "[secure]") parts.push(t);
+        }
+        for (const c of n.children) {
+            if (parts.length >= MAX_PARTS) break;
+            collect(c, d + 1);
+        }
+    }
+    for (const c of node.children) collect(c, 1);
+    return parts.join(" ").trim().slice(0, 200);
+}
+
 function flattenInteractiveJs(dump: AxDump): AxFlatElement[] {
     const out: AxFlatElement[] = [];
     let id = 1;
@@ -312,11 +343,15 @@ function flattenInteractiveJs(dump: AxDump): AxFlatElement[] {
         if (isInteractiveRole(node.role) && node.w > 0 && node.h > 0) {
             const label = (node.label || "").trim();
             const value = (node.value || "").trim();
-            if (label || value) {
+            // Fall back to descendant static-text when the node carries no text of
+            // its own — recovers list/sidebar/chat rows that would otherwise drop.
+            const derived = label || value ? "" : deriveLabelFromDescendants(node);
+            const effLabel = label || derived;
+            if (effLabel || value) {
                 out.push({
                     id: id++,
                     role: node.role || "",
-                    label,
+                    label: effLabel,
                     value,
                     bbox: { x: node.x, y: node.y, w: node.w, h: node.h },
                     center: { x: node.x + Math.floor(node.w / 2), y: node.y + Math.floor(node.h / 2) },
@@ -368,10 +403,46 @@ export function findElementByLabel(elements: AxFlatElement[], query: string, min
     return best.el;
 }
 
+const _STOPWORDS = new Set([
+    "the", "a", "an", "to", "in", "on", "of", "for", "at", "by", "click", "tap",
+    "button", "icon", "menu", "item", "field", "the", "and", "or", "this", "that",
+    "with", "into", "left", "right", "top", "bottom", "sidebar", "bar", "open",
+]);
+
+function _tokens(s: string): string[] {
+    return s
+        .split(/[^a-z0-9]+/i)
+        .map((t) => t.toLowerCase())
+        .filter((t) => t.length > 0);
+}
+
 function scoreText(q: string, hay: string): number {
     if (!hay) return 0;
     if (hay === q) return 1.0;
     if (hay.includes(q) || q.includes(hay)) return 0.85;
+
+    // Token-aware match: agents pass DESCRIPTIVE instructions ("the Downloads
+    // folder in the Finder sidebar") while AX labels are short ("Downloads").
+    // Pure substring/char-overlap missed these. Score by how much of the SHORTER
+    // side's significant tokens are covered by the longer side. A label whose
+    // every meaningful token appears in the query (e.g. "Downloads" ⊂ query)
+    // scores high; this is what lets natural-language instructions hit AX.
+    const qTok = _tokens(q).filter((t) => !_STOPWORDS.has(t));
+    const hTok = _tokens(hay).filter((t) => !_STOPWORDS.has(t));
+    if (qTok.length > 0 && hTok.length > 0) {
+        const qSet = new Set(qTok);
+        const hSet = new Set(hTok);
+        // Coverage of the label's tokens by the query (handles long query / short label).
+        const hayCovered = hTok.filter((t) => qSet.has(t)).length / hTok.length;
+        // Coverage of the query's tokens by the label (handles the reverse).
+        const qCovered = qTok.filter((t) => hSet.has(t)).length / qTok.length;
+        const tokenScore = Math.max(hayCovered, qCovered);
+        // Full label-token coverage is a strong signal (0.82 — above ax_fuzzy 0.8,
+        // below ax_exact 0.95); partial coverage scales down.
+        if (tokenScore >= 0.999) return 0.82;
+        if (tokenScore > 0) return Math.min(0.78, 0.4 + tokenScore * 0.4);
+    }
+
     // Char-overlap similarity for very loose matches.
     const intersect = [...new Set(q)].filter((c) => hay.includes(c)).length;
     return (intersect / Math.max(q.length, 1)) * 0.5;
