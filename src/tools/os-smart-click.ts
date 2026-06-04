@@ -14,10 +14,14 @@
  * tier automatically based on capability + AX availability.
  */
 
+import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 import { dumpAccessibilityTree } from "../screen/ax-dump.js";
 import { recallClickSite, recordClickMiss, recordClickSuccess } from "../screen/click-memory.js";
 import { applyCalibration, recordCalibrationSample } from "../screen/drift-calibration.js";
@@ -153,24 +157,78 @@ export const osSmartClick: ToolDefinition = {
         // Step 1 — run the perception cascade.
         let screenshotPath: string | undefined;
         let tempPath: string | null = null;
+        // Dims the cascade scales vision-tier coords against. Defaults to the
+        // full monitor; replaced with window-scoped dims if we region-capture.
+        let cascadeDims = dims;
         try {
             if (input.screenshot_base64) {
                 tempPath = await base64ToTempFile(input.screenshot_base64 as string);
                 screenshotPath = tempPath;
             } else {
+                // Raise the target app to the front BEFORE capturing. Without
+                // this, the auto-screenshot grabs whatever stole focus (e.g. a
+                // terminal), so grounding runs against the wrong window and
+                // returns a false cascade_miss for an element that IS on the
+                // target's window. macOS `open -a` is the safe activate path
+                // (per macos.ts guidance — `tell … activate` can resolve wrong).
+                if (appName && appName !== "unknown" && process.platform === "darwin") {
+                    try {
+                        await execFileAsync("open", ["-a", appName], { timeout: 4000 });
+                        await new Promise((r) => setTimeout(r, 350)); // let the window raise
+                    } catch { /* best-effort — proceed with whatever is frontmost */ }
+                }
                 // Auto-capture when the agent didn't supply one. Without this the
                 // cascade's vision tiers (OmniParser / UI-TARS / cloud_grounding)
                 // were silently skipped — agents routinely call os_smart_click
                 // without a screenshot, so AX-only would miss and the best
                 // grounding tiers never ran. This is the main cause of low click
                 // accuracy. Best-effort: on capture failure, fall back to AX-only.
-                try {
-                    const shot = await takeScreenshot();
-                    tempPath = join(tmpdir(), `atlas_smartclick_${randomBytes(6).toString("hex")}.png`);
-                    await fs.writeFile(tempPath, shot, { mode: 0o600 });
-                    screenshotPath = tempPath;
-                } catch (capErr) {
-                    console.warn(`[smart-click] auto-screenshot failed (AX-only cascade): ${(capErr as Error).message}`);
+                //
+                // Prefer a WINDOW-SCOPED capture (macOS `screencapture -R`) when
+                // the focused-window bounds are known: a full-screen image lets a
+                // stray background window pollute grounding, and the model can
+                // mis-ground onto the wrong app. Scoping to the target window's
+                // rect also gives the VLM a tighter, higher-signal image. When we
+                // scope, we hand the cascade WINDOW-relative dims (origin = window
+                // x/y, size = window w/h) so scaleImageToScreen maps the model's
+                // window-local coords back to absolute screen coords correctly —
+                // no change to the shared scaling math required.
+                const fw = dims.focusedWindow;
+                if (
+                    process.platform === "darwin" &&
+                    fw && fw.w > 0 && fw.h > 0 &&
+                    process.env.ATLAS_NO_WINDOW_SCOPED_CAPTURE !== "true"
+                ) {
+                    try {
+                        tempPath = join(tmpdir(), `atlas_smartclick_${randomBytes(6).toString("hex")}.png`);
+                        await execFileAsync(
+                            "screencapture",
+                            ["-x", `-R${fw.x},${fw.y},${fw.w},${fw.h}`, tempPath],
+                            { timeout: 8000 },
+                        );
+                        screenshotPath = tempPath;
+                        // Window-scoped dims: image spans the window rect, so the
+                        // cascade scales image-px → (window origin + window size).
+                        cascadeDims = {
+                            ...dims,
+                            originX: fw.x,
+                            originY: fw.y,
+                            width: fw.w,
+                            height: fw.h,
+                        };
+                    } catch {
+                        screenshotPath = undefined; // fall through to full-screen below
+                    }
+                }
+                if (!screenshotPath) {
+                    try {
+                        const shot = await takeScreenshot();
+                        tempPath = join(tmpdir(), `atlas_smartclick_${randomBytes(6).toString("hex")}.png`);
+                        await fs.writeFile(tempPath, shot, { mode: 0o600 });
+                        screenshotPath = tempPath;
+                    } catch (capErr) {
+                        console.warn(`[smart-click] auto-screenshot failed (AX-only cascade): ${(capErr as Error).message}`);
+                    }
                 }
             }
 
@@ -183,7 +241,7 @@ export const osSmartClick: ToolDefinition = {
             const target = await findClickTarget(instruction, {
                 screenshotPath,
                 skipTiers,
-                screenDims: dims,
+                screenDims: cascadeDims,
                 axDumpHint,
                 llm: _smartClickLLM ?? undefined,
             });

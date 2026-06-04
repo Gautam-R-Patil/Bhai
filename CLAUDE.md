@@ -366,6 +366,9 @@ Default ON unless marked opt-IN. Set `"true"` (or sentinel) to disable. `grep -r
 - `ATLAS_VISION_PROFILE=lite|standard|full` — override capability-detector pick (`src/screen/capability-detector.ts`)
 - `ATLAS_NO_CLICK_MEMORY` — disables `src/screen/click-memory.ts`; rules out poisoned `data/click-memory.db`
 - `ATLAS_NO_DRIFT_CALIBRATION` — disables `src/screen/drift-calibration.ts`; rules out bad affine fit
+- `ATLAS_NO_CLOUD_GROUNDING` — disables the cloud grounding cascade tier (`src/screen/cloud-grounding.ts`). Default ON. The tier (qwen3.7-plus → qwen3-vl-235b fallback) fires on Lite/Standard + degraded-Full when local AX/OmniParser/UI-TARS miss. `os_smart_click` auto-captures a screenshot (window-scoped via `screencapture -R` when focused-window bounds known, else full-screen) so the vision tiers always have an image — without this the cascade was AX-only and silently skipped the vision tiers (root cause of low click accuracy). Window-scoped capture hands the cascade window-relative dims so `scaleImageToScreen` maps coords correctly.
+- `ATLAS_NO_WINDOW_SCOPED_CAPTURE` — forces `os_smart_click` to full-screen capture instead of window-region capture (macOS). Diagnostic for coordinate-offset issues.
+- `ATLAS_UI_TARS_AUTOPULL=true` — opt-IN; on a Full-tier box with Ollama but no UI-TARS model, background-pulls it at boot (`ensureUITarsForFullTier`). Default OFF (4.7GB pull). Without it, a degraded-Full box warns + uses cloud grounding.
 
 ### Rust expansion — empirical lessons (May 2026)
 
