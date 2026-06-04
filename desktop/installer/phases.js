@@ -545,11 +545,43 @@ const P = {
             const venvPy = process.platform === "win32"
                 ? path.join(venvDir, "Scripts", "python.exe")
                 : path.join(venvDir, "bin", "python");
+            // Downloads the OmniParser-v2 icon_detect weights to ~/.cache/omniparser.
+            // SOFT sub-step: a failure here (flaky HF CDN) must NOT fail the whole
+            // phase \u2014 deps are still useful and the runtime ensure() retries.
+            const ensureOmniWeights = async () => {
+                const weightsPath = path.join(os.homedir(), ".cache", "omniparser", "icon_detect.pt");
+                try {
+                    if (fs.existsSync(weightsPath) && fs.statSync(weightsPath).size > 1_000_000) {
+                        log("Vision model weights present \u2713");
+                        return true;
+                    }
+                } catch { /* stat failed \u2014 re-fetch */ }
+                log("Downloading vision model weights (~50 MB)...");
+                try {
+                    await ctx.runCommand(venvPy, ["-m", "pip", "install", "--quiet", "huggingface_hub"], undefined, () => {});
+                    // Download icon_detect/model.pt and place at icon_detect.pt (a path the
+                    // detector + runtime omniParserWeightsPresent() both check).
+                    const dlScript =
+                        "import os,shutil;" +
+                        "from huggingface_hub import hf_hub_download;" +
+                        "d=os.path.expanduser('~/.cache/omniparser');os.makedirs(d,exist_ok=True);" +
+                        "p=hf_hub_download(repo_id='microsoft/OmniParser-v2.0',filename='icon_detect/model.pt');" +
+                        "shutil.copy(p,os.path.join(d,'icon_detect.pt'));print('OK')";
+                    await ctx.runCommand(venvPy, ["-c", dlScript], undefined, (l) => { if (l.trim()) log(l); });
+                    log("Vision model weights ready \u2713");
+                    return true;
+                } catch (err) {
+                    log("\u26a0\ufe0f Vision weights download failed (deps still installed; will retry at runtime): " + (err && err.message ? err.message : String(err)));
+                    return false;
+                }
+            };
+
             // Check if the venv already has the deps importable.
             if (fs.existsSync(venvPy)) {
                 try {
                     await ctx.runCommand(venvPy, ["-c", "import ultralytics, PIL"], undefined, () => {});
                     log("Vision deps already installed in venv \u2713");
+                    await ensureOmniWeights();
                     return;
                 } catch { /* venv exists but deps missing \u2014 proceed to install */ }
             } else {
@@ -572,6 +604,7 @@ const P = {
             } catch (err) {
                 throw new Error("pip install failed. Retry, or run manually: `" + venvPy + " -m pip install ultralytics Pillow`. (" + err.message + ")");
             }
+            await ensureOmniWeights();
         },
     }),
 

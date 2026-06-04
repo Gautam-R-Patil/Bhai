@@ -235,64 +235,125 @@ export const osSmartClick: ToolDefinition = {
             const skipTiers: CascadeTier[] = [];
             if (surface === "canvas") skipTiers.push("ax_exact", "ax_fuzzy");
 
-            // Pass screenDims so OmniParser / UI-TARS image-pixel coords are scaled
-            // to screen-absolute coords inside the cascade. Reuse the AX dump if we
-            // already grabbed one for app/window detection.
-            const target = await findClickTarget(instruction, {
-                screenshotPath,
-                skipTiers,
-                screenDims: cascadeDims,
-                axDumpHint,
-                llm: _smartClickLLM ?? undefined,
-            });
-            if (!target) {
+            // Vision tiers can return wrong coordinates (the model mis-grounds);
+            // AX/memory tiers come from OS element geometry and are trusted. Only
+            // vision-tier clicks get post-click verification + self-correction.
+            const VISION_TIERS = new Set<CascadeTier>(["omniparser", "ui_tars", "cloud_grounding"]);
+            const verifyOn = process.env.ATLAS_NO_SMARTCLICK_VERIFY !== "true";
+            const selfCorrectOn = process.env.ATLAS_NO_SMARTCLICK_SELFCORRECT !== "true";
+
+            // Captures a screenshot the same way grounding did (window-scoped when
+            // we region-captured, else full-screen), for before/after diffing.
+            const captureForVerify = async (): Promise<Buffer | null> => {
+                try {
+                    const fw = cascadeDims.focusedWindow;
+                    if (process.platform === "darwin" && fw && fw.w > 0 && process.env.ATLAS_NO_WINDOW_SCOPED_CAPTURE !== "true") {
+                        const p = join(tmpdir(), `atlas_verify_${randomBytes(6).toString("hex")}.png`);
+                        await execFileAsync("screencapture", ["-x", `-R${fw.x},${fw.y},${fw.w},${fw.h}`, p], { timeout: 8000 });
+                        const buf = await fs.readFile(p);
+                        await fs.unlink(p).catch(() => {});
+                        return buf;
+                    }
+                    return await takeScreenshot();
+                } catch {
+                    return null;
+                }
+            };
+
+            // Ground → click → (vision only) verify. Returns a structured result.
+            // `extraSkip` lets the self-correction force descent past a failed tier.
+            const attempt = async (extraSkip: CascadeTier[]): Promise<{
+                ok: boolean; target: NonNullable<Awaited<ReturnType<typeof findClickTarget>>> | null;
+                calX: number; calY: number; verdict?: string; dispatchErr?: string;
+            }> => {
+                const target = await findClickTarget(instruction, {
+                    screenshotPath,
+                    skipTiers: [...skipTiers, ...extraSkip],
+                    screenDims: cascadeDims,
+                    axDumpHint,
+                    llm: _smartClickLLM ?? undefined,
+                });
+                if (!target) return { ok: false, target: null, calX: 0, calY: 0 };
+
+                const { x: calX, y: calY } = applyCalibration(dims.monitorId, target.x, target.y);
+                const isVision = VISION_TIERS.has(target.source);
+
+                const before = verifyOn && isVision ? await captureForVerify() : null;
+                const clickResult = await dispatchClick(action, calX, calY);
+                if (!clickResult.success) {
+                    return { ok: false, target, calX, calY, dispatchErr: clickResult.error || "click_dispatch_failed" };
+                }
+
+                // Trusted (AX/memory) tier OR verification disabled → record + done.
+                if (!isVision || !verifyOn) {
+                    if (!dimsAreFallback) {
+                        try { recordClickSuccess(site, calX - dims.originX, calY - dims.originY, dims.width, dims.height); } catch { /* non-fatal */ }
+                    }
+                    return { ok: true, target, calX, calY };
+                }
+
+                // Vision tier → verify the click actually did something.
+                await new Promise((r) => setTimeout(r, 300)); // let the UI settle
+                const after = await captureForVerify();
+                const verdict = await reportClickOutcome(
+                    site, { x: calX, y: calY }, before, after,
+                    cascadeDims.width || dims.width, cascadeDims.height || dims.height,
+                );
+                if (verdict.outcome === "success" || verdict.outcome === "modal_pop") {
+                    if (!dimsAreFallback) {
+                        try { recordClickSuccess(site, calX - dims.originX, calY - dims.originY, dims.width, dims.height); } catch { /* non-fatal */ }
+                    }
+                    return { ok: true, target, calX, calY, verdict: verdict.outcome };
+                }
+                if (verdict.outcome === "unknown") {
+                    // Ambiguous — don't poison memory either way; soft-pass.
+                    return { ok: true, target, calX, calY, verdict: "unknown" };
+                }
+                // no_op / wrong_target — reportClickOutcome already recorded a miss.
+                return { ok: false, target, calX, calY, verdict: verdict.outcome };
+            };
+
+            let res = await attempt([]);
+
+            // Self-correction: a vision click that verified as a miss → re-ground
+            // forcing descent past the failed tier (+ all above it), click once more.
+            if (!res.ok && res.target && selfCorrectOn && VISION_TIERS.has(res.target.source) && verifyOn && !res.dispatchErr) {
+                const order: CascadeTier[] = ["memory", "ax_exact", "ax_fuzzy", "omniparser", "ui_tars", "cloud_grounding"];
+                const failedIdx = order.indexOf(res.target.source);
+                const forceSkip = order.slice(0, failedIdx + 1); // skip the failed tier and everything above it
+                const prevXY = `${res.calX},${res.calY}`;
+                const retry = await attempt(forceSkip);
+                // Only accept the retry if it grounded to a DIFFERENT point.
+                if (retry.target && `${retry.calX},${retry.calY}` !== prevXY) res = retry;
+            }
+
+            if (res.dispatchErr) {
+                return JSON.stringify({ success: false, error: res.dispatchErr, target: res.target, formatted: formatCascadeResult(res.target) });
+            }
+            if (!res.ok && !res.target) {
                 return JSON.stringify({
-                    success: false,
-                    error: "cascade_miss",
-                    instruction,
-                    formatted: formatCascadeResult(null),
+                    success: false, error: "cascade_miss", instruction, formatted: formatCascadeResult(null),
                     tip: "All grounding tiers (AX → OmniParser → UI-TARS/cloud-grounding) failed to locate the element. Call os_inspect to see the AX elements that ARE visible, or os_screenshot to reason about the layout directly before retrying.",
                 });
             }
-
-            // Step 2 — drift calibration (predicted vs actual click coord).
-            const { x: calX, y: calY } = applyCalibration(dims.monitorId, target.x, target.y);
-
-            // Step 3 — execute the click via the structured action surface.
-            const clickResult = await dispatchClick(action, calX, calY);
-            if (!clickResult.success) {
+            if (!res.ok) {
                 return JSON.stringify({
-                    success: false,
-                    error: clickResult.error || "click_dispatch_failed",
-                    target,
-                    formatted: formatCascadeResult(target),
+                    success: false, error: "click_unverified", instruction,
+                    clicked: { x: res.calX, y: res.calY }, target: res.target, verified: res.verdict,
+                    formatted: formatCascadeResult(res.target),
+                    tip: `Grounded via ${res.target?.source} and clicked, but post-click verification saw no expected change (${res.verdict}). The element may not have been where grounding predicted. Try os_inspect or os_screenshot to re-locate.`,
                 });
             }
-
-            // Step 4 — record success to click memory (only when dims are real;
-            // recording against fallback 1440x900 dims would normalize against
-            // fake numbers and poison every future recall).
-            // NOTE: calibration sample is NOT recorded here — recordCalibrationSample
-            // requires the *actual* landing point, which we only learn from outcome
-            // classification (reportClickOutcome). Recording (predicted, calibrated)
-            // is circular and locks the transform into its current state.
-            if (!dimsAreFallback) {
-                try {
-                    recordClickSuccess(site, calX - dims.originX, calY - dims.originY, dims.width, dims.height);
-                } catch {
-                    /* memory persistence failed — non-fatal */
-                }
-            }
-
             return JSON.stringify({
                 success: true,
-                source: target.source,
-                confidence: target.confidence,
+                source: res.target?.source,
+                confidence: res.target?.confidence,
                 instruction,
-                clicked: { x: calX, y: calY },
-                target,
-                formatted: formatCascadeResult(target),
-                tip: `Cascade succeeded via ${target.source} (${target.totalMs}ms total). Recorded to click memory for next-time fast path.`,
+                clicked: { x: res.calX, y: res.calY },
+                target: res.target,
+                verified: res.verdict ?? (res.target && VISION_TIERS.has(res.target.source) ? undefined : "trusted_tier"),
+                formatted: formatCascadeResult(res.target),
+                tip: `Cascade succeeded via ${res.target?.source} (${res.target?.totalMs}ms). ${res.verdict ? `Verified: ${res.verdict}. ` : ""}Recorded to click memory.`,
             });
         } finally {
             if (tempPath) {

@@ -25,12 +25,13 @@
 import {
     type AxDump,
     type AxFlatElement,
+    clearAxFailureCache,
     dumpAccessibilityTree,
     findElementByLabel,
     flattenInteractive,
 } from "./ax-dump.js";
 import { type CapabilityReport, detectCapabilities } from "./capability-detector.js";
-import { detectElements, findElementByCaption } from "./omniparser.js";
+import { detectElements, findElementByCaption, omniParserWeightsPresent } from "./omniparser.js";
 import { type ScreenDimensions, scaleImageToScreen } from "./screen-dimensions.js";
 import { groundClick, isUITarsAvailable } from "./ui-tars.js";
 import { cloudGroundClick } from "./cloud-grounding.js";
@@ -119,10 +120,38 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
         }
     }
 
-    // Tier 2+3: AX exact then fuzzy. (Dump runs once; each tier's elapsed is recorded
-    // AFTER the dump so the times reflect actual match-work, not dump cost.)
+    // Tier 2+3: AX exact then fuzzy. Runs the match against a flattened AX dump.
+    // Returns a finalized ClickTarget on hit, else null. Pushes tier-tried +
+    // elapsed as a side effect so telemetry reflects every attempt.
+    const matchAx = (els: AxFlatElement[]): ClickTarget | null => {
+        if (!skip.has("ax_exact")) {
+            tried.push("ax_exact");
+            const t = Date.now();
+            const exact = findElementByLabel(els, instruction, thresholds.ax_exact);
+            elapsed.ax_exact = Date.now() - t;
+            if (exact) {
+                return finalize(
+                    { x: exact.center.x, y: exact.center.y, confidence: thresholds.ax_exact, source: "ax_exact", matchedElementId: exact.id, matchedLabel: exact.label },
+                    "ax_exact", { tried, elapsed, cascadeStart },
+                );
+            }
+        }
+        if (!skip.has("ax_fuzzy")) {
+            tried.push("ax_fuzzy");
+            const t = Date.now();
+            const fuzzy = findElementByLabel(els, instruction, thresholds.ax_fuzzy);
+            elapsed.ax_fuzzy = Date.now() - t;
+            if (fuzzy) {
+                return finalize(
+                    { x: fuzzy.center.x, y: fuzzy.center.y, confidence: 0.85, source: "ax_fuzzy", matchedElementId: fuzzy.id, matchedLabel: fuzzy.label },
+                    "ax_fuzzy", { tried, elapsed, cascadeStart },
+                );
+            }
+        }
+        return null;
+    };
+
     let axDump = opts.axDumpHint;
-    let axElements: AxFlatElement[] | null = null;
     if (!skip.has("ax_exact") || !skip.has("ax_fuzzy")) {
         if (!axDump) {
             try {
@@ -132,45 +161,28 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
             }
         }
         if (axDump && !axDump.error) {
-            axElements = flattenInteractive(axDump);
-            if (!skip.has("ax_exact")) {
-                tried.push("ax_exact");
-                const exactStart = Date.now();
-                const exact = findElementByLabel(axElements, instruction, 0.95);
-                elapsed.ax_exact = Date.now() - exactStart; // record even on miss
-                if (exact) {
-                    return finalize(
-                        {
-                            x: exact.center.x,
-                            y: exact.center.y,
-                            confidence: 0.95,
-                            source: "ax_exact",
-                            matchedElementId: exact.id,
-                            matchedLabel: exact.label,
-                        },
-                        "ax_exact",
-                        { tried, elapsed, cascadeStart },
-                    );
-                }
-            }
-            if (!skip.has("ax_fuzzy")) {
-                tried.push("ax_fuzzy");
-                const fuzzyStart = Date.now();
-                const fuzzy = findElementByLabel(axElements, instruction, thresholds.ax_fuzzy);
-                elapsed.ax_fuzzy = Date.now() - fuzzyStart;
-                if (fuzzy) {
-                    return finalize(
-                        {
-                            x: fuzzy.center.x,
-                            y: fuzzy.center.y,
-                            confidence: 0.85,
-                            source: "ax_fuzzy",
-                            matchedElementId: fuzzy.id,
-                            matchedLabel: fuzzy.label,
-                        },
-                        "ax_fuzzy",
-                        { tried, elapsed, cascadeStart },
-                    );
+            const hit = matchAx(flattenInteractive(axDump));
+            if (hit) return hit;
+
+            // Cold-window retry: a freshly-activated window's AX tree is often
+            // incomplete on first dump (still settling), so a real element
+            // misses, then hits moments later. Re-dump ONCE before paying the
+            // slow/possibly-billed vision tiers. Skip when the caller supplied
+            // a full-depth hint (it already settled the window). Gated.
+            const axDumpHintShallow = !!opts.axDumpHint && (opts.axDumpHint.depth ?? 0) < 20;
+            const retryEligible = (!opts.axDumpHint || axDumpHintShallow) && process.env.ATLAS_NO_AX_RETRY !== "true";
+            if (retryEligible) {
+                const delayMs = Number(process.env.ATLAS_AX_RETRY_DELAY_MS) || 250;
+                await new Promise((r) => setTimeout(r, delayMs));
+                clearAxFailureCache();
+                try {
+                    const redump = await dumpAccessibilityTree({ depth: 20 });
+                    if (redump && !redump.error) {
+                        const retryHit = matchAx(flattenInteractive(redump));
+                        if (retryHit) return retryHit;
+                    }
+                } catch {
+                    /* re-dump failed — fall through to vision tiers */
                 }
             }
         }
@@ -181,8 +193,16 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
         return null;
     }
 
-    // Tier 4: OmniParser (Standard tier and up).
-    if (!skip.has("omniparser") && (profile === "standard" || profile === "full")) {
+    // Tier 4: OmniParser (Standard tier and up). Short-circuit when the
+    // icon_detect weights aren't present — otherwise we spawn python on every
+    // call just to get `omniparser_weights_missing` back (wasteful). Kill-switch
+    // ATLAS_NO_OMNIPARSER force-skips regardless.
+    if (
+        !skip.has("omniparser") &&
+        (profile === "standard" || profile === "full") &&
+        process.env.ATLAS_NO_OMNIPARSER !== "true" &&
+        omniParserWeightsPresent()
+    ) {
         tried.push("omniparser");
         const omStart = Date.now();
         try {

@@ -311,17 +311,23 @@ export async function ensureUITarsForFullTier(profile: string): Promise<void> {
     if (avail.reason !== "model_not_pulled") return;
 
     if (process.env.ATLAS_UI_TARS_AUTOPULL === "true") {
-        console.log(`🔧 [vision-nav] Full tier but UI-TARS not pulled — auto-pulling ${model} in background (~4.7GB)…`);
         const hostCheck = validateOllamaHost(host);
         if (!hostCheck.ok) return;
-        // Fire-and-forget background pull; clears the avail cache on success so
-        // the next grounding call picks it up without a restart.
-        execFileAsync("ollama", ["pull", model], { timeout: 30 * 60_000 })
-            .then(() => {
-                clearUITarsAvailCache();
-                console.log(`✅ [vision-nav] UI-TARS pulled — local grounding now active.`);
-            })
-            .catch((e) => console.warn(`⚠️  [vision-nav] UI-TARS auto-pull failed: ${(e as Error).message}. Cloud grounding remains the fallback.`));
+        // DETACHED background pull — a plain child dies when the bot process
+        // exits, which orphaned multi-GB pulls mid-download. spawnDetachedLogged
+        // reparents to init + lockfile-guards against double-spawn. `ollama pull`
+        // is resumable, so a partial from a prior run continues. No success
+        // callback (detached can't call back) — the 60s avail-cache TTL means
+        // the next grounding call re-probes /api/tags and picks it up.
+        const { spawnDetachedLogged } = await import("./spawn-detached.js");
+        const r = spawnDetachedLogged("ui-tars-pull", "ollama", ["pull", model]);
+        if (r === "started") {
+            console.log(`🔧 [vision-nav] Full tier but UI-TARS not pulled — pulling ${model} in background (~4.7GB, detached). Local grounding activates once it completes.`);
+        } else if (r === "locked") {
+            console.log(`🔧 [vision-nav] UI-TARS pull already in progress (background).`);
+        } else {
+            console.warn(`⚠️  [vision-nav] Could not start UI-TARS auto-pull. Run manually: \`ollama pull ${model}\`.`);
+        }
     } else {
         console.warn(
             `⚠️  [vision-nav] Full tier detected but UI-TARS model not pulled — local grounding unavailable. ` +

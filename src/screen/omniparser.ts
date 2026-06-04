@@ -20,7 +20,7 @@
 
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -200,4 +200,47 @@ export function findElementByCaption(elements: OmniParserElement[], query: strin
     }
     if (!best || best.score < 0.5) return null;
     return best.el;
+}
+
+/**
+ * True iff the OmniParser-v2 icon_detect weights are present locally. MUST stay
+ * byte-identical to the path list in scripts/omniparser_detect.py:84-89 — if
+ * they drift, the cascade thinks weights exist while the Python detector
+ * disagrees (or vice versa). Pure (no spawn) so the cascade can cheaply skip
+ * the tier instead of spawning python only to get `omniparser_weights_missing`.
+ */
+export function omniParserWeightsPresent(): boolean {
+    const candidates = [
+        process.env.OMNIPARSER_MODEL_PATH,
+        join(homedir(), ".cache", "omniparser", "icon_detect.pt"),
+        join(homedir(), ".cache", "omniparser", "model.pt"),
+        "weights/icon_detect/best.pt",
+    ].filter((p): p is string => !!p);
+    return candidates.some((p) => existsSync(p));
+}
+
+let _depsCache: { present: boolean; expiresAt: number } | null = null;
+const DEPS_CACHE_TTL_MS = 60_000;
+
+/**
+ * True iff the Python deps (ultralytics + PIL) import cleanly in the resolved
+ * interpreter. 60s-cached (mirrors ui-tars availability cache) so we don't
+ * spawn python on every cascade call.
+ */
+export async function omniParserDepsPresent(): Promise<boolean> {
+    if (_depsCache && _depsCache.expiresAt > Date.now()) return _depsCache.present;
+    let present = false;
+    try {
+        await execFileAsync(resolvePythonBin(), ["-c", "import ultralytics, PIL"], { timeout: 8000 });
+        present = true;
+    } catch {
+        present = false;
+    }
+    _depsCache = { present, expiresAt: Date.now() + DEPS_CACHE_TTL_MS };
+    return present;
+}
+
+/** Clears the deps-availability cache (e.g. after a background setup completes). */
+export function clearOmniParserDepsCache(): void {
+    _depsCache = null;
 }

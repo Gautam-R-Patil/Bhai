@@ -500,8 +500,10 @@ async function boot() {
             .then(async () => {
                 const { detectCapabilities } = await import("./screen/capability-detector.js");
                 const { ensureUITarsForFullTier } = await import("./screen/ui-tars.js");
+                const { ensureOmniParser } = await import("./screen/omniparser-setup.js");
                 const caps = await detectCapabilities();
                 await ensureUITarsForFullTier(caps.profile);
+                await ensureOmniParser(caps.profile);
             })
             .catch((err) => console.warn("[boot] vision-nav self-heal skipped:", (err as Error).message));
     }
