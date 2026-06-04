@@ -34,6 +34,8 @@ export const CREDIT_COSTS: Record<string, number> = {
     "deepseek/deepseek-chat-v3.1": 0.5,
     "deepseek/deepseek-v3.2-exp": 0.5,
     "z-ai/glm-4.6": 0.5,
+    "qwen/qwen3.7-plus": 0.5,
+    "qwen/qwen3-vl-235b-a22b-instruct": 0.5,
     // Pro tier (1 credit)
     "anthropic/claude-sonnet-4.5": 1,
     "anthropic/claude-sonnet-4.6": 1,

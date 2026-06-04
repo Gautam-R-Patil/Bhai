@@ -287,3 +287,46 @@ export async function isUITarsAvailable(
     _availCache.set(cacheKey, { result, expiresAt: Date.now() + AVAIL_CACHE_TTL_MS });
     return result;
 }
+
+/**
+ * Boot-time self-heal for the Full tier. A box can qualify as Full (GPU/Apple
+ * Silicon + RAM + disk) yet have UI-TARS un-pulled — e.g. set up outside the
+ * full installer wizard, or a pull that failed. In that state tier-5 silently
+ * skips and grounding leans on the cloud_grounding tier instead of free local
+ * UI-TARS. Surface it clearly, and optionally kick off a background pull.
+ *
+ * Called once at boot (non-blocking). Only acts when profile is "full".
+ * Set ATLAS_UI_TARS_AUTOPULL=true to auto-pull the ~4.7GB model in background.
+ */
+export async function ensureUITarsForFullTier(profile: string): Promise<void> {
+    if (profile !== "full") return;
+    const host = process.env.OLLAMA_HOST || "http://127.0.0.1:11434";
+    const model = process.env.ATLAS_UI_TARS_TAG || "hf.co/mradermacher/UI-TARS-1.5-7B-GGUF:Q4_K_M";
+
+    const avail = await isUITarsAvailable({ host, model }).catch(() => ({ available: false, reason: "probe_failed" }));
+    if (avail.available) return; // healthy Full — nothing to do
+
+    // Ollama not even installed → a different (install-time) problem; the
+    // capability detector already notes that. Only act on model_not_pulled.
+    if (avail.reason !== "model_not_pulled") return;
+
+    if (process.env.ATLAS_UI_TARS_AUTOPULL === "true") {
+        console.log(`🔧 [vision-nav] Full tier but UI-TARS not pulled — auto-pulling ${model} in background (~4.7GB)…`);
+        const hostCheck = validateOllamaHost(host);
+        if (!hostCheck.ok) return;
+        // Fire-and-forget background pull; clears the avail cache on success so
+        // the next grounding call picks it up without a restart.
+        execFileAsync("ollama", ["pull", model], { timeout: 30 * 60_000 })
+            .then(() => {
+                clearUITarsAvailCache();
+                console.log(`✅ [vision-nav] UI-TARS pulled — local grounding now active.`);
+            })
+            .catch((e) => console.warn(`⚠️  [vision-nav] UI-TARS auto-pull failed: ${(e as Error).message}. Cloud grounding remains the fallback.`));
+    } else {
+        console.warn(
+            `⚠️  [vision-nav] Full tier detected but UI-TARS model not pulled — local grounding unavailable. ` +
+            `Clicks will use the cheap cloud grounding fallback. To enable free local grounding, run: ` +
+            `\`ollama pull ${model}\` (or set ATLAS_UI_TARS_AUTOPULL=true to pull automatically next boot).`,
+        );
+    }
+}

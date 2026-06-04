@@ -78,6 +78,8 @@ export const MODELS = {
     GPT5_MINI: "openai/gpt-5-mini",
     GPT5_NANO: "openai/gpt-5-nano",
     GPT41_NANO: "openai/gpt-4.1-nano",
+    QWEN37_PLUS: "qwen/qwen3.7-plus",
+    QWEN3_VL_235B: "qwen/qwen3-vl-235b-a22b-instruct",
 };
 
 export const MODEL_DISPLAY: Record<string, string> = {

@@ -43,6 +43,73 @@ describe("findClickTarget — tier gating + fallthrough", () => {
     );
 });
 
+describe("cloud_grounding tier", () => {
+    // Minimal 1x1 PNG written to tmp (passes isSafeScreenshotPath + PNG header parse).
+    const TINY_PNG = Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+        "base64",
+    );
+
+    async function writeTmpPng(): Promise<string> {
+        const { tmpdir } = await import("node:os");
+        const { join } = await import("node:path");
+        const { promises: fs } = await import("node:fs");
+        const p = join(tmpdir(), `atlas_cg_test_${Date.now()}.png`);
+        await fs.writeFile(p, TINY_PNG);
+        return p;
+    }
+
+    // Mock LLM returning a grounding JSON response.
+    const mockLLM = {
+        chat: async () => ({
+            choices: [{ message: { content: '{"x": 42, "y": 84, "confidence": 0.9}' } }],
+        }),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+
+    it("fires on standard tier when local tiers are skipped, returns coords", async () => {
+        const png = await writeTmpPng();
+        const r = await findClickTarget("the Save button", {
+            screenshotPath: png,
+            forceProfile: "standard",
+            skipTiers: ["memory", "ax_exact", "ax_fuzzy", "omniparser"],
+            screenDims: { width: 100, height: 100, scale: 1, monitorId: "test", originX: 0, originY: 0 },
+            llm: mockLLM,
+        });
+        expect(r).not.toBeNull();
+        expect(r?.source).toBe("cloud_grounding");
+        expect(r?.triedTiers).toContain("cloud_grounding");
+    });
+
+    it("does NOT fire when no llm client is provided", async () => {
+        const png = await writeTmpPng();
+        const r = await findClickTarget("the Save button", {
+            screenshotPath: png,
+            forceProfile: "standard",
+            skipTiers: ["memory", "ax_exact", "ax_fuzzy", "omniparser"],
+        });
+        expect(r).toBeNull();
+    });
+
+    it("is disabled by ATLAS_NO_CLOUD_GROUNDING", async () => {
+        const png = await writeTmpPng();
+        const prev = process.env.ATLAS_NO_CLOUD_GROUNDING;
+        process.env.ATLAS_NO_CLOUD_GROUNDING = "true";
+        try {
+            const r = await findClickTarget("the Save button", {
+                screenshotPath: png,
+                forceProfile: "standard",
+                skipTiers: ["memory", "ax_exact", "ax_fuzzy", "omniparser"],
+                llm: mockLLM,
+            });
+            expect(r).toBeNull();
+        } finally {
+            if (prev === undefined) delete process.env.ATLAS_NO_CLOUD_GROUNDING;
+            else process.env.ATLAS_NO_CLOUD_GROUNDING = prev;
+        }
+    });
+});
+
 describe("formatCascadeResult", () => {
     it("renders 'no hit' message when null", () => {
         expect(formatCascadeResult(null)).toContain("no tier reached threshold");

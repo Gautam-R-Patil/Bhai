@@ -33,8 +33,11 @@ import { type CapabilityReport, detectCapabilities } from "./capability-detector
 import { detectElements, findElementByCaption } from "./omniparser.js";
 import { type ScreenDimensions, scaleImageToScreen } from "./screen-dimensions.js";
 import { groundClick, isUITarsAvailable } from "./ui-tars.js";
+import { cloudGroundClick } from "./cloud-grounding.js";
+import type { LLMClient } from "../llm.js";
 
-export type CascadeTier = "memory" | "ax_exact" | "ax_fuzzy" | "omniparser" | "ui_tars" | "cloud_vlm_required";
+export type CascadeTier =
+    | "memory" | "ax_exact" | "ax_fuzzy" | "omniparser" | "ui_tars" | "cloud_grounding" | "cloud_vlm_required";
 
 export interface ClickTarget {
     x: number;
@@ -74,6 +77,12 @@ export interface CascadeOptions {
      * display or partial-screen capture.
      */
     screenDims?: ScreenDimensions;
+    /**
+     * LLM client for the cloud_grounding tier. Required for cloud grounding to
+     * fire (Lite/Standard, or degraded-Full). Without it, the cascade returns
+     * null at the cloud tier and the caller falls back to the agentic VLM.
+     */
+    llm?: LLMClient;
 }
 
 const DEFAULT_THRESHOLDS: Record<CascadeTier, number> = {
@@ -82,6 +91,7 @@ const DEFAULT_THRESHOLDS: Record<CascadeTier, number> = {
     ax_fuzzy: 0.8,
     omniparser: 0.8,
     ui_tars: 0.7,
+    cloud_grounding: 0.6,
     cloud_vlm_required: 0,
 };
 
@@ -204,6 +214,9 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
     // Tier 5: UI-TARS local grounding (Full tier only, requires Ollama).
     // Short-circuit via capability-detector's deps.ollama check before paying the 3s
     // TCP-timeout cost on a box where Ollama is never installed.
+    // `uiTarsUsable` tracks whether local grounding was actually available this
+    // run — drives the degraded-Full self-heal gate on the cloud tier below.
+    let uiTarsUsable = false;
     if (!skip.has("ui_tars") && profile === "full") {
         const caps = await detectCapabilities();
         if (caps.deps.ollama) {
@@ -212,6 +225,7 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
             try {
                 const avail = await isUITarsAvailable();
                 if (avail.available) {
+                    uiTarsUsable = true;
                     const grounded = await groundClick(opts.screenshotPath, instruction);
                     elapsed.ui_tars = Date.now() - utStart;
                     if (!grounded.error && grounded.confidence >= thresholds.ui_tars) {
@@ -234,6 +248,37 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
             } catch {
                 elapsed.ui_tars = Date.now() - utStart;
             }
+        }
+    }
+
+    // Tier 6: Cloud grounding (cheap VLM). Fires on Lite/Standard (no local
+    // grounding) and on degraded Full (Full hardware but UI-TARS not pulled).
+    // Skipped on healthy Full (local UI-TARS handled it → zero cloud cost) and
+    // when no LLM client was provided. This replaces the old behavior where a
+    // missed click bounced to the expensive agentic model to re-ground.
+    const cloudEligible = profile !== "full" || !uiTarsUsable;
+    if (!skip.has("cloud_grounding") && cloudEligible && opts.llm && process.env.ATLAS_NO_CLOUD_GROUNDING !== "true") {
+        tried.push("cloud_grounding");
+        const cgStart = Date.now();
+        try {
+            const grounded = await cloudGroundClick(opts.screenshotPath, instruction, { llm: opts.llm });
+            elapsed.cloud_grounding = Date.now() - cgStart;
+            if (!grounded.error && grounded.confidence >= thresholds.cloud_grounding) {
+                const screen = toScreenCoords(grounded.x, grounded.y, grounded.imageWidth, opts.screenDims);
+                return finalize(
+                    {
+                        x: screen.x,
+                        y: screen.y,
+                        confidence: grounded.confidence,
+                        source: "cloud_grounding",
+                        reasoning: grounded.reasoning,
+                    },
+                    "cloud_grounding",
+                    { tried, elapsed, cascadeStart },
+                );
+            }
+        } catch {
+            elapsed.cloud_grounding = Date.now() - cgStart;
         }
     }
 

@@ -59,7 +59,8 @@ export const enum Provider {
   Openai = 'Openai',
   Amazon = 'Amazon',
   Deepseek = 'Deepseek',
-  Zai = 'Zai'
+  Zai = 'Zai',
+  Qwen = 'Qwen'
 }
 export interface ModelInfo {
   id: string

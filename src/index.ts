@@ -6,7 +6,7 @@ import { loadConfig } from "./config.js";
 import { createLLMClient } from "./llm.js";
 import { createTelegramBot, sendProactiveMessage } from "./telegram.js";
 import { initWhatsApp, closeWhatsApp, sendWhatsAppProactiveMessage } from "./whatsapp.js";
-import { getToolNames, setSwarmLLM, setDeepResearchLLM, setLongTaskLLM, setDeepResearchNotifier, initDeepResearch, rotateAuditLog, loadDynamicTools, setCodeActionLLM, setCodeActionExecutor, setComputerUseLLM, executeTool, registerChannelSender, setPresentationLLM, setIngestLLM, setBrandAuditLLM, setScriptWriterLLM, setCampaignPlannerLLM, setOutreachLLM, setProductHuntLLM } from "./tools/index.js";
+import { getToolNames, setSwarmLLM, setDeepResearchLLM, setLongTaskLLM, setDeepResearchNotifier, initDeepResearch, rotateAuditLog, loadDynamicTools, setCodeActionLLM, setCodeActionExecutor, setComputerUseLLM, executeTool, registerChannelSender, setPresentationLLM, setIngestLLM, setBrandAuditLLM, setScriptWriterLLM, setCampaignPlannerLLM, setOutreachLLM, setProductHuntLLM, setSmartClickLLM } from "./tools/index.js";
 import { initMemoryDB, embedExistingMemories, setMemoryLLM } from "./memory/sqlite.js";
 import { initKnowledgeGraph } from "./memory/knowledge-graph.js";
 import { initSupabase } from "./memory/supabase.js";
@@ -83,6 +83,7 @@ setLongTaskLLM(llm);       // Inject into long task executor
 setCodeActionLLM(llm);     // Inject into code-as-action agent tool
 setCodeActionExecutor(executeTool);  // Inject tool executor for code_execute sandbox
 setComputerUseLLM(llm);    // Inject into computer use agent tool
+setSmartClickLLM(llm);     // Inject into os_smart_click cloud-grounding cascade tier
 setMemoryLLM(llm);         // Inject into memory for smart write decisions
 setPresentationLLM(llm);   // Inject into presentation generator
 setIngestLLM(llm);         // Inject into PDF → JSON ingestion (vision-LLM fallback)
@@ -490,6 +491,19 @@ async function boot() {
     // advice when the user thinks they granted permission but the bot can't actually use it.
     if (process.platform === "darwin" && process.env.ATLAS_SKIP_PERMISSION_PROBE !== "true") {
         probeAndLogMacPermissions().catch((err) => console.warn("[boot] permission probe failed:", err));
+    }
+
+    // Vision-nav self-heal: warn (and optionally auto-pull) when a Full-tier box
+    // is missing the local UI-TARS model, so grounding doesn't silently degrade.
+    if (process.env.ATLAS_SKIP_CAPABILITY_PROBE !== "true") {
+        Promise.resolve()
+            .then(async () => {
+                const { detectCapabilities } = await import("./screen/capability-detector.js");
+                const { ensureUITarsForFullTier } = await import("./screen/ui-tars.js");
+                const caps = await detectCapabilities();
+                await ensureUITarsForFullTier(caps.profile);
+            })
+            .catch((err) => console.warn("[boot] vision-nav self-heal skipped:", (err as Error).message));
     }
 
     // Auto-resume any long tasks that were interrupted (async, non-blocking)

@@ -255,6 +255,8 @@ const MODEL_COSTS: Record<string, { input: number; output: number }> = {
     "openai/gpt-5-mini": { input: 0.25, output: 2 },
     "openai/gpt-5-nano": { input: 0.05, output: 0.4 },
     "openai/gpt-4.1-nano": { input: 0.1, output: 0.4 },
+    "qwen/qwen3.7-plus": { input: 0.4, output: 1.6 },
+    "qwen/qwen3-vl-235b-a22b-instruct": { input: 0.25, output: 1.2 },
 };
 
 // Fraction of full input price billed for cache-read (prompt-cache hit) tokens.

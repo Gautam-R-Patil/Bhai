@@ -24,8 +24,16 @@ import { applyCalibration, recordCalibrationSample } from "../screen/drift-calib
 import { classifyOutcome } from "../screen/outcome-classifier.js";
 import { type CascadeTier, findClickTarget, formatCascadeResult } from "../screen/perception-router.js";
 import { getScreenDimensions, isFallbackDims } from "../screen/screen-dimensions.js";
+import type { LLMClient } from "../llm.js";
 import type { ToolDefinition } from "./get-current-time.js";
 import { osComputerAction } from "./os-computer-action.js";
+
+// LLM client for the cloud_grounding cascade tier (Lite/Standard + degraded
+// Full). Injected at boot via setSmartClickLLM(); null = cloud tier skipped.
+let _smartClickLLM: LLMClient | null = null;
+export function setSmartClickLLM(client: LLMClient): void {
+    _smartClickLLM = client;
+}
 
 async function base64ToTempFile(base64: string, ext = "png"): Promise<string> {
     // crypto.randomBytes is unpredictable — defends against tmpdir symlink attacks
@@ -161,6 +169,7 @@ export const osSmartClick: ToolDefinition = {
                 skipTiers,
                 screenDims: dims,
                 axDumpHint,
+                llm: _smartClickLLM ?? undefined,
             });
             if (!target) {
                 return JSON.stringify({
@@ -168,7 +177,7 @@ export const osSmartClick: ToolDefinition = {
                     error: "cascade_miss",
                     instruction,
                     formatted: formatCascadeResult(null),
-                    tip: "All tiers failed. Either fall back to os_screenshot + cloud-VLM analysis, or call os_inspect to see what AX elements are visible.",
+                    tip: "All grounding tiers (AX → OmniParser → UI-TARS/cloud-grounding) failed to locate the element. Call os_inspect to see the AX elements that ARE visible, or os_screenshot to reason about the layout directly before retrying.",
                 });
             }
 

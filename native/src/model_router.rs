@@ -34,6 +34,7 @@ pub enum Provider {
     Amazon,
     Deepseek,
     Zai,
+    Qwen,
 }
 
 #[napi(object)]
@@ -372,6 +373,44 @@ fn build_model_registry() -> HashMap<String, ModelInfo> {
         supports_parallel_tools: true,
         supports_vision: true,
         provider: Provider::Openai,
+    });
+
+    // Qwen3.7-Plus — primary CLOUD grounding model for vision-nav (Lite/Standard
+    // tiers + degraded-Full). Strong GUI grounding (ScreenSpot-Pro ~79%); takes a
+    // screenshot + instruction → click coords. Not in the agentic routing tiers.
+    m.insert("qwen/qwen3.7-plus".into(), ModelInfo {
+        id: "qwen/qwen3.7-plus".into(),
+        display_name: "Qwen3.7-Plus".into(),
+        input_cost_per_1m: 0.40,
+        output_cost_per_1m: 1.60,
+        tier: 5,
+        speed: Speed::Fast,
+        strengths: vec!["multimodal".into(), "grounding".into(), "tool_use".into(), "agentic".into()],
+        max_tokens: 8192,
+        context_window: 1_000_000,
+        supports_tools: true,
+        supports_parallel_tools: true,
+        supports_vision: true,
+        provider: Provider::Qwen,
+    });
+
+    // Qwen3-VL-235B-Instruct — confirmed-GA fallback for cloud grounding when
+    // qwen3.7-plus errors/404s. OSWorld 66.7%, ScreenSpot ~62% (≈ local UI-TARS
+    // parity). Use the Instruct variant (Thinking hurts time-sensitive GUI tasks).
+    m.insert("qwen/qwen3-vl-235b-a22b-instruct".into(), ModelInfo {
+        id: "qwen/qwen3-vl-235b-a22b-instruct".into(),
+        display_name: "Qwen3-VL 235B".into(),
+        input_cost_per_1m: 0.25,
+        output_cost_per_1m: 1.20,
+        tier: 5,
+        speed: Speed::Fast,
+        strengths: vec!["multimodal".into(), "grounding".into(), "tool_use".into(), "agentic".into()],
+        max_tokens: 8192,
+        context_window: 256_000,
+        supports_tools: true,
+        supports_parallel_tools: true,
+        supports_vision: true,
+        provider: Provider::Qwen,
     });
 
     m
