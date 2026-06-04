@@ -384,7 +384,8 @@ export function clearUITarsHealthCache(): void {
  * UI-TARS. Surface it clearly, and optionally kick off a background pull.
  *
  * Called once at boot (non-blocking). Only acts when profile is "full".
- * Set ATLAS_UI_TARS_AUTOPULL=true to auto-pull the ~4.7GB model in background.
+ * Auto-pulls the model by default (turnkey); set ATLAS_NO_UI_TARS_AUTOPULL=true
+ * to disable the auto-pull and only warn.
  */
 export async function ensureUITarsForFullTier(profile: string): Promise<void> {
     if (profile !== "full") return;
@@ -398,7 +399,9 @@ export async function ensureUITarsForFullTier(profile: string): Promise<void> {
     // capability detector already notes that. Only act on model_not_pulled.
     if (avail.reason !== "model_not_pulled") return;
 
-    if (process.env.ATLAS_UI_TARS_AUTOPULL === "true") {
+    // Auto-pull by default so a degraded-Full box self-heals to working local
+    // grounding without manual steps. Opt out with ATLAS_NO_UI_TARS_AUTOPULL.
+    if (process.env.ATLAS_NO_UI_TARS_AUTOPULL !== "true") {
         const hostCheck = validateOllamaHost(host);
         if (!hostCheck.ok) return;
         // DETACHED background pull — a plain child dies when the bot process
@@ -418,9 +421,9 @@ export async function ensureUITarsForFullTier(profile: string): Promise<void> {
         }
     } else {
         console.warn(
-            `⚠️  [vision-nav] Full tier detected but UI-TARS model not pulled — local grounding unavailable. ` +
-            `Clicks will use the cheap cloud grounding fallback. To enable free local grounding, run: ` +
-            `\`ollama pull ${model}\` (or set ATLAS_UI_TARS_AUTOPULL=true to pull automatically next boot).`,
+            `⚠️  [vision-nav] Full tier but UI-TARS not pulled, and auto-pull disabled ` +
+            `(ATLAS_NO_UI_TARS_AUTOPULL). Clicks use cloud grounding. Enable local grounding: ` +
+            `\`ollama pull ${model}\`.`,
         );
     }
 }

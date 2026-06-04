@@ -35,12 +35,13 @@ export async function ensureOmniParser(profile: string): Promise<void> {
     const weightsOk = omniParserWeightsPresent();
     if (depsOk && weightsOk) return; // healthy
 
-    if (process.env.ATLAS_OMNIPARSER_AUTOSETUP !== "true") {
+    // Auto-provision by default (turnkey). Opt out with ATLAS_NO_OMNIPARSER_AUTOSETUP
+    // (or ATLAS_NO_OMNIPARSER to disable the tier entirely, handled above).
+    if (process.env.ATLAS_NO_OMNIPARSER_AUTOSETUP === "true") {
         console.warn(
-            `⚠️  [vision-nav] OmniParser tier unavailable (deps:${depsOk} weights:${weightsOk}). ` +
-            `It improves visual click grounding on ${profile} tier. To enable: set ATLAS_OMNIPARSER_AUTOSETUP=true ` +
-            `(auto-provisions ~500MB next boot), or install manually: \`pip install ultralytics Pillow huggingface_hub\` ` +
-            `+ download microsoft/OmniParser-v2.0 icon_detect weights to ~/.cache/omniparser/icon_detect.pt.`,
+            `⚠️  [vision-nav] OmniParser tier unavailable (deps:${depsOk} weights:${weightsOk}) and auto-setup ` +
+            `disabled. Install manually: \`pip install ultralytics Pillow huggingface_hub\` + download ` +
+            `microsoft/OmniParser-v2.0 icon_detect weights to ~/.cache/omniparser/icon_detect.pt.`,
         );
         return;
     }

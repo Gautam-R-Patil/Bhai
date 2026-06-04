@@ -429,7 +429,38 @@ const P = {
                 "ui-tars:7b",
             ];
 
-            // Check if ANY candidate is already pulled + manifest-valid.
+            // Vision-inference smoke test: a quant can pull + run TEXT fine yet
+            // CRASH on image inference (broken mmproj \u2192 GGML_ASSERT/Ollama 500),
+            // which makes "Full tier" silently non-functional. Validate the
+            // vision path with a tiny 4x4 PNG before accepting a tag. Returns
+            // true iff image inference succeeds. ~3s for a broken model, longer
+            // (cold load) for a good one \u2014 generous timeout.
+            const SMOKE_PNG =
+                "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAEUlEQVR4nGP8////fwYkwDgKAERWBQ8C3J3IAAAAAElFTkSuQmCC";
+            const healthCheck = async (tag) => {
+                try {
+                    const body = JSON.stringify({
+                        model: tag,
+                        prompt: 'Return JSON {"x":0,"y":0}.',
+                        images: [SMOKE_PNG],
+                        stream: false,
+                        options: { num_predict: 16, temperature: 0 },
+                    });
+                    const ctrl = new AbortController();
+                    const timer = setTimeout(() => ctrl.abort(), 120000);
+                    const resp = await fetch("http://127.0.0.1:11434/api/generate", {
+                        method: "POST", headers: { "Content-Type": "application/json" }, body, signal: ctrl.signal,
+                    });
+                    clearTimeout(timer);
+                    if (!resp.ok) return false; // 500 = vision-inference crash
+                    const data = await resp.json();
+                    return typeof data.response === "string";
+                } catch {
+                    return false;
+                }
+            };
+
+            // Check if ANY candidate is already pulled + manifest-valid + HEALTHY.
             // Match characters with regex-escape for the special chars Ollama
             // tags actually contain (`.`, `:`, `/`, `-`).
             let alreadyHave = null;
@@ -442,8 +473,9 @@ const P = {
                     if (re.test(listOutput)) {
                         try {
                             await ctx.runCommand("ollama", ["show", tag], undefined, () => {});
-                            alreadyHave = tag;
-                            break;
+                            log("Validating already-pulled vision model (" + tag + ")...");
+                            if (await healthCheck(tag)) { alreadyHave = tag; break; }
+                            log("Pulled model " + tag + " fails vision inference \u2014 will try another.");
                         } catch { /* manifest corrupt \u2014 fall through */ }
                     }
                 }
@@ -451,7 +483,7 @@ const P = {
                 throw new Error("Local model runtime stopped responding mid-phase. Click Retry.");
             }
             if (alreadyHave) {
-                log("Vision model already pulled (" + alreadyHave + ") \u2713");
+                log("Vision model already pulled + healthy (" + alreadyHave + ") \u2713");
                 persistUiTarsTag(ctx, alreadyHave);
                 return;
             }
@@ -494,8 +526,17 @@ const P = {
                             }
                         }
                     });
-                    pulled = tag;
-                    break;
+                    // Pull succeeded \u2014 now validate VISION inference actually
+                    // works before accepting it (the mradermacher quant pulls
+                    // fine but crashes on images). Advance to the next candidate
+                    // if it's broken, instead of shipping a non-functional model.
+                    log("Validating vision inference for " + tag + "...");
+                    if (await healthCheck(tag)) {
+                        pulled = tag;
+                        break;
+                    }
+                    errors.push(tag + ": pulled but vision inference failed (likely broken mmproj)");
+                    log("Tag " + tag + " pulled but fails vision inference \u2014 trying next...");
                 } catch (err) {
                     // Strip ANSI before storing \u2014 ollama emits cursor-control
                     // codes that mask the actual reason for failure.
@@ -574,18 +615,18 @@ const P = {
                     log("Vision model weights ready \u2713");
                     return true;
                 } catch (err) {
-                    log("\u26a0\ufe0f Vision weights download failed (deps still installed; will retry at runtime): " + (err && err.message ? err.message : String(err)));
+                    log("\u26a0\ufe0f Vision weights download failed: " + (err && err.message ? err.message : String(err)));
                     return false;
                 }
             };
 
             // Check if the venv already has the deps importable.
+            let depsInstalled = false;
             if (fs.existsSync(venvPy)) {
                 try {
                     await ctx.runCommand(venvPy, ["-c", "import ultralytics, PIL"], undefined, () => {});
                     log("Vision deps already installed in venv \u2713");
-                    await ensureOmniWeights();
-                    return;
+                    depsInstalled = true;
                 } catch { /* venv exists but deps missing \u2014 proceed to install */ }
             } else {
                 log("Creating Python virtual environment...");
@@ -595,19 +636,32 @@ const P = {
                     throw new Error("Could not create venv at " + venvDir + ". Ensure `python3 -m venv` works, then click Retry. (" + err.message + ")");
                 }
             }
-            log("Installing vision deps into venv (~500 MB)...");
-            try {
-                // Use the venv's python directly \u2014 PEP 668 doesn't apply inside
-                // a venv. `--quiet` keeps the install log readable.
-                await ctx.runCommand(venvPy, ["-m", "pip", "install", "--quiet", "--upgrade", "pip"], undefined, () => {});
-                await ctx.runCommand(venvPy, ["-m", "pip", "install", "--quiet", "ultralytics", "Pillow"], undefined, (l) => {
-                    if (l.trim()) log(l);
-                });
-                log("Vision deps installed \u2713");
-            } catch (err) {
-                throw new Error("pip install failed. Retry, or run manually: `" + venvPy + " -m pip install ultralytics Pillow`. (" + err.message + ")");
+            if (!depsInstalled) {
+                log("Installing vision deps into venv (~500 MB)...");
+                try {
+                    // Use the venv's python directly \u2014 PEP 668 doesn't apply inside
+                    // a venv. `--quiet` keeps the install log readable.
+                    await ctx.runCommand(venvPy, ["-m", "pip", "install", "--quiet", "--upgrade", "pip"], undefined, () => {});
+                    await ctx.runCommand(venvPy, ["-m", "pip", "install", "--quiet", "ultralytics", "Pillow"], undefined, (l) => {
+                        if (l.trim()) log(l);
+                    });
+                    log("Vision deps installed \u2713");
+                } catch (err) {
+                    throw new Error("pip install failed. Retry, or run manually: `" + venvPy + " -m pip install ultralytics Pillow`. (" + err.message + ")");
+                }
             }
-            await ensureOmniWeights();
+            // Weights are REQUIRED for the OmniParser tier to function \u2014 without
+            // them the detector hard-fails `omniparser_weights_missing`. Hard-fail
+            // the phase (Retry-able) so a Standard/Full install never silently
+            // ships deps-without-weights. ensureOmniWeights retries the download.
+            if (!(await ensureOmniWeights())) {
+                throw new Error(
+                    "Vision model weights could not be downloaded (network / Hugging Face CDN). " +
+                    "Click Retry. Or fetch manually: `" + venvPy + " -m pip install huggingface_hub` then " +
+                    "`" + venvPy + " -c \"from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='microsoft/OmniParser-v2.0', filename='icon_detect/model.pt')\"` " +
+                    "and copy the result to ~/.cache/omniparser/icon_detect.pt.",
+                );
+            }
         },
     }),
 
