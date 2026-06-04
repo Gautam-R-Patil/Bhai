@@ -412,15 +412,18 @@ const P = {
             // UI-TARS-1.5-7B isn't on Ollama's public registry — the original
             // ByteDance repo on HF is safetensors only. We pull community-
             // uploaded GGUF conversions via Ollama 0.4+'s `hf.co/<repo>:<tag>`
-            // integration. mradermacher's repo is the most-respected GGUF
-            // curator for vision models; Q4_K_M is the standard quality/size
-            // sweet spot (~4.7 GB). Fallback candidates cover the rare case
-            // where the primary source is unavailable.
+            // integration. Lucy-in-the-Sky is FIRST: verified working for VISION
+            // inference (grounds a real screenshot in ~3s, conf ~0.96). The
+            // mradermacher quant is demoted — it pulls + runs text fine but
+            // CRASHES on image inference (broken mmproj → GGML_ASSERT/Ollama 500),
+            // which made "Full tier" silently non-functional. The runtime
+            // isUITarsHealthy() probe is the backstop, but ordering the known-good
+            // quant first avoids pulling ~5GB of a broken one.
             const CANDIDATES = [
-                "hf.co/mradermacher/UI-TARS-1.5-7B-GGUF:Q4_K_M",
                 "hf.co/Lucy-in-the-Sky/UI-TARS-1.5-7B-Q4_K_M-GGUF:latest",
                 "hf.co/adriabama06/UI-TARS-1.5-7B-Q4_K_M-GGUF:latest",
                 "hf.co/Mungert/UI-TARS-1.5-7B-GGUF:Q4_K_M",
+                "hf.co/mradermacher/UI-TARS-1.5-7B-GGUF:Q4_K_M", // demoted: vision-inference crash
                 // Bare-tag forms in case Ollama ever publishes officially:
                 "ui-tars:1.5-7b",
                 "ui-tars:7b",

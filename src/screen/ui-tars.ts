@@ -78,6 +78,13 @@ export interface UITarsOptions {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
+// Default UI-TARS GGUF when no ATLAS_UI_TARS_TAG is set. The Lucy-in-the-Sky
+// quant is verified-working for VISION inference (grounds a real screenshot in
+// ~3s, conf ~0.96). The previously-default mradermacher quant pulls + runs text
+// fine but CRASHES on image inference (broken mmproj → GGML_ASSERT/500), so it
+// must NOT be the default. isUITarsHealthy() guards against a broken tag anyway.
+const DEFAULT_UI_TARS_TAG = "hf.co/Lucy-in-the-Sky/UI-TARS-1.5-7B-Q4_K_M-GGUF:latest";
+
 /**
  * Ground a click instruction against a screenshot using UI-TARS.
  * Returns `error` field when Ollama or the model isn't available.
@@ -116,7 +123,7 @@ export async function groundClick(
     // ui-tars:1.5-7b (canonical Ollama 1.5 release) or ui-tars:7b depending
     // on which tag the registry serves. ATLAS_UI_TARS_TAG is written by
     // installer/phases.js after a successful pull.
-    const model = opts.model || process.env.ATLAS_UI_TARS_TAG || "hf.co/mradermacher/UI-TARS-1.5-7B-GGUF:Q4_K_M";
+    const model = opts.model || process.env.ATLAS_UI_TARS_TAG || DEFAULT_UI_TARS_TAG;
     const host = opts.host || process.env.OLLAMA_HOST || "http://127.0.0.1:11434";
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const start = Date.now();
@@ -247,7 +254,7 @@ export function clearUITarsAvailCache(): void {
 export async function isUITarsAvailable(
     opts: { model?: string; host?: string } = {},
 ): Promise<{ available: boolean; reason?: string; modelTag?: string }> {
-    const model = opts.model || process.env.ATLAS_UI_TARS_TAG || "hf.co/mradermacher/UI-TARS-1.5-7B-GGUF:Q4_K_M";
+    const model = opts.model || process.env.ATLAS_UI_TARS_TAG || DEFAULT_UI_TARS_TAG;
     const host = opts.host || process.env.OLLAMA_HOST || "http://127.0.0.1:11434";
     const cacheKey = `${host}|${model}`;
     const cached = _availCache.get(cacheKey);
@@ -311,7 +318,7 @@ const SMOKE_PNG_B64 =
 export async function isUITarsHealthy(
     opts: { model?: string; host?: string; timeoutMs?: number } = {},
 ): Promise<{ healthy: boolean; reason?: string }> {
-    const model = opts.model || process.env.ATLAS_UI_TARS_TAG || "hf.co/mradermacher/UI-TARS-1.5-7B-GGUF:Q4_K_M";
+    const model = opts.model || process.env.ATLAS_UI_TARS_TAG || DEFAULT_UI_TARS_TAG;
     const host = opts.host || process.env.OLLAMA_HOST || "http://127.0.0.1:11434";
     const cacheKey = `${host}|${model}`;
     const cached = _healthCache.get(cacheKey);
@@ -382,7 +389,7 @@ export function clearUITarsHealthCache(): void {
 export async function ensureUITarsForFullTier(profile: string): Promise<void> {
     if (profile !== "full") return;
     const host = process.env.OLLAMA_HOST || "http://127.0.0.1:11434";
-    const model = process.env.ATLAS_UI_TARS_TAG || "hf.co/mradermacher/UI-TARS-1.5-7B-GGUF:Q4_K_M";
+    const model = process.env.ATLAS_UI_TARS_TAG || DEFAULT_UI_TARS_TAG;
 
     const avail = await isUITarsAvailable({ host, model }).catch(() => ({ available: false, reason: "probe_failed" }));
     if (avail.available) return; // healthy Full — nothing to do
