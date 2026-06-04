@@ -193,6 +193,14 @@ const PRE_E2E_PLAINTEXT_PATHS = new Set([
     "/api/auth/refresh",
 ]);
 
+// Per-attempt request deadline. Each fallback hop in LLMClient.chat() issues a
+// fresh encryptedFetch with its own AbortSignal, so this bounds a SINGLE model
+// attempt — not the whole chain. A hung/dead model (e.g. a 404 slug that never
+// answers) is abandoned at this deadline and the chain advances to the next
+// model, instead of stalling the previous 45s and stacking into ~55s+ totals.
+// Override with ATLAS_LLM_ATTEMPT_TIMEOUT_MS for slow links.
+const ATTEMPT_TIMEOUT_MS = Number(process.env.ATLAS_LLM_ATTEMPT_TIMEOUT_MS) || 25_000;
+
 function urlPathOf(rawUrl: string): string {
     try {
         return new URL(rawUrl).pathname;
@@ -225,7 +233,7 @@ export async function encryptedFetch(
                 `E2E required for ${method} ${urlPath}; shared key missing. Re-auth before issuing this request.`,
             );
         }
-        if (!options.signal) options.signal = AbortSignal.timeout(45_000);
+        if (!options.signal) options.signal = AbortSignal.timeout(ATTEMPT_TIMEOUT_MS);
         return fetch(url, options);
     }
 
@@ -265,9 +273,10 @@ export async function encryptedFetch(
 
     options.headers = headers;
 
-    // Add timeout to prevent hanging indefinitely on network issues (45s default)
+    // Add timeout to prevent hanging indefinitely on network issues.
+    // Per-attempt (see ATTEMPT_TIMEOUT_MS) so a hung model fails over fast.
     if (!options.signal) {
-        options.signal = AbortSignal.timeout(45_000);
+        options.signal = AbortSignal.timeout(ATTEMPT_TIMEOUT_MS);
     }
 
     // Make the request

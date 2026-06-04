@@ -70,10 +70,16 @@ export interface UITarsOptions {
     model?: string;
     /** Ollama host URL (default: http://127.0.0.1:11434). */
     host?: string;
-    /** Max generation tokens (default: 256). */
+    /** Max generation tokens (default: 64 — the {x,y,confidence} JSON is tiny). */
     maxTokens?: number;
     /** Override timeout (default 30s). */
     timeoutMs?: number;
+    /**
+     * Ollama keep_alive — how long to keep the model resident after this call.
+     * Defaults to "30m" so the first click warms the model and subsequent clicks
+     * reuse it (cold ~5GB reload is the bulk of the per-call latency).
+     */
+    keepAlive?: string;
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -83,7 +89,7 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 // ~3s, conf ~0.96). The previously-default mradermacher quant pulls + runs text
 // fine but CRASHES on image inference (broken mmproj → GGML_ASSERT/500), so it
 // must NOT be the default. isUITarsHealthy() guards against a broken tag anyway.
-const DEFAULT_UI_TARS_TAG = "hf.co/Lucy-in-the-Sky/UI-TARS-1.5-7B-Q4_K_M-GGUF:latest";
+export const DEFAULT_UI_TARS_TAG = "hf.co/Lucy-in-the-Sky/UI-TARS-1.5-7B-Q4_K_M-GGUF:latest";
 
 /**
  * Ground a click instruction against a screenshot using UI-TARS.
@@ -144,11 +150,34 @@ export async function groundClick(
         if (stat.size > MAX_IMAGE_BYTES) {
             return errorResult(model, start, `image_too_large:${stat.size}_bytes_max_${MAX_IMAGE_BYTES}`);
         }
-        const buf = await fs.readFile(screenshotPath);
+        let buf: Buffer = await fs.readFile(screenshotPath);
         // PNG IHDR chunk starts at byte 8; width is uint32 BE at offset 16, height at 20.
         if (buf.length >= 24 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
             imageWidth = buf.readUInt32BE(16);
             imageHeight = buf.readUInt32BE(20);
+        }
+        // Downscale to UI-TARS-1.5's native max (longest side 1568px) BEFORE encode.
+        // Retina/window full-res frames are 2-3MP — the vision encoder pass scales
+        // with pixel count, so this is the single biggest per-call inference saving.
+        // We re-read the RESIZED width/height and report THOSE as imageWidth/Height
+        // so toScreenCoords scales by what the model actually saw. Lazy sharp import
+        // + fail-open to full-res (ATLAS_NO_UITARS_DOWNSCALE opts out).
+        const longest = Math.max(imageWidth, imageHeight);
+        if (process.env.ATLAS_NO_UITARS_DOWNSCALE !== "true" && longest > 1568) {
+            try {
+                const sharp = (await import("sharp")).default;
+                const resized = await sharp(buf)
+                    .resize({ width: imageWidth >= imageHeight ? 1568 : undefined, height: imageHeight > imageWidth ? 1568 : undefined, fit: "inside" })
+                    .png()
+                    .toBuffer();
+                if (resized.length >= 24 && resized[0] === 0x89 && resized[1] === 0x50) {
+                    imageWidth = resized.readUInt32BE(16);
+                    imageHeight = resized.readUInt32BE(20);
+                    buf = resized;
+                }
+            } catch {
+                /* sharp missing/failed — send full-res (fail-open) */
+            }
         }
         base64 = buf.toString("base64");
     } catch (err) {
@@ -162,12 +191,18 @@ Target: ${instruction}
 
 Respond with ONLY a JSON object of the form: {"x": <pixel_x>, "y": <pixel_y>, "confidence": <0.0-1.0>, "reasoning": "<one sentence>"}`;
 
+    // keep_alive is a TOP-LEVEL /api/generate field (not inside options). "30m"
+    // keeps the ~5GB model resident so subsequent clicks skip the cold reload —
+    // the dominant cost on the first call. num_predict 64 is ample for the tiny
+    // {x,y,confidence,reasoning} JSON (was 256).
+    const keepAlive = opts.keepAlive ?? process.env.ATLAS_UITARS_KEEP_ALIVE ?? "30m";
     const requestBody = JSON.stringify({
         model,
         prompt,
         images: [base64],
         stream: false,
-        options: { num_predict: opts.maxTokens ?? 256, temperature: 0.0 },
+        keep_alive: keepAlive,
+        options: { num_predict: opts.maxTokens ?? 64, temperature: 0.0 },
     });
 
     try {
@@ -348,6 +383,10 @@ export async function isUITarsHealthy(
                 prompt: "Return the click coordinate as JSON {\"x\":0,\"y\":0}.",
                 images: [SMOKE_PNG_B64],
                 stream: false,
+                // Keep resident after the probe — this doubles as the boot warm-up
+                // so the first REAL click reuses the loaded model instead of paying
+                // the ~5GB cold reload.
+                keep_alive: process.env.ATLAS_UITARS_KEEP_ALIVE ?? "30m",
                 options: { num_predict: 32, temperature: 0.0 },
             }),
             signal: controller.signal,
@@ -393,7 +432,23 @@ export async function ensureUITarsForFullTier(profile: string): Promise<void> {
     const model = process.env.ATLAS_UI_TARS_TAG || DEFAULT_UI_TARS_TAG;
 
     const avail = await isUITarsAvailable({ host, model }).catch(() => ({ available: false, reason: "probe_failed" }));
-    if (avail.available) return; // healthy Full — nothing to do
+    if (avail.available) {
+        // Pulled + available → warm it now (fire-and-forget) so the model is
+        // resident in RAM (keep_alive 30m) before the user's first click, turning
+        // the cold ~5GB-reload latency into a one-time boot cost instead of a
+        // per-first-click penalty. isUITarsHealthy doubles as the warm-up + the
+        // broken-quant smoke test. Skip with ATLAS_NO_UITARS_HEALTHCHECK.
+        if (process.env.ATLAS_NO_UITARS_HEALTHCHECK !== "true") {
+            void isUITarsHealthy({ host, model }).then((h) => {
+                if (h.healthy) {
+                    console.log("🔧 [vision-nav] UI-TARS warmed at boot (resident 30m) — first click will be fast.");
+                } else {
+                    console.warn(`⚠️  [vision-nav] UI-TARS pulled but unhealthy at boot (${h.reason}) — clicks fall back to cloud grounding.`);
+                }
+            }).catch(() => {});
+        }
+        return; // healthy Full — nothing to do
+    }
 
     // Ollama not even installed → a different (install-time) problem; the
     // capability detector already notes that. Only act on model_not_pulled.

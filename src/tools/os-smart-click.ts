@@ -115,7 +115,7 @@ export const osSmartClick: ToolDefinition = {
         function: {
             name: "os_smart_click",
             description:
-                "DEFAULT click-by-description tool — ALWAYS try this FIRST for any 'click <description>' task on the host OS. It cascades automatically: persistent click-memory → Accessibility tree (fast, no screenshot needed) → OmniParser vision → UI-TARS local grounding. One tool call replaces os_scan+os_click_element / os_ocr_click flows. Pass `instruction` in plain English (e.g. 'the Save button in the toolbar', 'Wi-Fi in System Settings'). Pass `screenshot_base64` from os_screenshot only if you want vision-grounding fallback. Records every successful click for future fast-path recall (sub-10ms on repeat). Use os_ocr_click / os_scan only as fallback when this returns cascade_miss.",
+                "DEFAULT click-by-description tool — ALWAYS try this FIRST for any 'click <description>' task on the host OS. It cascades automatically: persistent click-memory → Accessibility tree (fast, no screenshot needed) → OmniParser vision → UI-TARS local grounding. One tool call replaces os_scan+os_click_element / os_ocr_click flows. Pass `instruction` in plain English (e.g. 'the Save button in the toolbar', 'Wi-Fi in System Settings'). You do NOT need to pass a screenshot — the tool activates the target app and captures a FRESH frame itself; do NOT pass an old `screenshot_base64` (stale pixels cause misclicks). Records every successful click for future fast-path recall (sub-10ms on repeat). Use os_ocr_click / os_scan only as fallback when this returns cascade_miss.",
             parameters: {
                 type: "object",
                 properties: {
@@ -127,7 +127,7 @@ export const osSmartClick: ToolDefinition = {
                     screenshot_base64: {
                         type: "string",
                         description:
-                            "Optional base64-encoded screenshot (from os_screenshot.screenshot_base64). Required for OmniParser/UI-TARS tiers; AX tiers work without it.",
+                            "Optional last-resort base64 screenshot. Normally OMIT this — the tool auto-captures a fresh window-scoped frame at click time. Only pass one if you cannot let the tool capture (rare); a stale frame will cause misclicks.",
                     },
                     surface_hint: {
                         type: "string",
@@ -221,7 +221,16 @@ export const osSmartClick: ToolDefinition = {
         // full monitor; replaced with window-scoped dims if we region-capture.
         let cascadeDims = dims;
         try {
-            if (input.screenshot_base64) {
+            // ALWAYS re-capture a FRESH frame at click time by default. Agents
+            // routinely pass a STALE screenshot_base64 (pixels from an earlier
+            // os_screenshot, before the UI changed) → the cascade grounds on an
+            // old frame → wrong_target / cascade_miss (observed live). A fresh
+            // window-scoped capture is fast (~50-150ms) and correct. The caller's
+            // base64 is used ONLY as a last resort when fresh capture fails, or
+            // when ATLAS_SMARTCLICK_USE_CALLER_SCREENSHOT=true restores the old
+            // "trust caller pixels" behavior.
+            const preferCaller = process.env.ATLAS_SMARTCLICK_USE_CALLER_SCREENSHOT === "true";
+            if (preferCaller && input.screenshot_base64) {
                 tempPath = await base64ToTempFile(input.screenshot_base64 as string);
                 screenshotPath = tempPath;
             } else {
@@ -230,13 +239,6 @@ export const osSmartClick: ToolDefinition = {
                 // focus (which caused false cascade_miss for elements that WERE
                 // on the target's window). Cross-platform, best-effort.
                 await activateApp(appName);
-                // Auto-capture when the agent didn't supply one. Without this the
-                // cascade's vision tiers (OmniParser / UI-TARS / cloud_grounding)
-                // were silently skipped — agents routinely call os_smart_click
-                // without a screenshot, so AX-only would miss and the best
-                // grounding tiers never ran. This is the main cause of low click
-                // accuracy. Best-effort: on capture failure, fall back to AX-only.
-                //
                 // Prefer a WINDOW-SCOPED capture when focused-window bounds are
                 // known (macOS + Windows): a full-screen image lets a stray
                 // background window pollute grounding. We hand the cascade
@@ -259,7 +261,17 @@ export const osSmartClick: ToolDefinition = {
                         await fs.writeFile(tempPath, shot, { mode: 0o600 });
                         screenshotPath = tempPath;
                     } catch (capErr) {
-                        console.warn(`[smart-click] auto-screenshot failed (AX-only cascade): ${(capErr as Error).message}`);
+                        console.warn(`[smart-click] auto-screenshot failed: ${(capErr as Error).message}`);
+                    }
+                }
+                // Last-resort fallback: fresh capture failed AND the caller gave us
+                // a frame — better than AX-only (the vision tiers need an image).
+                if (!screenshotPath && input.screenshot_base64) {
+                    try {
+                        tempPath = await base64ToTempFile(input.screenshot_base64 as string);
+                        screenshotPath = tempPath;
+                    } catch {
+                        /* AX-only cascade */
                     }
                 }
             }

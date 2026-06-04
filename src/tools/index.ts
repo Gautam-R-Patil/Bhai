@@ -10,7 +10,7 @@ import { firePostToolUse, firePreToolUse } from "../hooks/index.js";
 import { executeMCPTool, getMCPToolSchemas, isMCPTool } from "../mcp/client.js";
 import { sideloadSkillTool } from "../store/sideload.js";
 import { approveDynamicToolTool, revokeDynamicToolTool } from "./forge-approval.js";
-import { contactLookupTool, whatsappGroupInfoTool, whatsappSendTool, whatsappStickerTool } from "../whatsapp.js";
+import { contactLookupTool, getWhatsAppStatus, whatsappGroupInfoTool, whatsappSendTool, whatsappStickerTool } from "../whatsapp.js";
 import {
     appManager,
     calendarTool,
@@ -618,9 +618,28 @@ try {
 
 // ── Exports ───────────────────────────────────
 
+/**
+ * Whether a tool should be OFFERED to the agent right now. The Baileys WhatsApp
+ * channel (whatsapp_send/_sticker/_group_info) only works when connected
+ * (WHATSAPP_ALLOWED_JIDS set + socket up). Offering it while disconnected just
+ * burns an iteration on a guaranteed "WhatsApp is not connected" before the
+ * agent reroutes to GUI automation — so hide it until connected. Re-evaluated
+ * per message (getToolSchemas* is not boot-cached) so it reappears once linked.
+ * Emergency rollback: ATLAS_NO_WHATSAPP_TOOL_GATING=true.
+ */
+function isToolOfferable(name: string): boolean {
+    if (process.env.ATLAS_NO_WHATSAPP_TOOL_GATING === "true") return true;
+    if (name === "whatsapp_send" || name === "whatsapp_sticker" || name === "whatsapp_group_info") {
+        return getWhatsAppStatus() === "connected";
+    }
+    return true;
+}
+
 /** All tool schemas (built-in + MCP) */
 export function getToolSchemas(): ChatCompletionTool[] {
-    const builtIn = Array.from(registry.values()).map((t) => t.schema);
+    const builtIn = Array.from(registry.values())
+        .map((t) => t.schema)
+        .filter((s) => isToolOfferable(s.function.name));
     const mcp = getMCPToolSchemas();
     return [...builtIn, ...mcp];
 }
@@ -629,7 +648,7 @@ export function getToolSchemas(): ChatCompletionTool[] {
 export function getToolSchemasByNames(names: string[]): ChatCompletionTool[] {
     const nameSet = new Set(names);
     return Array.from(registry.values())
-        .filter((t) => nameSet.has(t.schema.function.name))
+        .filter((t) => nameSet.has(t.schema.function.name) && isToolOfferable(t.schema.function.name))
         .map((t) => t.schema);
 }
 

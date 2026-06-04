@@ -11,16 +11,13 @@
 import { execFile } from "node:child_process";
 import { existsSync, promises as fs, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { promisify } from "node:util";
+import { getScriptsDir } from "../config/paths.js";
 import { getScreenDimensions, percentageToScreen, scaleImageToScreen } from "../screen/screen-dimensions.js";
 import type { ToolDefinition } from "./get-current-time.js";
 import { captureScreenshot, getScreenResolution } from "./platform.js";
 import { getTelegramContext } from "./send-file.js";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 const execFileAsync = promisify(execFile);
 
@@ -180,8 +177,7 @@ export const linuxOsScreenshot: ToolDefinition = {
             }
 
             // Add grid overlay using Python + Pillow
-            const projectRoot = join(__dirname, "..", "..");
-            const gridScript = join(projectRoot, "scripts", "grid_overlay.py");
+            const gridScript = join(getScriptsDir(), "grid_overlay.py");
             try {
                 await execFileAsync("python3", [gridScript, tmpPng, tmpJpg, "200", String(screen.width)], {
                     timeout: 5000,
