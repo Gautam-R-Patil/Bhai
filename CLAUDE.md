@@ -374,6 +374,7 @@ Default ON unless marked opt-IN. Set `"true"` (or sentinel) to disable. `grep -r
 - `ATLAS_NO_AX_RETRY=true` — disables the cold-window AX re-dump retry in the cascade (`perception-router.ts`); `ATLAS_AX_RETRY_DELAY_MS` tunes the settle delay (default 250ms). The retry re-dumps the AX tree once after both AX tiers miss, since freshly-activated windows often have an incomplete tree on first dump.
 - `ATLAS_NO_SMARTCLICK_VERIFY=true` — disables post-click verification of VISION-tier clicks (omniparser/ui_tars/cloud_grounding) in `os_smart_click`. Default ON: captures before/after, runs `classifyOutcome`; `no_op`/`wrong_target` → records a click-miss + returns `click_unverified` instead of a false success (AX/memory tiers stay trusted, no verify). Fixes the over-claim bug where dispatch-success was recorded as click-success unverified.
 - `ATLAS_NO_SMARTCLICK_SELFCORRECT=true` — keeps verification but disables the one-shot self-correction (re-ground forcing descent past the failed tier) on a verified miss.
+- `ATLAS_NO_UITARS_HEALTHCHECK=true` — skips the one-time vision-inference smoke test (`isUITarsHealthy`, `src/screen/ui-tars.ts`). A UI-TARS GGUF can be PULLED but crash at vision inference (broken/mismatched mmproj → GGML_ASSERT / Ollama 500); the health check (4×4 PNG probe, 30-min cached) detects this in ~3s so the cascade skips the broken model → cloud grounding, instead of eating a 30s crash/timeout per click. Bypass only when you've confirmed a model works and want to skip the probe.
 
 ### Rust expansion — empirical lessons (May 2026)
 

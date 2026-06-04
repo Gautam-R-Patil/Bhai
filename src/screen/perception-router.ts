@@ -33,7 +33,7 @@ import {
 import { type CapabilityReport, detectCapabilities } from "./capability-detector.js";
 import { detectElements, findElementByCaption, omniParserWeightsPresent } from "./omniparser.js";
 import { type ScreenDimensions, scaleImageToScreen } from "./screen-dimensions.js";
-import { groundClick, isUITarsAvailable } from "./ui-tars.js";
+import { groundClick, isUITarsAvailable, isUITarsHealthy } from "./ui-tars.js";
 import { cloudGroundClick } from "./cloud-grounding.js";
 import type { LLMClient } from "../llm.js";
 
@@ -244,7 +244,16 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
             const utStart = Date.now();
             try {
                 const avail = await isUITarsAvailable();
-                if (avail.available) {
+                // Pulled AND vision-inference actually works. A pulled-but-broken
+                // quant (crashing mmproj) is treated as NOT usable so we skip it
+                // and fall to cloud grounding instead of eating a 30s crash/timeout
+                // per click. The health probe is one-time cached. Bypass with
+                // ATLAS_NO_UITARS_HEALTHCHECK=true.
+                const healthy = avail.available && (
+                    process.env.ATLAS_NO_UITARS_HEALTHCHECK === "true" ||
+                    (await isUITarsHealthy()).healthy
+                );
+                if (healthy) {
                     uiTarsUsable = true;
                     const grounded = await groundClick(opts.screenshotPath, instruction);
                     elapsed.ui_tars = Date.now() - utStart;

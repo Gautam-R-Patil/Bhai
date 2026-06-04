@@ -288,6 +288,87 @@ export async function isUITarsAvailable(
     return result;
 }
 
+// A model can be PULLED but crash at vision inference (e.g. a GGUF with a
+// broken/mismatched mmproj projector → GGML_ASSERT / Ollama 500). isUITarsAvailable
+// only checks /api/tags, so such a model passes the gate then wastes a 30s timeout
+// + crash on every click. isUITarsHealthy() runs a ONE-TIME cached vision smoke
+// test so the cascade can skip a broken model and fall straight to cloud grounding.
+interface HealthCacheEntry { healthy: boolean; reason?: string; expiresAt: number; }
+const _healthCache = new Map<string, HealthCacheEntry>();
+const HEALTH_CACHE_TTL_MS = 30 * 60_000; // 30min — re-probe occasionally in case a model is re-pulled
+
+// Minimal 4x4 white PNG (base64) — enough to exercise the vision/mmproj path
+// without a real screenshot. If the projector is broken this errors fast.
+const SMOKE_PNG_B64 =
+    "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAEUlEQVR4nGP8////fwYkwDgKAERWBQ8C3J3IAAAAAElFTkSuQmCC";
+
+/**
+ * One-time (cached) vision-inference smoke test. Returns healthy:false with a
+ * reason when the model can't run image inference (crash/timeout), so the
+ * cascade skips a pulled-but-broken UI-TARS quant. Short timeout — a healthy
+ * model answers a 4x4 image in a few seconds even cold-ish.
+ */
+export async function isUITarsHealthy(
+    opts: { model?: string; host?: string; timeoutMs?: number } = {},
+): Promise<{ healthy: boolean; reason?: string }> {
+    const model = opts.model || process.env.ATLAS_UI_TARS_TAG || "hf.co/mradermacher/UI-TARS-1.5-7B-GGUF:Q4_K_M";
+    const host = opts.host || process.env.OLLAMA_HOST || "http://127.0.0.1:11434";
+    const cacheKey = `${host}|${model}`;
+    const cached = _healthCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return { healthy: cached.healthy, reason: cached.reason };
+
+    const hostCheck = validateOllamaHost(host);
+    if (!hostCheck.ok) {
+        const r = { healthy: false, reason: hostCheck.reason };
+        _healthCache.set(cacheKey, { ...r, expiresAt: Date.now() + HEALTH_CACHE_TTL_MS });
+        return r;
+    }
+
+    // Generous timeout — the FIRST inference loads ~5.5GB into RAM (cold start),
+    // which legitimately takes longer than a normal call. A broken model errors
+    // out (Ollama 500) well before this, so the timeout only bites a slow-but-OK
+    // cold load — acceptable for a one-time probe.
+    const timeoutMs = opts.timeoutMs ?? 90_000;
+    let result: { healthy: boolean; reason?: string };
+    try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        const resp = await fetch(`${hostCheck.canonical || host}/api/generate`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                model,
+                prompt: "Return the click coordinate as JSON {\"x\":0,\"y\":0}.",
+                images: [SMOKE_PNG_B64],
+                stream: false,
+                options: { num_predict: 32, temperature: 0.0 },
+            }),
+            signal: controller.signal,
+        });
+        clearTimeout(timer);
+        if (!resp.ok) {
+            // 500 here = the inference crashed (broken mmproj / GGML_ASSERT).
+            result = { healthy: false, reason: `inference_${resp.status}` };
+        } else {
+            // Any 200 with a response body means the vision path executed.
+            const data = (await resp.json()) as { response?: string };
+            result = typeof data.response === "string"
+                ? { healthy: true }
+                : { healthy: false, reason: "empty_inference_response" };
+        }
+    } catch (err) {
+        const msg = (err as Error).message;
+        result = { healthy: false, reason: msg.includes("aborted") ? "inference_timeout" : `inference_error:${msg}` };
+    }
+    _healthCache.set(cacheKey, { ...result, expiresAt: Date.now() + HEALTH_CACHE_TTL_MS });
+    return result;
+}
+
+/** Clears the health-probe cache (e.g. after a model is re-pulled). */
+export function clearUITarsHealthCache(): void {
+    _healthCache.clear();
+}
+
 /**
  * Boot-time self-heal for the Full tier. A box can qualify as Full (GPU/Apple
  * Silicon + RAM + disk) yet have UI-TARS un-pulled — e.g. set up outside the
