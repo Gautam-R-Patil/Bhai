@@ -49,6 +49,66 @@ async function base64ToTempFile(base64: string, ext = "png"): Promise<string> {
     return tmp;
 }
 
+/**
+ * Raise an app to the foreground before grounding, so the auto-screenshot
+ * captures the intended window and not whatever stole focus. Cross-platform,
+ * best-effort (silent on failure — caller proceeds with current frontmost).
+ *   macOS: `open -a` (safe — `tell…activate` can resolve the wrong binary).
+ *   Windows: PowerShell AppActivate by process/window title.
+ *   Linux: wmctrl if available (no-op otherwise).
+ */
+async function activateApp(appName: string): Promise<void> {
+    if (!appName || appName === "unknown") return;
+    try {
+        if (process.platform === "darwin") {
+            await execFileAsync("open", ["-a", appName], { timeout: 4000 });
+        } else if (process.platform === "win32") {
+            // VBScript-free: use the WScript.Shell AppActivate via PowerShell.
+            await execFileAsync("powershell", ["-NoProfile", "-Command",
+                `$ws = New-Object -ComObject WScript.Shell; $ws.AppActivate('${appName.replace(/'/g, "''")}')`,
+            ], { timeout: 5000 });
+        } else {
+            await execFileAsync("wmctrl", ["-a", appName], { timeout: 4000 }).catch(() => {});
+        }
+        await new Promise((r) => setTimeout(r, 350)); // let the window raise
+    } catch {
+        /* best-effort */
+    }
+}
+
+/**
+ * Capture just the focused-window rect to a temp PNG, cross-platform. Returns
+ * the path on success or null (caller falls back to full-screen). Window-scoped
+ * capture keeps a stray background window from polluting vision grounding.
+ *   macOS: `screencapture -R x,y,w,h`.
+ *   Windows: PowerShell System.Drawing CopyFromScreen of the rect.
+ *   Linux: not implemented here → null (full-screen fallback).
+ */
+async function captureWindowRegion(fw: { x: number; y: number; w: number; h: number }): Promise<string | null> {
+    if (process.env.ATLAS_NO_WINDOW_SCOPED_CAPTURE === "true") return null;
+    const out = join(tmpdir(), `atlas_smartclick_${randomBytes(6).toString("hex")}.png`);
+    try {
+        if (process.platform === "darwin") {
+            await execFileAsync("screencapture", ["-x", `-R${fw.x},${fw.y},${fw.w},${fw.h}`, out], { timeout: 8000 });
+            return out;
+        }
+        if (process.platform === "win32") {
+            const ps =
+                `Add-Type -AssemblyName System.Drawing,System.Windows.Forms;` +
+                `$b = New-Object System.Drawing.Bitmap(${fw.w}, ${fw.h});` +
+                `$g = [System.Drawing.Graphics]::FromImage($b);` +
+                `$g.CopyFromScreen(${fw.x}, ${fw.y}, 0, 0, $b.Size);` +
+                `$b.Save('${out.replace(/\\/g, "\\\\")}', [System.Drawing.Imaging.ImageFormat]::Png);` +
+                `$g.Dispose(); $b.Dispose()`;
+            await execFileAsync("powershell", ["-NoProfile", "-Command", ps], { timeout: 8000 });
+            return out;
+        }
+        return null; // Linux region capture: fall back to full-screen
+    } catch {
+        return null;
+    }
+}
+
 export const osSmartClick: ToolDefinition = {
     schema: {
         type: "function",
@@ -165,18 +225,11 @@ export const osSmartClick: ToolDefinition = {
                 tempPath = await base64ToTempFile(input.screenshot_base64 as string);
                 screenshotPath = tempPath;
             } else {
-                // Raise the target app to the front BEFORE capturing. Without
-                // this, the auto-screenshot grabs whatever stole focus (e.g. a
-                // terminal), so grounding runs against the wrong window and
-                // returns a false cascade_miss for an element that IS on the
-                // target's window. macOS `open -a` is the safe activate path
-                // (per macos.ts guidance — `tell … activate` can resolve wrong).
-                if (appName && appName !== "unknown" && process.platform === "darwin") {
-                    try {
-                        await execFileAsync("open", ["-a", appName], { timeout: 4000 });
-                        await new Promise((r) => setTimeout(r, 350)); // let the window raise
-                    } catch { /* best-effort — proceed with whatever is frontmost */ }
-                }
+                // Raise the target app to the front BEFORE capturing, so the
+                // auto-screenshot sees the intended window and not whatever stole
+                // focus (which caused false cascade_miss for elements that WERE
+                // on the target's window). Cross-platform, best-effort.
+                await activateApp(appName);
                 // Auto-capture when the agent didn't supply one. Without this the
                 // cascade's vision tiers (OmniParser / UI-TARS / cloud_grounding)
                 // were silently skipped — agents routinely call os_smart_click
@@ -184,40 +237,19 @@ export const osSmartClick: ToolDefinition = {
                 // grounding tiers never ran. This is the main cause of low click
                 // accuracy. Best-effort: on capture failure, fall back to AX-only.
                 //
-                // Prefer a WINDOW-SCOPED capture (macOS `screencapture -R`) when
-                // the focused-window bounds are known: a full-screen image lets a
-                // stray background window pollute grounding, and the model can
-                // mis-ground onto the wrong app. Scoping to the target window's
-                // rect also gives the VLM a tighter, higher-signal image. When we
-                // scope, we hand the cascade WINDOW-relative dims (origin = window
-                // x/y, size = window w/h) so scaleImageToScreen maps the model's
-                // window-local coords back to absolute screen coords correctly —
-                // no change to the shared scaling math required.
+                // Prefer a WINDOW-SCOPED capture when focused-window bounds are
+                // known (macOS + Windows): a full-screen image lets a stray
+                // background window pollute grounding. We hand the cascade
+                // WINDOW-relative dims (origin = window x/y, size = window w/h) so
+                // scaleImageToScreen maps the model's window-local coords back to
+                // absolute screen coords — no change to the shared scaling math.
                 const fw = dims.focusedWindow;
-                if (
-                    process.platform === "darwin" &&
-                    fw && fw.w > 0 && fw.h > 0 &&
-                    process.env.ATLAS_NO_WINDOW_SCOPED_CAPTURE !== "true"
-                ) {
-                    try {
-                        tempPath = join(tmpdir(), `atlas_smartclick_${randomBytes(6).toString("hex")}.png`);
-                        await execFileAsync(
-                            "screencapture",
-                            ["-x", `-R${fw.x},${fw.y},${fw.w},${fw.h}`, tempPath],
-                            { timeout: 8000 },
-                        );
-                        screenshotPath = tempPath;
-                        // Window-scoped dims: image spans the window rect, so the
-                        // cascade scales image-px → (window origin + window size).
-                        cascadeDims = {
-                            ...dims,
-                            originX: fw.x,
-                            originY: fw.y,
-                            width: fw.w,
-                            height: fw.h,
-                        };
-                    } catch {
-                        screenshotPath = undefined; // fall through to full-screen below
+                if (fw && fw.w > 0 && fw.h > 0) {
+                    const region = await captureWindowRegion(fw);
+                    if (region) {
+                        tempPath = region;
+                        screenshotPath = region;
+                        cascadeDims = { ...dims, originX: fw.x, originY: fw.y, width: fw.w, height: fw.h };
                     }
                 }
                 if (!screenshotPath) {
@@ -247,12 +279,13 @@ export const osSmartClick: ToolDefinition = {
             const captureForVerify = async (): Promise<Buffer | null> => {
                 try {
                     const fw = cascadeDims.focusedWindow;
-                    if (process.platform === "darwin" && fw && fw.w > 0 && process.env.ATLAS_NO_WINDOW_SCOPED_CAPTURE !== "true") {
-                        const p = join(tmpdir(), `atlas_verify_${randomBytes(6).toString("hex")}.png`);
-                        await execFileAsync("screencapture", ["-x", `-R${fw.x},${fw.y},${fw.w},${fw.h}`, p], { timeout: 8000 });
-                        const buf = await fs.readFile(p);
-                        await fs.unlink(p).catch(() => {});
-                        return buf;
+                    if (fw && fw.w > 0) {
+                        const p = await captureWindowRegion(fw);
+                        if (p) {
+                            const buf = await fs.readFile(p);
+                            await fs.unlink(p).catch(() => {});
+                            return buf;
+                        }
                     }
                     return await takeScreenshot();
                 } catch {

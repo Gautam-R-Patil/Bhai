@@ -10,8 +10,6 @@
  * (desktop/installer/phases.js) — keep them in sync.
  */
 
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { getDataDir } from "../config/paths.js";
 import { omniParserDepsPresent, omniParserWeightsPresent } from "./omniparser.js";
@@ -52,7 +50,6 @@ export async function ensureOmniParser(profile: string): Promise<void> {
     const dataDir = getDataDir();
     const venvDir = join(dataDir, "python-venv");
     const sysPy = process.platform === "win32" ? "python" : "python3";
-    const py = existsSync(venvPython()) ? venvPython() : sysPy;
 
     // One shell pipeline so the detached process runs the full sequence. Bash on
     // POSIX; on Windows fall back to a plain spawn of python (venv assumed) since
@@ -73,10 +70,17 @@ export async function ensureOmniParser(profile: string): Promise<void> {
         const r = spawnDetachedLogged("omniparser-setup", "bash", ["-lc", script]);
         logProvisionResult(r);
     } else {
-        // Windows: assume venv exists (installer made it); just install + fetch.
-        const r = spawnDetachedLogged("omniparser-setup", py, [
-            "-m", "pip", "install", "--quiet", "ultralytics", "Pillow", "huggingface_hub",
-        ]);
+        // Windows: full sequence via PowerShell (creates venv if missing, installs
+        // deps, downloads weights) — mirrors the POSIX bash path. `;` chains;
+        // `2>$null` swallows the venv no-op error when it already exists.
+        const vp = venvPython();
+        const psScript = [
+            `& '${sysPy}' -m venv '${venvDir}' 2>$null`,
+            `& '${vp}' -m pip install --quiet --upgrade pip`,
+            `& '${vp}' -m pip install --quiet ultralytics Pillow huggingface_hub`,
+            `& '${vp}' -c "${dl.replace(/"/g, '\\"')}"`,
+        ].join("; ");
+        const r = spawnDetachedLogged("omniparser-setup", "powershell", ["-NoProfile", "-Command", psScript]);
         logProvisionResult(r);
     }
 }
