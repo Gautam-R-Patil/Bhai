@@ -1,6 +1,6 @@
 # A.T.L.A.S Native Module
 
-64-module Rust performance layer for A.T.L.A.S. Exposes SIMD-accelerated vector math, the model/tool routers, HNSW search, swarm/mesh orchestration state, MCTS, the meta-harness optimizer, the outbound secrets sanitizer, and more, to TypeScript via napi-rs. Every consumer of this binary has a pure-JS fallback in `src/` — `src/native/index.ts` loads the `.node` file at runtime and gracefully falls back if it's missing.
+78-module Rust performance layer for A.T.L.A.S. Exposes SIMD-accelerated vector math, the model/tool routers, HNSW search, swarm/mesh orchestration state, MCTS, the meta-harness optimizer, the outbound secrets sanitizer, and more, to TypeScript via napi-rs. Every consumer of this binary has a pure-JS fallback in `src/` — `src/native/index.ts` loads the `.node` file at runtime and gracefully falls back if it's missing.
 
 ## Prerequisites
 
@@ -47,7 +47,7 @@ Output is a platform-specific `.node` file written to `native/`:
 - `panic = "abort"`
 - `strip = true` (stripped binaries)
 
-## Module map (64 .rs files in `src/`)
+## Module map (78 .rs files in `src/`)
 
 | Group | Files | Purpose |
 |-------|-------|---------|
@@ -61,9 +61,10 @@ Output is a platform-specific `.node` file written to `native/`:
 | Browser | `browser_agent.rs`, `browser_guard.rs`, `chrome_bridge.rs`, `ip_guard.rs` | Element scoring, stealth, CAPTCHA detection |
 | Vision Nav | `ax_walker.rs` (opt-in via `ATLAS_NATIVE_AX=true`) | Cross-OS accessibility-tree flatten/find |
 | Voice | `pcm_vad.rs` (cargo feature `vad`, opt-in) | libfvad-backed barge-in for hybrid voice |
-| Security | `security.rs`, `secrets_sanitizer.rs` (default-ON, 1.44–2.00× faster than TS) | Encryption helpers + 23-pattern outbound secrets scrubber |
+| Security | `security.rs`, `secrets_sanitizer.rs` (default-ON, 1.44–2.00× faster than TS) | Encryption helpers + multi-pattern outbound secrets scrubber |
 | Research | `research_engine.rs`, `info_gain.rs`, `citation_graph.rs`, `skill_scorer.rs` | Source scoring, info gain, citation graphs |
 | Harness | `harness_optimizer.rs` | NSGA-II Pareto + GP surrogate + TextGrad scoring |
+| Skill Forge sandbox | `forge_sandbox/` (`api.rs`, `pool.rs`, `worker.rs`, `strikes.rs`, `linux_seccomp.rs`, `linux_landlock.rs`, `linux.rs`, `macos.rs`, `windows_appcontainer.rs`, `windows_jobobject.rs`, `windows.rs`, …) | OS-level kernel-sandbox supervisor for persisted dynamic tools: warm-pool LRU, three-strike auto-archive, per-platform seccomp/Landlock · sandbox-exec · AppContainer |
 
 `lib.rs` is the napi-rs entry; each module exports its own `#[napi]` functions.
 
@@ -74,7 +75,7 @@ Output is a platform-specific `.node` file written to `native/`:
 | cosine similarity (768-dim) | 12 μs | 0.8 μs | 15× |
 | findTopK (1000 vectors) | 15 ms | 0.9 ms | 17× |
 | batch similarity | 14 ms | 0.7 ms | 20× |
-| 23-pattern secrets scan (1KB–100KB) | baseline | 1.44–2.00× faster | — |
+| multi-pattern secrets scan (1KB–100KB) | baseline | 1.44–2.00× faster | — |
 
 ## Empirical port rule
 
@@ -94,7 +95,7 @@ native/
 ├── package.json        # @napi-rs/cli config
 ├── index.js            # JS wrapper with graceful fallback
 ├── index.d.ts          # Auto-generated TypeScript definitions
-└── src/                # 64 .rs modules (see Module map above)
+└── src/                # 78 .rs modules (see Module map above)
     ├── lib.rs          # napi-rs entry — re-exports per-module #[napi] fns
     ├── vector.rs / batch.rs / hnsw.rs
     ├── model_router.rs / tool_router.rs / …

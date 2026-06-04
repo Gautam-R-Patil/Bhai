@@ -9,11 +9,11 @@
 
 ## Overview
 
-**A.T.L.A.S** is an autonomous personal AI agent engineered for people who want more than a chatbot. It is a continuously running process that takes action, remembers what happened, reasons about what to do next, and keeps working while you sleep. The runtime combines a Node.js/TypeScript orchestration surface (~650 `.ts` files across src/) with a native Rust performance layer (64 `.rs` modules) compiled through napi-rs for SIMD-accelerated vector math, routing, memory operations, and cross-OS accessibility-tree walking.
+**A.T.L.A.S** is an autonomous personal AI agent engineered for people who want more than a chatbot. It is a continuously running process that takes action, remembers what happened, reasons about what to do next, and keeps working while you sleep. The runtime combines a Node.js/TypeScript orchestration surface (~770 `.ts` files across src/) with a native Rust performance layer (78 `.rs` modules) compiled through napi-rs for SIMD-accelerated vector math, routing, memory operations, and cross-OS accessibility-tree walking.
 
 ATLAS is built for operators, founders, and researchers who need a single system that can drive a browser, write and ship code, run deep research, orchestrate multi-agent swarms, manage a marketing funnel across nine social platforms, and hold a real conversation across Telegram, Discord, Slack, Matrix, WhatsApp, email, and a native desktop overlay — all from one codebase, one memory, and one identity.
 
-What makes ATLAS different is that it is **not stateless**. A 39-module organic memory system (SQLite + HNSW vectors + knowledge graph) captures episodic trajectory, emotional tone, user models, traits, goals, and task learnings. A nightly dream-replay pass consolidates the day, decays irrelevant data every six hours, and seeds the next morning's proactive brief. The agent also reasons about its own reasoning via a metacognition engine and a meta-harness optimizer that tunes 30+ internal dimensions through NSGA-II Pareto search.
+What makes ATLAS different is that it is **not stateless**. A 70-module organic memory system (SQLite + HNSW vectors + knowledge graph) captures episodic trajectory, emotional tone, user models, traits, goals, and task learnings. Writes pass through an LLM value-gate that rejects low-signal noise before it reaches the store, context compression preserves a structured 13-section continuity summary across long sessions, and a full conversation corpus is searchable via FTS5. A nightly dream-replay pass consolidates the day, decays irrelevant data every six hours, and seeds the next morning's proactive brief. The agent also reasons about its own reasoning via a tiered metacognition engine and a meta-harness optimizer that tunes 30+ internal dimensions through NSGA-II Pareto search.
 
 Security and privacy are foundational rather than bolted on. Every LLM call is proxied through a Convex backend with end-to-end ECDH P-256 + AES-256-GCM encryption — API keys never leave the server, system prompts never leave the server, and the client device only ever holds a short-lived session token bound to its ECDH shared key. All memory, all browser profile state, and all generated artifacts live locally on the user's machine.
 
@@ -22,22 +22,26 @@ Security and privacy are foundational rather than bolted on. Every LLM call is p
 ## Feature Highlights
 
 - **Multi-Channel Presence** — First-class integrations with Telegram, Discord, Slack, Matrix, WhatsApp (Baileys), IMAP/SMTP email, a native Electron desktop overlay, a WebSocket canvas surface, and an embeddable web widget.
-- **Organic Memory** — 49 memory modules spanning core store, knowledge graph, HNSW vector index, episodic milestones, emotional trajectory, traits, identity, session, relationship, world/user/self models, working memory, Hopfield associative recall, active inference, prospective, counterfactual, temporal cache, project memory, Memory Studio insights, and nightly dream replay.
-- **Native Rust Acceleration** — 64 Rust modules (SIMD via `wide`/`simsimd`, `rayon` parallelism) delivering ~15-20x speedup on vector ops, model routing, HNSW search, swarm/mesh orchestration, metacognition, MCTS, the harness optimizer, secrets sanitization, and cross-OS AX tree walking.
-- **Vision Navigation** — Tiered Perception Cascade (`src/screen/`) for autonomous computer use. Capability detector auto-picks one of three profiles (Lite/Standard/Full) on boot; perception-router walks AX → OmniParser → UI-TARS with confidence gating; persistent click-memory + per-monitor drift calibration learn across sessions. `os_smart_click` is the agent's primary GUI interaction tool.
+- **Organic Memory** — 70 memory modules spanning core store, knowledge graph, HNSW vector index, episodic milestones, emotional trajectory, traits, identity, session, relationship, world/user/self models, working memory, Hopfield associative recall, active inference, prospective, counterfactual, temporal cache, project memory, Memory Studio insights, and nightly dream replay. An LLM value-gate guards every write (shadow mode by default), a structured 13-section template carries continuity through context compression, and `session_search` exposes the full conversation corpus over FTS5.
+- **Native Rust Acceleration** — 78 Rust modules (SIMD via `wide`/`simsimd`, `rayon` parallelism) delivering ~15-20x speedup on vector ops, model routing, HNSW search, swarm/mesh orchestration, metacognition, MCTS, the harness optimizer, secrets sanitization, and cross-OS AX tree walking.
+- **Vision Navigation** — Tiered Perception Cascade (`src/screen/`) for autonomous computer use. Capability detector auto-picks one of three profiles (Lite/Standard/Full) on boot; perception-router walks click-memory → AX exact → AX fuzzy → OmniParser → UI-TARS → cloud grounding (Qwen) with confidence gating; persistent click-memory + per-monitor drift calibration learn across sessions. `os_smart_click` auto-captures a window-scoped screenshot, activates the target app, and verifies vision-tier clicks (re-grounding on a verified miss). UI-TARS quants are health-checked and auto-pulled; OmniParser self-provisions its venv + weights. `os_smart_click` is the agent's primary GUI interaction tool.
 - **Semantic Tool Selection** — MiniLM 384-dim embeddings route user intent across 20+ tool categories and 120+ tool implementations. A `request_tools` meta-tool lets the agent expand its surface mid-task.
 - **Four-Tier Orchestration** — Sub-Agent (specialized roles), Swarm (decomposition + evaluator-optimizer), Mesh (parallel DAG with layered recovery), Long-Task (multi-phase checkpointed execution up to 100 phases).
 - **Deep Research** — Three-phase research engine, 12 pluggable search backends, up to 500 sources per run, hypothesis generation and testing, source credibility scoring, relevance reranking.
 - **E2E Encrypted LLM Proxy** — ECDH P-256 + AES-256-GCM on top of HTTPS; 24h session tokens; atomic credit deduction; system prompts assembled server-side.
-- **Proactive Behaviors** — Heartbeat engine with per-channel postures (calm / active / ambient), nightly dream replay during detected sleep windows, quiet-hours guard, urgency bypass rules, shadow mode for dry runs. 50+ files spanning observer pipeline, composer fast-path, intent sources (calendar, news, stale email, weather, tasks, source gates), telemetry, and the proactive inbox.
+- **Proactive Behaviors** — Heartbeat engine with per-channel postures (calm / active / ambient), nightly dream replay during detected sleep windows, quiet-hours guard, urgency bypass rules, shadow mode for dry runs. 110+ files spanning observer pipeline, composer fast-path, intent sources (calendar, news, stale email, weather, tasks, onboarding graduation, source gates), telemetry, and the proactive inbox.
 - **Memory Studio** — Interactive graph viewer with edit/pin/forget controls and AI-generated insights over the local memory database (`src/memory/studio-graph.ts`, `studio-insights.ts`).
-- **Video Studio** — Project-scoped video pipeline (25 files) with AI edit planning, scene detection, beat sync, FFmpeg render stage, and reproducible hash-addressed inputs.
+- **Video Studio** — Project-scoped video pipeline (49 files) with AI edit planning, scene detection, beat sync, FFmpeg render stage, and reproducible hash-addressed inputs.
 - **Meta-Harness Self-Optimizer** — 30+ tunable dimensions (weights, thresholds, k-values, phase ratios) tuned via NSGA-II Pareto search, GP surrogate modeling, and TextGrad-style prompt refinement.
 - **A2A Protocol** — Google Agent-to-Agent protocol for inter-agent delegation and negotiation across trusted peers.
 - **CAPTCHA Solver** — Four-tier ladder: passive detection, audio-challenge bypass, NopeCHA, 2captcha fallback.
 - **Voice Mode** — Local ASR/TTS (Whisper, Kokoro), ElevenLabs TTS, Gemini Live voice, OpenAI Realtime voice, libfvad-backed barge-in detection (opt-in), wake-word detection, Telegram voice-note pipeline.
 - **Marketing Brain** — Native integrations with Instagram, LinkedIn, TikTok, X/Twitter, Facebook Pages, YouTube, Reddit, Product Hunt, plus content calendars, cold outreach, lead finding, and trend research.
 - **Coding Pipeline** — Design-doc gating, LSP integration, per-repo codebase index (SQLite + tree-sitter + FTS5 BM25), agent git worktrees for parallel coders, code critic (compile/test/lint/SAST), and walkthrough generation.
+- **Tiered Metacognition** — The agent assesses its own reasoning between iterations: content-aware loop detection, an intervention dispatcher (escalate / replan / critics / ask-user), a value-of-computation cost threshold that suppresses low-payoff interventions, and shadow-mode confidence calibration. A per-turn guardrail also kills identical-args tool-call loops.
+- **Cost-Aware Routing** — On top of the Light/Pro/Heavy tiers, a native cost router down-routes casual chat to cheap rungs (GPT-5 nano / mini), gates Opus to genuinely complex work, and tracks each model's context window for token-aware pruning and failover.
+- **Defense in Depth** — Centralized threat-pattern scanning (prompt injection / exfil / bidi spoofing), an SSRF + cloud-metadata-floor URL guard, untrusted-tool-result fencing against indirect prompt injection, OSV malware (`MAL-*`) pre-install checks for MCP packages, and an outbound secrets sanitizer that redacts API keys, DB connection strings, and URL userinfo before any payload leaves the device.
+- **Diagnostics** — `/recap` summarizes the last *n* turns with zero AI cost; `/doctor` probes Convex connectivity, session/credit state, the native binary, environment, and memory health.
 
 ---
 
@@ -59,11 +63,11 @@ Security and privacy are foundational rather than bolted on. Every LLM call is p
   │          │          │          │          │          │
 ┌─▼────┐ ┌───▼───┐ ┌────▼────┐ ┌───▼────┐ ┌───▼─────┐ ┌──▼──────┐
 │Memory│ │Agents │ │  Tools  │ │Research│ │Proactive│ │ Screen  │
-│49 mod│ │30+ mod│ │ 120+ t  │ │ 11 mod │ │ 50+ mod │ │ 10 mod  │
+│70 mod│ │50 mod │ │ 120+ t  │ │ 11 mod │ │110+ mod │ │ 23 mod  │
 └──────┘ └───────┘ └─────────┘ └────────┘ └─────────┘ └─────────┘
    │         │          │          │          │           │
 ┌──▼─────────▼──────────▼──────────▼──────────▼───────────▼───────────────────┐
-│                     Native Rust Layer (64 .rs modules)                       │
+│                     Native Rust Layer (78 .rs modules)                       │
 │  SIMD vectors · Model router · HNSW · Swarm/Mesh · Metacognition · MCTS      │
 │  Harness optimizer · Hopfield · Active inference · Credibility · Proactive   │
 │  AX walker · Secrets sanitizer · PCM VAD · Spreading · Query classifier      │
@@ -81,7 +85,7 @@ Security and privacy are foundational rather than bolted on. Every LLM call is p
 ## Source Layout
 
 ```
-src/                                  # ~650 TypeScript files (incl. tests)
+src/                                  # ~770 TypeScript files (incl. tests)
 ├── index.ts                          # Ordered + parallelized boot sequence
 ├── agent.ts                          # Core agent loop (runAgent)
 ├── llm.ts                            # LLM client (proxied through Convex)
@@ -99,7 +103,7 @@ src/                                  # ~650 TypeScript files (incl. tests)
 ├── account-guard.ts session.ts       # Credit/session middleware
 ├── telegram.ts | discord.ts | slack.ts | matrix.ts | whatsapp.ts | email.ts
 │
-├── agents/                           # 30 files — four-tier orchestration
+├── agents/                           # 50 files — four-tier orchestration
 │   ├── sub-agent.ts                  # Specialized roles (researcher/coder/browser/system)
 │   ├── swarm.ts  mesh.ts  long-task.ts
 │   ├── evaluator.ts replanner.ts mixture.ts speculative.ts
@@ -110,7 +114,7 @@ src/                                  # ~650 TypeScript files (incl. tests)
 │   ├── circuit-breaker.ts human-interrupt.ts tool-output-offload.ts a2a.ts
 │   └── error-recovery.ts handoff.ts blackboard.ts decomposition-library.ts
 │
-├── memory/                           # 49 files — organic memory system
+├── memory/                           # 70 files — organic memory system
 │   ├── sqlite.ts                     # Primary store (remember / recall / core)
 │   ├── knowledge-graph.ts vector-index.ts embeddings.ts embedding-cache.ts
 │   ├── resolve-embedding.ts memory-tiers.ts fts5-query.ts
@@ -120,61 +124,69 @@ src/                                  # ~650 TypeScript files (incl. tests)
 │   ├── working-memory.ts hopfield-memory.ts spreading-activation.ts
 │   ├── world-model.ts user-model.ts active-inference.ts counterfactual.ts prospective.ts
 │   ├── sleep-gate.ts surprise-gate.ts reranker.ts strategy-library.ts self-evolving.ts
+│   ├── value-gate.ts gate-audit.ts            # LLM write value-gate + JSONL audit (10MB rotation)
+│   ├── compression-template.ts                # Structured 13-section continuity summary
 │   ├── codebase-sidecar.ts codebase-merkle.ts codebase-index.ts code-parse/
 │   ├── multimodal.ts multimodal-embedding.ts project-memory.ts memory-informed-planning.ts
 │   ├── studio-graph.ts studio-insights.ts    # Memory Studio (graph viewer + AI insights)
 │   ├── supabase.ts                            # Optional cloud sync (off by default)
 │   └── classifier.ts context-pruning.ts consolidation.ts temporal-cache.ts
 │
-├── screen/                           # 10 files — Vision Navigation subsystem
+├── screen/                           # 23 files — Vision Navigation subsystem
 │   ├── capability-detector.ts        # Picks Lite/Standard/Full profile at boot
-│   ├── perception-router.ts          # Tiered Perception Cascade (AX → OmniParser → UI-TARS)
+│   ├── perception-router.ts          # Tiered Perception Cascade (memory→AX→OmniParser→UI-TARS→cloud)
 │   ├── ax-dump.ts                    # Cross-OS accessibility tree dumping (TS + native fallback)
-│   ├── omniparser.ts ui-tars.ts      # Vision-model integrations
+│   ├── omniparser.ts omniparser-setup.ts  # OmniParser captions + venv/weights auto-provisioner
+│   ├── ui-tars.ts                    # UI-TARS grounding + inference health-check + auto-pull
+│   ├── cloud-grounding.ts            # Cloud VLM grounding tier (Qwen3.7-plus → Qwen3-VL-235B)
 │   ├── click-memory.ts               # Persistent learnt-click recall (data/click-memory.db)
 │   ├── drift-calibration.ts          # Per-monitor affine drift correction
 │   ├── outcome-classifier.ts         # Click-success vs miss classification feedback
+│   ├── spawn-detached.ts             # Detached background pulls (survive bot exit)
 │   ├── computer-action.ts            # Structured action schema (mouse/keyboard/scroll)
 │   └── screen-dimensions.ts          # Multi-monitor coord-system reconciliation
 │
-├── tools/                            # 126 files — tool implementations
-│   ├── browser/                      # ~15 files — Playwright + Chrome Extension backends
-│   ├── coding/                       # 25+ files — edit/write/grep/glob/lsp/git/codebase
+├── tools/                            # 149 files — tool implementations
+│   ├── browser/                      # 21 files — Playwright + Chrome Extension backends
+│   ├── coding/                       # 34 files — edit/write/grep/glob/lsp/git/codebase
 │   ├── os-smart-click.ts             # Primary GUI click tool (uses perception-router)
 │   ├── os-computer-action.ts os-grounding.ts os-inspect.ts
 │   ├── platform.ts platform-info.ts platform-bridge.ts macos.ts linux.ts windows.ts
-│   ├── shell.ts files.ts memory-tools.ts deep-research.ts
+│   ├── shell.ts files.ts memory-tools.ts session-search.ts deep-research.ts
 │   ├── github-api.ts google-api.ts spotify.ts apple-notes.ts sonos.ts
 │   ├── generate-image.ts blender.ts audio-visualize.ts video-studio.ts
 │   └── tool-intelligence.ts create-tool.ts repo-map.ts
 │
+├── forge/                            # 52 files — Skill Forge (dynamic-tool synthesis + Rust kernel sandbox)
 ├── research/                         # 11 files — deep research engine
-├── harness/                          # 17 files — Meta-harness registry + optimizer
-├── video-studio/                     # 25 files — Project-scoped video pipeline
+├── harness/                          # 25 files — Meta-harness registry + optimizer
+├── video-studio/                     # 49 files — Project-scoped video pipeline
 ├── marketing/                        # 29 files — 9-platform marketing brain
-├── proactive/                        # 58 files — heartbeat, dreaming, composer, dispatch, inbox, monitors, sources
+├── proactive/                        # 111 files — heartbeat, dreaming, composer, dispatch, inbox, monitors, sources
 ├── planning/                         # 4 files — MCTS, hierarchical planner, logic verifier
 ├── execution/                        # Speculative execution patterns
 ├── social/                           # emotion-detector.ts (lexicon + punctuation heuristic)
 ├── models/                           # 5 files — Local ASR/TTS/OCR/vision + FunctionGemma
-├── voice/                            # 4 files + live/ (16) — TTS, transcription, live voice
+├── voice/                            # 31 files (incl. live/, 26) — TTS, transcription, live voice
 ├── documents/                        # 10 files — block-based doc renderer + templates
 ├── config/                           # Keys, paths, protected config loader
-├── security/                         # 5 files — Sandboxing, allowlist, secrets, Docker
+├── security/                         # 17 files — threat patterns, URL/SSRF guard, OSV check, skill scanner, secrets sanitizer, allowlist, sandbox
 ├── mcp/                              # 2 files — Model Context Protocol + gitmcp bridge
+├── diagnostics/                      # /doctor system probe (Convex, session, credits, native, env, memory)
 ├── hooks/                            # 3 files — Built-in pre/post tool hooks
-├── cron/                             # 3 files — Schedule parser + store + tick
+├── cron/                             # 6 files — Schedule parser + store + tick
 ├── skills/                           # 3 files — Skill loader (frontmatter markdown)
 ├── store/                            # 6 files — Marketplace + hot-reload + sideload
 ├── canvas/                           # WebSocket canvas channel
-├── commands/                         # Slash command parsing
+├── commands/                         # Slash command parsing (/recap, /doctor, ...)
 ├── location/                         # 7 files — GPS → Wi-Fi → IP fallback
 ├── notifications/                    # Web-push delivery
 ├── widget/                           # Embeddable chat widget IIFE
-├── setup/                            # Wizard + profile seeding
-└── prompts/                          # 4 files — Dynamic prompt assembly + watermark
+├── overlay/                          # Electron overlay chat server + overlay.html
+├── setup/                            # Wizard + profile + persona seeding
+└── prompts/                          # 8 files — Dynamic prompt assembly + persona bias + watermark
 
-native/src/                           # 64 Rust modules (napi-rs + SIMD)
+native/src/                           # 78 Rust modules (napi-rs + SIMD)
 ├── lib.rs                            # napi-rs entry point
 ├── vector.rs batch.rs                # SIMD-accelerated vector math
 ├── model_router.rs tool_router.rs tool_analytics.rs query_classifier.rs
@@ -196,12 +208,13 @@ native/src/                           # 64 Rust modules (napi-rs + SIMD)
 ├── harness_optimizer.rs              # NSGA-II + GP surrogate
 ├── research_engine.rs info_gain.rs citation_graph.rs skill_scorer.rs
 ├── pattern_speculator.rs process_reward.rs prompt_evaluator.rs
-└── security.rs ip_guard.rs
+├── security.rs ip_guard.rs
+└── forge_sandbox/                    # Kernel-sandbox supervisor (seccomp/Landlock · sandbox-exec · AppContainer)
 
-convex/                               # Serverless backend
+convex/                               # Serverless backend (30 .ts files)
 ├── http.ts                           # LLM proxy with E2E encryption
 ├── sessions.ts accounts.ts crypto.ts systemContent.ts
-├── schema.ts                         # Accounts, sessions, rate_limits, store tables
+├── schema.ts                         # accounts, sessions, rate_limits, llm_usage/log, store, system content, waitlist, prompt addenda
 └── store/                            # items, submissions, developers, installs, reviews
 
 desktop/                              # Electron app (setup wizard, panel, tray)
@@ -209,7 +222,6 @@ desktop/                              # Electron app (setup wizard, panel, tray)
 ├── wizard/                           # First-run wizard (incl. vision-intelligence tier step)
 └── components/ detection/ migration/ hostinger-upload/
 
-overlay-app/                          # Native macOS Swift overlay
 chrome-extension/                     # User-side Chrome automation bridge
 portals/                              # Next.js admin-panel + developer-portal
 prompts/                              # Source-of-truth for seeded system prompts
@@ -231,15 +243,15 @@ A thin TypeScript wrapper (`src/model-router.ts`) around a native Rust binary (`
 
 | Tier | Cost | Models | Primary Use |
 |------|------|--------|-------------|
-| Light | 0.25 credits | Claude Haiku 4.5, Gemini 3 Flash / Flash Lite, Nova Lite / Micro | Casual chat, simple retrieval, chime-in decisions |
+| Light | 0.25 credits | Claude Haiku 4.5, Gemini 3 Flash / Flash Lite, Nova Lite / Micro, GPT-5 nano / mini | Casual chat, simple retrieval, chime-in decisions |
 | Pro | 1 credit | Claude Sonnet 4.6 / 4.5, Gemini 3.1 Pro, Nova Pro | Browser automation, tool calling, coding |
 | Heavy | 3 credits | Claude Opus 4.6 | Complex reasoning, deep research, planning |
 
-Coding intent forces tier ≤ Pro via `maybeEscalateForCoding`. Errors accumulate → cascade escalation steps up the ladder automatically.
+Coding intent forces tier ≤ Pro via `maybeEscalateForCoding`. Errors accumulate → cascade escalation steps up the ladder automatically. A cost-aware net (native `select_dynamic_model`) down-routes the cheapest user-facing rungs to GPT-5 nano (`pn≤3 & score≤15`) / GPT-5 mini (`pn≤4 & score≤25`) and gates Opus to genuinely complex work; disable with `ATLAS_NO_COST_ROUTING`. The router is also context-window-aware per model, driving token-aware pruning and failover. A dedicated `tool_synthesis` task type routes Skill Forge synthesis to Sonnet (or Opus in dream-replay). Qwen3.7-plus / Qwen3-VL-235B back the Vision-Nav cloud-grounding tier rather than the agent loop.
 
 ### Memory System
 
-All local SQLite (`data/memory.db`) — no memory ever leaves the device. Twelve retrieval systems fire in parallel on the first iteration of each agent invocation with a combined ~2-3K token budget.
+All local SQLite (`data/memory.db`) — no memory ever leaves the device. Twelve retrieval systems fire in parallel on the first iteration of each agent invocation with a combined ~2-3K token budget. When the context window fills, compression preserves a structured 13-section continuity summary (active task verbatim, completed actions, exact errors, decisions, pending asks, files) that the next iteration parses and extends.
 
 | Layer | Purpose |
 |-------|---------|
@@ -254,6 +266,8 @@ All local SQLite (`data/memory.db`) — no memory ever leaves the device. Twelve
 | Reflection | Nightly dream replay consolidation; decay every 6h |
 | Task learnings + strategy library | Reusable strategies from past executions |
 | Sleep / surprise gates | Consolidation gating driven by reward prediction error |
+| Value-gate | LLM (Haiku) gate on every write — rejects low-signal noise; sha256-cached, fail-closed, JSONL audit; shadow mode by default |
+| Conversation corpus | Full message corpus searchable via `session_search` (FTS5 BM25) |
 | Codebase sidecar | Per-repo SQLite index (tree-sitter + FTS5 BM25) |
 
 ### Agent Orchestration
@@ -297,7 +311,11 @@ Autonomous GUI control without depending on a single cloud VLM. `src/screen/capa
 | Standard | Typical laptop with ≥8 GB RAM             | AX + OmniParser captions |
 | Full     | Apple-silicon or discrete GPU + Ollama    | AX + OmniParser + UI-TARS grounding |
 
-The Tiered Perception Cascade (`perception-router.ts`) walks `click-memory recall → AX exact → AX fuzzy → OmniParser → UI-TARS` and stops at the first tier whose confidence clears the gate. Successful clicks feed `click-memory.ts` (SQLite at `data/click-memory.db`) and `drift-calibration.ts` (per-monitor affine correction) so the agent gets faster and more accurate over time. `os_smart_click` is the primary GUI tool the agent reaches for; legacy coordinate tools remain available but are demoted in the tool-router prompt. Override the picked profile with `ATLAS_VISION_PROFILE=lite|standard|full`; kill-switches: `ATLAS_NO_CLICK_MEMORY`, `ATLAS_NO_DRIFT_CALIBRATION`, `ATLAS_NATIVE_AX` (opt-in Rust walker).
+The Tiered Perception Cascade (`perception-router.ts`) walks `click-memory recall → AX exact → AX fuzzy → OmniParser → UI-TARS → cloud grounding` and stops at the first tier whose confidence clears the gate (memory 0.90, AX exact 0.95 / fuzzy 0.80, OmniParser 0.80, UI-TARS 0.70, cloud grounding 0.60). The **cloud-grounding tier** (Qwen3.7-plus → Qwen3-VL-235B fallback) fires on Lite/Standard and degraded-Full hosts when local tiers miss, so even GPU-less machines get a working grounder. An AX cold-window retry re-dumps the tree once after both AX tiers miss (freshly-activated windows often have an incomplete first dump).
+
+`os_smart_click` is the primary GUI tool: it auto-captures a screenshot (window-scoped via `screencapture -R` when the focused window's bounds are known, else full-screen), activates the target app first, then runs the cascade. Vision-tier clicks (OmniParser / UI-TARS / cloud) are verified with a before/after capture and `classifyOutcome`; a `no_op`/`wrong_target` records a click-miss, returns `click_unverified` instead of a false success, and triggers one self-correcting re-ground past the failed tier (AX/memory tiers stay trusted, no verify). UI-TARS quants are smoke-tested for vision inference (`isUITarsHealthy`) so a pulled-but-broken GGUF skips straight to cloud grounding; missing quants auto-pull (detached) on Full hosts, and OmniParser self-provisions its venv + `icon_detect` weights, gated by `omniParserWeightsPresent()`.
+
+Successful clicks feed `click-memory.ts` (SQLite at `data/click-memory.db`) and `drift-calibration.ts` (per-monitor affine correction) so the agent gets faster and more accurate over time. Override the picked profile with `ATLAS_VISION_PROFILE=lite|standard|full`. Kill-switches: `ATLAS_NO_CLICK_MEMORY`, `ATLAS_NO_DRIFT_CALIBRATION`, `ATLAS_NO_CLOUD_GROUNDING`, `ATLAS_NO_OMNIPARSER` / `ATLAS_NO_OMNIPARSER_AUTOSETUP`, `ATLAS_NO_UI_TARS_AUTOPULL`, `ATLAS_NO_UITARS_HEALTHCHECK`, `ATLAS_NO_SMARTCLICK_VERIFY` / `ATLAS_NO_SMARTCLICK_SELFCORRECT`, `ATLAS_NO_AX_RETRY`, `ATLAS_NO_WINDOW_SCOPED_CAPTURE`, `ATLAS_NATIVE_AX` (opt-in Rust walker).
 
 ### Video Studio
 
@@ -373,8 +391,16 @@ OpenRouter and Convex keys are bundled with the app — end users do not configu
 | `ATLAS_VISION_PROFILE` | No | Override capability-detector pick: `lite` / `standard` / `full` |
 | `ATLAS_NO_CLICK_MEMORY` | No | Disable persistent click-memory recall/record |
 | `ATLAS_NO_DRIFT_CALIBRATION` | No | Disable per-monitor drift correction |
+| `ATLAS_NO_CLOUD_GROUNDING` | No | Disable the Qwen cloud-grounding cascade tier |
+| `ATLAS_NO_OMNIPARSER_AUTOSETUP` | No | Skip background OmniParser venv/weights provisioning |
+| `ATLAS_NO_UI_TARS_AUTOPULL` | No | Don't auto-pull the UI-TARS quant on Full hosts |
+| `ATLAS_NO_SMARTCLICK_VERIFY` | No | Trust vision-tier clicks without before/after verification |
 | `ATLAS_NATIVE_AX` | No | Opt-in Rust accessibility-tree walker (off by default) |
 | `ATLAS_NATIVE_VAD` / `ATLAS_VAD_MODE` | No | Opt-in libfvad barge-in (hybrid voice only); aggressiveness 0–3 |
+| `ATLAS_NO_COST_ROUTING` | No | Disable the cost-aware Opus-cap routing net |
+| `ATLAS_NO_MEMORY_GATE` / `ATLAS_MEMORY_GATE_SHADOW` | No | Disable / shadow-only the memory write value-gate |
+| `ATLAS_NO_THREAT_SCAN` / `ATLAS_NO_OSV_CHECK` | No | Disable threat-pattern scanning / OSV malware MCP pre-install check |
+| `ATLAS_NO_FORGE` / `ATLAS_NO_FORGE_VERIFIER` | No | Disable Skill Forge entirely / its closed-loop verifier |
 | `ATLAS_ENV` | No | `prod` to flip Convex client to production deployment |
 | `MEMORY_DEBUG` | No | Verbose memory subsystem logging |
 | `ATLAS_PROACTIVE_DISABLE` | No | Emergency global mute for proactive sends |
@@ -393,7 +419,7 @@ OpenRouter and Convex keys are bundled with the app — end users do not configu
 - **Multi-layer caching** — LLM responses (embedding similarity), tool results (per-tool TTLs), memory queries (temporal cache + bloom filter)
 - **Dependency injection** — `LLMClient` created once at boot and passed into every subsystem; never imported as a singleton
 - **OpenAI-compatible types** — All LLM interactions use `openai` package types regardless of provider, since Convex proxies through OpenRouter
-- **Plan-mode runtime gating** — `plan` / `spec` / `awaiting_approval` / `act` each have explicit tool allowlists enforced before and during LLM calls
+- **Plan-mode runtime gating** — `plan` / `spec` / `awaiting_approval` / `awaiting_dynamic_tool_approval` / `act` each have explicit tool allowlists enforced before and during LLM calls
 - **Graceful shutdown** — Every subsystem registers cleanup handlers
 
 ---
@@ -431,10 +457,10 @@ data/
 | Native acceleration | Rust (napi-rs), SIMD via `wide` + `simsimd`, `rayon` parallelism, `aes-gcm` |
 | Database | SQLite (`better-sqlite3`) — local only, per-user |
 | Backend | Convex 1.34 (serverless functions, real-time sync, HTTP actions) |
-| LLM providers | OpenRouter — Anthropic (Opus/Sonnet/Haiku 4.x), Google Gemini (2.x/3.x), Amazon Nova |
+| LLM providers | OpenRouter — Anthropic (Opus/Sonnet/Haiku 4.x), Google Gemini (2.x/3.x), Amazon Nova, OpenAI GPT-5 (nano/mini), DeepSeek, GLM, Qwen |
 | Embeddings | MiniLM 384-dim default, Nomic 768→256-dim optional (`@xenova/transformers`) |
 | Browser automation | Playwright 1.50 + Chrome Extension dual backend |
-| Vision-nav models | OmniParser (captions) + UI-TARS (grounding), runtime-detected via Ollama |
+| Vision-nav models | OmniParser (captions) + UI-TARS (grounding) via Ollama; Qwen3.7-plus / Qwen3-VL-235B cloud-grounding fallback |
 | Desktop | Electron 40+ with `electron-builder`, `bytenode` protected modules |
 | Telegram | `grammy` 1.35 |
 | Discord | `discord.js` 14 + `@discordjs/voice` |

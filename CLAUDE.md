@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A.T.L.A.S (v0.2.0) is a continuously running, proactive personal AI agent built with Node.js/TypeScript (~385 .ts files) + a native Rust performance layer (~49 .rs files). It provides autonomous computer use, deep research, and long-running async workflows via Telegram, Discord, Slack, Matrix, WhatsApp, desktop overlay, and email channels.
+A.T.L.A.S (v0.2.1) is a continuously running, proactive personal AI agent built with Node.js/TypeScript (~770 .ts files) + a native Rust performance layer (~78 .rs files). It provides autonomous computer use, deep research, and long-running async workflows via Telegram, Discord, Slack, Matrix, WhatsApp, desktop overlay, and email channels.
 
 ## Build & Run Commands
 
@@ -72,7 +72,7 @@ Falls back to JS-only if native fails.
 ### Tool Router (`src/tool-router.ts` + `src/tool-router-analytics.ts`)
 Semantic selection via MiniLM embeddings (384-dim). Boot: embed each category description. Per-message: embed query → cosine top-K → load category schemas. `request_tools` meta-tool expands mid-task. 20+ categories. **FunctionGemma fallback** (`src/models/function-gemma.ts`): optional local 270M via Ollama for zero-cost routing. Analytics track usage/accuracy/hit rates.
 
-### Memory System (`src/memory/` — 39 files)
+### Memory System (`src/memory/` — 70 files)
 All local SQLite (`data/memory.db`):
 - `sqlite.ts` — Primary store: `remember()`, `recall()`, `getCoreMemory()`
 - `knowledge-graph.ts` — Entity-relationship graph
@@ -107,7 +107,7 @@ API key proxy + auth + store backend — LLM keys never reach client:
 ### Native Rust Layer (`native/src/` — 49 .rs files)
 SIMD-accelerated vector ops (~15-20x speedup) via napi-rs. Built with `opt-level=3`, LTO, `panic=abort`, stripped. Deps: `wide` (SIMD), `simsimd`, `rayon`, `aes-gcm`. Modules mirror TS counterparts; `lib.rs` is napi entry, `chrome_bridge.rs` is extension bridge.
 
-### Agent Orchestration (`src/agents/` — 30 files)
+### Agent Orchestration (`src/agents/` — 50 files)
 Four-tier execution model:
 
 **Core Tiers:**
@@ -245,7 +245,7 @@ Embeddable chat widget at `/widget.js` from overlay server. IIFE injects DOM + s
 
 ### Additional Subsystems
 - **MCP** (`src/mcp/`) — `client.ts`, `gitmcp-bridge.ts` (exposed as `gitmcp_docs` via `src/tools/gitmcp.ts`)
-- **Proactive** (`src/proactive/` — 28 files) — Heartbeat, behaviors, night dreaming. P0+1: `intent.ts`/`intent-from-thought.ts`, `composer.ts`/`composer-templates.ts` (template → LLM → banned-phrase + third-person filter), `dispatch.ts` (single exit, mode emoji 💡/❓/✅), `config.ts` (per-channel posture calm/active/ambient; `data/proactive-config.json`), `kill-switches.ts`. Plus: `goal-engine.ts`, `habit-detector.ts`, `inner-thoughts.ts`, `thought-journal.ts`, `trigger-detector.ts`, `notification-tracker.ts`, `environment-sensors.ts`, `proactive-reward.ts`, `dnd.ts`, `monitors.ts`, `activity.ts`, `recommendations.ts`
+- **Proactive** (`src/proactive/` — 111 files) — Heartbeat, behaviors, night dreaming. P0+1: `intent.ts`/`intent-from-thought.ts`, `composer.ts`/`composer-templates.ts` (template → LLM → banned-phrase + third-person filter), `dispatch.ts` (single exit, mode emoji 💡/❓/✅), `config.ts` (per-channel posture calm/active/ambient; `data/proactive-config.json`), `kill-switches.ts`. Plus: `goal-engine.ts`, `habit-detector.ts`, `inner-thoughts.ts`, `thought-journal.ts`, `trigger-detector.ts`, `notification-tracker.ts`, `environment-sensors.ts`, `proactive-reward.ts`, `dnd.ts`, `monitors.ts`, `activity.ts`, `recommendations.ts`
 - **Security** (`src/security/`) — `sandbox.ts`, `allowlist.ts`, `secrets-sanitizer.ts` (scans tool results for keys before LLM), `audit-log.ts`, Docker isolation
 - **Voice** (`src/voice/`) — `telegram-voice.ts`, `transcribe.ts`, `tts.ts` (`ATLAS_TTS_PROVIDER` → `ELEVENLABS_API_KEY` → `OPENAI_API_KEY`), `live/` (continuous voice)
 - **Canvas** (`src/canvas/`) — WS canvas channel for rich UI
@@ -280,8 +280,8 @@ Next.js + Tailwind, own `package.json` + `.env.example`:
 - `portals/admin-panel/` — Manage users, store submissions, system prompts/skills
 - `portals/developer-portal/` — Skill/tool/MCP publishing
 
-### Overlay App (`overlay-app/`)
-Native macOS Swift app (`Package.swift`) — distinct from inline `src/overlay/overlay.html`.
+### Overlay (`src/overlay/` + Electron)
+Unified on the Electron overlay window (`src/overlay/overlay.html` + `overlay-chat.ts`, hosted by the desktop app); the former native macOS Swift `overlay-app/` was removed (commit `09391f1`). The overlay WebSocket is authenticated via a `?localToken=` gate exchanged through a discovery-first handshake (`/discover`).
 
 ### Chrome Extension (`chrome-extension/`)
 Companion for `src/tools/browser/chrome-backend.ts`. `background.js` (WS bridge), `content.js` (DOM), `popup.html`/`popup.js` (toggle). Drives user's real Chrome instead of headless.

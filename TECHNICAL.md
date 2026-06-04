@@ -56,11 +56,11 @@ ATLAS is a **local-first** autonomous agent. The Node.js process runs on the use
   │          │          │          │          │          │
 ┌─▼────┐ ┌───▼───┐ ┌────▼────┐ ┌───▼────┐ ┌───▼─────┐ ┌──▼──────┐
 │Memory│ │Agents │ │  Tools  │ │Research│ │Proactive│ │ Screen  │
-│49 mod│ │30+ mod│ │ 120+ t  │ │ 11 mod │ │ 50+ mod │ │ 10 mod  │
+│70 mod│ │50 mod │ │ 120+ t  │ │ 11 mod │ │110+ mod │ │ 23 mod  │
 └──────┘ └───────┘ └─────────┘ └────────┘ └─────────┘ └─────────┘
    │         │          │          │          │           │
 ┌──▼─────────▼──────────▼──────────▼──────────▼───────────▼──────────────┐
-│                    Native Rust Layer  (native/src/, 64 modules)          │
+│                    Native Rust Layer  (native/src/, 78 modules)          │
 │  SIMD vectors · model router · HNSW search · swarm/mesh · harness       │
 │  browser guard · proactive scheduler · metacognition · MCTS             │
 │  AX walker · secrets sanitizer · pcm-VAD · spreading · query classifier │
@@ -120,7 +120,7 @@ ATLAS runs as a single long-lived Node.js process on the user's own machine. Thi
 | WhatsApp | @whiskeysockets/baileys | ^7.0-rc.9 | WhatsApp Web protocol |
 | Email | IMAPFlow + Nodemailer | ^1.2 / ^8.0 | IMAP read + SMTP send |
 | Video processing | fluent-ffmpeg | ^2.1 | FFmpeg wrapper |
-| Code parsing | tree-sitter | ^0.22 | TS, JS, Python, Rust, Go |
+| Code parsing | tree-sitter | ^0.22 | TS/JS default; Python/Rust/Go gated behind `ATLAS_MULTI_TREE_SITTER`; regex fallback covers 15 langs |
 | Schema validation | Zod | ^4.3 | All tool parameter schemas |
 | Linter/formatter | Biome | ^2.4 | Replaces ESLint + Prettier |
 | Test runner | Vitest | ^3.2 | Unit + integration tests |
@@ -134,7 +134,9 @@ ATLAS runs as a single long-lived Node.js process on the user's own machine. Thi
 | Anthropic | Claude Opus 4.6, Sonnet 4.6, Sonnet 4.5, Haiku 4.5 |
 | Google | Gemini 3.1 Pro, 2.5 Flash, 3 Flash Preview, 3.1 Flash Lite, 2.0 Flash, 2.5 Flash Lite |
 | Amazon | Nova Pro v1, Nova Lite v1, Nova Micro v1 |
-| OpenAI | GPT-5 Image (image generation only) |
+| OpenAI | GPT-5 nano, GPT-5 mini, GPT-4.1 nano (cost-aware cheap rungs); GPT-5 Image (image generation) |
+| DeepSeek / Z-AI | DeepSeek V3.1, DeepSeek V3.2 (exp), GLM 4.6 (background / low-cost routing) |
+| Qwen | Qwen3.7-plus, Qwen3-VL-235B (Vision-Nav cloud-grounding tier only) |
 
 All LLM API keys live exclusively in Convex environment variables.
 
@@ -218,6 +220,20 @@ The router is implemented in Rust and exposed to TypeScript via napi-rs. It sele
 | `NOVA_PRO` | `amazon/nova-pro-v1` | Nova Pro | Mid |
 | `NOVA_LITE` | `amazon/nova-lite-v1` | Nova Lite | Light |
 | `NOVA_MICRO` | `amazon/nova-micro-v1` | Nova Micro | Light |
+| `GPT5_MINI` | `openai/gpt-5-mini` | GPT-5 mini | Light (cost-routed) |
+| `GPT5_NANO` | `openai/gpt-5-nano` | GPT-5 nano | Light (cost-routed) |
+| `GPT41_NANO` | `openai/gpt-4.1-nano` | GPT-4.1 nano | Light |
+| `DEEPSEEK_V31` | `deepseek/deepseek-chat-v3.1` | DeepSeek V3.1 | Light (background) |
+| `DEEPSEEK_V32` | `deepseek/deepseek-v3.2-exp` | DeepSeek V3.2 (exp) | Light (background) |
+| `GLM_46` | `z-ai/glm-4.6` | GLM 4.6 | Light (background) |
+| `QWEN37_PLUS` | `qwen/qwen3.7-plus` | Qwen3.7-plus | Vision cloud-grounding |
+| `QWEN3_VL_235B` | `qwen/qwen3-vl-235b-a22b-instruct` | Qwen3-VL-235B | Vision cloud-grounding (fallback) |
+
+**Cost-aware routing** (`ATLAS_NO_COST_ROUTING` to disable): On top of the tier ladder, the native `select_dynamic_model` down-routes the cheapest user-facing rungs — `pn≤3 & score≤15` → GPT-5 nano, `pn≤4 & score≤25` → GPT-5 mini — and otherwise climbs Haiku → Sonnet → Opus, with Opus gated to ComplexChat / explicit-complexity branches. A belt-and-suspenders TS net caps plain single-turn chat at Sonnet (never Opus) even when the native binary is stale. Background work (reflection, classification) can route to DeepSeek/GLM/GPT. Cost tables are kept in sync across `native/src/model_router.rs`, `src/llm-middleware.ts` (`MODEL_COSTS`), and `convex/credit_cost.ts`.
+
+**Context-window awareness:** The router carries each model's context window so the agent loop prunes tokens proactively and the failover guard avoids routing an over-budget conversation to a smaller-window model.
+
+**Tool-synthesis routing:** A dedicated `tool_synthesis` `TaskType` (native enum `ToolSynthesis`) routes Skill Forge synthesis to Sonnet + high thinking (Opus + max in dream-replay when `ATLAS_FORGE_DREAM_OPUS=true`).
 
 **Fallback chains** (`MODEL_FALLBACKS`): when a primary model returns 5xx, rate-limits, or times out, the router tries the next model in its fallback list. Each model has a 2-model fallback chain ordered by similarity of capability.
 
@@ -288,11 +304,15 @@ Each state has an explicit `*_ALLOWED_TOOLS` list in `plan-mode.ts`; `filterTool
 
 **System reminders** (`src/agent/system-reminders.ts`): Injected into the message stream (not the system prompt) at specific decision points to nudge behavior without bloating context. Examples: "You are at iteration 150/200 — start wrapping up"; "Plan mode active — write tools blocked"; "Coding complexity: complex — follow the 4-phase flow".
 
+**Loop guardrail:** A per-turn guard hard-stops identical-args tool-call loops (the same tool invoked with the same arguments repeatedly), separate from the metacognition loop detector; the no-progress guard is relaxed for legitimately long/iterative tasks.
+
+**Diagnostic commands** (`src/commands/`): `/recap [n]` summarizes the last *n* turns (default 20) with zero AI cost; `/doctor` runs a system probe across Convex connectivity, session/credit state, the native binary, environment, and memory health (`src/diagnostics/doctor.ts`).
+
 ---
 
 ### 3.5 Four-Tier Agent Orchestration
 
-**Directory:** `src/agents/` (30 files)
+**Directory:** `src/agents/` (50 files)
 
 | Tier | Entry point | Max scale | Purpose |
 |------|------------|-----------|---------|
@@ -305,7 +325,7 @@ Each state has an explicit `*_ALLOWED_TOOLS` list in `plan-mode.ts`; `filterTool
 - `error-recovery.ts` — retry → rephrase → reroute (switch role) → skip
 - `evaluator.ts` — quality scoring (completeness/accuracy/coherence/actionability 0-100); retry if < 60
 - `replanner.ts` — revises remaining plan when failures or new info detected
-- `metacognition.ts` — SOFAI-LM-style self-monitoring; detects loops, low confidence, and triggers interventions
+- `metacognition.ts` — tiered self-monitoring between iterations. **Tier A:** content-aware loop detection + an intervention dispatcher that picks `escalate` / `replan` / `critics` / `ask_user`. **Tier B (VOC):** a value-of-computation re-threshold (τ = 1 − cost_loss/cost_win, zero-LLM arithmetic) that suppresses an intervention when the agent is already confident, so low-payoff interventions don't burn credits (`ATLAS_NO_META_VOC`). **Tier C:** shadow-mode confidence calibration (identity until enabled) + an opt-in LLM judge. Outcomes are logged for later analysis (`ATLAS_NO_METACOG_LOG`); disable interventions entirely with `ATLAS_NO_META_INTERVENTIONS`. A separate per-turn guardrail in `src/agent.ts` hard-stops identical-args tool-call loops
 - `multi-critic.ts` — multi-perspective debate on solution quality
 - `code-critic.ts` — compile + lint + test + SAST (Semgrep) in parallel; weighted consensus score
 - `agent-worktree.ts` — git worktree isolation for parallel coder steps (opt-in via `ATLAS_AGENT_WORKTREE=true`)
@@ -319,7 +339,7 @@ Each state has an explicit `*_ALLOWED_TOOLS` list in `plan-mode.ts`; `filterTool
 
 ---
 
-### 3.6 Memory System (49 modules)
+### 3.6 Memory System (70 modules)
 
 **Directory:** `src/memory/`
 
@@ -352,6 +372,12 @@ All memory is local SQLite (`data/memory.db`) with WAL journal mode, 64 MB page 
 | `fts5-query.ts` | BM25 search helper | SQLite FTS5 query construction + scoring |
 | `project-memory.ts` | Per-project scoping | Tags memory entries with the active workspace root for project-scoped recall |
 | `anticipation.ts` / `briefing.ts` | Forward-looking context | Upcoming-event scan + morning briefing assembly |
+| `value-gate.ts` + `gate-audit.ts` | Write value-gate | Every `remember()` passes a Haiku gate (hardReject/hardAllow short-circuits + LLM judgment); sha256-cached, fail-closed, decisions logged to `data/memory-gate.jsonl` (10 MB rotation) |
+| `compression-template.ts` | Structured compression | 13-section continuity template (active task verbatim, completed actions, exact errors, decisions, pending asks, files); persisted so the next iterative pass parses + extends it |
+
+**Write value-gate** (`value-gate.ts`): `remember()` is async and routes through a gate. `hardReject` drops tool-result prefixes, screenshot/image blobs, WM-spill rows, and oversize (>2000-char) content; `hardAllow` fast-passes curated categories, high-importance writes, and reflection/consolidation sources; everything else gets a cheap Haiku yes/no (sha256-cached, fails closed to allow). Default is **shadow mode** (`ATLAS_MEMORY_GATE_SHADOW`, decides + logs but always inserts); set to `"false"` to enforce. `ATLAS_NO_MEMORY_GATE=true` reverts to direct writes. Working-memory spill no longer persists to LTM; per-message flush uses a Haiku extractor rather than a blanket filter.
+
+**Conversation corpus + `session_search`** (`src/tools/session-search.ts`, `fts5-query.ts`): the full message corpus is stored and searchable via an FTS5 BM25 recall tool, distinct from semantic recall — exact-phrase lookups across past turns. Capped by `ATLAS_CORPUS_MAX_MESSAGES`; disable the tool with `ATLAS_NO_SESSION_SEARCH`.
 
 **Retrieval fusion:** Results from multiple sources are blended using RRF (Reciprocal Rank Fusion) + recency exponential decay + importance weights + SAN/Hopfield boost multipliers. A cross-encoder reranker makes the final pass.
 
@@ -393,7 +419,7 @@ All memory is local SQLite (`data/memory.db`) with WAL journal mode, 64 MB page 
 
 ---
 
-### 3.7 Native Rust Layer (64 modules)
+### 3.7 Native Rust Layer (78 modules)
 
 **Directory:** `native/src/`
 
@@ -415,9 +441,10 @@ Built with napi-rs, compiled to platform-specific `.node` binaries. TypeScript l
 | Browser | `browser_agent.rs`, `browser_guard.rs`, `chrome_bridge.rs`, `ip_guard.rs` | Element scoring, stealth, CAPTCHA detection |
 | Vision Nav | `ax_walker.rs` (opt-in) | Cross-OS accessibility-tree flatten/find |
 | Voice | `pcm_vad.rs` (cargo feature `vad`, opt-in) | libfvad-backed barge-in detection for hybrid voice |
-| Security | `security.rs`, `secrets_sanitizer.rs` (default-ON) | Encryption helpers + 23-pattern outbound secrets scrubber (1.44–2.00× faster than TS) |
+| Security | `security.rs`, `secrets_sanitizer.rs` (default-ON) | Encryption helpers + multi-pattern outbound secrets scrubber (1.44–2.00× faster than TS) |
 | Research | `research_engine.rs`, `info_gain.rs`, `citation_graph.rs`, `skill_scorer.rs` | Research acceleration |
 | Harness | `harness_optimizer.rs` | NSGA-II Pareto, GP surrogate, TextGrad scoring |
+| Skill Forge sandbox | `forge_sandbox/` (`pool.rs`, `worker.rs`, `strikes.rs`, `linux_seccomp.rs`, `linux_landlock.rs`, `macos.rs`, `windows_appcontainer.rs`, …) | OS-level kernel sandbox supervisor for persisted dynamic tools: macOS sandbox-exec, Linux seccomp + Landlock + netns, Windows AppContainer + JobObject; LRU warm-pool, three-strike auto-archive |
 
 **Performance numbers** (from `native/README.md`):
 
@@ -441,7 +468,10 @@ Convex serves as the secure cloud layer. The Node.js client connects to it via t
 |-------|---------|
 | `accounts` | OTPless identity, plan (free/pro/enterprise), AI credits, activations |
 | `sessions` | 24h TTL tokens; ECDH shared key for E2E encryption; device fingerprint |
-| `rate_limits` | Sliding window — 60 requests per 60 seconds per session |
+| `rate_limits` / `request_rate_limits` | Sliding-window LLM rate limit + per-endpoint request limiter |
+| `llm_usage_counters` / `llm_call_log` / `error_log` | Per-account usage rollups, per-call telemetry, server-side error log |
+| `waitlist` / `contact_submissions` | Marketing-site waitlist + contact form intake |
+| `user_prompt_addenda` / `user_prompt_addendum_history` | Per-user system-prompt addenda + edit history (usage-tracked, nightly staleness sweep) |
 | `developers` | Store publisher accounts (email + bcrypt, approval workflow) |
 | `admins` | Admin panel users with role + permissions |
 | `store_items` | Published skills, tools, MCP servers (slug, type, category, tags, pricing) |
@@ -525,7 +555,7 @@ In-flight request coalescing ensures concurrent callers requesting the same slug
 
 ### 3.9 Browser Automation
 
-**Directory:** `src/tools/browser/` (20 files)
+**Directory:** `src/tools/browser/` (21 files)
 
 ATLAS supports two browser backends behind a unified `BrowserBackend` interface:
 
@@ -581,7 +611,7 @@ The agent calls `set_browser_mode({ mode: "vision" })` when text-only DOM inspec
 
 ### 3.10 Vision Navigation
 
-**Directory:** `src/screen/` (10 files), tools at `src/tools/os-*.ts` + `src/tools/platform*.ts`
+**Directory:** `src/screen/` (23 files), tools at `src/tools/os-*.ts` + `src/tools/platform*.ts`
 
 Autonomous GUI control without relying on a single cloud VLM. The pipeline runs entirely on the user's machine; only the captioning/grounding models are downloaded on demand, and the orchestrator is plain TypeScript so the agent can debug it like any other subsystem.
 
@@ -601,16 +631,17 @@ On boot, ATLAS profiles the host (RAM, free RAM, CPU bench score, GPU class, fre
 
 Given a natural-language instruction ("click Send"), the router walks tiers in confidence-gated order:
 
-| # | Tier                          | Typical latency  | Confidence gate |
+| # | Tier (`CascadeTier`)           | Typical latency  | Confidence gate |
 |---|-------------------------------|------------------|-----------------|
-| 1 | Click memory recall (DB lookup) | ~5 ms           | ≥ 0.90          |
-| 2 | AX exact-label match           | 50–200 ms        | ≥ 0.95          |
-| 3 | AX fuzzy-label match           | 50–200 ms        | ≥ 0.80          |
-| 4 | OmniParser caption match       | 200–800 ms       | ≥ 0.80 (Standard+) |
-| 5 | UI-TARS grounding              | 400–800 ms       | ≥ 0.70 (Full only) |
-| 6 | Cloud VLM fallback             | 1500–4000 ms     | caller's choice — router returns null |
+| 1 | `memory` — click-memory recall (DB lookup) | ~5 ms           | ≥ 0.90          |
+| 2 | `ax_exact` — AX exact-label match | 50–200 ms        | ≥ 0.95          |
+| 3 | `ax_fuzzy` — AX fuzzy-label match | 50–200 ms        | ≥ 0.80          |
+| 4 | `omniparser` — caption match   | 200–800 ms       | ≥ 0.80 (Standard+) |
+| 5 | `ui_tars` — grounding          | 400–800 ms       | ≥ 0.70 (Full only) |
+| 6 | `cloud_grounding` — Qwen VLM   | 1500–4000 ms     | ≥ 0.60 (Lite/Standard + degraded-Full) |
+| 7 | `cloud_vlm_required`           | —                | router returns null → caller falls back to the agentic VLM |
 
-First tier whose confidence clears its gate wins; remaining tiers are skipped. The router does NOT execute the click — it returns a `ClickTarget` that the caller hands to `os_computer_action` with `coordSystem='screen'`.
+First tier whose confidence clears its gate wins; remaining tiers are skipped. The **cloud-grounding tier** (`cloud-grounding.ts`) runs a cloud VLM cascade (Qwen3.7-plus → Qwen3-VL-235B) and fires when local AX/OmniParser/UI-TARS miss — this is what makes GPU-less Lite/Standard hosts (and degraded-Full hosts) usable; it needs an injected LLM client and is disabled by `ATLAS_NO_CLOUD_GROUNDING`. An **AX cold-window retry** re-dumps the tree once (after a settle delay, `ATLAS_AX_RETRY_DELAY_MS`, default 250 ms) when both AX tiers miss, since a just-activated window's first dump is often incomplete (`ATLAS_NO_AX_RETRY` to disable). The router does NOT execute the click — it returns a `ClickTarget` that the caller hands to `os_computer_action` with `coordSystem='screen'`.
 
 #### Click memory (`click-memory.ts`)
 
@@ -622,8 +653,9 @@ Per-monitor affine correction. Every confirmed click contributes a sample; once 
 
 #### Vision models
 
-- **OmniParser** (`omniparser.ts`) — Microsoft icon-detection + caption model. Downloaded on demand to the Ollama cache. Returns `{ bbox, caption, type }` per element.
-- **UI-TARS** (`ui-tars.ts`) — ByteDance vision-language model that grounds free-form instructions to coordinates. Heavy (Full tier only); reserved for fallback.
+- **OmniParser** (`omniparser.ts` + `omniparser-setup.ts`) — Microsoft icon-detection + caption model. On Standard/Full, `ensureOmniParser` background-provisions an isolated Python venv + deps + `icon_detect` weights (~500 MB, detached so it survives the bot exiting). The cascade tier is gated by `omniParserWeightsPresent()` so it never spawns Python before the weights exist. Returns `{ bbox, caption, type }` per element. Disable with `ATLAS_NO_OMNIPARSER` (tier) / `ATLAS_NO_OMNIPARSER_AUTOSETUP` (provisioning).
+- **UI-TARS** (`ui-tars.ts`) — ByteDance vision-language model that grounds free-form instructions to coordinates (Full tier). A verified-working default quant is pinned (override `ATLAS_UI_TARS_TAG`); on a Full host with Ollama but no model, `ensureUITarsForFullTier` background-pulls it (~4.7 GB, detached). A one-time vision-inference smoke test (`isUITarsHealthy`, 4×4 PNG probe, 30-min cached) detects pulled-but-broken GGUFs (mismatched mmproj → GGML_ASSERT / Ollama 500) in ~3 s so the cascade skips straight to cloud grounding instead of eating a 30 s crash per click. Disable auto-pull / health-check with `ATLAS_NO_UI_TARS_AUTOPULL` / `ATLAS_NO_UITARS_HEALTHCHECK`.
+- **Cloud grounding** (`cloud-grounding.ts`) — Qwen3.7-plus → Qwen3-VL-235B cascade used as a tier (see cascade table). Requires the injected LLM client; `ATLAS_NO_CLOUD_GROUNDING` disables it.
 
 #### AX walker (`ax-dump.ts`)
 
@@ -637,6 +669,10 @@ The TS implementation flattens the tree and finds matches by label. `ATLAS_NATIV
 #### Primary GUI tool
 
 `os_smart_click` (`src/tools/os-smart-click.ts`) is wired into the tool registry as the agent's primary GUI interaction tool. The tool router prompt explicitly demotes coordinate-based legacy tools in its favor. A boot-time permission probe ensures macOS Accessibility / Windows UIA / Linux AT-SPI access is granted before the agent tries to use it.
+
+On each call it **activates the target app**, then **auto-captures a screenshot** so the vision tiers always have an image — window-scoped via `screencapture -R` when the focused window's bounds are known (handing the cascade window-relative dims so coordinate scaling stays correct), else full-screen (`ATLAS_NO_WINDOW_SCOPED_CAPTURE` forces full-screen). Without this auto-capture the cascade was AX-only and silently skipped the vision tiers — the root cause of earlier low click accuracy.
+
+**Post-click verification:** VISION-tier clicks (`omniparser` / `ui_tars` / `cloud_grounding`) are verified by capturing before/after and running `classifyOutcome`; a `no_op`/`wrong_target` records a click-miss and returns `click_unverified` instead of a false success, then triggers one self-correcting re-ground that forces descent past the failed tier. AX/memory tiers stay trusted (no verify). Disable with `ATLAS_NO_SMARTCLICK_VERIFY` (verification) / `ATLAS_NO_SMARTCLICK_SELFCORRECT` (self-correction only).
 
 #### Wizard integration
 
@@ -729,7 +765,7 @@ Each hypothesis gets Bayesian confidence updates based on found evidence, with `
 
 ### 3.13 Proactive Engine
 
-**Directory:** `src/proactive/` (28+ files)
+**Directory:** `src/proactive/` (111 files)
 
 ATLAS can send messages without being prompted. The proactive system runs on three levels:
 
@@ -772,6 +808,7 @@ Defaults: Telegram = active, WhatsApp = calm, Overlay = ambient, Discord/Slack/M
 | `env_context` | Environment signals (weather change, battery low, DND expiring) |
 | `long_task_status` | Long-running tasks hitting milestones |
 | `convex_notification` | Server-pushed notifications (credit low, account status change) |
+| `onboarding_graduation` | Day-2/3/5 post-install nudges that graduate a new user from the wizard into everyday use (`ATLAS_NO_ONBOARDING_NUDGES` to disable) |
 
 **Composition fast-path** — for template-friendly intents (low-novelty, high-frequency), the Composer uses a pre-written template with variable slots rather than calling the LLM. This cuts composition latency from ~800ms (LLM) to ~5ms (template) for the most common proactive messages. LLM fallback fires for high-novelty intents.
 
@@ -783,7 +820,7 @@ Defaults: Telegram = active, WhatsApp = calm, Overlay = ambient, Discord/Slack/M
 
 ### 3.14 Video Studio
 
-**Directory:** `src/video-studio/` (15+ files), `src/tools/video-studio.ts`
+**Directory:** `src/video-studio/` (49 files), `src/tools/video-studio.ts`
 
 A complete AI-guided video editing pipeline.
 
@@ -834,7 +871,7 @@ A `validateEditPlan()` helper returns `{ ok: true, plan }` or `{ ok: false, erro
 
 ### 3.15 Meta-Harness Optimizer
 
-**Directory:** `src/harness/` (13 files)
+**Directory:** `src/harness/` (25 files)
 
 An automated outer-loop optimization system (based on arxiv 2603.28052) that treats ATLAS configuration as a tunable parameter space and evolves it automatically.
 
@@ -913,7 +950,7 @@ Candidates that fail safety gates are marked `scope-violation` and discarded wit
 
 ### 3.16 Voice Subsystem
 
-**Directory:** `src/voice/` (4 top-level files + `live/` subdirectory with ~16 files)
+**Directory:** `src/voice/` (31 files total, incl. `live/` subdirectory with ~26 files)
 
 **Transcription** (`transcribe.ts`, `telegram-voice.ts`): Tries in order — OpenAI Whisper or Groq `whisper-large-v3-turbo` → OpenRouter Gemini 2.5 Flash (with `input_audio` content). `transcribeAudio()` and `transcribeBuffer()` variants both supported.
 
@@ -945,7 +982,7 @@ ATLAS implements Google's Agent-to-Agent (A2A) protocol, which enables external 
 ```json
 {
   "name": "A.T.L.A.S",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "capabilities": ["research", "coding", "browser", "system", "memory"],
   "endpoint": "http://127.0.0.1:18792/a2a",
   "maxConcurrentTasks": 5
@@ -988,12 +1025,13 @@ ATLAS implements Google's Agent-to-Agent (A2A) protocol, which enables external 
 
 Cross-platform Electron app (macOS + Windows) with:
 
-- **Overlay panel:** 340 px wide, floats on top of all windows, connects to the ATLAS server at `http://127.0.0.1:18792`
+- **Overlay panel:** The overlay is now the single Electron overlay window (`desktop/`, served from `src/overlay/overlay.html` + `overlay-chat.ts`) — the former native macOS Swift `overlay-app/` has been removed. It floats on top of all windows and connects to the ATLAS overlay WebSocket; the socket is authenticated (a `?localToken=` gate is exchanged via a discovery-first handshake) so it reliably connects cross-platform.
 - **Auto-updater:** `electron-updater`; provider = generic; update metadata served from Convex
 - **Source protection:** Bytecode compilation via `bytenode`; runtime XOR key fetched from Convex `/api/app/runtime-key`; `.env.enc` encrypted with the runtime key
 - **Session management:** Session token cached in Electron `safeStorage` with 1-hour refresh before expiry
-- **Setup wizard:** `wizard.html` guides first-time config (Telegram token, user IDs, etc.)
-- **Chrome extension bridge:** Companion extension (`chrome-extension/`) connects via WebSocket to `ws://127.0.0.1:18792`; Manifest V3 service worker with 20s heartbeat
+- **Setup wizard:** `desktop/wizard/` guides first-time config across staged steps (W1/W2/W3): channel/token setup, a **persona step** (5 persona cards that bias identity + tool selection), a Vision-Intelligence tier step, and a "Magic Moment" Ready Hub whose suggestions are ranked from a live snapshot of the user's running apps (`magic-moment-ranker`). Persona seeds into the prompt layer (`src/prompts/persona-bias.ts`) and onboarding graduation nudges (Day-2/3/5) follow via the proactive engine.
+- **Chrome extension bridge:** Companion extension (`chrome-extension/`) connects over two WebSocket servers — a command bridge and the overlay chat channel; the extension discovers the overlay token via a `/discover` endpoint. Manifest V3 service worker with heartbeat.
+- **Store IPC:** Desktop store install/uninstall routes through the authenticated Convex proxy rather than calling the store backend directly.
 
 **Build targets:**
 - macOS: DMG via `create-dmg.sh` (`npm run build:mac`)
@@ -1003,7 +1041,7 @@ Cross-platform Electron app (macOS + Windows) with:
 
 ### 3.20 Marketing Brain
 
-**Directory:** `src/marketing/` (20 files)
+**Directory:** `src/marketing/` (29 files)
 
 A full content-marketing automation system for agencies and personal brands.
 
@@ -1204,10 +1242,29 @@ Client-side, individual tools also self-rate-limit to prevent single-tool storms
 - **Timing-safe comparison:** `timingSafeCompare()` is used for key validation to prevent timing attacks
 - **Secure storage:** on desktop, session tokens are cached in Electron `safeStorage` (Keychain on macOS, DPAPI on Windows)
 
-### 5.7 Other Security Measures
+### 5.7 Threat-Pattern Library & Prompt-Injection Defense
+
+`src/security/threat-patterns.ts` is a centralized scanner (`scanForThreats`) for prompt-injection, data-exfiltration, and bidirectional-text (bidi) spoofing patterns. It feeds two places: the memory write value-gate (untrusted content is screened before it can be persisted) and untrusted tool-result handling.
+
+- **Untrusted-result fencing** — tool results from untrusted surfaces (fetched web pages, MCP outputs) are wrapped in an explicit fence before reaching the LLM, so injected "ignore previous instructions" payloads are framed as data, not instructions. Disable with `ATLAS_NO_UNTRUSTED_WRAP`; disable the scan with `ATLAS_NO_THREAT_SCAN`.
+
+### 5.8 Outbound URL Guard (SSRF / Metadata Floor)
+
+`src/security/url-safety.ts` validates every outbound URL the agent fetches against an SSRF guard: it blocks private/loopback/link-local ranges and the cloud-metadata floor (`169.254.169.254` and peers) so a coerced fetch can't reach internal services or instance credentials.
+
+### 5.9 Supply-Chain: OSV Malware Check
+
+Before installing an MCP package, `src/security/osv-check.ts` queries OSV for known-malware advisories (`MAL-*`) and refuses install on a hit. `src/security/skill-scanner.ts` similarly scans sideloaded skills. Disable with `ATLAS_NO_OSV_CHECK`.
+
+### 5.10 Secrets Sanitizer (Outbound)
+
+`secrets-sanitizer.ts` (native default-ON, `ATLAS_NO_NATIVE_SANITIZER` to force TS) scans every tool result for credentials before it reaches the LLM — API keys, tokens, and now **DB connection strings and URL userinfo passwords** (`postgres://user:pass@…` → redacted). `sensitive-paths.ts` enumerates path patterns that must never be read into context.
+
+### 5.11 Other Security Measures
 
 - **Dangerous tool gating:** tools with `requiresConfirmation: true` (delete, format, send_email, git push --force) are held by `human-interrupt.ts` for user approval; default 5-minute timeout with configurable default action
-- **Write-path gating in plan mode:** `edit` and `write` tool paths are runtime-validated against the active plan-mode state (`plan`, `spec`, `awaiting_approval`) — not just prompt-enforced
+- **Write-path gating in plan mode:** `edit` and `write` tool paths are runtime-validated against the active plan-mode state (`plan`, `spec`, `awaiting_approval`, `awaiting_dynamic_tool_approval`) — not just prompt-enforced
+- **Skill Forge kernel sandbox:** persisted dynamic tools execute in OS-isolated child processes (macOS sandbox-exec, Linux seccomp + Landlock + netns, Windows AppContainer + JobObject) with a three-strike auto-archive on capability violations — see §3.7 and the Forge spec
 - **MCP tool vetting:** external MCP server tool schemas are validated against a JSON Schema before being exposed to the LLM
 - **Audit log:** every tool call is appended to `data/audit.jsonl` with timestamp, tool name, args (redacted), and outcome; HMAC-signed on reflection events for tamper detection
 
@@ -1361,7 +1418,20 @@ All configuration is via `.env` (copy from `.env.example`).
 | `ATLAS_CODE_PARSER=regex` | Force legacy regex extractors (skip tree-sitter) |
 | `ATLAS_MULTI_TREE_SITTER=true` | Enable Python/Rust/Go tree-sitter (unstable) |
 | `ATLAS_TOOL_DEBUG=off\|verbose` | Tool breadcrumb verbosity |
-| `ATLAS_POST_SYNTHESIS_BUDGET_MS` | Wall-clock cap for code-critic + multi-critic (default 90000) |
+| `ATLAS_POST_SYNTHESIS_BUDGET_MS` | Wall-clock cap for code-critic + multi-critic + verifier (default 90000) |
+| `ATLAS_NO_COST_ROUTING=true` | Disable the cost-aware Opus-cap routing net |
+| `ATLAS_NO_MEMORY_GATE=true` | Disable the memory write value-gate (emergency rollback) |
+| `ATLAS_MEMORY_GATE_SHADOW=false` | Switch the value-gate from shadow (default) to enforcing mode |
+| `ATLAS_NO_SESSION_SEARCH=true` / `ATLAS_CORPUS_MAX_MESSAGES=<n>` | Disable the `session_search` corpus tool / cap stored messages |
+| `ATLAS_NO_META_INTERVENTIONS=true` | Disable metacognition interventions |
+| `ATLAS_NO_META_VOC=true` / `ATLAS_METACOG_SHADOW=true` | Disable the VOC cost threshold / keep Tier-C calibration in shadow |
+| `ATLAS_NO_METACOG_LOG=true` | Don't write the metacognition outcome log |
+| `ATLAS_NO_THREAT_SCAN=true` / `ATLAS_NO_UNTRUSTED_WRAP=true` | Disable threat-pattern scanning / untrusted tool-result fencing |
+| `ATLAS_NO_OSV_CHECK=true` | Skip the OSV malware pre-install check for MCP packages |
+| `ATLAS_NO_FORGE=true` / `ATLAS_NO_FORGE_VERIFIER=true` | Disable Skill Forge entirely / its closed-loop verifier |
+| `ATLAS_FORGE_DREAM_OPUS=true` | Route dream-replay tool synthesis to Opus + max thinking |
+| `ATLAS_NO_RECOVERY_JITTER=true` | Disable full-jitter exponential backoff in error-recovery |
+| `ATLAS_TOOL_LOOP_HARDSTOP` / `ATLAS_NO_PROGRESS_LIMIT` | Tune / disable the per-turn identical-args tool-loop guardrail |
 
 ### Optional — Vision Navigation
 
@@ -1370,6 +1440,14 @@ All configuration is via `.env` (copy from `.env.example`).
 | `ATLAS_VISION_PROFILE=lite\|standard\|full` | Override the capability-detector's auto-picked profile |
 | `ATLAS_NO_CLICK_MEMORY=true` | Disable persistent click-memory recall / record |
 | `ATLAS_NO_DRIFT_CALIBRATION=true` | Disable per-monitor affine drift correction |
+| `ATLAS_NO_CLOUD_GROUNDING=true` | Disable the Qwen cloud-grounding cascade tier |
+| `ATLAS_NO_OMNIPARSER=true` / `ATLAS_NO_OMNIPARSER_AUTOSETUP=true` | Skip the OmniParser tier / its background venv+weights provisioning |
+| `ATLAS_NO_UI_TARS_AUTOPULL=true` | Don't auto-pull the UI-TARS quant on Full hosts |
+| `ATLAS_NO_UITARS_HEALTHCHECK=true` | Skip the UI-TARS vision-inference smoke test |
+| `ATLAS_UI_TARS_TAG=<tag>` | Override the pinned UI-TARS Ollama quant |
+| `ATLAS_NO_SMARTCLICK_VERIFY=true` / `ATLAS_NO_SMARTCLICK_SELFCORRECT=true` | Trust vision-tier clicks without before/after verification / disable one-shot self-correction |
+| `ATLAS_NO_AX_RETRY=true` / `ATLAS_AX_RETRY_DELAY_MS=<ms>` | Disable cold-window AX re-dump / tune its settle delay (default 250) |
+| `ATLAS_NO_WINDOW_SCOPED_CAPTURE=true` | Force `os_smart_click` to full-screen capture instead of window-region |
 | `ATLAS_NATIVE_AX=true` | Opt-in: route AX tree flatten/find through `native/src/ax_walker.rs` (TS is faster for trees <200 nodes; only flip for AX-heavy workloads) |
 
 ### Optional — Native Rust opt-ins / overrides
@@ -1496,52 +1574,58 @@ The environment variables listed below all default to the feature being ON. Sett
 
 ```
 ATLAS/
-├── src/                        (TypeScript source, ~650 files incl. tests)
+├── src/                        (TypeScript source, ~770 files incl. tests)
 │   ├── index.ts                (entry point, boot sequence)
 │   ├── agent.ts                (runAgent, core loop)
 │   ├── llm.ts / llm-middleware.ts / llm-cache.ts / llm-parsers/
 │   ├── crypto-transport.ts     (ECDH + AES-256-GCM)
 │   ├── crypto-kdf.ts / context-scrubber.ts
-│   ├── model-router.ts         (Rust wrapper)
+│   ├── model-router.ts         (Rust wrapper — tiers + cost-aware routing)
 │   ├── tool-router.ts          (semantic tool selection)
-│   ├── memory/                 (49 files + code-parse/ — incl. Memory Studio)
-│   ├── screen/                 (10 files — Vision Navigation: capability detector, perception router, click memory, drift calibration, OmniParser, UI-TARS, AX dump)
-│   ├── agents/                 (30 files — swarm, mesh, long-task, sub-agent, etc.)
-│   ├── tools/                  (126 files)
-│   │   ├── browser/            (15 files — dual-backend automation)
-│   │   ├── coding/             (25+ files — design docs, LSP, codebase index)
+│   ├── memory/                 (70 files + code-parse/ — incl. value-gate, compression-template, Memory Studio)
+│   ├── screen/                 (23 files — Vision Navigation: capability detector, perception router, click memory, drift calibration, OmniParser + setup, UI-TARS, cloud grounding, AX dump)
+│   ├── agents/                 (50 files — swarm, mesh, long-task, sub-agent, metacognition, etc.)
+│   ├── forge/                  (52 files — Skill Forge: dynamic-tool synthesis + verifier + kernel sandbox shim)
+│   ├── tools/                  (149 files)
+│   │   ├── browser/            (21 files — dual-backend automation)
+│   │   ├── coding/             (34 files — design docs, LSP, codebase index)
+│   │   ├── session-search.ts   (FTS5 conversation-corpus recall)
 │   │   └── os-smart-click.ts / os-computer-action.ts / os-grounding.ts / os-inspect.ts / platform.ts
 │   ├── research/               (11 files — deep research engine)
-│   ├── proactive/              (58 files — heartbeat, dreaming, composer, dispatch, inbox, monitors, sources, telemetry)
-│   ├── harness/                (17 files — Meta-Harness optimizer)
-│   ├── video-studio/           (25 files — AI video editing)
+│   ├── proactive/              (111 files — heartbeat, dreaming, composer, dispatch, inbox, monitors, sources, telemetry)
+│   ├── harness/                (25 files — Meta-Harness optimizer)
+│   ├── video-studio/           (49 files — AI video editing)
 │   ├── marketing/              (29 files — Marketing Brain)
-│   ├── voice/                  (4 files + live/ ~16 — TTS, STT, live voice, Kokoro local TTS)
+│   ├── voice/                  (31 files incl. live/ ~26 — TTS, STT, live voice, Kokoro local TTS)
 │   ├── social/                 (emotion-detector.ts — lexicon + punctuation heuristic)
 │   ├── documents/              (10 files — block-based doc renderer + templates)
 │   ├── location/               (7 files — GPS → Wi-Fi → IP fallback)
 │   ├── planning/               (MCTS, hierarchical)
 │   ├── mcp/                    (Model Context Protocol)
-│   ├── hooks/ cron/            (3 + 3 files — built-in tool hooks, cron schedules)
-│   └── security/               (sandbox, allowlist, secrets)
-├── native/                     (Rust, 64 modules)
+│   ├── commands/               (slash commands — /recap, /doctor)
+│   ├── diagnostics/            (/doctor system probe)
+│   ├── overlay/                (Electron overlay chat server + overlay.html)
+│   ├── prompts/                (8 files — dynamic assembly + persona-bias + watermark)
+│   ├── hooks/ cron/            (3 + 6 files — built-in tool hooks, cron schedules)
+│   └── security/               (17 files — threat patterns, URL/SSRF guard, OSV check, skill scanner, secrets sanitizer, allowlist, sandbox)
+├── native/                     (Rust, 78 modules)
 │   ├── src/
 │   │   ├── ax_walker.rs        (cross-OS AX flatten/find — opt-in)
 │   │   ├── pcm_vad.rs          (libfvad barge-in — cargo feature `vad`, opt-in)
 │   │   ├── secrets_sanitizer.rs (default-ON, 1.44–2.00× faster than TS)
-│   │   └── … 61 more modules
+│   │   ├── forge_sandbox/      (kernel-sandbox supervisor: seccomp/Landlock · sandbox-exec · AppContainer)
+│   │   └── … 73 more modules
 │   └── Cargo.toml
-├── convex/                     (serverless backend)
+├── convex/                     (serverless backend — 30 .ts files, 21 tables)
 │   ├── schema.ts
 │   ├── http.ts
 │   ├── crypto.ts
 │   └── store/
-├── desktop/                    (Electron app)
+├── desktop/                    (Electron app + overlay window)
 │   ├── installer/              (phase runner — Ollama, Python venv, vision deps)
-│   ├── wizard/                 (first-run wizard incl. vision-intelligence tier step)
+│   ├── wizard/                 (first-run wizard — persona step, vision-intelligence tier, magic-moment Ready Hub)
 │   └── components/ detection/ migration/ hostinger-upload/
 ├── chrome-extension/           (MV3 companion extension)
-├── overlay-app/                (native macOS Swift app)
 ├── portals/
 │   ├── admin-panel/            (Next.js admin dashboard)
 │   └── developer-portal/       (Next.js developer portal)
