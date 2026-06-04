@@ -2791,7 +2791,7 @@ PLAN:`,
 
                 const hasVisualTools = toolSelection.categories.includes("os_control");
                 const continuationHint = hasVisualTools
-                    ? "Use os_screenshot to see what's on screen right now, then os_click/os_ocr_click to interact with the visible UI elements. You have full mouse+keyboard control."
+                    ? "Use os_smart_click with a natural-language instruction (e.g. 'the Wi-Fi row') — it cascades AX → OmniParser → UI-TARS/cloud grounding automatically and is far more reliable than os_ocr_click, which has been failing here. Only fall back to os_screenshot + os_click if os_smart_click returns cascade_miss. You have full mouse+keyboard control."
                     : "Try a completely different approach — use request_tools if you need different capabilities, or try browser_navigate to accomplish it via the web.";
 
                 console.log(
