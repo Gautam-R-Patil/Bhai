@@ -150,12 +150,21 @@ export const browserNavigate: ToolDefinition = {
                 tip: "Read interactive_elements_text to find the label ID, then use browser_click_at with the label to click.",
             };
 
-            if (isDesignTool || hasVeryFewElements) {
-                result.design_tool_mode = isDesignTool;
-                result.canvas_app = isDesignTool || hasVeryFewElements;
-                result.tip = isDesignTool
-                    ? `🎨 DESIGN TOOL DETECTED (${navDomain}). This is a canvas app with minimal DOM. ALWAYS use browser_scan(visual:true) to see the UI, then click by exact coordinates (x,y) NOT by label. Use browser_scan(visual:true) before every action. Keyboard shortcuts are key: 'v'=select, 'r'=rectangle, 't'=text, 'h'=hand/pan, Escape=deselect, Cmd+Z=undo, Cmd+S=save.`
-                    : "⚠️ Very few interactive elements found. Use browser_scan(visual:true) to see the full page layout, then click by coordinates.";
+            // `canvas_app` means a GENUINE canvas surface (design tool) — it drives
+            // the agent to vision-only coordinate clicking. A transient empty/low
+            // DOM scan on an ordinary page (e.g. google.com scanned 0 elements before
+            // it settled) must NOT be labelled canvas_app, or the agent abandons the
+            // fast DOM path for a normal site. So: design tools → canvas_app; few/zero
+            // elements on a non-design domain → only a "rescan visually" hint.
+            if (isDesignTool) {
+                result.design_tool_mode = true;
+                result.canvas_app = true;
+                result.tip = `🎨 DESIGN TOOL DETECTED (${navDomain}). This is a canvas app with minimal DOM. ALWAYS use browser_scan(visual:true) to see the UI, then click by exact coordinates (x,y) NOT by label. Use browser_scan(visual:true) before every action. Keyboard shortcuts are key: 'v'=select, 'r'=rectangle, 't'=text, 'h'=hand/pan, Escape=deselect, Cmd+Z=undo, Cmd+S=save.`;
+            } else if (hasVeryFewElements) {
+                result.design_tool_mode = false;
+                result.canvas_app = false; // ordinary page with a thin/cold scan, not a canvas
+                result.tip =
+                    "⚠️ Few interactive elements detected — the page may still be loading or the scan ran early. Re-run browser_scan (optionally visual:true) before deciding it's element-less.";
             }
 
             if (accessibilityTree) {

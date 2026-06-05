@@ -2075,12 +2075,17 @@ pub fn select_model(opts: SelectModelOptions) -> ModelSelection {
     // screen?" only calls os_screenshot/os_context — gpt-4.1-nano is
     // vision-capable and handles those fine. Forcing Sonnet on every os_/
     // browser_ loop made trivial screen reads cost ~24K tokens/iter.
-    // Read-only tools that must NOT trigger the Sonnet upgrade:
+    // Read-only inspection AND trivial-navigation tools that must NOT trigger the
+    // Sonnet upgrade. Navigation (open URL / back / wait) is not agentic — it needs
+    // no vision or reasoning, so forcing Sonnet on "open google" wasted ~22K tokens
+    // for a 12-token confirmation. Genuinely-agentic interaction (click/type/scroll/
+    // drag/smart_click) is NOT here and still escalates.
     let read_only_screen_tools = [
         "os_screenshot", "os_context", "os_ocr", "os_ocr_click", "os_inspect",
         "os_accessibility_tree", "os_scan", "screen_record", "browser_scan",
         "browser_extract", "browser_extract_article", "browser_analyze",
         "browser_chrome_status", "browser_network_requests", "browser_form_state",
+        "browser_navigate", "browser_back", "browser_wait", "browser_wait_for_selector",
     ];
     let has_action_browser_os = opts.last_tool_calls
         .as_ref()
@@ -2090,14 +2095,42 @@ pub fn select_model(opts: SelectModelOptions) -> ModelSelection {
         }))
         .unwrap_or(false);
     if has_action_browser_os && task_type == TaskType::ToolLoop {
-        // Prefer Sonnet for genuinely-agentic browser/OS automation, respect
-        // circuit breaker
-        let preferred = "anthropic/claude-sonnet-4.6";
-        if !is_circuit_open(preferred) {
-            model_id = preferred.to_string();
-            reason.push_str(":browser_os_sonnet46");
-        } else {
-            // Fallback through vision-capable models
+        // ── Graduated browser/OS routing ──
+        // The old rule forced Sonnet on EVERY action browser/OS loop, so a
+        // one-shot "open google" cost ~22K tokens on Sonnet. Reserve Sonnet
+        // for the genuinely-hard ~3-5% (vision/canvas pages, error/retry loops,
+        // CAPTCHA/auth flows) and descend to cheap vision-capable models for
+        // the simple majority. This fn sees only tool NAMES + message +
+        // iteration/error/media — not tool results — so canvas detection uses
+        // message keywords (is_creative_task) + has_media as the proxy.
+        // gpt-5-nano has NO vision: it serves text-DOM-only steps; any vision
+        // step (screenshot/scan/grounding) must go to a vision-capable model.
+        let tool_names: Vec<&str> = opts.last_tool_calls
+            .as_ref()
+            .map(|calls| calls.iter().map(|tc| tc.name.as_str()).collect())
+            .unwrap_or_default();
+        let vision_bearing_tools = [
+            "os_screenshot", "browser_scan", "os_smart_click", "os_ground",
+            "os_visualize", "os_click", "os_ocr_click", "browser_click_at",
+        ];
+        let has_vision_step = has_media
+            || tool_names.iter().any(|n| vision_bearing_tools.contains(n));
+        let has_captcha_tool = tool_names.contains(&"browser_handle_captcha");
+        let auth_keywords = msg_lower.contains("captcha")
+            || msg_lower.contains("login") || msg_lower.contains("log in")
+            || msg_lower.contains("sign in") || msg_lower.contains("checkout")
+            || msg_lower.contains("password") || msg_lower.contains("2fa")
+            || msg_lower.contains(" otp");
+
+        // complex (~3-5%) → Sonnet: canvas/design page, visual grounding,
+        // error/retry loop, or CAPTCHA/auth flow.
+        let is_complex_browser = is_creative_task
+            || has_media
+            || error_count >= 2
+            || has_captcha_tool
+            || auth_keywords;
+
+        if is_complex_browser {
             let vision_fallbacks = [
                 "anthropic/claude-sonnet-4.6",
                 "anthropic/claude-opus-4.6",
@@ -2106,10 +2139,35 @@ pub fn select_model(opts: SelectModelOptions) -> ModelSelection {
             for fb in &vision_fallbacks {
                 if !is_circuit_open(fb) {
                     model_id = fb.to_string();
-                    let short_name = fb.split('/').last().unwrap_or(fb);
-                    reason.push_str(&format!(":browser_os_fallback_{}", short_name));
+                    reason.push_str(if *fb == "anthropic/claude-sonnet-4.6" {
+                        ":browser_complex_sonnet"
+                    } else {
+                        ":browser_complex_fallback"
+                    });
                     break;
                 }
+            }
+        } else if iteration >= 3 || adjusted_score >= 45 {
+            // moderate → Gemini 3.1 Pro (strong, cheaper than Sonnet).
+            let gemini = "google/gemini-3.1-pro-preview-customtools";
+            if !is_circuit_open(gemini) {
+                model_id = gemini.to_string();
+                reason.push_str(":browser_mod_gemini");
+            } else if !is_circuit_open("anthropic/claude-sonnet-4.6") {
+                model_id = "anthropic/claude-sonnet-4.6".to_string();
+                reason.push_str(":browser_mod_fallback_sonnet");
+            }
+        } else if has_vision_step {
+            // simple + vision → GPT-5 mini (vision-capable, cheap).
+            if !is_circuit_open("openai/gpt-5-mini") {
+                model_id = "openai/gpt-5-mini".to_string();
+                reason.push_str(":browser_simple_mini");
+            }
+        } else {
+            // simple text-DOM (navigate/click-by-selector/type) → GPT-5 nano.
+            if !is_circuit_open("openai/gpt-5-nano") {
+                model_id = "openai/gpt-5-nano".to_string();
+                reason.push_str(":browser_simple_nano");
             }
         }
     }
@@ -2825,5 +2883,91 @@ mod circuit_breaker_tests {
             CIRCUIT_BREAKER_THRESHOLD * CIRCUIT_BREAKER_TRANSIENT_MULTIPLIER
                 > CIRCUIT_BREAKER_THRESHOLD
         );
+    }
+}
+
+#[cfg(test)]
+mod browser_routing_tests {
+    use super::*;
+
+    fn tc(name: &str) -> ToolCallRef {
+        ToolCallRef { name: name.to_string() }
+    }
+
+    // Build a tool-loop selection for a browser/OS action loop. iteration>=2
+    // so infer_task_type yields ToolLoop. Asserts run on the reason tag, which
+    // the browser branch sets deterministically (final model_id can be rewritten
+    // by the downstream tool-success failover pass, so we key on the tag).
+    fn browser_reason(
+        message: &str,
+        iteration: i32,
+        error_count: i32,
+        has_media: bool,
+        last_tools: Vec<&str>,
+    ) -> String {
+        let sel = select_model(SelectModelOptions {
+            task_type: Some(TaskType::ToolLoop),
+            message: Some(message.to_string()),
+            iteration: Some(iteration),
+            error_count: Some(error_count),
+            has_media: Some(has_media),
+            model_hint: None,
+            last_tool_calls: Some(last_tools.iter().map(|n| tc(n)).collect()),
+            urgency: None,
+        });
+        sel.reason
+    }
+
+    #[test]
+    fn pure_navigation_stays_on_cheap_base() {
+        // browser_navigate/back/wait are read-only (not agentic) and skip the
+        // escalation block entirely → stay on the cheap tool_loop base model.
+        // This is the "open google should not use Sonnet" fix.
+        let r = browser_reason("open google", 2, 0, false, vec!["browser_navigate"]);
+        assert!(!r.contains("sonnet"), "pure nav must not be Sonnet, got: {r}");
+        assert!(!r.contains(":browser_complex"), "pure nav is not complex, got: {r}");
+    }
+
+    #[test]
+    fn simple_text_dom_action_uses_nano() {
+        // An action click-by-selector with no vision tool in the loop → nano.
+        let r = browser_reason("click the link", 2, 0, false, vec!["browser_click"]);
+        assert!(r.contains(":browser_simple_nano"), "expected nano, got: {r}");
+    }
+
+    #[test]
+    fn simple_vision_step_uses_mini() {
+        let r = browser_reason("click the blue button", 2, 0, false, vec!["os_smart_click"]);
+        assert!(r.contains(":browser_simple_mini"), "expected mini, got: {r}");
+    }
+
+    #[test]
+    fn error_loop_escalates_to_sonnet() {
+        let r = browser_reason("click the link", 2, 2, false, vec!["browser_click"]);
+        assert!(r.contains(":browser_complex_sonnet"), "expected sonnet, got: {r}");
+    }
+
+    #[test]
+    fn has_media_escalates_to_sonnet() {
+        let r = browser_reason("click around", 2, 0, true, vec!["browser_click"]);
+        assert!(r.contains(":browser_complex_sonnet"), "expected sonnet, got: {r}");
+    }
+
+    #[test]
+    fn captcha_tool_escalates_to_sonnet() {
+        let r = browser_reason("solve it", 2, 0, false, vec!["browser_handle_captcha"]);
+        assert!(r.contains(":browser_complex_sonnet"), "expected sonnet, got: {r}");
+    }
+
+    #[test]
+    fn login_keyword_escalates_to_sonnet() {
+        let r = browser_reason("log in to my account", 2, 0, false, vec!["browser_type"]);
+        assert!(r.contains(":browser_complex_sonnet"), "expected sonnet, got: {r}");
+    }
+
+    #[test]
+    fn deep_iteration_uses_gemini() {
+        let r = browser_reason("keep going", 3, 0, false, vec!["browser_click"]);
+        assert!(r.contains(":browser_mod_gemini"), "expected gemini, got: {r}");
     }
 }

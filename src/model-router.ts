@@ -958,13 +958,36 @@ export function maybeEscalateForBrowser(
         };
     }
 
-    // Normal browser loop — Light → Pro (Sonnet)
-    if (isInBrowserLoop && currentTier > PRO_TIER_CEILING && sonnet) {
+    // ── Kill-switch: restore old "any browser loop → Sonnet" behavior ──
+    if (process.env.ATLAS_NO_DYNAMIC_BROWSER_ROUTING === "true") {
+        if (isInBrowserLoop && currentTier > PRO_TIER_CEILING && sonnet) {
+            return {
+                ...base,
+                modelId: sonnet.id,
+                displayName: sonnet.displayName || sonnet.id,
+                reason: `${base.reason} → browser loop escalation (dynamic routing disabled)`,
+            };
+        }
+        return null;
+    }
+
+    // Complex browser loop → Sonnet ONLY on hard signals (error/retry loop or
+    // CAPTCHA/auth). A plain browser loop is left on the native pick
+    // (nano/mini/Gemini per the graduated ladder) — escalating it here would
+    // undo the cost savings. Mirrors the native browser ladder; aligned so the
+    // TS post-pass never silently re-escalates a cheap pick to Sonnet.
+    const hasCaptchaTool =
+        !!lastToolCalls && lastToolCalls.some((t) => t.function.name === "browser_handle_captcha");
+    const authKeywords = /\b(?:captcha|log\s?in|sign\s?in|checkout|password|2fa|otp)\b/i.test(message);
+    const isComplexBrowser = errorCount >= 2 || hasCaptchaTool || authKeywords;
+    if (isInBrowserLoop && isComplexBrowser && currentTier > PRO_TIER_CEILING && sonnet) {
         return {
             ...base,
             modelId: sonnet.id,
             displayName: sonnet.displayName || sonnet.id,
-            reason: `${base.reason} → browser loop escalation`,
+            reason: `${base.reason} → browser complex escalation (${
+                errorCount >= 2 ? "error loop" : hasCaptchaTool ? "captcha" : "auth flow"
+            })`,
         };
     }
 
