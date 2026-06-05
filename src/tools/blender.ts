@@ -3,8 +3,8 @@
 // See LICENSE.md for details.
 
 import { execFile } from "node:child_process";
-import { promises as fs } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, promises as fs } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { ToolDefinition } from "./get-current-time.js";
@@ -16,6 +16,52 @@ const execFileAsync = promisify(execFile);
 const MAX_OUTPUT = 10000;
 const DEFAULT_TIMEOUT = 120000; // 2 minutes (3D renders can take time)
 
+// ── Cross-OS Blender resolution ───────────────
+// Resolve the Blender executable across macOS / Windows / Linux. Honors
+// ATLAS_BLENDER_PATH first, then common install locations, then PATH (`blender`).
+async function resolveBlenderPath(): Promise<string | null> {
+    const envPath = process.env.ATLAS_BLENDER_PATH;
+    if (envPath && existsSync(envPath)) return envPath;
+
+    const candidates: string[] = [];
+    if (process.platform === "darwin") {
+        candidates.push("/Applications/Blender.app/Contents/MacOS/Blender");
+        candidates.push(join(homedir(), "Applications/Blender.app/Contents/MacOS/Blender"));
+    } else if (process.platform === "win32") {
+        const pf = process.env.ProgramFiles || "C:\\Program Files";
+        // Blender installs under a versioned dir (e.g. "Blender Foundation\\Blender 4.2\\blender.exe").
+        const root = join(pf, "Blender Foundation");
+        if (existsSync(root)) {
+            try {
+                const versions = await fs.readdir(root);
+                for (const v of versions.sort().reverse()) {
+                    const exe = join(root, v, "blender.exe");
+                    if (existsSync(exe)) candidates.push(exe);
+                }
+            } catch {
+                /* ignore */
+            }
+        }
+        candidates.push(join(pf, "Blender", "blender.exe"));
+    } else {
+        candidates.push("/usr/bin/blender", "/usr/local/bin/blender", "/snap/bin/blender", "/var/lib/flatpak/exports/bin/org.blender.Blender");
+    }
+    for (const c of candidates) {
+        if (existsSync(c)) return c;
+    }
+
+    // Last resort: PATH lookup (`which`/`where`).
+    try {
+        const finder = process.platform === "win32" ? "where" : "which";
+        const { stdout } = await execFileAsync(finder, ["blender"], { timeout: 5000 });
+        const first = stdout.split(/\r?\n/).map((s) => s.trim()).find(Boolean);
+        if (first && existsSync(first)) return first;
+    } catch {
+        /* not on PATH */
+    }
+    return null;
+}
+
 // ── Blender Script Tool ───────────────────────
 
 export const blenderScript: ToolDefinition = {
@@ -24,7 +70,7 @@ export const blenderScript: ToolDefinition = {
         function: {
             name: "blender_script",
             description:
-                "Execute a Python script in a headless Blender instance. Use this to procedurally generate 3D models, scenes, and renders using the bpy API.",
+                "Execute a Python (bpy) script in Blender to procedurally generate/edit 3D models, scenes, and renders. Cross-OS (macOS/Windows/Linux). Runs headless (--background) by default; set ATLAS_BLENDER_PATH to point at a specific Blender binary.",
             parameters: {
                 type: "object",
                 properties: {
@@ -45,22 +91,19 @@ export const blenderScript: ToolDefinition = {
     },
 
     async handler(input) {
-        if (process.platform !== "darwin") {
-            return JSON.stringify({
-                error: "Currently, blender_script tool assumes macOS path (/Applications/Blender.app/Contents/MacOS/Blender).",
-            });
-        }
-
         const script = input.script as string;
         const timeout = (input.timeout as number) || DEFAULT_TIMEOUT;
 
-        // Ensure Blender is installed
-        const blenderPath = "/Applications/Blender.app/Contents/MacOS/Blender";
-        try {
-            await fs.access(blenderPath);
-        } catch {
+        const blenderPath = await resolveBlenderPath();
+        if (!blenderPath) {
+            const hint =
+                process.platform === "darwin"
+                    ? "/Applications/Blender.app"
+                    : process.platform === "win32"
+                      ? "C:\\Program Files\\Blender Foundation\\Blender <ver>\\blender.exe"
+                      : "your package manager (apt/snap/flatpak) or /usr/bin/blender";
             return JSON.stringify({
-                error: `Blender not found at ${blenderPath}. Please ensure Blender is installed in the Applications folder.`,
+                error: `Blender not found. Install it (expected near ${hint}) or set ATLAS_BLENDER_PATH to the blender executable.`,
             });
         }
 
