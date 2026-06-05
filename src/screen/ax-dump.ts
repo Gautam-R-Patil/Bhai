@@ -419,7 +419,14 @@ function _tokens(s: string): string[] {
 function scoreText(q: string, hay: string): number {
     if (!hay) return 0;
     if (hay === q) return 1.0;
-    if (hay.includes(q) || q.includes(hay)) return 0.85;
+    // Label CONTAINS the whole query → strong (the query is a specific substring
+    // of a longer label, e.g. q="Downloads" hay="Downloads, 14 items").
+    if (hay.includes(q)) return 0.85;
+    // Query CONTAINS the label as a substring — only strong when the label is a
+    // SUBSTANTIAL fraction of the query. A short label buried in a long unrelated
+    // instruction (q="the purple ... widget" ⊃ "Purple") must NOT score 0.85 here;
+    // it falls through to the token logic which weighs query-side coverage.
+    if (q.includes(hay) && hay.length >= Math.max(4, q.length * 0.5)) return 0.85;
 
     // Token-aware match: agents pass DESCRIPTIVE instructions ("the Downloads
     // folder in the Finder sidebar") while AX labels are short ("Downloads").
@@ -432,15 +439,21 @@ function scoreText(q: string, hay: string): number {
     if (qTok.length > 0 && hTok.length > 0) {
         const qSet = new Set(qTok);
         const hSet = new Set(hTok);
-        // Coverage of the label's tokens by the query (handles long query / short label).
-        const hayCovered = hTok.filter((t) => qSet.has(t)).length / hTok.length;
-        // Coverage of the query's tokens by the label (handles the reverse).
-        const qCovered = qTok.filter((t) => hSet.has(t)).length / qTok.length;
-        const tokenScore = Math.max(hayCovered, qCovered);
-        // Full label-token coverage is a strong signal (0.82 — above ax_fuzzy 0.8,
-        // below ax_exact 0.95); partial coverage scales down.
-        if (tokenScore >= 0.999) return 0.82;
-        if (tokenScore > 0) return Math.min(0.78, 0.4 + tokenScore * 0.4);
+        const sharedH = hTok.filter((t) => qSet.has(t)).length;
+        const sharedQ = qTok.filter((t) => hSet.has(t)).length;
+        const hayCovered = sharedH / hTok.length; // label tokens found in query
+        const qCovered = sharedQ / qTok.length; // query tokens found in label
+        // A short label fully covered by a LONG query is weak evidence — the query
+        // is "about" something else and just happens to contain the label word
+        // (e.g. "the purple ... widget" hitting a tag labeled "Purple"). Require
+        // BOTH meaningful label-coverage AND that the shared tokens aren't a tiny
+        // fraction of the query. Score = harmonic-ish blend so one-sided coverage
+        // can't alone reach the top. Genuine case (label = the query's head noun,
+        // e.g. "Downloads" in "the Downloads folder in the sidebar") still wins
+        // because qCovered there is high relative to the few content tokens.
+        if (hayCovered >= 0.999 && qCovered >= 0.5) return 0.82; // label fully in query AND dominates it
+        const blend = (2 * hayCovered * qCovered) / (hayCovered + qCovered || 1); // F1 of the two coverages
+        if (blend > 0) return Math.min(0.79, 0.35 + blend * 0.45);
     }
 
     // Char-overlap similarity for very loose matches.
