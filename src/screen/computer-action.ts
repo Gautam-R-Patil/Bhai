@@ -94,6 +94,7 @@ export function parseComputerAction(input: unknown): ValidationSuccess | Validat
     if (typeof raw.imageWidth === "number" && raw.imageWidth > 0) common.imageWidth = raw.imageWidth;
     if (typeof raw.monitorId === "string") common.monitorId = raw.monitorId;
 
+    // NOTE: zoom uses `region: [x0,y0,x1,y1]`, NOT `coord` — it must not be here.
     const needsCoord = [
         "click",
         "double_click",
@@ -101,7 +102,6 @@ export function parseComputerAction(input: unknown): ValidationSuccess | Validat
         "right_click",
         "mouse_move",
         "scroll",
-        "zoom",
     ].includes(action);
     let coord: [number, number] | null = null;
     if (needsCoord) {

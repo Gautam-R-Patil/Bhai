@@ -16,6 +16,7 @@ import { promisify } from "node:util";
 import { type ComputerAction, parseComputerAction, resolveCoord } from "../screen/computer-action.js";
 import { getScreenDimensions } from "../screen/screen-dimensions.js";
 import type { ToolDefinition } from "./get-current-time.js";
+import { takeScreenshot } from "./platform-bridge.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -55,7 +56,7 @@ export const osComputerAction: ToolDefinition = {
                         type: "array",
                         items: { type: "number" },
                         description:
-                            "Coordinate as [x, y]. With coordSystem='percent' (default) values are 0..1. Required for click/double_click/right_click/mouse_move/scroll/zoom.",
+                            "Coordinate as [x, y]. With coordSystem='percent' (default) values are 0..1. Required for click/double_click/right_click/mouse_move/scroll. (zoom uses `region` instead.)",
                     },
                     coordSystem: {
                         type: "string",
@@ -112,6 +113,48 @@ export const osComputerAction: ToolDefinition = {
     },
 };
 
+/**
+ * Crop a region of the current screen at full resolution and return it as base64,
+ * so a VLM/grounder can read small dense UI (Figma/Canva toolbars, tiny menu
+ * items) that it would otherwise miss in a downscaled full-screen frame. Mirrors
+ * Anthropic's computer_20251124 `zoom`. Region is [x0,y0,x1,y1]; percent (default,
+ * 0..1) is scaled to the captured image, screen/image are treated as pixels.
+ */
+async function executeZoom(
+    region: [number, number, number, number],
+    coordSystem?: string,
+): Promise<Record<string, unknown>> {
+    const shot = await takeScreenshot();
+    const sharp = (await import("sharp")).default;
+    const meta = await sharp(shot).metadata();
+    const imgW = meta.width || 0;
+    const imgH = meta.height || 0;
+    if (!imgW || !imgH) return { action: "zoom", error: "could_not_read_screenshot_dimensions" };
+
+    let [x0, y0, x1, y1] = region;
+    if (!coordSystem || coordSystem === "percent") {
+        x0 *= imgW;
+        x1 *= imgW;
+        y0 *= imgH;
+        y1 *= imgH;
+    }
+    // Normalize + clamp to image bounds.
+    const left = Math.max(0, Math.min(imgW - 1, Math.round(Math.min(x0, x1))));
+    const top = Math.max(0, Math.min(imgH - 1, Math.round(Math.min(y0, y1))));
+    const width = Math.max(1, Math.min(imgW - left, Math.round(Math.abs(x1 - x0))));
+    const height = Math.max(1, Math.min(imgH - top, Math.round(Math.abs(y1 - y0))));
+
+    const cropped = await sharp(shot).extract({ left, top, width, height }).png().toBuffer();
+    return {
+        action: "zoom",
+        zoomed_base64: cropped.toString("base64"),
+        cropRegionPx: { left, top, width, height },
+        imageWidth: width,
+        imageHeight: height,
+        note: "Cropped region at full resolution. Read this image to locate small UI, then click using the original screen coords (cropRegionPx gives the offset).",
+    };
+}
+
 async function executeStructuredAction(act: ComputerAction): Promise<Record<string, unknown>> {
     switch (act.action) {
         case "click":
@@ -164,11 +207,7 @@ async function executeStructuredAction(act: ComputerAction): Promise<Record<stri
             };
         }
         case "zoom":
-            return {
-                action: "zoom",
-                region: act.region,
-                note: "Zoom region recorded; consumer (e.g. UI-TARS in Phase 3) will crop before grounding.",
-            };
+            return await executeZoom(act.region, act.coordSystem);
         default: {
             const _exhaustive: never = act;
             throw new Error(`Unhandled action: ${JSON.stringify(_exhaustive)}`);
@@ -323,13 +362,40 @@ async function dispatchDrag(points: Array<{ x: number; y: number }>): Promise<vo
         await execFileAsync("xdotool", ["mouseup", "1"], { timeout: 3000 });
         return;
     }
-    // Windows drag — for Phase 1 we fall through to consecutive moves; a proper SendInput-based
-    // drag is in Phase 2's cross-OS AX/IO layer.
-    // Windows drag: SendInput-based implementation deferred. For now, error explicitly so
-    // the agent can route to a different tool (e.g. PowerShell SendInput script).
-    throw new Error(
-        "drag_not_supported_windows:not yet implemented in os_computer_action — use powershell_script with SendInput, or perform a click + manual move sequence",
-    );
+    if (process.platform === "win32") {
+        // SetCursorPos + mouse_event LEFTDOWN at p0 → move through intermediate
+        // points → LEFTUP at the last. mouse_event flags: 0x0002 LEFTDOWN, 0x0004 LEFTUP.
+        const moves = points
+            .map((p, idx) => {
+                if (idx === 0) {
+                    return `[WinDrag]::SetCursorPos(${p.x}, ${p.y}) | Out-Null; Start-Sleep -Milliseconds 40; [WinDrag]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)`;
+                }
+                return `Start-Sleep -Milliseconds 30; [WinDrag]::SetCursorPos(${p.x}, ${p.y}) | Out-Null`;
+            })
+            .join("\n");
+        const last = points[points.length - 1];
+        const ps = `
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class WinDrag {
+    [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, int data, UIntPtr extraInfo);
+}
+"@
+${moves}
+Start-Sleep -Milliseconds 50
+[WinDrag]::SetCursorPos(${last.x}, ${last.y}) | Out-Null
+[WinDrag]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+`.trim();
+        await execFileAsync(
+            "powershell",
+            ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", ps],
+            { timeout: 15000 },
+        );
+        return;
+    }
+    throw new Error(`drag not yet implemented for platform: ${process.platform}`);
 }
 
 async function dispatchScroll(x: number, y: number, dx: number, dy: number): Promise<void> {
@@ -418,8 +484,27 @@ async function ensureYdotoold(): Promise<void> {
     }
 }
 
+// Real synthetic keystrokes (not clipboard-paste) are required for games,
+// terminals, key-repeat-sensitive fields, and to avoid clobbering the user's
+// clipboard. We use real keystrokes for short ASCII text and fall back to the
+// (faster, unicode-safe) clipboard-paste only for long or non-ASCII strings.
+// ATLAS_TYPE_VIA_CLIPBOARD=true forces the old paste behavior everywhere.
+function shouldRealKeystroke(text: string): boolean {
+    if (process.env.ATLAS_TYPE_VIA_CLIPBOARD === "true") return false;
+    // ASCII printable only, and short enough that per-char synthesis isn't slow.
+    return text.length <= 200 && /^[\x20-\x7e]*$/.test(text);
+}
+
 async function dispatchType(text: string): Promise<void> {
     if (process.platform === "darwin") {
+        if (shouldRealKeystroke(text)) {
+            // System Events `keystroke` sends REAL synthetic key events (not paste).
+            const escaped = escapeApplescript(text);
+            await execFileAsync("osascript", ["-e", `tell application "System Events" to keystroke "${escaped}"`], {
+                timeout: 15000,
+            });
+            return;
+        }
         const escaped = escapeApplescript(text);
         const script = `
 set oldClipboard to ""
@@ -448,6 +533,13 @@ end try`;
         return;
     }
     if (process.platform === "win32") {
+        if (shouldRealKeystroke(text)) {
+            // Real keystrokes via SendKeys of the literal text (stdin-fed, base64
+            // command — text never hits a command line). SendKeys treats
+            // +^%~(){}[] as metacharacters, so they're brace-escaped.
+            await typeWindowsViaStdin(text);
+            return;
+        }
         // SECURITY: pass the text via stdin to a base64-encoded PS command. The PS
         // -EncodedCommand arg is base64 (no shell-meta interpretation), and we read
         // the text from stdin so the actual string never appears in any command line.
@@ -455,6 +547,44 @@ end try`;
         return;
     }
     throw new Error(`type not yet implemented for platform: ${process.platform}`);
+}
+
+/**
+ * Type literal text on Windows via real synthetic keystrokes (SendKeys), reading
+ * the text from stdin so it never appears on a command line. Escapes SendKeys
+ * metacharacters {}+^%~()[] by brace-wrapping each.
+ */
+async function typeWindowsViaStdin(text: string): Promise<void> {
+    const psScript = `
+$txt = [Console]::In.ReadToEnd()
+$esc = ($txt.ToCharArray() | ForEach-Object {
+    if ('+^%~(){}[]'.Contains($_)) { '{' + $_ + '}' } else { [string]$_ }
+}) -join ''
+(New-Object -ComObject WScript.Shell).SendKeys($esc)
+`.trim();
+    const encoded = Buffer.from(psScript, "utf16le").toString("base64");
+    const { spawn } = await import("node:child_process");
+    await new Promise<void>((resolve, reject) => {
+        const child = spawn(
+            "powershell",
+            ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded],
+            { stdio: ["pipe", "pipe", "pipe"] },
+        );
+        const t = setTimeout(() => {
+            child.kill("SIGKILL");
+            reject(new Error("typeWindowsViaStdin timeout"));
+        }, 15_000);
+        child.on("exit", (code) => {
+            clearTimeout(t);
+            if (code === 0) resolve();
+            else reject(new Error(`powershell exited with ${code}`));
+        });
+        child.on("error", (err) => {
+            clearTimeout(t);
+            reject(err);
+        });
+        child.stdin.end(text, "utf-8");
+    });
 }
 
 /**
@@ -602,27 +732,48 @@ $keys = [Console]::In.ReadToEnd()
     });
 }
 
+// macOS Carbon virtual keycodes for letters, digits, arrows, and named keys.
+// Lets hold_key (and game movement: w/a/s/d) work for any common key instead of
+// only a handful of modifiers. Returns undefined for unknown single tokens.
+const MAC_KEYCODES: Record<string, number> = {
+    a: 0, s: 1, d: 2, f: 3, h: 4, g: 5, z: 6, x: 7, c: 8, v: 9,
+    b: 11, q: 12, w: 13, e: 14, r: 15, y: 16, t: 17,
+    o: 31, u: 32, i: 34, p: 35, l: 37, j: 38, k: 40, n: 45, m: 46,
+    "1": 18, "2": 19, "3": 20, "4": 21, "5": 23, "6": 22, "7": 26, "8": 28, "9": 25, "0": 29,
+    shift: 56, control: 59, ctrl: 59, option: 58, alt: 58, command: 55, cmd: 55,
+    return: 36, enter: 36, space: 49, tab: 48, escape: 53, esc: 53, delete: 51, backspace: 51,
+    up: 126, down: 125, left: 123, right: 124,
+};
+function macKeyCode(token: string): number | undefined {
+    return MAC_KEYCODES[token];
+}
+
+// Windows virtual-key codes. Letters/digits map to their ASCII-uppercase code
+// (VK_A=0x41 … VK_0=0x30), so 'w'/'a'/'s'/'d' and any alphanumeric hold works.
+const WIN_VK_NAMED: Record<string, number> = {
+    shift: 0x10, control: 0x11, ctrl: 0x11, alt: 0x12, menu: 0x12,
+    enter: 0x0d, return: 0x0d, space: 0x20, tab: 0x09, escape: 0x1b, esc: 0x1b,
+    backspace: 0x08, delete: 0x2e, up: 0x26, down: 0x28, left: 0x25, right: 0x27,
+};
+function winVkCode(token: string): number | undefined {
+    if (token in WIN_VK_NAMED) return WIN_VK_NAMED[token];
+    if (token.length === 1) {
+        const c = token.toUpperCase().charCodeAt(0);
+        if ((c >= 0x41 && c <= 0x5a) || (c >= 0x30 && c <= 0x39)) return c; // A-Z, 0-9
+    }
+    return undefined;
+}
+
 async function dispatchHoldKey(text: string, durationMs: number): Promise<void> {
     if (process.platform === "darwin") {
         const lower = text.toLowerCase();
-        const keyCodes: Record<string, number> = {
-            shift: 56,
-            control: 59,
-            option: 58,
-            command: 55,
-            return: 36,
-            enter: 36,
-            space: 49,
-            tab: 48,
-            escape: 53,
-        };
+        const code = macKeyCode(lower);
         // ERROR on unknown — silent fallback to shift is destructive.
-        if (!(lower in keyCodes)) {
+        if (code === undefined) {
             throw new Error(
-                `hold_key on macOS: unsupported key '${text}'. Supported: ${Object.keys(keyCodes).join(", ")}`,
+                `hold_key on macOS: unsupported key '${text}'. Use a letter/digit (e.g. 'w'), an arrow, or a named key.`,
             );
         }
-        const code = keyCodes[lower];
         const seconds = Math.max(0, Math.min(60, durationMs / 1000));
         const jxa = `ObjC.import('CoreGraphics');var down=$.CGEventCreateKeyboardEvent(null,${code},true);$.CGEventPost($.kCGHIDEventTap,down);delay(${seconds});var up=$.CGEventCreateKeyboardEvent(null,${code},false);$.CGEventPost($.kCGHIDEventTap,up);"held"`;
         await execFileAsync("osascript", ["-l", "JavaScript", "-e", jxa], { timeout: durationMs + 5000 });
@@ -641,22 +792,10 @@ async function dispatchHoldKey(text: string, durationMs: number): Promise<void> 
         // Best-effort: SendInput doesn't support a "hold" primitive via SendKeys.
         // We use P/Invoke keybd_event with vk-code lookup. Unknown keys throw.
         const lower = text.toLowerCase();
-        const vk: Record<string, number> = {
-            shift: 0x10,
-            control: 0x11,
-            ctrl: 0x11,
-            alt: 0x12,
-            menu: 0x12,
-            enter: 0x0d,
-            return: 0x0d,
-            space: 0x20,
-            tab: 0x09,
-            escape: 0x1b,
-        };
-        if (!(lower in vk)) {
-            throw new Error(`hold_key on Windows: unsupported key '${text}'. Supported: ${Object.keys(vk).join(", ")}`);
+        const code = winVkCode(lower);
+        if (code === undefined) {
+            throw new Error(`hold_key on Windows: unsupported key '${text}'. Use a letter/digit, an arrow, or a named key.`);
         }
-        const code = vk[lower];
         const ps = `
 Add-Type -TypeDefinition @"
 using System;
