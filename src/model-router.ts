@@ -7,6 +7,7 @@
 // This file provides the TypeScript interface and loads the native module.
 
 import type { ThinkingLevel } from "./llm.js";
+import { MODELS } from "./llm.js";
 
 // ── Types (re-exported for consumers) ────────────
 
@@ -636,6 +637,114 @@ export function classifyCodingComplexity(message: string): CodingComplexity {
     }
     // 3. Default: standard — Pro tier, no PRD ceremony.
     return "standard";
+}
+
+// ── Orchestrator complexity classifier ──────────────
+// Mirrors classifyCodingComplexity: a pure, sub-millisecond regex/heuristic
+// run at the orchestrator-planning gate (agent.ts) to pick the plan model by
+// task complexity. Deliberately bypasses selectForPlanning() / TaskType::Planning
+// (which hardcode Sonnet) so the decision is a local regex pick with no FFI —
+// same TS-override pattern the coding-complexity classifier uses.
+
+export type OrchestratorComplexity = "simple" | "mild" | "complex";
+
+export interface OrchestratorSignals {
+    activeCategories: string[];
+    classifierConfidence: number;
+    intent: string;
+    actionCategoryCount: number;
+}
+
+// Vision-only canvas / game / design surfaces — the AX tree is empty, so the
+// plan must reason about pixels. Gated on an action category at the call-site
+// so a chat-only mention ("what's the game score?") doesn't escalate.
+const ORCH_VISION_CANVAS =
+    /\b(?:figma|blender|minecraft|photoshop|illustrator|canva|unity|unreal|sculpt|render(?:ing)?|3d\s*model|game\s*(?:play|level|world)|canvas)\b/i;
+
+// Browser + desktop interleaving: web automation that has to hop into native
+// OS / app / messaging UI. These genuinely need strong sequencing.
+function orchBrowserDesktopMix(cats: string[]): boolean {
+    return (
+        cats.includes("browser") &&
+        cats.some((c) => c === "os_control" || c === "app_management" || c === "communication")
+    );
+}
+
+// Ambiguity / high-stakes language that demands careful decomposition.
+const ORCH_AMBIGUOUS_HIGHSTAKES =
+    /\b(?:figure\s+out|somehow|not\s+sure|whatever\s+works|best\s+way|reorganize|clean\s+up\s+everything|migrate|all\s+my|every\s+(?:file|email|message|tab|photo))\b/i;
+
+// Multi-step chaining language.
+const ORCH_CHAINED_PATTERN = / then |, then|after that| followed by | and then |once .+ (?:then|do)/i;
+
+// Obviously-atomic single imperative.
+const ORCH_SIMPLE_VERBS =
+    /^\s*(?:open|launch|close|quit|play|pause|resume|skip|mute|unmute|send|reply|text|message|search|find|set|turn|increase|decrease|lower|raise|screenshot|click|type|show|tell|what)\b/i;
+
+const ORCH_SHORT_MSG_CHARS = 140;
+const ORCH_LONG_MSG_CHARS = 400;
+const ORCH_HIGH_CONF = 0.75;
+const ORCH_LOW_CONF = 0.55;
+
+/**
+ * Classify an orchestrator planning task so agent.ts can pick the plan model:
+ *   simple  (~80%) → DeepSeek V4 Pro  — single clear action, short, high conf
+ *   mild    (~15%) → Gemini 3.1 Pro   — the asymmetric catch-all (never cheap when unsure)
+ *   complex (~5%)  → Sonnet 4.6       — vision/canvas, browser+desktop, ambiguous high-stakes
+ *
+ * The `mild` catch-all is the core safety property: a false-negative on
+ * "simple" lands on a strong model (Gemini Pro), not on a wrong plan.
+ */
+export function classifyOrchestratorComplexity(
+    message: string,
+    s: OrchestratorSignals,
+): OrchestratorComplexity {
+    if (!message) return "mild";
+
+    const msg = message.trim();
+    const len = msg.length;
+
+    // ── COMPLEX (→ Sonnet) ──
+    if (
+        (s.actionCategoryCount > 0 && ORCH_VISION_CANVAS.test(msg)) ||
+        orchBrowserDesktopMix(s.activeCategories) ||
+        ORCH_AMBIGUOUS_HIGHSTAKES.test(msg) ||
+        (len > ORCH_LONG_MSG_CHARS && s.classifierConfidence < ORCH_HIGH_CONF) ||
+        (s.actionCategoryCount >= 3 && s.classifierConfidence < ORCH_LOW_CONF)
+    ) {
+        return "complex";
+    }
+
+    // ── SIMPLE (→ DeepSeek) ──
+    const looksAtomic =
+        ORCH_SIMPLE_VERBS.test(msg) && len <= ORCH_SHORT_MSG_CHARS && !ORCH_CHAINED_PATTERN.test(msg);
+    if (looksAtomic && s.classifierConfidence >= ORCH_HIGH_CONF && s.actionCategoryCount <= 2) {
+        return "simple";
+    }
+
+    // ── MILD (→ Gemini Pro) — deliberate asymmetric default ──
+    return "mild";
+}
+
+/**
+ * Resolve an orchestrator complexity tier to a concrete plan model.
+ * thinkingLevel is "off" for simple/mild (latency: reasoning is the source of
+ * the multi-second thinking tax and Gemini's ~30s TTFT); "low" for complex,
+ * the one tier where decomposition quality outweighs latency.
+ */
+export function pickOrchestratorModel(c: OrchestratorComplexity): {
+    model: string;
+    display: string;
+    thinkingLevel: ThinkingLevel;
+} {
+    switch (c) {
+        case "simple":
+            return { model: MODELS.DEEPSEEK_V4_PRO, display: "DeepSeek V4 Pro", thinkingLevel: "off" };
+        case "mild":
+            return { model: MODELS.GEMINI_PRO, display: "Gemini 3.1 Pro", thinkingLevel: "off" };
+        case "complex":
+            return { model: MODELS.SONNET, display: "Sonnet 4.6", thinkingLevel: "low" };
+    }
 }
 
 const CODING_TOOL_NAMES: ReadonlySet<string> = new Set([

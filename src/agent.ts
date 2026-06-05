@@ -43,6 +43,7 @@ import {
     planModeReminderBody,
 } from "./agents/plan-mode.js";
 import { offloadIfLarge } from "./agents/tool-output-offload.js";
+import { logOrchestratorRouting } from "./agents/orchestrator-routing-log.js";
 import {
     buildVerifyReminder,
     newVerifyGateState,
@@ -76,8 +77,10 @@ import { getUserModelSnippet } from "./memory/user-model.js";
 import { getWMSnippet, reflect as wmReflect, retain as wmRetain } from "./memory/working-memory.js";
 import { recordFailure as recordWorldFailure, recordSuccess as recordWorldSuccess } from "./memory/world-model.js";
 import {
+    classifyOrchestratorComplexity,
     getCascadeNext,
     type ModelSelection,
+    pickOrchestratorModel,
     recordQualityFailure,
     selectForAgent,
     selectForFinalAnswer,
@@ -2281,9 +2284,24 @@ STRATEGY: Execute in as few tool calls as possible.
         if (iterations === 1 && needsPlanning && !musicFastPathActive) {
             try {
                 const planStart = Date.now();
-                // ALWAYS use Sonnet for orchestrator — Haiku guesses wrong on ambiguous tasks
-                const planModel = MODELS.SONNET;
-                console.log(`  📋 Orchestrator: Planning with Sonnet 4.6...`);
+                // Dynamic plan-model routing by task complexity (DeepSeek/Gemini/Sonnet).
+                // ATLAS_NO_DYNAMIC_ORCHESTRATOR forces "complex" → Sonnet (old behavior).
+                const orchComplexity =
+                    process.env.ATLAS_NO_DYNAMIC_ORCHESTRATOR === "true"
+                        ? "complex"
+                        : classifyOrchestratorComplexity(rawUserMessage, {
+                              activeCategories: activeCategories || [],
+                              classifierConfidence: classifierConf,
+                              intent: intentStr,
+                              actionCategoryCount,
+                          });
+                const orchPick = pickOrchestratorModel(orchComplexity);
+                const orchShadow = process.env.ATLAS_ORCH_SHADOW === "true";
+                const planModel = orchShadow ? MODELS.SONNET : orchPick.model;
+                const planThinking = orchShadow ? "low" : orchPick.thinkingLevel;
+                console.log(
+                    `  📋 Orchestrator: Planning with ${orchShadow ? "Sonnet 4.6 (shadow)" : orchPick.display} (complexity=${orchComplexity})...`,
+                );
 
                 // Build context from learned behavior + strategy library
                 const intent = getLastIntent() || "general";
@@ -2329,13 +2347,13 @@ STRATEGY: Execute in as few tool calls as possible.
                     /* session not initialized */
                 }
 
-                const planResponse = await llm.chat({
+                const planRequest = {
                     messages: [
                         {
                             role: "user" as const,
                             content: `Task: "${rawUserMessage}"${prefContext}${strategyContext}${conversationContext}${sessionCtx}${memoryContext}
 
-You are the ORCHESTRATOR (Sonnet 4.6). Create a precise execution plan.
+Create a precise execution plan.
 
 TOOLS (pick the right one — listed by domain):
 
@@ -2372,7 +2390,40 @@ PLAN:`,
                         },
                     ],
                     modelOverride: planModel,
+                    thinkingLevel: planThinking,
                     serverPromptSlug: "orchestrator-base",
+                };
+                let planResponse: Awaited<ReturnType<LLMClient["chat"]>> | undefined;
+                let escalatedToSonnet = false;
+                try {
+                    planResponse = await llm.chat(planRequest);
+                } catch (planErr) {
+                    // Failover: a cheap-tier (DeepSeek/Gemini) outage or timeout must
+                    // degrade to a Sonnet plan, not to no plan at all. One-shot retry.
+                    if (planModel !== MODELS.SONNET) {
+                        console.warn(
+                            `  ⚠️ Orchestrator plan failed on ${orchPick.display} (${(planErr as Error).message}) — retrying on Sonnet 4.6`,
+                        );
+                        escalatedToSonnet = true;
+                        planResponse = await llm.chat({
+                            ...planRequest,
+                            modelOverride: MODELS.SONNET,
+                            thinkingLevel: "low",
+                        });
+                    } else {
+                        throw planErr;
+                    }
+                }
+                logOrchestratorRouting({
+                    complexity: orchComplexity,
+                    model: escalatedToSonnet ? MODELS.SONNET : planModel,
+                    shadow: orchShadow,
+                    actionCategoryCount,
+                    classifierConfidence: classifierConf,
+                    activeCategories: activeCategories || [],
+                    messageLen: rawUserMessage.length,
+                    planLatencyMs: Date.now() - planStart,
+                    escalatedToSonnet,
                 });
                 const rawPlanText = planResponse?.choices?.[0]?.message?.content || "";
                 const { defangPlanInjection } = await import("./agents/defang-plan-injection.js");

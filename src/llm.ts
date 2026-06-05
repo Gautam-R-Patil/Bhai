@@ -73,6 +73,7 @@ export const MODELS = {
     NOVA_MICRO: "amazon/nova-micro-v1",
     DEEPSEEK_V31: "deepseek/deepseek-chat-v3.1",
     DEEPSEEK_V32: "deepseek/deepseek-v3.2-exp",
+    DEEPSEEK_V4_PRO: "deepseek/deepseek-v4-pro",
     GLM_46: "z-ai/glm-4.6",
     GPT5_MINI: "openai/gpt-5-mini",
     GPT5_NANO: "openai/gpt-5-nano",
@@ -96,6 +97,7 @@ export const MODEL_DISPLAY: Record<string, string> = {
     [MODELS.NOVA_MICRO]: "Nova Micro",
     [MODELS.DEEPSEEK_V31]: "DeepSeek V3.1",
     [MODELS.DEEPSEEK_V32]: "DeepSeek V3.2 (exp)",
+    [MODELS.DEEPSEEK_V4_PRO]: "DeepSeek V4 Pro",
     [MODELS.GLM_46]: "GLM 4.6",
 };
 

@@ -292,6 +292,22 @@ fn build_model_registry() -> HashMap<String, ModelInfo> {
         provider: Provider::Deepseek,
     });
 
+    m.insert("deepseek/deepseek-v4-pro".into(), ModelInfo {
+        id: "deepseek/deepseek-v4-pro".into(),
+        display_name: "DeepSeek V4 Pro".into(),
+        input_cost_per_1m: 0.435,
+        output_cost_per_1m: 0.87,
+        tier: 5,
+        speed: Speed::Fast,
+        strengths: vec!["agentic".into(), "tool_use".into(), "reasoning".into(), "long_context".into()],
+        max_tokens: 8192,
+        context_window: 1_000_000,
+        supports_tools: true,
+        supports_parallel_tools: true,
+        supports_vision: false,
+        provider: Provider::Deepseek,
+    });
+
     m.insert("z-ai/glm-4.6".into(), ModelInfo {
         id: "z-ai/glm-4.6".into(),
         display_name: "GLM 4.6".into(),
@@ -2517,6 +2533,7 @@ fn get_cascade_next_internal(current_model_id: &str, task_type: &TaskType) -> Op
         "google/gemini-2.5-flash",
         "google/gemini-3-flash-preview",
         "anthropic/claude-haiku-4.5",
+        "deepseek/deepseek-v4-pro",
         "google/gemini-3.1-pro-preview-customtools",
         "anthropic/claude-sonnet-4.6",
         "anthropic/claude-opus-4.6",

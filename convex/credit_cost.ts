@@ -33,6 +33,7 @@ export const CREDIT_COSTS: Record<string, number> = {
     "openai/gpt-5-mini": 0.5,
     "deepseek/deepseek-chat-v3.1": 0.5,
     "deepseek/deepseek-v3.2-exp": 0.5,
+    "deepseek/deepseek-v4-pro": 0.5,
     "z-ai/glm-4.6": 0.5,
     "qwen/qwen3.7-plus": 0.5,
     "qwen/qwen3-vl-235b-a22b-instruct": 0.5,

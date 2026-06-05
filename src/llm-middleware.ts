@@ -251,6 +251,7 @@ const MODEL_COSTS: Record<string, { input: number; output: number }> = {
     "amazon/nova-micro-v1": { input: 0.04, output: 0.16 },
     "deepseek/deepseek-chat-v3.1": { input: 0.27, output: 1.1 },
     "deepseek/deepseek-v3.2-exp": { input: 0.27, output: 0.4 },
+    "deepseek/deepseek-v4-pro": { input: 0.435, output: 0.87 },
     "z-ai/glm-4.6": { input: 0.55, output: 2.2 },
     "openai/gpt-5-mini": { input: 0.25, output: 2 },
     "openai/gpt-5-nano": { input: 0.05, output: 0.4 },
