@@ -119,6 +119,24 @@
             logHost.appendChild(p);
         }
 
+        // Advance out of the install step. With signin/permissions now AFTER install,
+        // completion hands control back to the wizard via ctx.onAdvance() — boot.js
+        // routes to the next step (signin → permissions → Ready Hub). Fallback to a
+        // direct Ready Hub redirect if onAdvance is missing (e.g. install opened
+        // standalone, outside the wizard shell).
+        // Idempotent: the runner emits BOTH a percent=100 progress event AND a
+        // {success:true} result, so the two completion paths below both call
+        // proceed(). Without this guard onAdvance() fires twice → the wizard skips
+        // a step + double-plays the confirm sound. (Harmless pre-reorder when this
+        // was a location.href redirect, but onAdvance is not idempotent.)
+        let didProceed = false;
+        function proceed() {
+            if (didProceed) return;
+            didProceed = true;
+            if (ctx && typeof ctx.onAdvance === "function") { ctx.onAdvance(); return; }
+            window.location.href = "ready-hub.html";
+        }
+
         // Snapshot done-markers so we can pre-color the phase list on first render.
         const atlas = window.atlas || {};
         let stateResp = { success: false, state: {} };
@@ -128,9 +146,16 @@
         const completed = (stateResp && stateResp.success && stateResp.state) ? stateResp.state : {};
         let failedId = null;
 
+        // The phases to render. Start with the hardcoded fallback so the list
+        // paints IMMEDIATELY, then swap to the tier-accurate set once the IPC
+        // resolves (setupGetPhaseIds runs a ~1-3s detection — don't block paint
+        // on it). The IPC returns the FULL tier list (lite=7/standard=8/full=10),
+        // not the install-time remainder, so completed phases still render.
+        let phaseIds = PHASE_IDS.slice();
+
         function renderList(running) {
             clearChildren(listEl);
-            for (const id of PHASE_IDS) {
+            for (const id of phaseIds) {
                 let st = "pending";
                 if (completed[id] && completed[id].completedAt) st = "done";
                 if (id === running) st = "running";
@@ -148,17 +173,30 @@
                 listEl.appendChild(li);
             }
         }
+        renderList(null); // immediate paint with the fallback list
 
-        // Decide what to show on mount.
-        const doneKeys = Object.keys(completed).filter(function (k) { return !k.startsWith("__"); });
-        const doneCount = doneKeys.length;
-        if (doneCount > 0 && doneCount < PHASE_IDS.length) {
+        // Fetch the tier-accurate phase list; re-render once it lands.
+        if (typeof atlas.setupGetPhaseIds === "function") {
+            try {
+                const r = await atlas.setupGetPhaseIds();
+                if (r && r.success && Array.isArray(r.ids) && r.ids.length) {
+                    phaseIds = r.ids;
+                    renderList(null);
+                }
+            } catch { /* keep fallback */ }
+        }
+
+        // Decide what to show on mount, scoped to THIS tier's phases (a prior
+        // higher-tier install may have left extra markers).
+        const isDone = function (id) { return !!(completed[id] && completed[id].completedAt); };
+        const tierDoneCount = phaseIds.filter(isDone).length;
+        if (tierDoneCount > 0 && tierDoneCount < phaseIds.length) {
             resumeBtn.classList.remove("hidden");
             startBtn.classList.add("hidden");
         }
-        if (doneCount >= PHASE_IDS.length) {
-            // Everything already done → skip straight to Ready Hub.
-            window.location.href = "ready-hub.html";
+        if (phaseIds.length > 0 && tierDoneCount >= phaseIds.length) {
+            // Everything already done → skip the install screen, continue the flow.
+            proceed();
             return;
         }
 
@@ -205,9 +243,12 @@
         // (e.g. 5-minute `ollama pull`) inflated elapsed \u2192 shrank rate \u2192 grew ETA.
         const RATE_SAMPLES = [];
         const RATE_WINDOW = 8;
+        // ETA labels sourced from copy.js for consistency with the rest of the screen.
+        const ETA_ESTIMATING = window.Copy.get("install", "eta_estimating") || "Estimating\u2026";
+        const ETA_ALMOST = (window.Copy.get("install", "eta_almost_done") || "Almost done") + "\u2026";
         function formatEta(seconds) {
-            if (seconds < 0 || !Number.isFinite(seconds)) return "Estimating\u2026";
-            if (seconds < 5) return "Almost done\u2026";
+            if (seconds < 0 || !Number.isFinite(seconds)) return ETA_ESTIMATING;
+            if (seconds < 5) return ETA_ALMOST;
             if (seconds < 60) return "~" + Math.round(seconds) + "s remaining";
             const m = Math.floor(seconds / 60);
             const s = Math.round(seconds % 60);
@@ -218,7 +259,7 @@
             RATE_SAMPLES.push({ ts: now, percent: percent });
             if (RATE_SAMPLES.length > RATE_WINDOW) RATE_SAMPLES.shift();
             if (RATE_SAMPLES.length < 2 || percent <= 1) {
-                etaEl.textContent = "Estimating\u2026";
+                etaEl.textContent = ETA_ESTIMATING;
                 return;
             }
             const oldest = RATE_SAMPLES[0];
@@ -237,7 +278,7 @@
         const etaStalenessTimer = setInterval(function () {
             if (RATE_SAMPLES.length > 0 &&
                 Date.now() - RATE_SAMPLES[RATE_SAMPLES.length - 1].ts > 15000) {
-                etaEl.textContent = "Estimating\u2026";
+                etaEl.textContent = ETA_ESTIMATING;
             }
         }, 5000);
 
@@ -287,7 +328,7 @@
                     etaEl.textContent = "Done \u2713";
                     clearInterval(factTimer);
                     clearInterval(etaStalenessTimer);
-                    setTimeout(function () { window.location.href = "ready-hub.html"; }, 500);
+                    setTimeout(function () { proceed(); }, 500);
                 }
             });
         }
@@ -303,7 +344,7 @@
         // Post-result handler — deals with success / paused / generic failure.
         async function handle(res) {
             if (res && res.success) {
-                window.location.href = "ready-hub.html";
+                proceed();
                 return;
             }
             if (res && res.paused) {

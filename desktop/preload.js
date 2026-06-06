@@ -72,6 +72,7 @@ contextBridge.exposeInMainWorld("atlas", {
     setupRetryInstallPhase: (phaseId) => ipcRenderer.invoke("setup:retry-install-phase", phaseId),
     setupResumeInstall: () => ipcRenderer.invoke("setup:resume-install"),
     setupGetSetupState: () => ipcRenderer.invoke("setup:get-state"),
+    setupGetPhaseIds: () => ipcRenderer.invoke("setup:get-phase-ids"),
     finishSetup: () => ipcRenderer.invoke("setup:finish"),
     showOverlay: () => ipcRenderer.send("overlay:show"),
     triggerLiveVoice: () => ipcRenderer.invoke("live-voice:trigger"),

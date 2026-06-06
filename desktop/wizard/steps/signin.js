@@ -57,20 +57,16 @@
 
         const fineprint = document.createElement("p");
         fineprint.className = "signin-fineprint";
-        fineprint.textContent = Copy.get("signin", "fineprint") || "You can sign in later from Settings.";
+        fineprint.textContent = Copy.get("signin", "fineprint") || "Sign in to finish setup and unlock your credits.";
         pane.appendChild(fineprint);
 
         section.appendChild(pane);
 
-        const actions = document.createElement("div");
-        actions.className = "step-actions";
-        const back = document.createElement("button");
-        back.type = "button";
-        back.className = "btn btn-text";
-        back.textContent = "Back";
-        back.addEventListener("click", function () { if (ctx && typeof ctx.onBack === "function") ctx.onBack(); });
-        actions.appendChild(back);
-        section.appendChild(actions);
+        // No "Back" button: signin sits AFTER install in the flow, so Back would
+        // return to an already-completed install step, which auto-advances right
+        // back here (a dead, flashing affordance). Signin is a required gate —
+        // forward progress is via the login CTA + the async account-status-change
+        // auto-advance in boot.js.
 
         root.appendChild(section);
     }

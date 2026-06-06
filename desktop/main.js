@@ -3575,6 +3575,31 @@ function registerIPC() {
         }
     });
 
+    // Setup: the ordered phase IDs for the user's chosen vision tier — the single
+    // source of truth the install screen uses to render exactly the rows that
+    // belong to the tier (lite=7, standard=8, full=10), instead of a hardcoded
+    // 10-row list that mislabels lite installs.
+    //
+    // We deliberately clear `installed`/`visionDeps` before building so we get the
+    // FULL tier sequence, not the install-time REMAINDER. buildPhaseList drops
+    // already-installed phases (for the actual run), but the install SCREEN must
+    // still show every tier phase so completed ones render with green checks and
+    // the Resume/done-count logic (install.js) lines up against real markers. The
+    // actual run is re-filtered identically by setup:install, so this only affects
+    // what rows are displayed.
+    ipcMain.handle("setup:get-phase-ids", async () => {
+        try {
+            const { runDetection, buildPhaseList } = requireInstaller();
+            const state = augmentStateWithChoices(await runDetection(buildDetectionDeps()));
+            state.installed = {};
+            state.visionDeps = {};
+            const ids = buildPhaseList(state).map((p) => p.id);
+            return { success: true, ids: ids, tier: state.visionTierChoice || "lite" };
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
     // Setup: finish and launch dashboard
     ipcMain.handle("setup:finish", () => {
         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -5335,6 +5360,22 @@ function buildAugmentedPath() {
     return [...new Set([...extras, ...current])].join(path.delimiter);
 }
 
+// Quote a single arg for spawn(..., { shell: true }) on Windows. Node does NOT
+// quote the args array under shell:true — it joins them with spaces and hands the
+// raw string to `cmd.exe /c`, so any arg with whitespace or cmd metacharacters
+// (`"`, `;`, `(`, `)`, `,`, `&`, `|`, `<`, `>`, `^`, `%`) gets re-tokenized. That
+// shreds Python `-c` scripts and breaks paths like `C:\Users\John Doe\...`. Simple
+// args pass through unchanged so existing single-token calls keep working.
+function winQuoteArg(s) {
+    const str = String(s);
+    if (str.length && !/[\s"();,&|<>^%]/.test(str)) return str;
+    // Escape backslashes that precede a quote (Windows arg-parsing rule), then the
+    // quotes themselves, then wrap. `%` can't be safely escaped for cmd.exe, but
+    // our args never contain it; the test above only quotes — it doesn't strip.
+    const escaped = str.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, "$1$1");
+    return '"' + escaped + '"';
+}
+
 function runCommand(cmd, args, cwd, onOutput) {
     return new Promise((resolve, reject) => {
         let executable = cmd;
@@ -5360,7 +5401,13 @@ function runCommand(cmd, args, cwd, onOutput) {
             shell = false; // Disable shell so parameters are passed correctly, and executable path handles spaces properly
         }
 
-        const proc = spawn(executable, args, {
+        // Under shell:true (Windows), spawn won't quote args — cmd.exe would
+        // re-tokenize anything with spaces/metacharacters. Quote each arg (and the
+        // executable if it contains a space) ourselves. shell:false passes args
+        // literally and must NOT be quoted.
+        const spawnExecutable = shell && /\s/.test(executable) ? winQuoteArg(executable) : executable;
+        const spawnArgs = shell ? args.map(winQuoteArg) : args;
+        const proc = spawn(spawnExecutable, spawnArgs, {
             cwd,
             shell,
             env: spawnEnv,
