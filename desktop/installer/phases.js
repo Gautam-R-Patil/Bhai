@@ -62,6 +62,118 @@ function persistUiTarsTag(ctx, tag) {
     } catch { /* best-effort */ }
 }
 
+// Run a Python program via a real .py file rather than `python -c "<inline>"`.
+// On Windows runCommand spawns with shell:true, and cmd.exe re-tokenizes a
+// multi-statement `-c` string on its spaces/semicolons/quotes (→ "SyntaxError:
+// invalid syntax" on a fragment). Writing the body to a temp file and invoking
+// `python <file>` passes a single-token path arg, eliminating that failure class
+// on every platform. Temp file lives under DATA_DIR (always writable). Cleaned up
+// in finally. `name` keeps temp files distinguishable in logs.
+async function runPythonScript(ctx, pyExe, body, log, name) {
+    const file = path.join(ctx.DATA_DIR, "_atlas_" + (name || "py") + "_" + process.pid + ".py");
+    fs.writeFileSync(file, body);
+    try {
+        await ctx.runCommand(pyExe, [file], undefined, (l) => { if (log && l.trim()) log(l); });
+    } finally {
+        try { fs.unlinkSync(file); } catch { /* best-effort cleanup */ }
+    }
+}
+
+// Resolve a usable system Python on Windows, installing it via winget if absent.
+// Returns an absolute path (or "python") usable for `-m venv`. The fresh-Windows
+// failure modes this handles: (1) Python entirely absent; (2) the Microsoft Store
+// `python` stub — a 0-byte shim under WindowsApps that opens the Store instead of
+// running, which would make `-m venv` silently no-op. After a winget install the
+// current process PATH is stale, so we resolve the real interpreter by probing
+// winget's known install locations. Throws a Retry-able error if it can't.
+async function ensureWindowsPython(ctx, log) {
+    const probe = async (exe) => {
+        try {
+            // The MS-Store stub typically resolves under WindowsApps and either
+            // errors or does nothing useful; a genuine interpreter prints a version
+            // AND can import a stdlib module. Use a tiny import to weed out the stub.
+            let out = "";
+            await ctx.runCommand(exe, ["-c", "import sys;print(sys.executable)"], undefined, (l) => { out += l; });
+            const resolved = out.trim();
+            if (resolved && !/WindowsApps/i.test(resolved)) return resolved || exe;
+            return null;
+        } catch { return null; }
+    };
+    const onPath = await probe("python");
+    if (onPath) { log("Python detected (" + onPath + ") ✓"); return onPath; }
+
+    log("Python not found — installing via winget (Python.Python.3.12)...");
+    // winget install is best-effort here: a non-zero exit does NOT mean failure.
+    // winget returns non-zero for APPINSTALLER_CLI_ERROR_PACKAGE_ALREADY_INSTALLED
+    // / UPDATE_NOT_APPLICABLE — the exact "Python already installed but not on this
+    // session's PATH" case the directory probe below exists to handle. So we never
+    // throw on a winget failure; we log it and fall through to resolve the
+    // interpreter from disk, throwing only if that ALSO finds nothing.
+    let wingetErr = null;
+    try {
+        await ctx.runCommand(
+            "winget",
+            ["install", "--id", "Python.Python.3.12", "-e", "--silent", "--scope", "machine", "--accept-package-agreements", "--accept-source-agreements"],
+            undefined,
+            (l) => { if (l.trim()) log(l); },
+        );
+    } catch {
+        // Machine scope needs elevation; retry user scope.
+        try {
+            await ctx.runCommand(
+                "winget",
+                ["install", "--id", "Python.Python.3.12", "-e", "--silent", "--scope", "user", "--accept-package-agreements", "--accept-source-agreements"],
+                undefined,
+                (l) => { if (l.trim()) log(l); },
+            );
+        } catch (err) {
+            wingetErr = err && err.message ? err.message : String(err);
+            log("winget install returned an error (may be 'already installed') — resolving Python from disk...");
+        }
+    }
+    // PATH is stale in this process — resolve the freshly-installed interpreter
+    // from winget's known locations. Newest version dir wins.
+    const localApp = process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local");
+    const roots = [
+        path.join(localApp, "Programs", "Python"),
+        process.env.ProgramFiles ? path.join(process.env.ProgramFiles, "Python312") : null,
+        process.env.ProgramFiles ? path.join(process.env.ProgramFiles, "Python") : null,
+        "C:\\Python312",
+    ].filter(Boolean);
+    const found = [];
+    for (const root of roots) {
+        try {
+            // root may itself be a python dir (contains python.exe) or a parent of
+            // PythonNNN dirs. Handle both.
+            const direct = path.join(root, "python.exe");
+            if (fs.existsSync(direct)) { found.push(direct); continue; }
+            for (const entry of fs.readdirSync(root)) {
+                const cand = path.join(root, entry, "python.exe");
+                if (fs.existsSync(cand)) found.push(cand);
+            }
+        } catch { /* root missing — skip */ }
+    }
+    if (found.length) {
+        // Prefer the highest version number. Sort NUMERICALLY by the PythonNNN
+        // segment — a lexicographic sort would rank "Python39" above "Python313".
+        found.sort(function (a, b) {
+            const ver = function (p) { return parseInt((p.match(/Python(\d+)/i) || [])[1] || "0", 10); };
+            return ver(a) - ver(b);
+        });
+        const chosen = found[found.length - 1];
+        log("Python installed (" + chosen + ") ✓");
+        return chosen;
+    }
+    // Last resort: maybe the installer DID refresh this session's PATH (rare).
+    const reprobe = await probe("python");
+    if (reprobe) { log("Python installed (" + reprobe + ") ✓"); return reprobe; }
+    throw new Error(
+        "Could not install or locate Python. Install it from " +
+        "https://www.python.org/downloads/windows/ (check 'Add python.exe to PATH'), then click Retry." +
+        (wingetErr ? " (winget: " + wingetErr + ")" : ""),
+    );
+}
+
 const ALL_PHASE_IDS = [
     "node",
     "playwright-chromium",
@@ -109,8 +221,29 @@ const P = {
         idempotent: true,
         async run(ctx, log) {
             log("Pre-warming Xenova/all-MiniLM-L6-v2 (quantized)...");
-            const script = path.join(os.tmpdir(), "_atlas_warmup.mjs");
-            fs.writeFileSync(script, 'import("@xenova/transformers").then(t=>t.pipeline("feature-extraction","Xenova/all-MiniLM-L6-v2",{quantized:true})).then(()=>console.log("done")).catch(e=>console.error(e));');
+            // Write the warmup script INSIDE BOT_DIR — not os.tmpdir(). ESM resolves
+            // bare specifiers relative to the importing FILE's dir (walking up
+            // node_modules), not cwd. From a temp dir, `import("@xenova/transformers")`
+            // never reaches BOT_DIR/node_modules and ERR_MODULE_NOT_FOUNDs. BOT_DIR
+            // holds the bundled, asar-unpacked @xenova (see desktop/package.json).
+            // Also pin env.cacheDir to DATA_DIR/models so we warm the SAME cache the
+            // runtime reads (src/memory/embeddings.ts), not the default HF cache —
+            // otherwise the pre-warm is wasted and the bot re-downloads on first use.
+            const modelsCacheDir = path.join(ctx.DATA_DIR, "models");
+            const script = path.join(ctx.BOT_DIR, "_atlas_warmup.mjs");
+            const body =
+                'import("@xenova/transformers")' +
+                '.then(t=>{t.env.cacheDir=' + JSON.stringify(modelsCacheDir) + ';' +
+                'return t.pipeline("feature-extraction","Xenova/all-MiniLM-L6-v2",{quantized:true});})' +
+                '.then(()=>console.log("done")).catch(e=>console.error(e));';
+            try {
+                fs.writeFileSync(script, body);
+            } catch (err) {
+                // BOT_DIR can be read-only in some packaged layouts. The warmup is a
+                // pure optimization — never fail the install over it.
+                log("Skipping embed pre-warm (could not write to bot dir): " + (err && err.message ? err.message : String(err)));
+                return;
+            }
             try {
                 await ctx.runCommand("node", [script], ctx.BOT_DIR, (l) => { if (l.trim()) log(l); });
             } finally {
@@ -143,10 +276,28 @@ const P = {
                         log("Install manually: sudo apt install sox");
                     }
                 } else {
+                    // Windows: winget \u2192 choco \u2192 manual URL. Fresh boxes have no
+                    // Chocolatey, but winget ships with App Installer on Win10 1809+/
+                    // Win11 (the Ollama phase already relies on it). The winget SoX
+                    // package installs sox.exe but does NOT add it to PATH; that's
+                    // fine here \u2014 this phase only needs the binary on disk, and the
+                    // voice runtime resolves it separately. Choco's package is
+                    // `sox.portable` (not `sox`). Whole branch stays non-fatal.
+                    let installed = false;
                     try {
-                        await ctx.runCommand("choco", ["install", "sox", "-y"], undefined, (l) => { if (l.trim()) log(l); });
-                    } catch {
-                        log("sox not found \u2014 https://sox.sourceforge.net");
+                        await ctx.runCommand("winget", ["install", "--id", "ChrisBagwell.SoX", "-e", "--silent", "--accept-package-agreements", "--accept-source-agreements"], undefined, (l) => { if (l.trim()) log(l); });
+                        log("sox via winget \u2713");
+                        installed = true;
+                    } catch { /* winget missing or package unavailable \u2014 try choco */ }
+                    if (!installed) {
+                        try {
+                            await ctx.runCommand("choco", ["install", "sox.portable", "-y"], undefined, (l) => { if (l.trim()) log(l); });
+                            log("sox via Chocolatey \u2713");
+                            installed = true;
+                        } catch { /* choco missing too */ }
+                    }
+                    if (!installed) {
+                        log("sox not installed (winget/choco unavailable) \u2014 install manually: https://sox.sourceforge.net");
                     }
                 }
             } catch {
@@ -573,12 +724,21 @@ const P = {
         label: "Vision deps (~500 MB)",
         idempotent: true,
         async run(ctx, log) {
-            // Probe system Python first \u2014 we need it to build the venv.
-            const sysPy = process.platform === "win32" ? "python" : "python3";
-            try {
-                await ctx.runCommand(sysPy, ["--version"], undefined, () => {});
-            } catch {
-                throw new Error("Python is not installed. On macOS: `brew install python`. Then click Retry.");
+            // Probe system Python first \u2014 we need it to build the venv. On Windows,
+            // the user picked Standard tier expecting it to work, so install Python
+            // (via winget) if it's absent or is the no-op MS-Store stub, mirroring how
+            // the ollama phase bootstraps its own runtime. On macOS/Linux keep the
+            // clear Retry-able error (auto brew/apt is riskier than the message).
+            let sysPy;
+            if (process.platform === "win32") {
+                sysPy = await ensureWindowsPython(ctx, log);
+            } else {
+                sysPy = "python3";
+                try {
+                    await ctx.runCommand(sysPy, ["--version"], undefined, () => {});
+                } catch {
+                    throw new Error("Python is not installed. On macOS: `brew install python`. On Linux: `sudo apt install python3 python3-venv`. Then click Retry.");
+                }
             }
             // Build paths to the dedicated venv. We can't use `pip install --user`
             // anymore: modern Homebrew Python (3.11+) ships PEP 668's
@@ -604,14 +764,18 @@ const P = {
                 try {
                     await ctx.runCommand(venvPy, ["-m", "pip", "install", "--quiet", "huggingface_hub"], undefined, () => {});
                     // Download icon_detect/model.pt and place at icon_detect.pt (a path the
-                    // detector + runtime omniParserWeightsPresent() both check).
+                    // detector + runtime omniParserWeightsPresent() both check). Run via a
+                    // temp .py file, not `-c` \u2014 cmd.exe shreds inline multi-statement
+                    // scripts on Windows (the original "SyntaxError: invalid syntax").
                     const dlScript =
-                        "import os,shutil;" +
-                        "from huggingface_hub import hf_hub_download;" +
-                        "d=os.path.expanduser('~/.cache/omniparser');os.makedirs(d,exist_ok=True);" +
-                        "p=hf_hub_download(repo_id='microsoft/OmniParser-v2.0',filename='icon_detect/model.pt');" +
-                        "shutil.copy(p,os.path.join(d,'icon_detect.pt'));print('OK')";
-                    await ctx.runCommand(venvPy, ["-c", dlScript], undefined, (l) => { if (l.trim()) log(l); });
+                        "import os, shutil\n" +
+                        "from huggingface_hub import hf_hub_download\n" +
+                        "d = os.path.expanduser('~/.cache/omniparser')\n" +
+                        "os.makedirs(d, exist_ok=True)\n" +
+                        "p = hf_hub_download(repo_id='microsoft/OmniParser-v2.0', filename='icon_detect/model.pt')\n" +
+                        "shutil.copy(p, os.path.join(d, 'icon_detect.pt'))\n" +
+                        "print('OK')\n";
+                    await runPythonScript(ctx, venvPy, dlScript, log, "omniweights");
                     log("Vision model weights ready \u2713");
                     return true;
                 } catch (err) {
@@ -624,7 +788,9 @@ const P = {
             let depsInstalled = false;
             if (fs.existsSync(venvPy)) {
                 try {
-                    await ctx.runCommand(venvPy, ["-c", "import ultralytics, PIL"], undefined, () => {});
+                    // Temp .py file, not `-c` \u2014 see runPythonScript: the inline form
+                    // ("import ultralytics, PIL" \u2014 space + comma) is mangled by cmd.exe.
+                    await runPythonScript(ctx, venvPy, "import ultralytics, PIL\n", null, "depcheck");
                     log("Vision deps already installed in venv \u2713");
                     depsInstalled = true;
                 } catch { /* venv exists but deps missing \u2014 proceed to install */ }

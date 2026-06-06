@@ -96,9 +96,8 @@
             if (window.WizardAudio && window.WizardAudio.play) window.WizardAudio.play("confirm");
             const n = router.next(fromIdx, steps);
             if (n === -1) {
-                await refreshState();
-                const installIdx = steps.indexOf("install");
-                if (installIdx >= 0) { renderIndex(installIdx); return; }
+                // End of the flow → Ready Hub. (install is no longer terminal: it
+                // hands off via onAdvance to signin → permissions, which end here.)
                 window.location.href = "ready-hub.html";
                 return;
             }
@@ -161,23 +160,29 @@
 
         // Auto-advance once OTPless sign-in completes. The signin step opens
         // a popup that resolves asynchronously; main.js fires this event when
-        // account:login succeeds.
+        // account:login succeeds. Signin now sits near the END of the flow
+        // (after install), so the step that follows it is permissions (macOS) or
+        // nothing (Windows → Ready Hub).
         if (typeof atlas.onAccountStatusChange === "function") {
             atlas.onAccountStatusChange(async function (data) {
                 if (!data || data.signedIn !== true) return;
+                if (document.body.getAttribute("data-step") !== "signin") return;
+                // Capture the successor from the CURRENT (rendered) list BEFORE
+                // refreshState() recomputes it — once signed in, signin is gated
+                // out of the recomputed list, so its old index would be lost.
+                const signinIdx = steps.indexOf("signin");
+                const successor = (signinIdx >= 0 && signinIdx + 1 < steps.length)
+                    ? steps[signinIdx + 1]
+                    : null;
                 await refreshState();
-                // If we're currently on signin and the router has moved past it,
-                // skip forward to the next pending step.
-                const currentId = document.body.getAttribute("data-step");
-                if (currentId === "signin") {
-                    // Find the next step in the freshly-recomputed list.
-                    const idx = steps.indexOf("signin");
-                    if (idx >= 0 && idx + 1 < steps.length) renderIndex(idx + 1);
-                    else if (steps.indexOf("signin") === -1 && steps.length > 0) {
-                        // Signin dropped from the flow entirely — go to first remaining step.
-                        renderIndex(0);
-                    }
+                if (!successor) {
+                    // Signin was the last step → flow is done.
+                    window.location.href = "ready-hub.html";
+                    return;
                 }
+                const nextIdx = steps.indexOf(successor);
+                if (nextIdx >= 0) renderIndex(nextIdx);
+                else window.location.href = "ready-hub.html";
             });
         }
 

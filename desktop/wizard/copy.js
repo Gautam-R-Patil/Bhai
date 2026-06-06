@@ -33,7 +33,7 @@ const COPY = {
         "sub": "One tap to sync preferences and credits across your devices. No password to remember.",
         "email_cta": "Continue with email",
         "phone_cta": "Continue with phone",
-        "fineprint": "You can sign in later from Settings.",
+        "fineprint": "Sign in to finish setup and unlock your credits.",
     },
 
     "profile": {

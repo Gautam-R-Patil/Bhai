@@ -3,7 +3,11 @@
 // Browser: attaches to window.WizardRouter. Main process: required from main.js.
 "use strict";
 
-const ALL_STEPS = ["awakening", "welcome", "terms", "signin", "profile", "persona", "personalize", "permissions", "vision-tier", "install"];
+// Order note: signin + permissions intentionally come AFTER install — the user
+// completes setup/installation first, then signs in and grants permissions right
+// before the Ready Hub. install has no dependency on either (buildPhaseList only
+// needs the vision-tier choice, which still precedes install).
+const ALL_STEPS = ["awakening", "welcome", "terms", "profile", "persona", "personalize", "vision-tier", "install", "signin", "permissions"];
 
 function envFlag(name) {
     try { if (typeof process !== "undefined" && process.env && process.env[name] === "true") return true; }
@@ -61,13 +65,15 @@ function getSteps(state) {
     // cinematic; controlled by needsAwakening).
     if (needsAwakening(s)) out.push("awakening");
     if (needsTerms(s) || s.isReconfigure) out.push("terms");
-    if (!signedIn || s.isReconfigure) out.push("signin");
     out.push("profile");
     out.push("persona");       // ← W2: persona specialization step
     out.push("personalize");
-    if (s.platform !== "win32") out.push("permissions");
     out.push("vision-tier");
     if (s.isReconfigure || needsInstall(s)) out.push("install");
+    // Post-install: sign in (required to finish — no skip) then grant permissions.
+    // Permissions are macOS-only; Windows grants at OS level so the step is omitted.
+    if (!signedIn || s.isReconfigure) out.push("signin");
+    if (s.platform !== "win32") out.push("permissions");
     return { steps: out, header };
 }
 

@@ -5148,3 +5148,36 @@ body[data-step] .progress-eta {
 }
 
 /* "Begin install" / install primary CTA inherits .btn-primary scoping above. */
+
+/* ── Install CTA: pinned bottom bar so "Begin install" is ALWAYS in view ──
+   The install screen stacks a tall phase list + progress + fun-fact + log, which
+   on the 820×620 non-resizable window pushed the start button below the fold
+   (users had to scroll to find it). Pin the actions to a fixed bottom bar with a
+   surface backdrop + top hairline; reserve bottom space on the stage so the log
+   host scrolls clear of the bar. Only the install step is affected. */
+body[data-step="install"] .stage {
+    padding-top: 84px;          /* claw back vertical room vs the default 110px */
+    padding-bottom: 104px;      /* clearance for the fixed CTA bar below */
+}
+body[data-step="install"] .step-actions {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: var(--z-sticky);
+    margin: 0;
+    padding: 16px 32px calc(16px + env(safe-area-inset-bottom, 0px));
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    background: var(--bg-1);
+    -webkit-backdrop-filter: blur(18px) saturate(1.4);
+    backdrop-filter: blur(18px) saturate(1.4);
+    border-top: 1px solid var(--hairline-1);
+    box-shadow: 0 -8px 24px -12px rgba(0,0,0,0.5);
+}
+/* Keep the action buttons aligned to the centered content column. */
+body[data-step="install"] .step-actions > * { flex: 0 0 auto; }
+/* The decorative dot indicator (bottom:28px) would collide with the fixed CTA
+   bar on the install step — hide it there. */
+body[data-step="install"] .indicator { display: none; }
