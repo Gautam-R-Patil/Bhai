@@ -23,7 +23,7 @@ import { existsSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { getDataDir, getScriptsDir } from "../config/paths.js";
+import { getDataDir } from "../config/paths.js";
 
 /**
  * Pick the Python binary the wizard's venv installed deps into, falling back
@@ -102,6 +102,23 @@ export interface OmniParserOptions {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
+// Resolve scripts/omniparser_detect.py across dev + packaged layouts.
+// Dev (tsx): __dirname = src/screen/ → ../../scripts works.
+// Built dist: __dirname = dist/screen/ → ../../scripts works.
+// Bundled prod: __dirname = Contents/Resources/bot/ → ../../scripts lands at
+// Contents/scripts (doesn't exist); scripts/ is a sibling of the bundle.
+function resolveOmniparserScript(): string {
+    const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+    const candidates = [
+        join(__dirname, "..", "..", "scripts", "omniparser_detect.py"),
+        join(__dirname, "scripts", "omniparser_detect.py"),
+        join(process.cwd(), "scripts", "omniparser_detect.py"),
+        ...(resourcesPath ? [join(resourcesPath, "bot", "scripts", "omniparser_detect.py")] : []),
+        ...(resourcesPath ? [join(resourcesPath, "scripts", "omniparser_detect.py")] : []),
+    ];
+    return candidates.find(existsSync) ?? candidates[0]!;
+}
+
 /**
  * Detect interactive UI elements in a screenshot.
  * Returns `{ elements: [] }` with `error` field if the tool isn't installed.
@@ -111,7 +128,7 @@ export async function detectElements(screenshotPath: string, opts: OmniParserOpt
         return failureResult(`screenshot_path_rejected:must be under tmpdir or ATLAS Files directory`);
     }
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    const script = join(getScriptsDir(), "omniparser_detect.py");
+    const script = resolveOmniparserScript();
     const args = [script, screenshotPath];
     if (opts.captions) args.push("--captions");
     if (opts.maxElements) args.push("--max-elements", String(opts.maxElements));

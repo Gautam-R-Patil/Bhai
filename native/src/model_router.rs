@@ -267,11 +267,15 @@ fn build_model_registry() -> HashMap<String, ModelInfo> {
         output_cost_per_1m: 1.10,
         tier: 5,
         speed: Speed::Fast,
-        strengths: vec!["agentic".into(), "tool_use".into(), "reasoning".into(), "coding".into(), "balanced".into()],
+        strengths: vec!["agentic".into(), "reasoning".into(), "coding".into(), "balanced".into()],
         max_tokens: 8192,
         context_window: 160_000,
-        supports_tools: true,
-        supports_parallel_tools: true,
+        // OpenRouter no longer routes V3.1 to any provider that supports
+        // tool use — every tool-bearing call 404s with "No endpoints found
+        // that support tool use". Mark as no-tools so failover skips it
+        // when tools are present.
+        supports_tools: false,
+        supports_parallel_tools: false,
         supports_vision: false,
         provider: Provider::Deepseek,
     });

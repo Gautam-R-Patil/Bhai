@@ -190,7 +190,16 @@ export function initOverlayChat(llm: LLMClient): void {
                     // Inject the loopback auth token so the page's WebSocket can
                     // authenticate (the server rejects token-less WS handshakes).
                     // Token only travels over 127.0.0.1 to a 0o600-gated client.
-                    html = html.replace(/%%ATLAS_LOCAL_TOKEN%%/g, getOverlayLocalToken());
+                    // overlay.html reads it via both %%ATLAS_LOCAL_TOKEN%% (primary,
+                    // window.__ATLAS_LOCAL_TOKEN__) and window.__atlasLocalToken.
+                    const token = getOverlayLocalToken();
+                    html = html.replace(/%%ATLAS_LOCAL_TOKEN%%/g, token);
+                    const injection = `<script>window.__atlasLocalToken=${JSON.stringify(token)};</script>`;
+                    if (html.includes("</head>")) {
+                        html = html.replace("</head>", `${injection}</head>`);
+                    } else {
+                        html = injection + html;
+                    }
                     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
                     res.end(html);
                     served = true;
@@ -597,6 +606,13 @@ export function initOverlayChat(llm: LLMClient): void {
         });
     });
 
+    httpServer.on("error", (err: NodeJS.ErrnoException) => {
+        if (err.code === "EADDRINUSE") {
+            console.error(`💬 [OVERLAY] Port ${OVERLAY_PORT} already in use — another ATLAS instance is likely running. Overlay chat disabled this run.`);
+        } else {
+            console.error(`💬 [OVERLAY] HTTP server error: ${err.message}`);
+        }
+    });
     httpServer.listen(OVERLAY_PORT, "127.0.0.1", () => {
         console.log(`💬 Overlay chat on http://127.0.0.1:${OVERLAY_PORT}`);
         // The overlay window is owned by the Electron desktop app on ALL platforms

@@ -2472,11 +2472,16 @@
       function connect() {
         // Authenticate the WS handshake with the server-injected loopback token.
         // The server rejects token-less connections (4001), which previously left
-        // the overlay connected-but-mute. Fall back to a token-less URL only if
-        // injection didn't run (dev), so the failure mode is visible not silent.
-        const _tok = window.__ATLAS_LOCAL_TOKEN__;
-        const _q = (_tok && _tok.indexOf('%%') === -1) ? `?localToken=${encodeURIComponent(_tok)}` : '';
-        ws = new WebSocket(`ws://${location.host}/${_q}`);
+        // the overlay connected-but-mute. overlay-chat.ts injects the token two
+        // ways: the %%ATLAS_LOCAL_TOKEN%% placeholder (→ window.__ATLAS_LOCAL_TOKEN__)
+        // and window.__atlasLocalToken. Prefer either; fall back to token-less in
+        // dev so the failure mode is visible, not silent.
+        const _placeholder = window.__ATLAS_LOCAL_TOKEN__;
+        const _tok = (_placeholder && _placeholder.indexOf('%%') === -1)
+          ? _placeholder
+          : (window.__atlasLocalToken || '');
+        const qs = _tok ? `?localToken=${encodeURIComponent(_tok)}` : '';
+        ws = new WebSocket(`ws://${location.host}${qs}`);
         window._atlasWS = ws; // Expose for Electron IPC (live voice shortcut)
         ws.onopen = () => { blobs.forEach(b => b.classList.add('on')); grabFocus(); };
         ws.onmessage = (e) => { try { handle(JSON.parse(e.data)); } catch (err) { console.error('[OVERLAY] handle() error:', err); } };

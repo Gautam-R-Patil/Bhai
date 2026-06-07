@@ -313,16 +313,21 @@ function sendMessage(msg) {
             fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
 
             try {
-                const Winreg = (await import("winreg2")).default;
+                // winreg2 is ESM with named exports — there is no default export
+                // (the old `winreg` package had one). It also exposes Promise
+                // methods without the `Async` suffix (create/set, not
+                // createAsync/setAsync) and separate Hive/RegType enums rather
+                // than statics on the class.
+                const { Registry, Hive, RegType } = await import("winreg2");
                 const browsers = [
                     "SOFTWARE\\Google\\Chrome\\NativeMessagingHosts\\com.atlas.bridge",
                     "SOFTWARE\\Microsoft\\Edge\\NativeMessagingHosts\\com.atlas.bridge",
                     "SOFTWARE\\Chromium\\NativeMessagingHosts\\com.atlas.bridge",
                 ];
                 for (const keyPath of browsers) {
-                    const key = new Winreg({ hive: Winreg.HKCU, key: `\\${keyPath}` });
-                    await key.createAsync();
-                    await key.setAsync("", Winreg.REG_SZ, manifestPath);
+                    const key = new Registry({ hive: Hive.HKCU, key: `\\${keyPath}` });
+                    await key.create();
+                    await key.set("", RegType.REG_SZ, manifestPath);
                 }
                 console.log("✓ Chrome/Edge/Chromium native messaging host registered (Windows registry)");
             } catch (err) {
@@ -557,6 +562,14 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
 
     wss.on("error", (err) => {
         console.error("🔌 Chrome bridge WS error:", (err as Error).message);
+    });
+
+    httpServer.on("error", (err: NodeJS.ErrnoException) => {
+        if (err.code === "EADDRINUSE") {
+            console.error(`🔌 [CHROME-BRIDGE] Port ${port} already in use — another ATLAS instance is likely running. Chrome extension bridge disabled this run.`);
+        } else {
+            console.error(`🔌 [CHROME-BRIDGE] HTTP server error: ${err.message}`);
+        }
     });
 
     httpServer.listen(port, "127.0.0.1", () => {

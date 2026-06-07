@@ -15,8 +15,10 @@
   ],
   "host_permissions": [
     "<all_urls>",
-    "http://127.0.0.1/*",
-    "http://localhost/*"
+    "http://127.0.0.1:18800/*",
+    "http://127.0.0.1:18792/*",
+    "http://localhost:18800/*",
+    "http://localhost:18792/*"
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' http://127.0.0.1:18800 http://127.0.0.1:18792 ws://127.0.0.1:18800 ws://127.0.0.1:18792 http://localhost:18800 http://localhost:18792 ws://localhost:18800 ws://localhost:18792"

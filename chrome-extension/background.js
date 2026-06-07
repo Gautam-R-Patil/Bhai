@@ -11,6 +11,11 @@
 // Chrome. Auth via first message {type:"auth", token}.
 let ws = null;
 let authenticated = false;
+// Default to the Chrome Bridge port. 18792 was the old default (overlay
+// chat server), but that's a different service requiring localToken auth
+// and speaking a different protocol — connecting there produces
+// confusing ERR_CONNECTION_REFUSED / 4001-close errors. autoDiscover()
+// will update serverUrl to whatever the bridge advertises.
 let serverUrl = "ws://127.0.0.1:18800";
 let discoveryUrl = "http://127.0.0.1:18800/discover";
 let authToken = "";
@@ -1645,6 +1650,11 @@ async function _autoDiscover() {
     // Native messaging not available
   }
 
+  // No fallback to the overlay port. 18792 is the overlay chat server — it
+  // speaks a different protocol AND requires ?localToken= auth that this
+  // extension does not hold. Connecting there used to silently fail with
+  // ERR_CONNECTION_REFUSED-style errors when the bot wasn't fully booted,
+  // and surface as 4001 closes after. Keep retrying /discover at 18800.
   return false;
 }
 
@@ -1791,6 +1801,22 @@ async function ensureConnected() {
     authToken = data.authToken;
     serverUrl = data.serverUrl || serverUrl;
     connect();
+
+    setTimeout(() => {
+      if (!authenticated) {
+        autoDiscover().then((found) => {
+          if (!found) startDiscovery();
+        });
+      }
+    }, 3000);
+  } else {
+    // No saved token — go straight to discovery. The previous "try direct
+    // connection first" path connected to the wrong server (18792 overlay,
+    // different protocol + auth) and surfaced spurious ERR_CONNECTION_REFUSED
+    // and 4001-close errors in the extension console.
+    autoDiscover().then((found) => {
+      if (!found) startDiscovery();
+    });
   }
   if (data.overlayToken) {
     overlayToken = data.overlayToken;
