@@ -1500,6 +1500,23 @@ http.route({
   }),
 });
 
+// Cheap heartbeat — called frequently by the live dashboard. Returns only the
+// numbers the Health badge / error pill / connectivity probe need; the heavy
+// overview endpoint stays on a slower cadence.
+http.route({
+  path: "/api/admin/observability/heartbeat",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authErr = await validateAdminRequest(request);
+    if (authErr) return authErr;
+    const data = await ctx.runQuery(internal.observability.getDashboardHeartbeat, {});
+    return new Response(JSON.stringify({ data }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
+
 http.route({
   path: "/api/admin/observability/top-models",
   method: "GET",

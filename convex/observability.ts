@@ -36,6 +36,54 @@ const MODEL_COSTS: Record<string, { credits: number; costPer1kInput: number; cos
 // All takes are capped at safe limits (same as getObservabilityData) — the
 // dashboard intentionally never shows authoritative billing numbers, so a
 // scan cap is acceptable here.
+// Cheap heartbeat for live dashboard polling. Deliberately avoids the heavy
+// table scans `getSystemOverview` does — just enough signal for the Health
+// badge, error-count KPI, and connectivity probe to stay fresh between full
+// refreshes. Roughly 3 reads vs ~30k for the full overview.
+export const getDashboardHeartbeat = internalQuery({
+    args: {},
+    handler: async (ctx) => {
+        const now = Date.now();
+        const hourMs = 60 * 60 * 1000;
+        const dayMs = 24 * hourMs;
+
+        // Single small denorm table — same one the heavy query reads.
+        const modelCounters = await ctx.db.query("llm_usage_counters").take(500);
+        const lastLlmCall = modelCounters.reduce((max, m) => Math.max(max, m.lastCalledAt), 0);
+        const totalLlmCalls = modelCounters.reduce((s, m) => s + m.count, 0);
+
+        // Bounded: indexed read of the most-recent error rows. We don't return
+        // payloads — only count, severity-broken-down, and the newest timestamp.
+        const recentErrors = await ctx.db
+            .query("error_log")
+            .withIndex("by_timestamp")
+            .order("desc")
+            .take(50);
+        const lastErrorAt = recentErrors[0]?.timestamp ?? null;
+        const errorCount = recentErrors.filter((e) => e.severity === "error").length;
+
+        let health: "healthy" | "idle" | "stale";
+        if (lastLlmCall === 0 && totalLlmCalls === 0) {
+            health = "healthy";
+        } else if (now - lastLlmCall < hourMs) {
+            health = "healthy";
+        } else if (now - lastLlmCall < dayMs) {
+            health = "idle";
+        } else {
+            health = "stale";
+        }
+
+        return {
+            now,
+            health,
+            errorCount,
+            lastErrorAt,
+            lastLlmCallAt: lastLlmCall || null,
+            totalLlmCalls,
+        };
+    },
+});
+
 export const getSystemOverview = internalQuery({
     args: {},
     handler: async (ctx) => {

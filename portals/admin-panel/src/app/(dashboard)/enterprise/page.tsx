@@ -11,6 +11,8 @@ import {
   BarChart3,
   Activity,
   RefreshCw,
+  Pencil,
+  KeyRound,
 } from "lucide-react";
 
 interface License {
@@ -147,6 +149,8 @@ function LicensesView({
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "active" | "revoked" | "expired">("all");
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [editing, setEditing] = useState<License | null>(null);
+  const [rotating, setRotating] = useState<License | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -288,14 +292,34 @@ function LicensesView({
                   </td>
                   <td className="px-6 py-4 text-right">
                     {l.status === "active" ? (
-                      <button
-                        type="button"
-                        onClick={() => handleRevoke(l.licenseKey)}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 rounded-lg transition-colors"
-                      >
-                        <Ban className="w-3.5 h-3.5" />
-                        Revoke
-                      </button>
+                      <div className="inline-flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setEditing(l)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors"
+                          title="Edit name, email, seats"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRotating(l)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-lg transition-colors"
+                          title="Generate a new license key"
+                        >
+                          <KeyRound className="w-3.5 h-3.5" />
+                          Rotate
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRevoke(l.licenseKey)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 rounded-lg transition-colors"
+                        >
+                          <Ban className="w-3.5 h-3.5" />
+                          Revoke
+                        </button>
+                      </div>
                     ) : (
                       <span className="text-xs text-gray-400">
                         {l.revokedReason ? `revoked: ${l.revokedReason}` : "—"}
@@ -314,6 +338,28 @@ function LicensesView({
           onClose={() => onShowCreate(false)}
           onCreated={async () => {
             onShowCreate(false);
+            await load();
+          }}
+        />
+      )}
+
+      {editing && (
+        <EditLicenseModal
+          license={editing}
+          onClose={() => setEditing(null)}
+          onSaved={async () => {
+            setEditing(null);
+            await load();
+          }}
+        />
+      )}
+
+      {rotating && (
+        <RotateKeyModal
+          license={rotating}
+          onClose={() => setRotating(null)}
+          onRotated={async () => {
+            setRotating(null);
             await load();
           }}
         />
@@ -716,6 +762,293 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     <div>
       <label className="block text-xs font-medium text-gray-700 mb-1">{label}</label>
       {children}
+    </div>
+  );
+}
+
+function EditLicenseModal({
+  license,
+  onClose,
+  onSaved,
+}: {
+  license: License;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const [clientName, setClientName] = useState(license.clientName);
+  const [contactEmail, setContactEmail] = useState(license.contactEmail);
+  const [seatLimit, setSeatLimit] = useState(license.seatLimit);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const dirty =
+    clientName.trim() !== license.clientName ||
+    contactEmail.trim().toLowerCase() !== license.contactEmail.toLowerCase() ||
+    seatLimit !== license.seatLimit;
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!dirty) {
+      onClose();
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    const patch: Record<string, unknown> = {};
+    if (clientName.trim() !== license.clientName) patch.client_name = clientName.trim();
+    if (contactEmail.trim().toLowerCase() !== license.contactEmail.toLowerCase()) {
+      patch.contact_email = contactEmail.trim();
+    }
+    if (seatLimit !== license.seatLimit) patch.seat_limit = seatLimit;
+
+    try {
+      const res = await fetch(
+        `/api/enterprise/licenses/${encodeURIComponent(license.licenseKey)}`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(patch),
+        },
+      );
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `HTTP ${res.status}`);
+      }
+      await onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to update");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 bg-gray-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-xl shadow-xl max-w-md w-full p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <form onSubmit={handleSubmit}>
+          <h2 className="text-xl font-bold text-gray-900 mb-1">Edit registration</h2>
+          <p className="text-gray-600 text-sm mb-1">
+            <span className="font-mono text-xs text-gray-800">{license.licenseKey}</span>
+          </p>
+          <p className="text-gray-500 text-xs mb-4">
+            Plan / features / dates aren't editable. To change them, revoke and re-issue.
+          </p>
+          {error && (
+            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+              {error}
+            </div>
+          )}
+          <div className="space-y-3">
+            <Field label="Client name">
+              <input
+                required
+                maxLength={200}
+                value={clientName}
+                onChange={(e) => setClientName(e.target.value)}
+                className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+            </Field>
+            <Field label="Contact email">
+              <input
+                required
+                type="email"
+                value={contactEmail}
+                onChange={(e) => setContactEmail(e.target.value)}
+                className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+            </Field>
+            <Field label="Seats">
+              <input
+                required
+                type="number"
+                min={1}
+                max={10000}
+                value={seatLimit}
+                onChange={(e) => setSeatLimit(Number(e.target.value))}
+                className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+            </Field>
+          </div>
+          <div className="flex gap-2 mt-6">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 px-3 py-2 bg-white text-gray-700 hover:bg-gray-50 border border-gray-200 text-sm font-medium rounded-lg transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting || !dirty}
+              className="flex-1 px-3 py-2 bg-primary-600 hover:bg-primary-700 disabled:bg-primary-300 text-white text-sm font-medium rounded-lg transition-colors"
+            >
+              {submitting ? "Saving…" : "Save changes"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function RotateKeyModal({
+  license,
+  onClose,
+  onRotated,
+}: {
+  license: License;
+  onClose: () => void;
+  onRotated: () => Promise<void>;
+}) {
+  const [revokeActivations, setRevokeActivations] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<{ license_key: string; revoked_activations: number } | null>(
+    null,
+  );
+  const [copied, setCopied] = useState(false);
+
+  const handleRotate = async () => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await fetch(
+        `/api/enterprise/licenses/${encodeURIComponent(license.licenseKey)}/rotate`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ revoke_activations: revokeActivations }),
+        },
+      );
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `HTTP ${res.status}`);
+      }
+      const body = (await res.json()) as {
+        license_key: string;
+        revoked_activations: number;
+      };
+      setResult(body);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to rotate");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 bg-gray-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-xl shadow-xl max-w-md w-full p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {result ? (
+          <div>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">License key rotated</h2>
+            <p className="text-gray-600 text-sm mb-4">
+              Send the new key to <span className="text-gray-900">{license.contactEmail}</span>. The
+              old key no longer authenticates.
+            </p>
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 mb-3">
+              <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
+                New license key
+              </div>
+              <div className="font-mono text-gray-900 text-sm break-all">{result.license_key}</div>
+            </div>
+            {result.revoked_activations > 0 && (
+              <div className="mb-4 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2">
+                Revoked {result.revoked_activations} existing activation
+                {result.revoked_activations === 1 ? "" : "s"}. Customer must re-activate.
+              </div>
+            )}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(result.license_key);
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 1500);
+                  } catch {}
+                }}
+                className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-white text-gray-700 hover:bg-gray-50 border border-gray-200 text-sm font-medium rounded-lg transition-colors"
+              >
+                {copied ? <Check className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
+                {copied ? "Copied" : "Copy key"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void onRotated()}
+                className="flex-1 px-3 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium rounded-lg transition-colors"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <h2 className="text-xl font-bold text-gray-900 mb-1">Rotate license key</h2>
+            <p className="text-gray-600 text-sm mb-4">
+              Generate a new key for{" "}
+              <span className="text-gray-900 font-medium">{license.clientName}</span>. The old key
+              will stop working immediately.
+            </p>
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 mb-4">
+              <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
+                Current key
+              </div>
+              <div className="font-mono text-gray-700 text-xs break-all">{license.licenseKey}</div>
+            </div>
+            <label className="flex items-start gap-2 mb-4 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={revokeActivations}
+                onChange={(e) => setRevokeActivations(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span className="text-sm text-gray-700">
+                Revoke existing activations
+                <span className="block text-xs text-gray-500">
+                  Force every installed binary to re-activate with the new key. Use this for
+                  suspected key compromise.
+                </span>
+              </span>
+            </label>
+            {error && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                {error}
+              </div>
+            )}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex-1 px-3 py-2 bg-white text-gray-700 hover:bg-gray-50 border border-gray-200 text-sm font-medium rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={handleRotate}
+                className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-amber-600 hover:bg-amber-700 disabled:bg-amber-300 text-white text-sm font-medium rounded-lg transition-colors"
+              >
+                <KeyRound className="w-4 h-4" />
+                {submitting ? "Rotating…" : "Rotate key"}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

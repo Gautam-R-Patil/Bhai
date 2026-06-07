@@ -521,6 +521,25 @@ async function executeAndProcessToolCall(
         fnArgs = {};
     }
 
+    // ── Reject obviously malformed tool names ──
+    // Fallback chains sometimes return mangled tool_call envelopes (single
+    // letter, empty, or trimmed names like "a" / "o") that aren't real tools
+    // and waste an iteration each time. Tool names in the registry are all
+    // ≥3 chars and alphanumeric+underscore; reject anything shorter so the
+    // loop bails out and the agent can move on.
+    if (!fnName || fnName.length < 3 || !/^[a-z_][a-z0-9_]*$/i.test(fnName)) {
+        const err = `Malformed tool call: name="${fnName}". The provider returned a truncated/invalid tool envelope. Skip this and try a different approach (try a simpler tool or stop and report progress to the user).`;
+        return {
+            toolCallId: toolCall.id,
+            fnName,
+            fnArgs,
+            result: JSON.stringify({ error: err }),
+            finalContent: JSON.stringify({ error: err }),
+            isBrowser: false,
+            isError: true,
+        };
+    }
+
     // ── Hard block: reject tools not in the allowlist (defense-in-depth) ──
     if (toolAllowlist && toolAllowlist.length > 0 && !new Set(toolAllowlist).has(fnName)) {
         return {

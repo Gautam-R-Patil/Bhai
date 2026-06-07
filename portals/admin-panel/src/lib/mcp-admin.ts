@@ -79,6 +79,45 @@ export async function issueEnterpriseLicense(req: IssueRequest): Promise<IssuedL
   return await jsonOrThrow<IssuedLicense>(res);
 }
 
+export interface UpdateEnterpriseLicensePatch {
+  client_name?: string;
+  contact_email?: string;
+  seat_limit?: number;
+}
+
+export async function updateEnterpriseLicense(
+  licenseKey: string,
+  patch: UpdateEnterpriseLicensePatch,
+): Promise<{ ok: boolean }> {
+  const res = await fetch(`${baseUrl()}/v1/admin/license/update`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-admin-key": adminKey(),
+    },
+    body: JSON.stringify({ license_key: licenseKey, ...patch }),
+  });
+  return await jsonOrThrow<{ ok: boolean }>(res);
+}
+
+export async function rotateEnterpriseLicenseKey(
+  licenseKey: string,
+  revokeActivations: boolean,
+): Promise<{ ok: boolean; license_key: string; revoked_activations: number }> {
+  const res = await fetch(`${baseUrl()}/v1/admin/license/rotate`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-admin-key": adminKey(),
+    },
+    body: JSON.stringify({
+      license_key: licenseKey,
+      revoke_activations: revokeActivations,
+    }),
+  });
+  return await jsonOrThrow<{ ok: boolean; license_key: string; revoked_activations: number }>(res);
+}
+
 export async function revokeEnterpriseLicense(
   licenseKey: string,
   reason: string,

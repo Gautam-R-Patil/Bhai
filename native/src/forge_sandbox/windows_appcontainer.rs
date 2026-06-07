@@ -12,16 +12,23 @@ use std::os::windows::ffi::OsStrExt;
 use std::ptr;
 
 use windows_sys::core::PWSTR;
-use windows_sys::Win32::Foundation::{
-    LocalFree, ERROR_ALREADY_EXISTS, HLOCAL, HRESULT_FROM_WIN32, PSID, S_OK,
-};
-use windows_sys::Win32::Security::Authorization::{
-    ConvertSidToStringSidW, ConvertStringSidToSidW,
-};
+use windows_sys::Win32::Foundation::{LocalFree, ERROR_ALREADY_EXISTS, HLOCAL, S_OK};
+use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
 use windows_sys::Win32::Security::Isolation::{
     CreateAppContainerProfile, DeriveAppContainerSidFromAppContainerName,
 };
-use windows_sys::Win32::Security::SID_AND_ATTRIBUTES;
+use windows_sys::Win32::Security::PSID;
+
+/// `HRESULT_FROM_WIN32` is a C preprocessor macro that windows-sys does not
+/// expose. For a positive Win32 error code it maps to the FACILITY_WIN32 HRESULT.
+#[inline]
+fn hresult_from_win32(code: u32) -> i32 {
+    if code as i32 <= 0 {
+        code as i32
+    } else {
+        ((code & 0x0000_FFFF) | (7 << 16) | 0x8000_0000) as i32
+    }
+}
 
 /// Owned AppContainer SID. Drop releases the LocalAlloc'd buffer.
 pub struct AppContainerSid {
@@ -76,7 +83,7 @@ pub fn ensure_profile(slug: &str) -> io::Result<AppContainerSid> {
         return Ok(AppContainerSid { sid });
     }
 
-    let already_exists = hr == HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS as u32) as i32;
+    let already_exists = hr == hresult_from_win32(ERROR_ALREADY_EXISTS as u32);
     if !already_exists {
         return Err(io::Error::from_raw_os_error(hr));
     }
