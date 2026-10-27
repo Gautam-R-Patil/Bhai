@@ -149,7 +149,7 @@ const OVERLAY_HIDE_DELAY_MS = 260;
 const _ATLAS_IS_PROD = process.env.ATLAS_ENV
     ? process.env.ATLAS_ENV === "prod"
     : app.isPackaged;
-const _CONVEX_DEPLOY_NAME = _ATLAS_IS_PROD ? "colorful-heron-487" : "flexible-panther-179";
+const _CONVEX_DEPLOY_NAME = _ATLAS_IS_PROD ? "avid-finch-726" : "avid-finch-726";
 const CONVEX_SITE_URL = process.env.CONVEX_SITE_URL || `https://${_CONVEX_DEPLOY_NAME}.convex.site`;
 const CONVEX_API_URL = process.env.CONVEX_URL || `https://${_CONVEX_DEPLOY_NAME}.convex.cloud`;
 

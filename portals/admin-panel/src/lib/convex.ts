@@ -1,7 +1,7 @@
 // Convex API client for admin panel
 // Direct HTTPS calls to Convex backend
 
-const CONVEX_URL = process.env.NEXT_PUBLIC_CONVEX_URL || "https://colorful-heron-487.convex.cloud";
+const CONVEX_URL = process.env.NEXT_PUBLIC_CONVEX_URL || "https://avid-finch-726.convex.cloud";
 
 interface ConvexResponse<T> {
   status: "success" | "error";

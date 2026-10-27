@@ -2,7 +2,7 @@
 const nextConfig = {
   output: 'standalone',
   images: {
-    domains: ['colorful-heron-487.convex.cloud', 'flexible-panther-179.convex.cloud'],
+    domains: ['avid-finch-726.convex.cloud', 'avid-finch-726.convex.cloud'],
   },
   // F15: global security headers. Same posture as admin-panel — every
   // response gets DENY/HSTS/CSP/etc. so a misconfigured route can't
