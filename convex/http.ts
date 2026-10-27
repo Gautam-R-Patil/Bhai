@@ -734,7 +734,7 @@ const AUTH_LOGIN_HTML = `<!DOCTYPE html>
   @media (prefers-color-scheme: dark) { :root { --bg: #141312; --card: #1f1d1b; --text: #f2efeb; --muted: #a29b94; --err: #f2b8b5; } }
   body { margin: 0; min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 24px; box-sizing: border-box;
          background: var(--bg); color: var(--text); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-  .card { width: 100%; max-width: 400px; background: var(--card); border-radius: 16px; padding: 32px; box-shadow: 0 10px 30px rgba(0,0,0,.08); }
+  .card { box-sizing: border-box; width: 100%; max-width: 400px; background: var(--card); border-radius: 16px; padding: 32px; box-shadow: 0 10px 30px rgba(0,0,0,.08); }
   h1 { font-size: 22px; margin: 0; text-align: center; }
   p { color: var(--muted); text-align: center; margin: 6px 0 20px; }
   .hidden { display: none; }
