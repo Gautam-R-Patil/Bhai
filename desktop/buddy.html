@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<!-- Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved. -->
+<!-- On-screen companion: the plush Bhai in the corner while it works for you.
+     Click-through and excluded from screen capture (set in main.js), so it
+     never gets in the way of what Bhai is doing. main.js calls setBuddy(). -->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';">
+    <title>Bhai</title>
+    <style>
+        :root {
+            --bubble-bg: rgba(255, 253, 250, 0.97);
+            --bubble-text: #2b2420;
+            --bubble-line: rgba(60, 36, 16, 0.10);
+            --bubble-shadow: 0 8px 22px rgba(60, 36, 16, 0.18), 0 1px 3px rgba(60, 36, 16, 0.10);
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bubble-bg: rgba(44, 40, 37, 0.97);
+                --bubble-text: #f5efe9;
+                --bubble-line: rgba(255, 255, 255, 0.10);
+                --bubble-shadow: 0 8px 22px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.3);
+            }
+        }
+        html, body {
+            margin: 0;
+            height: 100%;
+            background: transparent;
+            overflow: hidden;
+            font: 500 12.5px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+            -webkit-font-smoothing: antialiased;
+            user-select: none;
+        }
+        .stage {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: flex-end;
+            justify-content: flex-end;
+            gap: 2px;
+            padding: 0 10px 6px 0;
+            transform: translateY(110%);
+            opacity: 0;
+            transition: transform 520ms cubic-bezier(.34, 1.56, .64, 1), opacity 200ms ease;
+        }
+        .stage.shown { transform: translateY(0); opacity: 1; }
+        .bubble {
+            position: relative;
+            margin-bottom: 52px;
+            max-width: 170px;
+            padding: 8px 12px;
+            border-radius: 14px;
+            background: var(--bubble-bg);
+            color: var(--bubble-text);
+            border: 1px solid var(--bubble-line);
+            box-shadow: var(--bubble-shadow);
+            overflow-wrap: anywhere;
+            transition: opacity 160ms ease;
+        }
+        /* little tail pointing at Bhai */
+        .bubble::after {
+            content: "";
+            position: absolute;
+            right: -6px;
+            bottom: 12px;
+            width: 12px;
+            height: 12px;
+            background: var(--bubble-bg);
+            border-right: 1px solid var(--bubble-line);
+            border-bottom: 1px solid var(--bubble-line);
+            transform: rotate(-45deg);
+            border-bottom-right-radius: 3px;
+        }
+        .bubble.swap { opacity: 0; }
+        .bhai { width: 86px; height: 97px; flex-shrink: 0; }
+        @media (prefers-reduced-motion: reduce) {
+            .stage { transition: opacity 200ms ease; transform: none; }
+        }
+    </style>
+</head>
+<body>
+    <div class="stage" id="stage">
+        <div class="bubble" id="bubble">On it…</div>
+        <div class="bhai" id="bhai"></div>
+    </div>
+    <script src="components/mascot.js"></script>
+    <script>
+        const stage = document.getElementById("stage");
+        const bubble = document.getElementById("bubble");
+        const bhai = document.getElementById("bhai");
+        window.BhaiMascot.mount(bhai, "idle");
+
+        // Called from main.js: { mood, text, visible }
+        window.setBuddy = function ({ mood, text, visible }) {
+            if (mood) bhai.dataset.mood = mood;
+            if (text && text !== bubble.textContent) {
+                bubble.classList.add("swap");
+                setTimeout(() => { bubble.textContent = text; bubble.classList.remove("swap"); }, 160);
+            }
+            stage.classList.toggle("shown", visible !== false);
+        };
+    </script>
+</body>
+</html>

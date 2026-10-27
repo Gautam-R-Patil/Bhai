@@ -136,7 +136,7 @@ async function runV2Migration() {
 // ── Overlay Window Constants ─────────────────
 // One native-glass panel (input bar + replies); the window is the panel.
 const OVERLAY_WIDTH = 640;
-const OVERLAY_MIN_HEIGHT = 58;
+const OVERLAY_MIN_HEIGHT = 68;
 const OVERLAY_MAX_HEIGHT = 600;
 const OVERLAY_MARGIN_RIGHT = 16;
 const OVERLAY_MARGIN_TOP = 8;
@@ -893,12 +893,20 @@ const channelStatuses = {};
 // Broadcast a theme change to every window that cares about it. The overlay
 // is a separate BrowserWindow from the main one, so both need to be notified.
 function broadcastThemeChange(theme) {
+    applyNativeTheme(theme);
     if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("theme-changed", theme);
     }
     if (overlayWindow && !overlayWindow.isDestroyed()) {
         overlayWindow.webContents.send("theme-changed", theme);
     }
+}
+
+// Native materials (the dashboard sidebar, the chat overlay's glass) follow the
+// app's appearance, not the OS's, so they always match the chosen theme. This
+// also drives prefers-color-scheme in every window.
+function applyNativeTheme(theme) {
+    nativeTheme.themeSource = theme === "light" || theme === "dark" ? theme : "system";
 }
 
 // ── User Preferences Store ───────────────────
@@ -1038,6 +1046,12 @@ function setupAutoUpdater() {
                 total: progress.total,
             });
         }
+    });
+
+    require("electron").autoUpdater.on("before-quit-for-update", () => {
+        isQuitting = true;
+        if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.destroy();
+        if (buddyWindow && !buddyWindow.isDestroyed()) buddyWindow.destroy();
     });
 
     autoUpdater.on("update-downloaded", (info) => {
@@ -1244,8 +1258,19 @@ async function startBot() {
         return { status: "error", error: spawnErr.message };
     }
 
+    let stdoutTail = "";
     botProcess.stdout.on("data", (data) => {
-        const msg = data.toString().trim();
+        // Line-buffer so a companion marker split across chunks isn't lost, and
+        // keep the markers out of the user's log.
+        const lines = (stdoutTail + data.toString()).split("\n");
+        stdoutTail = lines.pop();
+        const rest = [];
+        for (const line of lines) {
+            const m = line.match(/^##BHAI_BUDDY##(\{.*\})\s*$/);
+            if (!m) { rest.push(line); continue; }
+            try { handleBuddyStatus(JSON.parse(m[1])); } catch { /* malformed line */ }
+        }
+        const msg = rest.join("\n").trim();
         if (msg) {
             sendLog(msg);
             // Track stats from log output
@@ -1344,6 +1369,7 @@ async function startBot() {
     botProcess.on("exit", (code) => {
         sendLog(`Process exited with code ${code}`);
         botProcess = null;
+        hideBuddy();
         for (const k of Object.keys(channelStatuses)) delete channelStatuses[k];
         // Clean up temp env
         try { fs.unlinkSync(tempEnvPath); } catch { /* */ }
@@ -1505,15 +1531,31 @@ function createWizardWindow() {
     if (IS_DEV) mainWindow.webContents.openDevTools({ mode: "detach" });
 }
 
+// macOS: native window chrome per Apple's HIG — standard traffic lights inset
+// into a hidden title bar. The page paints the whole window (living colour
+// orbs under liquid-glass panels), so the window is opaque; the background
+// colour matches the theme so there's no flash before the page paints.
+function macPanelChrome() {
+    if (process.platform !== "darwin") return {};
+    return {
+        frame: true,
+        titleBarStyle: "hiddenInset",
+        trafficLightPosition: { x: 18, y: 18 },
+        transparent: false,
+        backgroundColor: nativeTheme.shouldUseDarkColors ? "#14100E" : "#F7F1EC",
+    };
+}
+
 async function createPanelWindow() {
     mainWindow = new BrowserWindow({
-        width: 700,
-        height: 540,
-        minWidth: 600,
-        minHeight: 480,
+        width: 900,
+        height: 640,
+        minWidth: 760,
+        minHeight: 540,
         frame: false,
         transparent: true,
         resizable: true,
+        ...macPanelChrome(),
         icon: path.join(__dirname, "logo.ico"),
         webPreferences: {
             preload: path.join(__dirname, "preload.js"),
@@ -1528,6 +1570,14 @@ async function createPanelWindow() {
     });
 
     hardenBrowserWindow(mainWindow);
+    // The native close button hides to the menu bar, like the app's own close
+    // control; Quit (⌘Q / tray) still quits.
+    mainWindow.on("close", (e) => {
+        if (!isQuitting) {
+            e.preventDefault();
+            mainWindow.hide();
+        }
+    });
     // Load from local HTTP server so OTPless SDK origin check passes
     const port = await startLocalServer();
     if (port) {
@@ -1553,6 +1603,117 @@ function getOverlayPosition() {
         x: Math.round(wa.x + (wa.width - OVERLAY_WIDTH) / 2),
         y: Math.round(wa.y + wa.height * 0.2),
     };
+}
+
+// ── On-screen companion ──────────────────────────
+// The plush Bhai that pops up in the corner while it works for you (when the
+// chat window isn't showing). Click-through, never takes focus, and excluded
+// from screen capture so Bhai's own screenshots never see it.
+const BUDDY_W = 300;
+const BUDDY_H = 150;
+let buddyWindow = null;
+let buddyReady = false;
+let buddyState = null;
+let buddyHideTimer = null;
+let buddyWatchdog = null;
+
+function ensureBuddyWindow() {
+    if (buddyWindow && !buddyWindow.isDestroyed()) return buddyWindow;
+    buddyReady = false;
+    buddyWindow = new BrowserWindow({
+        width: BUDDY_W,
+        height: BUDDY_H,
+        frame: false,
+        transparent: true,
+        resizable: false,
+        movable: false,
+        minimizable: false,
+        maximizable: false,
+        // NOT closable:false — a window that refuses to close cancels app.quit()
+        // and quitAndInstall. It's click-through and focus-less anyway.
+        focusable: false,
+        skipTaskbar: true,
+        hasShadow: false,
+        show: false,
+        backgroundColor: "#00000000",
+        webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, devTools: IS_DEV },
+    });
+    hardenBrowserWindow(buddyWindow);
+    buddyWindow.setIgnoreMouseEvents(true);
+    buddyWindow.setContentProtection(true);
+    buddyWindow.setAlwaysOnTop(true, "floating");
+    if (process.platform === "darwin") buddyWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    buddyWindow.webContents.on("did-finish-load", () => {
+        buddyReady = true;
+        if (buddyState) renderBuddy();
+    });
+    buddyWindow.on("closed", () => { buddyWindow = null; buddyReady = false; });
+    buddyWindow.loadFile(path.join(__dirname, "buddy.html"));
+    return buddyWindow;
+}
+
+function renderBuddy() {
+    if (!buddyWindow || buddyWindow.isDestroyed() || !buddyReady || !buddyState) return;
+    buddyWindow.webContents.executeJavaScript(`window.setBuddy(${JSON.stringify(buddyState)})`).catch(() => {});
+}
+
+function hideBuddy() {
+    clearTimeout(buddyHideTimer);
+    clearTimeout(buddyWatchdog);
+    if (!buddyWindow || buddyWindow.isDestroyed()) return;
+    buddyState = { ...(buddyState || {}), visible: false };
+    renderBuddy();
+    buddyHideTimer = setTimeout(() => {
+        if (buddyWindow && !buddyWindow.isDestroyed()) buddyWindow.hide();
+    }, 450);
+}
+
+function overlayShowing() {
+    return !!(overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible());
+}
+
+// `force`: Bhai is acting on the screen and has made the overlay invisible, so
+// the companion stands in for it even while the overlay is open.
+function showBuddy(mood, text, hideAfterMs, force = false) {
+    // While the chat window is open the mascot already lives there.
+    if (overlayShowing() && !force) {
+        if (buddyState?.visible) hideBuddy();
+        return;
+    }
+    const win = ensureBuddyWindow();
+    clearTimeout(buddyHideTimer);
+    clearTimeout(buddyWatchdog);
+    const wa = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+    win.setPosition(Math.round(wa.x + wa.width - BUDDY_W - 12), Math.round(wa.y + wa.height - BUDDY_H - 8));
+    buddyState = { mood, text, visible: true };
+    if (!win.isVisible()) win.showInactive();
+    renderBuddy();
+    // Done/oops pop away on their own; anything else hides if Bhai goes quiet.
+    if (hideAfterMs) buddyHideTimer = setTimeout(hideBuddy, hideAfterMs);
+    else buddyWatchdog = setTimeout(hideBuddy, 90_000);
+}
+
+// Bot → "##BHAI_BUDDY##{type,text}" lines (see src/overlay/overlay-chat.ts).
+function handleBuddyStatus({ type, text }) {
+    const clean = (text || "").replace(/^[^\p{L}\p{N}]+/u, "").trim();
+    switch (type) {
+        case "thinking": return showBuddy("thinking", "Hmm, let me think…");
+        case "screen":
+            // Out of the way for the agent's screenshots and clicks: the native
+            // glass can't be hidden from CSS, and the window would block clicks.
+            if (overlayShowing()) { overlayWindow.setOpacity(0); overlayWindow.setIgnoreMouseEvents(true); }
+            return showBuddy("looking", "Looking at your screen…", 0, true);
+        case "screen_done":
+            if (overlayWindow && !overlayWindow.isDestroyed()) { overlayWindow.setOpacity(1); overlayWindow.setIgnoreMouseEvents(false); }
+            return overlayShowing() ? hideBuddy() : showBuddy("working", "Working on it…");
+        case "progress": {
+            const looking = /screen|look|see|brows|search|web|page|read/i.test(clean);
+            return showBuddy(looking ? "looking" : "working", clean || "Working on it…");
+        }
+        case "response": return buddyState?.visible ? showBuddy("happy", "All done!", 2400) : undefined;
+        case "error": return showBuddy("oops", "Oops — hit a snag.", 4000);
+        case "silent": return hideBuddy();
+    }
 }
 
 function createOverlayWindow() {
@@ -1592,6 +1753,10 @@ function createOverlayWindow() {
             preload: path.join(__dirname, "overlay-preload.js"),
         },
     });
+
+    // The native glass can't be faded from CSS, so keep the overlay out of
+    // screen captures (Bhai's own screenshots must see what's underneath).
+    overlayWindow.setContentProtection(true);
 
     // F4: deny window.open() and constrain navigation. Overlay loads from
     // 127.0.0.1 (the bot's overlay server), so allowLocal=true is sufficient.
@@ -1680,6 +1845,8 @@ function showOverlay() {
         return;
     }
 
+    hideBuddy(); // the overlay has its own mascot
+
     // Create lazily
     if (!overlayWindow || overlayWindow.isDestroyed()) {
         createOverlayWindow();
@@ -1708,7 +1875,7 @@ function showOverlay() {
             if (!busy) {
                 if (rb) { rb.classList.remove('visible'); }
                 if (pg) { pg.classList.remove('visible'); pg.innerHTML = ''; }
-                if (inp) { inp.value = ''; inp.disabled = false; }
+                if (inp) { inp.value = ''; inp.disabled = false; inp.dispatchEvent(new Event('input')); }
             }
             if (nb) { nb.classList.remove('visible'); nb.innerHTML = ''; }
             return busy;
@@ -1718,7 +1885,7 @@ function showOverlay() {
         if (hasContent) {
             // Active content — resize window to fit now
             overlayWindow.webContents.executeJavaScript(
-                "document.getElementById('container')?.scrollHeight || 0"
+                OVERLAY_CONTENT_HEIGHT_JS
             ).then((sh) => {
                 if (!overlayWindow || overlayWindow.isDestroyed()) return;
                 const h = Math.min(Math.max(sh, OVERLAY_MIN_HEIGHT), OVERLAY_MAX_HEIGHT);
@@ -1829,6 +1996,21 @@ function toggleLiveVoice() {
     }
 }
 
+// Height of the overlay's visible content: the bottom edge of the last shown
+// section. (The container's scrollHeight can't be used — hidden absolutely
+// positioned popovers inflate it to the window's own height, so the window
+// could grow but never shrink back.)
+const OVERLAY_CONTENT_HEIGHT_JS = `(() => {
+    const c = document.getElementById('container');
+    if (!c) return 0;
+    let bottom = 0;
+    for (const k of c.children) {
+        if (getComputedStyle(k).display === 'none') continue;
+        bottom = Math.max(bottom, k.getBoundingClientRect().bottom);
+    }
+    return Math.ceil(bottom);
+})()`;
+
 function startHeightPolling() {
     stopHeightPolling();
     overlayResizeTimer = setInterval(() => {
@@ -1837,7 +2019,7 @@ function startHeightPolling() {
             return;
         }
         overlayWindow.webContents.executeJavaScript(
-            "document.getElementById('container')?.scrollHeight || 0"
+            OVERLAY_CONTENT_HEIGHT_JS
         ).then((scrollHeight) => {
             if (!overlayWindow || overlayWindow.isDestroyed()) return;
             const newH = Math.min(Math.max(scrollHeight, OVERLAY_MIN_HEIGHT), OVERLAY_MAX_HEIGHT);
@@ -3642,8 +3824,13 @@ function registerIPC() {
     });
 
     // Setup: finish and launch dashboard
-    ipcMain.handle("setup:finish", () => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
+    ipcMain.handle("setup:finish", async () => {
+        if (process.platform === "darwin" && mainWindow && !mainWindow.isDestroyed()) {
+            // The wizard window is frameless; the dashboard gets native chrome.
+            const wizard = mainWindow;
+            await createPanelWindow();
+            wizard.destroy();
+        } else if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.setMinimumSize(780, 560);
             mainWindow.setSize(840, 620);
             mainWindow.setResizable(true);
@@ -4247,12 +4434,7 @@ function registerIPC() {
             });
         }
 
-        if (key === "theme") {
-            // Notify renderer of theme change
-            if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send("theme-changed", value);
-            }
-        }
+        if (key === "theme") broadcastThemeChange(value);
 
         return { success: true };
     });
@@ -5808,6 +5990,7 @@ let isQuitting = false;
 // ── App Lifecycle ─────────────────────────────
 
 app.whenReady().then(async () => {
+    applyNativeTheme(store.get("theme"));
     // Run v1 → v2 migration before anything reads SETUP_FLAG or prefs.json.
     await runV2Migration();
 

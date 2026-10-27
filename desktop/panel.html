@@ -8,57 +8,45 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://*.convex.cloud https://*.convex.site; frame-ancestors 'none'; object-src 'none'; base-uri 'self';">
     <title>Bhai — Control Panel</title>
+    <script>
+        // macOS: native traffic lights + vibrancy sidebar (see styles.css "HIG layer").
+        (function () {
+            var p = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
+            if (/mac/i.test(p)) document.documentElement.classList.add('platform-darwin');
+        })();
+    </script>
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="components/components.css">
     <link rel="stylesheet" href="studio.css">
 </head>
 
-<body>
+<body class="hig">
 
-    <!-- Background Orbs — coral / amber / cobalt / mint / lavender / peach -->
-    <div class="bg-canvas">
-        <div class="orb orb-1"></div>
-        <div class="orb orb-2"></div>
-        <div class="orb orb-3"></div>
-        <div class="orb orb-4"></div>
-        <div class="orb orb-5"></div>
-        <div class="orb orb-6"></div>
+    <!-- Living background: slow-drifting colour orbs behind every glass panel -->
+    <div class="ambient" aria-hidden="true">
+        <i class="orb orb-1"></i><i class="orb orb-2"></i><i class="orb orb-3"></i>
+        <i class="orb orb-4"></i><i class="orb orb-5"></i><i class="orb orb-6"></i>
     </div>
+
+    <!-- Liquid-glass refraction: bends the backdrop inward along panel edges
+         (used as `backdrop-filter: … url(#bhai-liquid)` in styles.css). -->
+    <svg class="lg-defs" width="0" height="0" aria-hidden="true" focusable="false">
+        <filter id="bhai-liquid" x="0%" y="0%" width="100%" height="100%" color-interpolation-filters="sRGB">
+            <feImage x="0%" y="0%" width="100%" height="100%" preserveAspectRatio="none" result="mx"
+                href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' preserveAspectRatio='none'%3E%3ClinearGradient id='g' x2='1'%3E%3Cstop offset='0' stop-color='rgb(255,0,0)'/%3E%3Cstop offset='0.025' stop-color='rgb(200,0,0)'/%3E%3Cstop offset='0.06' stop-color='rgb(150,0,0)'/%3E%3Cstop offset='0.09' stop-color='rgb(128,0,0)'/%3E%3Cstop offset='0.91' stop-color='rgb(128,0,0)'/%3E%3Cstop offset='0.94' stop-color='rgb(106,0,0)'/%3E%3Cstop offset='0.975' stop-color='rgb(56,0,0)'/%3E%3Cstop offset='1' stop-color='rgb(0,0,0)'/%3E%3C/linearGradient%3E%3Crect width='10' height='10' fill='url(%23g)'/%3E%3C/svg%3E" />
+            <feImage x="0%" y="0%" width="100%" height="100%" preserveAspectRatio="none" result="my"
+                href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' preserveAspectRatio='none'%3E%3ClinearGradient id='g' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='rgb(0,255,0)'/%3E%3Cstop offset='0.025' stop-color='rgb(0,200,0)'/%3E%3Cstop offset='0.06' stop-color='rgb(0,150,0)'/%3E%3Cstop offset='0.09' stop-color='rgb(0,128,0)'/%3E%3Cstop offset='0.91' stop-color='rgb(0,128,0)'/%3E%3Cstop offset='0.94' stop-color='rgb(0,106,0)'/%3E%3Cstop offset='0.975' stop-color='rgb(0,56,0)'/%3E%3Cstop offset='1' stop-color='rgb(0,0,0)'/%3E%3C/linearGradient%3E%3Crect width='10' height='10' fill='url(%23g)'/%3E%3C/svg%3E" />
+            <feComposite in="mx" in2="my" operator="arithmetic" k2="1" k3="1" result="map" />
+            <feDisplacementMap in="SourceGraphic" in2="map" scale="36" xChannelSelector="R" yChannelSelector="G" />
+        </filter>
+    </svg>
 
     <!-- Title Bar -->
     <div class="title-bar">
         <span class="title-bar-text">Bhai</span>
         <div class="title-bar-buttons">
-            <button class="title-btn" onclick="atlas.minimize()" title="Minimize">─</button>
-            <button class="title-btn close" onclick="atlas.close()" title="Close">✕</button>
-        </div>
-    </div>
-
-    <!-- Update Banner -->
-    <div class="update-banner" id="updateBanner" style="display: none;">
-        <div class="update-banner-content">
-            <div class="update-banner-icon">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                    <polyline points="7 10 12 15 17 10"></polyline>
-                    <line x1="12" y1="15" x2="12" y2="3"></line>
-                </svg>
-            </div>
-            <div class="update-banner-text">
-                <span id="updateBannerTitle">Update available</span>
-                <span id="updateBannerSubtitle" class="update-banner-subtitle">v0.0.0</span>
-            </div>
-        </div>
-        <div class="update-banner-actions">
-            <button class="btn btn-sm btn-primary" id="updateActionBtn" onclick="handleUpdateAction()">
-                Download
-            </button>
-            <button class="btn btn-sm btn-secondary" id="updateDismissBtn" onclick="dismissUpdate()">
-                Later
-            </button>
-        </div>
-        <div class="update-progress-bar" id="updateProgressBar" style="display: none;">
-            <div class="update-progress-fill" id="updateProgressFill"></div>
+            <button class="title-btn" onclick="atlas.minimize()" title="Minimize" aria-label="Minimize">─</button>
+            <button class="title-btn close" onclick="atlas.close()" title="Close" aria-label="Close">✕</button>
         </div>
     </div>
 
@@ -68,9 +56,11 @@
         <!-- Sidebar Navigation -->
         <nav class="panel-sidebar">
             <div class="sidebar-logo">
-                <img src="logo.png" alt="Bhai" class="sidebar-app-logo">
+                <span class="sidebar-mascot" id="sidebarMascot" aria-hidden="true"><img src="logo.png" alt="" class="sidebar-app-logo"></span>
+                <span class="sidebar-app-name">Bhai</span>
             </div>
             <div class="nav-items">
+                <div class="nav-section-label">Workspace</div>
                 <button class="nav-item active" data-tab="dashboard" onclick="switchTab('dashboard')">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                         stroke-linecap="round" stroke-linejoin="round">
@@ -81,16 +71,6 @@
                     </svg>
                     <span>Dashboard</span>
                 </button>
-                <button class="nav-item" data-tab="settings" onclick="switchTab('settings')">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                        stroke-linecap="round" stroke-linejoin="round">
-                        <circle cx="12" cy="12" r="3"></circle>
-                        <path
-                            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
-                        </path>
-                    </svg>
-                    <span>Settings</span>
-                </button>
                 <button class="nav-item" data-tab="memory" onclick="switchTab('memory')">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                         stroke-linecap="round" stroke-linejoin="round">
@@ -99,6 +79,13 @@
                         <line x1="10" y1="22" x2="14" y2="22" />
                     </svg>
                     <span>Memory</span>
+                </button>
+                <button class="nav-item" data-tab="channels" onclick="switchTab('channels')">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
+                    </svg>
+                    <span>Channels</span>
                 </button>
                 <button class="nav-item" data-tab="store" onclick="switchTab('store')">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -109,12 +96,16 @@
                     </svg>
                     <span>Store</span>
                 </button>
-                <button class="nav-item" data-tab="channels" onclick="switchTab('channels')">
+                <div class="nav-section-label">Preferences</div>
+                <button class="nav-item" data-tab="settings" onclick="switchTab('settings')">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                         stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path
+                            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
+                        </path>
                     </svg>
-                    <span>Channels</span>
+                    <span>Settings</span>
                 </button>
                 <button class="nav-item" data-tab="account" onclick="switchTab('account')">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -133,6 +124,7 @@
                     </svg>
                     <span>About</span>
                 </button>
+                <span class="nav-pill" aria-hidden="true"></span>
             </div>
             <div class="sidebar-footer">
                 <div class="sidebar-version" id="sidebarVersion">v0.2.0</div>
@@ -141,6 +133,35 @@
 
         <!-- Main Content Area -->
         <div class="panel-main">
+
+            <!-- Update Banner -->
+            <div class="update-banner" id="updateBanner" style="display: none;">
+                <div class="update-banner-content">
+                    <div class="update-banner-icon">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                    </div>
+                    <div class="update-banner-text">
+                        <span id="updateBannerTitle">Update available</span>
+                        <span id="updateBannerSubtitle" class="update-banner-subtitle">v0.0.0</span>
+                    </div>
+                </div>
+                <div class="update-banner-actions">
+                    <button class="btn btn-sm btn-primary" id="updateActionBtn" onclick="handleUpdateAction()">
+                        Download
+                    </button>
+                    <button class="btn btn-sm btn-secondary" id="updateDismissBtn" onclick="dismissUpdate()">
+                        Later
+                    </button>
+                </div>
+                <div class="update-progress-bar" id="updateProgressBar" style="display: none;">
+                    <div class="update-progress-fill" id="updateProgressFill"></div>
+                </div>
+            </div>
+
 
             <!-- ═══════════════════════════════ -->
             <!-- TAB: Dashboard                 -->
@@ -151,40 +172,36 @@
                 </div>
 
                 <div class="dashboard-content">
-                    <div class="status-card surface-card">
+                    <div class="status-card surface-card" id="heroCard" data-phase="stopped">
+                        <div class="hero-mascot" id="heroMascot" aria-hidden="true"></div>
+                        <div class="hero-body">
+                        <span class="status-chip"><span class="status-dot"></span><span id="statusChipText">Offline</span></span>
                         <div id="statusOnline" style="display: none;">
-                            <div class="status-title" style="color: var(--text-primary);">
-                                <span class="status-dot online"></span>
-                                System Online
-                            </div>
+                            <div class="status-title">Bhai is awake</div>
                             <div class="status-subtitle" id="statusOnlineSub">
-                                Bhai is running.
+                                Ready when you are.
                             </div>
                         </div>
 
                         <div id="statusOffline">
-                            <div class="status-title" style="color: var(--text-secondary);">
-                                <span class="status-dot offline"></span>
-                                System Offline
-                            </div>
+                            <div class="status-title" id="statusOfflineTitle">Bhai is napping</div>
                             <div class="status-subtitle">
-                                Bhai is currently stopped. Click Start to begin.
+                                Start Bhai to use chat, channels and automations.
                             </div>
                         </div>
 
                         <div class="panel-controls">
                             <button class="btn btn-primary" id="chatBtn" onclick="atlas.showOverlay()"
-                                style="display: none; min-width: 130px; padding: 11px 20px;">
-                                💬 Open chat <kbd class="chat-kbd" id="chatShortcut"></kbd>
+                                style="display: none;">
+                                Open Chat <kbd class="chat-kbd" id="chatShortcut"></kbd>
                             </button>
-                            <button class="btn btn-success" id="startBtn" onclick="startBot()"
-                                style="min-width: 130px; padding: 11px 20px;">
-                                ▶ Start Bhai
+                            <button class="btn btn-success" id="startBtn" onclick="startBot()">
+                                Start Bhai
                             </button>
-                            <button class="btn btn-secondary" id="stopBtn" onclick="stopBot()" disabled
-                                style="min-width: 130px; padding: 11px 20px; color: var(--accent-danger);">
-                                ◼ Stop
+                            <button class="btn btn-secondary" id="stopBtn" onclick="stopBot()" disabled>
+                                Stop
                             </button>
+                        </div>
                         </div>
                     </div>
 
@@ -212,7 +229,7 @@
                         </div>
                         <div class="stat-card surface-card">
                             <div class="stat-value" id="statMessages">0</div>
-                            <div class="stat-label">Messages Today</div>
+                            <div class="stat-label" title="Messages today" aria-label="Messages today">Messages</div>
                         </div>
                         <div class="stat-card surface-card">
                             <div class="stat-value" id="statMemories">0</div>
@@ -236,21 +253,30 @@
                     </div>
 
                     <div class="info-cards">
-                        <div class="info-card surface-card" onclick="switchTab('settings')" style="cursor: pointer;">
-                            <div class="info-card-icon">⚙️</div>
-                            <div class="info-card-label">Settings</div>
-                            <div class="info-card-desc">Workspace, shortcuts, theme</div>
-                        </div>
-                        <div class="info-card surface-card" onclick="atlas.openDataDir()" style="cursor: pointer;">
-                            <div class="info-card-icon">📂</div>
-                            <div class="info-card-label">Data</div>
-                            <div class="info-card-desc">Open data directory</div>
-                        </div>
-                        <div class="info-card surface-card" onclick="atlas.openLogsDir()" style="cursor: pointer;">
-                            <div class="info-card-icon">📋</div>
-                            <div class="info-card-label">Logs</div>
-                            <div class="info-card-desc">View system logs</div>
-                        </div>
+                        <button type="button" class="info-card" onclick="switchTab('settings')">
+                            <span class="info-card-icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12 2v3M12 19v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M2 12h3M19 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"></path></svg></span>
+                            <span class="info-card-text">
+                                <span class="info-card-label">Settings</span>
+                                <span class="info-card-desc">Workspace, shortcuts, theme</span>
+                            </span>
+                            <svg class="info-card-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"></polyline></svg>
+                        </button>
+                        <button type="button" class="info-card" onclick="atlas.openDataDir()">
+                            <span class="info-card-icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg></span>
+                            <span class="info-card-text">
+                                <span class="info-card-label">Data</span>
+                                <span class="info-card-desc">Open data directory</span>
+                            </span>
+                            <svg class="info-card-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"></polyline></svg>
+                        </button>
+                        <button type="button" class="info-card" onclick="atlas.openLogsDir()">
+                            <span class="info-card-icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="14 3 14 9 20 9"></polyline><line x1="8" y1="13" x2="16" y2="13"></line><line x1="8" y1="17" x2="13" y2="17"></line></svg></span>
+                            <span class="info-card-text">
+                                <span class="info-card-label">Logs</span>
+                                <span class="info-card-desc">View system logs</span>
+                            </span>
+                            <svg class="info-card-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"></polyline></svg>
+                        </button>
                     </div>
                 </div>
             </div>
@@ -463,7 +489,7 @@
                                 <textarea id="personalityNotes" rows="3" maxlength="800" placeholder="e.g. 'always start with the bottom line', 'use Hindi-English mix sometimes', 'no emojis ever'" style="resize:vertical;min-height:60px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:8px;outline:none;font-family:inherit;font-size:13px;"></textarea>
                             </label>
                             <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px;">
-                                <button class="btn btn-sm btn-primary" id="personalitySaveBtn" onclick="savePersonality()">Save personality</button>
+                                <button class="btn btn-sm btn-secondary" id="personalitySaveBtn" onclick="savePersonality()">Save personality</button>
                             </div>
                             <div id="personalitySaveStatus" style="font-size:0.85em;color:var(--text-secondary);margin-top:4px;min-height:1em;"></div>
                         </div>
@@ -1561,6 +1587,7 @@
     <!-- Toast Notification -->
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+    <script src="components/mascot.js"></script>
 
     <script>
         // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
@@ -1576,6 +1603,7 @@
             document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
             tabEl.classList.add('active');
             navEl.classList.add('active');
+            moveNavPill();
 
             if (tabId === 'settings') { loadSettings(); loadPreferences(); }
             if (tabId === 'memory') {
@@ -1588,6 +1616,75 @@
             if (tabId === 'account') loadAccountInfo();
             if (tabId === 'store') loadStore();
             if (tabId === 'channels') { loadChannelConfig(); loadPrimaryChannel(); }
+        }
+
+        // Glass selection pill that springs between sidebar items.
+        function moveNavPill() {
+            const pill = document.querySelector('.nav-pill');
+            const active = document.querySelector('.nav-item.active');
+            if (!pill || !active) return;
+            pill.style.height = `${active.offsetHeight}px`;
+            pill.style.transform = `translateY(${active.offsetTop}px)`;
+            pill.classList.add('ready');
+        }
+        moveNavPill();
+
+        // ── Mascot: the dashboard hero mirrors what Bhai is doing ──
+        const heroCard = document.getElementById('heroCard');
+        const heroMascot = document.getElementById('heroMascot');
+        let lastBotStatus = null, botStarting = false, userStopping = false, chatHover = false, moodHold = 0;
+
+        function restingMood() {
+            if (botStarting) return 'working';
+            if (userStopping || lastBotStatus !== 'running') return 'sleepy';
+            return chatHover ? 'listening' : 'idle';
+        }
+
+        // Set a mood; with holdMs it's a transient reaction that falls back to the resting mood.
+        function setMood(mood, holdMs) {
+            clearTimeout(moodHold);
+            moodHold = 0;
+            if (heroMascot) heroMascot.dataset.mood = mood || restingMood();
+            const phase = botStarting ? 'starting' : lastBotStatus === 'running' ? 'running' : 'stopped';
+            heroCard.dataset.phase = phase;
+            document.getElementById('statusChipText').textContent = { starting: 'Starting', running: 'Online', stopped: 'Offline' }[phase];
+            document.getElementById('statusOfflineTitle').textContent = botStarting ? 'Waking Bhai up…' : 'Bhai is napping';
+            if (holdMs) moodHold = setTimeout(() => setMood(), holdMs);
+        }
+
+        function startFailed() {
+            botStarting = false;
+            setMood('oops', 2200);
+        }
+
+        if (window.BhaiMascot) {
+            if (heroMascot) window.BhaiMascot.mount(heroMascot, 'sleepy');
+            const sideMascot = document.getElementById('sidebarMascot');
+            if (sideMascot) window.BhaiMascot.mount(sideMascot, 'idle', { bust: true });
+        }
+        {
+            const chatBtn = document.getElementById('chatBtn');
+            const hover = (on) => () => { chatHover = on; if (!moodHold) setMood(); };
+            chatBtn.addEventListener('mouseenter', hover(true));
+            chatBtn.addEventListener('focus', hover(true));
+            chatBtn.addEventListener('mouseleave', hover(false));
+            chatBtn.addEventListener('blur', hover(false));
+        }
+
+        // Stats count up to their new value (instant with reduced motion).
+        const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+        function countTo(el, value) {
+            const to = Number(value);
+            const from = Number(el.textContent) || 0;
+            cancelAnimationFrame(el._countRaf);
+            if (!Number.isFinite(to) || to === from || reduceMotion.matches) { el.textContent = value || '0'; return; }
+            const t0 = performance.now();
+            const step = (now) => {
+                const p = Math.min(1, (now - t0) / 700);
+                el.textContent = String(Math.round(from + (to - from) * (1 - Math.pow(1 - p, 3))));
+                if (p < 1) el._countRaf = requestAnimationFrame(step);
+            };
+            el._countRaf = requestAnimationFrame(step);
         }
 
         // Deep-link via #hash (e.g. panel.html#account from Ready Hub tiles).
@@ -1614,6 +1711,14 @@
 
         function updateUI(status) {
             const isRunning = status === 'running';
+            const wasRunning = lastBotStatus === 'running';
+            lastBotStatus = status;
+            if (isRunning) botStarting = false;
+            if (isRunning && !wasRunning) setMood('happy', 1500);                     // just woke up
+            else if (wasRunning && !isRunning && !userStopping) setMood('oops', 2400); // stopped on its own (crash)
+            else if (!moodHold) setMood();
+            if (!isRunning) userStopping = false;
+
             document.getElementById('statusOnline').style.display = isRunning ? 'block' : 'none';
             document.getElementById('statusOffline').style.display = isRunning ? 'none' : 'block';
             document.getElementById('startBtn').disabled = isRunning;
@@ -1622,7 +1727,7 @@
             document.getElementById('startBtn').style.display = isRunning ? 'none' : '';
 
             // Live stats
-            document.getElementById('statsGrid').style.display = isRunning ? 'grid' : 'none';
+            document.getElementById('statsGrid').style.display = isRunning ? '' : 'none';
             if (isRunning && !statsInterval) {
                 refreshStats();
                 statsInterval = setInterval(refreshStats, 5000);
@@ -1647,9 +1752,9 @@
                 const hrs = Math.floor(mins / 60);
                 const rem = mins % 60;
                 document.getElementById('statUptime').textContent = hrs > 0 ? `${hrs}h ${rem}m` : `${rem}m`;
-                document.getElementById('statMessages').textContent = stats.messagesHandled || '0';
-                document.getElementById('statMemories').textContent = stats.memoryCount || '0';
-                document.getElementById('statTools').textContent = stats.toolCount || '0';
+                countTo(document.getElementById('statMessages'), stats.messagesHandled);
+                countTo(document.getElementById('statMemories'), stats.memoryCount);
+                countTo(document.getElementById('statTools'), stats.toolCount);
             } catch { /* stats not available yet */ }
         }
 
@@ -1660,12 +1765,15 @@
             // real failures reach the user, as one plain sentence.
             if (!message.includes('❌')) return;
             showToast(friendlyError(message), true);
+            setMood('oops', 2400);
             // All logs are automatically saved to file by main process
         }
 
         async function startBot() {
             document.getElementById('startBtn').disabled = true;
-            document.getElementById('startBtn').textContent = '⏳ Checking account...';
+            document.getElementById('startBtn').textContent = 'Checking account…';
+            botStarting = true;
+            setMood('working');
 
             // Account gate: check status before starting
             try {
@@ -1675,13 +1783,15 @@
                     if (status === 'blocked') {
                         showToast('⛔ Account blocked. Contact support@codingdesk.info');
                         document.getElementById('startBtn').disabled = false;
-                        document.getElementById('startBtn').textContent = '▶ Start Bhai';
+                        document.getElementById('startBtn').textContent = 'Start Bhai';
+                        startFailed();
                         return;
                     }
                     if (status === 'suspended') {
                         showToast('⛔ Account suspended. Contact support@codingdesk.info');
                         document.getElementById('startBtn').disabled = false;
-                        document.getElementById('startBtn').textContent = '▶ Start Bhai';
+                        document.getElementById('startBtn').textContent = 'Start Bhai';
+                        startFailed();
                         return;
                     }
                     // Block if out of credits. null means data temporarily unavailable
@@ -1689,32 +1799,38 @@
                     if (info.ai_credits === 0) {
                         showToast('⛔ Out of AI credits. Purchase more credits to continue.');
                         document.getElementById('startBtn').disabled = false;
-                        document.getElementById('startBtn').textContent = '▶ Start Bhai';
+                        document.getElementById('startBtn').textContent = 'Start Bhai';
+                        startFailed();
                         return;
                     }
                 }
             } catch { /* no account = allow */ }
 
-            document.getElementById('startBtn').textContent = '⏳ Starting...';
+            document.getElementById('startBtn').textContent = 'Starting…';
 
-            const result = await atlas.startBot();
+            const result = await atlas.startBot().catch(() => ({}));
             if (result.status === 'started' || result.status === 'already_running') {
                 updateUI('running');
                 // Update credit display
                 refreshCreditDisplay();
+            } else {
+                document.getElementById('startBtn').disabled = false;
+                startFailed();
             }
-            document.getElementById('startBtn').textContent = '▶ Start Bhai';
+            document.getElementById('startBtn').textContent = 'Start Bhai';
         }
 
         async function stopBot() {
             document.getElementById('stopBtn').disabled = true;
-            document.getElementById('stopBtn').textContent = '⏳ Stopping...';
+            document.getElementById('stopBtn').textContent = 'Stopping…';
+            userStopping = true;
+            setMood('sleepy');
 
             await atlas.stopBot();
             setTimeout(async () => {
                 const { status } = await atlas.getBotStatus();
                 updateUI(status);
-                document.getElementById('stopBtn').textContent = '◼ Stop';
+                document.getElementById('stopBtn').textContent = 'Stop';
             }, 2000);
         }
 
@@ -3049,7 +3165,7 @@
 
                 const live = [connections.telegram && 'Telegram', connections.email && 'email'].filter(Boolean);
                 document.getElementById('statusOnlineSub').textContent =
-                    `Bhai is running. Press ${label} anywhere to chat` + (live.length ? `, or message it on ${live.join(' and ')}.` : '.');
+                    `Press ${label} anywhere to chat` + (live.length ? `, or message it on ${live.join(' and ')}.` : '.');
             } catch { /* */ }
         }
 

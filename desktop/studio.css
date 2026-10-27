@@ -102,14 +102,14 @@
 
 .studio-chip.active {
     background: var(--accent-tint);
-    color: var(--accent-primary);
+    color: var(--accent-text, var(--accent-primary));
     border-color: var(--accent-ring);
 }
 
 .studio-chip input[type="checkbox"] {
     width: 12px;
     height: 12px;
-    accent-color: var(--accent-primary);
+    accent-color: var(--accent-text, var(--accent-primary));
 }
 
 .studio-body {
@@ -174,7 +174,7 @@
     border: var(--glass-border);
     border-radius: 999px;
     padding: 4px 10px;
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 600;
     color: var(--text-secondary);
     box-shadow: var(--shadow-glass);
@@ -204,7 +204,7 @@
 
 .studio-zoom-controls .btn-icon:hover {
     background: var(--glass-hover);
-    color: var(--accent-primary);
+    color: var(--accent-text, var(--accent-primary));
 }
 
 .studio-legend {
@@ -220,7 +220,7 @@
     border: var(--glass-border);
     border-radius: var(--radius-sm);
     padding: 6px 10px;
-    font-size: 10px;
+    font-size: 11px;
     color: var(--text-secondary);
     box-shadow: var(--shadow-glass);
     z-index: 2;
@@ -252,7 +252,7 @@
     flex-direction: column;
     gap: var(--space-sm);
     z-index: 5;
-    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.25);
+    box-shadow: var(--shadow-elevated, -8px 0 24px rgba(0, 0, 0, 0.25));
 }
 
 .studio-detail[data-open="true"] {
@@ -262,9 +262,7 @@
 }
 
 .studio-detail-meta {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    font-size: 11px;
     color: var(--text-muted);
     font-weight: 600;
     display: flex;
@@ -284,7 +282,7 @@
 }
 
 .studio-detail-close:hover {
-    color: var(--accent-primary);
+    color: var(--accent-text, var(--accent-primary));
     background: var(--accent-tint);
 }
 
@@ -318,19 +316,17 @@
 }
 
 .studio-detail-label {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    font-size: 11px;
     color: var(--text-muted);
     font-weight: 600;
 }
 
 .studio-detail-tag {
     background: var(--accent-tint);
-    color: var(--accent-primary);
+    color: var(--accent-text, var(--accent-primary));
     border-radius: 999px;
     padding: 3px 9px;
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 600;
 }
 
@@ -346,7 +342,7 @@
     border: var(--glass-border);
     border-radius: var(--radius-sm);
     padding: 4px 8px;
-    font-size: 10px;
+    font-size: 11px;
     color: var(--text-secondary);
     cursor: pointer;
     display: inline-flex;
@@ -357,7 +353,7 @@
 
 .studio-conn-chip:hover {
     background: var(--glass-hover);
-    color: var(--accent-primary);
+    color: var(--accent-text, var(--accent-primary));
 }
 
 .studio-conn-dot {
@@ -418,7 +414,7 @@
 
 .studio-edit-importance {
     width: 100%;
-    accent-color: var(--accent-primary);
+    accent-color: var(--accent-text, var(--accent-primary));
 }
 
 .studio-edit-actions {
@@ -430,9 +426,7 @@
 .studio-modal-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.45);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
+    background: rgba(0, 0, 0, 0.28);
     z-index: var(--z-modal, 1000);
     display: flex;
     align-items: center;
@@ -490,7 +484,7 @@
 
 .studio-modal-option.active {
     background: var(--accent-tint);
-    color: var(--accent-primary);
+    color: var(--accent-text, var(--accent-primary));
     border-color: var(--accent-ring);
 }
 
@@ -528,10 +522,8 @@
 .studio-deleted-row:last-child { border-bottom: none; }
 
 .studio-deleted-meta {
-    font-size: 10px;
+    font-size: 11px;
     color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
 }
 
 .studio-insights {
@@ -564,10 +556,8 @@
 }
 
 .studio-insight-label {
-    font-size: 10px;
-    color: var(--accent-primary);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    font-size: 11px;
+    color: var(--accent-text, var(--accent-primary));
     font-weight: 700;
 }
 
@@ -708,7 +698,7 @@
 }
 
 .studio-graph-label {
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 500;
     fill: var(--text-secondary);
     pointer-events: none;

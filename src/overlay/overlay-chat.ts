@@ -1057,6 +1057,7 @@ function parseInteractiveElements(rawText: string): InteractiveElements {
 
 /** Hide the overlay from view (for screenshots) — sends CSS opacity:0 */
 export function hideOverlayForAgent(): void {
+    emitCompanionStatus("screen");
     for (const client of overlayClients) {
         if (client.readyState === 1) {
             client.send(JSON.stringify({ type: "agent_hide" }));
@@ -1066,6 +1067,7 @@ export function hideOverlayForAgent(): void {
 
 /** Show the overlay again after agent action */
 export function showOverlayForAgent(): void {
+    emitCompanionStatus("screen_done");
     for (const client of overlayClients) {
         if (client.readyState === 1) {
             client.send(JSON.stringify({ type: "agent_show" }));
@@ -1073,7 +1075,20 @@ export function showOverlayForAgent(): void {
     }
 }
 
+// Status the desktop app turns into the on-screen companion (the little plush
+// Bhai in the corner). Written straight to stdout, which the app parses.
+const COMPANION_TYPES: Record<string, string> = {
+    thinking: "thinking", progress: "progress", response: "response",
+    research_complete: "response", error: "error", silent: "silent",
+};
+function emitCompanionStatus(type: string, text?: string): void {
+    process.stdout.write(`##BHAI_BUDDY##${JSON.stringify({ type, text: text?.slice(0, 120) })}\n`);
+}
+
 function sendToClient(ws: WebSocket, data: unknown): void {
+    const msg = data as { type?: string; text?: string };
+    const status = msg?.type ? COMPANION_TYPES[msg.type] : undefined;
+    if (status) emitCompanionStatus(status, status === "progress" ? msg.text : undefined);
     const json = JSON.stringify(data);
     if (ws.readyState === 1) {
         ws.send(json);
