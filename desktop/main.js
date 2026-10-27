@@ -145,6 +145,7 @@ const OVERLAY_RESIZE_MS = 500;
 const OVERLAY_HIDE_DELAY_MS = 260;
 // macOS 26 Spotlight-style corners; keep in sync with --panel-radius in src/overlay/overlay.html.
 const OVERLAY_CORNER_RADIUS = 26;
+const OVERLAY_DARK_TINT = "#1C1A18E0";
 
 // ── Convex deployment selector ─────────────────────────────────────
 // Packaged DMG → prod by default. `npm start` (dev) → dev. Override either
@@ -916,7 +917,7 @@ const Store = require("electron-store");
 const store = new Store({
     defaults: {
         launchAtLogin: false,
-        theme: "light", // "light" | "dark" | "system"
+        theme: "system", // "light" | "dark" | "system"
         notificationsEnabled: true,
         notifyOnMessage: true,
         notifyOnTask: true,
@@ -1728,7 +1729,11 @@ function attachOverlayGlass(win) {
             overlayGlassNative = require(path.join(BOT_DIR, "native", `atlas-native.darwin-${process.arch}.node`));
         }
         const [w, h] = win.getContentSize();
-        if (overlayGlassNative?.attachGlassEffect?.(win.getNativeWindowHandle(), w, h, OVERLAY_CORNER_RADIUS)) return true;
+        // Dark glass gets a smoky tint so white text stays readable over busy or
+        // bright windows. Light mode gets a white veil in overlay.html instead
+        // (a white tint renders the glass grey).
+        const tint = nativeTheme.shouldUseDarkColors ? OVERLAY_DARK_TINT : null;
+        if (overlayGlassNative?.attachGlassEffect?.(win.getNativeWindowHandle(), w, h, OVERLAY_CORNER_RADIUS, tint)) return true;
         throw new Error("NSGlassEffectView unavailable (needs macOS 26+)");
     } catch (err) {
         if (overlayGlassNative !== null) console.warn("[OVERLAY] Liquid Glass off, using vibrancy:", err.message);
@@ -1780,7 +1785,7 @@ function createOverlayWindow() {
     } else {
         // No native glass here: give the clear page the theme's opaque panel fill.
         overlayWindow.webContents.on("did-finish-load", () => {
-            overlayWindow.webContents.insertCSS("body { background: var(--bg-panel); }").catch(() => {});
+            overlayWindow.webContents.insertCSS("body, body.theme-light { background: var(--bg-panel); }").catch(() => {});
         });
     }
 
@@ -4323,6 +4328,11 @@ function registerIPC() {
             const current = store.get("prefs") || {};
             const next = mergePersonalize(current, update || {});
             store.set("prefs", next);
+            // The app reads its appearance from the top-level "theme" key.
+            if (update && update.theme) {
+                store.set("theme", update.theme);
+                broadcastThemeChange(update.theme);
+            }
             try { saveEnvKVs(envKVsFromPersonalize(next.personalize)); }
             catch (e) { console.warn("[setup:save-personalize] env mirror failed:", e.message); }
             // Mirror personality choice into a separate file that the bot's
@@ -6020,7 +6030,18 @@ let isQuitting = false;
 // ── App Lifecycle ─────────────────────────────
 
 app.whenReady().then(async () => {
+    // Setup used to save its theme where nothing read it, leaving the old
+    // "light" default in charge even on a dark Mac. Adopt that choice once.
+    const setupTheme = store.get("prefs")?.personalize?.theme;
+    if (setupTheme && !store.get("themeFromSetup")) {
+        store.set("theme", setupTheme);
+        store.set("themeFromSetup", true);
+    }
     applyNativeTheme(store.get("theme"));
+    // Re-tint the overlay's glass when the appearance flips (theme or macOS).
+    nativeTheme.on("updated", () => {
+        if (overlayGlassNative && overlayWindow && !overlayWindow.isDestroyed()) attachOverlayGlass(overlayWindow);
+    });
     // Run v1 → v2 migration before anything reads SETUP_FLAG or prefs.json.
     await runV2Migration();
 

@@ -2106,8 +2106,11 @@
     body.theme-dark {
       --glass-line:   rgba(255, 255, 255, 0.10);
     }
-    /* Clip content to the glass's rounded shape. */
+    /* Clip content to the glass's rounded shape. Dark glass is tinted
+       natively (main.js); light glass gets a white veil here so dark text
+       stays readable over busy or dark windows. */
     body { background: transparent; border-radius: var(--panel-radius); }
+    body.theme-light { background: rgba(255, 255, 255, 0.85); }
     #container { padding: 0; gap: 0; position: relative; z-index: 1; }
     #live-voice-panel {
       background: transparent;
