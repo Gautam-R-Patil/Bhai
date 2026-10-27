@@ -1,10 +1,10 @@
-# Windows Testing & Porting Handoff — ATLAS Desktop
+# Windows Testing & Porting Handoff — Bhai Desktop
 
 **Date:** 2026-05-17
 **Branch:** `main` (head `c2994f9`)
 **Reader:** you, on a Windows machine
 
-This is a **full-surface** handoff covering every ATLAS subsystem that needs Windows verification or porting — not just Phase 4. ATLAS is primarily developed on macOS; Linux has partial CI coverage; Windows has had MINIMAL ground-truth testing. Treat this doc as a checklist of "things that may or may not work — verify each."
+This is a **full-surface** handoff covering every Bhai subsystem that needs Windows verification or porting — not just Phase 4. Bhai is primarily developed on macOS; Linux has partial CI coverage; Windows has had MINIMAL ground-truth testing. Treat this doc as a checklist of "things that may or may not work — verify each."
 
 ---
 
@@ -70,7 +70,7 @@ choco install tesseract -y
 
 ```powershell
 git clone https://github.com/dheeraj-codingdesk/ATLAS.git
-cd ATLAS
+cd Bhai
 git checkout main
 git log --oneline -5  # head should be c2994f9 (this handoff) on top
 ```
@@ -142,7 +142,7 @@ cd desktop
 npm run build:win:protected  # or build:win
 ```
 
-The installer comes out at `desktop/dist/A.T.L.A.S Setup 0.2.1.exe`.
+The installer comes out at `desktop/dist/Bhai Setup 0.2.1.exe`.
 
 **Quirks to watch for:**
 
@@ -261,7 +261,7 @@ These layers are pure TS and should work unchanged on Windows. After the spawn i
 
 ## 7. Vision / OS automation (`src/screen/`, `src/tools/`)
 
-ATLAS has a "computer-use" agent that takes screenshots, runs OCR + UI element detection (DOM + accessibility-tree), and clicks targets. Cross-OS by design but Windows-specific paths are less exercised.
+Bhai has a "computer-use" agent that takes screenshots, runs OCR + UI element detection (DOM + accessibility-tree), and clicks targets. Cross-OS by design but Windows-specific paths are less exercised.
 
 ### What to verify
 
@@ -277,7 +277,7 @@ ATLAS has a "computer-use" agent that takes screenshots, runs OCR + UI element d
 
 ### What to fix
 
-If `os_screenshot` doesn't work, ATLAS can't see the screen → can't do computer-use tasks. **High priority.** Likely fix: add a `node-screenshots` import in `src/screen/screenshot.ts` for win32 + linux branches.
+If `os_screenshot` doesn't work, Bhai can't see the screen → can't do computer-use tasks. **High priority.** Likely fix: add a `node-screenshots` import in `src/screen/screenshot.ts` for win32 + linux branches.
 
 ---
 
@@ -301,7 +301,7 @@ Both use cloud APIs (Gemini, OpenAI, ElevenLabs). Cross-OS by definition. Verify
 ### Quick test
 
 ```
-ATLAS> /voice
+Bhai> /voice
 ```
 
 Should drop into live voice mode. Speak a phrase. If you hear the model respond, voice works end-to-end.
@@ -343,7 +343,7 @@ Should show URL handler pointing to the installed exe. If not, run the installer
 
 ### Overlay
 
-`src/overlay/overlay.html` — webview that runs inside Electron. Cross-OS. Uses WebSocket to talk to ATLAS server on `localhost`. Should just work.
+`src/overlay/overlay.html` — webview that runs inside Electron. Cross-OS. Uses WebSocket to talk to Bhai server on `localhost`. Should just work.
 
 **Quirk on Windows:** electron-builder packs the overlay HTML into the asar bundle; the postbuild script `scripts/postbuild-copy-assets.mjs` copies it to `dist/overlay/`. If overlay won't load, check that `dist/overlay/overlay.html` exists after `npm run build`.
 
@@ -362,18 +362,18 @@ The auth flow:
 
 ```powershell
 # Run as admin
-reg add "HKCU\Software\Classes\atlas" /ve /d "URL:ATLAS Protocol" /f
+reg add "HKCU\Software\Classes\atlas" /ve /d "URL:Bhai Protocol" /f
 reg add "HKCU\Software\Classes\atlas" /v "URL Protocol" /d "" /f
-reg add "HKCU\Software\Classes\atlas\shell\open\command" /ve /d "\"C:\Program Files\A.T.L.A.S\A.T.L.A.S.exe\" \"%1\"" /f
+reg add "HKCU\Software\Classes\atlas\shell\open\command" /ve /d "\"C:\Program Files\Bhai\Bhai.exe\" \"%1\"" /f
 ```
 
 ### Permissions on Windows
 
-ATLAS may want:
-- **Microphone** (for voice mode) — Settings → Privacy → Microphone → enable for A.T.L.A.S
+Bhai may want:
+- **Microphone** (for voice mode) — Settings → Privacy → Microphone → enable for Bhai
 - **Screen recording / capture** — Windows usually doesn't gate this, but watch for permission popups on first screenshot
 - **File access** — desktop apps get user-folder access by default; OneDrive folders may need explicit grant
-- **Notifications** — Windows 11 Action Center; check Settings → System → Notifications → A.T.L.A.S allowed
+- **Notifications** — Windows 11 Action Center; check Settings → System → Notifications → Bhai allowed
 
 ---
 
@@ -434,17 +434,17 @@ cd ..
 npm test -- src/
 
 # 3. Install + smoke test
-# (run desktop\dist\A.T.L.A.S Setup 0.2.1.exe, complete OTPless auth)
+# (run desktop\dist\Bhai Setup 0.2.1.exe, complete OTPless auth)
 
 # 4. Basic agent prompt
-# In ATLAS: "what's 2+2?"
+# In Bhai: "what's 2+2?"
 # Expected: Haiku/Sonnet answers "4"; model router log shows correct task type
 
 # 5. Memory persistence test
-# In ATLAS: "remember my favorite color is blue"
-# Restart ATLAS
+# In Bhai: "remember my favorite color is blue"
+# Restart Bhai
 # Ask: "what's my favorite color?"
-# Expected: ATLAS recalls "blue" via SQLite memory
+# Expected: Bhai recalls "blue" via SQLite memory
 
 # 6. Channel test (pick one you use)
 # - Telegram: DM the bot
@@ -452,12 +452,12 @@ npm test -- src/
 # - Verify agent responds
 
 # 7. Voice test
-# /voice in ATLAS
+# /voice in Bhai
 # Speak: "tell me a joke"
 # Expected: voice response
 
 # 8. Computer-use test (vision)
-# Ask ATLAS: "take a screenshot and tell me what you see"
+# Ask Bhai: "take a screenshot and tell me what you see"
 # Expected: screenshot captured, OCR runs, description returned
 
 # 9. Synthesize a non-persistent tool

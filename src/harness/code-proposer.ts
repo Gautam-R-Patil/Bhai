@@ -132,7 +132,7 @@ function buildSystemPrompt(
     candidate: CandidateManifest,
     worktreePath: string,
 ): string {
-    return `You are optimizing the ATLAS harness configuration.
+    return `You are optimizing the Bhai harness configuration.
 
 CRITICAL RULE — READ INDIVIDUAL TRACE FILES:
 The traces/ directory contains one JSON file per agent invocation. Read them individually using the read tool.

@@ -1,7 +1,7 @@
 {
     "name": "atlas-desktop",
     "version": "0.2.1",
-    "description": "A.T.L.A.S AI — Desktop Control Panel & Installer",
+    "description": "Bhai AI — Desktop Control Panel & Installer",
     "author": "XAGI Labs Private Limited",
     "license": "UNLICENSED",
     "private": true,
@@ -39,7 +39,7 @@
     },
     "build": {
         "appId": "com.xagilabs.atlas",
-        "productName": "A.T.L.A.S",
+        "productName": "Bhai",
         "copyright": "Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.",
         "publish": {
             "provider": "generic",
@@ -194,9 +194,9 @@
             "entitlements": "build/entitlements.mac.plist",
             "entitlementsInherit": "build/entitlements.mac.plist",
             "extendInfo": {
-                "NSMicrophoneUsageDescription": "A.T.L.A.S needs microphone access for voice messages and live voice conversations.",
-                "NSScreenCaptureUsageDescription": "A.T.L.A.S needs screen recording access to take screenshots and help you with screen-based tasks.",
-                "NSAppleEventsUsageDescription": "A.T.L.A.S uses Apple Events to automate actions on your Mac."
+                "NSMicrophoneUsageDescription": "Bhai needs microphone access for voice messages and live voice conversations.",
+                "NSScreenCaptureUsageDescription": "Bhai needs screen recording access to take screenshots and help you with screen-based tasks.",
+                "NSAppleEventsUsageDescription": "Bhai uses Apple Events to automate actions on your Mac."
             },
             "extraResources": [
                 {
@@ -214,7 +214,7 @@
             ]
         },
         "dmg": {
-            "title": "A.T.L.A.S Setup",
+            "title": "Bhai Setup",
             "icon": "logo.png",
             "background": "build/dmg-background@2x.png",
             "sign": true,
@@ -247,7 +247,7 @@
             "createDesktopShortcut": true,
             "createStartMenuShortcut": true,
             "runAfterFinish": true,
-            "shortcutName": "A.T.L.A.S",
+            "shortcutName": "Bhai",
             "license": "../LICENSE.txt",
             "include": "./build/installer.nsh"
         },
@@ -265,7 +265,7 @@
             "icon": "logo.png",
             "category": "Utility",
             "synopsis": "A continuously running, proactive personal AI agent.",
-            "description": "ATLAS is an autonomous AI assistant with persistent memory, multi-channel presence (Telegram, Discord, Slack, WhatsApp, email), browsing, deep research and coding capabilities. Privacy-first: server-side prompts, end-to-end encrypted transport, your conversations are never used to train foundation models.",
+            "description": "Bhai is an autonomous AI assistant with persistent memory, multi-channel presence (Telegram, Discord, Slack, WhatsApp, email), browsing, deep research and coding capabilities. Privacy-first: server-side prompts, end-to-end encrypted transport, your conversations are never used to train foundation models.",
             "extraResources": [
                 {
                     "from": "../node_modules/ffprobe-static/bin/linux",

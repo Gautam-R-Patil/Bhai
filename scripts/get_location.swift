@@ -1,5 +1,5 @@
 #!/usr/bin/env swift
-// Get device location using macOS CoreLocation — A.T.L.A.S
+// Get device location using macOS CoreLocation — Bhai
 // Usage: get_location_bin
 // Outputs: latitude|longitude|altitude|accuracy
 // Or: error|<reason>

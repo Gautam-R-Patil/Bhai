@@ -7,7 +7,7 @@ export default function HomePage() {
       {/* Header */}
       <header className="container mx-auto px-6 py-6">
         <nav className="flex items-center justify-between">
-          <div className="text-white font-bold text-2xl">A.T.L.A.S Developers</div>
+          <div className="text-white font-bold text-2xl">Bhai Developers</div>
           <div className="space-x-4">
             <Link href="/login" className="text-gray-300 hover:text-white">
               Sign in
@@ -25,10 +25,10 @@ export default function HomePage() {
       {/* Hero */}
       <section className="container mx-auto px-6 py-20 text-center">
         <h1 className="text-5xl font-bold text-white mb-6">
-          Build for A.T.L.A.S
+          Build for Bhai
         </h1>
         <p className="text-xl text-gray-300 mb-8 max-w-2xl mx-auto">
-          Create Skills, MCP Servers, and Tools that extend A.T.L.A.S capabilities.
+          Create Skills, MCP Servers, and Tools that extend Bhai capabilities.
           Reach thousands of users through the built-in store.
         </p>
         <div className="flex justify-center space-x-4">
@@ -56,7 +56,7 @@ export default function HomePage() {
             </div>
             <h3 className="text-xl font-semibold text-white mb-2">Skills</h3>
             <p className="text-gray-400">
-              Create instruction sets that give A.T.L.A.S new capabilities and knowledge.
+              Create instruction sets that give Bhai new capabilities and knowledge.
               Write in Markdown, no coding required.
             </p>
           </div>
@@ -67,7 +67,7 @@ export default function HomePage() {
             </div>
             <h3 className="text-xl font-semibold text-white mb-2">MCP Servers</h3>
             <p className="text-gray-400">
-              Build Model Context Protocol servers that connect A.T.L.A.S to external services
+              Build Model Context Protocol servers that connect Bhai to external services
               and APIs.
             </p>
           </div>
@@ -78,7 +78,7 @@ export default function HomePage() {
             </div>
             <h3 className="text-xl font-semibold text-white mb-2">Tools</h3>
             <p className="text-gray-400">
-              Create custom tools with TypeScript that A.T.L.A.S can use to perform
+              Create custom tools with TypeScript that Bhai can use to perform
               specific actions.
             </p>
           </div>
@@ -112,7 +112,7 @@ export default function HomePage() {
               <h3 className="text-lg font-semibold text-white">Build Your Extension</h3>
               <p className="text-gray-400">
                 Use our SDK and documentation to create Skills, MCP Servers, or Tools.
-                Test locally with the A.T.L.A.S dev environment.
+                Test locally with the Bhai dev environment.
               </p>
             </div>
           </div>
@@ -137,7 +137,7 @@ export default function HomePage() {
             <div>
               <h3 className="text-lg font-semibold text-white">Reach Users</h3>
               <p className="text-gray-400">
-                Once approved, your extension appears in the A.T.L.A.S Store.
+                Once approved, your extension appears in the Bhai Store.
                 Users can install with one click.
               </p>
             </div>

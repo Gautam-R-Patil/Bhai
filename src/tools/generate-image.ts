@@ -273,7 +273,7 @@ export const generateImage: ToolDefinition = {
                 });
             }
 
-            // Save the image to ATLAS workspace Images folder
+            // Save the image to Bhai workspace Images folder
             const ext =
                 mimeType.includes("jpeg") || mimeType.includes("jpg")
                     ? "jpg"

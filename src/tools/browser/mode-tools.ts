@@ -54,7 +54,7 @@ Use "auto" to let the system decide based on context.`,
         // Validate chrome mode is possible
         if (mode === "chrome" && !isExtensionConnected()) {
             return JSON.stringify({
-                error: "Chrome extension is not connected. The user needs to install and connect the ATLAS Browser Bridge extension in Chrome.",
+                error: "Chrome extension is not connected. The user needs to install and connect the Bhai Browser Bridge extension in Chrome.",
                 current_mode: getCurrentMode(),
                 extension_connected: false,
                 suggestion: "Use 'playwright' mode instead, or ask the user to connect the Chrome extension.",
@@ -142,7 +142,7 @@ export const browserChromeStatus: ToolDefinition = {
             }
         } else {
             result.help =
-                "The Chrome extension is not connected. The user needs to: 1) Install the ATLAS Browser Bridge extension from chrome-extension/ folder, 2) Enter the auth token from the ATLAS console into the extension popup, 3) Click Connect.";
+                "The Chrome extension is not connected. The user needs to: 1) Install the Bhai Browser Bridge extension from chrome-extension/ folder, 2) Enter the auth token from the Bhai console into the extension popup, 3) Click Connect.";
         }
 
         if (input.show_token) {

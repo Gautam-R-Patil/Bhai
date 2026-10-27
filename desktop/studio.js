@@ -1,7 +1,7 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 // This software is proprietary. Copying or reuse is prohibited.
 
-// ── A.T.L.A.S Memory Studio (renderer) ─────────────
+// ── Bhai Memory Studio (renderer) ─────────────
 // Force-directed graph of the user's memory with right-side detail panel.
 // Mounts on first navigation to the Memory tab; pauses the simulation when
 // the tab is hidden. Fetches read-only data via window.atlas.studio.*.
@@ -747,7 +747,7 @@
                 <div class="studio-modal-title">Forget this ${kindNs}?</div>
                 <div class="studio-modal-body">
                     "${_escapeHtml((node.label || "").slice(0, 80))}"<br/>
-                    ATLAS will remove it and log the reason so it doesn't get re-learned.
+                    Bhai will remove it and log the reason so it doesn't get re-learned.
                 </div>
                 <div class="studio-modal-options" data-reason-options>
                     ${FORGET_REASONS.map((r, i) => `<button class="studio-modal-option${i === 0 ? " active" : ""}" data-reason="${_escapeHtml(r)}">${_escapeHtml(r)}</button>`).join("")}
@@ -1019,7 +1019,7 @@
                         n.kind === "goal" || n.kind === "task_learning" || n.kind === "world_model" || n.kind === "self_state",
                     );
                     if (advanced.length === 0) {
-                        window.showToast("No advanced memory yet — goals/task-learnings/world-model nodes will appear when ATLAS records them.");
+                        window.showToast("No advanced memory yet — goals/task-learnings/world-model nodes will appear when Bhai records them.");
                     } else {
                         window.showToast(`+${advanced.length} advanced node${advanced.length === 1 ? "" : "s"} now visible`);
                     }
@@ -1151,7 +1151,7 @@
             const container = $("studioGraph");
             if (container) {
                 container.innerHTML =
-                    '<div class="studio-empty">Memory database not ready yet. Start ATLAS at least once and try again.</div>';
+                    '<div class="studio-empty">Memory database not ready yet. Start Bhai at least once and try again.</div>';
             }
             return;
         }
@@ -1384,7 +1384,7 @@
             wrap.innerHTML = `
                 <div class="surface-card studio-insight-card" style="grid-column: 1 / -1; text-align: center">
                     <div class="studio-insight-label">✨ No insights yet</div>
-                    <div class="studio-insight-value" style="font-size:13px; font-weight:500">Click <strong>Recompute insights</strong> to generate the first set, or wait for ATLAS's next overnight dream replay.</div>
+                    <div class="studio-insight-value" style="font-size:13px; font-weight:500">Click <strong>Recompute insights</strong> to generate the first set, or wait for Bhai's next overnight dream replay.</div>
                 </div>
             `;
             return;

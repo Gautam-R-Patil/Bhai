@@ -1,5 +1,5 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
-// Convex HTTP Actions — server-side API key proxy for A.T.L.A.S.
+// Convex HTTP Actions — server-side API key proxy for Bhai.
 // ALL API keys (OpenRouter, etc.) live here as Convex env vars. Never sent to client.
 
 import { httpRouter } from "convex/server";
@@ -731,7 +731,7 @@ http.route({
           "Content-Type": "application/json",
           Authorization: `Bearer ${openrouterKey}`,
           "HTTP-Referer": "https://atlas.xagilab.com",
-          "X-Title": "A.T.L.A.S",
+          "X-Title": "Bhai",
         },
         body: JSON.stringify(openrouterBody),
       });
@@ -1133,7 +1133,7 @@ const ADMIN_STORE_QUERY_ALLOWLIST: Record<string, any> = {
 };
 
 // Mutations reachable by a holder of a USER SESSION TOKEN (the desktop app /
-// bot). Restricted to operations a regular ATLAS end-user legitimately
+// bot). Restricted to operations a regular Bhai end-user legitimately
 // performs as themselves against the store (install/uninstall, submit review,
 // register a developer profile). Anything that could escalate privilege
 // (creating admins/developers, approving submissions, banning developers,
@@ -1343,7 +1343,7 @@ http.route({
     // ⚠ Session-token route MUST use the USER allowlist, NOT the admin one.
     // The admin allowlist contains privilege-escalating mutations (create
     // admin, approve/ban developers, moderate submissions). Merging the two
-    // lets any signed-in ATLAS user call those mutations through their
+    // lets any signed-in Bhai user call those mutations through their
     // normal session.
     const mutationRef = USER_STORE_MUTATION_ALLOWLIST[functionPath];
     if (!mutationRef) {
@@ -2079,7 +2079,7 @@ http.route({
       buildYaml({
         platform: "mac",
         channel,
-        defaultFilename: `A.T.L.A.S-${process.env.UPDATE_VERSION || "0.0.0"}-arm64.dmg`,
+        defaultFilename: `Bhai-${process.env.UPDATE_VERSION || "0.0.0"}-arm64.dmg`,
       }) || EMPTY_YAML;
     return new Response(body, { status: 200, headers: yamlHeaders() });
   }),
@@ -2094,7 +2094,7 @@ http.route({
       buildYaml({
         platform: "win",
         channel,
-        defaultFilename: `A.T.L.A.S-${process.env.UPDATE_VERSION || "0.0.0"}-Setup.exe`,
+        defaultFilename: `Bhai-${process.env.UPDATE_VERSION || "0.0.0"}-Setup.exe`,
       }) || EMPTY_YAML;
     return new Response(body, { status: 200, headers: yamlHeaders() });
   }),
@@ -2361,7 +2361,7 @@ http.route({
 // OpenRouter availability probe (admin-only, server-side)
 // Hits OpenRouter /v1/models + /v1/credits with the server-held key and
 // returns the raw data so a local audit script can diff it against the
-// model IDs ATLAS references. Never exposes the key to the client.
+// model IDs Bhai references. Never exposes the key to the client.
 // ══════════════════════════════════════════════════════════════════════════
 
 http.route({
@@ -2405,7 +2405,7 @@ http.route({
 
 // ══════════════════════════════════════════════════════════════════════════
 // OTPless auth proxy — validates OTPless SDK tokens server-side and issues
-// ATLAS sessions. clientId/clientSecret stay server-side in Convex env vars.
+// Bhai sessions. clientId/clientSecret stay server-side in Convex env vars.
 // ══════════════════════════════════════════════════════════════════════════
 
 http.route({

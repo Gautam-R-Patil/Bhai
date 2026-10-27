@@ -1,7 +1,7 @@
 {
   "name": "@atlas/native",
   "version": "0.1.0",
-  "description": "Native SIMD-accelerated operations for A.T.L.A.S",
+  "description": "Native SIMD-accelerated operations for Bhai",
   "type": "commonjs",
   "main": "index.js",
   "types": "index.d.ts",

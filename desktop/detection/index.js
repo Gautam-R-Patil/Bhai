@@ -99,7 +99,7 @@ async function runDetection(deps) {
             hotkey: platform === "win32" ? "Ctrl+Space" : "Alt+Space",
             theme: "system",
             voice: { backend: "gemini-live", name: "Aoede" },
-            wakeWord: { enabled: false, phrase: "Hey Atlas" },
+            wakeWord: { enabled: false, phrase: "Hey Bhai" },
         },
     );
 

@@ -1,4 +1,4 @@
-// W3 packaged-.app smoke. Spawns /Applications/A.T.L.A.S.app's Electron
+// W3 packaged-.app smoke. Spawns /Applications/Bhai.app's Electron
 // binary with --remote-debugging-port + an isolated user-data-dir so the
 // SETUP_FLAG check fails and the wizard window opens. Then attaches via
 // Playwright CDP and exercises:
@@ -14,7 +14,7 @@ import { rmSync } from "node:fs";
 import path from "node:path";
 import { chromium } from "playwright";
 
-const APP_BIN  = "/Applications/A.T.L.A.S.app/Contents/MacOS/A.T.L.A.S";
+const APP_BIN  = "/Applications/Bhai.app/Contents/MacOS/Bhai";
 const USER_DATA = "/tmp/atlas-cdp-w3-packaged";
 const CDP_PORT  = 9224;
 

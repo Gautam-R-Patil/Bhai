@@ -3,7 +3,7 @@
 # This software is proprietary. Copying or reuse is prohibited.
 # See LICENSE.md for details.
 #
-# bg_matte.py — BiRefNet alpha-matte generator for ATLAS Video Studio.
+# bg_matte.py — BiRefNet alpha-matte generator for Bhai Video Studio.
 # Usage: python bg_matte.py <video_path> <model_dir> <output_matte_path>
 #
 # Writes a ProRes 4444 .mov (alpha channel preserved) to <output_matte_path>.

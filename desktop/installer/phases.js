@@ -374,7 +374,7 @@ const P = {
             try { fs.mkdirSync(ws, { recursive: true }); }
             catch (err) {
                 log("Could not create " + ws + ": " + err.message);
-                const fb = path.join(ctx.documentsDir, "A.T.L.A.S Files");
+                const fb = path.join(ctx.documentsDir, "Bhai Files");
                 fs.mkdirSync(fb, { recursive: true });
                 ctx.options.workspace = fb;
                 const env = ctx.loadEnvDecrypted && ctx.loadEnvDecrypted();

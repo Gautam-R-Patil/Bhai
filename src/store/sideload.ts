@@ -4,7 +4,7 @@
 
 // ── ClawHub / External Skill Sideloading ────────
 // Allows power users to import external skill files (e.g., from ClawHub/OpenClaw)
-// into ATLAS's local skill store. Unsupported — use at your own risk.
+// into Bhai's local skill store. Unsupported — use at your own risk.
 
 import { promises as fs } from "node:fs";
 import { existsSync } from "node:fs";
@@ -20,7 +20,7 @@ const SKILLS_PATH = join(STORE_BASE, "skills");
 const MANIFEST_PATH = join(STORE_BASE, "installs.json");
 
 // ── Category auto-classifier ─────────────────────
-// Maps keywords in skill descriptions to ATLAS tool router categories.
+// Maps keywords in skill descriptions to Bhai tool router categories.
 
 const CATEGORY_KEYWORDS: Record<string, string[]> = {
     media: ["music", "spotify", "audio", "video", "media", "play", "sound", "song", "playlist", "sonos", "speaker", "gif", "image", "photo", "visualization"],
@@ -328,7 +328,7 @@ export const sideloadSkillTool: ToolDefinition = {
         type: "function",
         function: {
             name: "sideload_skill",
-            description: "Sideload an external skill file (e.g., from ClawHub/OpenClaw) into ATLAS. The skill must be a markdown file with YAML frontmatter. WARNING: Sideloaded skills are unvetted third-party content — use at your own risk.",
+            description: "Sideload an external skill file (e.g., from ClawHub/OpenClaw) into Bhai. The skill must be a markdown file with YAML frontmatter. WARNING: Sideloaded skills are unvetted third-party content — use at your own risk.",
             parameters: {
                 type: "object",
                 properties: {

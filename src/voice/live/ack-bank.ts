@@ -6,7 +6,7 @@
 //
 // Tool calls can take 100-2000 ms (spotify, web_search, dark_mode, gmail).
 // Without an immediate audible response, the user hears dead air and thinks
-// ATLAS has hung. This module pre-synthesizes a handful of short "got it"
+// Bhai has hung. This module pre-synthesizes a handful of short "got it"
 // acks on boot using Kokoro, then plays one instantly when a tool fires.
 //
 // Design:

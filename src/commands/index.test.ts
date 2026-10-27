@@ -84,7 +84,7 @@ describe("handleCommand — routing", () => {
         initCommands(ctx);
         const r = await handleCommand("/HELP");
         expect(r.handled).toBe(true);
-        expect(r.response).toContain("A.T.L.A.S Commands");
+        expect(r.response).toContain("Bhai Commands");
     });
 
     it("splits arguments on whitespace", async () => {
@@ -112,7 +112,7 @@ describe("cmdStatus", () => {
         const { ctx } = makeCtx();
         initCommands(ctx);
         const r = await handleCommand("/status");
-        expect(r.response).toContain("A.T.L.A.S Status");
+        expect(r.response).toContain("Bhai Status");
     });
 
     it("includes uptime in h/m/s format", async () => {
@@ -205,11 +205,11 @@ describe("cmdThink", () => {
 });
 
 describe("cmdStart + cmdHelp", () => {
-    it("/start returns A.T.L.A.S introduction", async () => {
+    it("/start returns Bhai introduction", async () => {
         const { ctx } = makeCtx();
         initCommands(ctx);
         const r = await handleCommand("/start");
-        expect(r.response).toContain("A.T.L.A.S");
+        expect(r.response).toContain("Bhai");
         expect(r.response).toContain("proactive AI agent");
     });
 

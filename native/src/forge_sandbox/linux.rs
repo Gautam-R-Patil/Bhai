@@ -92,7 +92,7 @@ impl Sandbox for LinuxSandbox {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             // CRITICAL: env_clear() FIRST — synthesized handlers must not
-            // inherit ATLAS's OPENAI_API_KEY / TELEGRAM_BOT_TOKEN / etc.
+            // inherit Bhai's OPENAI_API_KEY / TELEGRAM_BOT_TOKEN / etc.
             .env_clear()
             .env("PATH", "/usr/bin:/bin")
             .env("HOME", handler_dir)

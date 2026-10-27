@@ -208,7 +208,7 @@ export const webAssetDownload: ToolDefinition = {
         try {
             const guarded = await fetchWithRedirectGuard(
                 url,
-                { signal: controller.signal, headers: { "User-Agent": "ATLAS/1.0 asset-downloader" } },
+                { signal: controller.signal, headers: { "User-Agent": "Bhai/1.0 asset-downloader" } },
                 5,
             );
             if ("error" in guarded) {

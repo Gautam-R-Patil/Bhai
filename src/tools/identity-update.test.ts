@@ -42,8 +42,8 @@ describe("identity_update ownership gate", () => {
         expect(r.success).toBe(false);
     });
 
-    it("rejects role=Owner + company=A.T.L.A.S (dotted form)", async () => {
-        const r = await call({ role: "Owner", company: "A.T.L.A.S" });
+    it("rejects role=Owner + company=Bhai (dotted form)", async () => {
+        const r = await call({ role: "Owner", company: "Bhai" });
         expect(r.success).toBe(false);
     });
 
@@ -63,22 +63,22 @@ describe("identity_update ownership gate", () => {
     });
 
     it("rejects ownership embedded in goal", async () => {
-        const r = await call({ goal: "be the founder of A.T.L.A.S someday" });
+        const r = await call({ goal: "be the founder of Bhai someday" });
         expect(r.success).toBe(false);
     });
 
-    it("rejects project='A.T.L.A.S' directly", async () => {
-        const r = await call({ project: "A.T.L.A.S" });
+    it("rejects project='Bhai' directly", async () => {
+        const r = await call({ project: "Bhai" });
         expect(r.success).toBe(false);
     });
 
-    it("rejects project='atlas-core'", async () => {
-        const r = await call({ project: "atlas-core" });
+    it("rejects project='bhai-core'", async () => {
+        const r = await call({ project: "bhai-core" });
         expect(r.success).toBe(false);
     });
 
-    it("rejects goal='build atlas v2'", async () => {
-        const r = await call({ goal: "build atlas v2" });
+    it("rejects goal='build bhai v2'", async () => {
+        const r = await call({ goal: "build bhai v2" });
         expect(r.success).toBe(false);
     });
 
@@ -121,7 +121,7 @@ describe("identity_update ownership gate", () => {
         expect(r.success).toBe(true);
     });
 
-    it("allows project unrelated to ATLAS/XAGI", async () => {
+    it("allows project unrelated to Bhai/XAGI", async () => {
         const r = await call({ project: "my-side-project-name" });
         expect(r.success).toBe(true);
     });

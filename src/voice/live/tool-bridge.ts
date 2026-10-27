@@ -2,7 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-// ── Tool Bridge — Translates ATLAS tools ↔ Gemini/OpenAI function declarations ──
+// ── Tool Bridge — Translates Bhai tools ↔ Gemini/OpenAI function declarations ──
 
 import type { ChatCompletionTool } from "openai/resources/chat/completions.js";
 import { getToolSchemasByNames, executeTool } from "../../tools/index.js";

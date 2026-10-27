@@ -6,7 +6,7 @@
 // When an OSS model is served via a non-OpenAI-compatible backend (vLLM
 // raw /generate, SGLang without the tool-parser shim, llama.cpp), the model
 // emits its native tool-call format as plain text instead of a structured
-// `tool_calls` array. ATLAS normally talks to OpenRouter-compatible endpoints
+// `tool_calls` array. Bhai normally talks to OpenRouter-compatible endpoints
 // via Convex, so this layer is a fallback middleware: when the LLM response
 // has empty `tool_calls` but its `content` contains a known tag, we parse.
 

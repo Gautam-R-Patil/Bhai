@@ -26,7 +26,7 @@
 # NOTE: This is a STUB scaffold for Phase 3. The actual OmniParser-v2 pipeline
 # (microsoft/OmniParser on GitHub) is a heavier integration. This file lets the
 # capability detector + cascade router treat OmniParser as a present-but-optional
-# component without ATLAS bundling the model.
+# component without Bhai bundling the model.
 import argparse
 import json
 import sys

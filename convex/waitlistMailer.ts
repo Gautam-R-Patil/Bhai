@@ -80,7 +80,7 @@ export const sendNewEntryNotification = internalAction({
     });
 
     const fullName = `${entry.firstName} ${entry.lastName}`.trim();
-    const subject = `New ATLAS waitlist signup: ${fullName}`;
+    const subject = `New Bhai waitlist signup: ${fullName}`;
     const lines = [
       `Name:       ${fullName}`,
       `Email:      ${entry.email}`,
@@ -95,7 +95,7 @@ export const sendNewEntryNotification = internalAction({
 
     const html = `
       <div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#1a1a1a;">
-        <h2 style="margin:0 0 16px;font-size:20px;">New ATLAS waitlist signup</h2>
+        <h2 style="margin:0 0 16px;font-size:20px;">New Bhai waitlist signup</h2>
         <table style="width:100%;border-collapse:collapse;font-size:14px;">
           <tr><td style="padding:6px 0;color:#666;width:120px;">Name</td><td style="padding:6px 0;font-weight:600;">${escapeHtml(fullName)}</td></tr>
           <tr><td style="padding:6px 0;color:#666;">Email</td><td style="padding:6px 0;"><a href="mailto:${escapeHtml(entry.email)}">${escapeHtml(entry.email)}</a></td></tr>
@@ -128,7 +128,7 @@ export const sendNewEntryNotification = internalAction({
         text,
         html,
         headers: {
-          "X-Mailer": "ATLAS",
+          "X-Mailer": "Bhai",
         },
       });
       return { sent: true };
@@ -180,7 +180,7 @@ export const sendAcceptanceEmail = internalAction({
       name: fromDomain,
     });
 
-    const subject = "Welcome to ATLAS Alpha Testing – You’re In!";
+    const subject = "Welcome to Bhai Alpha Testing – You’re In!";
 
     const html = `<table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 20px;background:#f3f4f6;">
   <tbody>
@@ -190,27 +190,27 @@ export const sendAcceptanceEmail = internalAction({
           <tbody>
             <tr>
               <td style="padding:30px; text-align:center; background:linear-gradient(135deg,#6366f1,#ec4899,#22c55e); color:#ffffff;">
-                <h1 style="margin:0; font-size:26px; letter-spacing:2px;">A.T.L.A.S</h1>
+                <h1 style="margin:0; font-size:26px; letter-spacing:2px;">Bhai</h1>
                 <p style="margin:6px 0 0; font-size:14px; opacity:0.9;">Alpha Access Invitation</p>
               </td>
             </tr>
             <tr>
               <td style="padding:35px; color:#111827; font-size:15px; line-height:1.7;">
                 <p><b>Congratulations.</b></p>
-                <p>You have been selected to be part of a <b>small, exclusive alpha testing group</b> for ATLAS by XAGI Labs &mdash; a platform built to redefine how humans interact with intelligence itself.</p>
-                <p><b>ATLAS is the world’s first AGI experience platform.</b><br>This is not just another tool or interface, but a new way of engaging with intelligence &mdash; one that moves beyond commands and responses into true interaction, adaptation, and understanding.</p>
+                <p>You have been selected to be part of a <b>small, exclusive alpha testing group</b> for Bhai by XAGI Labs &mdash; a platform built to redefine how humans interact with intelligence itself.</p>
+                <p><b>Bhai is the world’s first AGI experience platform.</b><br>This is not just another tool or interface, but a new way of engaging with intelligence &mdash; one that moves beyond commands and responses into true interaction, adaptation, and understanding.</p>
                 <p>As an early tester, you are among a very limited group gaining access to something fundamentally new.</p>
                 <p>If you are interested in participating, please reply to this email confirming your interest. Along with your confirmation, kindly share:</p>
                 <ul style="padding-left:20px;">
                   <li>Your Operating System</li>
                   <li>Your OS Version (if available)</li>
                 </ul>
-                <p>Selected participants will receive a <b>complimentary Pro account</b> along with <b>250 AI credits</b> to explore ATLAS and experience its capabilities firsthand.</p>
+                <p>Selected participants will receive a <b>complimentary Pro account</b> along with <b>250 AI credits</b> to explore Bhai and experience its capabilities firsthand.</p>
                 <p>A follow-up email will include access details, usage instructions, and program guidelines, along with a feedback form for reporting issues and sharing insights.</p>
                 <p>For every valid issue or feedback submission, you will receive <b>10 additional AI credits</b>.<br>After 10 successful submissions, you will receive a <b>bonus of 100 AI credits</b>.</p>
                 <p style="margin-top:20px; font-weight:bold;">You are not just testing a product.<br>You are stepping into the earliest version of what comes next.</p>
                 <p style="margin-top:25px;">For any queries, contact us at <a href="mailto:hello@xagilab.com" style="color:#2563eb; text-decoration:none;">hello@xagilab.com</a>.</p>
-                <p style="margin-top:20px;">Welcome to ATLAS.</p>
+                <p style="margin-top:20px;">Welcome to Bhai.</p>
                 <p>Best regards,<br><b>XAGI Labs Private Limited</b></p>
               </td>
             </tr>
@@ -232,9 +232,9 @@ export const sendAcceptanceEmail = internalAction({
     const text = [
       "Congratulations.",
       "",
-      "You have been selected to be part of a small, exclusive alpha testing group for ATLAS by XAGI Labs.",
+      "You have been selected to be part of a small, exclusive alpha testing group for Bhai by XAGI Labs.",
       "",
-      "ATLAS is the world’s first AGI experience platform.",
+      "Bhai is the world’s first AGI experience platform.",
       "",
       "If you are interested in participating, please reply to this email confirming your interest. Along with your confirmation, kindly share:",
       "  - Your Operating System",
@@ -244,7 +244,7 @@ export const sendAcceptanceEmail = internalAction({
       "",
       "For every valid issue or feedback submission, you will receive 10 additional AI credits. After 10 successful submissions, you will receive a bonus of 100 AI credits.",
       "",
-      "Welcome to ATLAS.",
+      "Welcome to Bhai.",
       "",
       "Best regards,",
       "XAGI Labs Private Limited",
@@ -265,7 +265,7 @@ export const sendAcceptanceEmail = internalAction({
         text,
         html,
         headers: {
-          "X-Mailer": "ATLAS",
+          "X-Mailer": "Bhai",
         },
       });
       console.log(`[waitlistMailer] acceptance email sent to ${entry.email}`);
@@ -329,7 +329,7 @@ export const sendContactedEmail = internalAction({
       name: fromDomain,
     });
 
-    const subject = "Important Update: Book Your 1:1 Session for ATLAS Alpha";
+    const subject = "Important Update: Book Your 1:1 Session for Bhai Alpha";
 
     const html = `<table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 20px;background:#f3f4f6;">
   <tbody>
@@ -339,23 +339,23 @@ export const sendContactedEmail = internalAction({
           <tbody>
             <tr>
               <td style="padding:30px; text-align:center; background:linear-gradient(135deg,#6366f1,#ec4899,#22c55e); color:#ffffff;">
-                <h1 style="margin:0; font-size:26px; letter-spacing:2px;">A.T.L.A.S</h1>
+                <h1 style="margin:0; font-size:26px; letter-spacing:2px;">Bhai</h1>
                 <p style="margin:6px 0 0; font-size:14px; opacity:0.9;">Alpha Walkthrough Session</p>
               </td>
             </tr>
             <tr>
               <td style="padding:35px; color:#111827; font-size:15px; line-height:1.7;">
                 <p><b>Hey,</b></p>
-                <p>Welcome to the next step of your ATLAS alpha access.</p>
+                <p>Welcome to the next step of your Bhai alpha access.</p>
                 <p>As part of the onboarding process, we are inviting you to a <b>one-on-one Google Meet session directly with the founders of XAGI Labs</b>.</p>
-                <p>This session is designed to give you a complete walkthrough of ATLAS, including:</p>
+                <p>This session is designed to give you a complete walkthrough of Bhai, including:</p>
                 <ul style="padding-left:20px;">
                   <li>How to set up the platform</li>
                   <li>How to use its core capabilities effectively</li>
                   <li>How to report issues and provide feedback</li>
                   <li>Best practices to get the most out of your access</li>
                 </ul>
-                <p>This is a personalized session to ensure you have a smooth and powerful start with ATLAS.</p>
+                <p>This is a personalized session to ensure you have a smooth and powerful start with Bhai.</p>
                 <table cellpadding="0" cellspacing="0" style="margin:25px 0;">
                   <tbody>
                     <tr>
@@ -366,7 +366,7 @@ export const sendContactedEmail = internalAction({
                   </tbody>
                 </table>
                 <p>Once you book your slot, you will receive the meeting details automatically.</p>
-                <p>We look forward to having you on this journey and helping you experience ATLAS the way it was meant to be.</p>
+                <p>We look forward to having you on this journey and helping you experience Bhai the way it was meant to be.</p>
                 <p style="margin-top:20px;">Best regards,<br><b><a href="https://xagilab.com/" rel="noopener noreferrer" style="color:#000000; text-decoration:underline;">XAGI Labs Private Limited</a></b></p>
               </td>
             </tr>
@@ -388,7 +388,7 @@ export const sendContactedEmail = internalAction({
     const text = [
       "Hey,",
       "",
-      "Welcome to the next step of your ATLAS alpha access.",
+      "Welcome to the next step of your Bhai alpha access.",
       "",
       "As part of the onboarding process, we are inviting you to a one-on-one Google Meet session directly with the founders of XAGI Labs.",
       "",
@@ -421,7 +421,7 @@ export const sendContactedEmail = internalAction({
         text,
         html,
         headers: {
-          "X-Mailer": "ATLAS",
+          "X-Mailer": "Bhai",
         },
       });
       console.log(`[waitlistMailer] contacted email sent to ${entry.email}`);

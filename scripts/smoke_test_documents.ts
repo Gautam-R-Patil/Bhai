@@ -13,7 +13,7 @@ import { ingestPdfToDocument } from "../src/documents/ingest.js";
 import type { Resume, GeneralDocument } from "../src/documents/schema.js";
 
 async function main() {
-    console.log("── Smoke test: ATLAS document subsystem ──\n");
+    console.log("── Smoke test: Bhai document subsystem ──\n");
 
     loadTemplates();
     const tpls = listTemplatesRaw();

@@ -82,7 +82,7 @@ export const osInspect: ToolDefinition = {
                     error: dump.error,
                     hint:
                         dump.source === "swift" && dump.error === "not_trusted"
-                            ? "Grant ATLAS Accessibility permission in System Settings → Privacy & Security → Accessibility."
+                            ? "Grant Bhai Accessibility permission in System Settings → Privacy & Security → Accessibility."
                             : dump.source === "pyatspi" && dump.error.includes("atspi_not_available")
                               ? "Install python3-pyatspi (apt install python3-pyatspi). Electron apps need --force-renderer-accessibility."
                               : dump.source === "powershell"

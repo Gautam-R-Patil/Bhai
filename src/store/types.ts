@@ -1,5 +1,5 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
-// TypeScript types for the A.T.L.A.S Store
+// TypeScript types for the Bhai Store
 
 // ── Item Types ─────────────────────────────────────────────────────────────
 

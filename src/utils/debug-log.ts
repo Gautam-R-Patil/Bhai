@@ -53,7 +53,7 @@ function prettyPath(p?: string): string | undefined {
  * ATLAS_TOOL_DEBUG env.
  *
  * Format: `🔧 [tool] sub_agent=id role=r | path:line — action`
- * The outer ATLAS process logger prepends the ISO timestamp, so we
+ * The outer Bhai process logger prepends the ISO timestamp, so we
  * don't add one inside.
  */
 export function logToolAction(entry: ToolActionLog): void {

@@ -159,7 +159,7 @@ describe("containsThreat", () => {
     });
 
     it("returns false on benign text", () => {
-        const text = "User lives in Bangalore and works on ATLAS.";
+        const text = "User lives in Bangalore and works on Bhai.";
         expect(containsThreat(text, "strict")).toBe(false);
         expect(containsThreat(text, "strict")).toBe(scanForThreats(text, "strict").detected);
     });

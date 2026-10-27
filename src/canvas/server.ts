@@ -54,7 +54,7 @@ export function initCanvas(port = 18791): void {
 
     server.on("error", (err: NodeJS.ErrnoException) => {
         if (err.code === "EADDRINUSE") {
-            console.warn(`🎨 Canvas port ${port} already in use — another ATLAS instance is running. Skipping canvas server.`);
+            console.warn(`🎨 Canvas port ${port} already in use — another Bhai instance is running. Skipping canvas server.`);
         } else {
             console.warn(`🎨 Canvas server error:`, err.message);
         }

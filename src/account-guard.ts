@@ -96,7 +96,7 @@ export async function checkAccountStatus(): Promise<{ allowed: boolean; reason?:
 
     if (!userId) {
         console.log("[AccountGuard] No userId — blocking");
-        return { allowed: false, reason: "Not signed in. Please log in through the A.T.L.A.S app." };
+        return { allowed: false, reason: "Not signed in. Please log in through the Bhai app." };
     }
 
     try {

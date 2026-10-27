@@ -28,7 +28,7 @@ export interface UserPresence {
 const SERVER_ONLY_APPS = new Set([
     "Terminal",
     "Finder",
-    "Electron",           // A.T.L.A.S UI or similar
+    "Electron",           // Bhai UI or similar
     "loginwindow",
     "SystemUIServer",
     "Dock",

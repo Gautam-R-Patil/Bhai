@@ -1,5 +1,5 @@
 /* ================================================================
-   A.T.L.A.S onboarding — Apple-quiet-futurism direction
+   Bhai onboarding — Apple-quiet-futurism direction
    ================================================================ */
 (function () {
 "use strict";
@@ -26,7 +26,7 @@ const state = {
     theme: "system",
     voice: "Aoede",
     wakeEnabled: true,
-    wakePhrase: "Hey Atlas",
+    wakePhrase: "Hey Bhai",
     personality: "casual_playful",
     permissions: { accessibility: "unknown", screen: "unknown", microphone: "unknown", location: "unknown" },
     permissionsSkipped: {},
@@ -324,17 +324,17 @@ STEP_RENDERERS["awakening"] = function (root) {
 STEP_RENDERERS["terms"] = function (root) {
     root.appendChild(el("div", { class: "eyebrow", html: '<span class="iri-dot"></span>Trust' }));
     root.appendChild(el("h1", { class: "step-title", text: "Read once. We won't ask again." }));
-    root.appendChild(el("p", { class: "step-sub", text: "A short set of terms covering what A.T.L.A.S can do, what it stores, and how to back out." }));
+    root.appendChild(el("p", { class: "step-sub", text: "A short set of terms covering what Bhai can do, what it stores, and how to back out." }));
 
     root.appendChild(el("div", { class: "terms-doc", html: `
         <h4>Terms of service</h4>
-        <p>A.T.L.A.S is a personal AI agent that acts on your behalf across the channels you connect. By accepting, you authorize the agent to read, write, and execute within the scopes you grant.</p>
+        <p>Bhai is a personal AI agent that acts on your behalf across the channels you connect. By accepting, you authorize the agent to read, write, and execute within the scopes you grant.</p>
         <h4>Privacy</h4>
         <p>Memory and conversation history are stored locally on this device. Telemetry is anonymized and aggregated.</p>
         <h4>Acceptable use</h4>
-        <p>You agree not to use A.T.L.A.S for activities that violate applicable law or the rights of others.</p>
+        <p>You agree not to use Bhai for activities that violate applicable law or the rights of others.</p>
         <h4>Disclaimer</h4>
-        <p>A.T.L.A.S is software and can make mistakes. You retain responsibility for actions it takes on your behalf.</p>
+        <p>Bhai is software and can make mistakes. You retain responsibility for actions it takes on your behalf.</p>
         <h4>Refund</h4>
         <p>Subscriptions are refundable within 7 days of purchase, no questions asked.</p>
     `}));
@@ -437,7 +437,7 @@ STEP_RENDERERS["persona"] = function (root) {
 
 STEP_RENDERERS["personalize"] = function (root) {
     root.appendChild(el("div", { class: "eyebrow", html: '<span class="iri-dot"></span>Ritual' }));
-    root.appendChild(el("h1", { class: "step-title", text: "How A.T.L.A.S shows up." }));
+    root.appendChild(el("h1", { class: "step-title", text: "How Bhai shows up." }));
     root.appendChild(el("p", { class: "step-sub", text: "Small choices that shape every interaction — what summons it, how it sounds, the mood." }));
 
     const spec = el("div", { class: "spec" });
@@ -542,7 +542,7 @@ STEP_RENDERERS["personalize"] = function (root) {
     sw.addEventListener("change", () => { state.wakeEnabled = sw.checked; phraseRow.style.display = sw.checked ? "" : "none"; });
     switchRow.appendChild(sw);
     wakeWrap.appendChild(switchRow);
-    const phraseInput = el("input", { attrs: { type: "text", value: state.wakePhrase, placeholder: "Hey Atlas" } });
+    const phraseInput = el("input", { attrs: { type: "text", value: state.wakePhrase, placeholder: "Hey Bhai" } });
     phraseInput.addEventListener("input", () => state.wakePhrase = phraseInput.value);
     const phraseRow = el("div", { class: "field", style: { marginTop: "12px" } },
         el("span", { class: "field-label", text: "Phrase" }),
@@ -698,12 +698,12 @@ STEP_RENDERERS["install"] = function (root) {
 
     const fact = el("div", { class: "install-fact" },
         el("p", { class: "install-fact-eyebrow", text: "Did you know" }),
-        el("p", { class: "install-fact-body", id: "demo-fact", text: "A.T.L.A.S remembers your preferences, communication style, and past conversations." })
+        el("p", { class: "install-fact-body", id: "demo-fact", text: "Bhai remembers your preferences, communication style, and past conversations." })
     );
     root.appendChild(fact);
 
     const FACTS = [
-        "A.T.L.A.S remembers your preferences, communication style, and past conversations.",
+        "Bhai remembers your preferences, communication style, and past conversations.",
         "It automates browser tasks — form-filling, clicking, tab-switching — without you watching.",
         "It deploys multiple specialized agents to work on different parts of your task in parallel.",
         "Your data runs locally on your machine and never leaves your device.",
@@ -817,7 +817,7 @@ STEP_RENDERERS["ready-hub"] = function (root) {
     const allGranted = Object.values(state.permissions).every((v) => v === "granted");
     const cells = [
         { label: "Account",     value: "Signed in" },
-        { label: "Workspace",   value: "~/A.T.L.A.S Files" },
+        { label: "Workspace",   value: "~/Bhai Files" },
         { label: "Hotkey",      value: state.hotkey },
         { label: "Voice",       value: state.voice },
         { label: "Persona",     value: capitalize(state.persona || "explorer") },
@@ -839,7 +839,7 @@ STEP_RENDERERS["ready-hub"] = function (root) {
     acts.appendChild(el("button", {
         class: "btn btn-primary btn-launch",
         on: { click: () => alert("(demo) Launch — opens overlay") },
-        html: 'Launch A.T.L.A.S <span class="chev">' + chevSvg() + '</span>',
+        html: 'Launch Bhai <span class="chev">' + chevSvg() + '</span>',
     }));
     acts.appendChild(el("button", { class: "btn btn-secondary",
         on: { click: () => alert("(demo) Talk — starts live voice") },
@@ -962,7 +962,7 @@ function showDay2Nudge() {
     const host = document.getElementById("nudge-host");
     clear(host);
     const nudge = el("div", { class: "nudge" });
-    nudge.appendChild(el("div", { class: "nudge-from", html: '<span class="iri-dot"></span>A.T.L.A.S · Day 2' }));
+    nudge.appendChild(el("div", { class: "nudge-from", html: '<span class="iri-dot"></span>Bhai · Day 2' }));
     nudge.appendChild(el("div", { class: "nudge-body",
         text: "I noticed you've been using " + state.hotkey + " a lot. Want me to personalize shortcuts based on your workflow?" }));
     const acts = el("div", { class: "nudge-actions" });

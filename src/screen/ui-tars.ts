@@ -42,9 +42,9 @@ function isSafeScreenshotPath(p: string): boolean {
         resolve(tmpdir()),
         "/tmp", // common shorthand for the per-user system tmp
         "/private/tmp", // macOS canonical (os.tmpdir() returns /var/folders/...)
-        resolve(process.env.HOME || "", "Desktop", "A.T.L.A.S Files"),
-        resolve(process.env.HOME || "", "Documents", "A.T.L.A.S Files"),
-        resolve(process.env.HOME || "", "A.T.L.A.S Files"),
+        resolve(process.env.HOME || "", "Desktop", "Bhai Files"),
+        resolve(process.env.HOME || "", "Documents", "Bhai Files"),
+        resolve(process.env.HOME || "", "Bhai Files"),
         resolve(process.env.HOME || "", "Library", "Caches", "atlas"),
         process.env.ATLAS_WORKSPACE ? resolve(process.env.ATLAS_WORKSPACE) : "",
     ].filter(isMeaningfulDir);
@@ -138,7 +138,7 @@ export async function groundClick(
     if (!hostCheck.ok) return errorResult(model, start, hostCheck.reason || "host_rejected");
     const canonHost = hostCheck.canonical || host;
     if (!isSafeScreenshotPath(screenshotPath)) {
-        return errorResult(model, start, "screenshot_path_rejected:must be under tmpdir or ATLAS Files directory");
+        return errorResult(model, start, "screenshot_path_rejected:must be under tmpdir or Bhai Files directory");
     }
 
     let base64: string;

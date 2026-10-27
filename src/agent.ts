@@ -951,7 +951,7 @@ async function _runAgentBody(
     if (true) {
         const accountStatus = await checkAccountStatus();
         if (!accountStatus.allowed) {
-            const errorMsg = `⛔ ${accountStatus.reason || "Your ATLAS account cannot process messages right now."}`;
+            const errorMsg = `⛔ ${accountStatus.reason || "Your Bhai account cannot process messages right now."}`;
             if (_harnessTraceId) finalizeTrace(_harnessTraceId, false);
             return { text: errorMsg, toolCalls: 0 };
         }
@@ -998,7 +998,7 @@ async function _runAgentBody(
     };
 
     // Strip any literal <system-reminder> tags from user input — those tags
-    // are reserved for ATLAS runtime instructions and must not be forgeable
+    // are reserved for Bhai runtime instructions and must not be forgeable
     // by attacker-controlled message text.
     const safeUserMessage = sanitizeUntrustedContent(userMessage);
 
@@ -1993,7 +1993,7 @@ STRATEGY: Execute in as few tool calls as possible.
             // ── Onboarding nudge for first-time users ──
             if (isFirstTime) {
                 parts.push(`🆕 FIRST-TIME USER — you have zero memory. This is your very first chat with this person.
-- Introduce yourself casually ONCE: "hey! I'm A.T.L.A.S 👋" — keep it short and warm.
+- Introduce yourself casually ONCE: "hey! I'm Bhai 👋" — keep it short and warm.
 - Naturally get to know them through conversation (name, what they do, what they're building). DON'T interrogate.
 - Save info as you learn it: identity_update for name/role/company, trait_update for preferences.
 - After this chat, you'll remember everything. Never re-introduce or re-ask.`);

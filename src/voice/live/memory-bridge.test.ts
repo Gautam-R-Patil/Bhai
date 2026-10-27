@@ -44,8 +44,8 @@ describe("detectMemoryVerb — voice shortcut to sqlite memory", () => {
         expect(got?.content).toBe("the stage IP is 10 dot 0 dot 1 dot 5");
     });
 
-    it("strips leading filler: 'hey atlas remember I like dark mode'", () => {
-        const got = detectMemoryVerb("hey atlas remember I like dark mode");
+    it("strips leading filler: 'hey bhai remember I like dark mode'", () => {
+        const got = detectMemoryVerb("hey bhai remember I like dark mode");
         expect(got?.content).toBe("I like dark mode");
     });
 

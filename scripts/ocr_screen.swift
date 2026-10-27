@@ -1,5 +1,5 @@
 #!/usr/bin/env swift
-// OCR screen text using macOS Vision framework — A.T.L.A.S v2
+// OCR screen text using macOS Vision framework — Bhai v2
 // Usage: swift ocr_screen.swift [screenshot_path] [fast|accurate]
 // Outputs JSON: {width, height, screen_w, screen_h, elements: [{text, cx_norm, cy_norm, w_norm, h_norm, cx_screen, cy_screen, confidence}]}
 // Normalized coords (0.0-1.0) are relative to the IMAGE dimensions.

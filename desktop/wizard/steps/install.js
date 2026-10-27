@@ -79,7 +79,7 @@
         const factBody = document.createElement("div");
         factBody.className = "fun-fact-body";
         factBody.id = "fun-fact-body";
-        factBody.textContent = "A.T.L.A.S remembers your conversations across sessions — it learns how you work.";
+        factBody.textContent = "Bhai remembers your conversations across sessions — it learns how you work.";
         factCard.appendChild(factLabel);
         factCard.appendChild(factBody);
         section.appendChild(factCard);
@@ -204,9 +204,9 @@
         // Pulled from tryatlasagi.com/101-reasons. Stay product-benefit framed
         // (what the user can do) rather than implementation detail (what tech
         // powers it). The wizard is the first impression — leaking internals
-        // here positions A.T.L.A.S as a tech demo, not as a useful assistant.
+        // here positions Bhai as a tech demo, not as a useful assistant.
         const FUN_FACTS = [
-            "A.T.L.A.S remembers your preferences, communication style, and past conversations.",
+            "Bhai remembers your preferences, communication style, and past conversations.",
             "It automates browser tasks — form-filling, clicking, tab-switching — without you watching.",
             "It researches across hundreds of sources and gives you a synthesized report, not a pile of links.",
             "It deploys multiple specialized agents to work on different parts of your task in parallel.",

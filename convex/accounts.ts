@@ -1,5 +1,5 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
-// Convex backend functions for A.T.L.A.S account management.
+// Convex backend functions for Bhai account management.
 // These run server-side and are called via ConvexHttpClient from Electron main + bot process.
 
 import { v } from "convex/values";

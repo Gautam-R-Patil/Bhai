@@ -3,7 +3,7 @@
 // See LICENSE.md for details.
 
 // ── Overlay Chat Server ──────────────────────
-// HTTP + WebSocket server for the on-screen "Type to A.T.L.A.S" overlay.
+// HTTP + WebSocket server for the on-screen "Type to Bhai" overlay.
 // Shares conversation context with Telegram — unified history.
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -608,7 +608,7 @@ export function initOverlayChat(llm: LLMClient): void {
 
     httpServer.on("error", (err: NodeJS.ErrnoException) => {
         if (err.code === "EADDRINUSE") {
-            console.error(`💬 [OVERLAY] Port ${OVERLAY_PORT} already in use — another ATLAS instance is likely running. Overlay chat disabled this run.`);
+            console.error(`💬 [OVERLAY] Port ${OVERLAY_PORT} already in use — another Bhai instance is likely running. Overlay chat disabled this run.`);
         } else {
             console.error(`💬 [OVERLAY] HTTP server error: ${err.message}`);
         }
@@ -856,7 +856,7 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
         // Clear timeout warning timer
         if (timeoutWarningTimer) clearTimeout(timeoutWarningTimer);
 
-        console.log(`🤖 [Overlay] A.T.L.A.S: ${result.text.substring(0, 150)}...`);
+        console.log(`🤖 [Overlay] Bhai: ${result.text.substring(0, 150)}...`);
         console.log(`📡 [Overlay] WS state: ${ws.readyState}, clients: ${overlayClients.size}`);
 
         // Strip internal debug blocks + [SOURCE: ...] and [no_reply] tags the LLM may have echoed back
@@ -1262,7 +1262,7 @@ function getPlaceholderForApp(app: string): string {
     for (const [key, placeholder] of Object.entries(PLACEHOLDER_MAP)) {
         if (app.includes(key) || key.includes(app)) return placeholder;
     }
-    return "Ask A.T.L.A.S…";
+    return "Ask Bhai…";
 }
 
 function startPlaceholderBroadcast(): void {

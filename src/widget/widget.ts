@@ -223,7 +223,7 @@ export function getWidgetScript(wsUrl: string): string {
   // -- DOM --
   var bubble = document.createElement("button");
   bubble.id = "atlas-widget-bubble";
-  bubble.setAttribute("aria-label", "Chat with A.T.L.A.S");
+  bubble.setAttribute("aria-label", "Chat with Bhai");
   bubble.innerHTML = '<svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.2L4 17.2V4h16v12z"/></svg>';
   document.body.appendChild(bubble);
 
@@ -231,7 +231,7 @@ export function getWidgetScript(wsUrl: string): string {
   win.id = "atlas-widget-window";
   win.innerHTML =
     '<div id="atlas-widget-header">' +
-      '<div><span>A.T.L.A.S</span><br><span class="status" id="atlas-widget-status">Connecting...</span></div>' +
+      '<div><span>Bhai</span><br><span class="status" id="atlas-widget-status">Connecting...</span></div>' +
       '<button id="atlas-widget-close" aria-label="Close chat">&times;</button>' +
     '</div>' +
     '<div id="atlas-widget-messages"></div>' +
@@ -392,7 +392,7 @@ export function getWidgetPage(host: string): string {
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>A.T.L.A.S Chat Widget</title>
+<title>Bhai Chat Widget</title>
 <style>
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 640px; margin: 60px auto; padding: 0 20px; color: #1f2937; }
   h1 { font-size: 1.5em; }
@@ -402,7 +402,7 @@ export function getWidgetPage(host: string): string {
 </style>
 </head>
 <body>
-  <h1>A.T.L.A.S Chat Widget</h1>
+  <h1>Bhai Chat Widget</h1>
   <p>Add the following script tag to your webpage to embed the chat widget:</p>
   <pre><code>&lt;script src="${host}/widget.js?token=YOUR_TOKEN"&gt;&lt;/script&gt;</code></pre>
   <p class="note">Replace <code>YOUR_TOKEN</code> with the value of your <code>WIDGET_TOKEN</code> environment variable.</p>

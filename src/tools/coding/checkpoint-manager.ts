@@ -109,7 +109,7 @@ function ensureStore(gitDir: string, workTree: string): boolean {
         const r = runShadow(gitDir, workTree, ["init", "-q", "--initial-branch=atlas"]);
         if (r.code !== 0) return false;
         runShadow(gitDir, workTree, ["config", "user.email", "checkpoints@atlas.local"]);
-        runShadow(gitDir, workTree, ["config", "user.name", "ATLAS Checkpoints"]);
+        runShadow(gitDir, workTree, ["config", "user.name", "Bhai Checkpoints"]);
         runShadow(gitDir, workTree, ["config", "gc.auto", "0"]);
         runShadow(gitDir, workTree, ["config", "commit.gpgsign", "false"]);
     }

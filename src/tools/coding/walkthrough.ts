@@ -10,7 +10,7 @@
 //   • How to try it (one-liner run commands)
 //   • Known limitations / follow-ups
 //
-// Landed under A.T.L.A.S Files/Documents/walkthroughs/<slug>/ so users
+// Landed under Bhai Files/Documents/walkthroughs/<slug>/ so users
 // have a persistent record. Returns the file path so the agent can
 // attach it to the channel along with a screenshot or recording.
 

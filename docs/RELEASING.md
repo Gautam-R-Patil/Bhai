@@ -1,4 +1,4 @@
-# Releasing the A.T.L.A.S Desktop App
+# Releasing the Bhai Desktop App
 
 The desktop installer is **not** hosted on GitHub Releases any more.
 GitHub's per-file upload ceiling (and the round-trip cost of re-uploading
@@ -19,10 +19,10 @@ endpoint at `/api/updates` serves only the YAML metadata and points
        ▼
  ┌────────────────────────────────────────────────────────────────┐
  │ Cloudflare R2 bucket (e.g. atlas-releases)                     │
- │   stable/0.2.1/A.T.L.A.S-0.2.1-arm64.dmg                       │
- │   stable/0.2.1/A.T.L.A.S-0.2.1-arm64.dmg.blockmap              │
- │   stable/0.2.1/A.T.L.A.S Setup 0.2.1.exe                       │
- │   stable/0.2.1/A.T.L.A.S Setup 0.2.1.exe.blockmap              │
+ │   stable/0.2.1/Bhai-0.2.1-arm64.dmg                       │
+ │   stable/0.2.1/Bhai-0.2.1-arm64.dmg.blockmap              │
+ │   stable/0.2.1/Bhai Setup 0.2.1.exe                       │
+ │   stable/0.2.1/Bhai Setup 0.2.1.exe.blockmap              │
  │   beta/…                                                       │
  └────────────────────────────────────────────────────────────────┘
 ```
@@ -70,7 +70,7 @@ includes `Access-Control-Expose-Headers: Content-Range, Content-Length`.
 
 ### 3. Create R2 S3-compatible credentials
 
-The ATLAS installer is larger than wrangler's 300 MiB per-file upload
+The Bhai installer is larger than wrangler's 300 MiB per-file upload
 limit, so `scripts/release.mjs` uses the S3-compatible API with proper
 multipart upload instead. You need R2-scoped S3 keys, NOT a regular
 Cloudflare API token:

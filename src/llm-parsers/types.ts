@@ -3,7 +3,7 @@
 // See LICENSE.md for details.
 
 // Common types for tool-call parsers.
-// Shape matches the OpenAI `ChatCompletionMessageToolCall` that ATLAS's LLM
+// Shape matches the OpenAI `ChatCompletionMessageToolCall` that Bhai's LLM
 // client already consumes — a ParsedToolCall is slot-compatible with
 // `response.choices[0].message.tool_calls[]`.
 

@@ -486,7 +486,7 @@ export class TranscriptSpeaker {
      * Strict variant: true ONLY while the player subprocess is running or
      * a synth is in flight — NOT during the post-playback quiet window.
      * Used for barge-in short-chunk gating so user ACKs like "okay" / "yes"
-     * arriving right after ATLAS finishes don't get wrongly dropped as
+     * arriving right after Bhai finishes don't get wrongly dropped as
      * echo-fragments.
      */
     activelyPlaying(): boolean {

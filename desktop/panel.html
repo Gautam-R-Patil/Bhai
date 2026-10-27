@@ -7,7 +7,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://*.convex.cloud https://*.convex.site; frame-ancestors 'none'; object-src 'none'; base-uri 'self';">
-    <title>A.T.L.A.S — Control Panel</title>
+    <title>Bhai — Control Panel</title>
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="components/components.css">
     <link rel="stylesheet" href="studio.css">
@@ -27,7 +27,7 @@
 
     <!-- Title Bar -->
     <div class="title-bar">
-        <span class="title-bar-text">A.T.L.A.S</span>
+        <span class="title-bar-text">Bhai</span>
         <div class="title-bar-buttons">
             <button class="title-btn" onclick="atlas.minimize()" title="Minimize">─</button>
             <button class="title-btn close" onclick="atlas.close()" title="Close">✕</button>
@@ -68,7 +68,7 @@
         <!-- Sidebar Navigation -->
         <nav class="panel-sidebar">
             <div class="sidebar-logo">
-                <img src="logo.png" alt="A.T.L.A.S" class="sidebar-app-logo">
+                <img src="logo.png" alt="Bhai" class="sidebar-app-logo">
             </div>
             <div class="nav-items">
                 <button class="nav-item active" data-tab="dashboard" onclick="switchTab('dashboard')">
@@ -158,7 +158,7 @@
                                 System Online
                             </div>
                             <div class="status-subtitle">
-                                A.T.L.A.S is active and listening via Telegram and overlay hotkey.
+                                Bhai is active and listening via Telegram and overlay hotkey.
                             </div>
                         </div>
 
@@ -168,14 +168,14 @@
                                 System Offline
                             </div>
                             <div class="status-subtitle">
-                                A.T.L.A.S is currently stopped. Click Start to begin.
+                                Bhai is currently stopped. Click Start to begin.
                             </div>
                         </div>
 
                         <div class="panel-controls">
                             <button class="btn btn-success" id="startBtn" onclick="startBot()"
                                 style="min-width: 130px; padding: 11px 20px;">
-                                ▶ Start A.T.L.A.S
+                                ▶ Start Bhai
                             </button>
                             <button class="btn btn-secondary" id="stopBtn" onclick="stopBot()" disabled
                                 style="min-width: 130px; padding: 11px 20px; color: var(--accent-danger);">
@@ -319,7 +319,7 @@
                             <span class="pref-section-icon">🚀</span>
                             <div>
                                 <h3 class="pref-section-title">Startup</h3>
-                                <p class="pref-section-desc">Control how A.T.L.A.S launches</p>
+                                <p class="pref-section-desc">Control how Bhai launches</p>
                             </div>
                         </div>
                         <div class="pref-items">
@@ -375,7 +375,7 @@
                         </div>
                         <div class="pref-items">
                             <div class="pref-shortcut">
-                                <span class="pref-shortcut-label">Show/Hide A.T.L.A.S</span>
+                                <span class="pref-shortcut-label">Show/Hide Bhai</span>
                                 <div class="pref-shortcut-control">
                                     <kbd id="prefHotkeyShow" tabindex="0" title="Click to change" onclick="startHotkeyRecording(this)">Alt + Space</kbd>
                                     <button class="pref-hotkey-reset" id="prefHotkeyReset" onclick="resetOverlayHotkey()" title="Reset to default" style="display:none;">Reset</button>
@@ -420,7 +420,7 @@
                             <span class="pref-section-icon">🗣️</span>
                             <div>
                                 <h3 class="pref-section-title">Personality</h3>
-                                <p class="pref-section-desc">How A.T.L.A.S should sound when talking with you</p>
+                                <p class="pref-section-desc">How Bhai should sound when talking with you</p>
                             </div>
                         </div>
                         <div class="pref-items" style="flex-direction:column;gap:8px;align-items:stretch;">
@@ -493,7 +493,7 @@
                             <span class="settings-section-icon">📁</span>
                             <div>
                                 <h3 class="settings-section-title">Workspace</h3>
-                                <p class="settings-section-desc">Where A.T.L.A.S saves files (screenshots, research,
+                                <p class="settings-section-desc">Where Bhai saves files (screenshots, research,
                                     exports)</p>
                             </div>
                         </div>
@@ -502,7 +502,7 @@
                                 <label class="input-label">Workspace Path</label>
                                 <div class="workspace-preview">
                                     <input class="clean-input" type="text" id="settingWorkspace"
-                                        placeholder="C:\Users\You\Desktop\A.T.L.A.S Files" readonly
+                                        placeholder="C:\Users\You\Desktop\Bhai Files" readonly
                                         style="flex: 1; cursor: default;">
                                     <button class="btn btn-secondary btn-sm" onclick="chooseWorkspace()">Browse</button>
                                 </div>
@@ -719,7 +719,7 @@
                                 <!-- Step 3: Verify Your Number (OTP) -->
                                 <div class="channel-wizard-step" id="wizStepWhatsapp3">
                                     <h4>Verify your number</h4>
-                                    <p>Send this code from your WhatsApp to register as the owner. Only verified owners get full access to ATLAS capabilities.</p>
+                                    <p>Send this code from your WhatsApp to register as the owner. Only verified owners get full access to Bhai capabilities.</p>
                                     <div style="text-align:center;margin:20px 0;">
                                         <div style="font-size:32px;font-weight:700;letter-spacing:8px;color:var(--accent-primary,#007AFF);font-family:monospace;" id="waOTPCode">------</div>
                                         <div style="font-size:12px;color:rgba(255,255,255,0.4);margin-top:8px;" id="waOTPTimer">Expires in 5:00</div>
@@ -733,7 +733,7 @@
                                 <!-- Step 4: Owner Numbers -->
                                 <div class="channel-wizard-step" id="wizStepWhatsapp4">
                                     <h4>Owner Numbers</h4>
-                                    <p>These numbers have full access to all ATLAS capabilities including system tools, file access, and shell commands.</p>
+                                    <p>These numbers have full access to all Bhai capabilities including system tools, file access, and shell commands.</p>
                                     <div id="waOwnerList" style="margin:12px 0;">
                                         <div style="color:rgba(255,255,255,0.4);font-size:13px;padding:20px;text-align:center;">No owners verified yet. Complete step 3 first.</div>
                                     </div>
@@ -881,9 +881,9 @@
                                     <a class="wizard-link" href="https://api.slack.com/apps" target="_blank" style="margin-bottom:12px;">Open Slack API Portal</a>
                                     <div style="position:relative;margin-top:12px;">
                                         <div class="manifest-code" id="slackManifest">{
-  "display_information": { "name": "A.T.L.A.S" },
+  "display_information": { "name": "Bhai" },
   "features": {
-    "bot_user": { "display_name": "ATLAS", "always_online": true }
+    "bot_user": { "display_name": "Bhai", "always_online": true }
   },
   "oauth_config": {
     "scopes": {
@@ -930,7 +930,7 @@
                                 <!-- Step 3: Test -->
                                 <div class="channel-wizard-step" id="wizStepSlack3">
                                     <h4>Test your connection</h4>
-                                    <p>Everything is set up. Click below to verify A.T.L.A.S can connect to your Slack workspace.</p>
+                                    <p>Everything is set up. Click below to verify Bhai can connect to your Slack workspace.</p>
                                     <div class="wizard-nav">
                                         <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('slack', 3)">Back</button>
                                         <button class="wizard-btn wizard-btn-success" onclick="testChannelConnection('slack')">Test Connection</button>
@@ -967,7 +967,7 @@
                                 <!-- Step 1: Enter email -->
                                 <div class="channel-wizard-step active" id="wizStepEmail1">
                                     <h4>Enter your email</h4>
-                                    <p>A.T.L.A.S will use this email address to send and receive messages.</p>
+                                    <p>Bhai will use this email address to send and receive messages.</p>
                                     <div class="input-group">
                                         <label class="input-label">Email Address</label>
                                         <input class="clean-input" type="email" id="chEmailUser" placeholder="you@gmail.com" autocomplete="off" oninput="onEmailDomainDetect(this.value)">
@@ -1022,7 +1022,7 @@
                                 <!-- Step 4: Allowed senders + Test -->
                                 <div class="channel-wizard-step" id="wizStepEmail4">
                                     <h4>Allowed senders</h4>
-                                    <p>A.T.L.A.S will only process emails from these addresses. Leave blank to accept all.</p>
+                                    <p>Bhai will only process emails from these addresses. Leave blank to accept all.</p>
                                     <div class="input-group">
                                         <label class="input-label">Email Whitelist</label>
                                         <input class="clean-input" type="text" id="chEmailWhitelist" placeholder="boss@company.com,friend@example.com" autocomplete="off">
@@ -1076,7 +1076,7 @@
                                 <!-- Step 2: Username + password -->
                                 <div class="channel-wizard-step" id="wizStepMatrix2">
                                     <h4>Enter username and password</h4>
-                                    <p>The bot will sign in with these credentials. You can create a dedicated Matrix account for A.T.L.A.S or use your own.</p>
+                                    <p>The bot will sign in with these credentials. You can create a dedicated Matrix account for Bhai or use your own.</p>
                                     <div class="input-group">
                                         <label class="input-label">Username</label>
                                         <input class="clean-input" type="text" id="chMatrixUsername" placeholder="@atlas:matrix.org" autocomplete="off">
@@ -1107,7 +1107,7 @@
                                 <!-- Step 4: Test -->
                                 <div class="channel-wizard-step" id="wizStepMatrix4">
                                     <h4>Test your connection</h4>
-                                    <p>Click below to verify A.T.L.A.S can connect to your Matrix homeserver.</p>
+                                    <p>Click below to verify Bhai can connect to your Matrix homeserver.</p>
                                     <div class="wizard-nav">
                                         <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('matrix', 4)">Back</button>
                                         <button class="wizard-btn wizard-btn-success" onclick="testChannelConnection('matrix')">Test Connection</button>
@@ -1182,7 +1182,7 @@
                         <div class="auth-card surface-card">
                             <div class="auth-header">
                                 <div class="auth-icon">🔐</div>
-                                <h3 class="auth-title">Sign in to A.T.L.A.S</h3>
+                                <h3 class="auth-title">Sign in to Bhai</h3>
                                 <p class="auth-subtitle">Use your phone number or Google account to sign in securely</p>
                             </div>
                             <div style="margin-top:24px;">
@@ -1273,14 +1273,14 @@
             <!-- ═══════════════════════════════════ -->
             <div class="tab-content" id="tab-about">
                 <div class="tab-header">
-                    <h2 class="tab-title">About A.T.L.A.S</h2>
+                    <h2 class="tab-title">About Bhai</h2>
                 </div>
 
                 <div class="about-content">
                     <div class="about-hero surface-card">
-                        <img src="logo.png" alt="A.T.L.A.S" class="about-logo">
+                        <img src="logo.png" alt="Bhai" class="about-logo">
                         <div class="about-info">
-                            <h3 class="about-name">A.T.L.A.S</h3>
+                            <h3 class="about-name">Bhai</h3>
                             <div class="about-version" id="aboutVersion">Version 0.2.0</div>
                             <div class="about-tagline">Personal AI Agent · All Systems</div>
                         </div>
@@ -1673,13 +1673,13 @@
                     if (status === 'blocked') {
                         showToast('⛔ Account blocked. Contact support@codingdesk.info');
                         document.getElementById('startBtn').disabled = false;
-                        document.getElementById('startBtn').textContent = '▶ Start A.T.L.A.S';
+                        document.getElementById('startBtn').textContent = '▶ Start Bhai';
                         return;
                     }
                     if (status === 'suspended') {
                         showToast('⛔ Account suspended. Contact support@codingdesk.info');
                         document.getElementById('startBtn').disabled = false;
-                        document.getElementById('startBtn').textContent = '▶ Start A.T.L.A.S';
+                        document.getElementById('startBtn').textContent = '▶ Start Bhai';
                         return;
                     }
                     // Block if out of credits. null means data temporarily unavailable
@@ -1687,7 +1687,7 @@
                     if (info.ai_credits === 0) {
                         showToast('⛔ Out of AI credits. Purchase more credits to continue.');
                         document.getElementById('startBtn').disabled = false;
-                        document.getElementById('startBtn').textContent = '▶ Start A.T.L.A.S';
+                        document.getElementById('startBtn').textContent = '▶ Start Bhai';
                         return;
                     }
                 }
@@ -1701,7 +1701,7 @@
                 // Update credit display
                 refreshCreditDisplay();
             }
-            document.getElementById('startBtn').textContent = '▶ Start A.T.L.A.S';
+            document.getElementById('startBtn').textContent = '▶ Start Bhai';
         }
 
         async function stopBot() {
@@ -1753,7 +1753,7 @@
             btn.textContent = 'Save Changes';
 
             if (result.success) {
-                showToast('✅ Settings saved! Restart A.T.L.A.S for changes to take effect.');
+                showToast('✅ Settings saved! Restart Bhai for changes to take effect.');
             } else {
                 showToast('❌ Failed to save: ' + result.error);
             }
@@ -2274,7 +2274,7 @@
                     showToast('Channels saved!');
                     // Offer restart if bot is running
                     if (result.botRunning) {
-                        if (confirm('A.T.L.A.S needs to restart for channel changes to take effect. Restart now?')) {
+                        if (confirm('Bhai needs to restart for channel changes to take effect. Restart now?')) {
                             showToast('Stopping bot...');
                             await atlas.stopBot();
                             // Wait for bot to actually stop (poll status)
@@ -2918,7 +2918,7 @@
                     if (status) status.textContent = 'Save failed: ' + ((res && res.error) || 'unknown error');
                     return;
                 }
-                if (status) status.textContent = 'Saved — A.T.L.A.S will pick this up on the next chat turn.';
+                if (status) status.textContent = 'Saved — Bhai will pick this up on the next chat turn.';
             } catch (e) {
                 if (status) status.textContent = 'Save failed: ' + (e.message || e);
             } finally {
@@ -3567,7 +3567,7 @@
                     <div style="font-size: 12px; color: var(--text-secondary);">
                         ${result.name} has been installed as a ${result.type}.
                         Categories: ${(result.categories || []).join(', ')}.<br>
-                        Restart A.T.L.A.S for the skill to take effect.
+                        Restart Bhai for the skill to take effect.
                     </div>
                 `;
 

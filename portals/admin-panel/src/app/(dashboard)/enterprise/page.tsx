@@ -63,7 +63,7 @@ export default function EnterprisePage() {
             <h1 className="text-2xl font-bold text-gray-900">Enterprise</h1>
           </div>
           <p className="text-gray-600 text-sm">
-            ATLAS Tools MCP — manage customer licenses and usage on the isolated
+            Bhai Tools MCP — manage customer licenses and usage on the isolated
             <span className="font-mono text-gray-800 ml-1">sincere-caiman-611</span> Convex deployment.
           </p>
         </div>

@@ -5,7 +5,7 @@
 /**
  * os_computer_action — single structured-action tool modeled on Anthropic's
  * computer_20251124. Routes one well-typed action through the per-OS execution
- * path. The agent emits a JSON object; ATLAS validates + executes.
+ * path. The agent emits a JSON object; Bhai validates + executes.
  *
  * Prefer this over the multiple legacy os_* tools when emitting complex action
  * sequences — the schema is unambiguous and resolution-independent (percent coords).

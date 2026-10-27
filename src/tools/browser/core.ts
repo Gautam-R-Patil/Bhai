@@ -225,7 +225,7 @@ export async function getBrowser(): Promise<BrowserContext> {
 
         // Stealth args: remove bot fingerprints without bypassCSP (which breaks Playwright internals).
         // Renderer sandbox is INTENTIONALLY left enabled (we no longer pass --no-sandbox) so a single
-        // malicious page-render exploit (V8/Skia/WebGL) cannot escalate to ATLAS host RCE. Set
+        // malicious page-render exploit (V8/Skia/WebGL) cannot escalate to Bhai host RCE. Set
         // ATLAS_BROWSER_NO_SANDBOX=true only on Linux containers where userns is unavailable.
         const stealthArgs = [
             "--disable-blink-features=AutomationControlled", // removes navigator.webdriver
@@ -499,7 +499,7 @@ export const SCROLL_INDICATOR_JS = `
 };
 `;
 
-// ATLAS action HUD: floating pill at top-right showing current action.
+// Bhai action HUD: floating pill at top-right showing current action.
 // Persists while action runs, fades out on completion.
 export const ATLAS_HUD_JS = `
 ({label, done}) => {

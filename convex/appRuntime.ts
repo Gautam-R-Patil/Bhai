@@ -1,5 +1,5 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
-// Server-side runtime key derivation for A.T.L.A.S desktop app.
+// Server-side runtime key derivation for Bhai desktop app.
 
 import { v } from "convex/values";
 import { internalAction } from "./_generated/server";

@@ -15,7 +15,7 @@
 
         const title = document.createElement("h1");
         title.className = "step-title";
-        title.textContent = re ? "Reconfigure A.T.L.A.S." : "Welcome to A.T.L.A.S.";
+        title.textContent = re ? "Reconfigure Bhai." : "Welcome to Bhai.";
 
         const sub = document.createElement("p");
         sub.className = "step-sub";

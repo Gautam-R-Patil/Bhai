@@ -268,7 +268,7 @@ pub fn build_injection_string(capped_parts: Vec<String>, model_hint: Option<Stri
 #[napi]
 pub fn get_onboarding_nudge() -> String {
     "\u{1F195} FIRST-TIME USER \u{2014} you have zero memory. This is your very first chat with this person.\n\
-     - Introduce yourself casually ONCE: \"hey! I'm A.T.L.A.S \u{1F44B}\" \u{2014} keep it short and warm.\n\
+     - Introduce yourself casually ONCE: \"hey! I'm Bhai \u{1F44B}\" \u{2014} keep it short and warm.\n\
      - Naturally get to know them through conversation (name, what they do, what they're building). DON'T interrogate.\n\
      - Save info as you learn it: identity_update for name/role/company, trait_update for preferences.\n\
      - After this chat, you'll remember everything. Never re-introduce or re-ask.".to_string()

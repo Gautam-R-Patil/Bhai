@@ -47,7 +47,7 @@ function resolvePythonBin(): string {
 const execFileAsync = promisify(execFile);
 
 /**
- * Reject screenshot paths outside known-safe directories (tmpdir + ATLAS Files/Screenshots).
+ * Reject screenshot paths outside known-safe directories (tmpdir + Bhai Files/Screenshots).
  * Prevents an LLM-supplied path from causing arbitrary file reads via the Python script.
  */
 function isSafeScreenshotPath(p: string): boolean {
@@ -65,9 +65,9 @@ function isSafeScreenshotPath(p: string): boolean {
         resolve(tmpdir()),
         "/tmp", // common shorthand for the per-user system tmp
         "/private/tmp", // macOS canonical (os.tmpdir() returns /var/folders/...)
-        resolve(process.env.HOME || "", "Desktop", "A.T.L.A.S Files"),
-        resolve(process.env.HOME || "", "Documents", "A.T.L.A.S Files"),
-        resolve(process.env.HOME || "", "A.T.L.A.S Files"),
+        resolve(process.env.HOME || "", "Desktop", "Bhai Files"),
+        resolve(process.env.HOME || "", "Documents", "Bhai Files"),
+        resolve(process.env.HOME || "", "Bhai Files"),
         resolve(process.env.HOME || "", "Library", "Caches", "atlas"),
         process.env.ATLAS_WORKSPACE ? resolve(process.env.ATLAS_WORKSPACE) : "",
     ].filter(isMeaningfulDir);
@@ -125,7 +125,7 @@ function resolveOmniparserScript(): string {
  */
 export async function detectElements(screenshotPath: string, opts: OmniParserOptions = {}): Promise<OmniParserResult> {
     if (!isSafeScreenshotPath(screenshotPath)) {
-        return failureResult(`screenshot_path_rejected:must be under tmpdir or ATLAS Files directory`);
+        return failureResult(`screenshot_path_rejected:must be under tmpdir or Bhai Files directory`);
     }
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const script = resolveOmniparserScript();

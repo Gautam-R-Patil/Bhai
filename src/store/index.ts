@@ -1,5 +1,5 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
-// A.T.L.A.S Store — Main entry point
+// Bhai Store — Main entry point
 
 // Re-export types
 export * from "./types.js";

@@ -1,5 +1,5 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
-// Native SIMD-accelerated operations for A.T.L.A.S
+// Native SIMD-accelerated operations for Bhai
 
 #![deny(clippy::all)]
 #![allow(dead_code, unused_variables, unused_imports, unused_mut)]

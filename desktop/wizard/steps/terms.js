@@ -31,7 +31,7 @@
             id: "acceptableUse",
             url: "https://tryatlasagi.com/acceptable-use",
             label: "Acceptable Use Policy",
-            summary: "The non-negotiable rules. What you can't do with A.T.L.A.S — illegal activity, harm, deception, abuse — and how we enforce them.",
+            summary: "The non-negotiable rules. What you can't do with Bhai — illegal activity, harm, deception, abuse — and how we enforce them.",
             check_label: "I have read and accept the Acceptable Use Policy.",
         },
         {

@@ -79,7 +79,7 @@ module.exports = require('${path.basename(jscPath)}');
  * Create entry point wrapper for bytecode
  */
 function createEntryWrapper(originalPath, jscPath) {
-    const wrapperCode = `// A.T.L.A.S Entry Point - © XAGI Labs
+    const wrapperCode = `// Bhai Entry Point - © XAGI Labs
 // Protected with V8 bytecode compilation
 'use strict';
 

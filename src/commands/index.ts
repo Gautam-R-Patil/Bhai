@@ -110,9 +110,9 @@ function cmdStatus(): string {
     const secs = uptime % 60;
 
     return [
-        "📊 **A.T.L.A.S Status**",
+        "📊 **Bhai Status**",
         "",
-        `🤖 Engine: A.T.L.A.S AI`,
+        `🤖 Engine: Bhai AI`,
         `🧠 Thinking: \`${_thinkingLevel}\``,
         `⏱️ Uptime: ${hours}h ${mins}m ${secs}s`,
         `💬 Conversations: ${_ctx.conversationCount()}`,
@@ -137,7 +137,7 @@ function cmdUsage(): string {
         "",
         `💬 Messages: ${_ctx?.conversationCount() || 0}`,
         `🧠 Thinking: \`${_thinkingLevel}\``,
-        `🤖 Engine: A.T.L.A.S AI`,
+        `🤖 Engine: Bhai AI`,
     ].join("\n");
 }
 
@@ -153,7 +153,7 @@ function cmdThink(args: string[]): string {
 
 function cmdStart(): string {
     return [
-        "**A.T.L.A.S** — your proactive AI agent",
+        "**Bhai** — your proactive AI agent",
         "",
         "I can browse the web, run deep research, manage files, execute code, and much more.",
         "",
@@ -163,7 +163,7 @@ function cmdStart(): string {
 
 function cmdHelp(): string {
     return [
-        "🤖 **A.T.L.A.S Commands**",
+        "🤖 **Bhai Commands**",
         "",
         "`/status` — Bot status and config",
         "`/new` — Clear conversation",

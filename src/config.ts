@@ -47,7 +47,7 @@ function parseEmailWhitelist(raw?: string): Set<string> {
 // ── Load Config ───────────────────────────────
 
 export function loadConfig(): Config {
-    // Telegram is optional — A.T.L.A.S boots without it (other channels: overlay,
+    // Telegram is optional — Bhai boots without it (other channels: overlay,
     // desktop, WhatsApp, Discord, Slack, Matrix, email). Both env vars must be
     // present AND valid for Telegram to be enabled; partial config (token without
     // user IDs, or vice versa) is treated as "not configured" with a warning.
@@ -64,7 +64,7 @@ export function loadConfig(): Config {
         console.log("ℹ️  Telegram channel not configured — running with other channels.");
     }
 
-    // Email (optional — A.T.L.A.S boots fine without these)
+    // Email (optional — Bhai boots fine without these)
     const emailUser = process.env.EMAIL_USER || undefined;
     const emailPassword = process.env.EMAIL_PASSWORD || undefined;
     const emailWhitelist = parseEmailWhitelist(process.env.EMAIL_WHITELIST);

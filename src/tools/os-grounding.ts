@@ -76,7 +76,7 @@ export const osVisualize: ToolDefinition = {
                     screenshot_path: {
                         type: "string",
                         description:
-                            "Absolute path to PNG/JPEG under tmpdir or ATLAS Files (rejected otherwise — security).",
+                            "Absolute path to PNG/JPEG under tmpdir or Bhai Files (rejected otherwise — security).",
                     },
                     screenshot_base64: {
                         type: "string",
@@ -155,7 +155,7 @@ export const osGround: ToolDefinition = {
                 properties: {
                     screenshot_path: {
                         type: "string",
-                        description: "Absolute path to PNG/JPEG under tmpdir or ATLAS Files (rejected otherwise).",
+                        description: "Absolute path to PNG/JPEG under tmpdir or Bhai Files (rejected otherwise).",
                     },
                     screenshot_base64: {
                         type: "string",

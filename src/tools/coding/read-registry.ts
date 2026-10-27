@@ -13,7 +13,7 @@
 // not match the current content — forcing a fresh read. That catches stale
 // content drift loudly instead of silently applying edits to the wrong state.
 //
-// ATLAS runs a single user's session per process, so the registry is
+// Bhai runs a single user's session per process, so the registry is
 // process-global rather than session-scoped. An LRU cap keeps memory bounded.
 
 import { createHash } from "node:crypto";

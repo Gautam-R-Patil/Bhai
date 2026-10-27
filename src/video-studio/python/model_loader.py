@@ -3,7 +3,7 @@
 # This software is proprietary. Copying or reuse is prohibited.
 # See LICENSE.md for details.
 """
-model_loader.py — On-demand model downloader sidecar for ATLAS Video Studio.
+model_loader.py — On-demand model downloader sidecar for Bhai Video Studio.
 
 Usage:
     python model_loader.py <model_name> <dest_dir>

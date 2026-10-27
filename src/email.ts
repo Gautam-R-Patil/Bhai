@@ -168,7 +168,7 @@ function createSMTPTransport(config: Config): nodemailer.Transporter {
 }
 
 /**
- * Send an email from A.T.L.A.S's own email account.
+ * Send an email from Bhai's own email account.
  * Available as a tool for the agent and internally for email replies.
  */
 export async function sendEmailFromAtlas(
@@ -183,7 +183,7 @@ export async function sendEmailFromAtlas(
 
     try {
         const mailOptions: nodemailer.SendMailOptions = {
-            from: `A.T.L.A.S <${emailConfig.emailUser}>`,
+            from: `Bhai <${emailConfig.emailUser}>`,
             to,
             subject,
             text: body,

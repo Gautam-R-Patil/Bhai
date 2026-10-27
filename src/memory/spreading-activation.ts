@@ -46,7 +46,7 @@ const SAN_WEIGHT = 0.3; // Blend weight: final = direct + SAN_WEIGHT × activati
 // reads for a 50-node graph) is more expensive than `JSON.stringify` +
 // `serde_json::from_str` on the same data. Both Rust-side functions remain
 // available; the TS wrapper uses the JSON variant. The honest takeaway:
-// graph BFS at ATLAS's working sizes does not fit the native-wins profile
+// graph BFS at Bhai's working sizes does not fit the native-wins profile
 // (CPU work per marshalled byte is too low — V8 inlines tight BFS loops
 // extremely well, and there's no SIMD win available for pointer-chasing).
 // If/when a workload with >1000-node induced graphs appears, re-bench.

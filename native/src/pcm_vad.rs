@@ -14,7 +14,7 @@
 //
 // Modes 0-3 trade quality for restrictiveness (0=most permissive, 3=most
 // aggressive). Mode 2 ("aggressive") is the default — empirically best fit
-// for ATLAS's barge-in use case where false positives (interrupting ATLAS
+// for Bhai's barge-in use case where false positives (interrupting Bhai
 // for room noise) cost more than false negatives (missing a quiet barge-in).
 
 #![cfg(feature = "vad")]
@@ -72,7 +72,7 @@ pub fn is_speech_frame_16khz(pcm: Buffer, aggressiveness: u8) -> Result<bool> {
 /// Convenience: scan a longer 16kHz PCM chunk by splitting it into 20ms
 /// sub-frames and returning true if ANY sub-frame is classified as speech.
 /// `pcm` may be any length that's a multiple of 640 bytes (20ms × 16kHz × 2
-/// bytes/sample). The 100ms mic chunks ATLAS uses are 3200 bytes = 5 frames.
+/// bytes/sample). The 100ms mic chunks Bhai uses are 3200 bytes = 5 frames.
 ///
 /// Returning early on the first speech-positive frame minimizes per-chunk
 /// cost in the common silent-chunk case.

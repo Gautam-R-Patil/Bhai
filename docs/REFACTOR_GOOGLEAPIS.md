@@ -8,7 +8,7 @@ reduction that was deferred during the audit session.
 
 `googleapis` (v171.4.0) ships TypeScript types and client code for
 **every** Google API (Drive, Sheets, Docs, Forms, Analytics, Admin,
-Books, dozens more). Unpacked size: **194 MB**. ATLAS only uses 4
+Books, dozens more). Unpacked size: **194 MB**. Bhai only uses 4
 of them.
 
 ## What we actually use — measured

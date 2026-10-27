@@ -467,7 +467,7 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
 // as short strings in random scripts (Korean/Japanese/German). We drop
 // obviously-non-speech outputs before they leak into the model turn.
 
-// Specific no-space noise patterns Gemini Live has produced against ATLAS.
+// Specific no-space noise patterns Gemini Live has produced against Bhai.
 // Kept conservative — only strings that are clearly transcription hallucinations
 // in the logs, NOT everyday single words. (We deliberately do NOT include
 // "はい" / "너도" here because they are legitimate Japanese "yes" / Korean

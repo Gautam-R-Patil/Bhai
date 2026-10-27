@@ -87,7 +87,7 @@ const COPY = {
 
     "personalize": {
         "eyebrow": "Ritual",
-        "title": "How A.T.L.A.S shows up.",
+        "title": "How Bhai shows up.",
         "sub": "Small choices that shape every interaction — what summons it, how it sounds, the mood.",
         "label_hotkey": "Summon gesture",
         "label_theme": "Appearance",
@@ -152,7 +152,7 @@ const COPY = {
     "ready-hub": {
         "magic_eyebrow": "I noticed something",
         "try_heading":   "Try this",
-        "launch":        "Launch A.T.L.A.S",
+        "launch":        "Launch Bhai",
         "talk":          "Talk",
         "type":          "Type",
         // Title + dek are built dynamically from name + hotkey in ready-hub-body.js

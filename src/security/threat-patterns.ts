@@ -4,7 +4,7 @@
 
 // ── Centralized threat-pattern scanner ──────────────────────────
 // Canonical home for prompt-injection / exfil / C2 / tool-coercion /
-// invisible-unicode detection across ATLAS. Two narrow regex scanners
+// invisible-unicode detection across Bhai. Two narrow regex scanners
 // predate this module — src/store/sideload.ts (8 injection regexes) and
 // src/agents/defang-plan-injection.ts (identity-affirmation scrub). Both
 // stay in place for now; new call sites should route here instead of

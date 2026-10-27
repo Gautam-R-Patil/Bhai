@@ -2,7 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-// ── A.T.L.A.S Desktop — Preload Script ───────────
+// ── Bhai Desktop — Preload Script ───────────
 // Secure bridge between renderer (HTML UI) and main process.
 // Exposes only specific IPC methods via contextBridge.
 

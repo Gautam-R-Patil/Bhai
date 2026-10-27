@@ -9,7 +9,7 @@
         const defaultHot   = pz.hotkey   || (platform === "win32" ? "Control+Space" : "Alt+Space");
         const defaultTheme = pz.theme    || "";
         const defaultVoice = pz.voice    || { backend: "gemini-live", name: "Aoede" };
-        const defaultWake  = pz.wakeWord || { enabled: false, phrase: "Hey Atlas" };
+        const defaultWake  = pz.wakeWord || { enabled: false, phrase: "Hey Bhai" };
         const defaultPersonality = pz.personality || { preset: "casual_playful", notes: "" };
 
         const section = document.createElement("section");
@@ -89,7 +89,7 @@
         // Wake word hidden — feature isn't reliable yet. Hold the values
         // off-DOM so the save payload still carries sensible defaults.
         const sw = { checked: !!defaultWake.enabled };
-        const phraseInput = { value: defaultWake.phrase || "Hey Atlas" };
+        const phraseInput = { value: defaultWake.phrase || "Hey Bhai" };
 
         section.appendChild(spec);
 
@@ -151,7 +151,7 @@
                 hotkey:   (hotkeyPicker && typeof hotkeyPicker.getValue === "function") ? hotkeyPicker.getValue() : hotkeyValue,
                 theme:    (themeSwitch  && typeof themeSwitch.getValue  === "function") ? themeSwitch.getValue()  : themeValue,
                 voice:    (voicePicker  && typeof voicePicker.getValue  === "function") ? (voicePicker.getValue() || defaultVoice) : defaultVoice,
-                wakeWord: { enabled: sw.checked, phrase: phraseInput.value.trim() || "Hey Atlas" },
+                wakeWord: { enabled: sw.checked, phrase: phraseInput.value.trim() || "Hey Bhai" },
                 personality: { preset: personaPreset, notes: defaultPersonality.notes || "" },
             };
             if (!window.atlas || typeof window.atlas.setupSavePersonalize !== "function") {

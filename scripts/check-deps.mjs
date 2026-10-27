@@ -27,7 +27,7 @@ await check("ffmpeg", "ffmpeg", ["-version"], "winget install Gyan.FFmpeg  OR  c
 await check("Python 3", "python", ["--version"], "https://www.python.org/downloads/windows/");
 
 if (missing.length > 0) {
-    console.log(`\n⚠️  Missing: ${missing.join(", ")}. Some ATLAS features may not work.`);
+    console.log(`\n⚠️  Missing: ${missing.join(", ")}. Some Bhai features may not work.`);
 } else {
     console.log("\n✓ All dependencies found.");
 }

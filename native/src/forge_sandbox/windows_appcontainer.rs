@@ -61,8 +61,8 @@ fn to_wide(s: &str) -> Vec<u16> {
 /// an owned SID buffer the caller must drop.
 pub fn ensure_profile(slug: &str) -> io::Result<AppContainerSid> {
     let profile_name = format!("atlas-forge-{slug}");
-    let display = format!("ATLAS Forge sandboxed tool: {slug}");
-    let description = format!("Per-slug isolated AppContainer for ATLAS Forge tool '{slug}'");
+    let display = format!("Bhai Forge sandboxed tool: {slug}");
+    let description = format!("Per-slug isolated AppContainer for Bhai Forge tool '{slug}'");
     let profile_w = to_wide(&profile_name);
     let display_w = to_wide(&display);
     let desc_w = to_wide(&description);

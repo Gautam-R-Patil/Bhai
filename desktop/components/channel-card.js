@@ -134,7 +134,7 @@
                 }
             });
         } else if (type === "slack") {
-            const info = el("div", {}, "Connect via Slack OAuth — Atlas will install into the workspace you choose.");
+            const info = el("div", {}, "Connect via Slack OAuth — Bhai will install into the workspace you choose.");
             info.style.fontSize = "13px";
             info.style.color = "var(--text-secondary, #515154)";
             form.appendChild(info);

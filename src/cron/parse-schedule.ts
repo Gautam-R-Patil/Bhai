@@ -67,7 +67,7 @@ export function parseSchedule(input: string): ParsedSchedule {
 // would fire. Cron fields evaluated: minute, hour, day-of-month, month,
 // day-of-week. Covers the 5-field form. For 6-field (with seconds), the
 // first field is ignored in next-time computation and the next fire is
-// the next MINUTE match — sufficient for ATLAS's scheduling granularity.
+// the next MINUTE match — sufficient for Bhai's scheduling granularity.
 
 function cronFieldMatches(value: number, field: string): boolean {
     if (field === "*") return true;

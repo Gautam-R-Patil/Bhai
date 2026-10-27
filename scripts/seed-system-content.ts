@@ -1,6 +1,6 @@
 #!/usr/bin/env npx tsx
 /**
- * Seed script for A.T.L.A.S System Content (Prompts + Skills)
+ * Seed script for Bhai System Content (Prompts + Skills)
  *
  * Reads local prompt files from /prompts and skill files from /skills,
  * then uploads them to Convex via the admin API endpoints.

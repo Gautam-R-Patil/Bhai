@@ -116,7 +116,7 @@ async function login(userId: string, password: string): Promise<void> {
                 user: userId,
             },
             password,
-            initial_device_display_name: "A.T.L.A.S Bot",
+            initial_device_display_name: "Bhai Bot",
         }),
     }) as { access_token: string; user_id: string; device_id: string };
 

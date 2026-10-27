@@ -8,7 +8,7 @@
 //   • TECHNICAL.md     — APIs, data models, tool choices
 //   • ARCHITECTURE.md  — component layout + data flow + key decisions
 //
-// Docs land under A.T.L.A.S Files/Documents/<slug>/ by default so users
+// Docs land under Bhai Files/Documents/<slug>/ by default so users
 // can find them later. The tool returns the file paths so the agent
 // can attach them to a channel message and wait for approval before
 // executing. Markdown is the format for every channel — overlay
@@ -131,7 +131,7 @@ export const designDocsTool: ToolDefinition = {
             name: "generate_design_docs",
             description:
                 "Generate PRD.md + TECHNICAL.md + ARCHITECTURE.md for a complex coding task. " +
-                "Writes to the ATLAS workspace Documents folder by default so the user can find " +
+                "Writes to the Bhai workspace Documents folder by default so the user can find " +
                 "them later. Returns the slug + file paths — pass these to your channel's sender " +
                 "(send_message_on_channel with filePath, or include the markdown inline for overlay) " +
                 "so the user can review before implementation. **Required** before implementing any " +
@@ -150,7 +150,7 @@ export const designDocsTool: ToolDefinition = {
                     },
                     parent_dir: {
                         type: "string",
-                        description: "Parent directory. Defaults to A.T.L.A.S Files/Documents/design-docs/.",
+                        description: "Parent directory. Defaults to Bhai Files/Documents/design-docs/.",
                     },
                 },
                 required: ["task"],

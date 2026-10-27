@@ -49,7 +49,7 @@ type FunctionGemmaFn = (
 ) => Promise<FunctionGemmaResult | null>;
 
 const FORGE_SYSTEM_PROMPT =
-    "You are ATLAS's tool-synthesis engine. Produce a JSON object with handler_code, tests, capabilities_declared, side_effects, synthesis_notes. Return ONLY the JSON.";
+    "You are Bhai's tool-synthesis engine. Produce a JSON object with handler_code, tests, capabilities_declared, side_effects, synthesis_notes. Return ONLY the JSON.";
 
 let _ready = false;
 let _embedFn: ((text: string) => Promise<Float32Array>) | null = null;

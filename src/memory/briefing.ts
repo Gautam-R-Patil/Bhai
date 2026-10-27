@@ -46,7 +46,7 @@ export async function generateMemoryBriefing(
         ? memoryDump.substring(0, MAX_INPUT_CHARS) + "\n[... truncated]"
         : memoryDump;
 
-    const briefingPrompt = `You are a memory briefing system for a personal AI assistant called A.T.L.A.S.
+    const briefingPrompt = `You are a memory briefing system for a personal AI assistant called Bhai.
 
 Below are memory fragments retrieved from various memory subsystems (identity, traits, emotions, episodes, relationships, knowledge graph, core facts, recalled memories, task learnings, etc.).
 

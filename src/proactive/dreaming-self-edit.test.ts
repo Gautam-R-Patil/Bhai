@@ -3,7 +3,7 @@
 // See LICENSE.md for details.
 
 // ── Regression test: self-edit proposal must NOT surface to the user ──
-// Screenshot 2026-05-03 showed ATLAS telling the user "Suggested instruction
+// Screenshot 2026-05-03 showed Bhai telling the user "Suggested instruction
 // edit: …" as part of the morning briefing. The user's directive: the agent
 // should improve ITSELF, not ask the user to apply suggestions. This test
 // guards the fix so the regression can't creep back.

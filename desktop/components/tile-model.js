@@ -102,7 +102,7 @@
             case "wakeWord": {
                 const w = s.wakeWord || {};
                 if (w.enabled) {
-                    return { label: "Wake word", value: w.phrase || "Hey Atlas", status: "green", onClickRoute: "settings:wake" };
+                    return { label: "Wake word", value: w.phrase || "Hey Bhai", status: "green", onClickRoute: "settings:wake" };
                 }
                 return { label: "Wake word", value: "Off", status: "neutral", onClickRoute: "settings:wake" };
             }

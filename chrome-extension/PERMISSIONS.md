@@ -1,4 +1,4 @@
-# ATLAS Bridge — permission rationale
+# Bhai Bridge — permission rationale
 
 Notes on why the manifest requests its permissions. Kept out of `manifest.json`
 because Chrome warns on unrecognized (`_`-prefixed) manifest keys.
@@ -17,7 +17,7 @@ because Chrome warns on unrecognized (`_`-prefixed) manifest keys.
   invocations, not the agent-driven flows where the operator says "use my Gmail
   tab" programmatically. Content-script injection is gated by `chrome.tabs.query`
   at runtime; debugger access requires explicit `chrome.debugger.attach`, which
-  surfaces an OS-level "A.T.L.A.S started debugging this browser" banner.
+  surfaces an OS-level "Bhai started debugging this browser" banner.
 
 - **`host_permissions: http://127.0.0.1:18800/*` + `http://127.0.0.1:18792/*`** —
   the extension fetches `http://127.0.0.1:18800/discover` (bridge token + overlay

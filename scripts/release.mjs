@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 //
-// ATLAS desktop release script.
+// Bhai desktop release script.
 //
 // End-to-end flow:
 //   1. Bump desktop/package.json version (or take --version).
@@ -140,7 +140,7 @@ function findFirst(dir, patterns) {
 
 function r2Key(channel, version, filename) {
     // Path pattern: <channel>/<version>/<filename>
-    // (e.g. stable/0.2.1/A.T.L.A.S-0.2.1-arm64.dmg)
+    // (e.g. stable/0.2.1/Bhai-0.2.1-arm64.dmg)
     return `${channel}/${version}/${filename}`;
 }
 

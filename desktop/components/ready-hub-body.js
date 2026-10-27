@@ -67,7 +67,7 @@
         launch.type = "button";
         launch.className = "btn btn-primary btn-launch";
         launch.setAttribute("data-action", "launch");
-        launch.innerHTML = (Copy.get("ready-hub", "launch") || "Launch A.T.L.A.S") + ' <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline points="9 6 15 12 9 18"/></svg></span>';
+        launch.innerHTML = (Copy.get("ready-hub", "launch") || "Launch Bhai") + ' <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline points="9 6 15 12 9 18"/></svg></span>';
         const talk = document.createElement("button");
         talk.type = "button";
         talk.className = "btn btn-secondary";

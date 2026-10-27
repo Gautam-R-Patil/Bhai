@@ -270,7 +270,7 @@ export default function DashboardClient({
           <div>
             <h1 className="page-title">Dashboard</h1>
             <p className="page-subtitle">
-              ATLAS admin overview &middot; production deployment{" "}
+              Bhai admin overview &middot; production deployment{" "}
               <span className="font-mono text-xs">avid-oyster-465</span>
             </p>
             <p className="text-xs text-[--text-muted] mt-1">
@@ -301,7 +301,7 @@ export default function DashboardClient({
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
         <KpiCard
-          label="ATLAS Users"
+          label="Bhai Users"
           value={fmtN(data.accounts.total)}
           sub={`${data.accounts.active} active`}
           icon={Users}

@@ -1,6 +1,6 @@
-# A.T.L.A.S Native Module
+# Bhai Native Module
 
-78-module Rust performance layer for A.T.L.A.S. Exposes SIMD-accelerated vector math, the model/tool routers, HNSW search, swarm/mesh orchestration state, MCTS, the meta-harness optimizer, the outbound secrets sanitizer, and more, to TypeScript via napi-rs. Every consumer of this binary has a pure-JS fallback in `src/` — `src/native/index.ts` loads the `.node` file at runtime and gracefully falls back if it's missing.
+78-module Rust performance layer for Bhai. Exposes SIMD-accelerated vector math, the model/tool routers, HNSW search, swarm/mesh orchestration state, MCTS, the meta-harness optimizer, the outbound secrets sanitizer, and more, to TypeScript via napi-rs. Every consumer of this binary has a pure-JS fallback in `src/` — `src/native/index.ts` loads the `.node` file at runtime and gracefully falls back if it's missing.
 
 ## Prerequisites
 

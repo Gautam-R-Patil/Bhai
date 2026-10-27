@@ -48,14 +48,14 @@ describe("paths — getWorkspaceDir priority order", () => {
         const mkdirSpy = vi.spyOn(fs, "mkdirSync").mockImplementation(() => undefined);
         const { getWorkspaceDir } = await freshImport();
         const result = getWorkspaceDir();
-        expect(result).toEqual(path.join("/home/user", "A.T.L.A.S Files"));
+        expect(result).toEqual(path.join("/home/user", "Bhai Files"));
         expect(existsSpy).toHaveBeenCalledWith("/fake/workspace/does-not-exist");
         expect(mkdirSpy).toHaveBeenCalled();
     });
 
     it("priority 2: returns Desktop location when it exists", async () => {
         vi.spyOn(os, "homedir").mockReturnValue("/home/user");
-        const desktopPath = path.join("/home/user", "Desktop", "A.T.L.A.S Files");
+        const desktopPath = path.join("/home/user", "Desktop", "Bhai Files");
         vi.spyOn(fs, "existsSync").mockImplementation((p) => String(p) === desktopPath);
         const { getWorkspaceDir } = await freshImport();
         expect(getWorkspaceDir()).toEqual(desktopPath);
@@ -63,7 +63,7 @@ describe("paths — getWorkspaceDir priority order", () => {
 
     it("priority 2: returns Documents location when Desktop missing", async () => {
         vi.spyOn(os, "homedir").mockReturnValue("/home/user");
-        const documentsPath = path.join("/home/user", "Documents", "A.T.L.A.S Files");
+        const documentsPath = path.join("/home/user", "Documents", "Bhai Files");
         vi.spyOn(fs, "existsSync").mockImplementation((p) => String(p) === documentsPath);
         const { getWorkspaceDir } = await freshImport();
         expect(getWorkspaceDir()).toEqual(documentsPath);
@@ -77,14 +77,14 @@ describe("paths — getWorkspaceDir priority order", () => {
         expect(getWorkspaceDir()).toEqual(atlasFilesPath);
     });
 
-    it("priority 3: creates ~/A.T.L.A.S Files when no existing location found", async () => {
+    it("priority 3: creates ~/Bhai Files when no existing location found", async () => {
         vi.spyOn(os, "homedir").mockReturnValue("/home/user");
         vi.spyOn(fs, "existsSync").mockReturnValue(false);
         const mkdirSpy = vi.spyOn(fs, "mkdirSync").mockImplementation(() => undefined);
         const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
         const { getWorkspaceDir } = await freshImport();
         const result = getWorkspaceDir();
-        const expected = path.join("/home/user", "A.T.L.A.S Files");
+        const expected = path.join("/home/user", "Bhai Files");
         expect(result).toEqual(expected);
         expect(mkdirSpy).toHaveBeenCalledWith(expected, { recursive: true });
         expect(logSpy).toHaveBeenCalled();

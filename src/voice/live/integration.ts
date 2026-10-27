@@ -136,7 +136,7 @@ export async function startLiveVoice(
             import("../../notifications/push.js")
                 .then(({ sendPushNotification }) => {
                     sendPushNotification(
-                        "ATLAS is watching your screen",
+                        "Bhai is watching your screen",
                         "Live voice is active and your screen is being shared with the live model. Mute the mic to pause sharing.",
                     ).catch(() => { /* push optional */ });
                 })

@@ -53,7 +53,7 @@
                 hotkey: "Alt+Space",
                 theme: "dark",
                 voice: { backend: "gemini-live", name: "Aoede" },
-                wakeWord: { enabled: false, phrase: "Hey Atlas" },
+                wakeWord: { enabled: false, phrase: "Hey Bhai" },
             };
             base.voice = base.personalize.voice;
             base.wakeWord = base.personalize.wakeWord;

@@ -10,7 +10,7 @@
 //
 // Fail-open: if the server binary is not installed, return a clear error
 // the agent can act on. If the server crashes, we drop the cached session
-// and the next call will respawn. LSP failures never take ATLAS down.
+// and the next call will respawn. LSP failures never take Bhai down.
 //
 // Not a full LSP client — we don't implement diagnostics streaming, code
 // actions, formatting, or completion. Just navigation and inspection.

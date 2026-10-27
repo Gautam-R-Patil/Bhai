@@ -13,7 +13,7 @@ export const emailSend: ToolDefinition = {
         function: {
             name: "email_send",
             description:
-                "Send an email from A.T.L.A.S's email account (ai@codingdesk.info). " +
+                "Send an email from Bhai's email account (ai@codingdesk.info). " +
                 "Use this for sending emails, reports, notifications, or any email communication. " +
                 "If the user wants to send from THEIR OWN email, use the browser tools to open their webmail instead.",
             parameters: {

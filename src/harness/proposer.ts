@@ -3,7 +3,7 @@
 // See LICENSE.md for details.
 
 // ── Meta-Harness: Proposer ─────────────────────────────────────────────────
-// Uses ATLAS's own LLM client to read all prior candidate history + traces
+// Uses Bhai's own LLM client to read all prior candidate history + traces
 // from the .metaharness/ filesystem and propose the next harness configuration.
 //
 // This implements the core Meta-Harness paper insight: giving the proposer
@@ -41,7 +41,7 @@ export async function proposeNextCandidate(
     // Build rich context by reading the .metaharness/ filesystem
     const context = _buildProposerContext(metaDir, candidate, runStore);
 
-    const systemPrompt = `You are an expert AI systems optimizer working on the ATLAS autonomous agent.
+    const systemPrompt = `You are an expert AI systems optimizer working on the Bhai autonomous agent.
 Your task is to analyze the harness configuration history and propose targeted improvements.
 
 Rules:

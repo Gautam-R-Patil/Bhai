@@ -1,6 +1,6 @@
 <div align="center">
-  <img src="./desktop/logo.png" alt="A.T.L.A.S Logo" width="120" />
-  <h1>A.T.L.A.S</h1>
+  <img src="./desktop/logo.png" alt="Bhai Logo" width="120" />
+  <h1>Bhai</h1>
   <p><b>Advanced Technology for Logical Autonomous Systems</b></p>
   <p>v0.2.1 &middot; Autonomous Personal AI Agent &middot; Built by <a href="https://tryatlasagi.com">XAGI Labs</a></p>
 </div>
@@ -9,11 +9,11 @@
 
 ## Overview
 
-**A.T.L.A.S** is an autonomous personal AI agent engineered for people who want more than a chatbot. It is a continuously running process that takes action, remembers what happened, reasons about what to do next, and keeps working while you sleep. The runtime combines a Node.js/TypeScript orchestration surface (~770 `.ts` files across src/) with a native Rust performance layer (78 `.rs` modules) compiled through napi-rs for SIMD-accelerated vector math, routing, memory operations, and cross-OS accessibility-tree walking.
+**Bhai** is an autonomous personal AI agent engineered for people who want more than a chatbot. It is a continuously running process that takes action, remembers what happened, reasons about what to do next, and keeps working while you sleep. The runtime combines a Node.js/TypeScript orchestration surface (~770 `.ts` files across src/) with a native Rust performance layer (78 `.rs` modules) compiled through napi-rs for SIMD-accelerated vector math, routing, memory operations, and cross-OS accessibility-tree walking.
 
-ATLAS is built for operators, founders, and researchers who need a single system that can drive a browser, write and ship code, run deep research, orchestrate multi-agent swarms, manage a marketing funnel across nine social platforms, and hold a real conversation across Telegram, Discord, Slack, Matrix, WhatsApp, email, and a native desktop overlay — all from one codebase, one memory, and one identity.
+Bhai is built for operators, founders, and researchers who need a single system that can drive a browser, write and ship code, run deep research, orchestrate multi-agent swarms, manage a marketing funnel across nine social platforms, and hold a real conversation across Telegram, Discord, Slack, Matrix, WhatsApp, email, and a native desktop overlay — all from one codebase, one memory, and one identity.
 
-What makes ATLAS different is that it is **not stateless**. A 70-module organic memory system (SQLite + HNSW vectors + knowledge graph) captures episodic trajectory, emotional tone, user models, traits, goals, and task learnings. Writes pass through an LLM value-gate that rejects low-signal noise before it reaches the store, context compression preserves a structured 13-section continuity summary across long sessions, and a full conversation corpus is searchable via FTS5. A nightly dream-replay pass consolidates the day, decays irrelevant data every six hours, and seeds the next morning's proactive brief. The agent also reasons about its own reasoning via a tiered metacognition engine and a meta-harness optimizer that tunes 30+ internal dimensions through NSGA-II Pareto search.
+What makes Bhai different is that it is **not stateless**. A 70-module organic memory system (SQLite + HNSW vectors + knowledge graph) captures episodic trajectory, emotional tone, user models, traits, goals, and task learnings. Writes pass through an LLM value-gate that rejects low-signal noise before it reaches the store, context compression preserves a structured 13-section continuity summary across long sessions, and a full conversation corpus is searchable via FTS5. A nightly dream-replay pass consolidates the day, decays irrelevant data every six hours, and seeds the next morning's proactive brief. The agent also reasons about its own reasoning via a tiered metacognition engine and a meta-harness optimizer that tunes 30+ internal dimensions through NSGA-II Pareto search.
 
 Security and privacy are foundational rather than bolted on. Every LLM call is proxied through a Convex backend with end-to-end ECDH P-256 + AES-256-GCM encryption — API keys never leave the server, system prompts never leave the server, and the client device only ever holds a short-lived session token bound to its ECDH shared key. All memory, all browser profile state, and all generated artifacts live locally on the user's machine.
 
@@ -426,7 +426,7 @@ OpenRouter and Convex keys are bundled with the app — end users do not configu
 
 ## Runtime Data
 
-All runtime artifacts live under `data/` (gitignored). User-facing artifacts (design docs, walkthroughs, scaffolded projects, generated images) land under `~/Desktop/A.T.L.A.S Files/` instead.
+All runtime artifacts live under `data/` (gitignored). User-facing artifacts (design docs, walkthroughs, scaffolded projects, generated images) land under `~/Desktop/Bhai Files/` instead.
 
 ```
 data/

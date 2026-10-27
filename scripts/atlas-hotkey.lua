@@ -3,7 +3,7 @@
 -- The Swift overlay auto-launches with the backend (npm run dev).
 -- This Hammerspoon script is kept for backwards compatibility only.
 --
--- A.T.L.A.S Overlay Chat — Hammerspoon Hotkey
+-- Bhai Overlay Chat — Hammerspoon Hotkey
 -- Cmd+J = toggle, Escape = dismiss
 
 local atlasOverlay = nil
@@ -114,4 +114,4 @@ hs.hotkey.bind({}, "escape", function()
     end
 end)
 
-print("✦ A.T.L.A.S overlay: Cmd+J (toggle), Esc (hide)")
+print("✦ Bhai overlay: Cmd+J (toggle), Esc (hide)")

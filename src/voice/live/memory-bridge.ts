@@ -179,8 +179,8 @@ export async function getFullMemoryContext(userHint?: string): Promise<string> {
 // Case-insensitive, matches at the start of the utterance after optional
 // greeting/filler. Captures the content AFTER the verb clause.
 const MEMORY_VERB_PATTERN = new RegExp(
-    // Optional leading filler like "hey atlas" / "okay" / "so"
-    "^\\s*(?:hey\\s+atlas[,.\\s]+|okay[,.\\s]+|so[,.\\s]+)?" +
+    // Optional leading filler like "hey bhai" / "okay" / "so"
+    "^\\s*(?:hey\\s+bhai[,.\\s]+|okay[,.\\s]+|so[,.\\s]+)?" +
     // The imperative verb clause
     "(?:please\\s+)?(?:" +
     "remember(?:\\s+this)?(?:\\s+that)?" +

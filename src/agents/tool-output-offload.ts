@@ -138,7 +138,7 @@ export function offloadIfLarge(
 
 function buildPreview(result: string): string {
     // Head+tail preview works for every shape — more reliable than trying
-    // to parse (tool results from ATLAS are usually JSON strings, but
+    // to parse (tool results from Bhai are usually JSON strings, but
     // shell_exec output and many others aren't).
     if (result.length <= PREVIEW_BYTES) return result;
     const headBytes = Math.floor(PREVIEW_BYTES * 0.6);

@@ -7,7 +7,7 @@
 #   1. Credentials: any *_API_KEY / *_TOKEN / *_SECRET / *_PASSWORD in the
 #      developer's shell would authenticate to real services and bypass
 #      unit-level mocks. Unset them all before vitest starts.
-#   2. ATLAS runtime env vars: anything starting with ATLAS_* could change
+#   2. Bhai runtime env vars: anything starting with ATLAS_* could change
 #      behavior in ways CI never sees. Unset too.
 #   3. Timezone: pin TZ=UTC so date-formatting tests match CI.
 #   4. Locale: pin LANG=C.UTF-8 + LC_ALL=C.UTF-8 so sort order / number
@@ -53,7 +53,7 @@ WORKERS="${ATLAS_TEST_WORKERS:-4}"
 # ── Step 5: run vitest ────────────────────────
 # Forward any extra args ("npm run test:hermetic -- src/utils/" etc.).
 # Use `forks` pool (vitest's default) — `threads` rejects process.chdir()
-# which some ATLAS tests use for cwd-relative path resolution.
+# which some Bhai tests use for cwd-relative path resolution.
 exec npx vitest run \
     --pool=forks \
     --poolOptions.forks.minForks=1 \

@@ -1,6 +1,6 @@
-# A.T.L.A.S Developer Portal
+# Bhai Developer Portal
 
-Web portal for developers to register, create, and publish Skills, MCP Servers, and Tools for the A.T.L.A.S Store.
+Web portal for developers to register, create, and publish Skills, MCP Servers, and Tools for the Bhai Store.
 
 ## Setup
 
@@ -50,7 +50,7 @@ Web portal for developers to register, create, and publish Skills, MCP Servers, 
 ## Features
 
 ### Public Pages
-- **Home** - Landing page with info about developing for A.T.L.A.S
+- **Home** - Landing page with info about developing for Bhai
 - **Login** - Developer sign in
 - **Register** - Create developer account
 
@@ -67,7 +67,7 @@ Web portal for developers to register, create, and publish Skills, MCP Servers, 
 2. **Wait for Approval** - Admin reviews and approves
 3. **Create Submission** - Upload Skill, MCP Server, or Tool
 4. **Review** - Admin reviews submission
-5. **Published** - Appears in A.T.L.A.S Store
+5. **Published** - Appears in Bhai Store
 
 ## App Types
 

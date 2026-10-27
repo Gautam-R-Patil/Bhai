@@ -286,7 +286,7 @@ export function addAllowedPath(_dirPath: string): void {
 }
 
 // ── Network Allowlist ─────────────────────────
-// ATLAS is a general-purpose agent and DEFAULTS to open network access —
+// Bhai is a general-purpose agent and DEFAULTS to open network access —
 // the LLM, browser, web_search, and shell layers all need it. This
 // allowlist is therefore advisory: callers can consult it when they
 // want a tight egress policy (e.g. running an untrusted sub-agent). It

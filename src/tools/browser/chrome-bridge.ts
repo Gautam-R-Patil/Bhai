@@ -3,7 +3,7 @@
 // See LICENSE.md for details.
 
 // ── Chrome Bridge Server ─────────────────────
-// WebSocket server that the ATLAS Chrome Extension connects to.
+// WebSocket server that the Bhai Chrome Extension connects to.
 // Enables the agent to see and interact with the user's real Chrome tabs
 // instead of always opening a headless Playwright browser.
 
@@ -247,7 +247,7 @@ async function registerNativeMessagingHost(_port: number): Promise<void> {
         // Write the native host script next to the discovery file
         const hostScriptPath = path.join(homedir(), ".atlas", "atlas-bridge-host.js");
         const hostScript = `#!/usr/bin/env node
-// ATLAS Browser Bridge — Native Messaging Host
+// Bhai Browser Bridge — Native Messaging Host
 // Reads the discovery file and returns config to the Chrome extension.
 const fs = require("fs");
 const path = require("path");
@@ -293,7 +293,7 @@ function sendMessage(msg) {
         // Write the native messaging host manifest
         const manifest = {
             name: "com.atlas.bridge",
-            description: "ATLAS Browser Bridge — auto-discovery for Chrome extension",
+            description: "Bhai Browser Bridge — auto-discovery for Chrome extension",
             path: hostScriptPath,
             type: "stdio",
             allowed_origins: ["chrome-extension://*/"],
@@ -430,7 +430,7 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
 
         // F10: local CLI / native auth path. Auth via file-backed Bearer
         // token at LOCAL_TOKEN_FILE (mode 0o600, generated at boot, only
-        // readable by the OS user running ATLAS). This replaces the
+        // readable by the OS user running Bhai). This replaces the
         // Sec-Fetch-Site=none escape hatch — only callers that can read
         // the file (i.e. the same UID) get a bridge token.
         if (req.method === "GET" && req.url === "/discover-local") {
@@ -566,7 +566,7 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
 
     httpServer.on("error", (err: NodeJS.ErrnoException) => {
         if (err.code === "EADDRINUSE") {
-            console.error(`🔌 [CHROME-BRIDGE] Port ${port} already in use — another ATLAS instance is likely running. Chrome extension bridge disabled this run.`);
+            console.error(`🔌 [CHROME-BRIDGE] Port ${port} already in use — another Bhai instance is likely running. Chrome extension bridge disabled this run.`);
         } else {
             console.error(`🔌 [CHROME-BRIDGE] HTTP server error: ${err.message}`);
         }

@@ -156,7 +156,7 @@ export const browserRunJs: ToolDefinition = {
     async handler(input) {
         try {
             const page = await getActivePage();
-            // IP guard: validate code before execution (blocks exfiltration & ATLAS internals access)
+            // IP guard: validate code before execution (blocks exfiltration & Bhai internals access)
             let safeCode: string;
             try {
                 safeCode = validateJsCode(input.code as string);

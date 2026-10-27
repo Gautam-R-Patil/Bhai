@@ -1,6 +1,6 @@
 # CREDITS
 
-A.T.L.A.S is built by **XAGI Labs Private Limited** and uses the following open-source libraries.
+Bhai is built by **XAGI Labs Private Limited** and uses the following open-source libraries.
 We gratefully acknowledge their authors and communities.
 
 ---
@@ -193,4 +193,4 @@ The native performance layer is built in Rust via napi-rs. It links the followin
 *All trademarks and registered trademarks are the property of their respective owners.
 The use of these open-source libraries does not imply any endorsement by their authors.*
 
-**A.T.L.A.S itself is proprietary software. See [LICENSE.md](./LICENSE.md).**
+**Bhai itself is proprietary software. See [LICENSE.md](./LICENSE.md).**

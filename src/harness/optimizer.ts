@@ -46,7 +46,7 @@ const DEFAULT_OPTIONS: OptimizeOptions = {
     fastMode: false,
     searchMode: "frontier",
     proposalBatchSize: 1,
-    objective: "Maximize ATLAS agent quality: improve memory retrieval, tool selection accuracy, and task completion score while maintaining token efficiency.",
+    objective: "Maximize Bhai agent quality: improve memory retrieval, tool selection accuracy, and task completion score while maintaining token efficiency.",
     usePareto: true,
     useSurrogate: true,
     useCodeSearch: true,

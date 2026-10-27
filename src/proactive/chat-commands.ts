@@ -71,24 +71,24 @@ export async function tryProactiveCommand(
 
     // ── Posture commands (sync) ───────────────────────────
 
-    // `shut up` / `atlas shut up` / `atlas, shut up` / `be quiet`
-    if (/^(atlas,?\s+)?shut up$/.test(lower) || /^(atlas,?\s+)?be quiet$/.test(lower)) {
+    // `shut up` / `bhai shut up` / `bhai, shut up` / `be quiet`
+    if (/^(bhai,?\s+)?shut up$/.test(lower) || /^(bhai,?\s+)?be quiet$/.test(lower)) {
         process.env.ATLAS_PROACTIVE_DISABLE = "true";
-        return { reply: "Going quiet. Say 'atlas resume' when you want me back." };
+        return { reply: "Going quiet. Say 'bhai resume' when you want me back." };
     }
 
-    // `resume` / `atlas resume` / `come back` — but be careful: "resume monitor N"
+    // `resume` / `bhai resume` / `come back` — but be careful: "resume monitor N"
     // also starts with "resume" and must fall through to the monitor handler below.
     if (
-        (/^(atlas,?\s+)?resume$/.test(lower) || /^(atlas,?\s+)?come back$/.test(lower))
-        && !/^(atlas,?\s+)?resume\s+monitor/i.test(lower)
+        (/^(bhai,?\s+)?resume$/.test(lower) || /^(bhai,?\s+)?come back$/.test(lower))
+        && !/^(bhai,?\s+)?resume\s+monitor/i.test(lower)
     ) {
         delete process.env.ATLAS_PROACTIVE_DISABLE;
         return { reply: "Resuming proactive messages." };
     }
 
     // `set <channel> to <preset>`
-    const setMatch = lower.match(/^(atlas,?\s+)?set\s+(\w+)\s+to\s+(\w+)$/);
+    const setMatch = lower.match(/^(bhai,?\s+)?set\s+(\w+)\s+to\s+(\w+)$/);
     if (setMatch) {
         const [, , ch, preset] = setMatch;
         if (!CHANNELS.includes(ch as Channel)) {
@@ -106,7 +106,7 @@ export async function tryProactiveCommand(
     // `proactive status` so the more specific pattern wins (neither regex
     // matches the other's text, but keeping the order consistent with the
     // spec avoids future regressions if the patterns loosen).
-    if (/^(atlas,?\s+)?proactive\s+stats$/.test(lower)) {
+    if (/^(bhai,?\s+)?proactive\s+stats$/.test(lower)) {
         // Lazy-import telemetry so this command is callable in tests without deps.
         const { getTelemetry } = await import("./telemetry.js");
         const tl = getTelemetry();
@@ -128,7 +128,7 @@ export async function tryProactiveCommand(
     }
 
     // `proactive status`
-    if (/^(atlas,?\s+)?proactive\s+status$/.test(lower)) {
+    if (/^(bhai,?\s+)?proactive\s+status$/.test(lower)) {
         const cfg = loadProactiveConfig(opts.configPath);
         const lines = ["Current postures:"];
         for (const ch of CHANNELS) {
@@ -137,7 +137,7 @@ export async function tryProactiveCommand(
         if (process.env.ATLAS_PROACTIVE_DISABLE === "true") {
             lines.push("");
             lines.push(
-                "Proactive messages are globally disabled right now. Say 'atlas resume' to re-enable.",
+                "Proactive messages are globally disabled right now. Say 'bhai resume' to re-enable.",
             );
         }
         return { reply: lines.join("\n") };
@@ -145,39 +145,39 @@ export async function tryProactiveCommand(
 
     // ── Monitor CRUD commands (async) ─────────────────────
 
-    // Create: "(atlas,)? (ping me if|monitor me when|alert me if|watch for) <phrase>"
+    // Create: "(bhai,)? (ping me if|monitor me when|alert me if|watch for) <phrase>"
     const createMatch = text
         .trim()
-        .match(/^(?:atlas,?\s+)?(?:ping me if|monitor me when|alert me if|watch for)\s+(.+)$/i);
+        .match(/^(?:bhai,?\s+)?(?:ping me if|monitor me when|alert me if|watch for)\s+(.+)$/i);
     if (createMatch) {
         return handleCreate(createMatch[1].trim(), opts);
     }
 
     // List
-    if (/^(atlas,?\s+)?(?:list|show)\s+monitors?$/i.test(text.trim())) {
+    if (/^(bhai,?\s+)?(?:list|show)\s+monitors?$/i.test(text.trim())) {
         return handleList(opts);
     }
 
-    // Delete: "(atlas,)? (delete|stop|remove) monitor <N|uuid>"
+    // Delete: "(bhai,)? (delete|stop|remove) monitor <N|uuid>"
     const deleteMatch = text
         .trim()
-        .match(/^(?:atlas,?\s+)?(?:delete|stop|remove)\s+monitor\s+(\S+)$/i);
+        .match(/^(?:bhai,?\s+)?(?:delete|stop|remove)\s+monitor\s+(\S+)$/i);
     if (deleteMatch) {
         return handleDelete(deleteMatch[1], opts);
     }
 
-    // Pause: "(atlas,)? pause monitor <N|uuid>"
+    // Pause: "(bhai,)? pause monitor <N|uuid>"
     const pauseMatch = text
         .trim()
-        .match(/^(?:atlas,?\s+)?pause\s+monitor\s+(\S+)$/i);
+        .match(/^(?:bhai,?\s+)?pause\s+monitor\s+(\S+)$/i);
     if (pauseMatch) {
         return handleSetActive(pauseMatch[1], false, opts);
     }
 
-    // Resume: "(atlas,)? resume monitor <N|uuid>"
+    // Resume: "(bhai,)? resume monitor <N|uuid>"
     const resumeMatch = text
         .trim()
-        .match(/^(?:atlas,?\s+)?resume\s+monitor\s+(\S+)$/i);
+        .match(/^(?:bhai,?\s+)?resume\s+monitor\s+(\S+)$/i);
     if (resumeMatch) {
         return handleSetActive(resumeMatch[1], true, opts);
     }

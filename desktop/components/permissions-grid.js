@@ -128,7 +128,7 @@
             const card = document.createElement("div");
             card.className = "sp-perm";
             const title = document.createElement("div"); title.className = "sp-perm__title"; title.textContent = "Windows handles permissions at runtime";
-            const why = document.createElement("div"); why.className = "sp-perm__why"; why.textContent = "A.T.L.A.S will ask for mic/screen access when the feature is first used.";
+            const why = document.createElement("div"); why.className = "sp-perm__why"; why.textContent = "Bhai will ask for mic/screen access when the feature is first used.";
             card.appendChild(title); card.appendChild(why);
             root.appendChild(card);
             container.appendChild(root);

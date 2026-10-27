@@ -897,7 +897,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 if (controller.signal.aborted) { await clearStatusMessage(); return; }
 
                 const taskDurationMs = Date.now() - taskStartTime;
-                console.log(`🤖 A.T.L.A.S: ${response.text.substring(0, 200)}... (${(taskDurationMs / 1000).toFixed(1)}s)`);
+                console.log(`🤖 Bhai: ${response.text.substring(0, 200)}... (${(taskDurationMs / 1000).toFixed(1)}s)`);
                 if (response.toolCalls > 0) {
                     console.log(`   (${response.toolCalls} tool call(s))`);
                 }
@@ -1371,7 +1371,7 @@ async function handleMediaMessage(
         const senderIsOwner = !!ctx.from?.id && isPlatformOwner("telegram", ctx.from.id, config);
         const result = await runAgent(llm, caption, progressCallback, media, undefined, undefined, undefined, undefined, { channel: "telegram", userId: String(ctx.chat.id), userName: ctx.from?.first_name, isOwner: senderIsOwner });
 
-        console.log(`🤖 A.T.L.A.S: ${result.text.substring(0, 200)}...`);
+        console.log(`🤖 Bhai: ${result.text.substring(0, 200)}...`);
 
         // If the agent decided no reply is needed, stay silent
         if (result.text.trim() === "[NO_REPLY]") {
@@ -1519,7 +1519,7 @@ Respond naturally. If music was identified, tell them the song. NEVER mention Ge
         const senderIsOwner = !!ctx.from?.id && isPlatformOwner("telegram", ctx.from.id as number, config);
         const result = await runAgent(llm, enrichedPrompt, progressCallback, undefined, undefined, undefined, undefined, undefined, { channel: "telegram", userId: String(ctx.from?.id || ""), userName: ctx.from?.first_name, isOwner: senderIsOwner });
 
-        console.log(`🤖 A.T.L.A.S: ${result.text.substring(0, 200)}...`);
+        console.log(`🤖 Bhai: ${result.text.substring(0, 200)}...`);
 
         if (result.text.trim() === "[NO_REPLY]") {
             console.log("  🤫 No reply needed — staying silent");

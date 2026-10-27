@@ -118,15 +118,15 @@ export async function probeAndLogMacPermissions(): Promise<MacPermissionState> {
     console.warn("⚠️  [permissions] One or more macOS permissions missing — vision-nav will degrade:");
     if (!axOk) {
         console.warn(`   ✗ Accessibility / Apple Events: ${state.appleScript.reason}`);
-        console.warn(`     → System Settings → Privacy & Security → Accessibility → enable A.T.L.A.S`);
+        console.warn(`     → System Settings → Privacy & Security → Accessibility → enable Bhai`);
         console.warn(`     → If toggle is already ON: run \`tccutil reset Accessibility com.xagilabs.atlas\` then re-grant`);
     }
     if (!srOk) {
         console.warn(`   ✗ Screen Recording: ${state.screenRecording.reason}`);
-        console.warn(`     → System Settings → Privacy & Security → Screen Recording → enable A.T.L.A.S`);
+        console.warn(`     → System Settings → Privacy & Security → Screen Recording → enable Bhai`);
         console.warn(`     → If toggle is already ON: run \`tccutil reset ScreenCapture com.xagilabs.atlas\` then re-grant`);
     }
-    console.warn(`   → After granting, quit + relaunch A.T.L.A.S`);
+    console.warn(`   → After granting, quit + relaunch Bhai`);
 
     return state;
 }

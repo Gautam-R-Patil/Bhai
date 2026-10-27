@@ -1,6 +1,6 @@
-# Technical Overview — A.T.L.A.S v0.2.1
+# Technical Overview — Bhai v0.2.1
 
-> **A.T.L.A.S** (Advanced Technology for Logical Autonomous Systems) is a continuously running personal AI agent built by [XAGI Labs](https://xagilab.com). This document covers how it is built — its architecture, tech stack, key components, and deployment.
+> **Bhai** (Advanced Technology for Logical Autonomous Systems) is a continuously running personal AI agent built by [XAGI Labs](https://xagilab.com). This document covers how it is built — its architecture, tech stack, key components, and deployment.
 
 ---
 
@@ -38,7 +38,7 @@
 
 ## 1. Architecture Overview
 
-ATLAS is a **local-first** autonomous agent. The Node.js process runs on the user's machine, all memory stays on-device in SQLite, and the only outbound traffic is to a Convex backend that acts as an encrypted API-key proxy for LLM calls.
+Bhai is a **local-first** autonomous agent. The Node.js process runs on the user's machine, all memory stays on-device in SQLite, and the only outbound traffic is to a Convex backend that acts as an encrypted API-key proxy for LLM calls.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -88,11 +88,11 @@ ATLAS is a **local-first** autonomous agent. The Node.js process runs on the use
 
 ### Why local-first
 
-ATLAS runs as a single long-lived Node.js process on the user's own machine. This choice is deliberate:
+Bhai runs as a single long-lived Node.js process on the user's own machine. This choice is deliberate:
 
 - **Privacy:** memory, embeddings, browser profile, and research artifacts never leave the device
 - **Latency:** tool calls (shell, browser, file edits) run against local resources with zero network hop
-- **Resilience:** ATLAS continues to function for memory recall, file edits, and local tools even when offline — only LLM calls require the Convex proxy
+- **Resilience:** Bhai continues to function for memory recall, file edits, and local tools even when offline — only LLM calls require the Convex proxy
 - **Cost:** expensive operations (vector search, reranking, tree-sitter parsing) run on local hardware instead of burning cloud compute
 
 ---
@@ -331,7 +331,7 @@ Each state has an explicit `*_ALLOWED_TOOLS` list in `plan-mode.ts`; `filterTool
 - `agent-worktree.ts` — git worktree isolation for parallel coder steps (opt-in via `ATLAS_AGENT_WORKTREE=true`)
 - `mixture.ts` — Mixture-of-Agents: 3 parallel proposals blended for complex tasks
 - `speculative.ts` — races primary + alternative approach; first success wins
-- `a2a.ts` — Google A2A protocol; exposes ATLAS as a callable agent to external systems
+- `a2a.ts` — Google A2A protocol; exposes Bhai as a callable agent to external systems
 
 **Shared context:** `blackboard.ts` provides a per-swarm key-value store for inter-agent data passing.
 
@@ -383,7 +383,7 @@ All memory is local SQLite (`data/memory.db`) with WAL journal mode, 64 MB page 
 
 **Memory decay:** Runs every 6 hours. Self-evolving synaptic pruning uses a strength score: `importance × log₂(1 + access_count) × exp(-0.01 × days_since_access)`. Memories below 30% of median strength are deleted.
 
-**Dream consolidation** (`reflection.ts`, `dreaming.ts`): When the user has been idle for 2+ hours during 11 pm–6 am, ATLAS enters dream mode — consolidates memories, runs pending tasks via sub-agents, proposes self-edits for repeated failures, and queues results for morning delivery.
+**Dream consolidation** (`reflection.ts`, `dreaming.ts`): When the user has been idle for 2+ hours during 11 pm–6 am, Bhai enters dream mode — consolidates memories, runs pending tasks via sub-agents, proposes self-edits for repeated failures, and queues results for morning delivery.
 
 **Memory categories** — every entry stored via `remember()` is tagged with a category for retrieval scoping and decay tuning:
 
@@ -399,7 +399,7 @@ All memory is local SQLite (`data/memory.db`) with WAL journal mode, 64 MB page 
 | `task` | Pending / completed task | Short (7 d) |
 | `observation` | Ambient passive observation | Short (3 d) |
 
-**Bi-temporal knowledge graph** — `knowledge-graph.ts` stores every fact with three timestamps: `valid_at` (when the fact started being true), `invalid_at` (when it stopped), and `expired_at` (when ATLAS last confirmed the fact). This allows queries like "what did the user believe 3 days ago?" to return historically accurate answers.
+**Bi-temporal knowledge graph** — `knowledge-graph.ts` stores every fact with three timestamps: `valid_at` (when the fact started being true), `invalid_at` (when it stopped), and `expired_at` (when Bhai last confirmed the fact). This allows queries like "what did the user believe 3 days ago?" to return historically accurate answers.
 
 **Vector index internals** — `vector-index.ts` uses HNSW with:
 - `M = 16` (max connections per layer)
@@ -557,7 +557,7 @@ In-flight request coalescing ensures concurrent callers requesting the same slug
 
 **Directory:** `src/tools/browser/` (21 files)
 
-ATLAS supports two browser backends behind a unified `BrowserBackend` interface:
+Bhai supports two browser backends behind a unified `BrowserBackend` interface:
 
 **Playwright backend** (`playwright-backend.ts`): Headless Chromium with a persistent profile at `data/browser-profile/`. Default for most use cases.
 
@@ -617,7 +617,7 @@ Autonomous GUI control without relying on a single cloud VLM. The pipeline runs 
 
 #### Capability detection (`capability-detector.ts`)
 
-On boot, ATLAS profiles the host (RAM, free RAM, CPU bench score, GPU class, free disk, online status, deps: python / pip / Ollama / models). The detector picks one of three profiles:
+On boot, Bhai profiles the host (RAM, free RAM, CPU bench score, GPU class, free disk, online status, deps: python / pip / Ollama / models). The detector picks one of three profiles:
 
 | Profile  | Picked when                                          | Available perception stack            |
 |----------|------------------------------------------------------|---------------------------------------|
@@ -696,7 +696,7 @@ Every coding request is classified on the first iteration:
 
 #### Complex task flow
 
-1. **Design docs** — `generate_design_docs` writes PRD.md + TECHNICAL.md + ARCHITECTURE.md under `A.T.L.A.S Files/Documents/design-docs/<slug>/`. Auto-transitions to `awaiting_approval` state.
+1. **Design docs** — `generate_design_docs` writes PRD.md + TECHNICAL.md + ARCHITECTURE.md under `Bhai Files/Documents/design-docs/<slug>/`. Auto-transitions to `awaiting_approval` state.
 2. **Approval gate** — Write tools are blocked except in the design-docs directory. The agent calls `approve_design_docs({ user_quote })` when the user approves.
 3. **Implement** — Standard coder loop on Pro tier. Git worktree isolation if `ATLAS_AGENT_WORKTREE=true` and ≥ 2 parallel coder steps.
 4. **Walkthrough** — `demo_project` auto-detects stack, launches runtime, records screen, generates WALKTHROUGH.md via `git log` + `git diff`.
@@ -767,7 +767,7 @@ Each hypothesis gets Bayesian confidence updates based on found evidence, with `
 
 **Directory:** `src/proactive/` (111 files)
 
-ATLAS can send messages without being prompted. The proactive system runs on three levels:
+Bhai can send messages without being prompted. The proactive system runs on three levels:
 
 **Heartbeat** (`heartbeat.ts`): Fires on a configurable interval. Checks battery, CPU, network, disk. Sends morning briefing (random time 6–10 am). Triggers inner-thoughts, monitors, and dreaming checks.
 
@@ -873,7 +873,7 @@ A `validateEditPlan()` helper returns `{ ok: true, plan }` or `{ ok: false, erro
 
 **Directory:** `src/harness/` (25 files)
 
-An automated outer-loop optimization system (based on arxiv 2603.28052) that treats ATLAS configuration as a tunable parameter space and evolves it automatically.
+An automated outer-loop optimization system (based on arxiv 2603.28052) that treats Bhai configuration as a tunable parameter space and evolves it automatically.
 
 **30+ tunable dimensions** (defined in `registry.ts`):
 
@@ -976,12 +976,12 @@ Live voice config: `LIVE_VOICE_NAME` (Gemini voices: Aoede/Charon/Kore/Fenrir/Pu
 
 **File:** `src/agents/a2a.ts`
 
-ATLAS implements Google's Agent-to-Agent (A2A) protocol, which enables external systems to discover and delegate tasks to ATLAS.
+Bhai implements Google's Agent-to-Agent (A2A) protocol, which enables external systems to discover and delegate tasks to Bhai.
 
 **Agent Card** (published at `/.well-known/agent.json`):
 ```json
 {
-  "name": "A.T.L.A.S",
+  "name": "Bhai",
   "version": "0.2.1",
   "capabilities": ["research", "coding", "browser", "system", "memory"],
   "endpoint": "http://127.0.0.1:18792/a2a",
@@ -991,7 +991,7 @@ ATLAS implements Google's Agent-to-Agent (A2A) protocol, which enables external 
 
 **Task lifecycle:** `pending` → `in_progress` → `completed` / `failed` / `cancelled`. Tasks auto-expire after 1 hour. Max 5 concurrent tasks.
 
-**Agent-as-tool pattern:** Any A2A agent can be wrapped as a `delegate_to_{name}` tool and called from within ATLAS's own agent loop.
+**Agent-as-tool pattern:** Any A2A agent can be wrapped as a `delegate_to_{name}` tool and called from within Bhai's own agent loop.
 
 **HTTP routes:**
 - `GET /.well-known/agent.json` — agent discovery
@@ -1025,7 +1025,7 @@ ATLAS implements Google's Agent-to-Agent (A2A) protocol, which enables external 
 
 Cross-platform Electron app (macOS + Windows) with:
 
-- **Overlay panel:** The overlay is now the single Electron overlay window (`desktop/`, served from `src/overlay/overlay.html` + `overlay-chat.ts`) — the former native macOS Swift `overlay-app/` has been removed. It floats on top of all windows and connects to the ATLAS overlay WebSocket; the socket is authenticated (a `?localToken=` gate is exchanged via a discovery-first handshake) so it reliably connects cross-platform.
+- **Overlay panel:** The overlay is now the single Electron overlay window (`desktop/`, served from `src/overlay/overlay.html` + `overlay-chat.ts`) — the former native macOS Swift `overlay-app/` has been removed. It floats on top of all windows and connects to the Bhai overlay WebSocket; the socket is authenticated (a `?localToken=` gate is exchanged via a discovery-first handshake) so it reliably connects cross-platform.
 - **Auto-updater:** `electron-updater`; provider = generic; update metadata served from Convex
 - **Source protection:** Bytecode compilation via `bytenode`; runtime XOR key fetched from Convex `/api/app/runtime-key`; `.env.enc` encrypted with the runtime key
 - **Session management:** Session token cached in Electron `safeStorage` with 1-hour refresh before expiry
@@ -1212,9 +1212,9 @@ The sandbox is disabled entirely if the Docker daemon is not available — `src/
 - Raw block device writes (`dd of=/dev/disk0`, `dd of=/dev/sd*`)
 - Fork bombs (`:(){ :|:& };:`, `perl -e 'fork while 1'`)
 - Power/reset (`halt`, `shutdown`, `reboot`, `init 0`)
-- Destructive writes to ATLAS's own installation directory
+- Destructive writes to Bhai's own installation directory
 
-ATLAS's own data directory (`data/`, `dist/`, `src/`, `native/`) is also protected from self-modification unless the user explicitly opts in.
+Bhai's own data directory (`data/`, `dist/`, `src/`, `native/`) is also protected from self-modification unless the user explicitly opts in.
 
 ### 5.4 Secrets Storage
 
@@ -1274,7 +1274,7 @@ Before installing an MCP package, `src/security/osv-check.ts` queries OSV for kn
 
 ### Local-first design
 
-ATLAS is designed to run on the user's own machine. All memory (SQLite, embeddings, browser profile, research results) stays local. The Convex backend is the only external dependency.
+Bhai is designed to run on the user's own machine. All memory (SQLite, embeddings, browser profile, research results) stays local. The Convex backend is the only external dependency.
 
 ### Convex environments
 
@@ -1523,13 +1523,13 @@ Replace `{brand}` with your brand slug (lowercase, hyphens). Example: `IG_USER_I
 
 ### Optional — Developer / Debugging
 
-These flags are intended for developers working on ATLAS itself. All default OFF (feature enabled).
+These flags are intended for developers working on Bhai itself. All default OFF (feature enabled).
 
 | Variable | Effect |
 |----------|--------|
 | `ATLAS_DATA_DIR` | Override the `data/` directory location |
 | `ATLAS_USER_DATA_DIR` | Electron `userData` path (used for wizard seed) |
-| `ATLAS_WORKSPACE` | Override workspace root (default: `~/Desktop/A.T.L.A.S Files`) |
+| `ATLAS_WORKSPACE` | Override workspace root (default: `~/Desktop/Bhai Files`) |
 | `MEMORY_DEBUG=true` | Verbose memory subsystem logging |
 | `ATLAS_TOOL_DEBUG=off\|verbose` | Tool breadcrumb verbosity |
 | `ATLAS_TS_DEBUG=true` | Verbose tree-sitter grammar-load logging |
@@ -1573,7 +1573,7 @@ The environment variables listed below all default to the feature being ON. Sett
 ## Appendix A — File Tree Summary
 
 ```
-ATLAS/
+Bhai/
 ├── src/                        (TypeScript source, ~770 files incl. tests)
 │   ├── index.ts                (entry point, boot sequence)
 │   ├── agent.ts                (runAgent, core loop)
@@ -1664,14 +1664,14 @@ ATLAS/
 
 ## Appendix C — Glossary
 
-- **ATLAS** — Advanced Technology for Logical Autonomous Systems
+- **Bhai** — Advanced Technology for Logical Autonomous Systems
 - **ECDH** — Elliptic-Curve Diffie-Hellman key exchange
 - **AES-256-GCM** — Authenticated encryption with associated data, 256-bit key, Galois/Counter Mode
 - **HNSW** — Hierarchical Navigable Small World (approximate nearest-neighbor search)
 - **FTS5** — SQLite Full-Text Search version 5 (with BM25 ranking)
 - **BM25** — Best Match 25, a probabilistic relevance ranking function
 - **MiniLM** — small sentence-transformer model (all-MiniLM-L6-v2, 384-dim embeddings)
-- **SAST** — Static Application Security Testing (Semgrep in ATLAS)
+- **SAST** — Static Application Security Testing (Semgrep in Bhai)
 - **LSP** — Language Server Protocol
 - **MCP** — Model Context Protocol
 - **OCC** — Optimistic Concurrency Control (used by Convex for credit deduction)

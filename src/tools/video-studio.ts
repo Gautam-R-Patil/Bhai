@@ -534,7 +534,7 @@ export const videoListProjects: ToolDefinition = {
         type: "function",
         function: {
             name: "video_list_projects",
-            description: "List all video editing projects in ATLAS's data directory, newest first.",
+            description: "List all video editing projects in Bhai's data directory, newest first.",
             parameters: {
                 type: "object",
                 properties: {},

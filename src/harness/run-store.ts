@@ -125,7 +125,7 @@ export class HarnessRunStore {
         // Absolute path for the candidate dir — used by bootstrap + AGENTS.md builders
         const candidateAbsDir = join(this.candidatesDir, candidate.candidateId);
 
-        // Bootstrap summary: ATLAS architecture context
+        // Bootstrap summary: Bhai architecture context
         const bootstrapSummary = _buildBootstrapSummary(parent, parentTraces.length, candidateAbsDir);
         writeFileSync(join(bootstrapDir, "summary.md"), bootstrapSummary, "utf-8");
 
@@ -307,11 +307,11 @@ function _buildBootstrapSummary(
     candidateAbsDir: string,
 ): string {
     const metaAbs = join(candidateAbsDir, ".metaharness");
-    return `# ATLAS Meta-Harness Run Bootstrap
+    return `# Bhai Meta-Harness Run Bootstrap
 
 ## What you are optimizing
-ATLAS is a continuously running autonomous personal AI agent (Node.js/TypeScript).
-You are optimizing its "harness" — the configuration parameters that control how ATLAS:
+Bhai is a continuously running autonomous personal AI agent (Node.js/TypeScript).
+You are optimizing its "harness" — the configuration parameters that control how Bhai:
 - Retrieves and weighs memories, selects tools, assembles context, evaluates responses
 
 ## Parent candidate: ${parent.candidateId}
@@ -344,7 +344,7 @@ function _buildAgentsMd(
 ${objective}
 
 ## Your task
-Improve ATLAS's harness configuration to increase the objective score above the parent candidate (${parent.candidateId}, score: ${parent.objective ?? "n/a"}).
+Improve Bhai's harness configuration to increase the objective score above the parent candidate (${parent.candidateId}, score: ${parent.objective ?? "n/a"}).
 
 ## CRITICAL — Read individual trace files using ABSOLUTE paths
 Paper 2603.28052 ablation: summary-only context gives median accuracy 34.9

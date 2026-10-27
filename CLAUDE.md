@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A.T.L.A.S (v0.2.1) is a continuously running, proactive personal AI agent: Node.js/TypeScript (~770 .ts) + native Rust performance layer (~78 .rs). Autonomous computer use, deep research, and long-running async workflows via Telegram, Discord, Slack, Matrix, WhatsApp, desktop overlay, email.
+Bhai (v0.2.1) is a continuously running, proactive personal AI agent: Node.js/TypeScript (~770 .ts) + native Rust performance layer (~78 .rs). Autonomous computer use, deep research, and long-running async workflows via Telegram, Discord, Slack, Matrix, WhatsApp, desktop overlay, email.
 
 ## Build & Run Commands
 
@@ -129,7 +129,7 @@ Per-repo SQLite sidecar under `data/codebase-index/<repo-hash>.db` (distinct fro
 Read-side: `code_change_summary` (git `recent_commits`/`hot_files`/`diff`/`blame`), `agents_md_scaffold` (AGENTS.md + 8 sub-docs, `<!-- @atlas:auto -->`), `lsp` `getDiagnostics` (auto-attached to edits as `post_edit_diagnostics` unless `ATLAS_NO_POST_EDIT_DIAGNOSTICS=true`). Write-side: `git_op` 4-tier safety (safe/confirm/destructive/blocked); protected branches `main`/`master`/`production`/`release/*` + evidence-phrase gate for `push --force`/`--force-with-lease`; ephemeral `checkpoint`/`restore_checkpoint` via `git stash create`.
 
 ### Workspace & Artifact Outputs (`src/config/paths.ts`)
-User-facing artifacts under `getWorkspaceDir()`: `$ATLAS_WORKSPACE` → `~/Desktop/A.T.L.A.S Files` → `~/Documents/A.T.L.A.S Files` → `~/.atlas/files` → `~/A.T.L.A.S Files` → `os.tmpdir()`. On-demand subdirs: `getCodeDir()` (`scaffold_project` default), `getDocumentsDir()` (`design-docs/<slug>/` + `walkthroughs/<slug>/`), `getImagesDir()`, `getScreenshotsDir()`, `getDownloadsDir()`, `getTempDir()`.
+User-facing artifacts under `getWorkspaceDir()`: `$ATLAS_WORKSPACE` → `~/Desktop/Bhai Files` → `~/Documents/Bhai Files` → `~/.atlas/files` → `~/Bhai Files` → `os.tmpdir()`. On-demand subdirs: `getCodeDir()` (`scaffold_project` default), `getDocumentsDir()` (`design-docs/<slug>/` + `walkthroughs/<slug>/`), `getImagesDir()`, `getScreenshotsDir()`, `getDownloadsDir()`, `getTempDir()`.
 
 Rule: tools writing user artifacts default to `getWorkspaceSubdir()`, override only when user names a path. `data/` is ATLAS-internal state.
 

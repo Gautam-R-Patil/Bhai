@@ -382,7 +382,7 @@ export function nativeVadFrame16Khz(pcm: Buffer, aggressiveness: number): boolea
 /**
  * Same as `nativeVadFrame16Khz` but takes a multi-frame chunk (any multiple
  * of 640 bytes; 20 ms × 16 kHz × 2 bytes) and returns true on the first
- * speech sub-frame. Designed for ATLAS's 100 ms (3200-byte) mic chunks.
+ * speech sub-frame. Designed for Bhai's 100 ms (3200-byte) mic chunks.
  */
 export function nativeVadAnyFrame16Khz(pcm: Buffer, aggressiveness: number): boolean | null {
     if (!useNative || !nativeModule?.anySpeechFrame16Khz) return null;

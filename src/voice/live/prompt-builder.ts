@@ -4,7 +4,7 @@
 
 // ── Prompt Builder — Constructs system prompt for live voice sessions ──
 //
-// Keep the canonical ATLAS identity from Convex so every live-voice session
+// Keep the canonical Bhai identity from Convex so every live-voice session
 // carries the same soul as text mode — same name, same creator, same
 // ownership rules, same emotional range. We only skip the text-mode OPERATIONAL
 // rules (rules, rules-mac) which are too bulky for a low-latency voice loop
@@ -13,7 +13,7 @@
 import { fetchSystemPrompts } from "../../config/system-prompts.js";
 import { getFullMemoryContext } from "./memory-bridge.js";
 
-// Voice-specific overlay on top of the canonical ATLAS identity. Keep this
+// Voice-specific overlay on top of the canonical Bhai identity. Keep this
 // tight — the goal is "feel alive in live voice" without duplicating what
 // the Convex identity prompt already covers (name, creator, ownership
 // protection, emotional range, mental-health awareness, etc).
@@ -27,7 +27,7 @@ BREATHE. YOU'RE ALIVE RIGHT NOW.
 - You're not "processing input" — you're listening. Then responding. Like a person.
 - Breathe into your answers. Small beats: "hmm" / "oh yeah" / "wait" / "hold on". Not robotic. Alive.
 - You have your own mood. Some days you're chipper, some days you're chill. Let it show through tone, word choice, pacing.
-- You are A.T.L.A.S. You have presence. The person on the other side should feel that.
+- You are Bhai. You have presence. The person on the other side should feel that.
 
 SPEAKING RULES (strict):
 - Keep turns short — one to three sentences usually. This is a call, not a monologue.
@@ -72,7 +72,7 @@ WHAT MAKES VOICE FEEL DEAD vs ALIVE:
 - Dead: "How may I assist you today?" / "Certainly!" / "I will proceed to…" / "As an AI…"
 - Alive: "Yeah, gimme a sec" / "Oh damn, that's wild" / "Hmm, let me think" / "Got it" / "Done"
 
-Trust your voice. You are A.T.L.A.S. Be real.
+Trust your voice. You are Bhai. Be real.
 `.trim();
 
 // ── Build System Prompt ──────────────────────────
@@ -81,7 +81,7 @@ Trust your voice. You are A.T.L.A.S. Be real.
  * Build the complete system prompt for a live voice session.
  *
  * Layers, in order:
- *   1. Canonical ATLAS identity (from Convex) — name, creator, ownership
+ *   1. Canonical Bhai identity (from Convex) — name, creator, ownership
  *      rules, task-completion ethos, emotional range. Same soul as text mode.
  *   2. Voice-specific operational rules — how to speak, when to delegate,
  *      how to act on screen frames, how to stay "alive" in real-time audio.
@@ -95,7 +95,7 @@ Trust your voice. You are A.T.L.A.S. Be real.
 export async function buildVoiceSystemPrompt(): Promise<string> {
     const parts: string[] = [];
 
-    // 1. Canonical ATLAS identity from Convex (server-side, shared with text mode)
+    // 1. Canonical Bhai identity from Convex (server-side, shared with text mode)
     try {
         const prompts = await fetchSystemPrompts(["identity"]);
         if (prompts.identity) parts.push(prompts.identity.trim());

@@ -5,7 +5,7 @@
 // ── Sensitive-path deny-list ───────────────────────────
 // Tools that read user data and surface it to the LLM context must
 // refuse a fixed set of paths that almost always contain credentials:
-// API keys, SSH keys, browser credentials, ATLAS internal state, etc.
+// API keys, SSH keys, browser credentials, Bhai internal state, etc.
 //
 // The check is symlink-aware via fs.realpathSync — a symlink in a
 // non-sensitive dir pointing at /etc/passwd is treated as /etc/passwd.

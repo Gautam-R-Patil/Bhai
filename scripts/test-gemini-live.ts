@@ -1,11 +1,11 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
-// Standalone Gemini Live test harness — reproduces ATLAS's tool-response flow
+// Standalone Gemini Live test harness — reproduces Bhai's tool-response flow
 // and logs every single server message so we can see what Gemini actually
 // sends back. Run with:
 //
 //   npx tsx scripts/test-gemini-live.ts
 //
-// Requires: Convex session (same env ATLAS uses) — ATLAS_OTPLESS_USER_ID set,
+// Requires: Convex session (same env Bhai uses) — ATLAS_OTPLESS_USER_ID set,
 // or GOOGLE_API_KEY as env override for direct use.
 
 import "dotenv/config";
@@ -38,7 +38,7 @@ const USE_TOOLS = process.env.TEST_TOOLS !== "false";
 const USE_TRANSCRIPTIONS = process.env.TEST_TRANSCRIPTIONS !== "false";
 const USE_TEMP = process.env.TEST_TEMP !== "false";
 
-// One tool matching ATLAS's get_current_time schema shape.
+// One tool matching Bhai's get_current_time schema shape.
 const TOOLS = [
     {
         functionDeclarations: [

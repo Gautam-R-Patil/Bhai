@@ -55,7 +55,7 @@ async function startPair(opts) {
     const sock = makeWASocket({
         auth: auth.state,
         printQRInTerminal: false,
-        browser: ["A.T.L.A.S Wizard", "Desktop", "1.0"],
+        browser: ["Bhai Wizard", "Desktop", "1.0"],
     });
     _sock = sock;
     _listeners = { auth: auth, creds: null, connection: null };

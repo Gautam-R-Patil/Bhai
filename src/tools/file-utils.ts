@@ -445,7 +445,7 @@ export const compressFiles: ToolDefinition = {
                     archive_path: {
                         type: "string",
                         description:
-                            "Path to the archive file. For 'zip': output path (default: auto-named in ATLAS Exports folder). For 'unzip': archive to extract.",
+                            "Path to the archive file. For 'zip': output path (default: auto-named in Bhai Exports folder). For 'unzip': archive to extract.",
                     },
                     output_dir: {
                         type: "string",

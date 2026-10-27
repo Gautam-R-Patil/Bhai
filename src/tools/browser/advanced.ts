@@ -788,7 +788,7 @@ export const browserMultiAction: ToolDefinition = {
                     // IP protection: code is validated by Rust ip_guard before execution
                     case "js_eval": {
                         if (!act.code) return { success: false, error: 'js_eval requires "code"' };
-                        // Validate through native IP guard (blocks exfiltration, ATLAS var access, eval)
+                        // Validate through native IP guard (blocks exfiltration, Bhai var access, eval)
                         let safeCode: string;
                         try {
                             safeCode = validateJsCode(act.code as string);

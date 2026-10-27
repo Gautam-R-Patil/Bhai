@@ -1,7 +1,7 @@
-# ATLAS Business Model Design
+# Bhai Business Model Design
 **Date:** 2026-04-26  
 **Company:** XAGI Labs Private Limited  
-**Product:** A.T.L.A.S v0.2.1 — Autonomous Personal AI Agent  
+**Product:** Bhai v0.2.1 — Autonomous Personal AI Agent  
 **Status:** Approved for implementation
 
 ---
@@ -66,7 +66,7 @@ All pricing is derived from actual model costs in `native/src/model_router.rs` a
 | **Enterprise On-Prem** | $3,000–15,000/mo | Unlimited (own API keys) | Near-pure margin; they supply keys |
 | **White-Label** | Custom | Custom | $5K+ setup + monthly licensing |
 
-> **On-prem is the highest-margin enterprise offering.** No LLM cost — ATLAS runs on their infra with their API keys. Only cost is support and maintenance.
+> **On-prem is the highest-margin enterprise offering.** No LLM cost — Bhai runs on their infra with their API keys. Only cost is support and maintenance.
 
 ---
 
@@ -89,7 +89,7 @@ Overage purchase = upsell signal. Three consecutive overage purchases in a month
 Infrastructure already exists: `convex/schema.ts` (`store_items`, `submissions`, `developers`, `store_reviews`, `store_installs`).
 
 **Model:**
-- Free tools: no revenue share; increases ATLAS stickiness and first-run value
+- Free tools: no revenue share; increases Bhai stickiness and first-run value
 - Paid tools: **70/30 split** (developer keeps 70%, XAGI takes 30%)
 - Pricing unit: credits (e.g., a skill priced at 500 credits = ~$11 value at Pro plan rates)
 
@@ -121,10 +121,10 @@ Infrastructure already exists: `convex/schema.ts` (`store_items`, `submissions`,
 ### Phase 2 — Team/Cloud Tier (Month 6–12)
 
 **Goal:** First 50 Team accounts.  
-**Distribution:** ATLAS runs in XAGI's cloud (VPS per team, or containerized); users connect via their existing channels.  
+**Distribution:** Bhai runs in XAGI's cloud (VPS per team, or containerized); users connect via their existing channels.  
 **Revenue drivers:** Team subscriptions ($449/mo), extra seats ($35/seat).  
 **Infrastructure cost added:** ~$50/team/mo for cloud agent hosting (Node.js process + Convex namespace).  
-**Marketing motion:** Founder/operator communities (IndieHackers, Product Hunt, Twitter/X builders), cold outreach via ATLAS's own marketing brain tools.
+**Marketing motion:** Founder/operator communities (IndieHackers, Product Hunt, Twitter/X builders), cold outreach via Bhai's own marketing brain tools.
 
 ### Phase 3 — API + Enterprise (Month 12–24)
 
@@ -132,7 +132,7 @@ Infrastructure already exists: `convex/schema.ts` (`store_items`, `submissions`,
 **API pricing:** $0.06/credit (same $/credit as Large overage pack; ~2.7x API cost).  
 **Enterprise motion:** Inbound from large Team accounts + outbound sales.  
 **On-prem option:** Unlocks procurement-blocked enterprise buyers (banking, healthcare, legal).  
-**API target customers:** Developers building AI products who want ATLAS's memory/orchestration/research engine without building from scratch.
+**API target customers:** Developers building AI products who want Bhai's memory/orchestration/research engine without building from scratch.
 
 ---
 

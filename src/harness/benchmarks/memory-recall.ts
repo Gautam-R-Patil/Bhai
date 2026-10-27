@@ -4,7 +4,7 @@
 
 // ── Memory Recall Benchmark ───────────────────────────────────────────────
 // Tests memory retrieval precision using a fixed set of query→expected_content
-// pairs derived from actual ATLAS usage patterns. No network calls needed.
+// pairs derived from actual Bhai usage patterns. No network calls needed.
 // Measures how many of the top-k retrieved memories match the expected answer.
 
 import type { BenchmarkResult } from "./index.js";
@@ -16,14 +16,14 @@ interface RecallCase {
     category?: string;
 }
 
-// Fixed test cases — representative of real ATLAS memory queries
+// Fixed test cases — representative of real Bhai memory queries
 const RECALL_CASES: RecallCase[] = [
     { query: "user's preferred programming language", expectedKeywords: ["typescript", "javascript", "python", "code"], category: "preference" },
     { query: "recent project the user is working on", expectedKeywords: ["project", "build", "app", "feature", "work"] },
     { query: "user's work schedule or daily routine", expectedKeywords: ["morning", "work", "schedule", "routine", "daily"] },
     { query: "tools the user uses for development", expectedKeywords: ["vscode", "editor", "terminal", "git", "node", "npm"] },
     { query: "user's goals or objectives", expectedKeywords: ["goal", "want", "plan", "aim", "objective"] },
-    { query: "recent conversations about ATLAS", expectedKeywords: ["atlas", "agent", "ai", "assistant"] },
+    { query: "recent conversations about Bhai", expectedKeywords: ["atlas", "agent", "ai", "assistant"] },
     { query: "user's location or timezone", expectedKeywords: ["location", "city", "timezone", "country", "india", "gmt"] },
     { query: "coding style preferences", expectedKeywords: ["style", "format", "lint", "prettier", "biome", "eslint"] },
     { query: "communication preferences", expectedKeywords: ["telegram", "message", "chat", "notify", "send"] },

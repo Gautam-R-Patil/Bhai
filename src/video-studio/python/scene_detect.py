@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-scene_detect.py — PySceneDetect sidecar for ATLAS Video Studio.
+scene_detect.py — PySceneDetect sidecar for Bhai Video Studio.
 Usage: python scene_detect.py <videoPath> <outputJsonPath>
 Writes: {"scenes": [{"start": float, "end": float, "duration": float}]}
 """

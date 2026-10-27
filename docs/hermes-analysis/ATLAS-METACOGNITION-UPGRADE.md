@@ -9,11 +9,11 @@ I have verified every load-bearing claim against the actual source. I'm ready to
 
 ---
 
-# Improving ATLAS Metacognition — Architect's Plan
+# Improving Bhai Metacognition — Architect's Plan
 
-## 1. Where ATLAS metacognition stands today
+## 1. Where Bhai metacognition stands today
 
-ATLAS metacognition is a **fast heuristic signal-counter that almost never acts**. `compute_confidence` in `native/src/metacognition.rs:74` starts at `1.0` and subtracts hand-tuned penalties (error ratio, consecutive errors, response-length variance, iteration count, tool-name loop) — an uncalibrated score whose absolute value is meaningless (the `0.35`/`0.2` cutoffs are arbitrary), with no correlation to actual task outcomes ever measured. It computes a rich `intervention` enum (`none|escalate|replan|critics|ask_user`) every iteration, but `src/agent.ts:1138` consumes only `loopDetected||struggleDetected` to push **one** text nudge (gated by a `metaNudged` latch that fires at most once per turn) and merely *logs* low confidence without acting — the failed "C2" regime (tell the model it's stuck, hope it self-corrects; Mirror arXiv:2604.19809). Loop detection (`detect_loop_pattern_internal`, `metacognition.rs:203`) compares **tool NAMES only** over the last 6 calls, so an identical-args retry loop or a paraphrased no-progress spiral is invisible (name-repeat alone is F1 0.08; arXiv:2511.10650). And `computeReasoningQuality` (`metacognition.ts:228`) — the one outcome signal — is imported at `agent.ts:22` but **never called**, so nothing is logged, nothing is learned, no per-task/per-tier prior is ever formed.
+Bhai metacognition is a **fast heuristic signal-counter that almost never acts**. `compute_confidence` in `native/src/metacognition.rs:74` starts at `1.0` and subtracts hand-tuned penalties (error ratio, consecutive errors, response-length variance, iteration count, tool-name loop) — an uncalibrated score whose absolute value is meaningless (the `0.35`/`0.2` cutoffs are arbitrary), with no correlation to actual task outcomes ever measured. It computes a rich `intervention` enum (`none|escalate|replan|critics|ask_user`) every iteration, but `src/agent.ts:1138` consumes only `loopDetected||struggleDetected` to push **one** text nudge (gated by a `metaNudged` latch that fires at most once per turn) and merely *logs* low confidence without acting — the failed "C2" regime (tell the model it's stuck, hope it self-corrects; Mirror arXiv:2604.19809). Loop detection (`detect_loop_pattern_internal`, `metacognition.rs:203`) compares **tool NAMES only** over the last 6 calls, so an identical-args retry loop or a paraphrased no-progress spiral is invisible (name-repeat alone is F1 0.08; arXiv:2511.10650). And `computeReasoningQuality` (`metacognition.ts:228`) — the one outcome signal — is imported at `agent.ts:22` but **never called**, so nothing is logged, nothing is learned, no per-task/per-tier prior is ever formed.
 
 **Confirmed ground truth** (all verified in source, not assumed):
 - The per-tool loop at `agent.ts:3040` already carries `r.fnName`, `r.fnArgs` (`agent.ts:467`), `r.isError`, `r.result` on the same object feeding `updateSignals()` at `:3063` — every signal a content-aware detector needs is already in hand.
@@ -45,7 +45,7 @@ Keep name-match as a cheap pre-filter. `loopDetected` now means "repeating *with
 
 **SOTA basis:** OpenHands `StuckDetector` content-normalized `_event_eq` (5-pattern set; docs.openhands.dev/sdk + `stuck.py`); LangChain `ProgressGuardMiddleware` hash(tool,args,error) (Issue #36139); hybrid structural+semantic cycle detection (arXiv:2511.10650, F1 0.72 vs 0.08).
 
-**ATLAS changes:**
+**Bhai changes:**
 - `native/src/metacognition.rs` — `MetaSignals` gains `recent_step_hashes_lo/hi: Vec<u32>` (paired u32 halves — avoids napi BigInt marshalling cost); rewrite `detect_loop_pattern_internal` → `detect_step_loop(names, hashes, errors)` with the 3 patterns; bias `intervention` to `replan` on action-error.
 - `src/agents/metacognition.ts` — add `normalizeArgs()` + `computeStepKey()` (TS owns the strings); extend `updateSignals()` to accept `fnArgs`, `isError`, `resultDigest`; push the two u32 halves into the native call object.
 - `src/agent.ts:3063` — pass `r.fnArgs` + truncated `r.result` into `updateSignals`. **Rename the existing `noProgressStreak` (agent.ts:1131)** to avoid collision with any new streak field.
@@ -71,7 +71,7 @@ This is the "enforce, don't nudge" thesis — emit *guidance* and fire the right
 
 **SOTA basis:** Mirror C4 architectural-enforcement-beats-self-report (arXiv:2604.19809, ConfFailRate −76%); SOFAI-LM feedback-loop-before-escalation (arXiv:2508.17959 — already cited in `metacognition.ts:8` header but unimplemented); SWE-PRM taxonomy-guided > prescriptive (arXiv:2509.02360); CRITIC tool-grounded > self-critique + Self-Refine caveat (Gou ICLR 2024; Huang arXiv:2310.01798; Madaan NeurIPS 2023).
 
-**ATLAS changes:**
+**Bhai changes:**
 - `src/agent.ts:1137-1152` — replace nudge with `await applyIntervention(...)`; remove the `metaNudged` latch; add per-turn cooldown state.
 - `src/agent.ts:430-440` — add optional `metacogForcedTier?: string` to `chooseModel`, threaded into `selectForAgent`; consume at `:1239`.
 - `src/agents/metacognition.ts` — new `applyIntervention()` + a `runProgressGate()` returning `{intervention, feedbackText, askText}`.
@@ -91,7 +91,7 @@ This is the "enforce, don't nudge" thesis — emit *guidance* and fire the right
 
 **SOTA basis:** Reflexion verbal RL (arXiv:2303.11366); intrinsic-metacognitive-learning outcome logging (Liu & van der Schaar, ICML 2025, arXiv:2506.05109).
 
-**ATLAS changes:**
+**Bhai changes:**
 - `src/agent.ts` success exit (~`:2905`) + failure exits (`:1186`, `:1203`, `:2325`, `:3110`, `:3131`) — call `computeReasoningQuality` + log.
 - `src/agents/metacognition.ts` — new `logOutcome(state, taskCompleted, taskType, modelTier)` writing the row.
 
@@ -109,7 +109,7 @@ This is the "enforce, don't nudge" thesis — emit *guidance* and fire the right
 
 **SOTA basis:** SAGE vMF novelty gate (arXiv:2605.30711, skips 16-18% LLM calls); "semantic circularity precedes textual repetition" (arXiv:2601.05693); the no-extra-LLM-call embedding-cosine path (hidden-state probes need logits, unavailable behind the proxy).
 
-**ATLAS changes:**
+**Bhai changes:**
 - `src/agents/metacognition.ts` — obs-embedding ring buffer + `progressStall` computation (TS, uses `embedText`+`cosineSimilarity`); pass `noProgressStreak`/`meanRecentNovelty` as scalars into the native call.
 - `native/src/metacognition.rs` — add the two scalar fields + Factor 7.
 - `src/agent.ts:3062` — embed the per-iter digest (fire-and-forget, batched once/iter).
@@ -134,7 +134,7 @@ Decision: destructive pending action + mediocre confidence → intervene unless 
 
 **SOTA basis:** Cost-aware escalation `τ=1−c_l/c_w` (arXiv:2604.08588; MICE-for-CATs NAACL 2025; Chow 1970); Russell-Wefald VOC value-thresholding (RaM arXiv:2410.05563; "Knowing When to Quit" arXiv:2604.18419).
 
-**ATLAS changes:**
+**Bhai changes:**
 - `src/agents/metacognition.ts` — `shouldThinkMore(assessment, ctx)` VOC gate.
 - `src/model-router.ts` — expose `c_l` lookup (reuse `MODEL_COSTS`) + `c_w` bucket helper.
 
@@ -150,7 +150,7 @@ Decision: destructive pending action + mediocre confidence → intervene unless 
 
 **SOTA basis:** SWE-PRM sparse taxonomy-guided critic (arXiv:2509.02360, +10.6pp, fires every-N not every-iter); adversarial "what can fail?" framing (arXiv:2602.06948 / arXiv:2506.18183, ECE 0.42→0.30, −15pp overconfidence); pre-execution assessment discriminates better than post-hoc (arXiv:2602.06948).
 
-**ATLAS changes:**
+**Bhai changes:**
 - `src/agents/metacognition.ts` — `async assessProgressJudge(state, llm, goal, recentDigests)`; inject `llm` via `agent.ts:823`.
 - `src/agent.ts:1137` — call inside the gate; wire `likely_fix` to A2's dispatcher.
 
@@ -170,7 +170,7 @@ Decision: destructive pending action + mediocre confidence → intervene unless 
 
 **SOTA basis:** Platt/isotonic/temperature scaling + ECE/Brier (Guo ICML 2017; ConfTuner arXiv:2508.18847, −54.7% ECE); online adaptive conformal (Gibbs-Candès 2021; CCPO arXiv:2511.11828, −30% cost); FOK/JOL "raw confidence is not directly actionable" (arXiv:2605.14186).
 
-**ATLAS changes:**
+**Bhai changes:**
 - `src/memory/reflection.ts:358` — nightly: read jsonl, compute ECE/Brier, fit Platt/isotonic + seed `κ`, persist to a small `calibrators` table.
 - `src/agents/metacognition.ts` — `calibrate(qRaw, ctx)` hot-path read.
 - `native/src/metacognition.rs` — apply Platt (a,b passed in). **Keep the FIT in TS** (per-night over a few thousand rows — cheaper than FFI); only per-iter *apply* justifies Rust, opt-in.
@@ -191,7 +191,7 @@ Decision: destructive pending action + mediocre confidence → intervene unless 
 
 **SOTA basis:** Token-logprob confidence (JMIR 2025 e64348, AUROC 0.70-0.87 vs verbalized 0.51-0.70); tool-name/arg targeting (MICE-for-CATs NAACL 2025); DeepConf min/tail (arXiv:2508.15260).
 
-**ATLAS changes (explicit, server-side included):**
+**Bhai changes (explicit, server-side included):**
 - `convex/http.ts:690` — add `logprobs`/`top_logprobs` to `openrouterBody` allowlist; redeploy (`npx convex deploy`).
 - `src/llm.ts:191` — add `logprobs:true, top_logprobs:5` to `requestBody` behind `ATLAS_NO_LOGPROB_CONF`.
 - `src/llm.ts:~313` — capture `choices[0].logprobs.content[]` if present; expose `lastLogprobs` side-channel without changing the `ChatCompletion` type; discard silently if absent.
@@ -228,10 +228,10 @@ Native Rust ports (A1's hash compare, C1's apply) ship **opt-IN** (`ATLAS_NATIVE
 - **No per-iteration LLM judge.** B2 fires ≤1×/turn, gated behind Tier-A heuristics. A SWE-PRM-style critic on *every* iteration burns credits for no payoff (their own finding: sparse cadence is what makes it net-cheaper).
 - **No ungrounded self-critique for pure reasoning.** Self-Refine/CRITIC (Huang arXiv:2310.01798; Kamoi TACL 2024) shows it degrades reasoning. Fire `critics` only when a tool-grounded verifier exists.
 - **No bandit/RL meta-controller** (cut above) — label volume too low; AEL "less is more."
-- **No hidden-state / linear-progress probes** (arXiv:2506.23274) — need logits ATLAS can't get behind the Convex proxy.
-- **No semantic entropy / self-consistency N-sampling** for per-iter confidence — N× generation cost; ATLAS isn't sampling multiple paths per iteration.
+- **No hidden-state / linear-progress probes** (arXiv:2506.23274) — need logits Bhai can't get behind the Convex proxy.
+- **No semantic entropy / self-consistency N-sampling** for per-iter confidence — N× generation cost; Bhai isn't sampling multiple paths per iteration.
 - **No premature Rust ports.** A1's hash and A4's cosine stay in TS until benched (FFI tax on tiny inputs is a wash — CLAUDE.md Rust lesson).
-- **No duplicating what ATLAS already covers:** the `evaluator.ts` 0-100 scoring, `process-reward.ts` PRM, `multi-critic.ts`/`code-critic.ts`, and the `NO_PROGRESS_LIMIT` hard guard (`agent.ts:1130`) already exist — metacognition should *route to* them, not reimplement them. Leave the hard loop-guard untouched as the last-resort backstop.
+- **No duplicating what Bhai already covers:** the `evaluator.ts` 0-100 scoring, `process-reward.ts` PRM, `multi-critic.ts`/`code-critic.ts`, and the `NO_PROGRESS_LIMIT` hard guard (`agent.ts:1130`) already exist — metacognition should *route to* them, not reimplement them. Leave the hard loop-guard untouched as the last-resort backstop.
 
 ## 5. First PR — highest-leverage self-contained change
 

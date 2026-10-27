@@ -2474,7 +2474,7 @@ export declare function computePagerank(nodeIds: Array<string>, edges: Array<Cit
 export declare function computeBetweenness(nodeIds: Array<string>, edges: Array<CitationEdge>): Array<PageRankResult>
 /**
  * Generate a cryptographically secure bridge token (32-byte hex string).
- * This token is shared between ATLAS and the Chrome extension for auth.
+ * This token is shared between Bhai and the Chrome extension for auth.
  */
 export declare function generateBridgeToken(): string
 /**
@@ -2767,7 +2767,7 @@ export declare function recordHoverFailure(url: string, selector: string): void
  *
  * Blocks:
  * - Network exfiltration (fetch, XHR, WebSocket, sendBeacon)
- * - Access to ATLAS internal injected variables
+ * - Access to Bhai internal injected variables
  * - Dynamic code execution (eval, Function constructor)
  * - Prototype pollution (__proto__, constructor)
  * - Node.js escape (process.env, require)
@@ -2786,7 +2786,7 @@ export declare function validateJsCode(code: string): string
  */
 export declare function obfuscateInjectedVariable(name: string): string
 /**
- * Rewrite all ATLAS internal variable references in a JS code string to their
+ * Rewrite all Bhai internal variable references in a JS code string to their
  * obfuscated session-scoped equivalents. Call this before any page.evaluate()
  * that injects our MutationObserver or other internal JS.
  */

@@ -295,7 +295,7 @@ export const scaffoldProject: ToolDefinition = {
                     parent_dir: {
                         type: "string",
                         description:
-                            "Parent directory under which to create the project. Defaults to the user's ATLAS workspace Code folder (A.T.L.A.S Files/Code on fresh installs). Pass an explicit path only when the user asked for a specific location.",
+                            "Parent directory under which to create the project. Defaults to the user's Bhai workspace Code folder (Bhai Files/Code on fresh installs). Pass an explicit path only when the user asked for a specific location.",
                     },
                     features: {
                         type: "array",
@@ -325,7 +325,7 @@ export const scaffoldProject: ToolDefinition = {
         if (!ALLOWED_TEMPLATES.includes(template)) {
             return JSON.stringify({ error: `Unsupported template: ${template}` });
         }
-        // Default parent: the user's workspace Code/ directory — `A.T.L.A.S Files/Code`
+        // Default parent: the user's workspace Code/ directory — `Bhai Files/Code`
         // on fresh installs. The installer sets ATLAS_WORKSPACE; fallbacks resolve
         // to Desktop / Documents / ~/ variants. Explicit parent_dir from the user
         // always wins.

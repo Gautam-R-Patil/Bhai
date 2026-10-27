@@ -2,9 +2,9 @@
 # Creates a styled macOS DMG with background image and drag-to-Applications layout
 set -e
 
-APP_NAME="A.T.L.A.S"
+APP_NAME="Bhai"
 # ARCH defaults to arm64 (host arch on Apple Silicon); pass ARCH=x64 to build
-# the Intel DMG once you've produced dist/mac-x64/A.T.L.A.S.app via
+# the Intel DMG once you've produced dist/mac-x64/Bhai.app via
 # `electron-builder --mac --x64 --dir`.
 ARCH="${ARCH:-arm64}"
 case "$ARCH" in
@@ -25,7 +25,7 @@ fi
 APP_VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "0.0.0")
 DMG_NAME="${APP_NAME}-${APP_VERSION}-${ARCH}.dmg"
 DMG_PATH="dist/${DMG_NAME}"
-VOL_NAME="A.T.L.A.S Installer"
+VOL_NAME="Bhai Installer"
 TEMP_DMG="dist/.temp-dmg.dmg"
 BG_IMG="build/dmg-background@2x.png"
 
@@ -34,7 +34,7 @@ echo "📦 Creating DMG: ${DMG_NAME}"
 [ ! -d "${APP_PATH}" ] && echo "❌ App not found: ${APP_PATH}" && exit 1
 
 # Eject ALL existing atlas volumes
-for vol in /Volumes/A.T.L.A.S*; do
+for vol in /Volumes/Bhai*; do
     [ -d "$vol" ] && hdiutil detach "$vol" -force 2>/dev/null || true
 done
 
@@ -68,7 +68,7 @@ echo "   Styling window..."
 (
 osascript <<'EOF'
 tell application "Finder"
-    tell disk "A.T.L.A.S Installer"
+    tell disk "Bhai Installer"
         open
         set current view of container window to icon view
         set toolbar visible of container window to false
@@ -80,7 +80,7 @@ tell application "Finder"
         try
             set background picture of theViewOptions to file ".background:bg.png"
         end try
-        set position of item "A.T.L.A.S.app" of container window to {130, 150}
+        set position of item "Bhai.app" of container window to {130, 150}
         set position of item "Applications" of container window to {410, 150}
         close
         open
@@ -100,7 +100,7 @@ kill -0 $PID 2>/dev/null && { echo "   ⚠️  Finder timed out"; kill $PID 2>/d
 
 # CRITICAL: Tell Finder to eject, then force detach
 echo "   Ejecting..."
-osascript -e 'tell application "Finder" to eject disk "A.T.L.A.S Installer"' 2>/dev/null || true
+osascript -e 'tell application "Finder" to eject disk "Bhai Installer"' 2>/dev/null || true
 sleep 2
 
 # Force detach by volume path AND device path (belt + suspenders)

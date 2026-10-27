@@ -175,7 +175,7 @@ const REGEX_RULES: Array<{ id: string; pattern: RegExp; severity: "ERROR" | "WAR
         id: "forge-no-source-read",
         pattern: /['"][^'"]*\/(?:src|native|prompts|convex)\/[^'"]*['"]/g,
         severity: "ERROR",
-        message: "reading ATLAS source paths not allowed",
+        message: "reading Bhai source paths not allowed",
     },
     {
         id: "forge-no-env-write",

@@ -20,7 +20,7 @@ ShowInstDetails show
 
 ; ── Custom uninstall section (wipe all data) ───────
 !macro customUnInstall
-  DetailPrint "Wiping A.T.L.A.S data and configurations..."
+  DetailPrint "Wiping Bhai data and configurations..."
 !macroend
 
 !macro customRemoveFiles
@@ -28,8 +28,8 @@ ShowInstDetails show
   RMDir /r "$APPDATA\atlas-desktop"
   
   ; 2. Delete the bot's data directory (SQLite DB, embeddings, etc.)
-  RMDir /r "$LOCALAPPDATA\Programs\A.T.L.A.S\resources\bot\data"
+  RMDir /r "$LOCALAPPDATA\Programs\Bhai\resources\bot\data"
   
   ; 3. Delete the entire installation folder just to be absolutely sure
-  RMDir /r "$LOCALAPPDATA\Programs\A.T.L.A.S"
+  RMDir /r "$LOCALAPPDATA\Programs\Bhai"
 !macroend

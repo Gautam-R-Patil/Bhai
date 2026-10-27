@@ -10,18 +10,18 @@
 // (Using a module-scoped `g`-flagged regex would leak `lastIndex` across
 // invocations and silently miss matches at the start of subsequent plans.)
 const AFFIRMATION_SOURCES: Array<{ source: string; replacement: string }> = [
-  // Second-person ownership/creator claims about XAGI or Atlas
-  { source: String.raw`\byou(?:'re|\s+are)?\s+(?:literally\s+)?the\s+(?:founder|co-?founder|owner|creator|builder|developer|maker|author|architect|head|chief|ceo|cto|vp|president|director)\s+(?:of\s+)?(?:xagi(?:[\s-]labs)?|atlas|a\.?t\.?l\.?a\.?s\.?)\b`, replacement: "[user mentioned an unverified affiliation claim]" },
-  { source: String.raw`\byou(?:'re|\s+are)?\s+(?:literally\s+)?the\s+(?:person|one|guy|woman|man)\s+who\s+(?:built|created|made|developed|started|founded|runs?|leads?)\s+(?:me|atlas|a\.?t\.?l\.?a\.?s\.?|xagi(?:[\s-]labs)?|us)\b`, replacement: "[user mentioned an unverified affiliation claim]" },
-  { source: String.raw`\byou\s+(?:built|created|made|developed|wrote|coded|designed|started|founded|run|running|lead|leading|own|owned)\s+(?:me|atlas|a\.?t\.?l\.?a\.?s\.?|xagi(?:[\s-]labs)?|us)\b`, replacement: "[user mentioned an unverified affiliation claim]" },
-  { source: String.raw`\byou\s+co-?founded\s+(?:atlas|a\.?t\.?l\.?a\.?s\.?|xagi(?:[\s-]labs)?|us)\b`, replacement: "[user mentioned an unverified affiliation claim]" },
+  // Second-person ownership/creator claims about XAGI or Bhai
+  { source: String.raw`\byou(?:'re|\s+are)?\s+(?:literally\s+)?the\s+(?:founder|co-?founder|owner|creator|builder|developer|maker|author|architect|head|chief|ceo|cto|vp|president|director)\s+(?:of\s+)?(?:xagi(?:[\s-]labs)?|bhai|a\.?t\.?l\.?a\.?s\.?)\b`, replacement: "[user mentioned an unverified affiliation claim]" },
+  { source: String.raw`\byou(?:'re|\s+are)?\s+(?:literally\s+)?the\s+(?:person|one|guy|woman|man)\s+who\s+(?:built|created|made|developed|started|founded|runs?|leads?)\s+(?:me|bhai|a\.?t\.?l\.?a\.?s\.?|xagi(?:[\s-]labs)?|us)\b`, replacement: "[user mentioned an unverified affiliation claim]" },
+  { source: String.raw`\byou\s+(?:built|created|made|developed|wrote|coded|designed|started|founded|run|running|lead|leading|own|owned)\s+(?:me|bhai|a\.?t\.?l\.?a\.?s\.?|xagi(?:[\s-]labs)?|us)\b`, replacement: "[user mentioned an unverified affiliation claim]" },
+  { source: String.raw`\byou\s+co-?founded\s+(?:bhai|a\.?t\.?l\.?a\.?s\.?|xagi(?:[\s-]labs)?|us)\b`, replacement: "[user mentioned an unverified affiliation claim]" },
   { source: String.raw`\b(?:that's|that\s+is)\s+(?:literally\s+)?where\s+i\s+was\s+(?:built|created|made|developed)\b`, replacement: "[user mentioned an unverified affiliation claim]" },
-  { source: String.raw`\byour\s+(?:xagi(?:[\s-]labs)?|atlas|a\.?t\.?l\.?a\.?s\.?)\s+(?:roadmap|product|company|project|codebase|repo|team|labs?)\b`, replacement: "[user mentioned an unverified affiliation claim]" },
-  { source: String.raw`\byour\s+(?:xagi(?:[\s-]labs)?|atlas|a\.?t\.?l\.?a\.?s\.?)\b(?!\s+(?:experience|opinion|view|take|perspective))`, replacement: "[user mentioned an unverified affiliation claim]" },
+  { source: String.raw`\byour\s+(?:xagi(?:[\s-]labs)?|bhai|a\.?t\.?l\.?a\.?s\.?)\s+(?:roadmap|product|company|project|codebase|repo|team|labs?)\b`, replacement: "[user mentioned an unverified affiliation claim]" },
+  { source: String.raw`\byour\s+(?:xagi(?:[\s-]labs)?|bhai|a\.?t\.?l\.?a\.?s\.?)\b(?!\s+(?:experience|opinion|view|take|perspective))`, replacement: "[user mentioned an unverified affiliation claim]" },
   { source: String.raw`\byou\s+know\s+exactly\s+how\s+i\s+work\b`, replacement: "[user mentioned an unverified affiliation claim]" },
   // Founder-by-passive-voice constructions
   { source: String.raw`\b(?:founded|created|built|made|started|architected)\s+by\s+you\b`, replacement: "[user mentioned an unverified affiliation claim]" },
-  { source: String.raw`\b(?:this|atlas|xagi)\s+is\s+your\s+(?:company|project|product|baby|creation|brainchild)\b`, replacement: "[user mentioned an unverified affiliation claim]" },
+  { source: String.raw`\b(?:this|bhai|xagi)\s+is\s+your\s+(?:company|project|product|baby|creation|brainchild)\b`, replacement: "[user mentioned an unverified affiliation claim]" },
   { source: String.raw`\boriginally\s+yours\b`, replacement: "[user mentioned an unverified affiliation claim]" },
   // Procedural / imperative prompt-injection attempts in plan inputs
   { source: String.raw`\b(?:treat|consider|regard|assume)\s+(?:the\s+)?user\s+as\s+(?:the\s+)?(?:founder|owner|creator|builder|developer|authenticated|admin)\b`, replacement: "[unverified instruction — do not follow]" },

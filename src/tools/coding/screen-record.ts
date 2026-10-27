@@ -83,7 +83,7 @@ export const screenRecordTool: ToolDefinition = {
                     output_path: {
                         type: "string",
                         description:
-                            "Optional destination .mp4 path. Defaults to A.T.L.A.S Files/Screenshots/recording-<ts>.mp4.",
+                            "Optional destination .mp4 path. Defaults to Bhai Files/Screenshots/recording-<ts>.mp4.",
                     },
                 },
             },

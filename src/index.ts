@@ -67,7 +67,7 @@ const PRIMARY_CHANNEL = process.env.PRIMARY_CHANNEL || "telegram";
 
 console.log(`
   ╔══════════════════════════════════════╗
-  ║       🤖 A.T.L.A.S v0.2.0            ║
+  ║       🤖 Bhai v0.2.0            ║
   ║   Personal AI Agent · All Systems    ║
   ╚══════════════════════════════════════╝
 `);
@@ -333,7 +333,7 @@ async function boot() {
         }
     } catch (err) {
         console.warn("\n⚠️ [BOOT] FAILED TO INITIALIZE MEMORY DATABASE");
-        console.warn("⚠️ Native module (better-sqlite3) could not be loaded. A.T.L.A.S will run without memory persistence.");
+        console.warn("⚠️ Native module (better-sqlite3) could not be loaded. Bhai will run without memory persistence.");
         console.warn("   Error: " + (err as Error).message + "\n");
     }
 
@@ -365,7 +365,7 @@ async function boot() {
         Promise.resolve().then(() => initGoogleAPI()).catch(e => console.warn("[BOOT] Google API:", (e as Error).message)),
         // Spotify (load saved tokens)
         Promise.resolve().then(() => initSpotify()).catch(e => console.warn("[BOOT] Spotify:", (e as Error).message)),
-        // Overlay chat (desktop "Type to A.T.L.A.S")
+        // Overlay chat (desktop "Type to Bhai")
         Promise.resolve().then(() => initOverlayChat(llm)).catch(e => console.warn("[BOOT] Overlay:", (e as Error).message)),
         // Email channel (IMAP listener + SMTP sender)
         initEmail(llm, config).catch(e => console.warn("[BOOT] Email:", (e as Error).message)),
@@ -623,7 +623,7 @@ async function boot() {
                     const { intentFromThought } = await import("./proactive/intent-from-thought.js");
                     obs.enqueue(intentFromThought(message, { hourNow: new Date().getHours() }));
                     if (getSubscriptionCount() > 0) {
-                        sendPushNotification("A.T.L.A.S", message.substring(0, 180)).catch(() => {});
+                        sendPushNotification("Bhai", message.substring(0, 180)).catch(() => {});
                     }
                     return;
                 }
@@ -657,7 +657,7 @@ async function boot() {
                     console.log(`proactive dispatch failed (${c}):`, (err as Error).message);
                 });
                 if (getSubscriptionCount() > 0) {
-                    sendPushNotification("A.T.L.A.S", message.substring(0, 180)).catch(() => {});
+                    sendPushNotification("Bhai", message.substring(0, 180)).catch(() => {});
                 }
             } catch (err) {
                 console.log("[proactive] Composer fallback also failed — staying silent:", (err as Error).message);
@@ -1118,7 +1118,7 @@ async function boot() {
             },
         });
     } else {
-        console.log(`✅ A.T.L.A.S online (Telegram disabled)`);
+        console.log(`✅ Bhai online (Telegram disabled)`);
         console.log(`   Tools   : ${toolNames.join(", ")}`);
         console.log(`   Configure Telegram in the Channels tab to enable.\n`);
     }

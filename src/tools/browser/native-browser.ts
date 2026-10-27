@@ -230,7 +230,7 @@ export function recordHoverFailure(url: string, selector: string): void {
 
 /**
  * Validate JavaScript code before passing to page.evaluate().
- * Blocks network exfiltration, ATLAS internals access, eval, __proto__.
+ * Blocks network exfiltration, Bhai internals access, eval, __proto__.
  * Throws if blocked, returns original code if clean.
  */
 export function validateJsCode(code: string): string {
@@ -248,7 +248,7 @@ export function obfuscateInjectedVariable(name: string): string {
 }
 
 /**
- * Rewrite all ATLAS internal variable references in a JS code string
+ * Rewrite all Bhai internal variable references in a JS code string
  * to their obfuscated session-scoped equivalents.
  */
 export function rewriteInternalVars(code: string): string {

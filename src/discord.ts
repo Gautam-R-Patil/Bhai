@@ -87,7 +87,7 @@ function buildResultEmbed(
         }
     }
 
-    embed.setFooter({ text: "A.T.L.A.S" });
+    embed.setFooter({ text: "Bhai" });
     return embed;
 }
 
@@ -259,7 +259,7 @@ async function runInThread(
         thread = await (channel as TextChannel).threads.create({
             name: threadName.substring(0, 100),
             autoArchiveDuration: 1440, // 24 hours
-            reason: `A.T.L.A.S ${embedTitle}`,
+            reason: `Bhai ${embedTitle}`,
         });
     } catch (err) {
         console.warn("[DISCORD] Thread creation failed:", (err as Error).message);
@@ -352,7 +352,7 @@ async function runInThread(
 function buildSlashCommands(): SlashCommandBuilder[] {
     const ask = new SlashCommandBuilder()
         .setName("ask")
-        .setDescription("Ask A.T.L.A.S anything")
+        .setDescription("Ask Bhai anything")
         .addStringOption(option =>
             option.setName("message")
                 .setDescription("Your message or question")
@@ -373,17 +373,17 @@ function buildSlashCommands(): SlashCommandBuilder[] {
         .setDescription("Start a long-running task")
         .addStringOption(option =>
             option.setName("description")
-                .setDescription("What you want A.T.L.A.S to do")
+                .setDescription("What you want Bhai to do")
                 .setRequired(true),
         ) as SlashCommandBuilder;
 
     const status = new SlashCommandBuilder()
         .setName("status")
-        .setDescription("Check A.T.L.A.S status and running tasks") as SlashCommandBuilder;
+        .setDescription("Check Bhai status and running tasks") as SlashCommandBuilder;
 
     const help = new SlashCommandBuilder()
         .setName("help")
-        .setDescription("List available A.T.L.A.S commands") as SlashCommandBuilder;
+        .setDescription("List available Bhai commands") as SlashCommandBuilder;
 
     return [ask, research, task, status, help];
 }
@@ -486,7 +486,7 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
 
         const userId = interaction.user.id;
         if (!isAllowed(userId)) {
-            await interaction.reply({ content: "You are not authorized to use A.T.L.A.S.", ephemeral: true });
+            await interaction.reply({ content: "You are not authorized to use Bhai.", ephemeral: true });
             return;
         }
         if (!discordRateLimitAllow(userId)) {
@@ -565,7 +565,7 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
                         : "No active tasks";
 
                     const embed = buildResultEmbed(
-                        "A.T.L.A.S Status",
+                        "Bhai Status",
                         "All systems operational.",
                         [
                             { name: "Uptime", value: uptimeStr, inline: true },
@@ -580,15 +580,15 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
 
                 case "help": {
                     const embed = buildResultEmbed(
-                        "A.T.L.A.S Commands",
+                        "Bhai Commands",
                         "Here are the available commands:",
                         [
-                            { name: "/ask <message>", value: "Ask A.T.L.A.S anything -- general questions, tool use, and more" },
+                            { name: "/ask <message>", value: "Ask Bhai anything -- general questions, tool use, and more" },
                             { name: "/research <topic>", value: "Start a deep research task (runs in a thread with progress updates)" },
                             { name: "/task <description>", value: "Start a long-running task (runs in a thread with progress updates)" },
-                            { name: "/status", value: "Check A.T.L.A.S uptime and running tasks" },
+                            { name: "/status", value: "Check Bhai uptime and running tasks" },
                             { name: "/help", value: "Show this help message" },
-                            { name: "@mention", value: "Mention A.T.L.A.S in any channel or send a DM to chat" },
+                            { name: "@mention", value: "Mention Bhai in any channel or send a DM to chat" },
                         ],
                     );
 

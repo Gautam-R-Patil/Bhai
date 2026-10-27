@@ -1,4 +1,4 @@
-; A.T.L.A.S Overlay Chat — AutoHotkey v2
+; Bhai Overlay Chat — AutoHotkey v2
 ; Win+J = toggle, Escape = dismiss
 ; Windows equivalent of atlas-hotkey.lua (Hammerspoon)
 ;
@@ -98,4 +98,4 @@ ToggleAtlas() {
 
 ; ── Startup Message ────────────────────────────
 
-TrayTip("A.T.L.A.S overlay: Alt+Space (toggle), Esc (hide)", "A.T.L.A.S", 1)
+TrayTip("Bhai overlay: Alt+Space (toggle), Esc (hide)", "Bhai", 1)

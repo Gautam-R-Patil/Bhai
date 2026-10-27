@@ -27,11 +27,11 @@ export interface AgentCard {
 const ATLAS_VERSION = "0.2.0";
 const MAX_CONCURRENT_TASKS = 5;
 
-/** Returns ATLAS's Agent Card — a JSON capability descriptor. */
+/** Returns Bhai's Agent Card — a JSON capability descriptor. */
 export function getAgentCard(): AgentCard {
     const port = process.env.OVERLAY_PORT || "18792";
     return {
-        name: "A.T.L.A.S",
+        name: "Bhai",
         description: "Autonomous personal AI agent with research, coding, browser automation, system control, and memory capabilities.",
         version: ATLAS_VERSION,
         capabilities: ["research", "coding", "browser", "system", "memory"],

@@ -3,7 +3,7 @@
 // See LICENSE.md for details.
 
 // ── Document Schemas ────────────────────────────
-// Canonical document shapes for ATLAS. JSON Resume schema for CVs
+// Canonical document shapes for Bhai. JSON Resume schema for CVs
 // (https://jsonresume.org) plus a lightweight GeneralDocument schema for
 // everything else (cover letters, reports, letters, invoices).
 

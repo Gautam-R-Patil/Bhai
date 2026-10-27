@@ -1,5 +1,5 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
-// ATLAS Browser Bridge — Popup UI (redesigned)
+// Bhai Browser Bridge — Popup UI (redesigned)
 
 const tabsList    = document.getElementById('tabsList');
 const connPill    = document.getElementById('connPill');
@@ -78,7 +78,7 @@ function setConnected(state, label) {
   btnSend.disabled = !on;
   btnPage.disabled = !on;
   btnSel.disabled = !on;
-  msgInput.placeholder = on ? 'Send a message to ATLAS…' : 'Not connected to ATLAS';
+  msgInput.placeholder = on ? 'Send a message to Bhai…' : 'Not connected to Bhai';
 }
 
 // ── Set agent busy/idle state ────────────────
@@ -103,7 +103,7 @@ function setAgentBusy(busy, action) {
   }
 }
 
-// ── Show ATLAS response ──────────────────────
+// ── Show Bhai response ──────────────────────
 
 function showResponse(text) {
   if (!text) return;
@@ -131,7 +131,7 @@ function renderTabs(tabs) {
     </div>`;
   }).join('');
 
-  // Click tab to switch ATLAS focus (sends a message)
+  // Click tab to switch Bhai focus (sends a message)
   tabsList.querySelectorAll('.tab-item').forEach(el => {
     el.addEventListener('click', () => {
       const idx = parseInt(el.dataset.idx);

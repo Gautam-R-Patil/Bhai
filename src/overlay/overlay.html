@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>A.T.L.A.S</title>
+  <title>Bhai</title>
   <script>
     // Loopback auth token, injected server-side when this page is served (the
     // server replaces %%ATLAS_LOCAL_TOKEN%% with the real token). The WebSocket
@@ -2204,7 +2204,7 @@
     </div>
   </div>
 
-  <div id="container" role="main" aria-label="A.T.L.A.S overlay">
+  <div id="container" role="main" aria-label="Bhai overlay">
     <!-- Task Drawer -->
     <button id="task-drawer-toggle" aria-label="Toggle active tasks drawer" aria-expanded="false" aria-controls="task-drawer" tabindex="0">
       Tasks <span class="task-count-badge empty" id="task-count-badge">0</span>
@@ -2224,14 +2224,14 @@
     </div>
 
     <div id="input-box-wrapper" style="position: relative; z-index: 10;">
-    <div id="input-box" role="search" aria-label="Message A.T.L.A.S">
+    <div id="input-box" role="search" aria-label="Message Bhai">
       <div class="blob b1" id="b1" aria-hidden="true"></div>
       <div class="blob b2" id="b2" aria-hidden="true"></div>
       <div class="blob b3" id="b3" aria-hidden="true"></div>
       <div class="icon" id="icon" role="status" aria-label="Agent status: idle" aria-live="polite">✦</div>
       <div id="input-wrapper">
         <!-- @ mention chips are prepended here dynamically -->
-        <input type="text" id="input" placeholder="Ask A.T.L.A.S. (type @ to mention)" autocomplete="off" autofocus
+        <input type="text" id="input" placeholder="Ask Bhai. (type @ to mention)" autocomplete="off" autofocus
           spellcheck="false" aria-label="Message input" role="combobox" aria-expanded="false" aria-controls="mention-picker" aria-haspopup="listbox" />
       </div>
         <button id="mic-btn" title="Voice input (single utterance)" aria-label="Voice input" tabindex="0">
@@ -2259,7 +2259,7 @@
     </div>
     <div id="progress" role="status" aria-live="polite" aria-label="Agent progress"></div>
     <div id="notification-box" role="alert" aria-live="assertive">
-      <div id="notification-label">✦ A.T.L.A.S</div>
+      <div id="notification-label">✦ Bhai</div>
       <div id="notification-text"></div>
       <div class="notif-actions">
         <button class="notif-action-btn reply-btn" onclick="replyToNotification()" aria-label="Reply to notification" tabindex="0">Reply</button>
@@ -2319,7 +2319,7 @@
       function setAgentBusy(busy) {
         replyBox.setAttribute('aria-busy', busy ? 'true' : 'false');
         icon.setAttribute('aria-label', busy ? 'Agent status: processing' : 'Agent status: idle');
-        if (busy) announceToSR('A.T.L.A.S is processing your request');
+        if (busy) announceToSR('Bhai is processing your request');
       }
 
       // ── Task Drawer ──
@@ -2629,7 +2629,7 @@
           input.value = '';
           input.disabled = false;
           waiting = false;
-          announceToSR(msg.type === 'error' ? 'Error received from A.T.L.A.S' : 'Response received from A.T.L.A.S');
+          announceToSR(msg.type === 'error' ? 'Error received from Bhai' : 'Response received from Bhai');
 
           // Render interactive elements
           clearInteractive();
@@ -2669,7 +2669,7 @@
           replyBox.classList.add('visible');
         }
         else if (msg.type === 'placeholder') {
-          input.placeholder = msg.text || 'Ask A.T.L.A.S…';
+          input.placeholder = msg.text || 'Ask Bhai…';
         }
         else if (msg.type === 'notification') {
           if (notifTimer) { clearTimeout(notifTimer); notifTimer = null; }
@@ -2711,7 +2711,7 @@
           micBtn.classList.remove('listening');
           isListening = false;
           if (msg.text) {
-            input.placeholder = 'Ask A.T.L.A.S…';
+            input.placeholder = 'Ask Bhai…';
             input.value = msg.text;
             send();
           } else {
@@ -2732,7 +2732,7 @@
             micBtn.classList.remove('listening');
             isListening = false;
             input.placeholder = msg.error || 'Voice error';
-            setTimeout(() => { input.placeholder = 'Ask A.T.L.A.S…'; }, 2000);
+            setTimeout(() => { input.placeholder = 'Ask Bhai…'; }, 2000);
           }
         }
         // ── Live Voice Mode status ──

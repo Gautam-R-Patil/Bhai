@@ -38,14 +38,14 @@ describe("tokenOverlap — echo detection", () => {
     });
 
     it("genuine new user speech has low overlap (< threshold)", () => {
-        // ATLAS said: "It's 26 degrees and partly cloudy"
+        // Bhai said: "It's 26 degrees and partly cloudy"
         // User follow-up: "what about tomorrow"
         expect(tokenOverlap("what about tomorrow", "its 26 degrees and partly cloudy")).toBeLessThan(0.3);
     });
 
-    it("the bug case: user says 'Yeah' + ATLAS saying 'opening WhatsApp now' echoes", () => {
+    it("the bug case: user says 'Yeah' + Bhai saying 'opening WhatsApp now' echoes", () => {
         // The log showed pending = "Yeah, opening WhatsApp now." (28 chars)
-        // ATLAS just said: "Yeah, opening WhatsApp now." (27 chars, identical)
+        // Bhai just said: "Yeah, opening WhatsApp now." (27 chars, identical)
         // Token overlap is 100%; echo filter catches it.
         const atlasSaid = normalizeForEcho("Yeah, opening WhatsApp now.");
         const userHeard = normalizeForEcho("Yeah, opening WhatsApp now.");

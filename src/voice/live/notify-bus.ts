@@ -39,7 +39,7 @@ export function notifyLiveVoiceIfActive(text: string): boolean {
         // Prefix makes the provenance obvious to the model so it speaks
         // the result casually instead of reading the raw payload verbatim.
         session.sendTextInput(
-            `[ATLAS SYSTEM — background task update, speak this to the user conversationally]\n${text}`,
+            `[BHAI SYSTEM — background task update, speak this to the user conversationally]\n${text}`,
         );
         return true;
     } catch {

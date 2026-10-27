@@ -1,13 +1,13 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
-// ATLAS Browser Bridge — Background Service Worker
-// Maintains a WebSocket connection to the ATLAS agent and routes
-// commands between ATLAS and the user's Chrome browser.
+// Bhai Browser Bridge — Background Service Worker
+// Maintains a WebSocket connection to the Bhai agent and routes
+// commands between Bhai and the user's Chrome browser.
 // Also provides overlay bridge: context menus, page capture, and
-// forwarding user messages/selections/page context to the ATLAS overlay chat.
+// forwarding user messages/selections/page context to the Bhai overlay chat.
 
 // ── State ────────────────────────────────────
 
-// Bridge socket (port 18800): command/response channel that lets ATLAS drive
+// Bridge socket (port 18800): command/response channel that lets Bhai drive
 // Chrome. Auth via first message {type:"auth", token}.
 let ws = null;
 let authenticated = false;
@@ -73,7 +73,7 @@ function connect() {
   }
 
   ws.onopen = () => {
-    console.log("[ATLAS Bridge] Connected to ATLAS bridge");
+    console.log("[ATLAS Bridge] Connected to Bhai bridge");
     connectionAttempts = 0;
     reconnectDelay = 1000;
     ws.send(JSON.stringify({ type: "auth", token: authToken }));
@@ -111,7 +111,7 @@ function connect() {
 
   ws.onerror = () => {
     // The WS onerror event has no useful message; the real reason appears in onclose
-    console.warn("[ATLAS Bridge] Bridge WebSocket error (ATLAS may not be running yet)");
+    console.warn("[ATLAS Bridge] Bridge WebSocket error (Bhai may not be running yet)");
   };
 }
 
@@ -147,7 +147,7 @@ function connectOverlay() {
   }
 
   overlayWs.onopen = () => {
-    console.log("[ATLAS Bridge] Connected to ATLAS overlay");
+    console.log("[ATLAS Bridge] Connected to Bhai overlay");
     overlayReconnectDelay = 1000;
   };
 
@@ -264,7 +264,7 @@ function logAction(type, detail) {
   chrome.runtime.sendMessage({ type: 'atlas_action', entry }).catch(() => {});
 }
 
-// ── Send Message to ATLAS Overlay ────────────
+// ── Send Message to Bhai Overlay ────────────
 // Sends a chat message through the WebSocket to the overlay chat server.
 // Messages include meta.source = "chrome-extension" so the server can
 // detect browser context and prepend URL info for the agent.
@@ -289,7 +289,7 @@ function sendToAtlas(text, meta = {}) {
   return true;
 }
 
-// ── Handle Messages from ATLAS Server ────────
+// ── Handle Messages from Bhai Server ────────
 
 // Bridge socket (18800): auth handshake + command/response traffic only.
 function handleServerMessage(msg) {
@@ -321,7 +321,7 @@ function handleServerMessage(msg) {
     return;
   }
 
-  // Command from ATLAS (Browser Bridge mode)
+  // Command from Bhai (Browser Bridge mode)
   if (msg.id && msg.type) {
     handleCommand(msg);
   }
@@ -366,13 +366,13 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: "atlas-ask-page",
-      title: "Ask ATLAS about this page",
+      title: "Ask Bhai about this page",
       contexts: ["page"],
     });
 
     chrome.contextMenus.create({
       id: "atlas-ask-selection",
-      title: "Ask ATLAS about this",
+      title: "Ask Bhai about this",
       contexts: ["selection"],
     });
 
@@ -1618,7 +1618,7 @@ async function _autoDiscover() {
     const config = await res.json();
 
     if (config.token && config.wsUrl) {
-      console.log("[ATLAS Bridge] Auto-discovered ATLAS server");
+      console.log("[ATLAS Bridge] Auto-discovered Bhai server");
       applyDiscovery(config);
       return true;
     }
@@ -1719,7 +1719,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  // ── Overlay Bridge: send page context to ATLAS ──
+  // ── Overlay Bridge: send page context to Bhai ──
 
   if (msg.type === "send_page") {
     capturePageContext().then((ctx) => {
@@ -1777,7 +1777,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 // ── Connection bootstrap ─────────────────────
-// Discover first, always. The bridge token rotates per ATLAS session, so a
+// Discover first, always. The bridge token rotates per Bhai session, so a
 // cached token can be stale; a fresh /discover yields both the current bridge
 // token and the overlay localToken and brings up both sockets. Cached creds
 // are only a last-resort fallback when discovery can't reach the server.

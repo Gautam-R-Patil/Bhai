@@ -11,7 +11,7 @@ import fs from "node:fs";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 
-// ── ATLAS Workspace Directory ────────────────────────
+// ── Bhai Workspace Directory ────────────────────────
 // This is where all bot-generated files should be saved.
 // Set by the desktop installer during setup.
 
@@ -25,8 +25,8 @@ function getAtlasWorkspace(): string {
     // Priority 2: Default locations based on OS
     const homeDir = os.homedir();
     const defaultLocations = [
-        path.join(homeDir, "Desktop", "A.T.L.A.S Files"),
-        path.join(homeDir, "Documents", "A.T.L.A.S Files"),
+        path.join(homeDir, "Desktop", "Bhai Files"),
+        path.join(homeDir, "Documents", "Bhai Files"),
         path.join(homeDir, ".atlas", "files"),
     ];
 
@@ -37,10 +37,10 @@ function getAtlasWorkspace(): string {
     }
 
     // Priority 3: Create default directory
-    const defaultDir = path.join(homeDir, "A.T.L.A.S Files");
+    const defaultDir = path.join(homeDir, "Bhai Files");
     try {
         fs.mkdirSync(defaultDir, { recursive: true });
-        console.log(`📁 Created ATLAS files directory: ${defaultDir}`);
+        console.log(`📁 Created Bhai files directory: ${defaultDir}`);
         return defaultDir;
     } catch {
         // Fallback to temp directory
@@ -52,7 +52,7 @@ function getAtlasWorkspace(): string {
 let _workspacePath: string | null = null;
 
 /**
- * Get the ATLAS workspace directory where bot-generated files should be saved.
+ * Get the Bhai workspace directory where bot-generated files should be saved.
  * This is the user-facing folder for all outputs (images, documents, downloads, etc.)
  */
 export function getWorkspaceDir(): string {

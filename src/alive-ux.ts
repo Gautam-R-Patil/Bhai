@@ -4,7 +4,7 @@
 
 // ── Alive UX System ──────────────────────────────
 // Centralized personality, phrasing, and dynamic responses that make
-// A.T.L.A.S feel alive, human, and genuinely present — NOT like a
+// Bhai feel alive, human, and genuinely present — NOT like a
 // pre-programmed system uttering canned responses.
 //
 // Key principles:

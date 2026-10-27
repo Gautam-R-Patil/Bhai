@@ -3,7 +3,7 @@
 // See LICENSE.md for details.
 
 // ── Meta-Harness: Dimension Registry ──────────────────────────────────────
-// Catalogs every tunable "harness dimension" in ATLAS — numeric weights,
+// Catalogs every tunable "harness dimension" in Bhai — numeric weights,
 // thresholds, k-values, phase ratios, and role prompts — as live get/set
 // descriptors. The active harness-config.json overrides defaults at boot.
 // All reads use getDimensionValue(id) ?? hardcodedDefault so the system
@@ -253,7 +253,7 @@ export function persistActiveConfig(candidateId: string): void {
 
 /** Return a human-readable summary of the registry for use in proposer prompts. */
 export function formatRegistrySummary(): string {
-    const lines: string[] = ["# ATLAS Harness Dimensions\n"];
+    const lines: string[] = ["# Bhai Harness Dimensions\n"];
     const groups: Record<string, HarnessDimension[]> = {};
     for (const dim of _registry.values()) {
         const group = dim.id.split(".")[0];

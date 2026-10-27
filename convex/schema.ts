@@ -1,5 +1,5 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
-// Convex database schema for A.T.L.A.S account management and store.
+// Convex database schema for Bhai account management and store.
 
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
@@ -50,7 +50,7 @@ export default defineSchema({
     .index("by_key", ["key"]),
 
   // ══════════════════════════════════════════════════════════════════════════
-  // A.T.L.A.S STORE - Marketplace for Skills, MCP Servers, and Tools
+  // Bhai STORE - Marketplace for Skills, MCP Servers, and Tools
   // ══════════════════════════════════════════════════════════════════════════
 
   // ── Developers (must be approved before publishing) ──────────────────────
@@ -107,7 +107,7 @@ export default defineSchema({
 
     version: v.string(),                 // Semver: "1.0.0"
     changelog: v.optional(v.string()),
-    minAtlasVersion: v.optional(v.string()), // Minimum A.T.L.A.S version required
+    minAtlasVersion: v.optional(v.string()), // Minimum Bhai version required
 
     // File references (Convex storage)
     contentFileId: v.id("_storage"),     // Main content (skill.md, bundle.zip)

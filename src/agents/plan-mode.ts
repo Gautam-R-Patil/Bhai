@@ -11,7 +11,7 @@
 // Exit is triggered by calling `exit_plan_mode` (with a plan body), which
 // flips the state back to "act" and returns the plan to the UI for display.
 //
-// ATLAS is single-user per-process, so state lives at module scope. If/when
+// Bhai is single-user per-process, so state lives at module scope. If/when
 // concurrent sessions ever matter, this becomes a Map<sessionId, State>.
 
 import fs from "node:fs";

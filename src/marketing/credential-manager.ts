@@ -63,7 +63,7 @@ export function removeCredential(key: string): void {
   const updated = lines.map((line) => {
     const trimmed = line.trim();
     if (trimmed.startsWith(`${key}=`)) {
-      return `# ${trimmed} (removed by ATLAS)`;
+      return `# ${trimmed} (removed by Bhai)`;
     }
     return line;
   });

@@ -51,8 +51,8 @@ export default function DeveloperSidebar({ displayName, status }: DeveloperSideb
       {/* Logo Header */}
       <div className="flex items-center justify-center h-16 border-b border-white/[0.08]">
         <Link href="/" className="flex items-center gap-3">
-          <img src="/logo.png" alt="A.T.L.A.S" className="w-8 h-8 rounded-lg" />
-          <span className="text-white font-semibold text-lg tracking-tight">A.T.L.A.S Dev</span>
+          <img src="/logo.png" alt="Bhai" className="w-8 h-8 rounded-lg" />
+          <span className="text-white font-semibold text-lg tracking-tight">Bhai Dev</span>
         </Link>
       </div>
 

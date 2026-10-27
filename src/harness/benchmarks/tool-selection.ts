@@ -21,7 +21,7 @@ interface SelectionCase {
     expectedCategories: string[];  // at least one must be selected
 }
 
-// Fixed ground-truth cases derived from ATLAS's tool categories
+// Fixed ground-truth cases derived from Bhai's tool categories
 const FIXED_CASES: SelectionCase[] = [
     { query: "search the web for latest news about AI", expectedCategories: ["search", "web"] },
     { query: "open chrome browser and navigate to google", expectedCategories: ["browser", "system"] },

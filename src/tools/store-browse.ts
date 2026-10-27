@@ -73,7 +73,7 @@ export const storeBrowse: ToolDefinition = {
         function: {
             name: "store_browse",
             description:
-                "Read-only view of the A.T.L.A.S marketplace: search items, list by type/category, look up a single item by slug, pull featured/trending lists, enumerate categories, or show the user's currently-installed items. Does NOT install or uninstall — users do that from the desktop UI.",
+                "Read-only view of the Bhai marketplace: search items, list by type/category, look up a single item by slug, pull featured/trending lists, enumerate categories, or show the user's currently-installed items. Does NOT install or uninstall — users do that from the desktop UI.",
             parameters: {
                 type: "object",
                 properties: {

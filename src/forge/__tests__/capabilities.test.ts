@@ -189,7 +189,7 @@ describe("isPathHardDenied", () => {
         expect(isPathHardDenied("/Users/x/.gnupg/private-keys-v1.d/key.key")).toBe(true);
     });
 
-    it("catches encrypted ATLAS source paths", () => {
+    it("catches encrypted Bhai source paths", () => {
         expect(isPathHardDenied("/Users/x/Desktop/ATLAS/src/agent.ts")).toBe(true);
         expect(isPathHardDenied("/Users/x/Desktop/ATLAS/native/index.js")).toBe(true);
         expect(isPathHardDenied("/Users/x/Desktop/ATLAS/prompts/identity.md")).toBe(true);

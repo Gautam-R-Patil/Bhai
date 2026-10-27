@@ -43,7 +43,7 @@ const dynamicToolNames = new Set<string>();
 //
 // Threat: a malicious actor (or another tool) that can write to
 // ~/.atlas/dynamic-tools/*.json could swap a tool's handler_code for an
-// arbitrary payload that auto-loads on next ATLAS boot. The verifier never
+// arbitrary payload that auto-loads on next Bhai boot. The verifier never
 // re-runs, the SAST never re-scans, and the user never re-approves — so
 // the only defense is a tamper-detection signature.
 //

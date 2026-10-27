@@ -460,7 +460,7 @@ function extractQuotedContext(message: WAMessage): string | null {
 
     // Truncate long quoted text
     const truncated = quotedText.length > 300 ? quotedText.substring(0, 300) + "..." : quotedText;
-    const sender = isFromMe ? "A.T.L.A.S (you)" : "the user";
+    const sender = isFromMe ? "Bhai (you)" : "the user";
 
     return `[Replying to ${sender}'s message: "${truncated}"]`;
 }
@@ -737,7 +737,7 @@ async function sendVoiceReply(jid: string, text: string, quotedMsg?: WAMessage):
 async function handleOTPVerification(jid: string, text: string, pushName: string | null | undefined): Promise<void> {
     const success = verifyOTP(jid, text.trim());
     if (success) {
-        await sendMessage(jid, "Verified! You are now registered as an owner of A.T.L.A.S. You have full access to all capabilities.");
+        await sendMessage(jid, "Verified! You are now registered as an owner of Bhai. You have full access to all capabilities.");
         console.log(`[WHATSAPP] Owner verified: ${jid} (${pushName || "unknown"})`);
     } else {
         await sendMessage(jid, "Invalid or expired code. Please try again.");
@@ -1654,7 +1654,7 @@ async function handleGroupMessage(
         const recentContext = recentMsgs.map(m => `${m.senderName}: ${m.content.substring(0, 150)}`).join("\n");
 
         const decisionResult = await llm.chat({
-            messages: [{ role: "user", content: `You are A.T.L.A.S in WhatsApp group "${group.name}".
+            messages: [{ role: "user", content: `You are Bhai in WhatsApp group "${group.name}".
 Recent conversation:
 ${recentContext}
 
@@ -1710,7 +1710,7 @@ async function respondInGroup(
         }
     } catch {}
 
-    const systemPrompt = `You are A.T.L.A.S participating in WhatsApp group "${group.name}".
+    const systemPrompt = `You are Bhai participating in WhatsApp group "${group.name}".
 ${group.description ? `Group description: ${group.description}` : ""}
 
 YOUR PERSONALITY IN THIS GROUP:
@@ -1731,7 +1731,7 @@ ${senderInfo?.messageCount ? `Active: ${senderInfo.messageCount} messages in gro
 ${groupMemories ? `GROUP MEMORIES:\n${groupMemories}` : ""}
 
 RECENT GROUP CONVERSATION:
-${recentMessages.map(m => `${m.isFromBot ? "A.T.L.A.S" : m.senderName}: ${m.content.substring(0, 200)}`).join("\n")}
+${recentMessages.map(m => `${m.isFromBot ? "Bhai" : m.senderName}: ${m.content.substring(0, 200)}`).join("\n")}
 
 Respond to ${senderName}'s latest message. Be concise, natural, and match the group energy.`;
 
@@ -1763,7 +1763,7 @@ Respond to ${senderName}'s latest message. Be concise, natural, and match the gr
             appendGroupMessage(groupJid, {
                 id: `bot_${Date.now()}`,
                 sender: socket?.user?.id || "bot",
-                senderName: "A.T.L.A.S",
+                senderName: "Bhai",
                 content: result.text,
                 contentType: "text",
                 timestamp: Date.now(),
@@ -2639,7 +2639,7 @@ export const whatsappGroupInfoTool: ToolDefinition = {
                 })),
             // Recent 15 messages for full context
             recentConversation: g.messageHistory.slice(-15).map(m => ({
-                from: m.isFromBot ? "A.T.L.A.S" : m.senderName,
+                from: m.isFromBot ? "Bhai" : m.senderName,
                 text: m.content.substring(0, 300),
                 time: new Date(m.timestamp).toISOString(),
             })),

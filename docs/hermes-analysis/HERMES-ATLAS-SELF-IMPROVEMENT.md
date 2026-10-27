@@ -2,7 +2,7 @@ All load-bearing claims verified: `incrementHits` exists but has zero callers (d
 
 ---
 
-# Hermes Self-Improvement vs. ATLAS — Architect's Verdict
+# Hermes Self-Improvement vs. Bhai — Architect's Verdict
 
 ## 1. How Hermes's self-improvement loop actually works
 
@@ -26,41 +26,41 @@ Hermes self-improves through **four pillars**, all anchored on a skill-centric m
 
 | Dimension | Winner | Why |
 |---|---|---|
-| **Trigger model** | **Hermes** | LLM-driven review fires same-day (every ~10 turns / ~10 tool-iters); ATLAS defers heavy LLM consolidation to 3am nightly (`reflection` every 15 turns; synthesis at night). ATLAS's per-turn `saveStrategy` is real but heuristic, not reflective authoring. |
-| **What's learned** | **ATLAS** | ATLAS learns 7+ classes (verified executable tools, skills, memory, prompts, reinforcement-scored strategies, self-model, harness-params) vs Hermes's 4 (skills, memory, user-model, trajectories). Strategy/self-model/harness axes have **no Hermes analog**. |
-| **Quality control (SAST/tests)** | **ATLAS** | Forge mandatorily executes 3-7 tests in a vm sandbox + scores vs `expected_kind` + diagnose-retry + HMAC + boot re-SAST — Hermes never *runs* a skill, and its SAST is **off by default** for agent-created skills. |
-| **Lifecycle / consolidation** | **Hermes** | Real activity-driven `active→stale→archived` + cross-skill umbrella consolidation. ATLAS has lifecycle only for Forge *tools* (and only via a safety-strike fence); its skills/addenda have **no staleness, and `incrementHits` is dead code**. |
-| **Cost model** | **Hermes** | Engineered prefix-cache reuse on the review fork (~26%, parity-tested) + aux-client isolation for the curator. ATLAS reflection builds fresh throwaway prompts (cheap in absolute terms but **no cache reuse**). |
-| **Closing-the-loop** | **Parity** | Both reuse artifacts. ATLAS injects addenda + task-learnings into context (guaranteed next-turn); Hermes reloads skills/memory next session via mandatory index. Each has a dead-on-arrival branch (Hermes trajectory off-by-default; ATLAS prompt-evolver + addenda telemetry unwired). |
-| **Safety / anti-poisoning** | **Parity** | Hermes: forked-thread tool-whitelist + explicit capture taxonomy + tar.gz snapshots. ATLAS: OS-kernel sandbox (sandbox-exec/seccomp/AppContainer) for executable tools + value-gate + secret-sanitizer. Different surfaces, comparable rigor. |
+| **Trigger model** | **Hermes** | LLM-driven review fires same-day (every ~10 turns / ~10 tool-iters); Bhai defers heavy LLM consolidation to 3am nightly (`reflection` every 15 turns; synthesis at night). Bhai's per-turn `saveStrategy` is real but heuristic, not reflective authoring. |
+| **What's learned** | **Bhai** | Bhai learns 7+ classes (verified executable tools, skills, memory, prompts, reinforcement-scored strategies, self-model, harness-params) vs Hermes's 4 (skills, memory, user-model, trajectories). Strategy/self-model/harness axes have **no Hermes analog**. |
+| **Quality control (SAST/tests)** | **Bhai** | Forge mandatorily executes 3-7 tests in a vm sandbox + scores vs `expected_kind` + diagnose-retry + HMAC + boot re-SAST — Hermes never *runs* a skill, and its SAST is **off by default** for agent-created skills. |
+| **Lifecycle / consolidation** | **Hermes** | Real activity-driven `active→stale→archived` + cross-skill umbrella consolidation. Bhai has lifecycle only for Forge *tools* (and only via a safety-strike fence); its skills/addenda have **no staleness, and `incrementHits` is dead code**. |
+| **Cost model** | **Hermes** | Engineered prefix-cache reuse on the review fork (~26%, parity-tested) + aux-client isolation for the curator. Bhai reflection builds fresh throwaway prompts (cheap in absolute terms but **no cache reuse**). |
+| **Closing-the-loop** | **Parity** | Both reuse artifacts. Bhai injects addenda + task-learnings into context (guaranteed next-turn); Hermes reloads skills/memory next session via mandatory index. Each has a dead-on-arrival branch (Hermes trajectory off-by-default; Bhai prompt-evolver + addenda telemetry unwired). |
+| **Safety / anti-poisoning** | **Parity** | Hermes: forked-thread tool-whitelist + explicit capture taxonomy + tar.gz snapshots. Bhai: OS-kernel sandbox (sandbox-exec/seccomp/AppContainer) for executable tools + value-gate + secret-sanitizer. Different surfaces, comparable rigor. |
 
 ---
 
 ## 3. Where Hermes is genuinely better (verified)
 
-1. **Prefix-cache reuse on the review fork.** The single non-obvious systems win. ATLAS `reflection.ts:653` builds a fresh "JSON-only summarizer" prompt with zero parent-cache inheritance.
-   → **ATLAS should adopt:** make `extractSummary`/`extractSignals` ride a *stable, frozen* shared reflection system prompt (no per-session id/timestamp) so the Convex/OpenRouter prefix-cache key is byte-identical run-to-run. **Effort: S.** Highest leverage-per-line.
+1. **Prefix-cache reuse on the review fork.** The single non-obvious systems win. Bhai `reflection.ts:653` builds a fresh "JSON-only summarizer" prompt with zero parent-cache inheritance.
+   → **Bhai should adopt:** make `extractSummary`/`extractSignals` ride a *stable, frozen* shared reflection system prompt (no per-session id/timestamp) so the Convex/OpenRouter prefix-cache key is byte-identical run-to-run. **Effort: S.** Highest leverage-per-line.
 
-2. **Real skill/addendum lifecycle + live usage telemetry.** Hermes's `active→stale→archived` is driven by an actually-incremented counter. ATLAS's equivalent — `convex/userAddenda.ts:248::incrementHits` — is **defined but never called** (verified zero callers); `systemContent.ts:284` injects addenda without recording hits. No `active→stale→archived` curator exists for skills/addenda (only a blind 7-day `discardStaleDrafts`).
-   → **ATLAS should adopt:** wire `incrementHits` from `systemContent.ts:284`, then add a nightly staleness sweep in `self-improvement-synthesis.ts` calling the already-existing `deactivateAddendum` on `hits==0` after N days. **Effort: S→M.**
+2. **Real skill/addendum lifecycle + live usage telemetry.** Hermes's `active→stale→archived` is driven by an actually-incremented counter. Bhai's equivalent — `convex/userAddenda.ts:248::incrementHits` — is **defined but never called** (verified zero callers); `systemContent.ts:284` injects addenda without recording hits. No `active→stale→archived` curator exists for skills/addenda (only a blind 7-day `discardStaleDrafts`).
+   → **Bhai should adopt:** wire `incrementHits` from `systemContent.ts:284`, then add a nightly staleness sweep in `self-improvement-synthesis.ts` calling the already-existing `deactivateAddendum` on `hits==0` after N days. **Effort: S→M.**
 
 3. **Cross-slug umbrella consolidation.** `runSelfImprovementSynthesis` merges only *within* a single slug; Hermes clusters siblings into one class-level skill with a 3-signal hallucination reconciler.
-   → **ATLAS should adopt:** a prefix-cluster pass + 3-strategy umbrella in the nightly synthesis. **Effort: M.**
+   → **Bhai should adopt:** a prefix-cluster pass + 3-strategy umbrella in the nightly synthesis. **Effort: M.**
 
-4. **Anti-poisoning capture discipline.** Hermes's "describe what the skill SHOULD contain, not actions you took" + "do NOT capture negative tool claims (they harden into refusals the agent cites against itself for months)" is a genuinely insightful prose guard. ATLAS's `value-gate.ts` prompt is generic; grep confirms no such taxonomy.
-   → **ATLAS should adopt:** port the taxonomy into `value-gate.ts` and the `auto-skill-creator` author prompt. **Effort: S.** Most transferable single insight.
+4. **Anti-poisoning capture discipline.** Hermes's "describe what the skill SHOULD contain, not actions you took" + "do NOT capture negative tool claims (they harden into refusals the agent cites against itself for months)" is a genuinely insightful prose guard. Bhai's `value-gate.ts` prompt is generic; grep confirms no such taxonomy.
+   → **Bhai should adopt:** port the taxonomy into `value-gate.ts` and the `auto-skill-creator` author prompt. **Effort: S.** Most transferable single insight.
 
-5. **SAST breadth.** `skills_guard.py` ships ~120 threat regexes (exfil/persistence/mining/supply-chain/secret-fingerprints/invisible-unicode-as-finding); ATLAS `critics.ts` has **exactly 19** (verified), all sandbox-escape-focused, and *strips* bidi without *flagging* it.
-   → **ATLAS should adopt:** broaden `REGEX_RULES` (additive) + emit bidi as a finding. **Effort: M.**
+5. **SAST breadth.** `skills_guard.py` ships ~120 threat regexes (exfil/persistence/mining/supply-chain/secret-fingerprints/invisible-unicode-as-finding); Bhai `critics.ts` has **exactly 19** (verified), all sandbox-escape-focused, and *strips* bidi without *flagging* it.
+   → **Bhai should adopt:** broaden `REGEX_RULES` (additive) + emit bidi as a finding. **Effort: M.**
 
 ---
 
-## 4. Where ATLAS is already better
+## 4. Where Bhai is already better
 
 These have **no Hermes equivalent**:
 
-- **Forge verifier rigor.** ATLAS *executes* synthesized artifacts: `parseEnvelope` (3-7 tests) → acorn compile → 19-rule SAST → vm-sandboxed test runs scored vs 8 `expected_kind` variants → `buildDiagnosePrompt` retry (3×/10×) → `envIsTestSelfBait` anti-cheat. Hermes never compiles or runs a skill — it cannot catch behavioral wrongness, only textual red flags.
-- **OS-kernel sandbox** (sandbox-exec/seccomp/AppContainer) for executable dynamic tools, with 3-strike capability-violation auto-archive. Hermes's artifacts are prose; it has no kernel-isolation analog because it needs none — but ATLAS auto-creates code that *runs*, a higher bar it clears.
+- **Forge verifier rigor.** Bhai *executes* synthesized artifacts: `parseEnvelope` (3-7 tests) → acorn compile → 19-rule SAST → vm-sandboxed test runs scored vs 8 `expected_kind` variants → `buildDiagnosePrompt` retry (3×/10×) → `envIsTestSelfBait` anti-cheat. Hermes never compiles or runs a skill — it cannot catch behavioral wrongness, only textual red flags.
+- **OS-kernel sandbox** (sandbox-exec/seccomp/AppContainer) for executable dynamic tools, with 3-strike capability-violation auto-archive. Hermes's artifacts are prose; it has no kernel-isolation analog because it needs none — but Bhai auto-creates code that *runs*, a higher bar it clears.
 - **HMAC tamper-detection + boot re-SAST + manifest sha256 recheck** defends the at-rest disk-swap threat. Hermes does not re-scan or signature-gate agent-created skills at load.
 - **Reinforcement-scored strategy library** (`task-learnings.ts`, `strategy-library.ts`): `timesReinforced`, running-average `successScore`, recency-weighted recall, **per-(app,element) click-offset learning** reused same-session. Hermes buries strategies as prose inside `SKILL.md` — no scored, queryable store.
 - **Self-model** (`self-model.ts`) — capability success tracking. No Hermes analog.
@@ -68,10 +68,10 @@ These have **no Hermes equivalent**:
 - **Prompt A/B evolution** (`prompt-evolver.ts`) with EMA metrics + native challenger comparison (currently under-wired, but the machinery exists; Hermes has *zero* prompt-variant machinery — grep-confirmed).
 - **Memory depth** — multiple specialized tiers (traits/identity/emotional/episodic/relationship) fed by reflection, vs Hermes's two-file `MEMORY.md`/`USER.md` model.
 
-**Correction to a common misconception:** ATLAS *does* auto-author skills — `auto-skill-creator.ts::maybeCreateSkill` (LLM-driven, wired at `swarm.ts:337` and `long-task.ts:601`, fires on ≥5-tool successes) plus the `self_improvement_draft` tool. The gap is not "no authoring" — it's that ATLAS authoring is **create-only** (dedup-skips an existing slug instead of patching), fires only on swarm/long-task (not ordinary single-agent turns), and batches to 3am.
+**Correction to a common misconception:** Bhai *does* auto-author skills — `auto-skill-creator.ts::maybeCreateSkill` (LLM-driven, wired at `swarm.ts:337` and `long-task.ts:601`, fires on ≥5-tool successes) plus the `self_improvement_draft` tool. The gap is not "no authoring" — it's that Bhai authoring is **create-only** (dedup-skips an existing slug instead of patching), fires only on swarm/long-task (not ordinary single-agent turns), and batches to 3am.
 
 ---
 
 ## 5. Bottom line
 
-Hermes's self-improvement is **better in three specific senses**: it learns *sooner* (same-day interval-gated review vs ATLAS's nightly batch), it learns *more cheaply* (engineered prefix-cache reuse — a real, parity-tested win ATLAS leaves on the table), and its skill artifacts live in a *real lifecycle* (activity-driven `active→stale→archived` + umbrella consolidation + a usage counter that is actually wired, unlike ATLAS's dead `incrementHits`). It is **not better overall**: ATLAS learns across a far broader set of artifact classes, and on the one artifact that actually executes code — dynamic tools — ATLAS's mandatory compile→SAST→sandboxed-test→retry→HMAC pipeline and OS-kernel sandbox are categorically more rigorous than Hermes's prompt-only, off-by-default skill scan. The honest read: **Hermes has the better *learning cadence and lifecycle management*; ATLAS has the better *verification, safety, and breadth*.** The four cheap wins worth porting are cache-reuse for reflection, wiring the dead `incrementHits` + staleness sweep, the anti-poisoning capture taxonomy, and cross-slug umbrella consolidation — none of which require abandoning ATLAS's verify-everything, kernel-sandbox stance.
+Hermes's self-improvement is **better in three specific senses**: it learns *sooner* (same-day interval-gated review vs Bhai's nightly batch), it learns *more cheaply* (engineered prefix-cache reuse — a real, parity-tested win Bhai leaves on the table), and its skill artifacts live in a *real lifecycle* (activity-driven `active→stale→archived` + umbrella consolidation + a usage counter that is actually wired, unlike Bhai's dead `incrementHits`). It is **not better overall**: Bhai learns across a far broader set of artifact classes, and on the one artifact that actually executes code — dynamic tools — Bhai's mandatory compile→SAST→sandboxed-test→retry→HMAC pipeline and OS-kernel sandbox are categorically more rigorous than Hermes's prompt-only, off-by-default skill scan. The honest read: **Hermes has the better *learning cadence and lifecycle management*; Bhai has the better *verification, safety, and breadth*.** The four cheap wins worth porting are cache-reuse for reflection, wiring the dead `incrementHits` + staleness sweep, the anti-poisoning capture taxonomy, and cross-slug umbrella consolidation — none of which require abandoning Bhai's verify-everything, kernel-sandbox stance.

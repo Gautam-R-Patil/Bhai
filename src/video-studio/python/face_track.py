@@ -3,7 +3,7 @@
 # This software is proprietary. Copying or reuse is prohibited.
 # See LICENSE.md for details.
 """
-face_track.py — MediaPipe face detection sidecar for ATLAS Video Studio.
+face_track.py — MediaPipe face detection sidecar for Bhai Video Studio.
 Usage: python face_track.py <videoPath> <outputJsonPath>
 Writes JSON: { videoPath, fps, width, height,
                frames: [{t, faces:[{x,y,w,h,score}]}] }

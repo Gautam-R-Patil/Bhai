@@ -5,7 +5,7 @@
 //
 // Calls the admin-gated /api/llm/audit Convex route; the server holds the
 // OpenRouter key and returns /v1/models + /v1/credits. This script diffs
-// the catalog against the model IDs ATLAS references in src/llm.ts and
+// the catalog against the model IDs Bhai references in src/llm.ts and
 // reports gaps + same-provider alternates.
 
 import { MODELS } from "../src/llm.js";
@@ -62,7 +62,7 @@ async function main() {
     const availableIds = new Set(models.map((m) => m.id));
     console.log(`Provider exposes ${models.length} models.\n`);
 
-    console.log("— ATLAS referenced models —");
+    console.log("— Bhai referenced models —");
     const referenced = Object.entries(MODELS) as Array<[string, string]>;
     const missing: Array<{ slot: string; id: string }> = [];
     for (const [slot, id] of referenced) {

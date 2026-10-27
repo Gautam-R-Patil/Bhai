@@ -1,5 +1,5 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
-// Native SIMD-accelerated harness optimization for A.T.L.A.S
+// Native SIMD-accelerated harness optimization for Bhai
 //
 // Provides fast, numerically stable operations for the Meta-Harness
 // optimization loop: composite score computation, candidate comparison,

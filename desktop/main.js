@@ -2,7 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-// ── A.T.L.A.S Desktop — Main Process ─────────────
+// ── Bhai Desktop — Main Process ─────────────
 // Electron main process: manages setup wizard, control panel,
 // bot child process, encryption, and IPC.
 
@@ -364,7 +364,7 @@ app.on("before-quit", () => {
 // Rendered by the ephemeral localhost:8844 server that catches Google's
 // redirect after the user consents. They see this in their BROWSER, not in
 // the Electron window — so it ships its own styles inline. Must match the
-// warm ATLAS aesthetic (coral/amber/cobalt orbs, Geist type, tinted
+// warm Bhai aesthetic (coral/amber/cobalt orbs, Geist type, tinted
 // shadows) since the previous version was a jarring dark-purple.
 function renderOAuthCallbackPage({ kind, error } = {}) {
     const success = kind !== "error";
@@ -373,8 +373,8 @@ function renderOAuthCallbackPage({ kind, error } = {}) {
     }[c]));
     const heading = success ? "You're connected" : "Couldn't connect";
     const sub = success
-        ? "Your Google account is now linked to A.T.L.A.S. You can close this tab."
-        : "We hit an issue during sign-in. Close this tab and try again from A.T.L.A.S.";
+        ? "Your Google account is now linked to Bhai. You can close this tab."
+        : "We hit an issue during sign-in. Close this tab and try again from Bhai.";
     const errBlock = success
         ? ""
         : `<p class="err-detail">${safeErr}</p>`;
@@ -396,7 +396,7 @@ function renderOAuthCallbackPage({ kind, error } = {}) {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>A.T.L.A.S — ${success ? "Connected" : "Sign-in error"}</title>
+<title>Bhai — ${success ? "Connected" : "Sign-in error"}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap">
@@ -416,7 +416,7 @@ body{
   display:flex; align-items:center; justify-content:center; padding:24px;
   -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
 }
-/* Colorful orb backdrop — same palette as the rest of A.T.L.A.S. */
+/* Colorful orb backdrop — same palette as the rest of Bhai. */
 .bg{position:fixed; inset:0; z-index:-1; overflow:hidden; background:var(--bg)}
 .orb{position:absolute; border-radius:50%; filter:blur(70px); will-change:transform}
 .o1{width:460px;height:460px;background:var(--coral);top:-140px;left:-140px;opacity:.62;animation:d1 9s ease-in-out infinite alternate}
@@ -588,7 +588,7 @@ function initProtection() {
                 if (actual !== expected) {
                     dialog.showErrorBox(
                         "Security Error",
-                        "Application files have been tampered with. Please reinstall A.T.L.A.S.\n\n" + COPYRIGHT
+                        "Application files have been tampered with. Please reinstall Bhai.\n\n" + COPYRIGHT
                     );
                     app.quit();
                     return;
@@ -770,7 +770,7 @@ function buildDetectionDeps() {
         googleTokens: path.join(app.getPath("userData"), "google-tokens"),
         botDir: path.join(process.resourcesPath || app.getAppPath(), "bot"),
         homeDir: app.getPath("home"),
-        workspace: path.join(app.getPath("desktop"), "A.T.L.A.S Files"),
+        workspace: path.join(app.getPath("desktop"), "Bhai Files"),
         storedVersion: path.join(app.getPath("userData"), "version.json"),
         slackInstalls: path.join(app.getPath("userData"), "slack-installs"),
         whatsappOwners: path.join(app.getPath("userData"), "whatsapp-users", "owners.json"),
@@ -999,7 +999,7 @@ function setupAutoUpdater() {
             const { Notification } = require("electron");
             if (Notification.isSupported()) {
                 new Notification({
-                    title: "A.T.L.A.S Update Available",
+                    title: "Bhai Update Available",
                     // Windows silently drops notifications with an empty body
                     body: `Version ${info.version} is ready to download`,
                     icon: path.join(__dirname, process.platform === "win32" ? "logo.ico" : "logo.png"),
@@ -1040,7 +1040,7 @@ function setupAutoUpdater() {
             const { Notification } = require("electron");
             if (Notification.isSupported()) {
                 new Notification({
-                    title: "A.T.L.A.S Update Ready",
+                    title: "Bhai Update Ready",
                     body: `Version ${info.version} is ready to install. Restart to update.`,
                     icon: path.join(__dirname, process.platform === "win32" ? "logo.ico" : "logo.png"),
                 }).show();
@@ -1481,7 +1481,7 @@ function createWizardWindow() {
             allowRunningInsecureContent: false,
             devTools: IS_DEV,
         },
-        title: "A.T.L.A.S Setup — © XAGI Labs",
+        title: "Bhai Setup — © XAGI Labs",
     });
 
     hardenBrowserWindow(mainWindow);
@@ -1508,7 +1508,7 @@ async function createPanelWindow() {
             allowRunningInsecureContent: false,
             devTools: IS_DEV,
         },
-        title: "A.T.L.A.S — © XAGI Labs",
+        title: "Bhai — © XAGI Labs",
     });
 
     hardenBrowserWindow(mainWindow);
@@ -1859,7 +1859,7 @@ function registerIPC() {
             height: 580,
             resizable: false,
             frame: true,
-            title: "A.T.L.A.S — Sign In",
+            title: "Bhai — Sign In",
             alwaysOnTop: true,
             webPreferences: {
                 preload: path.join(__dirname, "auth-preload.js"),
@@ -1907,9 +1907,9 @@ function registerIPC() {
         const { Notification } = require("electron");
         if (Notification.isSupported()) {
             // Windows silently drops notifications with an empty body — always provide one
-            const safeBody = body || "A.T.L.A.S notification";
+            const safeBody = body || "Bhai notification";
             new Notification({
-                title: title || "A.T.L.A.S",
+                title: title || "Bhai",
                 body: safeBody,
                 icon: path.join(__dirname, process.platform === "win32" ? "logo.ico" : "logo.png"),
             }).show();
@@ -2006,7 +2006,7 @@ function registerIPC() {
     // ── Settings: Choose workspace folder ──
     ipcMain.handle("settings:choose-workspace", async () => {
         const result = await dialog.showOpenDialog(mainWindow, {
-            title: "Choose A.T.L.A.S Workspace Folder",
+            title: "Choose Bhai Workspace Folder",
             properties: ["openDirectory", "createDirectory"],
         });
         if (result.canceled) return { canceled: true };
@@ -2470,7 +2470,7 @@ function registerIPC() {
                 }
             }
 
-            // Self-state — single row representing ATLAS's internal posture.
+            // Self-state — single row representing Bhai's internal posture.
             const ss = _safeGet(db,
                 `SELECT user_id, energy_level, engagement_mode, confidence_in_user_model, relationship_depth, recent_emotional_tone, updated_at
                  FROM self_state LIMIT 1`);
@@ -3297,7 +3297,7 @@ function registerIPC() {
     ipcMain.handle("setup:save-credentials", async (_, creds) => {
         try {
             const envLines = [
-                "# A.T.L.A.S — Environment Variables",
+                "# Bhai — Environment Variables",
                 "# Encrypted by XAGI Labs Secure Storage",
                 "",
                 `TELEGRAM_BOT_TOKEN=${creds.botToken}`,
@@ -3417,8 +3417,8 @@ function registerIPC() {
     // Setup: choose workspace folder
     ipcMain.handle("setup:choose-workspace", async () => {
         const result = await dialog.showOpenDialog(mainWindow, {
-            title: "Choose A.T.L.A.S Workspace Folder",
-            defaultPath: path.join(app.getPath("desktop"), "A.T.L.A.S Files"),
+            title: "Choose Bhai Workspace Folder",
+            defaultPath: path.join(app.getPath("desktop"), "Bhai Files"),
             properties: ["openDirectory", "createDirectory"],
         });
         if (result.canceled) return { canceled: true };
@@ -3433,16 +3433,16 @@ function registerIPC() {
             fs.writeFileSync(
                 readmePath,
                 [
-                    "📁 A.T.L.A.S Workspace",
+                    "📁 Bhai Workspace",
                     "═══════════════════════════════════════",
                     COPYRIGHT,
                     "",
-                    "This folder is managed by A.T.L.A.S AI.",
-                    "Files created by A.T.L.A.S (screenshots, downloads,",
+                    "This folder is managed by Bhai AI.",
+                    "Files created by Bhai (screenshots, downloads,",
                     "research, exports) are saved here.",
                     "",
                     "Feel free to organize or move files —",
-                    "A.T.L.A.S will always save new files to this folder.",
+                    "Bhai will always save new files to this folder.",
                     "",
                     "─── XAGI Labs ───",
                 ].join("\n")
@@ -3790,7 +3790,7 @@ function registerIPC() {
     // Setup: check if setup is complete
     ipcMain.handle("setup:is-complete", () => fs.existsSync(SETUP_FLAG));
 
-    // Setup: adaptive detection for the redesigned wizard (A.T.L.A.S wizard v2).
+    // Setup: adaptive detection for the redesigned wizard (Bhai wizard v2).
     // Runs all Phase A signal probes in parallel with per-signal timeouts.
     // Fail-safe: errors and timeouts never abort detection — every probe has a fallback.
     ipcMain.handle("setup:detect", async () => {
@@ -3918,7 +3918,7 @@ function registerIPC() {
     // Setup: return the file:// URL to a preview audio sample. Ship-v1 uses one
     // shared sample.wav for every voice; real per-voice samples are a follow-up.
     // Uses pathToFileURL so spaces and non-ASCII chars in the app path (common on
-    // macOS, e.g. "/Applications/A.T.L.A.S.app/...") are correctly URL-encoded.
+    // macOS, e.g. "/Applications/Bhai.app/...") are correctly URL-encoded.
     ipcMain.handle("setup:preview-voice", (_evt, backend, name) => {
         const wav = path.join(__dirname, "assets", "voices", "sample.wav");
         if (!fs.existsSync(wav)) return { ok: false, error: "sample.wav missing" };
@@ -4120,7 +4120,7 @@ function registerIPC() {
         version: app.getVersion(),
         copyright: COPYRIGHT,
         isDev: IS_DEV,
-        defaultWorkspace: path.join(app.getPath("desktop"), "A.T.L.A.S Files"),
+        defaultWorkspace: path.join(app.getPath("desktop"), "Bhai Files"),
         platform: process.platform,
     }));
 
@@ -4634,7 +4634,7 @@ function registerIPC() {
     });
 
     // F8: trusted Ed25519 publisher public keys, hex-encoded. Start with
-    // ATLAS's own key; add more as ecosystem partners are vetted. Stored as
+    // Bhai's own key; add more as ecosystem partners are vetted. Stored as
     // an env-overridable allowlist so we don't ship a hardcoded list that's
     // tedious to rotate.
     const TRUSTED_PUBLISHER_KEYS = (process.env.ATLAS_TRUSTED_PUBLISHER_KEYS || "")
@@ -5459,7 +5459,7 @@ function createTray() {
     const iconPath = path.join(__dirname, iconFile);
     const icon = nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 });
     tray = new Tray(icon);
-    tray.setToolTip("A.T.L.A.S — Personal AI Agent");
+    tray.setToolTip("Bhai — Personal AI Agent");
 
     const running = getBotStatus() === "running";
     const contextMenu = Menu.buildFromTemplate([
@@ -5490,12 +5490,12 @@ function createTray() {
         },
         { type: "separator" },
         {
-            label: "Start A.T.L.A.S",
+            label: "Start Bhai",
             click: () => { startBot(); updateTrayMenu(); },
             enabled: !running,
         },
         {
-            label: "Stop A.T.L.A.S",
+            label: "Stop Bhai",
             click: () => { stopBot(); setTimeout(updateTrayMenu, 2000); },
             enabled: running,
         },
@@ -5506,7 +5506,7 @@ function createTray() {
                 {
                     label: "Open Workspace",
                     click: () => {
-                        const workspace = store.get("workspace") || path.join(app.getPath("desktop"), "A.T.L.A.S Files");
+                        const workspace = store.get("workspace") || path.join(app.getPath("desktop"), "Bhai Files");
                         shell.openPath(workspace);
                     },
                 },
@@ -5639,12 +5639,12 @@ function updateTrayMenu() {
         },
         { type: "separator" },
         {
-            label: "Start A.T.L.A.S",
+            label: "Start Bhai",
             click: () => { startBot(); updateTrayMenu(); },
             enabled: !running,
         },
         {
-            label: "Stop A.T.L.A.S",
+            label: "Stop Bhai",
             click: () => { stopBot(); setTimeout(updateTrayMenu, 2000); },
             enabled: running,
         },
@@ -5655,7 +5655,7 @@ function updateTrayMenu() {
                 {
                     label: "Open Workspace",
                     click: () => {
-                        const workspace = store.get("workspace") || path.join(app.getPath("desktop"), "A.T.L.A.S Files");
+                        const workspace = store.get("workspace") || path.join(app.getPath("desktop"), "Bhai Files");
                         shell.openPath(workspace);
                     },
                 },
@@ -5748,7 +5748,7 @@ function updateTrayMenu() {
     tray.setContextMenu(contextMenu);
 
     // Update tooltip with status
-    let tooltip = running ? "A.T.L.A.S — Online" : "A.T.L.A.S — Offline";
+    let tooltip = running ? "Bhai — Online" : "Bhai — Offline";
     if (updateAvailable && !updateDownloaded) {
         tooltip += ` (v${updateAvailable.version} available)`;
     } else if (updateDownloaded) {
@@ -5816,9 +5816,9 @@ app.whenReady().then(async () => {
                 buttons: ["Deny", "Allow once", "Always allow"],
                 defaultId: 0,
                 cancelId: 0,
-                title: "A.T.L.A.S — Permission Request",
+                title: "Bhai — Permission Request",
                 message: `Grant ${permission} access to ${originHost}?`,
-                detail: "Only allow if you trust this site. ATLAS will remember your choice for 'Always allow'.",
+                detail: "Only allow if you trust this site. Bhai will remember your choice for 'Always allow'.",
             }).then(({ response }) => {
                 if (response === 2) {
                     grants[key] = "allow";

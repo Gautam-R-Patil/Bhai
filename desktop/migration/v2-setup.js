@@ -1,5 +1,5 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
-// v1 → v2 migration for existing A.T.L.A.S installs. Runs once at app boot
+// v1 → v2 migration for existing Bhai installs. Runs once at app boot
 // BEFORE the wizard gate. Tasks:
 //   - Tag prefs with {"setup-version": 2}
 //   - Preserve legacy v1 profile fields (age, gender) — new wizard collects

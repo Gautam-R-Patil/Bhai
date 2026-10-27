@@ -99,7 +99,7 @@ export interface ChromeTabInfo {
 }
 
 /**
- * Command sent from ATLAS to the Chrome extension
+ * Command sent from Bhai to the Chrome extension
  */
 export interface ChromeBridgeCommand {
     id: string;
@@ -109,7 +109,7 @@ export interface ChromeBridgeCommand {
 }
 
 /**
- * Response from the Chrome extension to ATLAS
+ * Response from the Chrome extension to Bhai
  */
 export interface ChromeBridgeResponse {
     id: string;

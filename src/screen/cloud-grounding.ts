@@ -56,9 +56,9 @@ function isSafeScreenshotPath(p: string): boolean {
         resolve(tmpdir()),
         "/tmp",
         "/private/tmp",
-        resolve(process.env.HOME || "", "Desktop", "A.T.L.A.S Files"),
-        resolve(process.env.HOME || "", "Documents", "A.T.L.A.S Files"),
-        resolve(process.env.HOME || "", "A.T.L.A.S Files"),
+        resolve(process.env.HOME || "", "Desktop", "Bhai Files"),
+        resolve(process.env.HOME || "", "Documents", "Bhai Files"),
+        resolve(process.env.HOME || "", "Bhai Files"),
         resolve(process.env.HOME || "", "Library", "Caches", "atlas"),
         process.env.ATLAS_WORKSPACE ? resolve(process.env.ATLAS_WORKSPACE) : "",
     ].filter(isMeaningfulDir);

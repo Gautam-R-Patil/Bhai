@@ -1,6 +1,6 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
-// ATLAS Browser Bridge — Content Script
-// Handles DOM interactions requested by the ATLAS agent via the background service worker.
+// Bhai Browser Bridge — Content Script
+// Handles DOM interactions requested by the Bhai agent via the background service worker.
 // Also provides page context capture for the overlay bridge (URL, title, selection, content).
 
 // ── Cached Selection ────────────────────────────

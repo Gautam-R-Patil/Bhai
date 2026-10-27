@@ -4,7 +4,7 @@
 
 // ── Meta-Harness: Shared Types ─────────────────────────────────────────────
 // Mirrors the domain model from the Meta-Harness paper (arxiv 2603.28052),
-// adapted for ATLAS's TypeScript architecture. The core idea: treat ATLAS
+// adapted for Bhai's TypeScript architecture. The core idea: treat Bhai
 // configuration surfaces as "harness dimensions" that can be proposed,
 // evaluated, and evolved automatically by the optimization outer loop.
 

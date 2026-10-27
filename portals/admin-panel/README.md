@@ -1,6 +1,6 @@
-# A.T.L.A.S Store Admin Panel
+# Bhai Store Admin Panel
 
-Admin dashboard for managing the A.T.L.A.S Store - developers, app submissions, and users.
+Admin dashboard for managing the Bhai Store - developers, app submissions, and users.
 
 ## Setup
 

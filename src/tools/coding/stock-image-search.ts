@@ -126,7 +126,7 @@ async function searchOpenverse(query: string, orientation: Orientation, count: n
     }
 
     const res = await fetch(url.toString(), {
-        headers: { "User-Agent": "ATLAS/1.0 web-designer (+openverse client)" },
+        headers: { "User-Agent": "Bhai/1.0 web-designer (+openverse client)" },
     });
     if (!res.ok) return [];
     const data = (await res.json()) as { results?: Array<Record<string, unknown>> };
@@ -168,7 +168,7 @@ async function searchWikimedia(query: string, count: number): Promise<StockImage
     url.searchParams.set("iiurlwidth", "1600");
 
     const res = await fetch(url.toString(), {
-        headers: { "User-Agent": "ATLAS/1.0 web-designer (commons@atlas)" },
+        headers: { "User-Agent": "Bhai/1.0 web-designer (commons@atlas)" },
     });
     if (!res.ok) return [];
     const data = (await res.json()) as { query?: { pages?: Record<string, Record<string, unknown>> } };

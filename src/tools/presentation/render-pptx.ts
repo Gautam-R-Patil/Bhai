@@ -54,8 +54,8 @@ export async function renderPptx(
 
     pres.layout = "LAYOUT_WIDE"; // 13.333 x 7.5 inches
     pres.title = outline.title;
-    pres.author = "A.T.L.A.S";
-    pres.company = "A.T.L.A.S";
+    pres.author = "Bhai";
+    pres.company = "Bhai";
     pres.subject = outline.subtitle ?? "";
 
     const warnings: string[] = [];

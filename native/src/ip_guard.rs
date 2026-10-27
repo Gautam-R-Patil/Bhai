@@ -36,7 +36,7 @@ const INTERNAL_VARS: &[&str] = &[
 ];
 
 /// JS patterns that indicate attempted exfiltration or introspection of
-/// ATLAS internals. These are blocked in validate_js_code().
+/// Bhai internals. These are blocked in validate_js_code().
 const BLOCKED_PATTERNS: &[&str] = &[
     // Network exfiltration
     "XMLHttpRequest",
@@ -44,7 +44,7 @@ const BLOCKED_PATTERNS: &[&str] = &[
     "WebSocket(",
     "navigator.sendBeacon",
     "EventSource(",
-    // ATLAS internal variable access
+    // Bhai internal variable access
     "__hoverAddedNodes",
     "__hoverObserver",
     "__atlasCapture",
@@ -134,7 +134,7 @@ lazy_static! {
 ///
 /// Blocks:
 /// - Network exfiltration (fetch, XHR, WebSocket, sendBeacon)
-/// - Access to ATLAS internal injected variables
+/// - Access to Bhai internal injected variables
 /// - Dynamic code execution (eval, Function constructor)
 /// - Prototype pollution (__proto__, constructor)
 /// - Node.js escape (process.env, require)
@@ -178,7 +178,7 @@ pub fn obfuscate_injected_variable(name: String) -> String {
         })
 }
 
-/// Rewrite all ATLAS internal variable references in a JS code string to their
+/// Rewrite all Bhai internal variable references in a JS code string to their
 /// obfuscated session-scoped equivalents. Call this before any page.evaluate()
 /// that injects our MutationObserver or other internal JS.
 #[napi]

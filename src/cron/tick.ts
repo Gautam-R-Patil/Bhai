@@ -12,13 +12,13 @@ export interface CronJobContext {
     isOwner: boolean;
 }
 
-/** Async prompt runner injected by the caller — ATLAS passes runAgent(). */
+/** Async prompt runner injected by the caller — Bhai passes runAgent(). */
 export type RunPromptFn = (
     prompt: string,
     ctx: CronJobContext,
 ) => Promise<string>;
 
-/** Channel-agnostic delivery — ATLAS wires this to the per-platform sender.
+/** Channel-agnostic delivery — Bhai wires this to the per-platform sender.
  * Return `false` on a definite failure (e.g. unknown channel / missing
  * adapter) so the tick engine can mark the run as `error` rather than
  * silently leaving `success` in the store. Throwing is also acceptable
@@ -87,7 +87,7 @@ export async function runCronTick(opts: CronTickOptions): Promise<number> {
     return due.length;
 }
 
-// ── Long-running ticker (wire into ATLAS boot) ─────────────
+// ── Long-running ticker (wire into Bhai boot) ─────────────
 
 let tickerHandle: ReturnType<typeof setInterval> | null = null;
 

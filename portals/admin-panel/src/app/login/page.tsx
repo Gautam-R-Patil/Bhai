@@ -42,7 +42,7 @@ export default function LoginPage() {
       <div className="max-w-md w-full space-y-8 p-8 bg-white rounded-xl shadow-lg">
         <div>
           <h1 className="text-3xl font-bold text-center text-gray-900">
-            A.T.L.A.S Admin
+            Bhai Admin
           </h1>
           <p className="mt-2 text-center text-gray-600">
             Sign in to access the admin panel

@@ -25,7 +25,7 @@ You are making a slide deck. The goal is **not** "title + bullets on every slide
    - Current market stats for pitch / sales decks
    - Industry benchmarks the user doesn't have memorized
    - Recent quotes / news to ground the deck in reality
-   This is ATLAS's advantage over Gamma. Use it.
+   This is Bhai's advantage over Gamma. Use it.
 
 3. **Call `create_presentation`** with a precise `prompt` that includes key facts, data, and narrative.
    - Don't pass a one-liner like "startup pitch deck" — pass the actual story beats.

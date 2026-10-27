@@ -38,7 +38,7 @@ function mergePersonalize(prefs, update) {
     }
     if ("wakeWord" in u && u.wakeWord) {
         const phrase = u.wakeWord.phrase && String(u.wakeWord.phrase).trim();
-        p.wakeWord = { enabled: !!u.wakeWord.enabled, phrase: phrase || "Hey Atlas" };
+        p.wakeWord = { enabled: !!u.wakeWord.enabled, phrase: phrase || "Hey Bhai" };
     }
     if ("personality" in u && u.personality) {
         const preset = u.personality.preset;
@@ -65,7 +65,7 @@ function envKVsFromPersonalize(p) {
     if (p.voice && p.voice.name) out.ATLAS_LIVE_VOICE_NAME = String(p.voice.name);
     if (p.wakeWord) {
         out.ATLAS_WAKE_WORD_ENABLED = p.wakeWord.enabled ? "true" : "false";
-        out.ATLAS_WAKE_WORD_PHRASE = String(p.wakeWord.phrase || "Hey Atlas");
+        out.ATLAS_WAKE_WORD_PHRASE = String(p.wakeWord.phrase || "Hey Bhai");
     }
     return out;
 }

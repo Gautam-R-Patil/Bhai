@@ -104,7 +104,7 @@ export function normalizeForEcho(s: string): string {
 
 /**
  * Fraction of tokens from `candidate` that appear in `reference`.
- * Returns 0-1. Higher = more overlap. Used to detect ATLAS's own words
+ * Returns 0-1. Higher = more overlap. Used to detect Bhai's own words
  * being re-transcribed as user speech (echo). Token-set overlap (not
  * string-similarity) so "opening WhatsApp now" matches "now opening"
  * regardless of order.
@@ -121,7 +121,7 @@ export function tokenOverlap(candidate: string, reference: string): number {
 
 // Echo is declared when ≥60% of candidate tokens appear in recent-spoken.
 // Conservative enough that a human echoing "I think it's 26 degrees" after
-// ATLAS says it doesn't trigger (<60% overlap once their actual words
+// Bhai says it doesn't trigger (<60% overlap once their actual words
 // arrive), but strict enough to catch "opening WhatsApp now" looping.
 const ECHO_OVERLAP_THRESHOLD = Number(process.env.ATLAS_ECHO_OVERLAP) || 0.6;
 
@@ -222,7 +222,7 @@ export class LiveVoiceSession extends EventEmitter {
     // DOES cross this bar. Tuned to 5 so short interjections like "Wait",
     // "Stop", "Hey?" trigger — at 8 we'd lose those single-word barge-ins.
     private static readonly BARGE_IN_MIN_CHARS = Number(process.env.ATLAS_BARGE_IN_MIN_CHARS) || 5;
-    // Echo-filter: ATLAS's most-recent spoken text (normalized). When a
+    // Echo-filter: Bhai's most-recent spoken text (normalized). When a
     // user transcript arrives right after we spoke, we compare it against
     // this — if it substantially overlaps, it's the mic picking up the
     // speaker. Dropped. Windowed: cleared when speaker goes idle + a few
@@ -272,7 +272,7 @@ export class LiveVoiceSession extends EventEmitter {
             this.backend = this.selectBackend();
 
             // 2. Build system prompt. In hybrid mode Gemini Live is STT-only
-            // so it doesn't need the full ATLAS identity/memory prompt — a
+            // so it doesn't need the full Bhai identity/memory prompt — a
             // minimal transcription-focused prompt keeps Live's token budget
             // low. The FULL prompt goes to the regular LLM turn instead.
             const systemPrompt = this.hybridMode
@@ -339,7 +339,7 @@ export class LiveVoiceSession extends EventEmitter {
             //
             // We emit a screen_share_started event AND log a prominent
             // notice so downstream UIs (overlay, panel, tray) can render a
-            // visible "ATLAS is watching your screen" indicator. Without
+            // visible "Bhai is watching your screen" indicator. Without
             // this signal users had no way to tell that screencaptures
             // were being uploaded to the live-voice provider every 1.5s.
             if (process.env.ATLAS_LIVE_SCREEN_SHARE !== "false") {
@@ -574,11 +574,11 @@ export class LiveVoiceSession extends EventEmitter {
             //     transcripts can still slip through from brief louder peaks.
             //   - Substantive chunks OR chunks that extend an already-accepted
             //     barge-in → accept, cancel the speaker, treat as user turn.
-            //     This is what makes interrupting ATLAS actually work.
+            //     This is what makes interrupting Bhai actually work.
             // Barge-in gate fires ONLY while the player subprocess is actively
             // running, not during the post-playback quiet window. quietUntil
             // is for mic-echo decay, not user-input suppression — a user ACK
-            // like "okay" / "yes" / "no" arriving right after ATLAS finishes
+            // like "okay" / "yes" / "no" arriving right after Bhai finishes
             // is a legitimate reply and must pass through. Previously we
             // used `isSpeaking()` which includes quietUntil and wrongly
             // dropped these short replies.
@@ -599,11 +599,11 @@ export class LiveVoiceSession extends EventEmitter {
             }
             this.pendingUserText += rawChunk;
             // ── Echo-self-loop guard ──
-            // Within the ECHO_WINDOW right after ATLAS spoke, check whether
+            // Within the ECHO_WINDOW right after Bhai spoke, check whether
             // the accumulated pending text is just the mic picking up our
-            // own voice. Observed bug: user says "Yeah", then ATLAS replies
+            // own voice. Observed bug: user says "Yeah", then Bhai replies
             // "opening WhatsApp now", Gemini transcribes both as two user
-            // chunks, and we fire a turn asking ATLAS "Yeah, opening WhatsApp
+            // chunks, and we fire a turn asking Bhai "Yeah, opening WhatsApp
             // now." which the LLM responds to as if the user said it.
             if (
                 this.lastSpokenNormalized &&

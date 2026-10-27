@@ -486,7 +486,7 @@ exports.default = async function afterPack(context) {
     let resourcesDir = path.join(appDir, "resources");
 
     if (context.electronPlatformName === "darwin") {
-        resourcesDir = path.join(appDir, "A.T.L.A.S.app", "Contents", "Resources");
+        resourcesDir = path.join(appDir, "Bhai.app", "Contents", "Resources");
     }
 
     const asarPath = path.join(resourcesDir, "app.asar");

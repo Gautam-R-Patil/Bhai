@@ -42,7 +42,7 @@ struct BridgeState {
 // ── Token Generation ─────────────────────────
 
 /// Generate a cryptographically secure bridge token (32-byte hex string).
-/// This token is shared between ATLAS and the Chrome extension for auth.
+/// This token is shared between Bhai and the Chrome extension for auth.
 #[napi]
 pub fn generate_bridge_token() -> String {
     let mut bytes = [0u8; 32];

@@ -98,7 +98,7 @@ function adminKey(): string {
   // boundary will get `undefined` and the throw below makes the regression
   // loud instead of silently shipping the master key to every browser tab.
   const key = process.env.ATLAS_ADMIN_KEY;
-  if (!key) throw new Error("ATLAS admin key missing (set ATLAS_ADMIN_KEY in server-side env, NOT NEXT_PUBLIC_*).");
+  if (!key) throw new Error("Bhai admin key missing (set ATLAS_ADMIN_KEY in server-side env, NOT NEXT_PUBLIC_*).");
   return key;
 }
 

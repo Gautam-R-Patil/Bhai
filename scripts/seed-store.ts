@@ -1,6 +1,6 @@
 #!/usr/bin/env npx tsx
 /**
- * Seed script for A.T.L.A.S Store — DISABLED.
+ * Seed script for Bhai Store — DISABLED.
  *
  * The store backend (convex/store/*.ts) was converted from public
  * `mutation`/`query` to `internalMutation`/`internalQuery` to close a
@@ -58,7 +58,7 @@ const SAMPLE_TOOLS = [
     description: "Format, validate, minify, and transform JSON data with powerful utility functions.",
     longDescription: `# JSON Utils
 
-A comprehensive JSON utility tool for A.T.L.A.S.
+A comprehensive JSON utility tool for Bhai.
 
 ## Features
 
@@ -160,7 +160,7 @@ async function uploadFile(buffer: Buffer): Promise<string> {
 }
 
 async function main() {
-  console.log("🏪 A.T.L.A.S Store Seed Script\n");
+  console.log("🏪 Bhai Store Seed Script\n");
 
   // Step 1: Create or get test developer
   console.log("1. Creating test developer account...");
@@ -181,10 +181,10 @@ async function main() {
       developerId = await client.mutation(api.store.developers.register, {
         email: testEmail,
         passwordHash: "$2a$12$test.hash.not.real", // Not a real login
-        displayName: "A.T.L.A.S Team",
+        displayName: "Bhai Team",
         companyName: "XAGI Labs Private Limited",
         website: "https://atlas.app",
-        bio: "Official A.T.L.A.S development team",
+        bio: "Official Bhai development team",
       });
 
       // Auto-approve the test developer
