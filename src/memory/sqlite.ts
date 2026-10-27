@@ -2133,9 +2133,12 @@ export async function recall(
     // ── Layer 2e: Conditional HyDE (Hypothetical Document Embeddings) ──
     // When initial recall is weak (vague queries like "the thing yesterday"),
     // generate a hypothetical answer and use its embedding to find better matches.
-    // Only triggers when results are few or low-confidence (~10% of queries).
+    // Only for questions about the past ("retrieve" mode): for everything else a
+    // weak recall just means memory has nothing relevant, and the extra LLM call
+    // (plus its latency on the critical path) buys nothing.
     if (
         llm &&
+        queryMode === "retrieve" &&
         isEmbeddingReady() &&
         (fusedScores.length < (getDimensionValue<number>("memory.hyde.minResults") ?? 3) ||
             (fusedScores.length > 0 && fusedScores[0].score < (getDimensionValue<number>("memory.hyde.minTopScore") ?? 0.15)))
@@ -2153,6 +2156,7 @@ export async function recall(
                 ],
                 systemPrompt: "You generate hypothetical memory entries. Output only the memory text, no explanation.",
                 modelOverride: "openai/gpt-4.1-nano",
+                lean: true,
             });
             const hypothetical = hydeResponse?.choices?.[0]?.message?.content;
             if (hypothetical && hypothetical.length > 10) {

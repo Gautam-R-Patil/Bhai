@@ -2728,7 +2728,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
       <div class="icon" id="icon" role="status" aria-label="Bhai is idle" data-mood="idle"></div>
       <div id="input-wrapper">
         <!-- @ mention chips are prepended here dynamically -->
-        <input type="text" id="input" placeholder="Ask Bhai anything…" autocomplete="off" autofocus
+        <input type="text" id="input" placeholder="Tell Bhai what needs sorting…" autocomplete="off" autofocus
           spellcheck="false" aria-label="Message input" role="combobox" aria-expanded="false" aria-controls="mention-picker" aria-haspopup="listbox" />
       </div>
         <button id="mic-btn" title="Voice input (single utterance)" aria-label="Voice input" tabindex="0">
@@ -3218,7 +3218,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           replyBox.classList.add('visible');
         }
         else if (msg.type === 'placeholder') {
-          input.placeholder = msg.text || 'Ask Bhai anything…';
+          input.placeholder = msg.text || 'Tell Bhai what needs sorting…';
         }
         else if (msg.type === 'notification') {
           if (notifTimer) { clearTimeout(notifTimer); notifTimer = null; }
@@ -3261,7 +3261,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           micBtn.classList.remove('listening');
           isListening = false;
           if (msg.text) {
-            input.placeholder = 'Ask Bhai anything…';
+            input.placeholder = 'Tell Bhai what needs sorting…';
             input.value = msg.text;
             send();
           } else {
@@ -3282,7 +3282,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
             micBtn.classList.remove('listening');
             isListening = false;
             input.placeholder = msg.error || 'Voice error';
-            setTimeout(() => { input.placeholder = 'Ask Bhai anything…'; }, 2000);
+            setTimeout(() => { input.placeholder = 'Tell Bhai what needs sorting…'; }, 2000);
           }
         }
         // ── Live Voice Mode status ──

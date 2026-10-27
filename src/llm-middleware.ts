@@ -118,7 +118,11 @@ export function createCacheMiddleware(): LLMMiddleware {
         // we still pass it through so the cache module's signature-aware
         // lookup path stays correct if the gate ever relaxes.
         const toolSignature = "";
-        const contextHash = buildContextHash(params.messages);
+        // The system prompt is part of the context: the tool classifier sends its
+        // conversation there, so two identical "yes, go ahead"s must not share an answer.
+        const contextHash =
+            buildContextHash(params.messages) +
+            (params.systemPrompt ? createHash("sha256").update(params.systemPrompt).digest("hex").slice(0, 12) : "");
 
         try {
             const { getCachedResponse, embedQuery } = await import("./llm-cache.js");
@@ -206,12 +210,14 @@ export function createTelemetryMiddleware(): LLMMiddleware {
         const promptTokens = usage?.prompt_tokens ?? 0;
         const completionTokens = usage?.completion_tokens ?? 0;
         const totalTokens = usage?.total_tokens ?? promptTokens + completionTokens;
+        const cachedTokens = (usage as { prompt_tokens_details?: { cached_tokens?: number } } | undefined)
+            ?.prompt_tokens_details?.cached_tokens ?? 0;
 
         // Only log if meaningful (skip noise from cached responses)
         if (elapsed > 0) {
             console.log(
                 `  [LLM-TELEMETRY] ${model} | ${elapsed}ms | ` +
-                `${promptTokens} in / ${completionTokens} out (${totalTokens} total)`,
+                `${promptTokens} in / ${completionTokens} out (${totalTokens} total, ${cachedTokens} cached)`,
             );
         }
 

@@ -171,7 +171,7 @@
                         <div class="hero-body">
                         <span class="status-chip"><span class="status-dot"></span><span id="statusChipText">Offline</span></span>
                         <div id="statusOnline" style="display: none;">
-                            <div class="status-title">Bhai is awake</div>
+                            <div class="status-title" id="statusOnlineTitle">Bhai is awake</div>
                             <div class="status-subtitle" id="statusOnlineSub">
                                 Ready when you are.
                             </div>
@@ -464,31 +464,38 @@
                         <div class="pref-items" style="flex-direction:column;gap:8px;align-items:stretch;">
                             <div id="personalityPresets" style="display:flex;flex-direction:column;gap:8px;">
                                 <label class="radio-row" style="display:flex;gap:10px;padding:10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;align-items:flex-start;">
-                                    <input type="radio" name="personality-preset" value="casual_playful" id="ppPresetCasual" style="margin-top:3px;" checked>
+                                    <input type="radio" name="personality-preset" value="casual_playful" id="ppPresetCasual" style="margin-top:3px;" onchange="savePersonality()" checked>
                                     <div style="flex:1;">
                                         <div style="font-weight:600;margin-bottom:2px;">Casual &amp; playful</div>
-                                        <div style="font-size:0.9em;color:var(--text-secondary);">Warm, witty, emoji-friendly. Reacts like a close friend.</div>
+                                        <div style="font-size:0.9em;color:var(--text-secondary);">Warm, witty, a little swag. Reacts like a close friend.</div>
                                     </div>
                                 </label>
                                 <label class="radio-row" style="display:flex;gap:10px;padding:10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;align-items:flex-start;">
-                                    <input type="radio" name="personality-preset" value="professional_concise" id="ppPresetProfessional" style="margin-top:3px;">
+                                    <input type="radio" name="personality-preset" value="professional_concise" id="ppPresetProfessional" style="margin-top:3px;" onchange="savePersonality()">
                                     <div style="flex:1;">
                                         <div style="font-weight:600;margin-bottom:2px;">Professional &amp; concise</div>
-                                        <div style="font-size:0.9em;color:var(--text-secondary);">Clear, formal-leaning, minimal emoji. Gets to the point.</div>
+                                        <div style="font-size:0.9em;color:var(--text-secondary);">Clear and to the point. No slang, minimal emoji.</div>
                                     </div>
                                 </label>
                                 <label class="radio-row" style="display:flex;gap:10px;padding:10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;align-items:flex-start;">
-                                    <input type="radio" name="personality-preset" value="warm_supportive" id="ppPresetWarm" style="margin-top:3px;">
+                                    <input type="radio" name="personality-preset" value="warm_supportive" id="ppPresetWarm" style="margin-top:3px;" onchange="savePersonality()">
                                     <div style="flex:1;">
                                         <div style="font-weight:600;margin-bottom:2px;">Warm &amp; supportive</div>
-                                        <div style="font-size:0.9em;color:var(--text-secondary);">Empathetic, encouraging, low on sarcasm. Best for stressful work.</div>
+                                        <div style="font-size:0.9em;color:var(--text-secondary);">Patient and encouraging, no sarcasm. Best for stressful days.</div>
                                     </div>
                                 </label>
                                 <label class="radio-row" style="display:flex;gap:10px;padding:10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;align-items:flex-start;">
-                                    <input type="radio" name="personality-preset" value="direct_terse" id="ppPresetDirect" style="margin-top:3px;">
+                                    <input type="radio" name="personality-preset" value="direct_terse" id="ppPresetDirect" style="margin-top:3px;" onchange="savePersonality()">
                                     <div style="flex:1;">
                                         <div style="font-weight:600;margin-bottom:2px;">Direct &amp; no-nonsense</div>
-                                        <div style="font-size:0.9em;color:var(--text-secondary);">Terse, action-first. Skips filler. Good for power users.</div>
+                                        <div style="font-size:0.9em;color:var(--text-secondary);">Results first, zero fluff. Good for power users.</div>
+                                    </div>
+                                </label>
+                                <label class="radio-row" style="display:flex;gap:10px;padding:10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;align-items:flex-start;">
+                                    <input type="radio" name="personality-preset" value="unhinged" id="ppPresetUnhinged" style="margin-top:3px;" onchange="savePersonality()">
+                                    <div style="flex:1;">
+                                        <div style="font-weight:600;margin-bottom:2px;">Unhinged 😈 <span style="font-size:0.8em;font-weight:600;color:var(--text-secondary);border:1px solid var(--border);border-radius:5px;padding:0 5px;margin-left:4px;">18+</span></div>
+                                        <div style="font-size:0.9em;color:var(--text-secondary);">No filter: swears freely, roasts you, dark jokes, way more Hindi. Only with you, never your contacts. Turns serious when it really matters.</div>
                                     </div>
                                 </label>
                             </div>
@@ -1733,9 +1740,65 @@
             const phase = botStarting ? 'starting' : lastBotStatus === 'running' ? 'running' : 'stopped';
             heroCard.dataset.phase = phase;
             document.getElementById('statusChipText').textContent = { starting: 'Starting', running: 'Online', stopped: 'Offline' }[phase];
-            document.getElementById('statusOfflineTitle').textContent = botStarting ? 'Waking Bhai up…' : 'Bhai is napping';
+            const lines = phase === 'running' ? ALIVE_LINES.online[dayPart()] : phase === 'starting' ? ALIVE_LINES.starting : ALIVE_LINES.offline;
+            document.getElementById(phase === 'running' ? 'statusOnlineTitle' : 'statusOfflineTitle').textContent = pickLine(lines);
             if (holdMs) moodHold = setTimeout(() => setMood(), holdMs);
         }
+
+        // The status card speaks in Bhai's voice and follows the time of day.
+        // A line holds for the part of the day (no flicker on every refresh).
+        const ALIVE_LINES = {
+            "online": {
+                "morning": [
+                    "Morning! Bhai's up ☕",
+                    "Team chai, reporting in ☕",
+                    "Fresh day, shades on 😎",
+                    "Chalo, new day ☕"
+                ],
+                "afternoon": [
+                    "Afternoon. Bhai's locked in",
+                    "Peak hours. All systems chill",
+                    "Midday, shades still on 😎",
+                    "Afternoon. Tabs under control?"
+                ],
+                "evening": [
+                    "Evening. Bhai's still around",
+                    "Golden hour, shades justified 😎",
+                    "Winding down? Bhai's around",
+                    "Evening. Let's close it out"
+                ],
+                "night": [
+                    "Late one? Bhai's here 🌙",
+                    "Night mode. Still sharp",
+                    "Quiet hours. Bhai's around",
+                    "Night owl hours 🌙"
+                ],
+                "late": [
+                    "Still up? So is Bhai 🌙",
+                    "Wee hours. Bhai's here",
+                    "Quick one, then sleep? 🌙",
+                    "Lights low, shades on"
+                ]
+            },
+            "offline": [
+                "Bhai is napping 💤",
+                "Shades folded. Napping",
+                "Bhai's recharging 🔋"
+            ],
+            "starting": [
+                "Waking Bhai up…",
+                "Putting the shades on…"
+            ]
+        };
+        function dayPart(h = new Date().getHours()) {
+            return h >= 5 && h < 12 ? 'morning' : h >= 12 && h < 17 ? 'afternoon' : h >= 17 && h < 22 ? 'evening' : h >= 2 && h < 5 ? 'late' : 'night';
+        }
+        function pickLine(lines) {
+            const now = new Date();
+            const seed = now.getFullYear() * 400 + now.getMonth() * 31 + now.getDate() + dayPart().length;
+            return lines[seed % lines.length];
+        }
+        setInterval(() => { if (!moodHold) setMood(); }, 10 * 60 * 1000); // roll over to the next part of the day
 
         function startFailed() {
             botStarting = false;
@@ -3131,7 +3194,7 @@
                     if (status) status.textContent = 'Save failed: ' + ((res && res.error) || 'unknown error');
                     return;
                 }
-                if (status) status.textContent = 'Saved — Bhai will pick this up on the next chat turn.';
+                if (status) status.textContent = 'Saved. Bhai talks like this from your next message.';
             } catch (e) {
                 if (status) status.textContent = 'Save failed: ' + (e.message || e);
             } finally {

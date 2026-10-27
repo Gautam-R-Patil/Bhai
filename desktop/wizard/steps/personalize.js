@@ -67,6 +67,7 @@
             { value: "professional_concise", label: "Professional & concise",  ex: "Got it. Running the analysis now." },
             { value: "warm_supportive",      label: "Warm & supportive",       ex: "That's a lot. Let's take it one step at a time." },
             { value: "direct_terse",         label: "Direct & no-nonsense",    ex: "Done. Output in /tmp/results.txt." },
+            { value: "unhinged",             label: "Unhinged 😈 (18+)",       ex: "47 tabs?? what the fuck, bhai sahab. this is a cry for help. fixing it 💀" },
         ];
         for (const p of presets) {
             const r = document.createElement("div");

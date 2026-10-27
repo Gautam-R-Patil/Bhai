@@ -10,6 +10,7 @@ const VALID_PERSONALITY_PRESETS = [
     "professional_concise",
     "warm_supportive",
     "direct_terse",
+    "unhinged",
 ];
 const PERSONALITY_NOTES_MAX = 800;
 

@@ -143,6 +143,7 @@ function resolveSafePath(userPath: string): string | null {
 }
 
 export { resolveSafePath as _resolveSafePathForTest };
+export { isScreenQuery as _isScreenQueryForTest };
 
 let httpServer: ReturnType<typeof createServer> | null = null;
 let wss: WebSocketServer | null = null;
@@ -720,18 +721,21 @@ function isScreenQuery(msg: string): boolean {
     if (words.length <= 6 && DEICTIC_WORDS.some(d => words.includes(d))) return true;
 
     // 3. Short implicit queries starting with a screen-intent verb with no clear object
-    //    e.g. "explain", "summarize", "fix it", "debug", "help", "what now"
+    //    e.g. "explain", "summarize", "fix it", "debug", "help", "what now".
+    //    A question word only counts alone or with one word ("what now", "why tho"):
+    //    "what's 17 times 23" is a plain question, not about the screen.
     if (words.length <= 4) {
-        const startsWithVerb = IMPLICIT_SCREEN_VERBS.some(v => lower.startsWith(v));
-        if (startsWithVerb) return true;
+        const verb = IMPLICIT_SCREEN_VERBS.find(v => lower.startsWith(v));
+        if (verb && (!["what", "how", "why", "show"].includes(verb) || words.length <= 2)) return true;
     }
 
-    // 4. Pure question with no external reference → screen is the implicit context
-    //    e.g. "what should I do?", "what's next?", "why is this happening?"
-    if (words.length <= 8) {
-        const isOpenQuestion = /^(what|why|how|when|where|which|who)\b/i.test(lower);
+    // 4. Short questions about what the user is in the middle of → the screen is the context
+    //    e.g. "what should I do?", "what's next?", "what's wrong?", "how do I fix"
+    //    (not every short question: "what's the capital of France?" needs no screenshot)
+    if (words.length <= 6 && /^(what|why|how)\b/i.test(lower)) {
+        const aboutCurrentWork = /\b(should i|do i|now|next|wrong|happening|happened|going on|fix|broken|stuck|error)\b/i.test(lower);
         const hasNoExternalRef = !/\b(google|youtube|weather|news|wikipedia|github|spotify|telegram|file|folder|path|url|http|www|email|calendar|time|date|remind|alarm|music|song|play|search for|find me|look up)\b/i.test(lower);
-        if (isOpenQuestion && hasNoExternalRef && words.length <= 6) return true;
+        if (aboutCurrentWork && hasNoExternalRef) return true;
     }
 
     return false;
@@ -1268,28 +1272,28 @@ export function sendOverlayImage(base64: string, mimeType: string, caption?: str
 // ── Context-Aware Placeholder ─────────────────
 
 const PLACEHOLDER_MAP: Record<string, string> = {
-    "Code": "Ask about this code…",
-    "Visual Studio Code": "Ask about this code…",
-    "Cursor": "Ask about this code…",
-    "Xcode": "Ask about this code…",
-    "IntelliJ IDEA": "Ask about this code…",
-    "Chrome": "Summarize this page…",
-    "Safari": "Summarize this page…",
-    "Arc": "Summarize this page…",
-    "Firefox": "Summarize this page…",
-    "Brave Browser": "Summarize this page…",
-    "Calendar": "What's next today?",
+    "Code": "Explain or fix this code…",
+    "Visual Studio Code": "Explain or fix this code…",
+    "Cursor": "Explain or fix this code…",
+    "Xcode": "Why won't this build…",
+    "IntelliJ IDEA": "Explain or fix this code…",
+    "Chrome": "TL;DR or fact-check this page…",
+    "Safari": "TL;DR or fact-check this page…",
+    "Arc": "TL;DR or fact-check this page…",
+    "Firefox": "TL;DR or fact-check this page…",
+    "Brave Browser": "TL;DR or fact-check this page…",
+    "Calendar": "What's on today?",
     "Slack": "Draft a reply…",
     "Discord": "Draft a reply…",
-    "Messages": "Draft a reply…",
-    "Mail": "Draft a reply…",
-    "Terminal": "Help with this command…",
-    "iTerm2": "Help with this command…",
-    "Warp": "Help with this command…",
-    "Notes": "Help me write…",
-    "Pages": "Help me write…",
-    "TextEdit": "Help me write…",
-    "Notion": "Help me write…",
+    "Messages": "Reply, or check a fishy text…",
+    "Mail": "Reply, or check a fishy email…",
+    "Terminal": "Explain or fix this error…",
+    "iTerm2": "Explain or fix this error…",
+    "Warp": "Explain or fix this error…",
+    "Notes": "Help me write this…",
+    "Pages": "Help me write this…",
+    "TextEdit": "Help me write this…",
+    "Notion": "Help me write this…",
 };
 
 function getPlaceholderForApp(app: string): string {
@@ -1299,7 +1303,7 @@ function getPlaceholderForApp(app: string): string {
     for (const [key, placeholder] of Object.entries(PLACEHOLDER_MAP)) {
         if (app.includes(key) || key.includes(app)) return placeholder;
     }
-    return "Ask Bhai…";
+    return "Tell Bhai what needs sorting…";
 }
 
 function startPlaceholderBroadcast(): void {

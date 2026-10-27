@@ -389,7 +389,10 @@ export function selectModel(opts: {
     if (process.env.ATLAS_NO_COST_ROUTING !== "true") {
         const plainSingleTurn =
             result.taskType === "first_iteration" || result.taskType === "simple_chat";
-        if (plainSingleTurn && result.modelId === "anthropic/claude-opus-4.6") {
+        if (
+            claudeTier(result.modelId) === "opus" &&
+            (plainSingleTurn || !opusWarranted(opts.message, opts.errorCount, opts.modelHint))
+        ) {
             result = {
                 ...result,
                 modelId: "anthropic/claude-sonnet-4.6",
@@ -399,6 +402,18 @@ export function selectModel(opts: {
         }
     }
     return result;
+}
+
+/**
+ * Opus costs about 2x Sonnet per call (and runs slower) for gains that only
+ * show on genuinely hard work. The native router reaches for it on keyword
+ * scores (design sites, "complex chat", long coding asks); keep it for an
+ * explicit ask, an upstream "complex" hint, or repeated failures.
+ */
+export function opusWarranted(message?: string, errorCount?: number, modelHint?: string): boolean {
+    if (modelHint === "complex") return true;
+    if ((errorCount ?? 0) >= 3) return true;
+    return /\b(think (really )?(hard|deeply|carefully)|ultrathink|use opus|best model|deep(ly)? reason)/i.test(message || "");
 }
 
 export function shouldCascadeEscalate(response: string, originalMessage: string, currentModelId: string): CascadeResult {
@@ -429,6 +444,27 @@ export function selectForClassify(): ModelSelection {
 }
 
 export function selectForAgent(
+    message: string,
+    iteration: number,
+    errorCount: number,
+    modelHint?: "simple" | "complex",
+    lastToolCalls?: Array<{ function: { name: string } }>,
+    hasMedia?: boolean,
+): ModelSelection {
+    const pick = selectForAgentUncapped(message, iteration, errorCount, modelHint, lastToolCalls, hasMedia);
+    // The escalations below can return Opus directly (design sites, "stuck"
+    // loops); apply the same gate as selectModel's cost cap.
+    if (
+        process.env.ATLAS_NO_COST_ROUTING !== "true" &&
+        claudeTier(pick.modelId) === "opus" &&
+        !opusWarranted(message, errorCount, modelHint)
+    ) {
+        return { ...pick, modelId: "anthropic/claude-sonnet-4.6", displayName: "Sonnet 4.6", reason: `${pick.reason}+cost_cap:opus_to_sonnet` };
+    }
+    return pick;
+}
+
+function selectForAgentUncapped(
     message: string,
     iteration: number,
     errorCount: number,
@@ -754,7 +790,9 @@ export function pickOrchestratorModel(c: OrchestratorComplexity): {
         case "simple":
             return { model: MODELS.HAIKU, display: "Haiku", thinkingLevel: "off" };
         case "mild":
-            return { model: MODELS.SONNET, display: "Sonnet", thinkingLevel: "off" };
+            // A short plan for a few known tools is well within Haiku; Sonnet
+            // (~20x the price) is kept for genuinely complex plans.
+            return { model: MODELS.HAIKU, display: "Haiku", thinkingLevel: "low" };
         case "complex":
             return { model: MODELS.SONNET, display: "Sonnet 4.6", thinkingLevel: "low" };
     }

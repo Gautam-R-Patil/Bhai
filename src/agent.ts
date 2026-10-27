@@ -54,7 +54,7 @@ import type { ChatCompletionMessageParam, LLMClient, ThinkingLevel } from "./llm
 import { MODEL_DISPLAY, MODELS } from "./llm.js";
 import { getLocationSnippet, getTimezone } from "./location/index.js";
 import { getAnticipationSnippet, trackSessionForAnticipation } from "./memory/anticipation.js";
-import { generateMemoryBriefing, USE_MEMORY_BRIEFING } from "./memory/briefing.js";
+import { BRIEFING_MIN_CHARS, generateMemoryBriefing, USE_MEMORY_BRIEFING } from "./memory/briefing.js";
 import { classifyQuery } from "./memory/classifier.js";
 import { pruneContext } from "./memory/context-pruning.js";
 import { getEmotionalContextSnippet } from "./memory/emotional.js";
@@ -81,6 +81,7 @@ import {
     getCascadeNext,
     claudeTier,
     type ModelSelection,
+    opusWarranted,
     pickOrchestratorModel,
     recordQualityFailure,
     selectForAgent,
@@ -961,6 +962,9 @@ async function _runAgentBody(
     // Smart tool selection — dynamically updated each iteration
     let activeCategories: string[] | undefined;
     let requestedCategories: string[] | undefined;
+    // The turn's tool set, reused on later iterations (see the selectTools await).
+    let turnToolSelection: Awaited<ReturnType<typeof selectTools>> | undefined;
+    let turnToolReqKey = "";
 
     // Strip [SOURCE: ...] tags for classification/routing — the overlay appends
     // these to every message, inflating word count and breaking simple-message detection.
@@ -1383,7 +1387,8 @@ STRATEGY: Execute in as few tool calls as possible.
         // Circuit breaker half-open: force highest-tier model for recovery probe.
         // A2: the metacog escalate arm threads a forced tier here via the same
         // modelOverride path — consumed once, then cleared so it forces ONE iteration.
-        const model =
+        const forcedPick = circuitBreaker.state === "half-open" || !!interventionState.forcedModel;
+        let model =
             circuitBreaker.state === "half-open"
                 ? MODELS.SONNET
                 : (interventionState.forcedModel ?? selection.modelId);
@@ -1443,10 +1448,13 @@ STRATEGY: Execute in as few tool calls as possible.
                     console.log(
                         `[MEMORY][REFLECTION] Session expired — triggering reflection (${expiredSession.turn_count} turns)`,
                     );
-                    // Await reflection so its DB writes complete before memory retrieval runs
-                    await runReflection(llm, preSessionHistory).catch((err) =>
+                    // Give reflection a moment so its DB writes usually land before
+                    // memory retrieval, but never hold the user's first message
+                    // after a break for its 2-4 LLM calls; it finishes in the background.
+                    const reflection = runReflection(llm, preSessionHistory).catch((err) =>
                         console.error("[MEMORY][REFLECTION] Expired session reflection failed:", err),
                     );
+                    await Promise.race([reflection, new Promise((r) => setTimeout(r, 1500))]);
                 }
             }
 
@@ -2056,7 +2064,10 @@ STRATEGY: Execute in as few tool calls as possible.
                     if (totalChars + part.length > MAX_INJECTION_CHARS) {
                         // Truncate the last part that overflows
                         const remaining = MAX_INJECTION_CHARS - totalChars;
-                        if (remaining > 100) cappedParts.push(`${part.substring(0, remaining)}...`);
+                        if (remaining > 100) {
+                            cappedParts.push(`${part.substring(0, remaining)}...`);
+                            totalChars += remaining;
+                        }
                         break;
                     }
                     cappedParts.push(part);
@@ -2074,7 +2085,9 @@ STRATEGY: Execute in as few tool calls as possible.
                 // ── LLM Memory Briefing ──
                 // When enabled, synthesize raw memory fragments into a cohesive briefing
                 // via a cheap Haiku call. Falls back to raw injection on failure.
-                if (USE_MEMORY_BRIEFING && queryMode !== "llm_only" && !musicFastPathPhase1) {
+                // Small injections go in raw: cheaper than a briefing call, which
+                // also sits on the critical path (see BRIEFING_MIN_CHARS).
+                if (USE_MEMORY_BRIEFING && queryMode !== "llm_only" && !musicFastPathPhase1 && totalChars > BRIEFING_MIN_CHARS) {
                     try {
                         const rawMemories: Record<string, string> = {};
                         for (const part of cappedParts) {
@@ -2150,7 +2163,7 @@ STRATEGY: Execute in as few tool calls as possible.
             lastToolNames.length > 0 &&
             lastToolNames.every((name) => name.startsWith("os_") || name === "app_manager");
 
-        const iterThinking: ThinkingLevel =
+        let iterThinking: ThinkingLevel =
             iterations <= 1 && modelHint === "simple"
                 ? "off"
                 : iterations <= 1
@@ -2163,11 +2176,16 @@ STRATEGY: Execute in as few tool calls as possible.
 
         // ── Await tool selection (started in parallel with memory injection above) ──
         let toolSelection: Awaited<ReturnType<typeof selectTools>>;
+        const reqKey = (requestedCategories || []).join(",");
         if (iterations === 1 && userMessage) {
             // Use the promise started earlier
             toolSelection = await toolSelectionPromise!;
+        } else if (turnToolSelection && reqKey === turnToolReqKey) {
+            // Later iterations keep the turn's tool set: tools render first in the
+            // prompt, so a set that changes every iteration busts the prompt cache.
+            // request_tools still widens it (reqKey changes → re-select below).
+            toolSelection = turnToolSelection;
         } else {
-            // Later iterations: run normally
             toolSelection = await selectTools({
                 message: userMessage,
                 recentToolCalls: lastToolCalls?.map((tc) => tc.function.name),
@@ -2176,8 +2194,32 @@ STRATEGY: Execute in as few tool calls as possible.
                 conversationContext: buildToolRouterContext(workingHistory),
             });
         }
+        turnToolSelection = toolSelection;
+        turnToolReqKey = reqKey;
         const tools = toolSelection.tools;
         activeCategories = toolSelection.categories;
+
+        // ── Task-context routing (iteration 1) ──
+        // The router picked a model from the raw message before anything knew
+        // what this turn needs; the classifier (which also sees the recent
+        // conversation) now does. Chat and single quick actions run on Haiku
+        // (chat without thinking); complex work gets at least Sonnet with some
+        // thinking. Forced picks and explicit asks for depth are left alone.
+        const turnTier = toolSelection.classification?.tier;
+        if (iterations === 1 && turnTier && !forcedPick) {
+            const before = model;
+            if ((turnTier === "chat" || turnTier === "simple") && !opusWarranted(rawUserMessage, errorCount, modelHint)) {
+                if (claudeTier(model) !== "haiku") model = MODELS.HAIKU;
+                // Pure chat needs no reasoning. A tool task keeps a little: with
+                // thinking off, Haiku tends to answer from stale context instead
+                // of calling the tool ("I haven't checked the weather this time…").
+                iterThinking = turnTier === "chat" ? "off" : iterThinking === "off" ? "low" : iterThinking;
+            } else if (turnTier === "complex" && claudeTier(model) === "haiku") {
+                model = MODELS.SONNET;
+                if (iterThinking === "off") iterThinking = "low";
+            }
+            console.log(`  🧭 Task tier: ${turnTier} → ${claudeTier(model)}${model !== before ? ` (was ${claudeTier(before)})` : ""}, thinking ${iterThinking}`);
+        }
 
         // ── Harness trace: record selected tools ──
         if (iterations === 1 && _harnessTraceId) {
@@ -2247,6 +2289,14 @@ STRATEGY: Execute in as few tool calls as possible.
             iterationMessages.push({ role: "system", content: ctxMsg });
         }
 
+        // The tone the owner picked in Settings, restated next to their message
+        // (never for contacts, groups or widget visitors).
+        if (!channelContext || channelContext.isOwner) {
+            const { getToneReminder } = await import("./setup/personality-sync.js");
+            const tone = getToneReminder();
+            if (tone) iterationMessages.push({ role: "system", content: tone });
+        }
+
         // ── Orchestrator Planning: Sonnet 4.6 generates execution plan for interactive tasks ──
         const planningCategories = ["os_control", "app_management", "browser", "media", "communication", "scheduling"];
         const actionCategoryCount = activeCategories.filter((c) => planningCategories.includes(c)).length;
@@ -2295,7 +2345,21 @@ STRATEGY: Execute in as few tool calls as possible.
             !multiAppOrChained &&
             classifierConf >= 0.7;
 
-        const needsPlanning = actionCategoryCount > 0 && !unambiguousSingleStep && !simpleGuiFastPath;
+        // The classifier says whether the turn is multi-step; a single-step or
+        // chat turn doesn't need a plan however many categories it touches.
+        const turnCls = toolSelection.classification;
+        const classifierSaysSingleStep =
+            process.env.ATLAS_ALWAYS_ORCHESTRATE !== "true" &&
+            !!turnCls?.tier &&
+            !turnCls.multi_step &&
+            turnCls.tier !== "complex" &&
+            !multiAppOrChained &&
+            !multiStepIntent;
+        const needsPlanning =
+            actionCategoryCount > 0 && !unambiguousSingleStep && !simpleGuiFastPath && !classifierSaysSingleStep;
+        if (iterations === 1 && classifierSaysSingleStep && actionCategoryCount > 0) {
+            console.log(`  ⚡ Single-step ${turnCls?.tier} task — skipping orchestrator plan`);
+        }
         if (iterations === 1 && simpleGuiFastPath && !unambiguousSingleStep) {
             console.log(
                 `  ⚡ Simple GUI/messaging fast-path — skipping Sonnet orchestrator (cats=[${activeActionCats.join(",")}] intent="${intentStr}" conf=${classifierConf.toFixed(2)})`,
@@ -2983,9 +3047,15 @@ PLAN:`,
 
             // Final response — use PRO for synthesis if needed
             // Note: if PRO itself wants to keep using tools, let the loop continue.
-            if (totalToolCalls > 0 && model !== MODELS.PRO) {
-                // Use router for final answer instead of hardcoding PRO
-                const finalSelection = selectForFinalAnswer(selection.taskType);
+            // Only when a stronger model would write it: re-asking the same tier
+            // re-sends the whole context to rewrite an answer we already have.
+            const finalSelection = totalToolCalls > 0 ? selectForFinalAnswer(selection.taskType) : null;
+            const TIER_RANK = { haiku: 0, sonnet: 1, opus: 2 } as const;
+            if (
+                finalSelection &&
+                model !== MODELS.PRO &&
+                TIER_RANK[claudeTier(finalSelection.modelId)] > TIER_RANK[claudeTier(model)]
+            ) {
                 console.log(`  🧠 Switching to ${finalSelection.displayName} for final answer`);
                 const finalResponse = await llm.chat({
                     messages: iterationMessages,

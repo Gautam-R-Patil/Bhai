@@ -120,6 +120,22 @@ describe("toClaudeRequest — mid-conversation system messages and tool images",
   });
 });
 
+describe("toClaudeRequest — thinking off", () => {
+  const chat = [{ role: "user", content: "hi" }];
+  const off = (model: string) => toClaudeRequest({ model, reasoning: { effort: "none" } }, chat) as any;
+  it("disables thinking on Haiku, between_tools on Sonnet, and only lowers effort on Opus", () => {
+    expect(off("openai/gpt-4.1-nano").thinking).toEqual({ type: "disabled" });
+    expect(off("anthropic/claude-sonnet-4.6").thinking).toEqual({ type: "between_tools" });
+    expect(off("anthropic/claude-opus-4.6").thinking).toBeUndefined();
+    for (const m of ["openai/gpt-4.1-nano", "anthropic/claude-sonnet-4.6", "anthropic/claude-opus-4.6"]) {
+      expect(off(m).output_config).toEqual({ effort: "low" });
+    }
+  });
+  it("leaves thinking on for a normal effort", () => {
+    expect((toClaudeRequest({ model: "openai/gpt-4.1-nano", reasoning: { effort: "low" } }, chat) as any).thinking).toBeUndefined();
+  });
+});
+
 describe("toOpenAIResponse", () => {
   it("returns the OpenAI chat-completion shape", () => {
     const out = toOpenAIResponse({

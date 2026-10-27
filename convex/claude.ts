@@ -167,9 +167,12 @@ export function toClaudeRequest(body: any, chat: any[]): Beta.MessageCreateParam
     : undefined;
 
   const output_config: Beta.BetaOutputConfig = {};
-  // OpenAI-style "minimal"/"none" have no Claude equivalent; use the lowest effort.
+  // "none"/"minimal" mean no thinking: Haiku 5.5 accepts thinking "disabled"
+  // and Sonnet 5.5 "between_tools" (both at effort high or below); Opus 5.5
+  // can't turn thinking off, so it just gets the lowest effort.
   const raw = body.reasoning?.effort;
-  const effort = raw === "minimal" || raw === "none" ? "low" : raw;
+  const thinkingOff = raw === "minimal" || raw === "none";
+  const effort = thinkingOff ? "low" : raw;
   if (EFFORTS.includes(effort)) output_config.effort = effort as Effort;
   const schema = body.response_format?.json_schema?.schema;
   if (body.response_format?.type === "json_schema" && schema && !tools?.length) {
@@ -193,6 +196,8 @@ export function toClaudeRequest(body: any, chat: any[]): Beta.MessageCreateParam
   }
   if (tools?.length) params.tools = tools;
   if (Object.keys(output_config).length) params.output_config = output_config;
+  if (thinkingOff && model === HAIKU) params.thinking = { type: "disabled" };
+  if (thinkingOff && model === SONNET) params.thinking = { type: "between_tools" };
   // Opus/Sonnet 5.5 re-run a declined request on Anthropic's recommended
   // fallback; Haiku has no server-side fallback.
   if (model !== HAIKU) {

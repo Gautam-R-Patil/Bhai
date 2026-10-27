@@ -15,6 +15,12 @@ import type { LLMClient } from "../llm.js";
 
 // ── Toggle: switch between LLM briefing and raw injection ──
 export const USE_MEMORY_BRIEFING = true;
+/**
+ * Raw memory under this many chars is injected as-is: a few thousand extra
+ * input tokens cost less than a briefing call (one more per-call credit and
+ * 2-3s on the critical path). The injection cap is 8K chars (agent.contextCap).
+ */
+export const BRIEFING_MIN_CHARS = 6000;
 
 /**
  * Synthesize raw memory section outputs into a concise, actionable briefing.
@@ -70,6 +76,7 @@ Output ONLY the briefing, no preamble.`;
             messages: [{ role: "user", content: briefingPrompt }],
             systemPrompt: "You are a concise memory synthesis engine. Output only the briefing.",
             modelOverride: "openai/gpt-4.1-nano",
+            lean: true,
         });
 
         const briefing = response.choices?.[0]?.message?.content?.trim();

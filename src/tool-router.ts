@@ -57,8 +57,20 @@ export interface ToolRouterSelection {
      * so callers can implement fast-path gates without relying on
      * module-level state that's vulnerable to races / cache staleness.
      */
-    classification: { intent: string; specific_tools: string[]; confidence: number; categories: string[] } | null;
+    classification: {
+        intent: string;
+        specific_tools: string[];
+        confidence: number;
+        categories: string[];
+        /** How much work the turn needs: chat (no tools) → simple → standard → complex. */
+        tier?: TaskTier;
+        /** Several dependent steps (worth a plan). */
+        multi_step?: boolean;
+    } | null;
 }
+
+export type TaskTier = "chat" | "simple" | "standard" | "complex";
+const TASK_TIERS: readonly TaskTier[] = ["chat", "simple", "standard", "complex"];
 
 interface CategoryDef {
     description: string; // Rich NL description for embedding
@@ -487,6 +499,8 @@ interface IntentClassification {
     categories: string[]; // e.g. ["media", "web_search"]
     specific_tools: string[]; // e.g. ["spotify"]
     confidence: number; // 0-1
+    tier?: TaskTier;
+    multi_step?: boolean;
 }
 
 const intentCache: Map<string, { result: IntentClassification; timestamp: number }> = new Map();
@@ -544,9 +558,12 @@ Rules:
 - "play a song" = media, NOT shell (don't confuse "play" with "run/execute")
 - "run npm install" = shell, NOT media
 - IMPORTANT: When the user names a desktop app the agent must DRIVE (open, click, type in, switch to) — e.g. "open WhatsApp and send …", "click the Send button in Photoshop", "switch to Figma and …" — include BOTH "app_management" AND "os_control" in addition to any messaging category. Protocol tools like whatsapp_send/imessage_send work for contacts the bot already has on file; UI-driving the actual desktop app needs os_smart_click + app_manager.
-- IMPORTANT: Use the conversation context to resolve ambiguous references. If the user was just discussing a website, "open file manager" likely means a button ON that website (browser), not the OS file manager (app_management).${recentContext}${historyContext}
+- IMPORTANT: Use the conversation context to resolve ambiguous references. If the user was just discussing a website, "open file manager" likely means a button ON that website (browser), not the OS file manager (app_management). A follow-up like "yes do it" or "try again" continues the task in the conversation, with that task's categories.
+- "tier": "chat" when the reply needs NO tools — small talk, opinions, advice, writing, math, explaining, or answering from the conversation so far or general knowledge (categories: []). "simple" for one quick action or lookup. "standard" for a normal task with a few tool calls. "complex" for long multi-step work, coding, deep research, or anything needing careful reasoning.
+- "multi_step": true only when the task needs several dependent steps (find X, then do Y with it).
+- Anything about current or live information (weather, news, prices, what's on screen, files, apps) is NOT chat.${recentContext}${historyContext}
 
-Respond with JSON only: {"intent":"short_label","categories":["cat1"],"specific_tools":["tool1"],"confidence":0.9}`;
+Respond with JSON only: {"intent":"short_label","categories":["cat1"],"specific_tools":["tool1"],"confidence":0.9,"tier":"simple","multi_step":false}`;
 
     try {
         const response = await Promise.race([
@@ -554,6 +571,7 @@ Respond with JSON only: {"intent":"short_label","categories":["cat1"],"specific_
                 messages: [{ role: "user", content: message }],
                 systemPrompt,
                 modelOverride: MODELS.GPT41_NANO,
+                lean: true,
             }),
             new Promise<never>((_, reject) =>
                 setTimeout(() => reject(new Error("timeout")), LLM_CLASSIFIER_TIMEOUT_MS),
@@ -572,6 +590,8 @@ Respond with JSON only: {"intent":"short_label","categories":["cat1"],"specific_
         parsed.specific_tools = parsed.specific_tools || [];
         parsed.intent = parsed.intent || "unknown";
         parsed.confidence = Math.min(1, Math.max(0, parsed.confidence || 0.5));
+        parsed.tier = TASK_TIERS.includes(parsed.tier as TaskTier) ? parsed.tier : undefined;
+        parsed.multi_step = parsed.multi_step === true;
 
         // Cache the result (with TTL sweep to prevent stale buildup)
         const now = Date.now();
@@ -596,7 +616,7 @@ Respond with JSON only: {"intent":"short_label","categories":["cat1"],"specific_
         }
 
         console.log(
-            `🧠 LLM Classifier: intent="${parsed.intent}" cats=[${parsed.categories}] tools=[${parsed.specific_tools}] conf=${parsed.confidence}`,
+            `🧠 LLM Classifier: intent="${parsed.intent}" cats=[${parsed.categories}] tools=[${parsed.specific_tools}] conf=${parsed.confidence} tier=${parsed.tier ?? "?"}${parsed.multi_step ? " multi-step" : ""}`,
         );
         return parsed;
     } catch (err) {
@@ -885,7 +905,7 @@ const messageEmbeddingCache: Map<string, CachedEmbedding> = new Map();
 const selectionCache: Map<string, CachedSelection> = new Map();
 const SELECTION_CACHE_TTL_MS = 60_000; // 60 seconds
 const MAX_CACHE_SIZE = 50;
-const CATEGORY_EXPIRY_ITERATIONS = 10; // Auto-expire after 10 unused iterations
+const CATEGORY_EXPIRY_ITERATIONS = 3; // Auto-expire after 3 unused selections (≈ turns: later iterations reuse the turn's set)
 
 // ── Collision-free hash function for cache keys ───────
 
@@ -1431,6 +1451,46 @@ export async function selectTools(opts: {
     // Try LLM classifier first (primary path)
     const llmResult = await classifyWithLLM(opts.message, opts.recentToolCalls, opts.conversationContext);
 
+    // Expire stale request_tools categories before the chat-lane check uses them.
+    if (
+        activeRequestedCategories.categories.length > 0 &&
+        currentIteration - activeRequestedCategories.lastUsedIteration > CATEGORY_EXPIRY_ITERATIONS
+    ) {
+        activeRequestedCategories = { categories: [], lastUsedIteration: 0 };
+    }
+
+    // ── Chat lane: the classifier is confident no tools are needed ──
+    // Skip the tool schemas entirely (they were most of a greeting's 20K-token
+    // prompt). request_tools stays, so a wrong call can still fetch what it needs;
+    // memory tools stay only if the classifier asked for them ("remember …").
+    if (
+        llmResult?.tier === "chat" &&
+        llmResult.confidence >= 0.6 &&
+        !opts.requestedCategories &&
+        activeRequestedCategories.categories.length === 0
+    ) {
+        const chatCats = llmResult.categories.filter((c) => c === "memory");
+        const chatSchemas = chatCats.length
+            ? allSchemas.filter((t) => CATEGORIES.memory.tools.includes(t.function.name))
+            : [];
+        lastClassifiedIntent = llmResult.intent;
+        lastClassification = {
+            intent: llmResult.intent,
+            specific_tools: [],
+            confidence: llmResult.confidence,
+            categories: chatCats,
+        };
+        console.log(`🎯 Tool Router: ${chatSchemas.length} tools [chat lane] (${Date.now() - startTime}ms)`);
+        return {
+            tools: [...chatSchemas, REQUEST_TOOLS_SCHEMA],
+            categories: ["chat_only", ...chatCats],
+            skillSlugs: [],
+            totalAvailable: allSchemas.length,
+            selectedCount: chatSchemas.length + 1,
+            classification: { ...lastClassification, tier: "chat", multi_step: false },
+        };
+    }
+
     if (
         llmResult &&
         llmResult.categories.length > 0 &&
@@ -1696,6 +1756,8 @@ export async function selectTools(opts: {
                   specific_tools: [...(llmResult.specific_tools || [])],
                   confidence: llmResult.confidence,
                   categories: [...llmResult.categories],
+                  tier: llmResult.tier,
+                  multi_step: llmResult.multi_step,
               }
             : null;
 

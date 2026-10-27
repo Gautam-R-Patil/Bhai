@@ -285,18 +285,30 @@ export const assembleSystemPrompt = internalQuery({
         .withIndex("by_user_active", (q) => q.eq("otplessUserId", userId).eq("isActive", true))
         .take(12);
 
-      if (addenda.length > 0) {
+      // The tone the user picked in Settings is THEIR instruction, not a
+      // bot-authored learning: give it its own section with real weight
+      // (inside the learnings fence it read as a weak hint and barely changed
+      // replies). Only the user-controlled slug gets this — the agent can't
+      // write to it (userAddenda.USER_CONTROLLED_SLUGS).
+      const sanitize = (s: string) => s.replace(/^#{1,6}\s+/gm, "").trim();
+      const userTone = addenda.find((a) => a.slug === "user-personality");
+      if (userTone) {
+        parts.push(
+          `## Tone the user chose in Settings\n\nThe user set this in Bhai's Settings. For tone, length, emoji, slang and humour it OVERRIDES the defaults above; identity, safety, honesty and tool rules still apply.\n\n${sanitize(userTone.content)}`,
+        );
+      }
+      const learned = addenda.filter((a) => a !== userTone);
+
+      if (learned.length > 0) {
         const sorted = [
-          ...addenda.filter((a) => a.kind === "personality"),
-          ...addenda.filter((a) => a.kind === "skill"),
-          ...addenda.filter((a) => a.kind === "memory"),
+          ...learned.filter((a) => a.kind === "personality"),
+          ...learned.filter((a) => a.kind === "skill"),
+          ...learned.filter((a) => a.kind === "memory"),
         ];
         // Demote ALL leading markdown headers (#-######) to plain text so a
         // bot-authored block can't visually masquerade as a core section
         // (e.g. "# CORE RULES" or "## OWNERSHIP OVERRIDE"). The fence text
         // around the block is advisory; this is the structural defense.
-        const sanitize = (s: string) =>
-          s.replace(/^#{1,6}\s+/gm, "").trim();
         const block = sorted
           .map((a) => `### ${a.title}\n${sanitize(a.content)}`)
           .join("\n\n");

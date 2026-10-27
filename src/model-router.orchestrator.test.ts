@@ -132,10 +132,10 @@ describe("pickOrchestratorModel — tier → model", () => {
         expect(p.thinkingLevel).toBe("off");
     });
 
-    it("mild → Sonnet, thinking off", () => {
+    it("mild → Haiku, thinking low", () => {
         const p = pickOrchestratorModel("mild");
-        expect(p.model).toBe(MODELS.SONNET);
-        expect(p.thinkingLevel).toBe("off");
+        expect(p.model).toBe(MODELS.HAIKU);
+        expect(p.thinkingLevel).toBe("low");
     });
 
     it("complex → Sonnet 4.6, thinking low", () => {

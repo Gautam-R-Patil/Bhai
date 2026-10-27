@@ -540,8 +540,8 @@ export async function applyIntervention(ctx: InterventionContext): Promise<void>
 // model pick via the existing modelOverride path. Cooldown-gated.
 function escalateArm(ctx: InterventionContext): void {
     if (ctx.iterations - ctx.state.lastEscalateIter < ESCALATE_COOLDOWN) return;
-    const struggledHard =
-        ctx.assessment.struggleDetected || ctx.assessment.confidence < 0.25 || ctx.recentToolNames.length > 0;
+    // Opus only for real struggle; merely having used tools isn't struggling.
+    const struggledHard = ctx.assessment.struggleDetected || ctx.assessment.confidence < 0.25;
     const target = struggledHard ? MODELS.PRO : MODELS.SONNET;
     ctx.state.forcedModel = target;
     ctx.state.lastEscalateIter = ctx.iterations;

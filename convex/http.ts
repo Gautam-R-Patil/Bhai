@@ -561,14 +561,21 @@ http.route({
     //    Otherwise, build from server DB using platform + skillSlugs.
     const messages = Array.isArray(body.messages) ? [...body.messages] : [];
 
+    // A lean call (classifier, HyDE, memory briefing) can't act — it carries no
+    // tools — so the agent's safety rules are dead weight there (~4.8K tokens
+    // per call). Any call with tools still gets them.
+    const hasTools = Array.isArray(body.tools) && body.tools.length > 0;
+    const skipRules = body.lean === true && !hasTools;
+
     if (body.systemPromptOverride && typeof body.systemPromptOverride === "string") {
       // Client-specified override: sub-agents, JSON planners, and classifiers
       // still want the narrow task-specific prompt — but we always prepend the
       // server-side `rules` slug so core safety rails are non-overridable even
-      // by an authenticated client. If the rules slug is missing (fresh seed
-      // state) we fall through without it rather than blocking the call.
+      // by an authenticated client (unless the call is lean and tool-less, see
+      // above). If the rules slug is missing (fresh seed state) we fall through
+      // without it rather than blocking the call.
       let safetyRules = "";
-      try {
+      if (!skipRules) try {
         const rulesPrompt = await ctx.runQuery(
           internal.systemContent.getPromptBySlug,
           { slug: "rules" },
@@ -596,7 +603,22 @@ http.route({
       const skillSlugs: string[] = Array.isArray(body.skillSlugs) ? body.skillSlugs : [];
 
       try {
-        const serverPrompt = await ctx.runQuery(
+        // A named base prompt (e.g. "orchestrator-base" for the planner) replaces
+        // the full identity stack, with the safety rules still in front.
+        const slug = typeof body.serverPromptSlug === "string" && /^[a-z0-9-]{1,40}$/.test(body.serverPromptSlug)
+          ? body.serverPromptSlug
+          : "";
+        let serverPrompt: string | null = null;
+        if (slug) {
+          const [rules, base] = await Promise.all([
+            ctx.runQuery(internal.systemContent.getPromptBySlug, { slug: "rules" }),
+            ctx.runQuery(internal.systemContent.getPromptBySlug, { slug }),
+          ]);
+          if (base && typeof base.content === "string") {
+            serverPrompt = rules && typeof rules.content === "string" ? `${rules.content}\n\n${base.content}` : base.content;
+          }
+        }
+        if (!serverPrompt) serverPrompt = await ctx.runQuery(
           internal.systemContent.assembleSystemPrompt,
           {
             platform,
@@ -2843,8 +2865,10 @@ http.route({
     if (validation instanceof Response) return validation;
     const { account } = validation;
 
+    // The bot sends these bodies E2E-encrypted (encryptedFetch), like every
+    // other authenticated route — request.json() alone saw only the envelope.
     let body: any;
-    try { body = await request.json(); } catch {
+    try { ({ body } = await parseRequestBody(request, account.sharedKey)); } catch {
       return new Response(JSON.stringify({ error: "Invalid JSON" }), { status: 400, headers: { "Content-Type": "application/json" } });
     }
     const { slug, kind, title, content, reason, allowUserControlled } = body || {};
@@ -2901,8 +2925,10 @@ http.route({
     if (validation instanceof Response) return validation;
     const { account } = validation;
 
+    // The bot sends these bodies E2E-encrypted (encryptedFetch), like every
+    // other authenticated route — request.json() alone saw only the envelope.
     let body: any;
-    try { body = await request.json(); } catch {
+    try { ({ body } = await parseRequestBody(request, account.sharedKey)); } catch {
       return new Response(JSON.stringify({ error: "Invalid JSON" }), { status: 400, headers: { "Content-Type": "application/json" } });
     }
     const { slug, toVersion } = body || {};
@@ -2934,8 +2960,10 @@ http.route({
     if (validation instanceof Response) return validation;
     const { account } = validation;
 
+    // The bot sends these bodies E2E-encrypted (encryptedFetch), like every
+    // other authenticated route — request.json() alone saw only the envelope.
     let body: any;
-    try { body = await request.json(); } catch {
+    try { ({ body } = await parseRequestBody(request, account.sharedKey)); } catch {
       return new Response(JSON.stringify({ error: "Invalid JSON" }), { status: 400, headers: { "Content-Type": "application/json" } });
     }
     const { slug } = body || {};

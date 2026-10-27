@@ -52,6 +52,12 @@ export interface LLMClient {
         modelOverride?: string;
         skillSlugs?: string[];
         responseFormat?: "json_object";
+        /**
+         * Helper call (classifier, HyDE, briefing): no thinking, no clock/widget
+         * context, and — when it has no tools — no server rules preamble. Much
+         * faster and cheaper; use only for calls that just transform text.
+         */
+        lean?: boolean;
     }): Promise<ChatCompletion>;
     config: Config;
 }
@@ -146,7 +152,7 @@ export function createLLMClient(config: Config): LLMClient {
 
     return {
         config,
-        async chat({ messages, tools, systemPrompt, serverPromptSlug, thinkingLevel, modelOverride, skillSlugs, responseFormat }) {
+        async chat({ messages, tools, systemPrompt, serverPromptSlug, thinkingLevel, modelOverride, skillSlugs, responseFormat, lean }) {
             // ── Network health guard: fail fast if internet is down ──
             try {
                 const { isOffline, reportNetworkError } = await import("./network-health.js");
@@ -166,7 +172,7 @@ export function createLLMClient(config: Config): LLMClient {
             // Unspecified callers are background work (reflection, summaries,
             // classifiers): the cheap, fast model is the right default.
             const model = modelOverride || MODELS.HAIKU;
-            const effort = thinkingLevel || "off";
+            const effort = lean ? "off" : thinkingLevel || "off";
             const isThinking = effort !== "off";
 
             // Build middleware params
@@ -189,13 +195,10 @@ export function createLLMClient(config: Config): LLMClient {
 
                 // Dynamic context (non-sensitive, stays client-side).
                 // Server will prepend the system prompt from its DB before this.
-                const dynamicContext = buildDynamicContextBlock(languageContext);
-
-                // Prepend dynamic context as first system message.
-                const allMessages: ChatCompletionMessageParam[] = [
-                    { role: "system", content: dynamicContext },
-                    ...params.messages,
-                ];
+                // Lean helper calls skip it: a classifier doesn't need the clock.
+                const allMessages: ChatCompletionMessageParam[] = lean
+                    ? [...params.messages]
+                    : [{ role: "system", content: buildDynamicContextBlock(languageContext) }, ...params.messages];
 
                 // Scale max_tokens based on thinking level
                 const maxTokensByThinking: Record<string, number> = {
@@ -224,12 +227,17 @@ export function createLLMClient(config: Config): LLMClient {
                     // when tools are present so the flag is safe to set in
                     // middleware-agnostic code paths.
                     response_format: responseFormat === "json_object" ? { type: "json_object" } : undefined,
+                    lean: lean || undefined,
                 };
 
                 // Always send an effort: every Claude model thinks by default
-                // (Sonnet at high), so "off" must explicitly mean the lowest
-                // effort or quick replies pay for deep reasoning.
-                requestBody.reasoning = { effort: isThinking ? effort : "low" };
+                // (Sonnet at high). "none" makes the proxy turn thinking off
+                // (disabled on Haiku, between_tools on Sonnet) at the lowest effort.
+                // Callers that never chose a level (planners, sub-agents,
+                // research, synthesis) keep the old default: lowest effort with
+                // thinking on. Only an explicit "off" or a lean helper call
+                // turns thinking off.
+                requestBody.reasoning = { effort: isThinking ? effort : lean || thinkingLevel === "off" ? "none" : "low" };
 
             // Exclude already-tried models so each hop surfaces a new provider.
             // Window-aware mode (opt-in): estimate the request's token size once

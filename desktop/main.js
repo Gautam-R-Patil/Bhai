@@ -1222,6 +1222,8 @@ async function startBot() {
         PATH: mergedPath,
         DOTENV_CONFIG_PATH: tempEnvPath,
         ATLAS_DATA_DIR: DATA_DIR,
+        // Where Settings writes .user-personality.json (personality-sync.ts).
+        ATLAS_USER_DATA_DIR: app.getPath("userData"),
         NODE_ENV: "production",
     };
 
@@ -1697,24 +1699,66 @@ function showBuddy(mood, text, hideAfterMs, force = false) {
 }
 
 // Bot → "##BHAI_BUDDY##{type,text}" lines (see src/overlay/overlay-chat.ts).
+// What the corner companion says, in Bhai's voice — varied so it doesn't repeat itself.
+const BUDDY_LINES = {
+    "thinking": [
+        "Hmm, let me see…",
+        "Thinking it through…",
+        "Connecting the dots…",
+        "Hmm, one sec…"
+    ],
+    "looking": [
+        "Checking your screen…",
+        "Taking a look…",
+        "Eyes on it 👀",
+        "Peeking over the shades 😎"
+    ],
+    "working": [
+        "Sorting it out…",
+        "On it…",
+        "Finding a way…",
+        "No hands, still on it…",
+        "Chalo, on it…"
+    ],
+    "done": [
+        "Sorted!",
+        "Done ✅",
+        "Ho gaya ✅",
+        "All set 😎",
+        "That's handled."
+    ],
+    "error": [
+        "Arre, hit a snag.",
+        "Hmm, that didn't land.",
+        "That one fought back 😅",
+        "Bump in the road."
+    ]
+};
+let lastBuddyLine = "";
+function buddyLine(kind) {
+    const pool = BUDDY_LINES[kind].filter((l) => l !== lastBuddyLine);
+    lastBuddyLine = pool[Math.floor(Math.random() * pool.length)];
+    return lastBuddyLine;
+}
+
 function handleBuddyStatus({ type, text }) {
     const clean = (text || "").replace(/^[^\p{L}\p{N}]+/u, "").trim();
     switch (type) {
-        case "thinking": return showBuddy("thinking", "Hmm, let me think…");
+        case "thinking": return showBuddy("thinking", buddyLine("thinking"));
         case "screen":
             // Out of the way for the agent's screenshots and clicks: the native
             // glass can't be hidden from CSS, and the window would block clicks.
             if (overlayShowing()) { overlayWindow.setOpacity(0); overlayWindow.setIgnoreMouseEvents(true); }
-            return showBuddy("looking", "Looking at your screen…", 0, true);
+            return showBuddy("looking", buddyLine("looking"), 0, true);
         case "screen_done":
             if (overlayWindow && !overlayWindow.isDestroyed()) { overlayWindow.setOpacity(1); overlayWindow.setIgnoreMouseEvents(false); }
-            return overlayShowing() ? hideBuddy() : showBuddy("working", "Working on it…");
+            return overlayShowing() ? hideBuddy() : showBuddy("working", buddyLine("working"));
         case "progress": {
             const looking = /screen|look|see|brows|search|web|page|read/i.test(clean);
             return showBuddy(looking ? "looking" : "working", clean || "Working on it…");
         }
-        case "response": return buddyState?.visible ? showBuddy("happy", "All done!", 2400) : undefined;
-        case "error": return showBuddy("oops", "Oops — hit a snag.", 4000);
+        case "response": return buddyState?.visible ? showBuddy("happy", buddyLine("done"), 2400) : undefined;
+        case "error": return showBuddy("oops", buddyLine("error"), 4000);
         case "silent": return hideBuddy();
     }
 }

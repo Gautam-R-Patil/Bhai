@@ -226,6 +226,16 @@ async function boot() {
             } else if (r.reason && r.reason !== "no-file") {
                 console.warn(`[personality-sync] ${r.reason}${r.error ? `: ${r.error}` : ""}`);
             }
+            // Later Settings changes apply on the next message, not the next boot.
+            const { watchPersonalityFile, loadActivePreset } = await import("./setup/personality-sync.js");
+            loadActivePreset({ userDataDir: process.env.ATLAS_USER_DATA_DIR, dataDir: process.env.ATLAS_DATA_DIR });
+            watchPersonalityFile(
+                { userDataDir: process.env.ATLAS_USER_DATA_DIR, dataDir: process.env.ATLAS_DATA_DIR },
+                (res) => {
+                    if (res.ran) console.log(`🎨 Personality updated from Settings (v${res.version})`);
+                    else if (res.reason !== "no-file") console.warn(`[personality-sync] ${res.reason}${res.error ? `: ${res.error}` : ""}`);
+                },
+            );
         } catch (err) {
             console.warn("[personality-sync] non-fatal:", (err as Error).message);
         }
