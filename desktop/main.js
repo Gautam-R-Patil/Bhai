@@ -143,6 +143,8 @@ const OVERLAY_MARGIN_TOP = 8;
 const OVERLAY_URL = "http://127.0.0.1:18792";
 const OVERLAY_RESIZE_MS = 500;
 const OVERLAY_HIDE_DELAY_MS = 260;
+// macOS 26 Spotlight-style corners; keep in sync with --panel-radius in src/overlay/overlay.html.
+const OVERLAY_CORNER_RADIUS = 26;
 
 // ── Convex deployment selector ─────────────────────────────────────
 // Packaged DMG → prod by default. `npm start` (dev) → dev. Override either
@@ -1716,6 +1718,25 @@ function handleBuddyStatus({ type, text }) {
     }
 }
 
+// Apple's real Liquid Glass (NSGlassEffectView, macOS 26+) behind the overlay's
+// web contents, via the bot's native module (native/ in dev, Resources/bot/native
+// when packaged). Returns false — logged once — so the caller falls back to vibrancy.
+let overlayGlassNative; // undefined = not loaded yet, null = unavailable
+function attachOverlayGlass(win) {
+    try {
+        if (overlayGlassNative === undefined) {
+            overlayGlassNative = require(path.join(BOT_DIR, "native", `atlas-native.darwin-${process.arch}.node`));
+        }
+        const [w, h] = win.getContentSize();
+        if (overlayGlassNative?.attachGlassEffect?.(win.getNativeWindowHandle(), w, h, OVERLAY_CORNER_RADIUS)) return true;
+        throw new Error("NSGlassEffectView unavailable (needs macOS 26+)");
+    } catch (err) {
+        if (overlayGlassNative !== null) console.warn("[OVERLAY] Liquid Glass off, using vibrancy:", err.message);
+        overlayGlassNative = null;
+        return false;
+    }
+}
+
 function createOverlayWindow() {
     const pos = getOverlayPosition();
 
@@ -1734,11 +1755,11 @@ function createOverlayWindow() {
         alwaysOnTop: true,
         skipTaskbar: true,
         focusable: true,
-        // macOS: real "liquid glass" — native vibrancy blurs and tints what's
-        // behind the window (CSS backdrop-filter can't see other apps), with
-        // the system's rounded corners and shadow.
+        // macOS: the glass (Liquid Glass, or vibrancy before macOS 26) is
+        // attached right after creation by attachOverlayGlass(); CSS
+        // backdrop-filter can't see other apps. visualEffectState applies to
+        // the vibrancy fallback.
         hasShadow: true,
-        vibrancy: "popover",
         visualEffectState: "active",
         roundedCorners: true,
         show: false,
@@ -1753,6 +1774,15 @@ function createOverlayWindow() {
             preload: path.join(__dirname, "overlay-preload.js"),
         },
     });
+
+    if (process.platform === "darwin") {
+        if (!attachOverlayGlass(overlayWindow)) overlayWindow.setVibrancy("popover");
+    } else {
+        // No native glass here: give the clear page the theme's opaque panel fill.
+        overlayWindow.webContents.on("did-finish-load", () => {
+            overlayWindow.webContents.insertCSS("body { background: var(--bg-panel); }").catch(() => {});
+        });
+    }
 
     // The native glass can't be faded from CSS, so keep the overlay out of
     // screen captures (Bhai's own screenshots must see what's underneath).

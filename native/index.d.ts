@@ -3129,6 +3129,17 @@ export declare function forgeEvict(slug: string): Promise<void>
 export declare function forgeStrikes(slug: string): number
 export declare function forgeClearStrikes(slug: string): void
 export declare function forgeSetPoolSize(size: number): void
+/**
+ * Put Apple's Liquid Glass (`NSGlassEffectView`, macOS 26+) behind the web
+ * contents of the window whose `getNativeWindowHandle()` is `handle`. The view
+ * tracks the window size. `tintColor` is `#RRGGBB[AA]`; `style` is
+ * `NSGlassEffectViewStyle` (0 regular, 1 clear). Re-attaching replaces the
+ * previous glass. Returns false when unavailable (macOS < 26, not macOS,
+ * off the main thread), so the caller falls back to vibrancy.
+ */
+export declare function attachGlassEffect(handle: Buffer, width: number, height: number, cornerRadius: number, tintColor?: string | undefined | null, style?: number | undefined | null): boolean
+/** Remove glass added by `attachGlassEffect`. Returns false if there was none. */
+export declare function detachGlassEffect(handle: Buffer): boolean
 /** Get the native module version */
 export declare function getVersion(): string
 /** Check if SIMD is available on this platform */

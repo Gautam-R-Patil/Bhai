@@ -95,6 +95,7 @@
         window.setBuddy = function ({ mood, text, visible }) {
             if (mood) bhai.dataset.mood = mood;
             if (text && text !== bubble.textContent) {
+                window.BhaiMascot.react(bhai, "talk");
                 bubble.classList.add("swap");
                 setTimeout(() => { bubble.textContent = text; bubble.classList.remove("swap"); }, 160);
             }

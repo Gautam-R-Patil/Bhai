@@ -67,6 +67,7 @@ mod harness_optimizer;
 mod secrets_sanitizer;
 mod ax_walker;
 mod forge_sandbox;
+mod glass_effect;
 
 #[cfg(feature = "vad")]
 mod pcm_vad;
@@ -137,6 +138,7 @@ pub use harness_optimizer::*;
 pub use secrets_sanitizer::*;
 pub use ax_walker::*;
 pub use forge_sandbox::api::*;
+pub use glass_effect::*;
 
 #[cfg(feature = "vad")]
 pub use pcm_vad::*;

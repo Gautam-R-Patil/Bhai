@@ -5621,24 +5621,40 @@ body.hig .studio-detail { background: var(--bg-elevated); border-color: var(--se
 /* ════════════════════════════════════════════════════════════════════
    LIQUID GLASS — panel.html only (body.hig), layered on the HIG skin
    ────────────────────────────────────────────────────────────────────
-   1. A living background: six soft colour orbs drifting on 38–70s loops
-      (transform-only, compositor friendly) plus a faint film grain.
-   2. Glass panels: translucent fill + backdrop blur/saturate so the orbs
-      bleed through, a 1px specular rim (bright top-left), an inner top
-      highlight and a warm drop shadow. The sidebar and hero also refract
-      the backdrop along their edges through the inline SVG filter
-      #bhai-liquid (Chromium `backdrop-filter: url()`), behind @supports.
-   3. The mascot hero, a springy nav pill, count-up stats, staggered tab
-      entrances. Everything calms down under prefers-reduced-motion.
+   Apple Liquid Glass (macOS 26 / iOS 26), in three parts:
+   1. A living background: six firm-edged colour orbs drifting on 38–70s
+      loops (transform-only) — the detail the glass has to bend.
+   2. The material: mostly clear (light frost + adaptive tint), lensing
+      along the rim, a thin specular rim brightest top-left and bottom-
+      right, an inner glow, and a highlight that follows the pointer
+      (--lg-x / --lg-y, set by components/liquid-glass.js). The lensing is
+      a per-element SVG displacement filter that liquid-glass.js builds
+      and hands over as --lg-refract; without it this is plain blur.
+   3. Liquid motion: spring easings (`linear()`), jelly press on controls,
+      the droplet nav pill (LiquidGlass.slide), count-up stats, staggered
+      entrances. prefers-reduced-motion turns the motion off.
    Radii: 10 controls · 14 tiles · 18 groups · 20 hero / sidebar.
    ════════════════════════════════════════════════════════════════════ */
 
+/* Pointer position on a glass element. Registered so the highlight glides
+   (and drifts home on leave) instead of jumping. */
+@property --lg-x { syntax: '<length-percentage>'; inherits: true; initial-value: 28%; }
+@property --lg-y { syntax: '<length-percentage>'; inherits: true; initial-value: -140px; }
+
 body.hig {
-    --lg-blur:   blur(30px) saturate(180%);
-    --lg-sheen:  linear-gradient(180deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0) 46%);
-    --lg-rim:    linear-gradient(145deg, rgba(255, 255, 255, 1) 0%, rgba(255, 255, 255, 0.5) 16%, rgba(255, 255, 255, 0.12) 42%, rgba(255, 255, 255, 0.16) 72%, rgba(255, 255, 255, 0.8) 100%);
-    --lg-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 1px 2px rgba(90, 40, 10, 0.05), 0 14px 34px -14px rgba(160, 72, 20, 0.30);
-    --lg-shadow-hover: inset 0 1px 0 rgba(255, 255, 255, 0.85), 0 2px 4px rgba(90, 40, 10, 0.06), 0 22px 44px -16px rgba(160, 72, 20, 0.40);
+    --lg-frost: blur(3px);
+    --lg-color: saturate(190%) brightness(1.05);
+    --lg-tint: rgba(255, 251, 248, 0.24);
+    --lg-tint-side: rgba(255, 251, 248, 0.18);
+    --lg-glow: rgba(255, 255, 255, 0.6);
+    --lg-rim: linear-gradient(135deg, #fff 0%, rgba(255, 255, 255, 0.4) 16%, rgba(255, 255, 255, 0.1) 40%, rgba(255, 255, 255, 0.1) 62%, rgba(255, 255, 255, 0.45) 86%, rgba(255, 255, 255, 0.95) 100%);
+    --lg-glint: #fff;
+    --lg-inner: inset 0 0 0 0.5px rgba(255, 255, 255, 0.3), inset 1px 1.5px 1px -1px rgba(255, 255, 255, 0.9), inset -1px -1px 1px -1px rgba(255, 255, 255, 0.6), inset 0 0 22px rgba(255, 255, 255, 0.2);
+    --lg-drop: 0 1px 2px rgba(90, 40, 10, 0.05), 0 12px 30px -14px rgba(150, 66, 18, 0.3);
+    --lg-drop-hover: 0 2px 4px rgba(90, 40, 10, 0.06), 0 22px 44px -16px rgba(150, 66, 18, 0.4);
+    /* Springs as `linear()` curves: damping 0.62 (settle) and 0.42 (jelly). */
+    --lg-spring: linear(0, 0.068, 0.225, 0.417, 0.607, 0.772, 0.9, 0.991, 1.047, 1.076, 1.084, 1.078, 1.065, 1.049, 1.033, 1.019, 1.008, 1.001, 0.996, 0.994, 0.993, 0.993, 0.995, 0.996, 0.997, 0.998, 0.999, 1);
+    --lg-jelly: linear(0, 0.054, 0.192, 0.378, 0.581, 0.776, 0.945, 1.077, 1.168, 1.218, 1.234, 1.221, 1.189, 1.145, 1.098, 1.052, 1.013, 0.982, 0.961, 0.949, 0.945, 0.948, 0.956, 0.966, 0.977, 0.988, 0.997, 1.004, 1.009, 1.012, 1.013, 1.012, 1);
     --spring:   cubic-bezier(0.34, 1.56, 0.64, 1);
     --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
     --r-ctl: 10px;
@@ -5648,10 +5664,15 @@ body.hig {
     --orb-k: 1;                       /* orb intensity; lower while Bhai naps */
 }
 body.hig.theme-dark {
-    --lg-sheen:  linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0) 40%);
-    --lg-rim:    linear-gradient(145deg, rgba(255, 255, 255, 0.42) 0%, rgba(255, 255, 255, 0.14) 18%, rgba(255, 255, 255, 0.04) 48%, rgba(255, 255, 255, 0.06) 76%, rgba(255, 255, 255, 0.24) 100%);
-    --lg-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 1px 2px rgba(0, 0, 0, 0.3), 0 18px 40px -16px rgba(0, 0, 0, 0.7);
-    --lg-shadow-hover: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 2px 4px rgba(0, 0, 0, 0.3), 0 26px 50px -16px rgba(0, 0, 0, 0.8);
+    --lg-color: saturate(170%) brightness(0.94);
+    --lg-tint: rgba(28, 22, 19, 0.4);
+    --lg-tint-side: rgba(28, 22, 19, 0.34);
+    --lg-glow: rgba(255, 236, 222, 0.16);
+    --lg-rim: linear-gradient(135deg, rgba(255, 255, 255, 0.6) 0%, rgba(255, 255, 255, 0.16) 16%, rgba(255, 255, 255, 0.04) 40%, rgba(255, 255, 255, 0.04) 62%, rgba(255, 255, 255, 0.14) 86%, rgba(255, 255, 255, 0.45) 100%);
+    --lg-glint: rgba(255, 236, 222, 0.8);
+    --lg-inner: inset 0 0 0 0.5px rgba(255, 255, 255, 0.06), inset 1px 1.5px 1px -1px rgba(255, 255, 255, 0.22), inset -1px -1px 1px -1px rgba(255, 255, 255, 0.1), inset 0 0 22px rgba(255, 255, 255, 0.035);
+    --lg-drop: 0 1px 2px rgba(0, 0, 0, 0.3), 0 18px 40px -16px rgba(0, 0, 0, 0.7);
+    --lg-drop-hover: 0 2px 4px rgba(0, 0, 0, 0.3), 0 26px 50px -16px rgba(0, 0, 0, 0.8);
 }
 
 /* ── 1. Living background ────────────────────────────────────────── */
@@ -5686,6 +5707,10 @@ body.hig:has(#heroCard[data-phase="stopped"]) { --orb-k: 0.78; }
 }
 body.theme-dark :is(.ambient, .bg-canvas)::after { opacity: 0.06; mix-blend-mode: screen; }
 
+/* Firm-bodied orbs: a solid core that falls off over the outer rim (--rim),
+   so their edges are crisp enough to visibly bend at the glass rims. The two
+   small ones are crisper still — they are what you see lensing as they pass
+   under an edge. */
 :is(.ambient, .bg-canvas) .orb {
     position: absolute;
     left: var(--x);
@@ -5693,7 +5718,7 @@ body.theme-dark :is(.ambient, .bg-canvas)::after { opacity: 0.06; mix-blend-mode
     width: var(--d);
     aspect-ratio: 1;
     border-radius: 50%;
-    background: radial-gradient(closest-side, var(--c) 0%, color-mix(in srgb, var(--c) 55%, transparent) 45%, transparent 100%);
+    background: radial-gradient(closest-side, var(--c) 0%, color-mix(in srgb, var(--c) 84%, transparent) var(--core, 60%), color-mix(in srgb, var(--c) 36%, transparent) var(--rim, 84%), transparent 100%);
     opacity: calc(var(--o) * var(--orb-k, 1));
     will-change: transform;
     animation: lgOrbDrift var(--t) ease-in-out var(--delay) infinite alternate;
@@ -5701,12 +5726,12 @@ body.theme-dark :is(.ambient, .bg-canvas)::after { opacity: 0.06; mix-blend-mode
 }
 body.theme-dark :is(.ambient, .bg-canvas) .orb { opacity: calc(var(--o) * var(--orb-k, 1) * 0.62); mix-blend-mode: screen; }
 
-:is(.ambient, .bg-canvas) .orb-1 { --c: #E87B2D; --x: -18vw; --y: -26vh; --d: 62vmax; --o: 0.62; --t: 52s; --delay: -14s; --dx: 16vw; --dy: 14vh; --dx2: 4vw; --dy2: 26vh; --s1: 1.12; --s2: 0.94; }
-:is(.ambient, .bg-canvas) .orb-2 { --c: #FFB37A; --x: 52vw; --y: -30vh; --d: 58vmax; --o: 0.66; --t: 64s; --delay: -30s; --dx: -14vw; --dy: 20vh; --dx2: 8vw; --dy2: 32vh; --s1: 0.92; --s2: 1.1; }
-:is(.ambient, .bg-canvas) .orb-3 { --c: #FF7A8A; --x: 34vw; --y: 40vh; --d: 46vmax; --o: 0.46; --t: 46s; --delay: -8s; --dx: 18vw; --dy: -16vh; --dx2: -12vw; --dy2: -6vh; --s1: 1.14; --s2: 0.9; }
-:is(.ambient, .bg-canvas) .orb-4 { --c: #FFD36E; --x: -12vw; --y: 52vh; --d: 50vmax; --o: 0.62; --t: 70s; --delay: -40s; --dx: 20vw; --dy: -10vh; --dx2: 30vw; --dy2: 6vh; --s1: 1.08; --s2: 0.96; }
-:is(.ambient, .bg-canvas) .orb-5 { --c: #9B87F5; --x: 68vw; --y: 48vh; --d: 42vmax; --o: 0.42; --t: 58s; --delay: -22s; --dx: -20vw; --dy: -14vh; --dx2: -6vw; --dy2: -26vh; --s1: 1.16; --s2: 0.92; }
-:is(.ambient, .bg-canvas) .orb-6 { --c: #FF9F5A; --x: 36vw; --y: 2vh; --d: 30vmax; --o: 0.44; --t: 38s; --delay: -5s; --dx: -18vw; --dy: 24vh; --dx2: 14vw; --dy2: 30vh; --s1: 1.2; --s2: 0.86; }
+:is(.ambient, .bg-canvas) .orb-1 { --c: #E87B2D; --x: -18vw; --y: -26vh; --d: 62vmax; --o: 0.5; --t: 52s; --delay: -14s; --dx: 16vw; --dy: 14vh; --dx2: 4vw; --dy2: 26vh; --s1: 1.12; --s2: 0.94; }
+:is(.ambient, .bg-canvas) .orb-2 { --c: #FFB37A; --x: 52vw; --y: -30vh; --d: 58vmax; --o: 0.56; --t: 64s; --delay: -30s; --dx: -14vw; --dy: 20vh; --dx2: 8vw; --dy2: 32vh; --s1: 0.92; --s2: 1.1; }
+:is(.ambient, .bg-canvas) .orb-3 { --c: #FF7A8A; --x: 34vw; --y: 40vh; --d: 46vmax; --o: 0.4; --t: 46s; --delay: -8s; --dx: 18vw; --dy: -16vh; --dx2: -12vw; --dy2: -6vh; --s1: 1.14; --s2: 0.9; }
+:is(.ambient, .bg-canvas) .orb-4 { --c: #FFD36E; --x: -12vw; --y: 52vh; --d: 50vmax; --o: 0.54; --t: 70s; --delay: -40s; --dx: 20vw; --dy: -10vh; --dx2: 30vw; --dy2: 6vh; --s1: 1.08; --s2: 0.96; }
+:is(.ambient, .bg-canvas) .orb-5 { --c: #9B87F5; --x: 68vw; --y: 48vh; --d: 34vmax; --o: 0.38; --core: 84%; --rim: 95%; --t: 58s; --delay: -22s; --dx: -20vw; --dy: -14vh; --dx2: -6vw; --dy2: -26vh; --s1: 1.16; --s2: 0.92; }
+:is(.ambient, .bg-canvas) .orb-6 { --c: #FF9F5A; --x: 36vw; --y: 2vh; --d: 24vmax; --o: 0.5; --core: 86%; --rim: 96%; --t: 38s; --delay: -5s; --dx: -18vw; --dy: 24vh; --dx2: 14vw; --dy2: 30vh; --s1: 1.2; --s2: 0.86; }
 
 @keyframes lgOrbDrift {
     0%   { transform: translate3d(0, 0, 0) scale(1); }
@@ -5715,45 +5740,49 @@ body.theme-dark :is(.ambient, .bg-canvas) .orb { opacity: calc(var(--o) * var(--
     100% { transform: translate3d(calc(var(--dx) * -0.5), calc(var(--dy2) * 0.5), 0) scale(1.05); }
 }
 
-/* ── 2. Glass panels ─────────────────────────────────────────────── */
+/* ── 2. The glass material ───────────────────────────────────────── */
 body.hig .panel-layout { position: relative; z-index: 1; }
 body.hig .title-bar { background: transparent; border-bottom: 0; }
 
-body.hig :is(.panel-sidebar, .info-cards, .coming-soon-section, .update-banner, .installed-item, .trait-item) { position: relative; }
+body.hig :is(.panel-sidebar, .info-cards, .coming-soon-section, .update-banner, .installed-item, .trait-item, .connection-item) { position: relative; }
 
 body.hig :is(.panel-sidebar, .surface-card, .info-cards, .settings-section, .coming-soon-section, .update-banner, .installed-item, .trait-item) {
+    --lg-x: 28%;
+    --lg-y: -140px;
     border: 0;
-    background: var(--lg-sheen), var(--bg-group);
-    -webkit-backdrop-filter: var(--lg-blur);
-    backdrop-filter: var(--lg-blur);
-    box-shadow: var(--lg-shadow);
+    /* pointer glow (parked above the top edge as a soft inner top highlight) over a light tint */
+    background: radial-gradient(280px circle at var(--lg-x) var(--lg-y), var(--lg-glow), transparent 70%), var(--lg-tint);
+    /* light frost → edge lensing (when liquid-glass.js has built a map) → colour bleed */
+    -webkit-backdrop-filter: var(--lg-frost) var(--lg-refract,) var(--lg-color);
+    backdrop-filter: var(--lg-frost) var(--lg-refract,) var(--lg-color);
+    box-shadow: var(--lg-inner), var(--lg-drop);
+    transition: transform 620ms var(--lg-spring), box-shadow 300ms var(--ease-out), --lg-x 220ms var(--ease-out), --lg-y 220ms var(--ease-out);
 }
-/* Specular rim: a 1px gradient ring, brightest at the top-left edge. */
-body.hig :is(.panel-sidebar, .surface-card, .info-cards, .settings-section, .coming-soon-section, .update-banner, .installed-item, .trait-item)::before {
+/* Specular rim: a 1px ring brightest top-left and bottom-right, plus a glint
+   that slides along it under the pointer. */
+body.hig :is(.panel-sidebar, .surface-card, .info-cards, .settings-section, .coming-soon-section, .update-banner, .installed-item, .trait-item, .connection-item)::before {
     content: "";
     position: absolute;
     inset: 0;
     padding: 1px;
     border-radius: inherit;
-    background: var(--lg-rim);
+    background: radial-gradient(130px circle at var(--lg-x) var(--lg-y), var(--lg-glint), transparent 72%), var(--lg-rim);
     box-shadow: none;
     -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
     -webkit-mask-composite: xor;
     mask-composite: exclude;
     pointer-events: none;
-    opacity: 0.85;
-    transition: opacity 240ms var(--ease-out);
 }
-body.hig :is(.surface-card, .info-cards, .settings-section):hover::before { opacity: 1; }
 
-/* Real refraction on the two big panels. The SVG map pushes sampling
-   inward near each edge, so the orbs bend like light through thick glass. */
-@supports (backdrop-filter: url(#bhai-liquid)) {
-    body.hig :is(.panel-sidebar, .status-card) {
-        -webkit-backdrop-filter: blur(26px) saturate(185%) url(#bhai-liquid);
-        backdrop-filter: blur(26px) saturate(185%) url(#bhai-liquid);
-    }
-}
+/* Content-heavy surfaces (the memory graph and its detail pane) take a thicker
+   material so nodes and text don't compete with the orbs. */
+body.hig :is(.studio-canvas-card, .studio-detail) { --lg-frost: blur(20px); --lg-tint: rgba(255, 251, 248, 0.56); }
+body.hig.theme-dark :is(.studio-canvas-card, .studio-detail) { --lg-tint: rgba(28, 22, 19, 0.64); }
+/* The Memory tab animates these itself (studio.css); keep those transitions
+   instead of the shared glass spring. */
+body.hig .studio-detail { transition: transform 220ms ease, opacity 220ms ease, --lg-x 220ms var(--ease-out), --lg-y 220ms var(--ease-out); }
+body.hig .studio-body .studio-canvas-card { transition: margin-right 220ms ease, --lg-x 220ms var(--ease-out), --lg-y 220ms var(--ease-out); }
+body.hig .studio-insight-card { transition: transform 0.15s ease, box-shadow 0.15s ease, --lg-x 220ms var(--ease-out), --lg-y 220ms var(--ease-out); }
 
 /* Radii */
 body.hig :is(.surface-card, .settings-section, .info-cards, .coming-soon-section, .update-banner) { border-radius: var(--r-group) !important; }
@@ -5761,7 +5790,7 @@ body.hig :is(.stat-card, .account-detail-card, .installed-item, .trait-item) { b
 
 /* ── Sidebar: a floating glass slab the traffic lights sit on ────── */
 body.hig .panel-sidebar {
-    background: var(--lg-sheen), rgba(255, 255, 255, 0.4);   /* lighter than groups: more colour bleeds through */
+    --lg-tint: var(--lg-tint-side);   /* clearest slab: the most colour bleeds through */
     width: 216px;
     min-width: 216px;
     margin: 10px 0 10px 10px;
@@ -5779,12 +5808,17 @@ body.hig .nav-item {
     z-index: 1;
     height: 30px;
     border-radius: var(--r-ctl);
-    transition: background var(--hig-fast) var(--hig-ease), color var(--hig-fast) var(--hig-ease);
+    transition: background var(--hig-fast) var(--hig-ease), color var(--hig-fast) var(--hig-ease), transform 560ms var(--lg-jelly);
 }
-body.hig .nav-item svg { transition: transform 360ms var(--spring), color 200ms ease; }
+body.hig .nav-item:active { transform: scale(0.965); transition-duration: var(--hig-fast), var(--hig-fast), 120ms; transition-timing-function: var(--hig-ease), var(--hig-ease), var(--ease-out); }
+body.hig .nav-item svg { transition: transform 520ms var(--lg-jelly), color 200ms ease; }
 body.hig .nav-item:hover svg { transform: scale(1.1); }
 body.hig .nav-item.active,
 body.hig .nav-item.active:hover { background: transparent; font-weight: 600; }
+
+/* The selection droplet. liquid-glass.js drives its transform/height with two
+   springs (it stretches toward the target, thins, then settles); it rounds
+   into a capsule while in flight. */
 body.hig .nav-pill {
     position: absolute;
     top: 0;
@@ -5795,16 +5829,20 @@ body.hig .nav-pill {
     border-radius: var(--r-ctl);
     pointer-events: none;
     opacity: 0;
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.7));
-    box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.9), 0 1px 2px rgba(90, 40, 10, 0.08), 0 6px 16px -6px rgba(210, 95, 30, 0.38);
-    transition: transform 520ms var(--spring), height 300ms var(--ease-out), opacity 240ms ease;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.6));
+    box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.95), inset 0 -1px 1px rgba(255, 255, 255, 0.6), 0 1px 2px rgba(90, 40, 10, 0.08), 0 6px 16px -6px rgba(210, 95, 30, 0.38);
+    transition: opacity 240ms ease, border-radius 260ms var(--ease-out), box-shadow 260ms var(--ease-out);
 }
 body.hig .nav-pill.ready { opacity: 1; }
-body.hig.theme-dark .panel-sidebar { background: var(--lg-sheen), rgba(36, 29, 26, 0.46); }
-body.hig.theme-dark .nav-pill {
-    background: linear-gradient(180deg, rgba(255, 240, 230, 0.17), rgba(255, 240, 230, 0.09));
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), inset 0 0 0 0.5px rgba(255, 255, 255, 0.08), 0 8px 18px -8px rgba(0, 0, 0, 0.7);
+body.hig .nav-pill.lg-moving {
+    border-radius: 15px;
+    box-shadow: inset 0 0 0 0.5px #fff, inset 0 -1px 1px rgba(255, 255, 255, 0.6), 0 1px 2px rgba(90, 40, 10, 0.08), 0 10px 22px -8px rgba(210, 95, 30, 0.5);
 }
+body.hig.theme-dark .nav-pill {
+    background: linear-gradient(180deg, rgba(255, 240, 230, 0.18), rgba(255, 240, 230, 0.09));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), inset 0 0 0 0.5px rgba(255, 255, 255, 0.1), 0 8px 18px -8px rgba(0, 0, 0, 0.7);
+}
+body.hig.theme-dark .nav-pill.lg-moving { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), inset 0 0 0 0.5px rgba(255, 255, 255, 0.14), 0 10px 22px -8px rgba(0, 0, 0, 0.8); }
 
 /* ── Content column ──────────────────────────────────────────────── */
 body.hig .tab-header { padding-left: 28px; padding-right: 28px; }
@@ -5891,21 +5929,32 @@ body.hig .status-card:is([data-phase="running"], [data-phase="starting"]) .statu
 body.hig .status-card[data-phase="starting"] .status-dot::after { animation-duration: 1s; }
 @keyframes lgPulse { from { transform: scale(1); opacity: 0.7; } to { transform: scale(3.2); opacity: 0; } }
 
-/* ── Buttons: warm gradient + moving sheen ───────────────────────── */
+/* ── Buttons: jelly press, warm gradient, pointer glow, moving sheen ─
+   Hover swells, press squishes (wide + short) fast, release springs back
+   through the jelly curve so the control wobbles once and settles. */
+body.hig .btn {
+    --lg-x: 50%;
+    --lg-y: -60px;
+    transition: transform 640ms var(--lg-jelly), box-shadow 220ms var(--ease-out), filter 160ms ease, background 160ms ease, --lg-x 160ms var(--ease-out), --lg-y 160ms var(--ease-out);
+}
+body.hig .btn:hover:not(:disabled) { transform: scale(1.03); }
+body.hig .btn:active:not(:disabled) {
+    transform: scale(1.05, 0.9);
+    transition-duration: 120ms;
+    transition-timing-function: var(--ease-out);
+}
 body.hig :is(.btn-primary, .btn-success) {
     position: relative;
     overflow: hidden;
     isolation: isolate;
-    background: linear-gradient(180deg, #c85b12, #a44609);   /* white text ≥5:1 at the glyphs */
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), inset 0 -1px 0 rgba(0, 0, 0, 0.12), 0 1px 2px rgba(120, 50, 10, 0.25), 0 8px 18px -8px rgba(232, 123, 45, 0.7);
-    transition: transform 260ms var(--spring), box-shadow 220ms var(--ease-out), filter 160ms ease;
+    background: radial-gradient(90px circle at var(--lg-x) var(--lg-y), rgba(255, 255, 255, 0.26), transparent 70%), linear-gradient(180deg, #c85b12, #a44609);   /* white text ≥5:1 at the glyphs */
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.34), inset 0 -1px 0 rgba(0, 0, 0, 0.12), 0 1px 2px rgba(120, 50, 10, 0.25), 0 8px 18px -8px rgba(232, 123, 45, 0.7);
 }
 body.hig :is(.btn-primary, .btn-success):hover:not(:disabled) {
-    background: linear-gradient(180deg, #c85b12, #a44609);
-    transform: translateY(-1px);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.34), inset 0 -1px 0 rgba(0, 0, 0, 0.12), 0 2px 4px rgba(120, 50, 10, 0.25), 0 12px 24px -8px rgba(232, 123, 45, 0.8);
+    background: radial-gradient(90px circle at var(--lg-x) var(--lg-y), rgba(255, 255, 255, 0.26), transparent 70%), linear-gradient(180deg, #c85b12, #a44609);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), inset 0 -1px 0 rgba(0, 0, 0, 0.12), 0 2px 4px rgba(120, 50, 10, 0.25), 0 12px 24px -8px rgba(232, 123, 45, 0.8);
 }
-body.hig :is(.btn-primary, .btn-success):active:not(:disabled) { transform: scale(0.97); filter: brightness(0.94); }
+body.hig :is(.btn-primary, .btn-success):active:not(:disabled) { filter: brightness(1.06) saturate(1.1); }
 body.hig :is(.btn-primary, .btn-success)::after {
     content: "";
     position: absolute;
@@ -5920,30 +5969,38 @@ body.hig :is(.btn-primary, .btn-success):focus-visible { box-shadow: 0 0 0 3px v
 body.hig .btn:disabled { transform: none; }
 
 body.hig :is(.btn-secondary, .btn-outline, .btn-ghost) {
-    background: rgba(255, 255, 255, 0.62);
-    border-color: rgba(70, 35, 10, 0.1);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85), 0 1px 2px rgba(70, 35, 10, 0.06);
+    --lg-btn: rgba(255, 255, 255, 0.55);
+    background: radial-gradient(90px circle at var(--lg-x) var(--lg-y), rgba(255, 255, 255, 0.7), transparent 70%), var(--lg-btn);
+    border-color: rgba(255, 255, 255, 0.5);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 -1px 1px rgba(255, 255, 255, 0.35), 0 1px 2px rgba(70, 35, 10, 0.06), 0 6px 14px -8px rgba(150, 66, 18, 0.25);
 }
-body.hig :is(.btn-secondary, .btn-outline, .btn-ghost):hover { background: rgba(255, 255, 255, 0.88); }
+body.hig :is(.btn-secondary, .btn-outline, .btn-ghost):hover { --lg-btn: rgba(255, 255, 255, 0.78); background: radial-gradient(90px circle at var(--lg-x) var(--lg-y), rgba(255, 255, 255, 0.7), transparent 70%), var(--lg-btn); }
 body.hig.theme-dark :is(.btn-secondary, .btn-outline, .btn-ghost) {
-    background: rgba(255, 240, 230, 0.09);
+    --lg-btn: rgba(255, 240, 230, 0.09);
+    background: radial-gradient(90px circle at var(--lg-x) var(--lg-y), rgba(255, 240, 230, 0.12), transparent 70%), var(--lg-btn);
     border-color: rgba(255, 240, 230, 0.08);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 6px 14px -8px rgba(0, 0, 0, 0.6);
 }
-body.hig.theme-dark :is(.btn-secondary, .btn-outline, .btn-ghost):hover { background: rgba(255, 240, 230, 0.15); }
+body.hig.theme-dark :is(.btn-secondary, .btn-outline, .btn-ghost):hover { --lg-btn: rgba(255, 240, 230, 0.15); }
 
 /* ── Connection capsules ─────────────────────────────────────────── */
 body.hig .connection-status { gap: 8px; padding: 0; }
-body.hig .connection-item {
+body.hig .connection-item {           /* small glass capsules, refracted too (liquid-glass.js) */
+    --lg-x: 50%;
+    --lg-y: -40px;
     height: 26px;
     padding: 0 11px 0 9px;
     border-radius: 999px;
     font-size: 12px;
     color: var(--text-secondary);
-    background: var(--bg-group);
-    box-shadow: inset 0 0 0 0.5px var(--separator), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+    background: radial-gradient(70px circle at var(--lg-x) var(--lg-y), var(--lg-glow), transparent 70%), var(--lg-tint);
+    -webkit-backdrop-filter: var(--lg-frost) var(--lg-refract,) var(--lg-color);
+    backdrop-filter: var(--lg-frost) var(--lg-refract,) var(--lg-color);
+    box-shadow: var(--lg-inner), 0 6px 14px -8px rgba(150, 66, 18, 0.3);
+    transition: transform 600ms var(--lg-jelly), --lg-x 160ms var(--ease-out), --lg-y 160ms var(--ease-out);
 }
-body.hig.theme-dark .connection-item { box-shadow: inset 0 0 0 0.5px var(--separator); }
+body.hig .connection-item:hover { transform: scale(1.05); }
+body.hig.theme-dark .connection-item { box-shadow: var(--lg-inner), 0 6px 14px -8px rgba(0, 0, 0, 0.6); }
 body.hig .connection-item.connected .connection-dot { background: var(--accent-success); box-shadow: 0 0 0 3px rgba(48, 209, 88, 0.18); }
 
 /* ── Stat tiles: glass with a coloured glow in the corner ────────── */
@@ -5952,7 +6009,7 @@ body.hig .stat-card {
     isolation: isolate;
     overflow: hidden;
     padding: 12px 14px !important;
-    transition: transform 360ms var(--spring), box-shadow 260ms var(--ease-out);
+    transition: transform 620ms var(--lg-spring), box-shadow 300ms var(--ease-out), --lg-x 220ms var(--ease-out), --lg-y 220ms var(--ease-out);
 }
 body.hig .stat-card::after {
     content: "";
@@ -5966,10 +6023,11 @@ body.hig .stat-card::after {
     background: radial-gradient(closest-side, var(--tint, #FFB37A), transparent);
     opacity: 0.55;
     pointer-events: none;
-    transition: transform 520ms var(--spring);
+    transition: transform 640ms var(--lg-jelly);
 }
 body.hig.theme-dark .stat-card::after { opacity: 0.32; }
-body.hig .stat-card:hover { transform: translateY(-2px); box-shadow: var(--lg-shadow-hover); }
+body.hig .stat-card:hover { transform: translateY(-2px) scale(1.015); box-shadow: var(--lg-inner), var(--lg-drop-hover); }
+body.hig .stat-card:active { transform: scale(0.97); transition-duration: 140ms; transition-timing-function: var(--ease-out); }
 body.hig .stat-card:hover::after { transform: scale(1.3); }
 body.hig .stat-card:nth-child(2) { --tint: #FF7A8A; }
 body.hig .stat-card:nth-child(3) { --tint: #FFD36E; }
@@ -5984,21 +6042,22 @@ body.hig .info-card-icon {
     border-radius: 8px;
     background: linear-gradient(160deg, #f6a15c, #d95f17);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 3px 8px -3px rgba(200, 90, 20, 0.6);
-    transition: transform 360ms var(--spring);
+    transition: transform 620ms var(--lg-jelly);
 }
 body.hig .info-card:nth-child(2) .info-card-icon { background: linear-gradient(160deg, #b8a8fb, #7a64e6); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 3px 8px -3px rgba(110, 90, 220, 0.6); }
 body.hig .info-card:nth-child(3) .info-card-icon { background: linear-gradient(160deg, #ffa0ab, #ec5a74); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 3px 8px -3px rgba(220, 70, 100, 0.6); }
 body.hig .info-card:hover .info-card-icon { transform: scale(1.08) rotate(-3deg); }
-body.hig .info-card-chevron { transition: transform 300ms var(--spring); }
+body.hig .info-card:active .info-card-icon { transform: scale(0.84); transition-duration: 120ms; transition-timing-function: var(--ease-out); }
+body.hig .info-card-chevron { transition: transform 560ms var(--lg-jelly); }
 body.hig .info-card:hover .info-card-chevron { transform: translateX(3px); }
 
 /* ── Modals ──────────────────────────────────────────────────────── */
 body.hig .store-modal { animation: none; background: rgba(40, 18, 6, 0.24); }
 body.hig .store-modal-content {
-    background: var(--lg-sheen), var(--bg-elevated);
+    background: var(--bg-elevated);
     border-radius: var(--r-hero) !important;
-    box-shadow: var(--lg-shadow), 0 30px 80px -24px rgba(80, 30, 5, 0.5);
-    animation: lgPop 380ms var(--spring) backwards;
+    box-shadow: var(--lg-inner), 0 30px 80px -24px rgba(80, 30, 5, 0.5);
+    animation: lgPop 560ms var(--lg-spring) backwards;
 }
 @keyframes lgPop { from { opacity: 0; transform: translateY(8px) scale(0.96); } }
 
@@ -6028,4 +6087,6 @@ body.hig .tab-content.active .stats-grid > :nth-child(n+4) { animation-delay: 21
     body.hig .hero-mascot::before,
     body.hig .status-dot::after { animation: none !important; }
     body.hig :is(.btn-primary, .btn-success)::after { display: none; }
+    body.hig :is(.btn, .stat-card, .nav-item, .connection-item, .info-card-icon, .info-card-chevron, .nav-item svg),
+    body.hig .stat-card::after { transform: none !important; }
 }
