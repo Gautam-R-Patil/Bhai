@@ -452,7 +452,7 @@ async function detectVisionDeps(fsMod, execFn, homeDir) {
     }
     if (typeof execFn === "function") {
         probes.push((async () => {
-            // Prefer the wizard's venv python (~/Library/.../atlas-desktop/python-venv).
+            // Prefer the wizard's venv python (~/Library/.../bhai-desktop/python-venv).
             // PEP 668 forbids system-level pip installs on Homebrew Python 3.11+,
             // so the wizard puts ultralytics+Pillow in a venv. If the venv path
             // doesn't exist yet (first install / legacy install), fall through

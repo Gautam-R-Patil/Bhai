@@ -5776,8 +5776,8 @@ app.whenReady().then(async () => {
 
     // Windows: set AppUserModelID for Action Center notification grouping
     if (process.platform === "win32") {
-        app.setAppUserModelId("com.xagilabs.atlas");
-        console.log("[INIT] Windows AppUserModelID set: com.xagilabs.atlas");
+        app.setAppUserModelId("com.xagilabs.bhai");
+        console.log("[INIT] Windows AppUserModelID set: com.xagilabs.bhai");
 
         // F5: permission handler with per-origin confirmation gate.
         // Auto-granting microphone/camera/geolocation to any webContents

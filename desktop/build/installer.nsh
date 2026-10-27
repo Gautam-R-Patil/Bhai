@@ -25,7 +25,7 @@ ShowInstDetails show
 
 !macro customRemoveFiles
   ; 1. Delete the desktop app's configuration folder (electron-store, logs)
-  RMDir /r "$APPDATA\atlas-desktop"
+  RMDir /r "$APPDATA\bhai-desktop"
   
   ; 2. Delete the bot's data directory (SQLite DB, embeddings, etc.)
   RMDir /r "$LOCALAPPDATA\Programs\Bhai\resources\bot\data"

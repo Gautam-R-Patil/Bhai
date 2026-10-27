@@ -1,5 +1,5 @@
 {
-    "name": "atlas-desktop",
+    "name": "bhai-desktop",
     "version": "0.2.1",
     "description": "Bhai AI — Desktop Control Panel & Installer",
     "author": "XAGI Labs Private Limited",
@@ -38,7 +38,7 @@
         "vitest": "^2.1.9"
     },
     "build": {
-        "appId": "com.xagilabs.atlas",
+        "appId": "com.xagilabs.bhai",
         "productName": "Bhai",
         "copyright": "Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.",
         "publish": {

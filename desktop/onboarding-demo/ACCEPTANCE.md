@@ -72,7 +72,7 @@
 
 # W2 Persona Specialization — Acceptance Checklist
 
-> Walk on a clean `~/Library/Application Support/atlas-desktop/config.json`.
+> Walk on a clean `~/Library/Application Support/bhai-desktop/config.json`.
 
 ## Persona step renders
 - [ ] After Profile (name), the wizard shows the new Persona step with five cards.
@@ -84,7 +84,7 @@
 - [ ] Quit and relaunch from setup-state: the Persona step pre-selects Developer.
 
 ## Tone defaults work
-- [ ] Fresh state + Developer → profile.tone becomes "professional" (verify via `cat ~/Library/Application\ Support/atlas-desktop/config.json | jq .prefs.profile` or the equivalent `.user-profile.json` in userData).
+- [ ] Fresh state + Developer → profile.tone becomes "professional" (verify via `cat ~/Library/Application\ Support/bhai-desktop/config.json | jq .prefs.profile` or the equivalent `.user-profile.json` in userData).
 - [ ] Fresh state + Creator → profile.tone becomes "friendly".
 - [ ] If you set Personalize → Personality preset first and then change Persona, the existing tone wins (NOT overridden by persona default).
 
