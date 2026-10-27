@@ -183,7 +183,7 @@
             ]
         },
         "mac": {
-            "identity": null,
+            "identity": "-",
             "hardenedRuntime": true,
             "gatekeeperAssess": false,
             "notarize": false,
