@@ -100,6 +100,11 @@ contextBridge.exposeInMainWorld("atlas", {
     chooseSettingsWorkspace: () => ipcRenderer.invoke("settings:choose-workspace"),
     openDataDir: () => ipcRenderer.invoke("settings:open-data-dir"),
     openLogsDir: () => ipcRenderer.invoke("settings:open-logs-dir"),
+
+    // ── Chats (chat bar history) ──────────────
+    listChats: () => ipcRenderer.invoke("chats:list"),
+    getChat: (id) => ipcRenderer.invoke("chats:get", id),
+    clearChats: () => ipcRenderer.invoke("chats:clear"),
     onGoogleOAuthSuccess: (callback) => {
         ipcRenderer.on("google-oauth-success", (_, email) => callback(email));
     },

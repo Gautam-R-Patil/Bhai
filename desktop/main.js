@@ -1965,6 +1965,7 @@ function hideOverlay() {
             var anim = 'springOut 0.25s cubic-bezier(0.55, 0, 1, 0.45) forwards';
             if (ib) ib.style.animation = anim;
             if (rb) rb.style.animation = anim;
+            if (window.noteHide) window.noteHide();
         })();
     `).catch(() => {});
 
@@ -1972,13 +1973,16 @@ function hideOverlay() {
     setTimeout(() => {
         if (overlayWindow && !overlayWindow.isDestroyed()) {
             overlayWindow.hide();
-            // Reset animations so springIn replays on next show
+            // Reset animations so springIn replays on next show, and start a
+            // fresh chat if Bhai is idle (it keeps the context; the dashboard's
+            // Chats page keeps the transcript).
             overlayWindow.webContents.executeJavaScript(`
                 (function() {
                     var ib = document.getElementById('input-box');
                     var rb = document.getElementById('reply-box');
                     if (ib) ib.style.animation = '';
                     if (rb) rb.style.animation = '';
+                    if (window.resetChatIfIdle) window.resetChatIfIdle();
                 })();
             `).catch(() => {});
         }
@@ -2253,6 +2257,39 @@ function registerIPC() {
     // ── Settings: Open data directory ──
     ipcMain.handle("settings:open-data-dir", () => {
         shell.openPath(DATA_DIR);
+    });
+
+    // ── Chats: the chat bar's saved transcript (written by src/overlay/chat-log.ts) ──
+    const CHAT_LOG = path.join(DATA_DIR, "chat-history.jsonl");
+    function readChatLog() {
+        let raw = "";
+        try { raw = fs.readFileSync(CHAT_LOG, "utf8"); } catch { return []; }
+        const out = [];
+        for (const line of raw.split("\n")) {
+            if (!line) continue;
+            try {
+                const e = JSON.parse(line);
+                if (e && e.chat && typeof e.text === "string") out.push(e);
+            } catch { /* skip a torn line */ }
+        }
+        return out;
+    }
+    ipcMain.handle("chats:list", () => {
+        const chats = new Map();
+        for (const e of readChatLog()) {
+            let c = chats.get(e.chat);
+            if (!c) chats.set(e.chat, (c = { id: e.chat, start: e.ts, end: e.ts, title: "", count: 0 }));
+            c.end = e.ts;
+            c.count++;
+            if (!c.title && e.role === "user") c.title = e.text.replace(/\s+/g, " ").slice(0, 90);
+        }
+        return [...chats.values()].sort((a, b) => b.end - a.end);
+    });
+    ipcMain.handle("chats:get", (_, id) =>
+        readChatLog().filter((e) => e.chat === id).map(({ role, text, ts }) => ({ role, text, ts })));
+    ipcMain.handle("chats:clear", () => {
+        fs.rmSync(CHAT_LOG, { force: true });
+        return true;
     });
 
     // ── Settings: Open logs directory ──

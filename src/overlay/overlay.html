@@ -2804,6 +2804,30 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
       const inboxCountBadge = document.getElementById('inbox-count-badge');
 
       let ws = null, waiting = false, notifTimer = null;
+      // One id per chat-bar session; the bot files the transcript under it
+      // (the dashboard's Chats page). A fresh one starts after each close.
+      const newChatId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+      let chatId = newChatId();
+      // Called by main.js after the bar hides: a reply that was already on
+      // screen goes away (Bhai keeps the context); one still being worked on
+      // stays, and so does one that arrives while hidden.
+      // Idleness is decided when the hide starts, so a reply landing during the
+      // close animation is kept for the next open instead of being wiped.
+      let idleAtHide = false;
+      window.noteHide = function () { idleAtHide = !waiting && !icon.classList.contains('thinking'); };
+      window.resetChatIfIdle = function () {
+        if (!idleAtHide) return false;
+        replyBox.classList.remove('visible');
+        replyText.innerHTML = '';
+        progress.classList.remove('visible');
+        progress.innerHTML = '';
+        clearInteractive();
+        input.value = '';
+        input.disabled = false;
+        input.dispatchEvent(new Event('input'));
+        chatId = newChatId();
+        return true;
+      };
 
       // ── Mascot mood: Bhai's face mirrors what the agent is doing ──
       const MOOD_LABELS = {
@@ -3326,7 +3350,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
             input.disabled = true;
             replyBox.classList.remove('visible');
             clearInteractive();
-            ws.send(JSON.stringify({ type: 'quick_action', text: label }));
+            ws.send(JSON.stringify({ type: 'quick_action', text: label, chat: chatId }));
           };
           quickActionsBox.appendChild(btn);
         });
@@ -3347,7 +3371,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           card.onclick = (e) => {
             e.preventDefault();
             if (ws && ws.readyState === 1) {
-              ws.send(JSON.stringify({ type: 'chat', text: `open ${filePath}` }));
+              ws.send(JSON.stringify({ type: 'chat', text: `open ${filePath}`, chat: chatId }));
             }
           };
           cardsBox.appendChild(card);
@@ -3482,7 +3506,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           micBtn.classList.remove('listening');
           input.placeholder = 'Processing…';
         } else {
-          ws.send(JSON.stringify({ type: 'voice_start' }));
+          ws.send(JSON.stringify({ type: 'voice_start', chat: chatId }));
           isListening = true;
           micBtn.classList.add('listening');
           input.value = '';
@@ -4103,7 +4127,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         progress.classList.remove('visible');
         progress.innerHTML = '';
         clearInteractive();
-        ws.send(JSON.stringify({ type: 'chat', text }));
+        ws.send(JSON.stringify({ type: 'chat', text, chat: chatId }));
       }
 
       // Click outside picker to close
@@ -4172,6 +4196,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
             base64,
             mimeType,
             text: '',
+            chat: chatId,
           }));
         };
         reader.readAsDataURL(file);

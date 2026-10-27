@@ -58,6 +58,13 @@
                     </svg>
                     <span>Dashboard</span>
                 </button>
+                <button class="nav-item" data-tab="chats" onclick="switchTab('chats')">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                    </svg>
+                    <span>Chats</span>
+                </button>
                 <button class="nav-item" data-tab="memory" onclick="switchTab('memory')">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                         stroke-linecap="round" stroke-linejoin="round">
@@ -265,6 +272,20 @@
                             <svg class="info-card-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"></polyline></svg>
                         </button>
                     </div>
+                </div>
+            </div>
+
+            <!-- ═══════════════════════════════ -->
+            <!-- TAB: Chats (chat bar history)  -->
+            <!-- ═══════════════════════════════ -->
+            <div class="tab-content" id="tab-chats">
+                <div class="tab-header">
+                    <h2 class="tab-title">Chats</h2>
+                    <button class="btn btn-secondary btn-sm" id="chatsClearBtn" onclick="clearChatHistory()" hidden>Clear history</button>
+                </div>
+                <div class="chats-layout">
+                    <div class="chats-list surface-card" id="chatsList" aria-label="Past chats"></div>
+                    <div class="chats-thread surface-card" id="chatsThread"></div>
                 </div>
             </div>
 
@@ -1604,6 +1625,79 @@
             if (tabId === 'account') loadAccountInfo();
             if (tabId === 'store') loadStore();
             if (tabId === 'channels') { loadChannelConfig(); loadPrimaryChannel(); }
+            if (tabId === 'chats') loadChats();
+        }
+
+        // ── Chats: the chat bar's history (main reads <data>/chat-history.jsonl) ──
+        let chatsOpenId = null;
+        function chatWhen(ts) {
+            const d = new Date(ts), now = new Date();
+            const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+            if (d.toDateString() === now.toDateString()) return time;
+            const y = new Date(now);
+            y.setDate(now.getDate() - 1);
+            if (d.toDateString() === y.toDateString()) return `Yesterday, ${time}`;
+            const sameYear = d.getFullYear() === now.getFullYear();
+            return `${d.toLocaleDateString([], { month: 'short', day: 'numeric', year: sameYear ? undefined : 'numeric' })}, ${time}`;
+        }
+        async function loadChats() {
+            const list = document.getElementById('chatsList');
+            const thread = document.getElementById('chatsThread');
+            const chats = await atlas.listChats().catch(() => []);
+            document.getElementById('chatsClearBtn').hidden = !chats.length;
+            list.replaceChildren();
+            if (!chats.length) {
+                chatsOpenId = null;
+                list.innerHTML = '<div class="chats-empty">No chats yet</div>';
+                thread.innerHTML = '<div class="chats-empty">Conversations from the chat bar show up here.<br>Bhai still remembers them after you close the bar.</div>';
+                return;
+            }
+            for (const c of chats) {
+                const item = document.createElement('button');
+                item.className = 'chats-item';
+                item.dataset.id = c.id;
+                const title = document.createElement('span');
+                title.className = 'chats-item-title';
+                title.textContent = c.title || 'Chat';
+                const meta = document.createElement('span');
+                meta.className = 'chats-item-meta';
+                meta.textContent = `${chatWhen(c.end)} · ${c.count} message${c.count === 1 ? '' : 's'}`;
+                item.append(title, meta);
+                item.onclick = () => openChat(c.id);
+                list.appendChild(item);
+            }
+            openChat(chats.some((c) => c.id === chatsOpenId) ? chatsOpenId : chats[0].id);
+        }
+        async function openChat(id) {
+            chatsOpenId = id;
+            document.querySelectorAll('.chats-item').forEach((b) => {
+                const on = b.dataset.id === id;
+                b.classList.toggle('active', on);
+                if (on) b.setAttribute('aria-current', 'true');
+                else b.removeAttribute('aria-current');
+            });
+            const msgs = await atlas.getChat(id).catch(() => []);
+            if (chatsOpenId !== id) return; // another chat was picked meanwhile
+            const thread = document.getElementById('chatsThread');
+            thread.replaceChildren(...msgs.map((m) => {
+                const row = document.createElement('div');
+                row.className = `chats-msg ${m.role === 'user' ? 'from-user' : 'from-bhai'}`;
+                const bubble = document.createElement('div');
+                bubble.className = 'chats-bubble';
+                bubble.textContent = m.text;
+                const when = document.createElement('div');
+                when.className = 'chats-when';
+                when.textContent = new Date(m.ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+                row.append(bubble, when);
+                return row;
+            }));
+            thread.scrollTop = thread.scrollHeight;
+        }
+        async function clearChatHistory() {
+            if (!confirm('Delete all saved chats? Bhai keeps what it has learned in its memory.')) return;
+            await atlas.clearChats();
+            chatsOpenId = null;
+            loadChats();
         }
 
         // Glass selection pill: stretches toward the new item like a droplet, then settles.

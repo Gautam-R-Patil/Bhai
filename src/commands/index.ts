@@ -11,6 +11,7 @@ import type { LLMClient } from "../llm.js";
 import { statusReport, pruneAll, clearAll } from "../tools/coding/checkpoint-manager.js";
 import { buildRecap } from "./recap.js";
 import { runDoctor, formatDoctor } from "../diagnostics/doctor.js";
+import { markChatReset } from "../overlay/chat-log.js";
 
 // ── Types ─────────────────────────────────────
 
@@ -123,6 +124,7 @@ function cmdStatus(): string {
 
 function cmdNew(): string {
     _ctx?.clearConversation();
+    markChatReset(); // a restart mustn't restore what /new cleared
     return "🗑️ Conversation cleared. Fresh start!";
 }
 

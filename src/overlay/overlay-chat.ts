@@ -17,7 +17,8 @@ import { existsSync, unlinkSync } from "node:fs";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { getWorkspaceDir } from "../config/paths.js";
 import type { LLMClient } from "../llm.js";
-import { runAgent, type MediaAttachment, type ChannelContext } from "../agent.js";
+import { runAgent, getConversationHistory, setConversationHistory, type MediaAttachment, type ChannelContext } from "../agent.js";
+import { logChatMessage, recentChatContext } from "./chat-log.js";
 import { classifyQuery } from "../memory/classifier.js";
 import { captureScreenshot } from "../tools/platform.js";
 import { getUserPresence } from "../proactive/activity.js";
@@ -153,8 +154,17 @@ let recordingPath: string | null = null;
 
 // ── Initialize ────────────────────────────────
 
+// Which chat-bar session each socket is in (sent by overlay.html as `chat`).
+const chatIds = new WeakMap<WebSocket, string>();
+const chatOf = (ws: WebSocket) => chatIds.get(ws) || "overlay";
+
 export function initOverlayChat(llm: LLMClient): void {
     llmClient = llm;
+    // Pick up where the conversation left off before a restart.
+    if (getConversationHistory().length === 0) {
+        const recent = recentChatContext(12 * 60 * 60 * 1000, 20);
+        if (recent.length) setConversationHistory(recent);
+    }
     // Ensure the local bootstrap token exists on disk so the native Swift
     // overlay (and any other local-process client) can authenticate.
     try {
@@ -454,6 +464,8 @@ export function initOverlayChat(llm: LLMClient): void {
         const isWidget = connKind === "web-widget";
         // Tag the socket with its origin for downstream dispatch.
         (ws as unknown as { _connKind: typeof connKind })._connKind = connKind;
+        // Its own chat until the client names one (the chat bar sends `chat`).
+        chatIds.set(ws, `${connKind || "client"}-${randomBytes(4).toString("hex")}`);
         overlayClients.add(ws);
         console.log(`💬 ${isWidget ? "Widget" : "Overlay"} chat connected (${overlayClients.size} client${overlayClients.size > 1 ? "s" : ""})`);
 
@@ -525,6 +537,8 @@ export function initOverlayChat(llm: LLMClient): void {
                     return;
                 }
 
+                if (typeof msg.chat === "string" && msg.chat) chatIds.set(ws, msg.chat.slice(0, 64));
+
                 if (msg.type === "chat" && msg.text) {
                     const messageSource = msg.meta?.source || (isWidget ? "web-widget" : "overlay");
                     console.log(`💬 [${messageSource}] message received`);
@@ -541,7 +555,7 @@ export function initOverlayChat(llm: LLMClient): void {
                         console.log(`🌐 [Chrome Extension] Browser context injected: ${browserUrl}`);
                     }
 
-                    await handleOverlayMessage(ws, messageText);
+                    await handleOverlayMessage(ws, messageText, messageSource, msg.text.trim());
                 } else if (msg.type === "quick_action" && msg.text) {
                     const actionText = msg.text.trim();
                     // Handle feedback actions locally (don't send to agent)
@@ -760,11 +774,15 @@ function wsIsOwner(ws: WebSocket): boolean {
 
 // ── Handle Overlay Message ────────────────────
 
-async function handleOverlayMessage(ws: WebSocket, userMessage: string): Promise<void> {
+// `logText` is what the transcript shows as the user's words (without injected
+// context such as the browser prefix or the voice-analysis prompt).
+async function handleOverlayMessage(ws: WebSocket, userMessage: string, source = "overlay", logText = userMessage): Promise<void> {
     if (!llmClient) {
         sendToClient(ws, { type: "error", text: "LLM not initialized" });
         return;
     }
+    const chat = chatOf(ws); // the reply belongs to this chat even if a new one starts meanwhile
+    logChatMessage(chat, "user", logText, source);
 
     console.log(`\n💬 [Overlay] User: ${userMessage}`);
 
@@ -886,6 +904,7 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
             { label: "👎", action: "feedback:bad" },
         ] : (interactive.quickActions || []);
 
+        logChatMessage(chat, "assistant", interactive.text, source);
         sendToClient(ws, {
             type: "response",
             text: interactive.text,
@@ -918,6 +937,8 @@ async function handleFileAttachment(
     }
 
     console.log(`\n📎 [Overlay] File attached: ${fileName} (${mimeType})`);
+    const chat = chatOf(ws);
+    logChatMessage(chat, "user", userText ? `${userText}\n📎 ${fileName}` : `📎 ${fileName}`);
     sendToClient(ws, { type: "thinking" });
 
     const isImage = mimeType.startsWith("image/");
@@ -960,6 +981,7 @@ async function handleFileAttachment(
             return;
         }
 
+        logChatMessage(chat, "assistant", interactive.text);
         sendToClient(ws, {
             type: "response",
             text: interactive.text,
@@ -1453,8 +1475,8 @@ async function stopVoiceCapture(ws: WebSocket): Promise<void> {
 
         if (transcript && transcript.trim().length > 0) {
             // Simple voice message — user spoke words, just send as text
+            // The chat bar puts it in the input and sends it as a normal chat message.
             sendToClient(ws, { type: "voice_result", text: transcript.trim() });
-            await handleOverlayMessage(ws, transcript.trim());
         } else {
             // No speech detected — fall back to Gemini audio analysis (music, ambient sounds)
             const base64Audio = audioBuffer.toString("base64");
@@ -1467,7 +1489,7 @@ async function stopVoiceCapture(ws: WebSocket): Promise<void> {
             const enrichedPrompt = `[VOICE MESSAGE FROM USER]\nThe user sent a voice message with no clear speech. Audio analysis:\n\n${geminiAnalysis}\n\nIMPORTANT: Respond naturally. If music was identified, tell them the song. If it was ambient sounds, mention them casually. NEVER mention Gemini, analysis pipelines, or internal processing.`;
 
             sendToClient(ws, { type: "voice_result", text: "" });
-            await handleOverlayMessage(ws, enrichedPrompt);
+            await handleOverlayMessage(ws, enrichedPrompt, "overlay", "🎤 Voice message");
         }
 
         // Clean up temp file
