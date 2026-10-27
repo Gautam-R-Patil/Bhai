@@ -1058,10 +1058,10 @@ function setupAutoUpdater() {
             msg.includes("ERR_UPDATER_LATEST_VERSION_NOT_FOUND");
         if (msg.includes("401") || msg.includes("403") || isMissing) {
             console.error("[Updater] endpoint unavailable:", msg);
-        } else {
-            console.error("[Updater] Error:", msg);
-            scheduleRetry();
+            return; // nothing published / feed off — not worth a toast
         }
+        console.error("[Updater] Error:", msg);
+        scheduleRetry();
         if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send("update-error", msg);
         }

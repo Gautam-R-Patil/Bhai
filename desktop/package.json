@@ -190,7 +190,7 @@
             "target": [
                 "dir"
             ],
-            "icon": "logo.png",
+            "icon": "build/icon-mac.png",
             "entitlements": "build/entitlements.mac.plist",
             "entitlementsInherit": "build/entitlements.mac.plist",
             "extendInfo": {
@@ -215,7 +215,7 @@
         },
         "dmg": {
             "title": "Bhai Setup",
-            "icon": "logo.png",
+            "icon": "build/icon-mac.png",
             "background": "build/dmg-background@2x.png",
             "sign": true,
             "writeUpdateInfo": true,
