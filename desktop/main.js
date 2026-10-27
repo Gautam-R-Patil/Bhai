@@ -1877,8 +1877,8 @@ function registerIPC() {
         });
         // F3: lock down the auth window — it's the only window we load remote
         // content into. setWindowOpenHandler denies window.open() from the
-        // page; will-navigate confines the renderer to tryatlasagi.com.
-        const authUrl = process.env.ATLAS_AUTH_URL || "https://tryatlasagi.com/auth-login";
+        // page; will-navigate confines the renderer to the auth page's host.
+        const authUrl = process.env.ATLAS_AUTH_URL || `${CONVEX_SITE_URL}/auth-login`;
         const authHost = (() => { try { return new URL(authUrl).host; } catch { return "tryatlasagi.com"; } })();
         hardenBrowserWindow(authWindow, { allowedNavigateOrigins: [authHost], allowLocal: false });
         // OTPless SDK requires a real HTTPS origin; auth-login/ hosts the

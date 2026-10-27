@@ -5,6 +5,8 @@
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { internal } from "./_generated/api";
+import Anthropic from "@anthropic-ai/sdk";
+import { toClaudeRequest, toOpenAIResponse } from "./claude";
 import {
   generateServerKeyPair,
   deriveSharedKey,
@@ -536,16 +538,16 @@ http.route({
       }
     };
 
-    // 4. Get OpenRouter API key from Convex env (NEVER leaves server)
-    const openrouterKey = process.env.OPENROUTER_API_KEY;
-    if (!openrouterKey) {
-      console.error("[HTTP Proxy] OPENROUTER_API_KEY not set in Convex environment");
-      await refundIfDeducted("missing_openrouter_key");
+    // 4. Get Anthropic API key from Convex env (NEVER leaves server)
+    const anthropicKey = process.env.ANTHROPIC_API_KEY;
+    if (!anthropicKey) {
+      console.error("[HTTP Proxy] ANTHROPIC_API_KEY not set in Convex environment");
+      await refundIfDeducted("missing_anthropic_key");
       await logCall({
         model: String(model),
         status: "failed",
-        errorType: "missing_openrouter_key",
-        errorMessage: "OPENROUTER_API_KEY not set",
+        errorType: "missing_anthropic_key",
+        errorMessage: "ANTHROPIC_API_KEY not set",
         hasMedia,
       });
       return new Response(
@@ -632,128 +634,34 @@ http.route({
       }
     }
 
-    // 5b. Anthropic prompt caching — add cache_control breakpoints
-    //     Reduces cost by up to 90% for repeated system prompt + tool definitions.
-    //     Only applied for Anthropic models (via OpenRouter's anthropic/ prefix).
-    const isAnthropicModel = typeof model === "string" && model.startsWith("anthropic/");
-    if (isAnthropicModel) {
-      // Cache the system prompt: convert string content to content-block array
-      // with cache_control on the last block
-      if (messages.length > 0 && messages[0].role === "system") {
-        const sysContent = messages[0].content;
-        if (typeof sysContent === "string") {
-          messages[0] = {
-            ...messages[0],
-            content: [
-              { type: "text", text: sysContent, cache_control: { type: "ephemeral" } },
-            ],
-          };
-        } else if (Array.isArray(sysContent) && sysContent.length > 0) {
-          // Already an array of content blocks — add cache_control to the last one
-          const blocks = [...sysContent];
-          blocks[blocks.length - 1] = {
-            ...blocks[blocks.length - 1],
-            cache_control: { type: "ephemeral" },
-          };
-          messages[0] = { ...messages[0], content: blocks };
-        }
-      }
+    // 6. Translate the OpenAI-format request into a Claude Messages call
+    //    (prompt caching breakpoints are placed by the translator).
+    const claudeParams = toClaudeRequest(body, messages);
 
-      // Cache tool definitions: add cache_control to the last tool
-      if (Array.isArray(body.tools) && body.tools.length > 0) {
-        const tools = body.tools.map((t: any) => ({ ...t }));
-        tools[tools.length - 1] = {
-          ...tools[tools.length - 1],
-          cache_control: { type: "ephemeral" },
-        };
-        body.tools = tools;
-      }
-
-      // Cache conversation history: place a third cache_control marker on
-      // the second-to-last message so the growing prefix is cached across
-      // agent-loop iterations. The last message is excluded so each new
-      // turn adds unique content beyond the cached prefix (otherwise the
-      // cache would miss on every fresh user/tool message).
-      // Anthropic allows up to 4 cache breakpoints; we now use 3 (system
-      // + tools + history prefix).
-      if (messages.length > 2) {
-        const cutIdx = messages.length - 2;
-        const msg = messages[cutIdx];
-        if (msg && typeof msg === "object") {
-          const content = (msg as any).content;
-          if (typeof content === "string") {
-            (msg as any).content = [
-              { type: "text", text: content, cache_control: { type: "ephemeral" } },
-            ];
-          } else if (Array.isArray(content) && content.length > 0) {
-            const blocks = [...content];
-            blocks[blocks.length - 1] = {
-              ...blocks[blocks.length - 1],
-              cache_control: { type: "ephemeral" },
-            };
-            (msg as any).content = blocks;
-          }
-        }
-      }
-    }
-
-    // 6. Build the OpenRouter request
-    // OpenRouter's `reasoning` parameter is unified across all providers
-    // (Anthropic, Google, OpenAI) — same { effort: "high" } format works for all.
-    const openrouterBody: any = {
-      model: body.model,
-      messages,
-      max_tokens: body.max_tokens,
-      tools: body.tools,
-      reasoning: body.reasoning,
-      provider: body.provider,
-      modalities: body.modalities,
-      // Grammar-constrained decoding: forwarded to OpenRouter which maps
-      // to each provider's native JSON mode. Drop when tools are present
-      // — the two are mutually exclusive on most providers and tool use
-      // already produces structured output.
-      response_format:
-        body.response_format && (!body.tools || body.tools.length === 0) ? body.response_format : undefined,
-    };
-
-    // Remove undefined fields
-    for (const key of Object.keys(openrouterBody)) {
-      if (openrouterBody[key] === undefined) {
-        delete openrouterBody[key];
-      }
-    }
-
-    // 7. Forward to OpenRouter
+    // 7. Call Claude
     try {
-      const orResponse = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${openrouterKey}`,
-          "HTTP-Referer": "https://atlas.xagilab.com",
-          "X-Title": "Bhai",
-        },
-        body: JSON.stringify(openrouterBody),
-      });
-
-      const responseData = await orResponse.json();
-
-      // 8. If OpenRouter returned an error, refund the pre-deduction and
-      //    pass through. Credits were already taken atomically at 3b, so
-      //    the refund must run before returning.
-      if (!orResponse.ok) {
-        const snippet = JSON.stringify(responseData).slice(0, 500);
-        console.error(`[HTTP Proxy] OpenRouter error ${orResponse.status} for ${model}:`, snippet);
-        await refundIfDeducted(`openrouter_${orResponse.status}`);
+      const anthropic = new Anthropic({ apiKey: anthropicKey });
+      let responseData;
+      try {
+        const message = await anthropic.beta.messages.stream(claudeParams).finalMessage();
+        responseData = toOpenAIResponse(message);
+      } catch (err) {
+        // 8. If Claude returned an error, refund the pre-deduction and pass
+        //    it through. Credits were already taken atomically at 3b, so
+        //    the refund must run before returning.
+        if (!(err instanceof Anthropic.APIError) || !err.status) throw err;
+        const snippet = JSON.stringify(err.error ?? err.message).slice(0, 500);
+        console.error(`[HTTP Proxy] Claude error ${err.status} for ${model}:`, snippet);
+        await refundIfDeducted(`anthropic_${err.status}`);
         await logCall({
           model: String(model),
           status: "failed",
-          errorType: `openrouter_${orResponse.status}`,
+          errorType: `anthropic_${err.status}`,
           errorMessage: snippet,
           hasMedia,
         });
-        return new Response(JSON.stringify(responseData), {
-          status: orResponse.status,
+        return new Response(JSON.stringify(err.error ?? { error: err.message }), {
+          status: err.status,
           headers: { "Content-Type": "application/json" },
         });
       }
@@ -787,16 +695,16 @@ http.route({
         hasMedia,
       });
 
-      // 10. Return the OpenRouter response (encrypted if client uses E2E)
+      // 10. Return the response (encrypted if client uses E2E)
       return await buildResponse(responseData, 200, isEncrypted, account.sharedKey, request);
     } catch (err: any) {
-      console.error("[HTTP Proxy] OpenRouter request failed:", err.message);
-      await refundIfDeducted("openrouter_network");
+      console.error("[HTTP Proxy] Claude request failed:", err.message);
+      await refundIfDeducted("anthropic_network");
       await logCall({
         model: String(model),
         status: "failed",
-        errorType: "openrouter_network",
-        errorMessage: err?.message ?? "OpenRouter fetch threw",
+        errorType: "anthropic_network",
+        errorMessage: err?.message ?? "Claude request threw",
         hasMedia,
       });
       return new Response(
@@ -804,6 +712,75 @@ http.route({
         { status: 502, headers: { "Content-Type": "application/json" } }
       );
     }
+  }),
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// GET /auth-login — OTPless sign-in page loaded by the desktop auth window.
+// The OTPless SDK rejects file:// origins, so the page is served over HTTPS
+// from this deployment. The token goes back to the app via window.atlasAuth.
+// ══════════════════════════════════════════════════════════════════════════
+
+const OTPLESS_APP_ID = "F1WCDC7B2QKKDI2UTGVD";
+
+const AUTH_LOGIN_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bhai — Sign In</title>
+<style>
+  :root { color-scheme: light dark; --bg: #f6f4f1; --card: #fff; --text: #1d1b19; --muted: #6b6560; --err: #b3261e; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #141312; --card: #1f1d1b; --text: #f2efeb; --muted: #a29b94; --err: #f2b8b5; } }
+  body { margin: 0; min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 24px; box-sizing: border-box;
+         background: var(--bg); color: var(--text); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  .card { width: 100%; max-width: 400px; background: var(--card); border-radius: 16px; padding: 32px; box-shadow: 0 10px 30px rgba(0,0,0,.08); }
+  h1 { font-size: 22px; margin: 0; text-align: center; }
+  p { color: var(--muted); text-align: center; margin: 6px 0 20px; }
+  .hidden { display: none; }
+  #error { color: var(--err); text-align: center; margin-top: 12px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Sign in to Bhai</h1>
+  <p>Continue with phone, email, or a social account</p>
+  <div id="otpless-login-page"></div>
+  <p id="status" class="hidden"></p>
+  <div id="error" role="alert"></div>
+</div>
+<script id="otpless-sdk" src="https://otpless.com/v4/auth.js" data-appid="${OTPLESS_APP_ID}"></script>
+<script>
+  const widget = document.getElementById("otpless-login-page");
+  const status = document.getElementById("status");
+  const error = document.getElementById("error");
+  function show(msg) { widget.classList.add("hidden"); status.textContent = msg; status.classList.remove("hidden"); error.textContent = ""; }
+  function fail(msg) { widget.classList.remove("hidden"); status.classList.add("hidden"); error.textContent = msg; }
+  // Called by the OTPless SDK on successful sign-in.
+  async function otpless(user) {
+    const token = user && user.token;
+    if (!token) return fail("Sign-in returned no token.");
+    show("Verifying…");
+    try {
+      const res = await window.atlasAuth.submitToken(token);
+      if (res && res.success) show("Signed in. Returning to Bhai…");
+      else fail((res && res.error) || "Sign-in failed. Please try again.");
+    } catch (err) {
+      fail((err && err.message) || "Sign-in failed.");
+    }
+  }
+</script>
+</body>
+</html>`;
+
+http.route({
+  path: "/auth-login",
+  method: "GET",
+  handler: httpAction(async () => {
+    return new Response(AUTH_LOGIN_HTML, {
+      status: 200,
+      headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+    });
   }),
 });
 
