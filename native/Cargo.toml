@@ -88,7 +88,8 @@ opt-level = 3
 lto = true
 codegen-units = 1
 panic = "abort"
-strip = true
+# strip=true makes ld-27xx emit a mis-aligned LINKEDIT string pool that dyld rejects; re-enable once the toolchain is fixed
+strip = false
 
 [profile.dev]
 opt-level = 1
