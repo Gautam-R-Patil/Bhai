@@ -28,7 +28,7 @@ export default async function SettingsPage() {
 
   const convexCloud = process.env.NEXT_PUBLIC_CONVEX_URL ?? "(unset)";
   const adminApiBase = process.env.NEXT_PUBLIC_ATLAS_ADMIN_API_BASE ?? "(unset)";
-  const isProd = convexCloud.includes("avid-oyster-465");
+  const isProd = convexCloud.includes("colorful-heron-487");
 
   return (
     <div className="space-y-8">
@@ -156,7 +156,7 @@ export default async function SettingsPage() {
           />
           <CodeBlock
             label="Import waitlist from Web3Forms CSV"
-            cmd={`ATLAS_ADMIN_BASE=https://avid-oyster-465.convex.site ATLAS_ADMIN_KEY=… npx tsx scripts/import-waitlist-csv.ts <file.csv>`}
+            cmd={`ATLAS_ADMIN_BASE=https://colorful-heron-487.convex.site ATLAS_ADMIN_KEY=… npx tsx scripts/import-waitlist-csv.ts <file.csv>`}
           />
           <CodeBlock
             label="Hot-reset admin password (super admin)"

@@ -69,7 +69,7 @@ Bhai is a **local-first** autonomous agent. The Node.js process runs on the user
 ┌──────────────────────────────▼──────────────────────────────────────────┐
 │                     Convex Backend  (convex/)                            │
 │  LLM proxy (E2E encrypted) · Sessions · Credits · Store · Sys prompts   │
-│  Dev: zany-kudu-607.convex.cloud · Prod: avid-oyster-465.convex.cloud   │
+│  Dev: flexible-panther-179.convex.cloud · Prod: colorful-heron-487.convex.cloud   │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -1280,8 +1280,8 @@ Bhai is designed to run on the user's own machine. All memory (SQLite, embedding
 
 | Environment | URL | When used |
 |-------------|-----|-----------|
-| Development | `zany-kudu-607.convex.cloud` | Default (`ATLAS_ENV` not set) |
-| Production | `avid-oyster-465.convex.cloud` | `ATLAS_ENV=prod` |
+| Development | `flexible-panther-179.convex.cloud` | Default (`ATLAS_ENV` not set) |
+| Production | `colorful-heron-487.convex.cloud` | `ATLAS_ENV=prod` |
 | Custom | `CONVEX_URL` / `CONVEX_SITE_URL` | Override either individually |
 
 ### Platform binaries (native Rust)

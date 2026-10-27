@@ -229,7 +229,7 @@ export const create = mutation({
     if (args.isUpdate && args.existingItemId) {
       const existingItem = await ctx.db.get(args.existingItemId);
       if (!existingItem) throw new Error("Item not found");
-      if (!existingItem.developerId.equals(args.developerId)) {
+      if (existingItem.developerId !== args.developerId) {
         throw new Error("You don't own this item");
       }
     }
@@ -509,7 +509,7 @@ export const resubmit = mutation({
   handler: async (ctx, args) => {
     const submission = await ctx.db.get(args.submissionId);
     if (!submission) throw new Error("Submission not found");
-    if (!submission.developerId.equals(args.developerId)) {
+    if (submission.developerId !== args.developerId) {
       throw new Error("You don't own this submission");
     }
     if (submission.status !== "revision_requested") {
@@ -555,7 +555,7 @@ export const cancel = mutation({
   handler: async (ctx, args) => {
     const submission = await ctx.db.get(args.submissionId);
     if (!submission) throw new Error("Submission not found");
-    if (!submission.developerId.equals(args.developerId)) {
+    if (submission.developerId !== args.developerId) {
       throw new Error("You don't own this submission");
     }
     if (submission.status === "approved") {

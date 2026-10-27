@@ -47,7 +47,7 @@ process.exit(1);
 import { api } from "../convex/_generated/api";
 
 // Convex client
-const CONVEX_URL = process.env.CONVEX_URL || "https://zany-kudu-607.convex.cloud";
+const CONVEX_URL = process.env.CONVEX_URL || "https://flexible-panther-179.convex.cloud";
 const client = new ConvexHttpClient(CONVEX_URL);
 
 // Sample tools to upload

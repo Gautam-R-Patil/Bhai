@@ -17,7 +17,7 @@ import * as fs from "fs";
 import * as path from "path";
 
 const CONVEX_SITE_URL = process.env.CONVEX_SITE_URL
-  || (process.env.CONVEX_URL || "https://zany-kudu-607.convex.cloud").replace(".cloud", ".site");
+  || (process.env.CONVEX_URL || "https://flexible-panther-179.convex.cloud").replace(".cloud", ".site");
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY;
 
 if (!ADMIN_API_KEY) {

@@ -226,7 +226,7 @@ Companion for `chrome-backend.ts`. `background.js` (WS bridge), `content.js` (DO
 ### Configuration
 - `.env` (see `.env.example`). Required: `TELEGRAM_BOT_TOKEN`, `ALLOWED_USER_IDS`, `ATLAS_OTPLESS_USER_ID`. Optional: `EMAIL_USER`/`EMAIL_PASSWORD`, `EMAIL_WHITELIST`, `GITHUB_TOKEN`, `HF_TOKEN`, `MEMORY_DEBUG`.
 - Voice: `LIVE_VOICE_NAME` (Gemini Aoede/Charon/Kore/Fenrir/Puck; OpenAI alloy/shimmer/echo), `LIVE_VOICE_BACKEND` (gemini-live/openai-realtime/hybrid)
-- `ATLAS_ENV=prod` flips Convex dev (`zany-kudu-607`) → prod (`avid-oyster-465`); default dev. Override via `CONVEX_URL`/`CONVEX_SITE_URL`. OpenRouter + Convex keys bundled (not user-configurable).
+- `ATLAS_ENV=prod` flips Convex dev (`flexible-panther-179`) → prod (`colorful-heron-487`); default dev. Override via `CONVEX_URL`/`CONVEX_SITE_URL`. Convex keys bundled (not user-configurable). LLM calls go to the Claude API (`ANTHROPIC_API_KEY` in Convex env); `convex/claude.ts` translates the OpenAI-format requests.
 
 **System prompts are SERVER-SIDE**: Convex `system_prompts` table, seeded from `prompts/` via `scripts/seed-system-content.ts` (needs `ADMIN_API_KEY`). Client never reads disk — `src/config/system-prompts.ts::fetchSystemPrompt(slug)` pulls via `/api/system/prompt?slug=` (coalesced + single-flight auth refresh). Desktop electron-builder does NOT bundle `../prompts`. Seeded slugs (11): `identity`, `rules`, `rules-mac`, `rules-windows`, `browsing`, `thinking`, `coding`, `spec`, `proactive-composer`, `monitor-rule-parser`, `orchestrator-base`.
 

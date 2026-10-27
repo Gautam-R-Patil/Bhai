@@ -9,8 +9,8 @@
 //
 // Switching: set ATLAS_ENV=prod (or override CONVEX_URL directly).
 const CONVEX_URLS = {
-    dev: "https://zany-kudu-607.convex.cloud",
-    prod: "https://avid-oyster-465.convex.cloud",
+    dev: "https://flexible-panther-179.convex.cloud",
+    prod: "https://colorful-heron-487.convex.cloud",
 } as const;
 
 function defaultConvexUrl(): string {

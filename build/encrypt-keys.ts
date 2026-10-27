@@ -23,7 +23,7 @@ if (process.env.CONVEX_DEPLOY_KEY) {
 
 const BUNDLED_KEYS: Record<string, string> = {
     // Convex URL is public (it's just a cloud endpoint identifier)
-    convex_url: process.env.CONVEX_URL || "https://zany-kudu-607.convex.cloud",
+    convex_url: process.env.CONVEX_URL || "https://flexible-panther-179.convex.cloud",
 };
 
 // Generate a unique key for this build (derived from build timestamp + random)

@@ -227,7 +227,7 @@ export default function DashboardClient({
           <AlertTriangle className="h-12 w-12 text-[--accent-warning] mx-auto mb-4" />
           <p className="text-[--text-secondary]">
             Convex backend unreachable. Check ATLAS_ADMIN_KEY in .env.local and that the prod
-            deployment is up at avid-oyster-465.convex.cloud.
+            deployment is up at colorful-heron-487.convex.cloud.
           </p>
           <button
             onClick={() => refreshFull(false)}
@@ -271,7 +271,7 @@ export default function DashboardClient({
             <h1 className="page-title">Dashboard</h1>
             <p className="page-subtitle">
               Bhai admin overview &middot; production deployment{" "}
-              <span className="font-mono text-xs">avid-oyster-465</span>
+              <span className="font-mono text-xs">colorful-heron-487</span>
             </p>
             <p className="text-xs text-[--text-muted] mt-1">
               Live signals every {Math.floor(HEARTBEAT_MS / 1000)}s &middot; full refresh every{" "}

@@ -346,5 +346,5 @@ log(`Version:  ${VERSION}`);
 log(`Channel:  ${CHANNEL}`);
 if (meta.mac) log(`macOS:    ${meta.mac.url}`);
 if (meta.win) log(`Windows:  ${meta.win.url}`);
-log(`Feed:     https://zany-kudu-607.convex.site/api/updates${CHANNEL === "stable" ? "" : `?channel=${CHANNEL}`}`);
+log(`Feed:     https://flexible-panther-179.convex.site/api/updates${CHANNEL === "stable" ? "" : `?channel=${CHANNEL}`}`);
 console.log("");

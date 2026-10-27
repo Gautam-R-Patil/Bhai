@@ -18,7 +18,7 @@ const adminBase = process.env.ATLAS_ADMIN_BASE;
 const adminKey = process.env.ATLAS_ADMIN_KEY;
 if (!adminBase || !adminKey) {
     console.error(
-        "Both ATLAS_ADMIN_BASE (Convex site URL, e.g. https://avid-oyster-465.convex.site)\n" +
+        "Both ATLAS_ADMIN_BASE (Convex site URL, e.g. https://colorful-heron-487.convex.site)\n" +
             "and ATLAS_ADMIN_KEY (matches the ADMIN_API_KEY env in Convex) must be set.",
     );
     exit(2);

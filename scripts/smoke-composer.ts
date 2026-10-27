@@ -19,7 +19,7 @@ import { makeIntentId, type ProactiveIntent } from "../src/proactive/intent.js";
 
 async function run() {
     console.log("🚬 Composer smoke test");
-    console.log("   CONVEX_URL:", process.env.CONVEX_URL ?? "(default zany-kudu-607 dev)");
+    console.log("   CONVEX_URL:", process.env.CONVEX_URL ?? "(default flexible-panther-179 dev)");
 
     // Boot session (auth needed for /api/system/prompt + /api/llm/chat)
     const config = loadConfig();

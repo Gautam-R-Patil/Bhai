@@ -2,7 +2,7 @@
 const nextConfig = {
   output: 'standalone',
   images: {
-    domains: ['avid-oyster-465.convex.cloud', 'zany-kudu-607.convex.cloud'],
+    domains: ['colorful-heron-487.convex.cloud', 'flexible-panther-179.convex.cloud'],
   },
   // F15: global security headers. Applied to every response (including
   // static assets) by Next.js. CSP is tight by default — connect-src is
