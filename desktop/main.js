@@ -134,9 +134,10 @@ async function runV2Migration() {
 }
 
 // ── Overlay Window Constants ─────────────────
-const OVERLAY_WIDTH = 340;
-const OVERLAY_MIN_HEIGHT = 56;
-const OVERLAY_MAX_HEIGHT = 500;
+// One native-glass panel (input bar + replies); the window is the panel.
+const OVERLAY_WIDTH = 640;
+const OVERLAY_MIN_HEIGHT = 58;
+const OVERLAY_MAX_HEIGHT = 600;
 const OVERLAY_MARGIN_RIGHT = 16;
 const OVERLAY_MARGIN_TOP = 8;
 const OVERLAY_URL = "http://127.0.0.1:18792";
@@ -1546,9 +1547,11 @@ function getOverlayPosition() {
     const cursor = screen.getCursorScreenPoint();
     const display = screen.getDisplayNearestPoint(cursor);
     const wa = display.workArea;
+    // Centred command-bar placement (Spotlight-style) on the display the
+    // cursor is on, a fifth of the way down, clear of menu bars and toolbars.
     return {
-        x: wa.x + wa.width - OVERLAY_WIDTH - OVERLAY_MARGIN_RIGHT,
-        y: wa.y + OVERLAY_MARGIN_TOP,
+        x: Math.round(wa.x + (wa.width - OVERLAY_WIDTH) / 2),
+        y: Math.round(wa.y + wa.height * 0.2),
     };
 }
 
@@ -1570,10 +1573,14 @@ function createOverlayWindow() {
         alwaysOnTop: true,
         skipTaskbar: true,
         focusable: true,
-        hasShadow: false,
+        // macOS: real "liquid glass" — native vibrancy blurs and tints what's
+        // behind the window (CSS backdrop-filter can't see other apps), with
+        // the system's rounded corners and shadow.
+        hasShadow: true,
+        vibrancy: "popover",
+        visualEffectState: "active",
+        roundedCorners: true,
         show: false,
-        // macOS: no window-level vibrancy — each element uses its own
-        // backdrop-filter so the empty space stays fully transparent
         backgroundColor: "#00000000",
         webPreferences: {
             nodeIntegration: false,
@@ -1714,7 +1721,7 @@ function showOverlay() {
                 "document.getElementById('container')?.scrollHeight || 0"
             ).then((sh) => {
                 if (!overlayWindow || overlayWindow.isDestroyed()) return;
-                const h = Math.min(Math.max(sh + 10, OVERLAY_MIN_HEIGHT), OVERLAY_MAX_HEIGHT);
+                const h = Math.min(Math.max(sh, OVERLAY_MIN_HEIGHT), OVERLAY_MAX_HEIGHT);
                 overlayWindow.setContentSize(OVERLAY_WIDTH, h);
             }).catch(() => {});
         } else {
@@ -1833,7 +1840,7 @@ function startHeightPolling() {
             "document.getElementById('container')?.scrollHeight || 0"
         ).then((scrollHeight) => {
             if (!overlayWindow || overlayWindow.isDestroyed()) return;
-            const newH = Math.min(Math.max(scrollHeight + 10, OVERLAY_MIN_HEIGHT), OVERLAY_MAX_HEIGHT);
+            const newH = Math.min(Math.max(scrollHeight, OVERLAY_MIN_HEIGHT), OVERLAY_MAX_HEIGHT);
             const [, currentH] = overlayWindow.getContentSize();
             if (Math.abs(currentH - newH) > 2) {
                 overlayWindow.setContentSize(OVERLAY_WIDTH, newH);
