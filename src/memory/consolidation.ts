@@ -277,6 +277,12 @@ export async function consolidateMemories(
     // ── Step 6: Compact old archived memories ──
     try {
         const cutoff = new Date(Date.now() - ARCHIVE_AGE_DAYS * 24 * 60 * 60 * 1000).toISOString();
+        const old = db.exec("SELECT id FROM memories WHERE tier = 'archived' AND created_at < ?", [cutoff]);
+        const ids = old.length > 0 ? old[0].values.map((r) => r[0] as number) : [];
+        for (const id of ids) {
+            db.run("DELETE FROM memory_embeddings WHERE memory_id = ?", [id]);
+            try { getHNSWIndex().removeVector(id); } catch { /* */ }
+        }
         db.run(
             "DELETE FROM memories WHERE tier = 'archived' AND created_at < ?",
             [cutoff]

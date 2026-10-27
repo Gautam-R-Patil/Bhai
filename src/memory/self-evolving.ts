@@ -98,6 +98,7 @@ export function synapticPrune(db: Database): { pruned: number; weakened: number;
             if (m.strength < pruneThreshold && m.importance < 3 && !isNewMemory && !isUnaccessed) {
                 // PRUNE — too weak, remove (but not new/unaccessed memories)
                 db.run("DELETE FROM memories WHERE id = ?", [m.id]);
+                db.run("DELETE FROM memory_embeddings WHERE memory_id = ?", [m.id]);
                 // Also remove from HNSW
                 try {
                     getHNSWIndex().removeVector(m.id);
@@ -193,6 +194,7 @@ export function mergeDuplicates(db: Database): number {
 
             const deleteId = score1 >= score2 ? dupe.id2 : dupe.id1;
             db.run("DELETE FROM memories WHERE id = ?", [deleteId]);
+            db.run("DELETE FROM memory_embeddings WHERE memory_id = ?", [deleteId]);
             try {
                 getHNSWIndex().removeVector(deleteId);
             } catch {

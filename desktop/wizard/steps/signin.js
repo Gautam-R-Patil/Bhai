@@ -46,14 +46,32 @@
         cta.type = "button";
         cta.className = "btn btn-primary signin-cta";
         cta.innerHTML = 'Continue to login <span class="chev">' + svgArrow() + '</span>';
-        cta.addEventListener("click", function () {
-            if (window.atlas && typeof window.atlas.openAuthWindow === "function") {
-                window.atlas.openAuthWindow();
+        // Shown while the sign-in window is open, so the user knows where to look.
+        const waiting = document.createElement("p");
+        waiting.className = "signin-fineprint";
+        waiting.setAttribute("role", "status");
+        waiting.setAttribute("aria-live", "polite");
+
+        cta.addEventListener("click", async function () {
+            if (!(window.atlas && typeof window.atlas.openAuthWindow === "function")) return;
+            let res = null;
+            try { res = await window.atlas.openAuthWindow(); } catch (_) { /* shown below */ }
+            if (res && res.alreadySignedIn) {
+                // Already signed in (e.g. re-running setup): just move on.
+                if (ctx && typeof ctx.onAdvance === "function") ctx.onAdvance();
+                return;
             }
-            // OTPless popup completes asynchronously; setup:account-status-change
-            // fires refreshState in boot.js which will advance once signed in.
+            if (!res || res.success === false) {
+                waiting.textContent = "Couldn't open the sign-in window. Please try again.";
+                return;
+            }
+            // OTPless completes asynchronously; setup:account-status-change
+            // fires refreshState in boot.js, which advances once signed in.
+            waiting.textContent = "Finish signing in in the window that just opened. Closed it by mistake? Tap the button again.";
+            cta.innerHTML = 'Open sign-in again <span class="chev">' + svgArrow() + '</span>';
         });
         pane.appendChild(cta);
+        pane.appendChild(waiting);
 
         const fineprint = document.createElement("p");
         fineprint.className = "signin-fineprint";

@@ -11,7 +11,8 @@
  *   - modal_pop     : new modal/dialog appeared (large new region in foreground)
  *   - wrong_target  : changes happened but NOT near the target
  *
- * Heuristic-only — no ML, runs in <1ms on a typical 1920×1080 screenshot diff.
+ * Heuristic-only — no ML. Encoded frames are decoded + downsampled with sharp
+ * (classifyOutcomeFromImages) and diffed in pixel space; a few ms per pair.
  * Feeds into:
  *   - click-memory (success increments count; misses decrement)
  *   - drift-calibration (success records sample if we can locate the actual click target)
@@ -29,20 +30,22 @@ export interface ClickOutcomeResult {
 }
 
 export interface ClassifyOptions {
-    /** Sample size for the diff (number of pixel samples). Default 1000. */
+    /** Max pixel samples for the global diff (strided). Default: every pixel. */
     sampleCount?: number;
-    /** Pixel-value diff threshold for "counted as changed". Default 10. */
+    /** Grey-level diff threshold for "counted as changed". Default 10. */
     pixelThreshold?: number;
-    /** Bbox half-size (px) around the target for nearTargetDiff. Default 80. */
+    /** Box half-size around the target, in the caller's imageWidth/Height units. Default 40. */
     targetRadius?: number;
 }
 
+/** Longest side of the decoded grey frames we diff (cheap, and dilutes 1px AA noise). */
+const DIFF_MAX_SIDE = 512;
+
 /**
- * Classify a click outcome from before/after screenshot buffers + target coord.
- * Buffers can be raw PNG bytes; we sample byte-level so this is approximate but fast.
- *
- * For better accuracy, decode to RGBA first and pass decoded buffers — but the
- * raw-byte mode is adequate for the cascade-router's success-vs-miss gating.
+ * Classify a click outcome from DECODED frames: `before`/`after` are 8-bit
+ * single-channel (greyscale) pixel arrays of exactly imageWidth × imageHeight,
+ * row-major, and (targetX, targetY) is in that same pixel space. Anything else
+ * (e.g. PNG bytes) → `unknown`. Use classifyOutcomeFromImages for encoded images.
  */
 export function classifyOutcome(
     before: Buffer | null,
@@ -56,26 +59,17 @@ export function classifyOutcome(
     if (!before || !after) {
         return { outcome: "unknown", diffPercent: 0, nearTargetDiff: 0, confidence: 0, reason: "missing_buffer" };
     }
-    const sampleCount = opts.sampleCount ?? 1000;
-    const pixelThreshold = opts.pixelThreshold ?? 10;
-    const targetRadius = opts.targetRadius ?? 80;
-
-    const diffPercent = computeByteDiff(before, after, sampleCount, pixelThreshold);
-    const nearTargetDiff = computeRegionalDiff(
-        before,
-        after,
-        targetX,
-        targetY,
-        targetRadius,
-        imageWidth,
-        imageHeight,
-        pixelThreshold,
-    );
-
-    // Classify
-    if (diffPercent < 0.005) {
-        return { outcome: "no_op", diffPercent, nearTargetDiff, confidence: 0.9, reason: "no_visible_change" };
+    const n = imageWidth * imageHeight;
+    if (n <= 0 || before.length !== n || after.length !== n) {
+        return { outcome: "unknown", diffPercent: 0, nearTargetDiff: 0, confidence: 0, reason: "size_mismatch" };
     }
+    const pixelThreshold = opts.pixelThreshold ?? 10;
+    const targetRadius = opts.targetRadius ?? 40;
+
+    const diffPercent = computeGlobalDiff(before, after, opts.sampleCount ?? n, pixelThreshold);
+    const nearTargetDiff = computeRegionalDiff(
+        before, after, Math.round(targetX), Math.round(targetY), Math.round(targetRadius), imageWidth, imageHeight, pixelThreshold,
+    );
 
     // Large global change + small near-target change = something else opened (modal/menu/window switch)
     if (diffPercent > 0.3 && nearTargetDiff < 0.1) {
@@ -88,9 +82,14 @@ export function classifyOutcome(
         };
     }
 
-    // Near-target change → success
+    // Near-target change → success. Checked BEFORE no_op: a small control
+    // (checkbox/toggle) changes only a few hundred pixels — tiny globally.
     if (nearTargetDiff >= 0.02) {
         return { outcome: "success", diffPercent, nearTargetDiff, confidence: 0.8, reason: "change_near_target" };
+    }
+
+    if (diffPercent < 0.005) {
+        return { outcome: "no_op", diffPercent, nearTargetDiff, confidence: 0.9, reason: "no_visible_change" };
     }
 
     // Global change but nothing near target → wrong target
@@ -107,29 +106,58 @@ export function classifyOutcome(
     return { outcome: "unknown", diffPercent, nearTargetDiff, confidence: 0.3, reason: "ambiguous" };
 }
 
-/** Pixel-sampled byte diff. Same algorithm as the existing computeScreenDiff. */
-function computeByteDiff(before: Buffer, after: Buffer, samples: number, threshold: number): number {
-    const minLen = Math.min(before.length, after.length);
-    if (minLen < samples) return 1.0;
-    const step = Math.max(1, Math.floor(minLen / samples));
+/**
+ * Classify from ENCODED before/after images (PNG/JPEG). Both are decoded with
+ * sharp to greyscale and resized to the same ≤512px frame (aspect from
+ * imageWidth/Height), so captures at different pixel densities still compare.
+ * (targetX, targetY) and targetRadius are in imageWidth × imageHeight units —
+ * i.e. relative to the captured region's top-left, NOT absolute screen coords.
+ */
+export async function classifyOutcomeFromImages(
+    before: Buffer | null,
+    after: Buffer | null,
+    targetX: number,
+    targetY: number,
+    imageWidth: number,
+    imageHeight: number,
+    opts: ClassifyOptions = {},
+): Promise<ClickOutcomeResult> {
+    if (!before || !after) return classifyOutcome(null, null, 0, 0, 0, 0);
+    if (imageWidth <= 0 || imageHeight <= 0) {
+        return { outcome: "unknown", diffPercent: 0, nearTargetDiff: 0, confidence: 0, reason: "missing_dims" };
+    }
+    const k = Math.min(1, DIFF_MAX_SIDE / Math.max(imageWidth, imageHeight));
+    const w = Math.max(1, Math.round(imageWidth * k));
+    const h = Math.max(1, Math.round(imageHeight * k));
+    let a: Buffer;
+    let b: Buffer;
+    try {
+        const sharp = (await import("sharp")).default;
+        const decode = (img: Buffer) =>
+            sharp(img).greyscale().resize({ width: w, height: h, fit: "fill" }).raw().toBuffer();
+        [a, b] = await Promise.all([decode(before), decode(after)]);
+    } catch {
+        return { outcome: "unknown", diffPercent: 0, nearTargetDiff: 0, confidence: 0, reason: "decode_failed" };
+    }
+    return classifyOutcome(a, b, targetX * k, targetY * k, w, h, {
+        ...opts,
+        targetRadius: (opts.targetRadius ?? 40) * k,
+    });
+}
+
+/** Fraction of (strided) pixels whose grey level changed by more than `threshold`. */
+function computeGlobalDiff(before: Buffer, after: Buffer, samples: number, threshold: number): number {
+    const step = Math.max(1, Math.floor(before.length / Math.max(1, samples)));
     let diffCount = 0;
     let total = 0;
-    for (let i = 0; i < minLen; i += step) {
+    for (let i = 0; i < before.length; i += step) {
         total++;
         if (Math.abs(before[i] - after[i]) > threshold) diffCount++;
     }
     return total > 0 ? diffCount / total : 1.0;
 }
 
-/**
- * Approximate regional diff. Since we're sampling raw PNG bytes (which are NOT a
- * regular grid mapping to pixel coords), we use a proportional offset: the byte
- * offset corresponding to (targetX, targetY) in image space, ± targetRadius rows.
- *
- * This is a HEURISTIC — PNG bytes are compressed, so the offset doesn't map 1:1
- * to pixel coords. For more accuracy, decode to RGBA first and pass the raw
- * decoded buffer.
- */
+/** Fraction of changed pixels inside the (clamped) box of half-size `radius` around the target. */
 function computeRegionalDiff(
     before: Buffer,
     after: Buffer,
@@ -140,24 +168,19 @@ function computeRegionalDiff(
     imageH: number,
     threshold: number,
 ): number {
-    if (imageW <= 0 || imageH <= 0) return 0;
-    const minLen = Math.min(before.length, after.length);
-    if (minLen < 1000) return 0;
-    // Assume buffer is RGBA-decoded (or compressed but roughly proportional).
-    // Map (targetX, targetY) to a fractional offset in [0,1] then to byte index.
-    const xFrac = Math.max(0, Math.min(1, targetX / imageW));
-    const yFrac = Math.max(0, Math.min(1, targetY / imageH));
-    const centerByte = Math.floor((yFrac * imageH + xFrac) * (minLen / (imageW * imageH)));
-    const radiusByte = Math.floor(radius * radius * (minLen / (imageW * imageH)));
-    const start = Math.max(0, centerByte - radiusByte);
-    const end = Math.min(minLen, centerByte + radiusByte);
-    if (end <= start) return 0;
+    const x0 = Math.max(0, targetX - radius);
+    const x1 = Math.min(imageW - 1, targetX + radius);
+    const y0 = Math.max(0, targetY - radius);
+    const y1 = Math.min(imageH - 1, targetY + radius);
+    if (x1 < x0 || y1 < y0) return 0; // target outside the image
     let diffCount = 0;
     let total = 0;
-    const step = Math.max(1, Math.floor((end - start) / 500));
-    for (let i = start; i < end; i += step) {
-        total++;
-        if (Math.abs(before[i] - after[i]) > threshold) diffCount++;
+    for (let y = y0; y <= y1; y++) {
+        for (let x = x0; x <= x1; x++) {
+            const i = y * imageW + x;
+            total++;
+            if (Math.abs(before[i] - after[i]) > threshold) diffCount++;
+        }
     }
     return total > 0 ? diffCount / total : 0;
 }

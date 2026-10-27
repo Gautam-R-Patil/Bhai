@@ -739,17 +739,30 @@ const AUTH_LOGIN_HTML = `<!DOCTYPE html>
   p { color: var(--muted); text-align: center; margin: 6px 0 20px; }
   .hidden { display: none; }
   #error { color: var(--err); text-align: center; margin-top: 12px; }
+  .logo { display: flex; justify-content: center; margin-bottom: 14px; }
 </style>
 </head>
 <body>
 <div class="card">
+  <div class="logo"><svg xmlns="http://www.w3.org/2000/svg" width="56" height="56" aria-hidden="true" viewBox="0 0 472 472">
+  <rect width="472" height="472" rx="108" fill="#E87B2D"/>
+  <g fill="#1E1A15">
+    <rect x="74" y="147" width="324" height="16" rx="5"/>
+    <path d="M74 157H222C222 212 194 246 155 246H141C102 246 74 212 74 157Z"/>
+    <path d="M250 157H398C398 212 370 246 331 246H317C278 246 250 212 250 157Z"/>
+  </g>
+  <g fill="none" stroke-linecap="round">
+    <path d="M110 186L148 172M288 186L326 172" stroke="#9E9E9E" stroke-width="12"/>
+    <path d="M199 326C240 336 295 332 324 288" stroke="#1E1A15" stroke-width="20"/>
+  </g>
+</svg></div>
   <h1>Sign in to Bhai</h1>
   <p>Continue with phone, email, or a social account</p>
   <div id="otpless-login-page"></div>
   <p id="status" class="hidden"></p>
   <div id="error" role="alert"></div>
 </div>
-<script id="otpless-sdk" src="https://otpless.com/v4/auth.js" data-appid="${OTPLESS_APP_ID}"></script>
+
 <script>
   const widget = document.getElementById("otpless-login-page");
   const status = document.getElementById("status");
@@ -770,6 +783,7 @@ const AUTH_LOGIN_HTML = `<!DOCTYPE html>
     }
   }
 </script>
+<script id="otpless-sdk" onerror="fail('Couldn\\'t load the sign-in service. Check your internet connection, then close this window and try again.')" src="https://otpless.com/v4/auth.js" data-appid="${OTPLESS_APP_ID}"></script>
 </body>
 </html>`;
 

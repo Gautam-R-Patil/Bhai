@@ -20,7 +20,8 @@
         const name = (state && state.profile && state.profile.name)
                   || (state && state.osUserName)
                   || "";
-        const hotkey = (state && state.personalize && state.personalize.hotkey) || "\u2325 Space";
+        // The shortcut that is actually registered (main resolves custom/default/fallback).
+        const hotkey = (state && (state.overlayShortcutLabel || state.overlayShortcut)) || "\u2318J";
 
         // Title \u2014 "Ready, <em>Name</em>." (name omitted if no name resolved)
         const title = document.createElement("h1");

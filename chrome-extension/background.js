@@ -1290,32 +1290,43 @@ async function executeJS(payload) {
   // ALL CSP restrictions (both page CSP and extension CSP).
   // ISOLATED world + new Function() fails on strict CSP pages (e.g. Gmail)
   // because `new Function()` is equivalent to `eval()` which requires unsafe-eval.
+  let result;
   try {
     await chrome.debugger.attach({ tabId: tab.id }, "1.3").catch(() => {});
-    const result = await chrome.debugger.sendCommand(
+    result = await chrome.debugger.sendCommand(
       { tabId: tab.id },
       "Runtime.evaluate",
       { expression: payload.code, returnByValue: true, awaitPromise: true }
     );
     chrome.debugger.detach({ tabId: tab.id }).catch(() => {});
-
-    if (result.exceptionDetails) {
-      return { error: result.exceptionDetails.exception?.description || result.exceptionDetails.text };
-    }
-    return result.result?.value;
   } catch (cdpErr) {
-    // CDP fallback failed — try ISOLATED world as last resort
+    // CDP unavailable — try ISOLATED world as last resort. `code` is an
+    // expression, so wrap it in `return (...)` or the result is always undefined;
+    // fall back to statement form if it doesn't parse as an expression.
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       world: "ISOLATED",
-      func: (code) => {
-        try { const fn = new Function(code); return fn(); }
-        catch (e) { return { error: e.message }; }
+      func: async (code) => {
+        try {
+          let fn;
+          try { fn = new Function(`return (${code}\n)`); }
+          catch (e) { if (!(e instanceof SyntaxError)) throw e; fn = new Function(code); }
+          return { ok: true, value: await fn() };
+        } catch (e) { return { ok: false, error: (e && e.message) || String(e) }; }
       },
       args: [payload.code],
     });
-    return results[0]?.result;
+    const out = results[0]?.result;
+    if (!out || !out.ok) throw new Error(out?.error || "execute_js failed");
+    return out.value;
   }
+
+  // Throw (outside the try, so the fallback doesn't re-run the code) so the
+  // bridge reports a real error instead of an {error} value callers misread.
+  if (result.exceptionDetails) {
+    throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text);
+  }
+  return result.result?.value;
 }
 
 // Raw CDP passthrough for nativeType, setFileInput, and other CDP methods.
@@ -1367,7 +1378,11 @@ async function captureScreenshot(payload) {
 
 async function switchTab(payload) {
   if (payload.tabId) {
-    await chrome.tabs.update(payload.tabId, { active: true });
+    const tab = await chrome.tabs.update(payload.tabId, { active: true });
+    // focus:true also raises the window (CAPTCHA human handoff)
+    if (payload.focus && tab?.windowId !== undefined) {
+      await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+    }
   }
   return { success: true };
 }

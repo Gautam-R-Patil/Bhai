@@ -25,7 +25,7 @@ const execFileAsync = promisify(execFile);
 import { dumpAccessibilityTree } from "../screen/ax-dump.js";
 import { recallClickSite, recordClickMiss, recordClickSuccess } from "../screen/click-memory.js";
 import { applyCalibration, recordCalibrationSample } from "../screen/drift-calibration.js";
-import { classifyOutcome } from "../screen/outcome-classifier.js";
+import { type classifyOutcome, classifyOutcomeFromImages } from "../screen/outcome-classifier.js";
 import { type CascadeTier, findClickTarget, formatCascadeResult } from "../screen/perception-router.js";
 import { getScreenDimensions, isFallbackDims } from "../screen/screen-dimensions.js";
 import type { LLMClient } from "../llm.js";
@@ -53,14 +53,21 @@ async function base64ToTempFile(base64: string, ext = "png"): Promise<string> {
  * Raise an app to the foreground before grounding, so the auto-screenshot
  * captures the intended window and not whatever stole focus. Cross-platform,
  * best-effort (silent on failure — caller proceeds with current frontmost).
+ * Returns true only when it actually tried to raise a window (callers re-read
+ * the focused-window rect then). No-op when the app is already frontmost.
  *   macOS: `open -a` (safe — `tell…activate` can resolve the wrong binary).
  *   Windows: PowerShell AppActivate by process/window title.
  *   Linux: wmctrl if available (no-op otherwise).
  */
-async function activateApp(appName: string): Promise<void> {
-    if (!appName || appName === "unknown") return;
+async function activateApp(appName: string): Promise<boolean> {
+    if (!appName || appName === "unknown") return false;
     try {
         if (process.platform === "darwin") {
+            // Already frontmost → skip `open -a` + the 350ms settle sleep.
+            const { stdout } = await execFileAsync("osascript", ["-e",
+                'tell application "System Events" to get name of first process whose frontmost is true',
+            ], { timeout: 2000 }).catch(() => ({ stdout: "" }));
+            if (stdout.trim().toLowerCase() === appName.toLowerCase()) return false;
             await execFileAsync("open", ["-a", appName], { timeout: 4000 });
         } else if (process.platform === "win32") {
             // VBScript-free: use the WScript.Shell AppActivate via PowerShell.
@@ -71,8 +78,9 @@ async function activateApp(appName: string): Promise<void> {
             await execFileAsync("wmctrl", ["-a", appName], { timeout: 4000 }).catch(() => {});
         }
         await new Promise((r) => setTimeout(r, 350)); // let the window raise
+        return true;
     } catch {
-        /* best-effort */
+        return false; /* best-effort */
     }
 }
 
@@ -164,25 +172,30 @@ export const osSmartClick: ToolDefinition = {
         let windowTitle = (input.window_title as string) || "";
         if (!instruction) return JSON.stringify({ success: false, error: "instruction required" });
 
-        const dims = await getScreenDimensions({ focusedWindow: true });
-        const dimsAreFallback = isFallbackDims(dims);
+        let dims = await getScreenDimensions({ focusedWindow: true });
+        let dimsAreFallback = isFallbackDims(dims);
 
         // Auto-detect app when caller didn't specify — keying click memory by
         // `unknown` collapses every site into a single bucket and defeats the cache.
         // AxDump doesn't currently expose a window title, so window_title falls
         // back to the app name (still per-app, which is better than per-process).
+        // Full-depth (20, same as the router's own) so the cascade reuses this
+        // dump as its AX hint instead of dumping a second time.
         let axDumpHint: Awaited<ReturnType<typeof dumpAccessibilityTree>> | undefined;
-        if (!appName || !windowTitle) {
+        let appIsFrontmost = false;
+        if (!appName) {
             try {
-                axDumpHint = await dumpAccessibilityTree({ depth: 6 });
-                if (axDumpHint && !axDumpHint.error) {
-                    if (!appName) appName = axDumpHint.app || "";
-                    if (!windowTitle) windowTitle = axDumpHint.app || "";
+                const dump = await dumpAccessibilityTree({ depth: 20 });
+                if (dump && !dump.error) {
+                    axDumpHint = dump;
+                    appName = dump.app || "";
+                    appIsFrontmost = !!appName;
                 }
             } catch {
                 /* AX unavailable — fall back to placeholders */
             }
         }
+        if (!windowTitle) windowTitle = appName;
         if (!appName) appName = "unknown";
         if (!windowTitle) windowTitle = "default";
 
@@ -238,7 +251,14 @@ export const osSmartClick: ToolDefinition = {
                 // auto-screenshot sees the intended window and not whatever stole
                 // focus (which caused false cascade_miss for elements that WERE
                 // on the target's window). Cross-platform, best-effort.
-                await activateApp(appName);
+                // Skipped when the app was auto-detected as frontmost. After a
+                // real activation, re-read dims so the focused-window rect (and
+                // monitor) belong to the raised app, not the previous one.
+                if (!appIsFrontmost && (await activateApp(appName))) {
+                    dims = await getScreenDimensions({ focusedWindow: true, force: true });
+                    dimsAreFallback = isFallbackDims(dims);
+                    cascadeDims = dims;
+                }
                 // Prefer a WINDOW-SCOPED capture when focused-window bounds are
                 // known (macOS + Windows): a full-screen image lets a stray
                 // background window pollute grounding. We hand the cascade
@@ -343,6 +363,7 @@ export const osSmartClick: ToolDefinition = {
                 const verdict = await reportClickOutcome(
                     site, { x: calX, y: calY }, before, after,
                     cascadeDims.width || dims.width, cascadeDims.height || dims.height,
+                    { origin: { x: cascadeDims.originX, y: cascadeDims.originY } },
                 );
                 if (verdict.outcome === "success" || verdict.outcome === "modal_pop") {
                     if (!dimsAreFallback) {
@@ -444,6 +465,10 @@ async function dispatchClick(
  * to the click (typically a post-verify AX dump or OmniParser re-run after the
  * action). When omitted, no calibration sample is recorded — recording (predicted,
  * predicted) is circular and locks the transform.
+ *
+ * `target` is in absolute screen coords; `before`/`after` are encoded captures
+ * of the imageWidth × imageHeight (logical px) region whose top-left is
+ * `opts.origin` (default 0,0) — the target is made region-relative before diffing.
  */
 export async function reportClickOutcome(
     site: { app: string; windowTitle: string; elementLabel: string },
@@ -452,9 +477,11 @@ export async function reportClickOutcome(
     after: Buffer | null,
     imageWidth: number,
     imageHeight: number,
-    opts?: { monitorId?: string; actual?: { x: number; y: number } },
+    opts?: { monitorId?: string; actual?: { x: number; y: number }; origin?: { x: number; y: number } },
 ): Promise<ReturnType<typeof classifyOutcome>> {
-    const outcome = classifyOutcome(before, after, target.x, target.y, imageWidth, imageHeight);
+    const ox = opts?.origin?.x ?? 0;
+    const oy = opts?.origin?.y ?? 0;
+    const outcome = await classifyOutcomeFromImages(before, after, target.x - ox, target.y - oy, imageWidth, imageHeight);
     try {
         if (outcome.outcome === "no_op" || outcome.outcome === "wrong_target") {
             recordClickMiss(site);

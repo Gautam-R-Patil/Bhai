@@ -6,7 +6,7 @@
         const Copy = window.Copy;
         const platform = (ctx && ctx.state && ctx.state.platform) || "darwin";
         const pz = (ctx && ctx.state && ctx.state.personalize) || {};
-        const defaultHot   = pz.hotkey   || (platform === "win32" ? "Control+Space" : "Alt+Space");
+        const defaultHot   = pz.hotkey   || (ctx && ctx.state && ctx.state.overlayShortcut) || (platform === "darwin" ? "Command+J" : "Alt+Space");
         const defaultTheme = pz.theme    || "";
         const defaultVoice = pz.voice    || { backend: "gemini-live", name: "Aoede" };
         const defaultWake  = pz.wakeWord || { enabled: false, phrase: "Hey Bhai" };

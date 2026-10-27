@@ -11,9 +11,12 @@
  * path for Lite/Standard tiers (no local UI-TARS) and the self-heal path for a
  * degraded Full tier (Full hardware but UI-TARS model not pulled).
  *
- * Model: qwen/qwen3.7-plus (primary, strong GUI grounding) → falls back to
- * qwen/qwen3-vl-235b-a22b-instruct on error/404. Only invoked when the local
- * cascade (AX/OmniParser/UI-TARS) has already missed, so cost stays minimal.
+ * Model: Sonnet (the Convex proxy maps every id onto Claude, so a second
+ * "fallback" model would just re-hit the same one). The screenshot is
+ * downscaled to ≤1568px longest side BEFORE sending so Claude does not resize
+ * it again server-side; returned coords are in the SENT image's pixel space and
+ * we report those dims as imageWidth/Height for toScreenCoords. Only invoked
+ * when the local cascade (AX/OmniParser/UI-TARS) has already missed.
  */
 
 import { promises as fs } from "node:fs";
@@ -22,13 +25,16 @@ import { resolve } from "node:path";
 import type { ChatCompletionMessageParam } from "openai/resources/index.js";
 import type { LLMClient } from "../llm.js";
 import { MODELS } from "../llm.js";
-import { parseGroundingResponse } from "./ui-tars.js";
+import { downscaleForVision, parseGroundingResponse } from "./ui-tars.js";
 
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+/** Raw-file read cap (memory safety); a 5K Retina PNG can exceed 10MB before downscale. */
+const MAX_IMAGE_BYTES = 40 * 1024 * 1024;
+/** Claude's per-image limit (~5MB base64). */
+const MAX_SENT_BASE64_BYTES = 5 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 30_000;
-
-/** Cloud grounding models, in fallback order: primary first. */
-const GROUNDING_MODELS = [MODELS.QWEN37_PLUS, MODELS.QWEN3_VL_235B];
+const GROUNDING_MODEL = MODELS.SONNET;
+const GROUNDING_SYSTEM_PROMPT =
+    "You are a GUI grounding model. Given a screenshot and a target UI element, output ONLY a JSON object with the pixel coordinate to click. No prose.";
 
 export interface CloudGroundingResult {
     x: number;
@@ -88,32 +94,29 @@ export async function cloudGroundClick(
     }
 
     let base64: string;
-    let mime = "image/png";
-    let imageWidth = 0;
-    let imageHeight = 0;
+    let mime: string;
+    let imageWidth: number;
+    let imageHeight: number;
     try {
         const stat = await fs.stat(screenshotPath);
         if (stat.size > MAX_IMAGE_BYTES) {
             return errorResult("none", start, `image_too_large:${stat.size}`);
         }
-        const buf = await fs.readFile(screenshotPath);
-        // PNG IHDR: width@16, height@20 (BE uint32). JPEG → leave dims 0 (caller scales by screenDims).
-        if (buf.length >= 24 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
-            imageWidth = buf.readUInt32BE(16);
-            imageHeight = buf.readUInt32BE(20);
-        } else if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
-            mime = "image/jpeg";
+        // Downscale + JPEG so Claude sees exactly the pixels we scale by (no server-side resize).
+        const scaled = await downscaleForVision(await fs.readFile(screenshotPath), { jpeg: true });
+        ({ mime, width: imageWidth, height: imageHeight } = scaled);
+        base64 = scaled.buf.toString("base64");
+        if (base64.length > MAX_SENT_BASE64_BYTES) {
+            return errorResult("none", start, `image_too_large_after_downscale:${base64.length}`);
         }
-        base64 = buf.toString("base64");
     } catch (err) {
         return errorResult("none", start, `image_read_failed:${(err as Error).message}`);
     }
 
-    const prompt = `You are a GUI grounding model. Given a screenshot and a target UI element description, return the pixel coordinate to click.
+    const sizeLine = imageWidth > 0 ? `The screenshot is ${imageWidth}x${imageHeight} pixels. ` : "";
+    const prompt = `Target: ${instruction}
 
-Target: ${instruction}
-
-Respond with ONLY a JSON object: {"x": <pixel_x>, "y": <pixel_y>, "confidence": <0.0-1.0>, "reasoning": "<one sentence>"}
+${sizeLine}Respond with ONLY a JSON object: {"x": <pixel_x>, "y": <pixel_y>, "confidence": <0.0-1.0>, "reasoning": "<one sentence>"}
 Coordinates are in the screenshot's own pixel space (top-left origin).`;
 
     const messages: ChatCompletionMessageParam[] = [
@@ -126,25 +129,30 @@ Coordinates are in the screenshot's own pixel space (top-left origin).`;
         },
     ];
 
-    // Try primary model, fall through to the GA fallback on any error.
-    let lastErr = "no_models";
-    for (const model of GROUNDING_MODELS) {
-        try {
-            const resp = await opts.llm.chat({
+    const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    let timer: NodeJS.Timeout | undefined;
+    try {
+        const resp = await Promise.race([
+            opts.llm.chat({
                 messages,
-                modelOverride: model,
-                thinkingLevel: "off",
+                systemPrompt: GROUNDING_SYSTEM_PROMPT,
+                modelOverride: GROUNDING_MODEL,
+                thinkingLevel: "low",
                 responseFormat: "json_object",
-            });
-            const text = resp.choices?.[0]?.message?.content ?? "";
-            const parsed = parseGroundingResponse(typeof text === "string" ? text : "");
-            if (parsed) {
-                return { ...parsed, elapsedMs: Date.now() - start, model, imageWidth, imageHeight };
-            }
-            lastErr = `unparseable:${model}`;
-        } catch (err) {
-            lastErr = `${model}:${(err as Error).message}`;
+            }),
+            new Promise<never>((_, reject) => {
+                timer = setTimeout(() => reject(new Error(`timeout_${timeoutMs}ms`)), timeoutMs);
+            }),
+        ]);
+        const text = resp.choices?.[0]?.message?.content ?? "";
+        const parsed = parseGroundingResponse(typeof text === "string" ? text : "");
+        if (parsed) {
+            return { ...parsed, elapsedMs: Date.now() - start, model: GROUNDING_MODEL, imageWidth, imageHeight };
         }
+        return errorResult(GROUNDING_MODEL, start, "unparseable");
+    } catch (err) {
+        return errorResult(GROUNDING_MODEL, start, (err as Error).message);
+    } finally {
+        clearTimeout(timer);
     }
-    return errorResult(GROUNDING_MODELS[0], start, lastErr);
 }

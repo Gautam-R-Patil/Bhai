@@ -3,15 +3,18 @@
 // See LICENSE.md for details.
 
 // ── Audit Logging ────────────────────────────────
-// Appends JSON-line entries to data/audit.jsonl for security-relevant operations.
+// Appends JSON-line entries to <data dir>/audit.jsonl for security-relevant operations.
 // All writes are non-blocking and fire-and-forget — audit logging must never
 // slow down or break tool execution.
 
 import fs from "node:fs";
 import path from "node:path";
 import { registerProtectedPath } from "./allowlist.js";
+import { getDataDir } from "../config/paths.js";
 
-const AUDIT_PATH = path.resolve("data", "audit.jsonl");
+// Honour ATLAS_DATA_DIR: in the packaged app the working directory is inside
+// the (read-only, signed) app bundle.
+const AUDIT_PATH = path.join(getDataDir(), "audit.jsonl");
 
 // Make the audit log itself write/delete-protected — a tool that scrubs
 // audit.jsonl could otherwise hide its own tracks. Idempotent register.

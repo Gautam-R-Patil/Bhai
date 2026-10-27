@@ -70,6 +70,24 @@ export class ChromePageProxy {
         await new Promise((resolve) => setTimeout(resolve, ms));
     }
 
+    // Playwright-compatible (fn, arg, options): polls evaluate() until truthy.
+    // Evaluate errors (e.g. mid-navigation) count as "not yet".
+    async waitForFunction(
+        fn: ((...args: unknown[]) => unknown) | string,
+        arg?: unknown,
+        opts?: { timeout?: number; polling?: number | "raf" },
+    ): Promise<unknown> {
+        const timeout = opts?.timeout ?? 30000;
+        const polling = typeof opts?.polling === "number" ? opts.polling : 100;
+        const deadline = Date.now() + timeout;
+        for (;;) {
+            const value = await (arg === undefined ? this.evaluate(fn) : this.evaluate(fn, arg)).catch(() => null);
+            if (value) return value;
+            if (Date.now() + polling > deadline) throw new Error(`waitForFunction: timeout ${timeout}ms exceeded`);
+            await new Promise((resolve) => setTimeout(resolve, polling));
+        }
+    }
+
     async waitForLoadState(_state?: string, _opts?: { timeout?: number }): Promise<void> {
         // The Chrome extension handles page load natively
         await new Promise((resolve) => setTimeout(resolve, 300));

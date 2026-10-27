@@ -27,6 +27,7 @@ import { consolidateMemories } from "./consolidation.js";
 import { cleanupTriggers } from "./prospective.js";
 import { getTemporalCache } from "./temporal-cache.js";
 import { getHNSWIndex } from "./vector-index.js";
+import { auditLog } from "../security/audit-log.js";
 import {
     type CalibratorBundle,
     type CalibratorRow,
@@ -1049,8 +1050,9 @@ function signedAuditLog(action: string, details: Record<string, unknown>): void 
         hmac.update(payloadStr);
         const signature = hmac.digest("hex");
 
-        const entry = JSON.stringify({ ...payload, sig: signature });
-        remember(entry, "audit_log", `audit,${action}`, 3);
+        // Goes to data/audit.jsonl, not the memories table — signed JSON blobs
+        // were being embedded and recalled as if they were facts.
+        auditLog(`memory_${action}`, { ...payload, sig: signature });
     } catch {
         // Never let audit failures affect main flow
     }

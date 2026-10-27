@@ -6,6 +6,7 @@
 // Click, type, scroll, hover, drag, keyboard
 
 import type { ToolDefinition } from "../get-current-time.js";
+import { CAPTCHA_HINT, quickCaptchaCheck } from "./captcha.js";
 import {
     ATLAS_HUD_JS,
     buildElementsText,
@@ -258,9 +259,11 @@ export const browserClickAt: ToolDefinition = {
             const finalUrl = page.url();
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const stateTransitions: any = {};
+            let captchaType: string | null = null;
             if (initialUrl !== finalUrl) {
                 stateTransitions.navigation = `Navigated from ${initialUrl} to ${finalUrl}`;
                 await waitForPageReady(page);
+                captchaType = await quickCaptchaCheck(page);
             }
 
             // Generate condensed DOM text of updated elements
@@ -296,6 +299,7 @@ export const browserClickAt: ToolDefinition = {
                 url: page.url(),
                 open_tabs: context.pages().length,
                 interactive_elements_text,
+                ...(captchaType ? { captcha_detected: true, captcha_type: captchaType, hint: CAPTCHA_HINT } : {}),
             });
         } catch (err) {
             // Record failure for loop detection

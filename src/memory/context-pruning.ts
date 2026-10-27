@@ -8,7 +8,7 @@ import type { ChatCompletionMessageParam, LLMClient } from "../llm.js";
 import { sanitizeSecrets } from "../security/secrets-sanitizer.js";
 import { buildCompressionUserPrompt, COMPRESSION_SYSTEM_PROMPT } from "./compression-template.js";
 import { getLastCompressionSummary, getSessionState, setLastCompressionSummary } from "./session.js";
-import { remember } from "./sqlite.js";
+import { keywordSearch, remember } from "./sqlite.js";
 
 // ── Types ─────────────────────────────────────
 
@@ -47,6 +47,14 @@ export function estimateMessagesTokens(messages: ChatCompletionMessageParam[]): 
  * Runs one Haiku extraction call over the full window; emitted facts go
  * through remember() with source="reflection" (auto-allowed by the gate).
  */
+const normFact = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+
+/** Near-exact (case/punctuation-insensitive) duplicate check against stored memories via FTS. */
+function alreadyKnown(fact: string): boolean {
+    const n = normFact(fact);
+    return keywordSearch(fact, 5).some((m) => normFact(m.content) === n);
+}
+
 async function flushToMemory(messages: ChatCompletionMessageParam[], llm: LLMClient): Promise<void> {
     try {
         if (messages.length === 0) return;
@@ -93,11 +101,16 @@ async function flushToMemory(messages: ChatCompletionMessageParam[], llm: LLMCli
         if (!Array.isArray(facts)) return;
 
         let flushed = 0;
+        const seen = new Set<string>();
         for (const fact of facts) {
             if (typeof fact !== "string") continue;
             const trimmed = fact.trim();
             if (trimmed.length < 10 || trimmed.length > 200) continue;
+            const key = normFact(trimmed);
+            if (seen.has(key)) continue;
+            seen.add(key);
             try {
+                if (alreadyKnown(trimmed)) continue;
                 await remember(trimmed, "session_summary", "context_pruning,auto", 5, "reflection");
                 flushed++;
             } catch {

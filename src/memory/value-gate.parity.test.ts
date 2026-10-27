@@ -152,9 +152,9 @@ describe("value-gate llmGate", () => {
         __clearLlmGateCacheForTesting();
     });
 
-    it("returns DROP when llm is null (fail-closed)", async () => {
+    it("returns ADD when llm is null (fail-open)", async () => {
         const result = await llmGate("any content", null);
-        expect(result.decision).toBe("DROP");
+        expect(result.decision).toBe("ADD");
         expect(result.reason).toBe("no_llm");
     });
 
@@ -180,25 +180,36 @@ describe("value-gate llmGate", () => {
         expect(result.reason).toBe("llm_drop");
     });
 
-    it("returns DROP on malformed llm response", async () => {
+    it("accepts answers that start with ADD (case-insensitive, trimmed)", async () => {
+        const stub = {
+            chat: async () => ({
+                choices: [{ message: { content: "  add.\n" } }],
+            }),
+        } as any;
+        const result = await llmGate("User lives in Pune", stub);
+        expect(result.decision).toBe("ADD");
+        expect(result.reason).toBe("llm_add");
+    });
+
+    it("fails open on malformed llm response", async () => {
         const stub = {
             chat: async () => ({
                 choices: [{ message: { content: "maybe?" } }],
             }),
         } as any;
         const result = await llmGate("content", stub);
-        expect(result.decision).toBe("DROP");
+        expect(result.decision).toBe("ADD");
         expect(result.reason).toBe("llm_malformed");
     });
 
-    it("returns DROP on llm timeout/throw", async () => {
+    it("fails open on llm timeout/throw", async () => {
         const stub = {
             chat: async () => {
                 throw new Error("timeout");
             },
         } as any;
         const result = await llmGate("content", stub);
-        expect(result.decision).toBe("DROP");
+        expect(result.decision).toBe("ADD");
         expect(result.reason).toBe("llm_error");
     });
 
@@ -225,9 +236,10 @@ describe("value-gate llmGate", () => {
             },
         } as any;
         const first = await llmGate("retryable content", stub);
-        expect(first.decision).toBe("DROP");
+        expect(first.reason).toBe("llm_error");
         const second = await llmGate("retryable content", stub);
-        expect(second.decision).toBe("ADD");
+        expect(second.reason).toBe("llm_add");
+        expect(callCount).toBe(2);
     });
 });
 

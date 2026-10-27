@@ -6,6 +6,7 @@
 import { getSessionToken } from "./session.js";
 import { getConvexSiteUrl } from "./config/keys.js";
 import { encryptedFetch } from "./crypto-transport.js";
+import { claudeTier } from "./model-router.js";
 
 // ── State ──────────────────────────────────────
 let lastKnownCredits: number | null = null;
@@ -18,31 +19,14 @@ const MAX_ERRORS_BEFORE_BLOCK = 5;
 let sessionCreditsUsed = 0;
 let sessionLLMCalls = 0;
 
-// ── Credit Costs by Model Tier (for local display/tracking only) ──
+// ── Credit Costs (for local display/tracking only) ──
+// Mirrors convex/credit_cost.ts: priced by the Claude model a request runs on.
 // Server-side proxy has its own copy and handles actual deduction.
-export const CREDIT_COSTS: Record<string, number> = {
-    "google/gemini-3-flash-preview": 0.25,
-    "google/gemini-3.1-flash-lite-preview": 0.25,
-    "anthropic/claude-haiku-4.5": 0.25,
-    "gpt-4o-mini": 0.25,
-    "google/gemini-2.0-flash-exp": 0.25,
-    "anthropic/claude-sonnet-4.6": 1,
-    "google/gemini-3.1-pro-preview-customtools": 1,
-    "amazon/nova-micro-v1": 0.25,
-    "amazon/nova-lite-v1": 0.25,
-    "google/gemini-2.5-flash-lite": 0.25,
-    "google/gemini-2.0-flash-001": 0.25,
-    "amazon/nova-pro-v1": 0.5,
-    "google/gemini-2.5-flash": 0.5,
-    "anthropic/claude-sonnet-4.5": 1,
-    "gpt-4o": 1,
-    "anthropic/claude-opus-4.6": 3,
-    default: 1,
-};
+const CREDITS_BY_TIER = { haiku: 0.25, sonnet: 1, opus: 2 } as const;
 
 /** Get credit cost for a specific model (local estimate) */
 export function getCreditCost(modelId: string): number {
-    return CREDIT_COSTS[modelId] ?? CREDIT_COSTS.default;
+    return CREDITS_BY_TIER[claudeTier(modelId)];
 }
 
 /**

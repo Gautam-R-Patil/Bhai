@@ -145,6 +145,7 @@ contextBridge.exposeInMainWorld("atlas", {
     resetOverlayHotkey: () => ipcRenderer.invoke("hotkey:reset-overlay"),
     setLiveVoiceHotkey: (accelerator) => ipcRenderer.invoke("hotkey:set-live-voice", accelerator),
     resetLiveVoiceHotkey: () => ipcRenderer.invoke("hotkey:reset-live-voice"),
+    getOverlayHotkey: () => ipcRenderer.invoke("hotkey:get-overlay"),
     getLiveVoiceHotkey: () => ipcRenderer.invoke("hotkey:get-live-voice"),
 
     onThemeChanged: (callback) => {

@@ -12,7 +12,8 @@ import { join } from "node:path";
 import { transcribeBuffer } from "../../voice/transcribe.js";
 import type { ToolDefinition } from "../get-current-time.js";
 import { getCurrentMode } from "./browser-backend.js";
-import { getActivePage } from "./core.js";
+import { getActiveExtensionTab, sendBridgeCommand } from "./chrome-bridge.js";
+import { ATLAS_HUD_JS, getActivePage, touchBrowserActivity } from "./core.js";
 import { isNativeBrowserAvailable } from "./native-browser.js";
 
 // Try to use Rust-native CAPTCHA classifier for speed
@@ -50,14 +51,23 @@ async function ensureCaptchaKeys(): Promise<void> {
         try {
             const { getConvexSiteUrl } = await import("../../config/keys.js");
             const { getSessionToken } = await import("../../session.js");
+            const { encryptedFetch } = await import("../../crypto-transport.js");
             const convexUrl = getConvexSiteUrl();
             const sessionToken = await getSessionToken().catch(() => null);
             if (!convexUrl || !sessionToken) return;
-            const resp = await fetch(`${convexUrl}/api/config/secrets`, {
+            // Must go through encryptedFetch: the endpoint refuses cleartext
+            // (400) and returns an encrypted response this unwraps.
+            const resp = await encryptedFetch(`${convexUrl}/api/config/secrets`, {
                 headers: { Authorization: `Bearer ${sessionToken}` },
             });
-            if (!resp.ok) return;
+            if (!resp.ok) {
+                console.warn(`  ⚠️ CAPTCHA: secrets fetch failed (${resp.status}) — will retry on next CAPTCHA`);
+                return;
+            }
             const secrets = (await resp.json()) as Record<string, string>;
+            // Only mark fetched on success so a transient failure (no session
+            // yet, network blip) doesn't disable key loading for the process.
+            _captchaKeysFetched = true;
             if (secrets.NOPECHA_API_KEY && !process.env.NOPECHA_API_KEY) {
                 process.env.NOPECHA_API_KEY = secrets.NOPECHA_API_KEY;
                 console.log("  🔑 CAPTCHA: NOPECHA_API_KEY loaded from Convex");
@@ -69,7 +79,6 @@ async function ensureCaptchaKeys(): Promise<void> {
         } catch {
             /* non-fatal — keys may still be available via process.env */
         } finally {
-            _captchaKeysFetched = true;
             _captchaKeysFetchInFlight = null;
         }
     })();
@@ -86,7 +95,9 @@ export interface CaptchaInfo {
 export async function detectCaptcha(
     page: ReturnType<typeof getActivePage> extends Promise<infer P> ? P : never,
 ): Promise<CaptchaInfo> {
-    // Fast Rust pre-check: scan raw HTML for CAPTCHA signals before running JS
+    // Fast Rust pre-check: used ONLY as a fast negative. On a positive we still
+    // run the JS detector below — the classifier reads raw HTML and can't
+    // extract the sitekey that the NopeCHA/2captcha tiers need.
     if (nativeClassifyCaptcha) {
         try {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -94,16 +105,6 @@ export async function detectCaptcha(
                 document.documentElement.innerHTML.substring(0, 50000),
             )) as string;
             const result = nativeClassifyCaptcha(html);
-            if (result.kind !== "none" && result.confidence > 0.7) {
-                console.log(
-                    `  🦀 Rust CAPTCHA classifier: ${result.kind} (confidence ${result.confidence.toFixed(2)})`,
-                );
-                // siteKey is null here by design — the Rust classifier only reads raw HTML
-                // and cannot safely extract dynamic sitekeys (they may be injected by JS).
-                // Tiers requiring siteKey (NopeCHA, 2captcha) will skip; audio bypass and
-                // Turnstile passive stealth work without it and are the preferred free paths.
-                return { type: result.kind as CaptchaType, siteKey: null };
-            }
             if (result.kind === "none" && result.confidence === 0) {
                 return { type: "none", siteKey: null }; // definitively no CAPTCHA
             }
@@ -112,9 +113,9 @@ export async function detectCaptcha(
         }
     }
 
-    // Full JS evaluate for siteKey extraction
+    // Full JS evaluate for type + siteKey extraction
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (page as any).evaluate((): { type: string; siteKey: string | null } => {
+    const info = (await (page as any).evaluate((): { type: string; siteKey: string | null } => {
         // Cloudflare Turnstile
         const tsFrame = document.querySelector('iframe[src*="challenges.cloudflare.com"]');
         const tsWidget = document.querySelector('[class*="cf-turnstile"],[data-cf-turnstile]');
@@ -142,8 +143,27 @@ export async function detectCaptcha(
             return { type: "recaptcha-v2", siteKey: (rcWidget as HTMLElement)?.dataset?.sitekey ?? null };
         }
         return { type: "none", siteKey: null };
-    });
+    })) as CaptchaInfo | null;
+    // Older extension builds return {error} instead of throwing — never read
+    // a malformed result as "CAPTCHA present".
+    if (!info || typeof info.type !== "string") {
+        throw new Error(`CAPTCHA detection failed: ${JSON.stringify(info).slice(0, 120)}`);
+    }
+    return info;
 }
+
+/** Cheap post-action check: CAPTCHA type on the page, or null if none/undetectable. Never throws. */
+export async function quickCaptchaCheck(page: unknown): Promise<CaptchaType | null> {
+    try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const info = await detectCaptcha(page as any);
+        return info.type === "none" ? null : info.type;
+    } catch {
+        return null;
+    }
+}
+
+export const CAPTCHA_HINT = "A CAPTCHA is on this page — call browser_handle_captcha before continuing.";
 
 // ─── Solver (2captcha) ────────────────────────
 
@@ -266,6 +286,7 @@ async function waitForTurnstilePassive(page: any, timeoutMs = 25000): Promise<bo
                 // Frame becomes hidden when challenge passes
                 return s.display === "none" || s.visibility === "hidden" || s.opacity === "0";
             },
+            undefined, // Playwright signature is (fn, arg, options)
             { timeout: timeoutMs, polling: 1000 },
         );
         return true;
@@ -529,7 +550,68 @@ export async function handleCaptchaIfPresent(
         }
     }
 
+    // ── Tier 5: human handoff — surface the page and wait for the user ──
+    if (await handOffToHuman(page)) return { handled: true, type: info.type, method: "human" };
+
     return { handled: false, type: info.type, method: "unsolved" };
+}
+
+// ─── Human Handoff ────────────────────────────
+
+/**
+ * Poll the detector until the CAPTCHA is gone or timeoutMs elapses. Detection
+ * errors (page mid-navigation right after the user solves) count as "not yet".
+ */
+export async function waitForCaptchaCleared(
+    page: unknown,
+    timeoutMs: number,
+    intervalMs = 2000,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    detect: (page: any) => Promise<CaptchaInfo> = detectCaptcha,
+): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        touchBrowserActivity(); // keep the idle-close timer from killing the browser mid-wait
+        await new Promise((r) => setTimeout(r, intervalMs));
+        const info = await detect(page).catch(() => null);
+        if (info?.type === "none") return true;
+    }
+    return false;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function handOffToHuman(page: any): Promise<boolean> {
+    const raw = process.env.ATLAS_CAPTCHA_HANDOFF_MS;
+    const timeoutMs = raw ? Number(raw) : 300_000;
+    if (!(timeoutMs > 0)) return false; // ATLAS_CAPTCHA_HANDOFF_MS=0 disables the handoff
+
+    console.log(`  🙋 CAPTCHA: handing off to user (waiting up to ${Math.round(timeoutMs / 1000)}s)`);
+    try {
+        if (getCurrentMode() === "chrome") {
+            const tab = await getActiveExtensionTab();
+            if (tab?.id) await sendBridgeCommand("switch_tab", { tabId: tab.id, focus: true });
+        } else {
+            await page.bringToFront?.();
+        }
+    } catch {
+        /* best effort */
+    }
+    const banner = (label: string, done: boolean) =>
+        page.evaluate(`(${ATLAS_HUD_JS})(${JSON.stringify({ label, done, maxWidth: 460 })})`).catch(() => {});
+    await banner("⏸ Bhai paused — please solve the CAPTCHA, I'll continue automatically", false);
+    import("../platform-bridge.js")
+        .then(({ showNotification }) =>
+            showNotification(
+                "Bhai needs your help",
+                "Please solve the CAPTCHA in the browser — I'll continue automatically.",
+            ),
+        )
+        .catch(() => {});
+
+    const cleared = await waitForCaptchaCleared(page, timeoutMs);
+    await banner("", true);
+    console.log(`  🙋 CAPTCHA handoff: ${cleared ? "cleared by user ✓" : "timed out"}`);
+    return cleared;
 }
 
 // ─── Tool Definition ──────────────────────────
@@ -540,7 +622,7 @@ export const browserHandleCaptcha: ToolDefinition = {
         function: {
             name: "browser_handle_captcha",
             description:
-                "Detect and solve CAPTCHA challenges on the current page. Solving waterfall (all automatic): 1) Cloudflare Turnstile — passive stealth bypass; 2) reCAPTCHA v2 — free audio challenge bypass (no API key needed); 3) All types — NopeCHA free API (set NOPECHA_API_KEY in Convex, 100 free solves/day); 4) All types — 2captcha paid fallback (set CAPTCHA_API_KEY in Convex). Call this when a page is blocked by a CAPTCHA before proceeding.",
+                "Detect and solve CAPTCHA challenges on the current page. Waterfall: 1) Cloudflare Turnstile — passive wait; 2) reCAPTCHA v2 — audio challenge; 3) NopeCHA API (NOPECHA_API_KEY); 4) 2captcha API (CAPTCHA_API_KEY); 5) if all fail, hands off to the user — brings the page to the front, notifies them, and waits (up to ~5 min) until they solve it, then returns success with method 'human'. If it returns requires_user:true, do NOT retry — tell the user the page needs a manual CAPTCHA solve. Call this when a page is blocked by a CAPTCHA before proceeding.",
             parameters: {
                 type: "object",
                 properties: {},
@@ -555,17 +637,26 @@ export const browserHandleCaptcha: ToolDefinition = {
             if (result.type === "none") {
                 return JSON.stringify({ success: true, captcha_present: false });
             }
+            if (result.handled) {
+                return JSON.stringify({
+                    success: true,
+                    captcha_present: true,
+                    captcha_type: result.type,
+                    method: result.method,
+                    message: `CAPTCHA solved via ${result.method}. You may now proceed.`,
+                });
+            }
+            // `error` makes the agent loop count this as a failure; requires_user
+            // tells it retrying won't help.
             return JSON.stringify({
-                success: result.handled,
+                success: false,
+                error: `CAPTCHA (${result.type}) not solved: automatic solvers failed and the user did not solve it in time.`,
+                requires_user: true,
                 captcha_present: true,
                 captcha_type: result.type,
                 method: result.method,
-                ...(result.handled
-                    ? { message: `CAPTCHA solved via ${result.method}. You may now proceed.` }
-                    : {
-                          message:
-                              "CAPTCHA detected but could not be solved automatically. reCAPTCHA v2 audio bypass was attempted (free, no key needed). To enable full solving: set NOPECHA_API_KEY (free 100/day, nopecha.com) or CAPTCHA_API_KEY (2captcha, paid). Solve manually if needed.",
-                      }),
+                message:
+                    "Stop retrying this page. Ask the user to solve the CAPTCHA in the browser, then continue. (Auto-solving needs NOPECHA_API_KEY or CAPTCHA_API_KEY.)",
             });
         } catch (err) {
             return JSON.stringify({ error: `CAPTCHA handler failed: ${(err as Error).message}` });

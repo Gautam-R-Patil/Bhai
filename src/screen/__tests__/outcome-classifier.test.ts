@@ -1,59 +1,80 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 
+import sharp from "sharp";
 import { describe, expect, it } from "vitest";
-import { classifyOutcome } from "../outcome-classifier.js";
+import { classifyOutcome, classifyOutcomeFromImages } from "../outcome-classifier.js";
 
-function mkBuf(size: number, fill: number): Buffer {
-    const b = Buffer.alloc(size);
-    b.fill(fill);
-    return b;
+const W = 200;
+const H = 100;
+
+function grey(fill: number): Buffer {
+    return Buffer.alloc(W * H, fill);
 }
 
-describe("classifyOutcome", () => {
+function paintBox(buf: Buffer, x0: number, y0: number, x1: number, y1: number, v: number): Buffer {
+    const out = Buffer.from(buf);
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) out[y * W + x] = v;
+    return out;
+}
+
+describe("classifyOutcome (decoded greyscale pixels)", () => {
     it("returns 'unknown' when buffers missing", () => {
         const r = classifyOutcome(null, null, 100, 100, 800, 600);
         expect(r.outcome).toBe("unknown");
         expect(r.confidence).toBe(0);
     });
 
+    it("returns 'unknown' for buffers that aren't W×H pixel arrays (e.g. PNG bytes)", () => {
+        const r = classifyOutcome(Buffer.alloc(10), Buffer.alloc(10), 1, 1, W, H);
+        expect(r.reason).toBe("size_mismatch");
+    });
+
     it("returns 'no_op' when before and after are identical", () => {
-        const buf = mkBuf(10000, 128);
-        const r = classifyOutcome(buf, buf, 400, 300, 800, 600);
+        const r = classifyOutcome(grey(128), grey(128), 100, 50, W, H);
         expect(r.outcome).toBe("no_op");
-        expect(r.diffPercent).toBeLessThan(0.01);
     });
 
-    it("returns 'success' when changes concentrate near target", () => {
-        const before = mkBuf(10000, 128);
-        const after = Buffer.from(before);
-        // Modify the middle 100 bytes (roughly near our target region)
-        for (let i = 4500; i < 5500; i++) after[i] = 250;
-        const r = classifyOutcome(before, after, 400, 300, 800, 600);
-        // Either success or modal_pop is reasonable depending on diff ratios
-        expect(["success", "modal_pop", "wrong_target"]).toContain(r.outcome);
+    it("returns 'success' for a small change right at the target", () => {
+        const after = paintBox(grey(128), 95, 45, 105, 55, 250); // 10x10 toggle
+        const r = classifyOutcome(grey(128), after, 100, 50, W, H, { targetRadius: 20 });
+        expect(r.outcome).toBe("success");
     });
 
-    it("returns 'modal_pop' on large global change with small near-target change", () => {
-        const before = mkBuf(10000, 100);
-        const after = mkBuf(10000, 200); // Every byte changed
-        const r = classifyOutcome(before, after, 400, 300, 800, 600);
-        expect(["modal_pop", "success"]).toContain(r.outcome);
-        expect(r.diffPercent).toBeGreaterThan(0.5);
+    it("returns 'wrong_target' when the change is far from the target", () => {
+        const after = paintBox(grey(128), 150, 0, 200, 100, 250); // right quarter changed
+        const r = classifyOutcome(grey(128), after, 20, 50, W, H, { targetRadius: 10 });
+        expect(r.outcome).toBe("wrong_target");
     });
 
-    it("clamps targetRadius option", () => {
-        const before = mkBuf(10000, 100);
-        const after = mkBuf(10000, 200);
-        const r = classifyOutcome(before, after, 400, 300, 800, 600, { targetRadius: 0 });
-        // With radius=0 the regional check returns ~0
-        expect(r.nearTargetDiff).toBeLessThan(0.1);
+    it("returns 'modal_pop' on a large global change away from the target", () => {
+        const after = paintBox(grey(128), 60, 0, 200, 100, 250);
+        const r = classifyOutcome(grey(128), after, 20, 50, W, H, { targetRadius: 10 });
+        expect(r.outcome).toBe("modal_pop");
+    });
+});
+
+describe("classifyOutcomeFromImages (encoded PNGs, region-relative target)", () => {
+    const png = (img: Buffer, w: number, h: number) =>
+        sharp(img, { raw: { width: w, height: h, channels: 1 } }).png().toBuffer();
+
+    it("decodes a 2x Retina capture and finds the change at the logical target", async () => {
+        // Logical region 400x200, captured at 2x = 800x400 px. Toggle at logical (300,150).
+        const bw = 800;
+        const bh = 400;
+        const base = Buffer.alloc(bw * bh, 128);
+        const changed = Buffer.from(base);
+        for (let y = 290; y < 310; y++) for (let x = 590; x < 610; x++) changed[y * bw + x] = 250;
+        const [before, after] = await Promise.all([png(base, bw, bh), png(changed, bw, bh)]);
+        const hit = await classifyOutcomeFromImages(before, after, 300, 150, 400, 200, { targetRadius: 20 });
+        expect(hit.outcome).toBe("success");
+        // Same frames, target elsewhere → change is not near it.
+        const miss = await classifyOutcomeFromImages(before, after, 50, 50, 400, 200, { targetRadius: 20 });
+        expect(miss.outcome).not.toBe("success");
+        expect(miss.nearTargetDiff).toBe(0);
     });
 
-    it("respects custom pixelThreshold", () => {
-        const before = mkBuf(10000, 100);
-        const after = mkBuf(10000, 105); // small change
-        const tight = classifyOutcome(before, after, 0, 0, 100, 100, { pixelThreshold: 3 });
-        const loose = classifyOutcome(before, after, 0, 0, 100, 100, { pixelThreshold: 20 });
-        expect(tight.diffPercent).toBeGreaterThan(loose.diffPercent);
+    it("returns 'unknown' when decode fails", async () => {
+        const r = await classifyOutcomeFromImages(Buffer.from("nope"), Buffer.from("nope"), 1, 1, 10, 10);
+        expect(r.reason).toBe("decode_failed");
     });
 });

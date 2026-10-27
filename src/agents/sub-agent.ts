@@ -181,6 +181,7 @@ const ROLE_TOOLS: Record<AgentRole, string[]> = {
         "browser_switch_tab",
         "browser_close",
         "browser_scroll_element",
+        "browser_handle_captcha",
         "get_current_time",
     ],
     system: [

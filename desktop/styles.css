@@ -45,11 +45,12 @@
     --orb-purple:   #b58cff;
     --orb-pink:     #ff7a9c;
 
-    /* ── Accent — coral, warm, energetic (Arc-style) ── */
-    --accent-primary: #e8533f;
-    --accent-hover:   #d3402c;
-    --accent-tint:    rgba(232, 83, 63, 0.13);
-    --accent-ring:    rgba(232, 83, 63, 0.30);
+    /* ── Accent — Bhai orange. Buttons use the deeper shade so white text
+       stays readable (~4.5:1); the brand orange (#E87B2D) tints and rings. ── */
+    --accent-primary: #c2570f;
+    --accent-hover:   #a9490b;
+    --accent-tint:    rgba(232, 123, 45, 0.14);
+    --accent-ring:    rgba(232, 123, 45, 0.55);
     --accent-success: #2fb06a;
     --accent-warning: #e3a31f;
     --accent-danger:  #c5392f;
@@ -225,7 +226,6 @@ small, .caption, .hint {
    global fallback so we don't get a double-ring. */
 .btn:focus-visible,
 .title-btn:focus-visible,
-.nav-item:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
@@ -5181,3 +5181,12 @@ body[data-step="install"] .step-actions > * { flex: 0 0 auto; }
 /* The decorative dot indicator (bottom:28px) would collide with the fixed CTA
    bar on the install step — hide it there. */
 body[data-step="install"] .indicator { display: none; }
+
+/* Shortcut hint on the dashboard's Open chat button */
+.chat-kbd {
+    margin-left: 8px;
+    padding: 2px 7px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.22);
+    font: 600 12px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+}

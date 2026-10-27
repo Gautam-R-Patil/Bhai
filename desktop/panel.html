@@ -157,8 +157,8 @@
                                 <span class="status-dot online"></span>
                                 System Online
                             </div>
-                            <div class="status-subtitle">
-                                Bhai is active and listening via Telegram and overlay hotkey.
+                            <div class="status-subtitle" id="statusOnlineSub">
+                                Bhai is running.
                             </div>
                         </div>
 
@@ -173,6 +173,10 @@
                         </div>
 
                         <div class="panel-controls">
+                            <button class="btn btn-primary" id="chatBtn" onclick="atlas.showOverlay()"
+                                style="display: none; min-width: 130px; padding: 11px 20px;">
+                                💬 Open chat <kbd class="chat-kbd" id="chatShortcut"></kbd>
+                            </button>
                             <button class="btn btn-success" id="startBtn" onclick="startBot()"
                                 style="min-width: 130px; padding: 11px 20px;">
                                 ▶ Start Bhai
@@ -196,7 +200,7 @@
                         </div>
                         <div class="connection-item" id="connOverlay">
                             <span class="connection-dot"></span>
-                            <span class="connection-label">Overlay</span>
+                            <span class="connection-label">Chat window</span>
                         </div>
                     </div>
 
@@ -235,7 +239,7 @@
                         <div class="info-card surface-card" onclick="switchTab('settings')" style="cursor: pointer;">
                             <div class="info-card-icon">⚙️</div>
                             <div class="info-card-label">Settings</div>
-                            <div class="info-card-desc">Telegram, workspace</div>
+                            <div class="info-card-desc">Workspace, shortcuts, theme</div>
                         </div>
                         <div class="info-card surface-card" onclick="atlas.openDataDir()" style="cursor: pointer;">
                             <div class="info-card-icon">📂</div>
@@ -636,7 +640,7 @@
                                 <!-- Step 2: Create bot -->
                                 <div class="channel-wizard-step" id="wizStepTelegram2">
                                     <h4>Create your bot</h4>
-                                    <p>In the BotFather chat, send <code>/newbot</code> and follow the prompts. You will be asked to choose a name and username for your bot. The username must end in <code>bot</code> (e.g. <code>MyAtlasBot</code>).</p>
+                                    <p>In the BotFather chat, send <code>/newbot</code> and follow the prompts. You will be asked to choose a name and username for your bot. The username must end in <code>bot</code> (e.g. <code>MyBhaiBot</code>).</p>
                                     <div class="wizard-nav">
                                         <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('telegram', 2)">Back</button>
                                         <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('telegram', 2)">Next</button>
@@ -1132,7 +1136,7 @@
                         </div>
                         <div class="settings-fields">
                             <div style="font-size:12px;color:var(--text-secondary);padding:4px 0;">
-                                Always enabled. Port 18792. Use Preferences tab to change the overlay hotkey.
+                                Always on. Change its keyboard shortcut in Settings.
                             </div>
                         </div>
                     </div>
@@ -1555,7 +1559,7 @@
     </div>
 
     <!-- Toast Notification -->
-    <div class="toast" id="toast"></div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 
     <script>
@@ -1614,6 +1618,8 @@
             document.getElementById('statusOffline').style.display = isRunning ? 'none' : 'block';
             document.getElementById('startBtn').disabled = isRunning;
             document.getElementById('stopBtn').disabled = !isRunning;
+            document.getElementById('chatBtn').style.display = isRunning ? '' : 'none';
+            document.getElementById('startBtn').style.display = isRunning ? 'none' : '';
 
             // Live stats
             document.getElementById('statsGrid').style.display = isRunning ? 'grid' : 'none';
@@ -1632,6 +1638,7 @@
         }
 
         async function refreshStats() {
+            updateConnectionStatus();
             try {
                 const stats = await atlas.getStats();
                 if (!stats) return;
@@ -1649,15 +1656,10 @@
         // Bot log handler - only show errors as toast, logs are saved to file by main process
         function addBotLog(message) {
             // Only show errors and warnings as toast notifications
-            if (message.includes('❌') || message.includes('⚠') || message.includes('Error') || message.includes('error')) {
-                // Filter out AI model names from error messages for cleaner display
-                let cleanMessage = message
-                    .replace(/\b(claude|gpt|gemini|anthropic|openai|openrouter|llama|mistral|sonnet|opus|haiku)[^\s]*/gi, 'AI')
-                    .replace(/\bmodel[:\s]+[^\s]+/gi, '')
-                    .replace(/\s{2,}/g, ' ')
-                    .trim();
-                showToast(cleanMessage, true); // true = error style
-            }
+            // Warnings and stack traces stay in the log file (Logs card); only
+            // real failures reach the user, as one plain sentence.
+            if (!message.includes('❌')) return;
+            showToast(friendlyError(message), true);
             // All logs are automatically saved to file by main process
         }
 
@@ -2404,6 +2406,16 @@
             return Math.floor(s / 86400) + 'd ago';
         }
 
+        function friendlyError(raw) {
+            const m = raw.toLowerCase();
+            if (m.includes('session') && (m.includes('401') || m.includes('not_validated') || m.includes('auth'))) return 'Bhai couldn\'t sign in. Open Account and sign in again.';
+            if (m.includes('credit') || m.includes('402')) return 'You\'re out of credits. Check the Account tab.';
+            if (m.includes('enotfound') || m.includes('econnrefused') || m.includes('network') || m.includes('timed out')) return 'Bhai can\'t reach the internet right now. It will retry.';
+            if (m.includes('permission') || m.includes('not authorized')) return 'Bhai is missing a macOS permission. See Settings → Permissions.';
+            if (m.includes('exited with code')) return 'Bhai stopped unexpectedly. Click Start to try again, or open Logs for details.';
+            return 'Something went wrong. Open Logs for details.';
+        }
+
         // ── Toast ─────────────────────────────────────
 
         function showToast(message, isError = false) {
@@ -3022,16 +3034,22 @@
 
                 container.style.display = 'flex';
 
-                // Update connection indicators based on bot status
-                // For now, assuming telegram is connected if bot is running
-                document.getElementById('connTelegram').classList.add('connected');
-
-                // Check other connections from bot logs/status
                 const connections = await atlas.getConnectionStatus();
+                const { label } = await atlas.getOverlayHotkey();
+                document.getElementById('chatShortcut').textContent = label;
 
-                document.getElementById('connTelegram').classList.toggle('connected', connections.telegram);
-                document.getElementById('connEmail').classList.toggle('connected', connections.email);
+                // Only show channels the user actually set up; never assume one is live.
+                const tg = document.getElementById('connTelegram');
+                tg.style.display = connections.telegramConfigured ? '' : 'none';
+                tg.classList.toggle('connected', connections.telegram);
+                const em = document.getElementById('connEmail');
+                em.style.display = connections.email ? '' : 'none';
+                em.classList.toggle('connected', connections.email);
                 document.getElementById('connOverlay').classList.toggle('connected', connections.overlay);
+
+                const live = [connections.telegram && 'Telegram', connections.email && 'email'].filter(Boolean);
+                document.getElementById('statusOnlineSub').textContent =
+                    `Bhai is running. Press ${label} anywhere to chat` + (live.length ? `, or message it on ${live.join(' and ')}.` : '.');
             } catch { /* */ }
         }
 

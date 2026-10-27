@@ -233,6 +233,16 @@ export function omniParserWeightsPresent(): boolean {
     return candidates.some((p) => existsSync(p));
 }
 
+/**
+ * True iff Florence-2 caption weights are cached locally. Mirrors the path check
+ * in scripts/omniparser_detect.py (FLORENCE2_MODEL_PATH or ~/.cache/florence2).
+ * Without them every caption is "" so findElementByCaption can never match —
+ * the cascade skips the tier instead of paying the python/YOLO spawn for nothing.
+ */
+export function omniParserCaptionsPresent(): boolean {
+    return existsSync(process.env.FLORENCE2_MODEL_PATH || join(homedir(), ".cache", "florence2"));
+}
+
 let _depsCache: { present: boolean; expiresAt: number } | null = null;
 const DEPS_CACHE_TTL_MS = 60_000;
 

@@ -925,6 +925,18 @@ function getOverlayShortcut() {
     return process.platform === "darwin" ? "Command+J" : "Alt+Space";
 }
 
+// The overlay shortcut that is actually registered right now (may be a
+// fallback when the preferred one is taken). Shown to the user in the UI.
+let activeOverlayShortcut = null;
+function getActiveOverlayShortcut() {
+    return activeOverlayShortcut || getOverlayShortcut();
+}
+function shortcutLabel(accelerator) {
+    if (process.platform !== "darwin") return accelerator.replace(/\+/g, " + ");
+    const map = { Command: "\u2318", Cmd: "\u2318", CommandOrControl: "\u2318", Option: "\u2325", Alt: "\u2325", Shift: "\u21E7", Control: "\u2303", Ctrl: "\u2303", Space: "Space" };
+    return accelerator.split("+").map((k) => map[k] || k).join("");
+}
+
 // Resolve the active live voice shortcut (custom or platform default)
 function getLiveVoiceShortcut() {
     const custom = store.get("liveVoiceHotkey");
@@ -1293,6 +1305,8 @@ async function startBot() {
             if (msg.includes("[SLACK]") && msg.includes("\u26A1")) channelStatuses.slack = "connected";
             if (msg.includes("[MATRIX] Bot started")) channelStatuses.matrix = "connected";
             if (msg.includes("Email connected") || msg.includes("IMAP connected")) channelStatuses.email = "connected";
+            if (msg.includes("\u2705 Bot online: @")) channelStatuses.telegram = "connected";
+            if (msg.includes("Bhai online (Telegram disabled)")) channelStatuses.telegram = "not_configured";
 
             // Push status updates to renderer
             const win = mainWindow;
@@ -1329,6 +1343,7 @@ async function startBot() {
     botProcess.on("exit", (code) => {
         sendLog(`Process exited with code ${code}`);
         botProcess = null;
+        for (const k of Object.keys(channelStatuses)) delete channelStatuses[k];
         // Clean up temp env
         try { fs.unlinkSync(tempEnvPath); } catch { /* */ }
         // Notify renderer
@@ -1642,6 +1657,22 @@ function createOverlayWindow() {
 }
 
 function showOverlay() {
+    // The chat UI is served by the bot. If it isn't running, start it (when
+    // signed in) and say so, instead of opening a blank, endlessly retrying window.
+    if (!botProcess) {
+        const { Notification } = require("electron");
+        const signedIn = !!(loadAccountSession() || {}).userId;
+        if (signedIn) startBot().catch((err) => console.error("[OVERLAY] Auto-start failed:", err.message));
+        if (Notification.isSupported()) {
+            new Notification({
+                title: "Bhai",
+                body: signedIn ? "Bhai is starting — press the shortcut again in a few seconds." : "Open Bhai and sign in to start chatting.",
+            }).show();
+        }
+        if (!signedIn && mainWindow && !mainWindow.isDestroyed()) mainWindow.show();
+        return;
+    }
+
     // Create lazily
     if (!overlayWindow || overlayWindow.isDestroyed()) {
         createOverlayWindow();
@@ -1862,6 +1893,9 @@ function registerIPC() {
             title: "Bhai — Sign In",
             alwaysOnTop: true,
             webPreferences: {
+                // Non-persistent partition: each sign-in starts clean, so the
+                // OTPless widget can't silently resume an old, expired attempt.
+                partition: `auth-${Date.now()}`,
                 preload: path.join(__dirname, "auth-preload.js"),
                 nodeIntegration: false,
                 contextIsolation: true,
@@ -3609,6 +3643,7 @@ function registerIPC() {
             mainWindow.center();
             mainWindow.loadFile(path.join(__dirname, "panel.html"));
         }
+        if (!botProcess) startBot().catch((err) => console.error("[SETUP] Auto-start failed:", err.message));
         return { success: true };
     });
 
@@ -3819,6 +3854,8 @@ function registerIPC() {
                 }
             }
         } catch { /* ignore */ }
+        state.overlayShortcut = getActiveOverlayShortcut();
+        state.overlayShortcutLabel = shortcutLabel(state.overlayShortcut);
         return state;
     });
 
@@ -3901,6 +3938,7 @@ function registerIPC() {
                 return { ok: false, error: "globalShortcut.register returned false — combo may have been claimed between test and save" };
             }
             store.set("overlayHotkey", combo);
+            activeOverlayShortcut = combo;
             return { ok: true };
         } catch (err) {
             // Best-effort rollback then report
@@ -4239,6 +4277,7 @@ function registerIPC() {
 
             // Persist
             store.set("overlayHotkey", accelerator);
+            activeOverlayShortcut = accelerator;
             return { success: true };
         } catch (err) {
             // Re-register old shortcut on error
@@ -4260,9 +4299,9 @@ function registerIPC() {
             store.delete("overlayHotkey");
 
             const defaultShortcut = getOverlayShortcut();
-            globalShortcut.register(defaultShortcut, () => {
+            if (globalShortcut.register(defaultShortcut, () => {
                 toggleOverlay();
-            });
+            })) activeOverlayShortcut = defaultShortcut;
 
             return { success: true, shortcut: defaultShortcut };
         } catch (err) {
@@ -4318,25 +4357,25 @@ function registerIPC() {
         }
     });
 
+    ipcMain.handle("hotkey:get-overlay", () => {
+        const shortcut = getActiveOverlayShortcut();
+        return { shortcut, label: shortcutLabel(shortcut) };
+    });
+
     ipcMain.handle("hotkey:get-live-voice", () => {
         return { shortcut: getLiveVoiceShortcut() };
     });
 
     // ── Connection Status IPC ────────────────────
     ipcMain.handle("status:connections", () => {
-        const connections = {
-            telegram: false,
-            email: false,
-            overlay: false,
+        // Derived from what the bot actually logged — never assume a channel is up.
+        const running = !!(botProcess && !botProcess.killed);
+        return {
+            telegram: running && channelStatuses.telegram === "connected",
+            telegramConfigured: channelStatuses.telegram !== "not_configured",
+            email: running && channelStatuses.email === "connected",
+            overlay: running,
         };
-
-        // Check bot logs for connection indicators
-        if (botProcess && !botProcess.killed) {
-            connections.telegram = true; // If bot is running, Telegram is likely connected
-            // Other connections can be detected from bot output patterns
-        }
-
-        return connections;
     });
 
     // ── Account Handlers ─────────────────────────
@@ -5886,6 +5925,7 @@ app.whenReady().then(async () => {
         toggleOverlay();
     });
     if (overlayRegistered) {
+        activeOverlayShortcut = overlayShortcut;
         console.log(`[SHORTCUT] Overlay shortcut registered: ${overlayShortcut}`);
     } else {
         console.warn(`[SHORTCUT] ⚠️ Could not register overlay shortcut: ${overlayShortcut} — trying fallback...`);
@@ -5895,6 +5935,7 @@ app.whenReady().then(async () => {
             : ["Alt+J", "Ctrl+Shift+J", "Ctrl+\\"];
         for (const fb of fallbacks) {
             if (globalShortcut.register(fb, () => toggleOverlay())) {
+                activeOverlayShortcut = fb;
                 console.log(`[SHORTCUT] Overlay shortcut registered with fallback: ${fb}`);
                 break;
             }

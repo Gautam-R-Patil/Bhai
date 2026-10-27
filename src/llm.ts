@@ -163,7 +163,9 @@ export function createLLMClient(config: Config): LLMClient {
             // by the composable middleware pipeline. The inner `next` function
             // contains the core network logic (failover, auth, etc.).
 
-            const model = modelOverride || MODELS.PRO;
+            // Unspecified callers are background work (reflection, summaries,
+            // classifiers): the cheap, fast model is the right default.
+            const model = modelOverride || MODELS.HAIKU;
             const effort = thinkingLevel || "off";
             const isThinking = effort !== "off";
 
@@ -224,18 +226,10 @@ export function createLLMClient(config: Config): LLMClient {
                     response_format: responseFormat === "json_object" ? { type: "json_object" } : undefined,
                 };
 
-                // Add reasoning config for thinking models
-                if (isThinking) {
-                    const apiEffort = effort === "max" ? "high" : effort;
-                    requestBody.reasoning = { effort: apiEffort };
-                } else if (model.startsWith("openai/gpt-5")) {
-                    // GPT-5 models reason by DEFAULT when no reasoning param is
-                    // sent — which made fast-path acks take ~11s. Force minimal
-                    // reasoning so greetings respond fast (Haiku-like latency)
-                    // while keeping the model's low cost. Anthropic/Gemini have
-                    // no such default, so this is scoped to gpt-5*.
-                    requestBody.reasoning = { effort: "minimal" };
-                }
+                // Always send an effort: every Claude model thinks by default
+                // (Sonnet at high), so "off" must explicitly mean the lowest
+                // effort or quick replies pay for deep reasoning.
+                requestBody.reasoning = { effort: isThinking ? effort : "low" };
 
             // Exclude already-tried models so each hop surfaces a new provider.
             // Window-aware mode (opt-in): estimate the request's token size once
@@ -249,11 +243,18 @@ export function createLLMClient(config: Config): LLMClient {
                     estTokens = estimateMessagesTokens(allMessages);
                 } catch { estTokens = 0; }
             }
+            // Every id runs on one of three Claude models, so failing over to an
+            // alias of the same model just repeats the failed call. Only hop to
+            // a different model, and at most once.
+            const { claudeTier } = await import("./model-router.js");
             const modelsToTry: string[] = [model];
-            for (let i = 0; i < 3; i++) {
-                const seed = modelsToTry[modelsToTry.length - 1];
-                const next = await getModelFallback(seed, modelsToTry);
-                if (!next || modelsToTry.includes(next)) break;
+            const tried: string[] = [model];
+            for (let i = 0; i < 4 && modelsToTry.length < 2; i++) {
+                const seed = tried[tried.length - 1];
+                const next = await getModelFallback(seed, tried);
+                if (!next || tried.includes(next)) break;
+                tried.push(next);
+                if (modelsToTry.some((m) => claudeTier(m) === claudeTier(next))) continue;
                 if (windowAware && estTokens > 0) {
                     try {
                         const { getContextWindow } = await import("./model-router.js");

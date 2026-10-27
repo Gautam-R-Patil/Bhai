@@ -502,7 +502,7 @@ export const SCROLL_INDICATOR_JS = `
 // Bhai action HUD: floating pill at top-right showing current action.
 // Persists while action runs, fades out on completion.
 export const ATLAS_HUD_JS = `
-({label, done}) => {
+({label, done, maxWidth}) => {
     const ID = '__atlasHUD';
     let hud = document.getElementById(ID);
     if (done) {
@@ -536,7 +536,7 @@ export const ATLAS_HUD_JS = `
         requestAnimationFrame(() => { hud.style.opacity = '1'; });
     }
     const txt = document.getElementById('__atlasHUDtxt');
-    if (txt) txt.textContent = label;
+    if (txt) { txt.textContent = label; txt.style.maxWidth = (maxWidth || 200) + 'px'; }
 };
 `;
 
@@ -577,6 +577,7 @@ export async function waitForPageReady(page: Page, timeoutMs = 2500): Promise<vo
                 if (isNext || isVue || isNuxt || isReact) return document.readyState === "complete";
                 return document.readyState !== "loading";
             },
+            undefined,
             { timeout: Math.min(deadline - Date.now(), 2500), polling: 150 },
         );
     } catch {

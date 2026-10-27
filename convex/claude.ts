@@ -10,11 +10,12 @@ const SONNET = "claude-sonnet-5-5";
 const HAIKU = "claude-haiku-5-5";
 
 // The client still routes by OpenRouter ids across vendors. Keep its tiering:
-// heavy → Opus, light/cheap → Haiku, everything else → Sonnet.
+// heavy → Opus, light/cheap → Haiku, everything else → Sonnet. Size words must
+// be whole id segments, so "gemini-3.1-pro" isn't read as "mini".
 export function toClaudeModel(id: unknown): string {
   const m = String(id ?? "").toLowerCase();
   if (m.includes("opus")) return OPUS;
-  if (/haiku|nano|mini|micro|lite|flash/.test(m)) return HAIKU;
+  if (/(^|[/._:-])(haiku|nano|mini|micro|lite|flash|flash-lite)([/._:-]|$)/.test(m)) return HAIKU;
   return SONNET;
 }
 
@@ -84,10 +85,27 @@ export function toClaudeRequest(body: any, chat: any[]): Beta.MessageCreateParam
   const system: Beta.BetaTextBlockParam[] = [];
   const messages: Beta.BetaMessageParam[] = [];
 
+  let pendingReminder = "";
+  // Leading system messages after the first (the client's per-request context:
+  // clock, language, memory) change every call. Sent with the latest turn
+  // instead, so the system prompt and conversation history stay cacheable.
+  const tailReminders: string[] = [];
   for (const msg of chat) {
     if (msg?.role === "system" || msg?.role === "developer") {
       const t = textOf(msg.content);
-      if (t) system.push({ type: "text", text: t });
+      if (!t) continue;
+      if (!messages.length) {
+        if (!system.length) system.push({ type: "text", text: t });
+        else tailReminders.push(t);
+      } else {
+        const reminder = `<system-reminder>\n${t}\n</system-reminder>`;
+        const last = messages[messages.length - 1];
+        // Append to the latest user turn (after any tool results); otherwise
+        // carry it into the next user turn.
+        if (last.role === "user" && Array.isArray(last.content)) last.content.push({ type: "text", text: reminder });
+        else pendingReminder += (pendingReminder ? "\n" : "") + reminder;
+      }
+      continue;
     } else if (msg?.role === "assistant") {
       const content: Beta.BetaContentBlockParam[] = toBlocks(msg.content);
       for (const tc of msg.tool_calls ?? []) {
@@ -100,26 +118,42 @@ export function toClaudeRequest(body: any, chat: any[]): Beta.MessageCreateParam
       }
       if (content.length) messages.push({ role: "assistant", content });
     } else if (msg?.role === "tool") {
+      const parts = toBlocks(msg.content).filter(
+        (b): b is Beta.BetaTextBlockParam | Beta.BetaImageBlockParam => b.type === "text" || b.type === "image",
+      );
       const result: Beta.BetaToolResultBlockParam = {
         type: "tool_result",
         tool_use_id: msg.tool_call_id,
-        content: textOf(msg.content) || "(empty)",
+        content: parts.length ? parts : "(empty)",
       };
-      // All results for one assistant turn go back in a single user message.
+      // All results for one assistant turn go back in a single user message,
+      // tool results first and any reminders after them.
       const last = messages[messages.length - 1];
-      if (
-        last?.role === "user" &&
-        Array.isArray(last.content) &&
-        last.content.every((b) => b.type === "tool_result")
-      ) {
-        last.content.push(result);
+      if (last?.role === "user" && Array.isArray(last.content) && last.content[0]?.type === "tool_result") {
+        const firstOther = last.content.findIndex((b) => b.type !== "tool_result");
+        last.content.splice(firstOther === -1 ? last.content.length : firstOther, 0, result);
       } else {
         messages.push({ role: "user", content: [result] });
       }
+      if (pendingReminder) {
+        (messages[messages.length - 1].content as Beta.BetaContentBlockParam[]).push({ type: "text", text: pendingReminder });
+        pendingReminder = "";
+      }
     } else {
       const content = toBlocks(msg?.content);
+      if (pendingReminder) {
+        content.push({ type: "text", text: pendingReminder });
+        pendingReminder = "";
+      }
       if (content.length) messages.push({ role: "user", content });
     }
+  }
+  if (pendingReminder) messages.push({ role: "user", content: [{ type: "text", text: pendingReminder }] });
+  if (tailReminders.length) {
+    const block = { type: "text" as const, text: `<system-reminder>\n${tailReminders.join("\n\n")}\n</system-reminder>` };
+    const last = messages[messages.length - 1];
+    if (last?.role === "user" && Array.isArray(last.content)) last.content.push(block);
+    else messages.push({ role: "user", content: [block] });
   }
 
   const tools: Beta.BetaTool[] | undefined = Array.isArray(body.tools)
@@ -133,7 +167,9 @@ export function toClaudeRequest(body: any, chat: any[]): Beta.MessageCreateParam
     : undefined;
 
   const output_config: Beta.BetaOutputConfig = {};
-  const effort = body.reasoning?.effort;
+  // OpenAI-style "minimal"/"none" have no Claude equivalent; use the lowest effort.
+  const raw = body.reasoning?.effort;
+  const effort = raw === "minimal" || raw === "none" ? "low" : raw;
   if (EFFORTS.includes(effort)) output_config.effort = effort as Effort;
   const schema = body.response_format?.json_schema?.schema;
   if (body.response_format?.type === "json_schema" && schema && !tools?.length) {

@@ -120,6 +120,44 @@ export function validateOllamaHost(host: string): { ok: boolean; reason?: string
     }
 }
 
+/** Longest-side cap for vision-model input (UI-TARS-1.5 max; ≤ Claude's own resize threshold). */
+export const VISION_MAX_SIDE = 1568;
+
+/**
+ * Shared screenshot downscale for vision grounding (UI-TARS + cloud). Caps the
+ * longest side at `maxSide` and returns the dims of the image ACTUALLY produced
+ * so callers scale model coords by what the model saw. Lazy `sharp`, fail-open:
+ * on any sharp error returns the input with PNG IHDR dims (0x0 for non-PNG).
+ * Returns the input untouched when already small enough (unless `jpeg`).
+ */
+export async function downscaleForVision(
+    input: Buffer,
+    opts: { maxSide?: number; jpeg?: boolean } = {},
+): Promise<{ buf: Buffer; width: number; height: number; mime: string }> {
+    const maxSide = opts.maxSide ?? VISION_MAX_SIDE;
+    const isPng = input.length >= 24 && input[0] === 0x89 && input[1] === 0x50 && input[2] === 0x4e && input[3] === 0x47;
+    const isJpeg = input.length >= 3 && input[0] === 0xff && input[1] === 0xd8 && input[2] === 0xff;
+    // PNG IHDR: width uint32 BE @16, height @20.
+    const fallback = {
+        buf: input,
+        width: isPng ? input.readUInt32BE(16) : 0,
+        height: isPng ? input.readUInt32BE(20) : 0,
+        mime: isJpeg ? "image/jpeg" : "image/png",
+    };
+    try {
+        const sharp = (await import("sharp")).default;
+        const meta = await sharp(input).metadata();
+        const width = meta.width ?? fallback.width;
+        const height = meta.height ?? fallback.height;
+        if (Math.max(width, height) <= maxSide && !opts.jpeg) return { ...fallback, width, height };
+        const pipeline = sharp(input).resize({ width: maxSide, height: maxSide, fit: "inside", withoutEnlargement: true });
+        const out = await (opts.jpeg ? pipeline.jpeg({ quality: 90 }) : pipeline.png()).toBuffer({ resolveWithObject: true });
+        return { buf: out.data, width: out.info.width, height: out.info.height, mime: opts.jpeg ? "image/jpeg" : "image/png" };
+    } catch {
+        return fallback; // sharp missing/failed — send as-is
+    }
+}
+
 export async function groundClick(
     screenshotPath: string,
     instruction: string,
@@ -150,35 +188,17 @@ export async function groundClick(
         if (stat.size > MAX_IMAGE_BYTES) {
             return errorResult(model, start, `image_too_large:${stat.size}_bytes_max_${MAX_IMAGE_BYTES}`);
         }
-        let buf: Buffer = await fs.readFile(screenshotPath);
-        // PNG IHDR chunk starts at byte 8; width is uint32 BE at offset 16, height at 20.
-        if (buf.length >= 24 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
-            imageWidth = buf.readUInt32BE(16);
-            imageHeight = buf.readUInt32BE(20);
-        }
         // Downscale to UI-TARS-1.5's native max (longest side 1568px) BEFORE encode.
         // Retina/window full-res frames are 2-3MP — the vision encoder pass scales
         // with pixel count, so this is the single biggest per-call inference saving.
-        // We re-read the RESIZED width/height and report THOSE as imageWidth/Height
-        // so toScreenCoords scales by what the model actually saw. Lazy sharp import
-        // + fail-open to full-res (ATLAS_NO_UITARS_DOWNSCALE opts out).
-        const longest = Math.max(imageWidth, imageHeight);
-        if (process.env.ATLAS_NO_UITARS_DOWNSCALE !== "true" && longest > 1568) {
-            try {
-                const sharp = (await import("sharp")).default;
-                const resized = await sharp(buf)
-                    .resize({ width: imageWidth >= imageHeight ? 1568 : undefined, height: imageHeight > imageWidth ? 1568 : undefined, fit: "inside" })
-                    .png()
-                    .toBuffer();
-                if (resized.length >= 24 && resized[0] === 0x89 && resized[1] === 0x50) {
-                    imageWidth = resized.readUInt32BE(16);
-                    imageHeight = resized.readUInt32BE(20);
-                    buf = resized;
-                }
-            } catch {
-                /* sharp missing/failed — send full-res (fail-open) */
-            }
-        }
+        // imageWidth/Height are the SENT dims so toScreenCoords scales by what the
+        // model actually saw. ATLAS_NO_UITARS_DOWNSCALE opts out (fail-open to full-res).
+        const scaled = await downscaleForVision(await fs.readFile(screenshotPath), {
+            maxSide: process.env.ATLAS_NO_UITARS_DOWNSCALE === "true" ? Number.POSITIVE_INFINITY : VISION_MAX_SIDE,
+        });
+        const buf = scaled.buf;
+        imageWidth = scaled.width;
+        imageHeight = scaled.height;
         base64 = buf.toString("base64");
     } catch (err) {
         return errorResult(model, start, `image_read_failed:${(err as Error).message}`);
@@ -251,13 +271,26 @@ export function parseGroundingResponse(
     text: string,
 ): { x: number; y: number; confidence: number; reasoning?: string } | null {
     if (!text) return null;
-    // Use indexOf/lastIndexOf to capture the outermost JSON object — handles
-    // nested braces inside reasoning strings like "the {Save} button".
+    // Candidates, best first: the outermost {...} span (handles nested braces in
+    // reasoning like "the {Save} button"), then every flat {...} object from LAST
+    // to first (handles prose/thinking that mentions braces or drafts a guess
+    // before the final answer). First candidate that parses with numeric x/y wins.
     const start = text.indexOf("{");
     const end = text.lastIndexOf("}");
     if (start === -1 || end <= start) return null;
+    const candidates = [text.slice(start, end + 1), ...(text.match(/\{[^{}]*\}/g) ?? []).reverse()];
+    for (const c of candidates) {
+        const r = parseGroundingObject(c);
+        if (r) return r;
+    }
+    return null;
+}
+
+function parseGroundingObject(
+    json: string,
+): { x: number; y: number; confidence: number; reasoning?: string } | null {
     try {
-        const obj = JSON.parse(text.slice(start, end + 1)) as Record<string, unknown>;
+        const obj = JSON.parse(json) as Record<string, unknown>;
         // Clamp coords to a sane screen-space range to defend against hallucinated huge ints.
         const x = typeof obj.x === "number" ? Math.max(-32767, Math.min(32767, Math.round(obj.x))) : null;
         const y = typeof obj.y === "number" ? Math.max(-32767, Math.min(32767, Math.round(obj.y))) : null;
@@ -423,8 +456,8 @@ export function clearUITarsHealthCache(): void {
  * UI-TARS. Surface it clearly, and optionally kick off a background pull.
  *
  * Called once at boot (non-blocking). Only acts when profile is "full".
- * Auto-pulls the model by default (turnkey); set ATLAS_NO_UI_TARS_AUTOPULL=true
- * to disable the auto-pull and only warn.
+ * Only warns by default; auto-pulls (~4.7GB) when ATLAS_UI_TARS_AUTOPULL=true
+ * (ATLAS_NO_UI_TARS_AUTOPULL=true still forces it off).
  */
 export async function ensureUITarsForFullTier(profile: string): Promise<void> {
     if (profile !== "full") return;
@@ -454,9 +487,9 @@ export async function ensureUITarsForFullTier(profile: string): Promise<void> {
     // capability detector already notes that. Only act on model_not_pulled.
     if (avail.reason !== "model_not_pulled") return;
 
-    // Auto-pull by default so a degraded-Full box self-heals to working local
-    // grounding without manual steps. Opt out with ATLAS_NO_UI_TARS_AUTOPULL.
-    if (process.env.ATLAS_NO_UI_TARS_AUTOPULL !== "true") {
+    // OPT-IN (~4.7GB download, ~5GB resident while warm): only auto-pull when
+    // ATLAS_UI_TARS_AUTOPULL=true. ATLAS_NO_UI_TARS_AUTOPULL=true still forces off.
+    if (process.env.ATLAS_UI_TARS_AUTOPULL === "true" && process.env.ATLAS_NO_UI_TARS_AUTOPULL !== "true") {
         const hostCheck = validateOllamaHost(host);
         if (!hostCheck.ok) return;
         // DETACHED background pull — a plain child dies when the bot process
@@ -476,8 +509,8 @@ export async function ensureUITarsForFullTier(profile: string): Promise<void> {
         }
     } else {
         console.warn(
-            `⚠️  [vision-nav] Full tier but UI-TARS not pulled, and auto-pull disabled ` +
-            `(ATLAS_NO_UI_TARS_AUTOPULL). Clicks use cloud grounding. Enable local grounding: ` +
+            `⚠️  [vision-nav] Full tier but UI-TARS not pulled (auto-pull is opt-in: ` +
+            `ATLAS_UI_TARS_AUTOPULL=true). Clicks use cloud grounding. Enable local grounding: ` +
             `\`ollama pull ${model}\`.`,
         );
     }

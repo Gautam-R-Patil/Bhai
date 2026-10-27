@@ -79,6 +79,7 @@ import { recordFailure as recordWorldFailure, recordSuccess as recordWorldSucces
 import {
     classifyOrchestratorComplexity,
     getCascadeNext,
+    claudeTier,
     type ModelSelection,
     pickOrchestratorModel,
     recordQualityFailure,
@@ -1384,7 +1385,7 @@ STRATEGY: Execute in as few tool calls as possible.
         // modelOverride path — consumed once, then cleared so it forces ONE iteration.
         const model =
             circuitBreaker.state === "half-open"
-                ? MODELS.PRO
+                ? MODELS.SONNET
                 : (interventionState.forcedModel ?? selection.modelId);
         if (interventionState.forcedModel) {
             console.log(`  🧠 Metacog escalate → ${interventionState.forcedModel}`);
@@ -1719,7 +1720,7 @@ STRATEGY: Execute in as few tool calls as possible.
 
                 // 6. Query-specific recall — only for modes that need semantic search
                 if (queryMode === "retrieve" || queryMode === "llm_with_traits") {
-                    const recallK = getDimensionValue<number>("memory.recall.k") ?? 10;
+                    const recallK = getDimensionValue<number>("memory.recall.k") ?? 5;
                     const convRecallK = getDimensionValue<number>("memory.conversationRecall.k") ?? 3;
                     // Enrich recall query with recent user messages for better semantic matching
                     const recentUserMsgs = workingHistory
@@ -2542,7 +2543,8 @@ PLAN:`,
             cbRecordFailure(circuitBreaker);
             console.error(`[AGENT] LLM call threw: ${(llmErr as Error).message} — attempting recovery`);
             // Try one more model before giving up this iteration
-            const fallbackModel = getCascadeNext(model) || (model !== MODELS.PRO ? MODELS.PRO : MODELS.SONNET);
+            // Step to a different Claude model, never up to Opus on an error.
+            const fallbackModel = claudeTier(model) === "sonnet" ? MODELS.HAIKU : MODELS.SONNET;
             try {
                 response = await llm.chat({
                     messages: iterationMessages,
@@ -2593,8 +2595,9 @@ PLAN:`,
         // If LLM returns empty/undefined, retry with escalating models before giving up.
         if (!response?.choices?.length) {
             console.warn(`[AGENT] LLM returned empty/undefined response from ${model} — attempting recovery`);
-            const retryModels = [getCascadeNext(model), MODELS.PRO, MODELS.SONNET].filter(
-                (m): m is string => !!m && m !== model,
+            // Retry on a different Claude model (Sonnet, then Haiku), never Opus.
+            const retryModels = [MODELS.SONNET, MODELS.HAIKU].filter(
+                (m) => claudeTier(m) !== claudeTier(model),
             );
             // Deduplicate while preserving order
             const seen = new Set<string>();

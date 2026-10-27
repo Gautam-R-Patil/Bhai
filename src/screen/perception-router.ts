@@ -31,7 +31,7 @@ import {
     flattenInteractive,
 } from "./ax-dump.js";
 import { type CapabilityReport, detectCapabilities } from "./capability-detector.js";
-import { detectElements, findElementByCaption, omniParserWeightsPresent } from "./omniparser.js";
+import { detectElements, findElementByCaption, omniParserCaptionsPresent, omniParserWeightsPresent } from "./omniparser.js";
 import { type ScreenDimensions, scaleImageToScreen } from "./screen-dimensions.js";
 import { groundClick, isUITarsAvailable, isUITarsHealthy } from "./ui-tars.js";
 import { cloudGroundClick } from "./cloud-grounding.js";
@@ -167,11 +167,9 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
             // Cold-window retry: a freshly-activated window's AX tree is often
             // incomplete on first dump (still settling), so a real element
             // misses, then hits moments later. Re-dump ONCE before paying the
-            // slow/possibly-billed vision tiers. Skip when the caller supplied
-            // a full-depth hint (it already settled the window). Gated.
-            const axDumpHintShallow = !!opts.axDumpHint && (opts.axDumpHint.depth ?? 0) < 20;
-            const retryEligible = (!opts.axDumpHint || axDumpHintShallow) && process.env.ATLAS_NO_AX_RETRY !== "true";
-            if (retryEligible) {
+            // slow/possibly-billed vision tiers (also when the hint came from the
+            // caller — os_smart_click's hint is a pre-click dump, not "settled"). Gated.
+            if (process.env.ATLAS_NO_AX_RETRY !== "true") {
                 const delayMs = Number(process.env.ATLAS_AX_RETRY_DELAY_MS) || 250;
                 await new Promise((r) => setTimeout(r, delayMs));
                 clearAxFailureCache();
@@ -195,13 +193,15 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
 
     // Tier 4: OmniParser (Standard tier and up). Short-circuit when the
     // icon_detect weights aren't present — otherwise we spawn python on every
-    // call just to get `omniparser_weights_missing` back (wasteful). Kill-switch
-    // ATLAS_NO_OMNIPARSER force-skips regardless.
+    // call just to get `omniparser_weights_missing` back (wasteful). Also skip
+    // when Florence-2 captions aren't cached: matching is caption-only, so a
+    // caption-less run can never hit. Kill-switch ATLAS_NO_OMNIPARSER force-skips.
     if (
         !skip.has("omniparser") &&
         (profile === "standard" || profile === "full") &&
         process.env.ATLAS_NO_OMNIPARSER !== "true" &&
-        omniParserWeightsPresent()
+        omniParserWeightsPresent() &&
+        omniParserCaptionsPresent()
     ) {
         tried.push("omniparser");
         const omStart = Date.now();
@@ -234,9 +234,6 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
     // Tier 5: UI-TARS local grounding (Full tier only, requires Ollama).
     // Short-circuit via capability-detector's deps.ollama check before paying the 3s
     // TCP-timeout cost on a box where Ollama is never installed.
-    // `uiTarsUsable` tracks whether local grounding was actually available this
-    // run — drives the degraded-Full self-heal gate on the cloud tier below.
-    let uiTarsUsable = false;
     if (!skip.has("ui_tars") && profile === "full") {
         const caps = await detectCapabilities();
         if (caps.deps.ollama) {
@@ -254,7 +251,6 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
                     (await isUITarsHealthy()).healthy
                 );
                 if (healthy) {
-                    uiTarsUsable = true;
                     const grounded = await groundClick(opts.screenshotPath, instruction, { keepAlive: "30m" });
                     elapsed.ui_tars = Date.now() - utStart;
                     if (!grounded.error && grounded.confidence >= thresholds.ui_tars) {
@@ -280,13 +276,12 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
         }
     }
 
-    // Tier 6: Cloud grounding (cheap VLM). Fires on Lite/Standard (no local
-    // grounding) and on degraded Full (Full hardware but UI-TARS not pulled).
-    // Skipped on healthy Full (local UI-TARS handled it → zero cloud cost) and
+    // Tier 6: Cloud grounding (VLM). Fires on every profile once the local tiers
+    // missed — including healthy Full after a UI-TARS miss/low-confidence (a hit
+    // already returned above, so a healthy-Full hit costs zero cloud). Skipped
     // when no LLM client was provided. This replaces the old behavior where a
     // missed click bounced to the expensive agentic model to re-ground.
-    const cloudEligible = profile !== "full" || !uiTarsUsable;
-    if (!skip.has("cloud_grounding") && cloudEligible && opts.llm && process.env.ATLAS_NO_CLOUD_GROUNDING !== "true") {
+    if (!skip.has("cloud_grounding") && opts.llm && process.env.ATLAS_NO_CLOUD_GROUNDING !== "true") {
         tried.push("cloud_grounding");
         const cgStart = Date.now();
         try {

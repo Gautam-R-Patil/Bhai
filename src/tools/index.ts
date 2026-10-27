@@ -662,6 +662,8 @@ const TOOL_TIMEOUTS: Record<string, number> = {
     browser_scroll: 10_000,
     browser_scan: 20_000,
     browser_screenshot: 15_000,
+    // Covers the solver tiers plus the human hand-off wait (ATLAS_CAPTCHA_HANDOFF_MS, 5 min).
+    browser_handle_captcha: 330_000,
     // Shell/system tools - variable execution time
     shell: 60_000, // Shell commands can take a while
     run_code: 30_000,

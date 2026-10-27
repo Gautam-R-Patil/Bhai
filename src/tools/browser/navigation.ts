@@ -7,6 +7,8 @@
 
 import type { ToolDefinition } from "../get-current-time.js";
 import { getCachedActions, markActionFailed, replayActions, shouldReplayActions } from "./action-cache.js";
+import { getActiveBackend, getCurrentMode } from "./browser-backend.js";
+import { CAPTCHA_HINT, quickCaptchaCheck } from "./captcha.js";
 import {
     ATLAS_HUD_JS,
     getAccessibilityTree,
@@ -22,6 +24,9 @@ import {
     waitForPageReady,
 } from "./core.js";
 import type { InteractiveElement } from "./types.js";
+
+// Statuses that mean the site refused us (bot wall / rate limit / outage) — report as failure.
+const BLOCKING_STATUSES = new Set([403, 429, 503]);
 
 // ═══════════════════════════════════════════════
 // TOOL: Navigate
@@ -70,14 +75,20 @@ export const browserNavigate: ToolDefinition = {
                 });
             }
 
-            const context = await getBrowser();
-            let page;
+            // Resolve the backend FIRST via getActivePage() (see core.ts getActivePage):
+            // calling getBrowser() up front would launch Playwright even when the
+            // Chrome extension backend is connected.
+            let page = await getActivePage();
+            const context = getCurrentMode() === "chrome" ? null : await getBrowser();
             if (input.new_tab) {
-                page = await context.newPage();
-                // Track the new tab as active so subsequent tools operate on it
-                setActivePageIndex(context.pages().indexOf(page));
-            } else {
-                page = await getActivePage();
+                if (context) {
+                    page = await context.newPage();
+                    // Track the new tab as active so subsequent tools operate on it
+                    setActivePageIndex(context.pages().indexOf(page));
+                } else {
+                    await (await getActiveBackend()).newTab();
+                    page = await getActivePage();
+                }
             }
             const timeout = (input.timeout_ms as number) || 30000;
             // Show HUD while navigating
@@ -87,13 +98,40 @@ export const browserNavigate: ToolDefinition = {
                     `(${ATLAS_HUD_JS})(${JSON.stringify({ label: `🌐 Navigating to ${navDomain}`, done: false })})`,
                 )
                 .catch(() => {});
-            // Catch navigation timeouts — page is likely usable even if not fully loaded
-            await page.goto(input.url as string, { waitUntil: "domcontentloaded", timeout }).catch(() => null);
+            // Navigation timeouts are non-fatal (page is likely usable even if not fully
+            // loaded); any other goto error (DNS, connection refused, ...) is a failure.
+            let navError: string | null = null;
+            let status: number | null = null;
+            try {
+                // Playwright returns a Response; ChromePageProxy returns void (no status).
+                const resp = (await page.goto(input.url as string, { waitUntil: "domcontentloaded", timeout })) as {
+                    status?: () => number;
+                } | null;
+                status = resp?.status?.() ?? null;
+            } catch (err) {
+                if ((err as Error).name !== "TimeoutError") navError = (err as Error).message.split("\n")[0];
+            }
 
             // Smart wait for the page to stabilize
-            await waitForPageReady(page);
+            if (!navError) await waitForPageReady(page);
             // Clear HUD once page is ready
             await page.evaluate(`(${ATLAS_HUD_JS})(${JSON.stringify({ label: "", done: true })})`).catch(() => {});
+
+            const captchaType = navError ? null : await quickCaptchaCheck(page);
+            const captchaFields = captchaType
+                ? { captcha_detected: true, captcha_type: captchaType, hint: CAPTCHA_HINT }
+                : {};
+            if (!navError && page.url().startsWith("chrome-error://"))
+                navError = "browser error page (site unreachable)";
+            if (!navError && status !== null && BLOCKING_STATUSES.has(status)) navError = `HTTP ${status}`;
+            if (navError) {
+                return JSON.stringify({
+                    error: `Navigation failed: ${navError}`,
+                    url: page.url(),
+                    ...(status !== null ? { status } : {}),
+                    ...captchaFields,
+                });
+            }
 
             if (input.wait_for) {
                 await page.waitForSelector(input.wait_for as string, { timeout: 10000 }).catch(() => null);
@@ -101,7 +139,7 @@ export const browserNavigate: ToolDefinition = {
 
             const title = await page.title();
             const url = page.url();
-            const tabCount = context.pages().length;
+            const tabCount = context ? context.pages().length : (await (await getActiveBackend()).getAllTabs()).length;
 
             // Run a11y tree + DOM scan in parallel
             const [accessibilityTree, elementMap] = await Promise.all([
@@ -148,6 +186,8 @@ export const browserNavigate: ToolDefinition = {
                 open_tabs: tabCount,
                 interactive_elements_text,
                 tip: "Read interactive_elements_text to find the label ID, then use browser_click_at with the label to click.",
+                ...(status !== null ? { status } : {}),
+                ...captchaFields,
             };
 
             // `canvas_app` means a GENUINE canvas surface (design tool) — it drives

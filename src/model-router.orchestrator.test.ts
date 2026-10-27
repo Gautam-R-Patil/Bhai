@@ -6,6 +6,7 @@ import { describe, it, expect } from "vitest";
 import {
     classifyOrchestratorComplexity,
     pickOrchestratorModel,
+    claudeTier,
     type OrchestratorSignals,
 } from "./model-router.js";
 import { MODELS } from "./llm.js";
@@ -114,16 +115,26 @@ describe("classifyOrchestratorComplexity — 3-tier orchestrator router", () => 
     });
 });
 
+describe("claudeTier — which Claude model an id runs on", () => {
+    it("matches the proxy's mapping, including gemini not being 'mini'", () => {
+        expect(claudeTier(MODELS.PRO)).toBe("opus");
+        expect(claudeTier(MODELS.GEMINI_PRO)).toBe("sonnet");
+        expect(claudeTier(MODELS.FLASH_LITE)).toBe("haiku");
+        expect(claudeTier(MODELS.GPT5_MINI)).toBe("haiku");
+        expect(claudeTier(MODELS.DEEPSEEK_V4_PRO)).toBe("sonnet");
+    });
+});
+
 describe("pickOrchestratorModel — tier → model", () => {
-    it("simple → DeepSeek V4 Pro, thinking off", () => {
+    it("simple → Haiku, thinking off", () => {
         const p = pickOrchestratorModel("simple");
-        expect(p.model).toBe(MODELS.DEEPSEEK_V4_PRO);
+        expect(p.model).toBe(MODELS.HAIKU);
         expect(p.thinkingLevel).toBe("off");
     });
 
-    it("mild → Gemini 3.1 Pro, thinking off", () => {
+    it("mild → Sonnet, thinking off", () => {
         const p = pickOrchestratorModel("mild");
-        expect(p.model).toBe(MODELS.GEMINI_PRO);
+        expect(p.model).toBe(MODELS.SONNET);
         expect(p.thinkingLevel).toBe("off");
     });
 

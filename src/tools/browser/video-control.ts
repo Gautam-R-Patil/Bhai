@@ -188,7 +188,7 @@ export const browserVideoControl: ToolDefinition = {
                     if (siteHint === "youtube") {
                         // Wait for YouTube player to be ready (up to 8s)
                         const isReady = await page
-                            .waitForFunction(YT_WAIT_READY, { timeout: 8000, polling: 300 })
+                            .waitForFunction(YT_WAIT_READY, undefined, { timeout: 8000, polling: 300 })
                             .then(() => true)
                             .catch(() => false);
 

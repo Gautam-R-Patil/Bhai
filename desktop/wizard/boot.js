@@ -18,8 +18,11 @@
             const dot = document.createElement("span");
             dot.className = cls;
             dot.setAttribute("data-sp-step", id);
-            if (typeof onDotClick === "function") {
+            // Only completed steps are clickable: jumping ahead would skip the
+            // terms and sign-in gates.
+            if (typeof onDotClick === "function" && i < currentIdx) {
                 dot.addEventListener("click", function () { onDotClick(i); });
+                dot.style.cursor = "pointer";
             }
             host.appendChild(dot);
         }

@@ -1069,6 +1069,7 @@ export async function remember(
 
     let gateDecision: "allow" | "reject" = "allow";
     let gateReason = "gate_disabled";
+    let gateLogDeferred = false;
 
     if (!gateDisabled) {
         const threat = threatReject(content);
@@ -1085,6 +1086,21 @@ export async function remember(
                 if (allow.allow) {
                     gateDecision = "allow";
                     gateReason = allow.reason;
+                } else if (shadow) {
+                    // Shadow mode always inserts, so classify in the background
+                    // instead of adding LLM latency to every remember().
+                    gateLogDeferred = true;
+                    llmGate(content, memoryLLM)
+                        .then((r) =>
+                            logGateDecision({
+                                decision: r.decision === "ADD" ? "allow" : "reject",
+                                reason: r.reason,
+                                source,
+                                category,
+                                content,
+                            }),
+                        )
+                        .catch(() => {});
                 } else {
                     const llmResult = await llmGate(content, memoryLLM);
                     gateDecision = llmResult.decision === "ADD" ? "allow" : "reject";
@@ -1093,13 +1109,15 @@ export async function remember(
             }
         }
 
-        logGateDecision({
-            decision: gateDecision,
-            reason: gateReason,
-            source,
-            category,
-            content,
-        });
+        if (!gateLogDeferred) {
+            logGateDecision({
+                decision: gateDecision,
+                reason: gateReason,
+                source,
+                category,
+                content,
+            });
+        }
 
         if (gateDecision === "reject" && !shadow) {
             return null;
@@ -1181,8 +1199,10 @@ function _rememberDirect(
         }
     }
 
-    // Register in temporal cache bloom filter
+    // Register in temporal cache bloom filter; drop cached recall results so a
+    // search right after a store sees the new memory.
     getTemporalCache().registerContent(content);
+    getTemporalCache().clearCache();
 
     // Async: generate embedding, store in DB + HNSW index (non-blocking)
     if (id > 0) {
@@ -1312,13 +1332,7 @@ Respond with ONLY the action keyword (and ID if applicable), e.g.: "UPDATE 42" o
         if (decision === "NOOP") {
             // Already known — remove the just-inserted duplicate
             try {
-                db.run("DELETE FROM memories WHERE id = ?", [newId]);
-                db.run("DELETE FROM memory_embeddings WHERE memory_id = ?", [newId]);
-                try {
-                    db.run("DELETE FROM memories_fts WHERE rowid = ?", [newId]);
-                } catch {
-                    /* */
-                }
+                _purgeMemoryRow(newId);
                 console.log(`[MEMORY][SMART_WRITE] NOOP: removed duplicate #${newId} (already known)`);
             } catch {
                 /* cleanup non-fatal */
@@ -1357,13 +1371,7 @@ Respond with ONLY the action keyword (and ID if applicable), e.g.: "UPDATE 42" o
             embedAndStore(targetId, content).catch(() => {});
             // Remove the newly-inserted duplicate
             try {
-                db.run("DELETE FROM memories WHERE id = ?", [newId]);
-                db.run("DELETE FROM memory_embeddings WHERE memory_id = ?", [newId]);
-                try {
-                    db.run("DELETE FROM memories_fts WHERE rowid = ?", [newId]);
-                } catch {
-                    /* */
-                }
+                _purgeMemoryRow(newId);
             } catch {
                 /* cleanup non-fatal */
             }
@@ -1371,12 +1379,35 @@ Respond with ONLY the action keyword (and ID if applicable), e.g.: "UPDATE 42" o
         } else if (action === "DELETE") {
             // Mark the stale memory as decayed, keep the new one
             db.run("UPDATE memories SET decay_score = 0 WHERE id = ?", [targetId]);
+            getTemporalCache().clearCache();
             console.log(`[MEMORY][SMART_WRITE] DELETE: decayed stale #${targetId}, kept new #${newId}`);
         }
     } catch (err) {
         // Entire smart write pipeline failed — the direct write still succeeded
         console.warn("[MEMORY][SMART_WRITE] Pipeline error (non-fatal):", (err as Error).message);
     }
+}
+
+/**
+ * Hard-delete a memory row with its embedding, FTS row and HNSW vector, and
+ * drop cached recall results. embedAndStore() re-checks row existence before
+ * writing, so an in-flight embed for this id won't resurrect the vector.
+ */
+function _purgeMemoryRow(id: number): void {
+    if (!db) return;
+    db.run("DELETE FROM memories WHERE id = ?", [id]);
+    db.run("DELETE FROM memory_embeddings WHERE memory_id = ?", [id]);
+    try {
+        db.run("DELETE FROM memories_fts WHERE rowid = ?", [id]);
+    } catch {
+        /* */
+    }
+    try {
+        getHNSWIndex().removeVector(id);
+    } catch {
+        /* */
+    }
+    getTemporalCache().clearCache();
 }
 
 /** Helper: retrieve a stored embedding vector for a given memory ID. */
@@ -1412,6 +1443,10 @@ async function embedAndStore(memoryId: number, content: string): Promise<void> {
         }
 
         const { getEmbeddingVersion } = await import("./embeddings.js");
+        // The row may have been removed (smart-write NOOP/UPDATE, prune) while
+        // we were embedding — don't re-insert an orphan vector. No await between
+        // this check and the writes below, so it can't race.
+        if (!rawDb.prepare("SELECT 1 FROM memories WHERE id = ?").get(memoryId)) return;
         rawDb
             .prepare(
                 "INSERT OR REPLACE INTO memory_embeddings (memory_id, embedding, context_embedding, embedding_version) VALUES (?, ?, ?, ?)",
@@ -1436,6 +1471,7 @@ async function embedAndStore(memoryId: number, content: string): Promise<void> {
 export function keywordSearch(
     query: string,
     limit: number = 15,
+    scopes?: string[],
 ): Array<{
     id: number;
     content: string;
@@ -1501,9 +1537,11 @@ export function keywordSearch(
        WHERE ${ftsTable} MATCH ?
        AND m.consolidated_into IS NULL
        AND m.decay_score > 0.2
+       AND ${recallableSql("m.")}
+       ${scopes && scopes.length > 0 ? `AND m.scope IN (${scopes.map(() => "?").join(",")})` : ""}
        ORDER BY rank
        LIMIT ?`,
-            [ftsQuery, limit],
+            [ftsQuery, ...(scopes ?? []), limit],
         );
 
         if (results.length === 0) return [];
@@ -1559,9 +1597,38 @@ export function reciprocalRankFusion(
         .sort((a, b) => b.score - a.score);
 }
 
+/**
+ * Rows that must never surface in recall or core memory: audit-trail entries
+ * and raw JSON blobs (e.g. brand profiles stored at importance 10).
+ */
+export function recallableSql(alias = ""): string {
+    return `${alias}category NOT IN ('audit_log', 'brand') AND LTRIM(${alias}content) NOT LIKE '{%'`;
+}
+
+/**
+ * Reciprocal-rank fusion of per-retriever ranks (1-based, undefined = not
+ * found) with a multi-source agreement boost, normalised to 0-1 against the
+ * best score achievable with `activeSources` retrievers (rank 1 in all of them).
+ * Normalising lets relevance compete with recency/importance (both 0-1) in the
+ * composite blend instead of being ~0.02 next to them.
+ */
+export function normalizedFusionScore(ranks: Array<number | undefined>, activeSources: number, k = 60): number {
+    const boost = (n: number) => (n >= 3 ? 2.0 : n === 2 ? 1.5 : 1);
+    let raw = 0;
+    let found = 0;
+    for (const r of ranks) {
+        if (r === undefined) continue;
+        raw += 1 / (k + r);
+        found++;
+    }
+    if (found === 0) return 0;
+    const active = Math.max(found, Math.min(3, activeSources));
+    return Math.min(1, (raw * boost(found)) / ((boost(active) * active) / (k + 1)));
+}
+
 export async function recall(
     query: string,
-    limit = 10,
+    limit = 5,
     llm?: import("../llm.js").LLMClient,
     queryMode?: string,
     scopes?: string[],
@@ -1591,6 +1658,8 @@ export async function recall(
     const effectiveScopes = scopes && scopes.length > 0 ? [...new Set(["global", ...scopes])] : ["global"];
     const scopePlaceholders = effectiveScopes.map(() => "?").join(",");
     const scopeWhereClause = `scope IN (${scopePlaceholders})`;
+    // Shared visibility filter for the secondary paths (KG / SAN / Hopfield / HyDE).
+    const visibleWhere = `decay_score > 0.2 AND consolidated_into IS NULL AND ${recallableSql()} AND ${scopeWhereClause}`;
 
     // Extract meaningful keywords
     const stopWords = new Set([
@@ -1654,7 +1723,7 @@ export async function recall(
     // Uses the standalone keywordSearch() which handles sanitization and fail-open
     const ftsResults = new Map<number, { record: MemoryRecord; rank: number }>();
     try {
-        const keywordHits = keywordSearch(query, effectiveLimit * 2);
+        const keywordHits = keywordSearch(query, effectiveLimit * 2, effectiveScopes);
         for (let idx = 0; idx < keywordHits.length; idx++) {
             const hit = keywordHits[idx];
             const record: MemoryRecord = {
@@ -1699,8 +1768,7 @@ export async function recall(
                     const placeholders = ids.map(() => "?").join(",");
                     const stmt = rawDb.prepare(
                         `SELECT id, content, category, tags, importance, created_at, access_count
-             FROM memories WHERE id IN (${placeholders}) AND decay_score > 0.2 AND consolidated_into IS NULL
-             AND ${scopeWhereClause}`,
+             FROM memories WHERE id IN (${placeholders}) AND ${visibleWhere}`,
                     );
                     const rows = stmt.all(...ids, ...effectiveScopes) as Array<{
                         id: number;
@@ -1738,7 +1806,7 @@ export async function recall(
                     .prepare(
                         `SELECT m.id, m.content, m.category, m.tags, m.importance, m.created_at, m.access_count, e.embedding
            FROM memory_embeddings e JOIN memories m ON e.memory_id = m.id
-           WHERE m.decay_score > 0.2 AND m.consolidated_into IS NULL AND m.scope IN (${scopePlaceholders})`,
+           WHERE m.decay_score > 0.2 AND m.consolidated_into IS NULL AND ${recallableSql("m.")} AND m.scope IN (${scopePlaceholders})`,
                     )
                     .all(...effectiveScopes) as Array<{
                     id: number;
@@ -1807,9 +1875,9 @@ export async function recall(
                 const likeParams = nameArray.map((n) => `%${n}%`);
                 const kgMemories = db.exec(
                     `SELECT id, content, category, tags, importance, created_at, access_count
-           FROM memories WHERE (${likeClauses}) AND consolidated_into IS NULL
+           FROM memories WHERE (${likeClauses}) AND ${visibleWhere}
            ORDER BY importance DESC LIMIT 10`,
-                    likeParams,
+                    [...likeParams, ...effectiveScopes],
                 );
                 if (kgMemories.length > 0) {
                     kgMemories[0].values.forEach((row, idx) => {
@@ -1847,8 +1915,8 @@ export async function recall(
                                 if (!kgResults.has(san.memoryId)) {
                                     const sanMem = db.exec(
                                         `SELECT id, content, category, tags, importance, created_at, access_count
-                     FROM memories WHERE id = ? AND consolidated_into IS NULL`,
-                                        [san.memoryId],
+                     FROM memories WHERE id = ? AND ${visibleWhere}`,
+                                        [san.memoryId, ...effectiveScopes],
                                     );
                                     if (sanMem.length > 0 && sanMem[0].values.length > 0) {
                                         kgResults.set(san.memoryId, {
@@ -1873,6 +1941,14 @@ export async function recall(
     const k = 60;
     const allIds = new Set([...ftsResults.keys(), ...vectorResults.keys(), ...kgResults.keys()]);
     const fusedScores: Array<{ id: number; record: MemoryRecord; score: number }> = [];
+    const activeSources = [ftsResults, vectorResults, kgResults].filter((m) => m.size > 0).length;
+    // Weights tunable via Meta-Harness registry
+    const wRel = getDimensionValue<number>("memory.fusion.relevanceWeight") ?? 0.5;
+    const wRec = getDimensionValue<number>("memory.fusion.recencyWeight") ?? 0.25;
+    const wImp = getDimensionValue<number>("memory.fusion.importanceWeight") ?? 0.25;
+    // Drop weak matches (e.g. single-retriever hits deep in the list while all
+    // three retrievers are active) instead of letting importance/recency carry them in.
+    const minRelevance = getDimensionValue<number>("memory.fusion.minRelevance") ?? 0.1;
 
     for (const id of allIds) {
         const fts = ftsResults.get(id);
@@ -1881,38 +1957,20 @@ export async function recall(
         const record = fts?.record || vec?.record || kg?.record;
         if (!record) continue;
 
-        let score = 0;
-        let sourceCount = 0;
-        if (fts) {
-            score += 1 / (k + fts.rank);
-            sourceCount++;
-        }
-        if (vec) {
-            score += 1 / (k + vec.rank);
-            sourceCount++;
-        }
-        if (kg) {
-            score += 1 / (k + kg.rank);
-            sourceCount++;
-        }
-        // Boost memories found by multiple retrieval methods
-        if (sourceCount >= 3)
-            score *= 2.0; // All 3 sources agree — strong signal
-        else if (sourceCount === 2) score *= 1.5; // 2 sources agree
+        const relevance = normalizedFusionScore([fts?.rank, vec?.rank, kg?.rank], activeSources, k);
+        if (relevance < minRelevance) continue;
 
         // ── Generative Agents-style composite scoring (Park et al. 2023) ──
-        // Score = α·recency + β·relevance + γ·importance
+        // Score = α·recency + β·relevance + γ·importance (all terms 0-1)
         const hoursAgo = record.created_at ? (Date.now() - new Date(record.created_at).getTime()) / 3600000 : 168; // default 1 week
         const recencyWeight = Math.exp(-0.01 * hoursAgo); // exponential decay, half-life ~70h
         const importanceWeight = (record.importance || 5) / 10; // normalized 0-1
-        // Weights tunable via Meta-Harness registry
-        const wRel = getDimensionValue<number>("memory.fusion.relevanceWeight") ?? 0.5;
-        const wRec = getDimensionValue<number>("memory.fusion.recencyWeight") ?? 0.25;
-        const wImp = getDimensionValue<number>("memory.fusion.importanceWeight") ?? 0.25;
-        score = wRel * score + wRec * recencyWeight + wImp * importanceWeight;
+        const score = wRel * relevance + wRec * recencyWeight + wImp * importanceWeight;
 
         fusedScores.push({ id, record, score });
     }
+    // Sort before any top-N slice below (SAN seeds, cross-encoder, reranker).
+    fusedScores.sort((a, b) => b.score - a.score);
 
     // ── Layer 2b: Spreading Activation Network (Associative Cortex) ──
     if (fusedScores.length > 0) {
@@ -1933,8 +1991,8 @@ export async function recall(
                     } else {
                         const memResult = db.exec(
                             `SELECT id, content, category, tags, importance, created_at, access_count
-               FROM memories WHERE id = ? AND consolidated_into IS NULL`,
-                            [san.memoryId],
+               FROM memories WHERE id = ? AND ${visibleWhere}`,
+                            [san.memoryId, ...effectiveScopes],
                         );
                         if (memResult.length > 0 && memResult[0].values.length > 0) {
                             fusedScores.push({
@@ -1969,8 +2027,8 @@ export async function recall(
                         // Add new associative results
                         const memResult = db.exec(
                             `SELECT id, content, category, tags, importance, created_at, access_count
-               FROM memories WHERE id = ? AND consolidated_into IS NULL`,
-                            [hr.memoryId],
+               FROM memories WHERE id = ? AND ${visibleWhere}`,
+                            [hr.memoryId, ...effectiveScopes],
                         );
                         if (memResult.length > 0 && memResult[0].values.length > 0) {
                             fusedScores.push({
@@ -1991,17 +2049,33 @@ export async function recall(
     // Re-rank top candidates using direct embedding similarity for precision.
     // This is a lightweight cross-attention substitute — compare query embedding
     // against each candidate's content embedding for fine-grained relevance.
+    fusedScores.sort((a, b) => b.score - a.score); // SAN/Hopfield may have reordered
     if (isEmbeddingReady() && fusedScores.length > 3) {
         try {
             const queryEmb = await embedText(query);
             const topN = fusedScores.slice(0, Math.min(fusedScores.length, limit * 2));
             const wCE = getDimensionValue<number>("memory.crossEncoder.blend") ?? 0.6;
-            for (const item of topN) {
-                const contentEmb = await embedText(item.record.content.substring(0, 200));
-                const rerankSim = cosineSimilarity(queryEmb, contentEmb);
-                // Blend: wCE × RRF score + (1-wCE) × re-rank similarity (normalized)
-                item.score = item.score * wCE + rerankSim * (1 - wCE) * 0.03;
+            // Reuse vectors already in memory_embeddings; only embed rows that lack one.
+            const stored = new Map<number, Float32Array>();
+            if (rawDb) {
+                const rows = rawDb
+                    .prepare(
+                        `SELECT memory_id, embedding FROM memory_embeddings WHERE memory_id IN (${topN.map(() => "?").join(",")})`,
+                    )
+                    .all(...topN.map((t) => t.id)) as Array<{ memory_id: number; embedding: Buffer }>;
+                for (const row of rows) stored.set(row.memory_id, bufferToEmbedding(row.embedding));
             }
+            for (const item of topN) {
+                let contentEmb = stored.get(item.id);
+                if (!contentEmb || contentEmb.length !== queryEmb.length) {
+                    contentEmb = await embedText(item.record.content.substring(0, 200));
+                }
+                const rerankSim = cosineSimilarity(queryEmb, contentEmb);
+                // Blend: wCE × fused score + (1-wCE) × re-rank similarity (both ~0-1)
+                item.score = item.score * wCE + rerankSim * (1 - wCE);
+            }
+            // Keep the un-rescored tail on the same scale so it can't leapfrog the top N.
+            for (const item of fusedScores.slice(topN.length)) item.score *= wCE;
         } catch {
             /* re-ranking non-fatal — fall through to RRF sort */
         }
@@ -2010,6 +2084,7 @@ export async function recall(
     // ── Layer 2d: Re-Ranking (conditional LLM or heuristic) ──
     if (fusedScores.length > 3) {
         try {
+            fusedScores.sort((a, b) => b.score - a.score); // reranker takes the top slice
             const candidates = fusedScores.map((f) => ({
                 id: f.id,
                 content: f.record.content,
@@ -2092,7 +2167,8 @@ export async function recall(
                     for (const hit of validHits) {
                         const existing = fusedScores.find((f) => f.id === hit.id);
                         if (existing) {
-                            existing.score += 0.8 * (1 / (k + (validHits.indexOf(hit) + 1)));
+                            existing.score +=
+                                0.8 * wRel * normalizedFusionScore([validHits.indexOf(hit) + 1], 1, k);
                         } else {
                             newHydeHits.push(hit);
                         }
@@ -2103,9 +2179,9 @@ export async function recall(
                         const placeholders = hydeHitIds.map(() => "?").join(",");
                         const stmt = rawDb.prepare(
                             `SELECT id, content, category, tags, importance, created_at, access_count
-               FROM memories WHERE id IN (${placeholders}) AND consolidated_into IS NULL`,
+               FROM memories WHERE id IN (${placeholders}) AND ${visibleWhere}`,
                         );
-                        const rows = stmt.all(...hydeHitIds) as Array<{
+                        const rows = stmt.all(...hydeHitIds, ...effectiveScopes) as Array<{
                             id: number;
                             content: string;
                             category: string;
@@ -2129,7 +2205,7 @@ export async function recall(
                                         row.created_at,
                                         row.access_count,
                                     ]),
-                                    score: 0.8 * (1 / (k + (validHits.indexOf(hit) + 1))),
+                                    score: 0.8 * wRel * normalizedFusionScore([validHits.indexOf(hit) + 1], 1, k),
                                 });
                             }
                         }
@@ -2156,8 +2232,8 @@ export async function recall(
         const likeParams = sanitized.flatMap((t) => [`%${t}%`, `%${t}%`]);
         const whereClause =
             likeConditions.length > 0
-                ? `WHERE (${likeConditions.join(" OR ")}) AND decay_score > 0.2 AND consolidated_into IS NULL AND ${scopeWhereClause}`
-                : `WHERE decay_score > 0.2 AND ${scopeWhereClause}`;
+                ? `WHERE (${likeConditions.join(" OR ")}) AND ${visibleWhere}`
+                : `WHERE ${visibleWhere}`;
 
         const results = db.exec(
             `SELECT id, content, category, tags, importance, created_at, access_count
@@ -2278,9 +2354,12 @@ export async function recall(
 export function getCoreMemory(limit = 10): MemoryRecord[] {
     if (!db) return [];
 
+    // Skip archived/consolidated originals, smart-write "deleted" (decay 0) rows,
+    // session/task-scoped rows and audit/JSON blobs — this is injected every turn.
     const results = db.exec(
         `SELECT id, content, category, tags, importance, created_at, access_count
      FROM memories
+     WHERE decay_score > 0.2 AND consolidated_into IS NULL AND scope = 'global' AND ${recallableSql()}
      ORDER BY importance DESC, access_count DESC, created_at DESC
      LIMIT ?`,
         [limit],
@@ -2357,6 +2436,7 @@ export function updateMemory(
             db.run("DELETE FROM memory_embeddings WHERE memory_id = ?", [id]);
         }
         commitTransaction();
+        getTemporalCache().clearCache();
         return { ok: true };
     } catch (err) {
         rollbackTransaction();
@@ -2399,6 +2479,12 @@ export function forgetMemoryWithReason(
         db.run("DELETE FROM memory_embeddings WHERE memory_id = ?", [id]);
         db.run("DELETE FROM memories WHERE id = ?", [id]);
         commitTransaction();
+        try {
+            getHNSWIndex().removeVector(id);
+        } catch {
+            /* */
+        }
+        getTemporalCache().clearCache();
         return true;
     } catch (err) {
         rollbackTransaction();
@@ -2430,6 +2516,12 @@ export function bulkForget(
             count++;
         }
         commitTransaction();
+        try {
+            for (const id of ids) getHNSWIndex().removeVector(id);
+        } catch {
+            /* */
+        }
+        getTemporalCache().clearCache();
     } catch (err) {
         rollbackTransaction();
         throw err;

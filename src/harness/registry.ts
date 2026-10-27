@@ -126,7 +126,7 @@ function buildRegistry(): void {
         numericDim("memory.crossEncoder.blend", "Cross-encoder re-rank blend: (blend)×RRF_score + (1-blend)×rerankSim×0.02", 0.6, "src/memory/sqlite.ts", "1508"),
 
         // Recall k-values (agent.ts:1403,1423)
-        intDim("memory.recall.k", "Top-k memories returned by semantic recall()", 10, "src/agent.ts", "1423", 3, 50),
+        intDim("memory.recall.k", "Top-k memories returned by semantic recall()", 5, "src/agent.ts", "1423", 3, 50),
         intDim("memory.coreMemory.k", "Top-k core memories injected at iteration 1", 10, "src/agent.ts", "1403", 3, 30),
         intDim("memory.conversationRecall.k", "Top-k conversation memories recalled", 3, "src/agent.ts", "1426", 1, 10),
         intDim("memory.kgEntities.k", "Top-k knowledge graph entities injected at iteration 1", 5, "src/agent.ts", "1457", 1, 15),

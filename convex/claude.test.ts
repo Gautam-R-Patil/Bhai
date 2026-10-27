@@ -8,6 +8,10 @@ describe("toClaudeModel", () => {
     expect(toClaudeModel("google/gemini-2.5-flash")).toBe("claude-haiku-5-5");
     expect(toClaudeModel("anthropic/claude-sonnet-4.6")).toBe("claude-sonnet-5-5");
     expect(toClaudeModel("deepseek/deepseek-v4-pro")).toBe("claude-sonnet-5-5");
+    // "gemini" contains "mini" — must not be mistaken for a small model
+    expect(toClaudeModel("google/gemini-3.1-pro-preview-customtools")).toBe("claude-sonnet-5-5");
+    expect(toClaudeModel("google/gemini-3.1-flash-lite-preview")).toBe("claude-haiku-5-5");
+    expect(toClaudeModel("openai/gpt-5-mini")).toBe("claude-haiku-5-5");
   });
 });
 
@@ -41,11 +45,11 @@ describe("toClaudeRequest", () => {
   };
   const req = toClaudeRequest(body, chat) as any;
 
-  it("hoists system messages and caches the stable server prompt", () => {
-    expect(req.system).toEqual([
-      { type: "text", text: "SERVER PROMPT", cache_control: { type: "ephemeral" } },
-      { type: "text", text: "clock: 10:00" },
-    ]);
+  it("caches only the stable server prompt and sends per-request context with the latest turn", () => {
+    expect(req.system).toEqual([{ type: "text", text: "SERVER PROMPT", cache_control: { type: "ephemeral" } }]);
+    const last = req.messages[req.messages.length - 1];
+    expect(last.content[last.content.length - 1].text).toContain("clock: 10:00");
+    expect(req.messages[0].content.some((b: any) => b.text?.includes("clock"))).toBe(false);
   });
 
   it("converts images, tool calls and merges parallel tool results", () => {
@@ -58,7 +62,7 @@ describe("toClaudeRequest", () => {
       { type: "tool_use", id: "t2", name: "b", input: {} },
     ]);
     expect(req.messages).toHaveLength(3);
-    expect(req.messages[2].content.map((b: any) => b.tool_use_id)).toEqual(["t1", "t2"]);
+    expect(req.messages[2].content.filter((b: any) => b.type === "tool_result").map((b: any) => b.tool_use_id)).toEqual(["t1", "t2"]);
     expect(req.messages[2].content[1].content).toBe("(empty)");
   });
 
@@ -69,6 +73,50 @@ describe("toClaudeRequest", () => {
     expect(req.max_tokens).toBe(8192);
     expect(req.fallbacks).toBe("default");
     expect(toClaudeRequest({ model: "openai/gpt-5-nano" }, chat).fallbacks).toBeUndefined();
+  });
+});
+
+describe("toClaudeRequest — mid-conversation system messages and tool images", () => {
+  const chat = [
+    { role: "system", content: "SERVER PROMPT" },
+    { role: "user", content: "take a screenshot" },
+    { role: "assistant", content: null, tool_calls: [{ id: "t1", type: "function", function: { name: "shot", arguments: "{}" } }] },
+    { role: "system", content: "nudge: be brief" },
+    {
+      role: "tool",
+      tool_call_id: "t1",
+      content: [
+        { type: "text", text: "captured" },
+        { type: "image_url", image_url: { url: "data:image/png;base64,BBBB" } },
+      ],
+    },
+    { role: "system", content: "plan hint" },
+  ];
+  const req = toClaudeRequest({ model: "anthropic/claude-sonnet-4.6", reasoning: { effort: "minimal" } }, chat) as any;
+
+  it("keeps only leading system messages in the cached system prompt", () => {
+    expect(req.system.map((b: any) => b.text)).toEqual(["SERVER PROMPT"]);
+  });
+
+  it("delivers later system messages as reminders after the tool results", () => {
+    const last = req.messages[req.messages.length - 1];
+    expect(last.role).toBe("user");
+    expect(last.content[0].type).toBe("tool_result");
+    const reminders = last.content.slice(1).map((b: any) => b.text).join("\n");
+    expect(reminders).toContain("nudge: be brief");
+    expect(reminders).toContain("plan hint");
+  });
+
+  it("passes screenshots inside tool results to Claude", () => {
+    const result = req.messages[2].content[0];
+    expect(result.content).toEqual([
+      { type: "text", text: "captured" },
+      { type: "image", source: { type: "base64", media_type: "image/png", data: "BBBB" } },
+    ]);
+  });
+
+  it("maps minimal effort to low", () => {
+    expect(req.output_config).toEqual({ effort: "low" });
   });
 });
 

@@ -128,7 +128,9 @@ function cachePut(key: string, value: "ADD" | "DROP"): void {
 }
 
 export async function llmGate(content: string, llm: LlmClientLike | null): Promise<LlmGateResult> {
-    if (!llm) return { decision: "DROP", reason: "no_llm" };
+    // Fails OPEN everywhere except an explicit DROP: a missing/slow/garbled
+    // classifier must not silently discard memories once enforcement is on.
+    if (!llm) return { decision: "ADD", reason: "no_llm" };
 
     const key = sha256Key(content);
     const cached = cacheGet(key);
@@ -137,10 +139,11 @@ export async function llmGate(content: string, llm: LlmClientLike | null): Promi
     }
 
     let response: Awaited<ReturnType<LlmClientLike["chat"]>> | null = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-        const timeoutPromise = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error("gate_timeout")), LLM_TIMEOUT_MS),
-        );
+        const timeoutPromise = new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error("gate_timeout")), LLM_TIMEOUT_MS);
+        });
         response = await Promise.race([
             llm.chat({
                 messages: [
@@ -157,20 +160,22 @@ export async function llmGate(content: string, llm: LlmClientLike | null): Promi
             timeoutPromise,
         ]);
     } catch {
-        return { decision: "DROP", reason: "llm_error" };
+        return { decision: "ADD", reason: "llm_error" };
+    } finally {
+        clearTimeout(timer);
     }
 
     const raw = response.choices[0]?.message?.content;
-    if (typeof raw !== "string") return { decision: "DROP", reason: "llm_malformed" };
+    if (typeof raw !== "string") return { decision: "ADD", reason: "llm_malformed" };
     const trimmed = raw.trim().toUpperCase();
 
-    if (trimmed === "ADD") {
+    if (trimmed.startsWith("ADD")) {
         cachePut(key, "ADD");
         return { decision: "ADD", reason: "llm_add" };
     }
-    if (trimmed === "DROP") {
+    if (trimmed.startsWith("DROP")) {
         cachePut(key, "DROP");
         return { decision: "DROP", reason: "llm_drop" };
     }
-    return { decision: "DROP", reason: "llm_malformed" };
+    return { decision: "ADD", reason: "llm_malformed" };
 }

@@ -727,6 +727,19 @@ export function classifyOrchestratorComplexity(
 }
 
 /**
+ * Which Claude model a router id actually runs on. The Convex proxy maps every
+ * id onto one of three models (see convex/claude.ts toClaudeModel); failover and
+ * escalation only help when they land on a *different* one of these.
+ */
+export type ClaudeTier = "haiku" | "sonnet" | "opus";
+export function claudeTier(id: string): ClaudeTier {
+    const m = id.toLowerCase();
+    if (m.includes("opus")) return "opus";
+    if (/(^|[/._:-])(haiku|nano|mini|micro|lite|flash)([/._:-]|$)/.test(m)) return "haiku";
+    return "sonnet";
+}
+
+/**
  * Resolve an orchestrator complexity tier to a concrete plan model.
  * thinkingLevel is "off" for simple/mild (latency: reasoning is the source of
  * the multi-second thinking tax and Gemini's ~30s TTFT); "low" for complex,
@@ -739,9 +752,9 @@ export function pickOrchestratorModel(c: OrchestratorComplexity): {
 } {
     switch (c) {
         case "simple":
-            return { model: MODELS.DEEPSEEK_V4_PRO, display: "DeepSeek V4 Pro", thinkingLevel: "off" };
+            return { model: MODELS.HAIKU, display: "Haiku", thinkingLevel: "off" };
         case "mild":
-            return { model: MODELS.GEMINI_PRO, display: "Gemini 3.1 Pro", thinkingLevel: "off" };
+            return { model: MODELS.SONNET, display: "Sonnet", thinkingLevel: "off" };
         case "complex":
             return { model: MODELS.SONNET, display: "Sonnet 4.6", thinkingLevel: "low" };
     }
