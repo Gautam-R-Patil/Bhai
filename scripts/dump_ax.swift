@@ -17,14 +17,17 @@
 //       "children": [ ... ]
 //     }
 //   }
-//   An optional top-level "partial": true means an AX read hit the messaging timeout,
-//   so some of the tree is missing (only with ATLAS_AX_MSG_TIMEOUT_MS set).
+//   An optional top-level "partial": true means some of the tree is missing: an AX read
+//   hit the messaging timeout, or the walk ran out of its total time budget.
 //
 // Environment switches (both opt-in; unset = the old per-attribute walk, system timeout):
 //   ATLAS_AX_BATCH=true            one AXUIElementCopyMultipleAttributeValues per node
 //                                  instead of one IPC per attribute
 //   ATLAS_AX_MSG_TIMEOUT_MS=N      per-call AX messaging timeout (clamped 100-5000). Two
 //                                  timeouts in a row count as a hung app and end the walk.
+//   ATLAS_AX_BUDGET_MS=N           whole-walk budget (default 3000, min 500)
+// Either way the whole walk stops after budgetMs (below), so a slow app gets a partial dump
+// instead of ax-dump.ts's 5 s exec kill, which loses all of it.
 //
 // On error: prints "error|<reason>" to stdout, exits 1.
 //   Reasons: not_trusted, no_frontmost, pid_not_found, ax_query_failed
@@ -90,6 +93,30 @@ let msgTimeoutMs: Int? = Int(env["ATLAS_AX_MSG_TIMEOUT_MS"] ?? "").flatMap { $0 
 // A kAXErrorCannotComplete that comes back fast is an app quirk, not a timeout: only a
 // call that ran for at least half the timeout counts.
 let hangNs: UInt64? = msgTimeoutMs.map { UInt64($0) * 500_000 }
+/// A batched read this slow means the app is stuck in some attribute's handler. Normal
+/// replies take a few ms, so this holds without the timeout too.
+let slowNs: UInt64 = hangNs ?? 500_000_000
+
+func now() -> UInt64 { DispatchTime.now().uptimeNanoseconds }
+
+/// Whole-walk budget, well under ax-dump.ts's 5 s exec timeout (launch and JSON encode
+/// fit in the rest, even on a loaded machine). Past it every read is skipped and the dump
+/// is partial. ATLAS_AX_BUDGET_MS overrides it (parity runs lift it to compare whole trees).
+let budgetMs: UInt64 = UInt64(env["ATLAS_AX_BUDGET_MS"] ?? "").map { max(500, $0) } ?? 3000
+let deadline = now() + budgetMs * 1_000_000
+let app = AXUIElementCreateApplication(pid)
+let systemWide = AXUIElementCreateSystemWide()
+/// The per-call messaging timeout in force; .max = the system default (~6 s).
+var callCapNs: UInt64 = msgTimeoutMs.map { UInt64($0) * 1_000_000 } ?? .max
+
+func setMessagingTimeout(_ ns: UInt64) {
+    callCapNs = ns
+    let t = Float(Double(ns) / 1e9)
+    // The system-wide element sets this process's global timeout, which covers every
+    // element we reach; the app element is set as well in case a per-element value wins.
+    AXUIElementSetMessagingTimeout(systemWide, t)
+    AXUIElementSetMessagingTimeout(app, t)
+}
 
 /// Consecutive timed-out calls. One is a slow call (the app is busy, the walk goes on);
 /// two in a row is a hung app, so every later call is skipped (`hung`) and the dump
@@ -99,11 +126,23 @@ var hung = false
 /// Some read was lost to the timeout, so the tree is incomplete: output "partial".
 var lostRead = false
 
-func now() -> UInt64 { DispatchTime.now().uptimeNanoseconds }
+/// Gate before every AX call: false once the app is hung or the budget is spent. Near the
+/// end it lowers the per-call timeout to what is left (in 50 ms steps), so one slow call
+/// cannot carry the walk past the deadline.
+func callAllowed() -> Bool {
+    if hung { return false }
+    let t = now()
+    if t >= deadline { hung = true; lostRead = true; return false }
+    let left = deadline - t
+    if left + 50_000_000 < callCapNs { setMessagingTimeout(left) }
+    return true
+}
 
 /// Records every AX call's outcome. `read: false` for the AXManualAccessibility set,
 /// which can strike but loses no data.
 func note(_ err: AXError, since t0: UInt64, read: Bool = true) {
+    // Cut short by the budget: the walk is over and the tree incomplete.
+    if err == .cannotComplete && now() + 50_000_000 >= deadline { hung = true; lostRead = true; return }
     guard let hangNs = hangNs else { return }
     if err == .cannotComplete && now() - t0 >= hangNs {
         strikes += 1
@@ -115,7 +154,7 @@ func note(_ err: AXError, since t0: UInt64, read: Bool = true) {
 }
 
 func axCopy(_ el: AXUIElement, _ attr: String) -> CFTypeRef? {
-    if hung { return nil }
+    if !callAllowed() { return nil }
     var v: CFTypeRef?
     let t0 = now()
     let err = AXUIElementCopyAttributeValue(el, attr as CFString, &v)
@@ -257,29 +296,42 @@ let batchAttrs: [String] = [
 ]
 let batchAttrsCF = batchAttrs as CFArray
 
+// Attributes whose handler runs app code to build a string; the slow ones in practice.
+let labelAttrs: Set<String> = [kAXTitleAttribute, kAXDescriptionAttribute, kAXHelpAttribute]
+
 /// One AXUIElementCopyMultipleAttributeValues per node. A slot that failed comes back
 /// as an AXValue of type .axError and becomes nil, which the converters turn into the
-/// same defaults a failed per-attribute read gives; a cannotComplete slot is re-read on
-/// its own (below), never timed against the whole batch. When the whole call fails (a toolkit
-/// without the multi-attribute message, a quick error, one slow reply) the node is
-/// re-read one attribute at a time, unless the app is now considered hung.
+/// same defaults a failed per-attribute read gives. Nothing known to be slow is asked
+/// twice: asking again runs the app's slow handler again, queued behind the first.
+///   fast reply, cannotComplete slot   re-read that attribute on its own (an app quirk)
+///   slow reply, cannotComplete slot   that slot is what was slow: lost, not re-read
+///   whole call fails fast             (no multi-attribute message, bad argument) re-read
+///                                     the node one attribute at a time
+///   whole call fails slow             some attribute's handler is stuck and the reply
+///                                     can't say which: re-read only the structural
+///                                     attributes so the walk goes on; the labels are lost
 func axCopyBatch(_ el: AXUIElement) -> [CFTypeRef?] {
-    if hung { return [CFTypeRef?](repeating: nil, count: batchAttrs.count) }
+    if !callAllowed() { return [CFTypeRef?](repeating: nil, count: batchAttrs.count) }
     var values: CFArray?
     let t0 = now()
     let err = AXUIElementCopyMultipleAttributeValues(
         el, batchAttrsCF, AXCopyMultipleAttributeOptions(rawValue: 0), &values)
-    note(err, since: t0)
+    let slow = now() - t0 >= slowNs
+    // Not a lost read by itself: lostRead is set below only for what is actually not read.
+    note(err, since: t0, read: false)
     if err == .success, let arr = values as [AnyObject]?, arr.count == batchAttrs.count {
         return arr.enumerated().map { idx, v in
             guard CFGetTypeID(v) == AXValueGetTypeID(), AXValueGetType(v as! AXValue) == .axError else { return v }
             var slotErr = AXError.success
             AXValueGetValue(v as! AXValue, .axError, &slotErr)
-            // A slot can time out inside a reply that succeeded (AppKit answers each
-            // attribute in turn). The slot can't be timed on its own, so re-read just
-            // that attribute: it is timed, and a lost read is flagged, like the default walk.
-            return slotErr == .cannotComplete ? axCopy(el, batchAttrs[idx]) : nil
+            guard slotErr == .cannotComplete else { return nil }
+            if slow { lostRead = true; return nil }
+            return axCopy(el, batchAttrs[idx])
         }
+    }
+    if err == .cannotComplete && slow {
+        lostRead = true
+        return batchAttrs.map { labelAttrs.contains($0) ? nil : axCopy(el, $0) }
     }
     return batchAttrs.map { axCopy(el, $0) }
 }
@@ -301,20 +353,13 @@ func walkBatched(_ el: AXUIElement, depth: Int) -> AXNode {
 
 // ── Dump ──────────────────────────────────────────
 
-let app = AXUIElementCreateApplication(pid)
-if let ms = msgTimeoutMs {
-    // The system-wide element sets this process's global timeout, which covers every
-    // element we reach; the app element is set as well in case a per-element value wins.
-    let t = Float(ms) / 1000
-    AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), t)
-    AXUIElementSetMessagingTimeout(app, t)
-}
+if let ms = msgTimeoutMs { setMessagingTimeout(UInt64(ms) * 1_000_000) }
 // Electron apps (Slack, VS Code, Discord…) only build their tree for assistive
 // tech that asks; other apps ignore the attribute. A cold tree fills in shortly
 // after, which the caller's one-shot re-dump picks up. A slow set is one strike, not a
 // hang on its own: the walk still runs.
 let manualT0 = now()
-note(AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue), since: manualT0, read: false)
+if callAllowed() { note(AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue), since: manualT0, read: false) }
 let root = useBatch ? walkBatched(app, depth: 0) : walkLegacy(app, depth: 0)
 
 struct Output: Encodable {

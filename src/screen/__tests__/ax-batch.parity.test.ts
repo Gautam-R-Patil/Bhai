@@ -92,6 +92,14 @@ describe("compareRuns (parity rule)", () => {
         const a = tree(node("AXButton", "OK", 0));
         expect(compareRuns([a], [tree(node("AXButton", "OK", 0), node("AXButton", "More", 20))]).countOk).toBe(false);
     });
+
+    it("fails when some batched runs lose part of the tree, even if one is whole", () => {
+        const full = tree(node("AXButton", "A", 0), node("AXButton", "B", 20), node("AXButton", "C", 40));
+        const cut = tree(node("AXButton", "A", 0));
+        const r = compareRuns([full, full, full], [full, cut, cut]);
+        expect(r.countOk).toBe(false);
+        expect(r.ok).toBe(false);
+    });
 });
 
 const pid = liveTarget();

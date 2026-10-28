@@ -56,9 +56,13 @@ function hangTest(): boolean {
     process.kill(pid, "SIGSTOP");
     try {
         for (const batch of [false, true]) {
-            const r = runDump(BIN, pid, batch, { ATLAS_AX_MSG_TIMEOUT_MS: String(timeoutMs) });
-            // Two timeouts in a row end the walk (one slow call does not).
-            const budget = 2 * timeoutMs + 400;
+            const r = runDump(BIN, pid, batch, {
+                ATLAS_AX_MSG_TIMEOUT_MS: String(timeoutMs),
+                ATLAS_AX_BUDGET_MS: "3000",
+            });
+            // Two timeouts in a row usually end the walk (~2x the timeout); a quick error between
+            // them resets the count, so the hard bound is the helper's 3 s walk budget, plus launch.
+            const budget = 3500;
             const pass = r.raw.partial === true && r.ms <= budget;
             ok &&= pass;
             console.log(

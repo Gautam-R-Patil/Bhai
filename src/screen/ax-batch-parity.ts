@@ -28,7 +28,9 @@ export interface TimedDump {
 
 /** Runs the helper once, with ATLAS_AX_BATCH set to "true" or removed. Throws on `error|…`. */
 export function runDump(bin: string, pid: number, batch: boolean, extraEnv: Record<string, string> = {}): TimedDump {
-    const env = { ...process.env, ...extraEnv };
+    // The helper's 3 s walk budget would cut both trees on a loaded machine; parity
+    // compares whole trees, so lift it (callers can still set their own).
+    const env = { ...process.env, ATLAS_AX_BUDGET_MS: "15000", ...extraEnv };
     delete env.ATLAS_AX_BATCH;
     if (batch) env.ATLAS_AX_BATCH = "true";
     const t0 = performance.now();
@@ -80,11 +82,15 @@ export interface ParityResult {
  *   diff       both modes are stable on that field and disagree: a real batching bug
  * A node is identical when every field is, live when none is a diff. A field that
  * is live never covers a different field of the same node.
- * Pass: no diffs and >=99% of nodes identical or live.
+ * Pass: every batched run's node count is within the legacy runs' range (a batched run
+ * that lost part of the tree fails, even when another batched run is whole; a count that
+ * varies between legacy runs is a live UI), no diffs, and >=99% of nodes identical or live.
  */
 export function compareRuns(legacy: NodeRow[][], batched: NodeRow[][]): ParityResult {
     const lens = batched.map((b) => b.length).filter((n) => legacy.some((l) => l.length === n));
     if (lens.length === 0) return { ok: false, countOk: false, ratio: 0, live: 0, diffs: [] };
+    const ll = legacy.map((l) => l.length);
+    const countOk = batched.every((b) => b.length >= Math.min(...ll) && b.length <= Math.max(...ll));
     const len = median(lens);
     const ls = legacy.filter((l) => l.length === len);
     const bs = batched.filter((b) => b.length === len);
@@ -107,8 +113,8 @@ export function compareRuns(legacy: NodeRow[][], batched: NodeRow[][]): ParityRe
     }
     const total = Math.max(len, 1);
     return {
-        ok: diffs.length === 0 && (identical + live) / total >= 0.99,
-        countOk: true,
+        ok: countOk && diffs.length === 0 && (identical + live) / total >= 0.99,
+        countOk,
         ratio: identical / total,
         live,
         diffs,
@@ -127,5 +133,7 @@ export function parityRuns(bin: string, pid: number, runs: number) {
         legacy.map((d) => d.rows),
         batched.map((d) => d.rows),
     );
+    // The helper flags a read it lost; batching must not lose one the per-attribute walk kept.
+    if (batched.some((d) => d.raw.partial) && !legacy.some((d) => d.raw.partial)) cmp.ok = cmp.countOk = false;
     return { legacy, batched, cmp };
 }
