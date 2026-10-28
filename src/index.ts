@@ -503,21 +503,6 @@ async function boot() {
         probeAndLogMacPermissions().catch((err) => console.warn("[boot] permission probe failed:", err));
     }
 
-    // Vision-nav self-heal: warn (and optionally auto-pull) when a Full-tier box
-    // is missing the local UI-TARS model, so grounding doesn't silently degrade.
-    if (process.env.ATLAS_SKIP_CAPABILITY_PROBE !== "true") {
-        Promise.resolve()
-            .then(async () => {
-                const { detectCapabilities } = await import("./screen/capability-detector.js");
-                const { ensureUITarsForFullTier } = await import("./screen/ui-tars.js");
-                const { ensureOmniParser } = await import("./screen/omniparser-setup.js");
-                const caps = await detectCapabilities();
-                await ensureUITarsForFullTier(caps.profile);
-                await ensureOmniParser(caps.profile);
-            })
-            .catch((err) => console.warn("[boot] vision-nav self-heal skipped:", (err as Error).message));
-    }
-
     // Auto-resume any long tasks that were interrupted (async, non-blocking)
     autoResumeInterruptedTasks(llm)
         .then(({ resumed }) => {

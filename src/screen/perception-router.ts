@@ -33,7 +33,6 @@ import {
 import { type CapabilityReport, detectCapabilities } from "./capability-detector.js";
 import { detectElements, findElementByCaption, omniParserCaptionsPresent, omniParserWeightsPresent } from "./omniparser.js";
 import { type ScreenDimensions, scaleImageToScreen } from "./screen-dimensions.js";
-import { groundClick, isUITarsAvailable, isUITarsHealthy } from "./ui-tars.js";
 import { cloudGroundClick } from "./cloud-grounding.js";
 import type { LLMClient } from "../llm.js";
 
@@ -198,7 +197,7 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
     // caption-less run can never hit. Kill-switch ATLAS_NO_OMNIPARSER force-skips.
     if (
         !skip.has("omniparser") &&
-        (profile === "standard" || profile === "full") &&
+        profile === "standard" &&
         process.env.ATLAS_NO_OMNIPARSER !== "true" &&
         omniParserWeightsPresent() &&
         omniParserCaptionsPresent()
@@ -231,54 +230,9 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
         }
     }
 
-    // Tier 5: UI-TARS local grounding (Full tier only, requires Ollama).
-    // Short-circuit via capability-detector's deps.ollama check before paying the 3s
-    // TCP-timeout cost on a box where Ollama is never installed.
-    if (!skip.has("ui_tars") && profile === "full") {
-        const caps = await detectCapabilities();
-        if (caps.deps.ollama) {
-            tried.push("ui_tars");
-            const utStart = Date.now();
-            try {
-                const avail = await isUITarsAvailable();
-                // Pulled AND vision-inference actually works. A pulled-but-broken
-                // quant (crashing mmproj) is treated as NOT usable so we skip it
-                // and fall to cloud grounding instead of eating a 30s crash/timeout
-                // per click. The health probe is one-time cached. Bypass with
-                // ATLAS_NO_UITARS_HEALTHCHECK=true.
-                const healthy = avail.available && (
-                    process.env.ATLAS_NO_UITARS_HEALTHCHECK === "true" ||
-                    (await isUITarsHealthy()).healthy
-                );
-                if (healthy) {
-                    const grounded = await groundClick(opts.screenshotPath, instruction, { keepAlive: "30m" });
-                    elapsed.ui_tars = Date.now() - utStart;
-                    if (!grounded.error && grounded.confidence >= thresholds.ui_tars) {
-                        const screen = toScreenCoords(grounded.x, grounded.y, grounded.imageWidth, opts.screenDims);
-                        return finalize(
-                            {
-                                x: screen.x,
-                                y: screen.y,
-                                confidence: grounded.confidence,
-                                source: "ui_tars",
-                                reasoning: grounded.reasoning,
-                            },
-                            "ui_tars",
-                            { tried, elapsed, cascadeStart },
-                        );
-                    }
-                } else {
-                    elapsed.ui_tars = Date.now() - utStart;
-                }
-            } catch {
-                elapsed.ui_tars = Date.now() - utStart;
-            }
-        }
-    }
-
-    // Tier 6: Cloud grounding (VLM). Fires on every profile once the local tiers
-    // missed — including healthy Full after a UI-TARS miss/low-confidence (a hit
-    // already returned above, so a healthy-Full hit costs zero cloud). Skipped
+    // Tier 6: Cloud grounding (VLM). Fires once the local tiers missed. (Tier 5,
+    // local UI-TARS, went with the old "full" profile: ~4.5 GB and ~5 GB of RAM
+    // for a lower hit rate than this one cloud call.) Skipped
     // when no LLM client was provided. This replaces the old behavior where a
     // missed click bounced to the expensive agentic model to re-ground.
     if (!skip.has("cloud_grounding") && opts.llm && process.env.ATLAS_NO_CLOUD_GROUNDING !== "true") {

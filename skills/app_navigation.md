@@ -9,19 +9,18 @@ As a Desktop App Navigation Expert, your goal is to interact with any desktop ap
 
 Use the following tool hierarchy — always start from the top and fall back only when needed:
 
-1. **`os_scan` + `os_click_element`** — Identify UI elements first, then click by label. Most reliable for unfamiliar apps.
-2. **Keyboard shortcuts** — Fastest and most reliable for known operations. No visual confirmation needed.
-3. **`os_multi_action` batching** — Combine multiple steps (keystrokes, waits, clicks) into a single tool call.
-4. **`os_ocr_click`** — Fallback when element labels are not clear from the accessibility tree.
-5. **`os_click` with coordinates** — Last resort. Only use when no other method works.
+1. **Keyboard shortcuts** — Fastest and most reliable for known operations.
+2. **`os_smart_click instruction="..."`** — Click by description. Finds the element through the accessibility tree first, then vision. No screenshot needed first.
+3. **`os_inspect` + `os_click_id`** — See what's clickable, then click by id or text, when smart click misses.
+4. **`os_click` with coordinates** — Last resort, from an `os_screenshot` (you see the image; grid labels are the x/y).
 
 ## SPEED RULES
 
 1. **Plan ALL steps before the first tool call** — think through the full sequence, then execute. Do not improvise one step at a time.
 
-2. **Batch with `os_multi_action` whenever possible** — every individual tool call adds latency. Combine keystrokes, waits, and actions:
+2. **Put predictable steps in one turn** — every round trip adds latency. Several OS tool calls in one turn run one after another, in order:
    ```
-   [{combo: "cmd+s"}, {wait: 300}, {type: "filename.txt"}, {wait: 200}, {key: "enter"}]
+   os_type combo="cmd+s" → os_type text="filename.txt" → os_type key="return"
    ```
 
 3. **Skip screenshots between predictable actions** — if you just pressed Cmd+S and are typing a filename, you do not need a screenshot before pressing Enter.

@@ -8,13 +8,13 @@
 
 const STEPS = [
     "awakening", "terms", "signin", "profile", "persona",
-    "personalize", "permissions", "vision-tier", "install", "ready-hub"
+    "personalize", "permissions", "install", "ready-hub"
 ];
 
 const STEP_NUMS = {
     "awakening": "00", "terms": "01", "signin": "02", "profile": "03",
     "persona": "04", "personalize": "05", "permissions": "06",
-    "vision-tier": "07", "install": "08", "ready-hub": "09"
+    "install": "07", "ready-hub": "08"
 };
 
 const state = {
@@ -30,7 +30,6 @@ const state = {
     personality: "casual_playful",
     permissions: { accessibility: "unknown", screen: "unknown", microphone: "unknown", location: "unknown" },
     permissionsSkipped: {},
-    visionTier: "standard",
     timeOfDay: "evening",
     forcedPersona: "",
     audioOn: false,
@@ -617,41 +616,6 @@ STEP_RENDERERS["permissions"] = function (root) {
 
 /* ── 8. Vision tier ── */
 
-STEP_RENDERERS["vision-tier"] = function (root) {
-    root.appendChild(el("div", { class: "eyebrow", html: '<span class="iri-dot"></span>Sight' }));
-    root.appendChild(el("h1", { class: "step-title", text: "How sharp should my eyes be?" }));
-    root.appendChild(el("p", { class: "step-sub", text: "On-device vision lets me see your screen and reason about UI. Heavier tiers see more but take longer to install." }));
-
-    const tiers = [
-        { v: "lite",     l: "Lite",     size: "~200 MB", tag: "Snappy",      d: "Fast OCR + screenshot understanding. Great on older laptops without a GPU." },
-        { v: "standard", l: "Standard", size: "~1.2 GB", tag: "Recommended", d: "OCR plus a lightweight vision model. Reads UI and reasons about layouts." },
-        { v: "full",     l: "Full",     size: "~4.8 GB", tag: "Heavy",       d: "OCR + UI-TARS + OmniParser. Element-level grounding. Best on recent machines." },
-    ];
-    const list = el("div", { class: "tier-list" });
-    tiers.forEach((t) => {
-        const tier = el("div", {
-            class: "tier" + (state.visionTier === t.v ? " active" : ""),
-            on: { click: () => {
-                state.visionTier = t.v;
-                list.querySelectorAll(".tier").forEach((tt, i) => tt.classList.toggle("active", tiers[i].v === t.v));
-            }}
-        },
-            el("div", { class: "tier-radio" }),
-            el("div", { class: "tier-body" },
-                el("div", { class: "tier-head" },
-                    el("h3", { class: "tier-name", text: t.l }),
-                    el("span", { class: "tier-tag", text: t.tag })
-                ),
-                el("p", { class: "tier-desc", text: t.d })
-            ),
-            el("span", { class: "tier-size", text: t.size })
-        );
-        list.appendChild(tier);
-    });
-    root.appendChild(list);
-    root.appendChild(actionsBar({}));
-};
-
 /* ── 9. Install ── */
 
 STEP_RENDERERS["install"] = function (root) {
@@ -676,9 +640,6 @@ STEP_RENDERERS["install"] = function (root) {
         { id: "playwright",   l: "Browser engine" },
         { id: "embedding",    l: "Semantic memory" },
         { id: "sox",          l: "Audio toolkit" },
-        { id: "ollama",       l: "Local model runtime" },
-        { id: "vision-model", l: "Vision weights" },
-        { id: "vision-deps",  l: "Vision dependencies" },
         { id: "data-dir",     l: "Data directory" },
         { id: "workspace",    l: "Workspace folder" },
         { id: "finalize",     l: "Finishing touches" },

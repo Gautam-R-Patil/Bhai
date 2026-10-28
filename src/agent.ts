@@ -46,6 +46,8 @@ import { offloadIfLarge } from "./agents/tool-output-offload.js";
 import { logOrchestratorRouting } from "./agents/orchestrator-routing-log.js";
 import {
     buildVerifyReminder,
+    isMutator,
+    isVerifier,
     newVerifyGateState,
     recordToolCall as recordToolCallForVerifyGate,
     shouldForceVerify,
@@ -248,6 +250,32 @@ const BROWSER_TOOLS = new Set([
     "browser_multi_action",
 ]);
 
+const OS_TASK_HINT = `[OS TASK — desktop control]
+1. Click things by description with os_smart_click (it finds the element itself; no screenshot needed first).
+2. Prefer app_manager and keyboard shortcuts (os_type combo) over clicking when you know them.
+3. To see the screen, use os_inspect (accessibility list) or os_screenshot (you get the image; its grid labels are the x/y to pass to os_click).
+4. Before saying done, check the end state once with os_visual_verify expect_text="..." (or expect_gone).`;
+
+/** Categories a plain desktop-driving turn uses, plus the always-on ones. */
+const GUI_LOOP_CATEGORIES = new Set(["os_control", "app_management", "system_controls", "core", "memory", "tool_creation"]);
+/** Past this many iterations a desktop task isn't "short" any more; the router decides. */
+const GUI_PIN_MAX_ITERATIONS = 8;
+const isGuiOnly = (cats: string[]) =>
+    cats.some((c) => c === "os_control" || c === "app_management") && cats.every((c) => GUI_LOOP_CATEGORIES.has(c));
+
+/**
+ * Order for the verify-before-done gate. The browser lane runs alongside the
+ * in-order screen lane, so a screenshot in the same batch may predate a browser
+ * action: record browser calls last, so they still need their own check.
+ */
+const gateOrder = <T extends { isBrowser: boolean }>(rs: T[]): T[] => [
+    ...rs.filter((r) => !r.isBrowser),
+    ...rs.filter((r) => r.isBrowser),
+];
+
+/** Non-os_* tools that also drive the screen (os_* / win_os_* are matched by prefix). */
+const SCREEN_TOOLS = new Set(["app_manager", "apple_script", "window_manage", "run_shortcut", "computer_use"]);
+
 const HARD_DECISION_TOOLS = new Set(["web_search", "shell_exec", "memory_store"]);
 
 /** Tools whose results don't affect conversation flow — executed in background, synthetic success returned immediately */
@@ -299,6 +327,7 @@ const TOOL_RESULT_LIMITS: Record<string, number> = {
     grep: 4000,
     glob: 2000,
     deep_research: 6000,
+    os_inspect: 8000, // a whole 60-element list, still under the 8KB offload line
 };
 const DEFAULT_RESULT_LIMIT = 4000;
 
@@ -306,6 +335,25 @@ function truncateToolResult(toolName: string, result: string): string {
     const limit = TOOL_RESULT_LIMITS[toolName] ?? DEFAULT_RESULT_LIMIT;
     if (result.length <= limit) return result;
     return `${result.substring(0, limit)}\n[... truncated from ${result.length} chars]`;
+}
+
+/**
+ * Screenshots ride in tool results and stay in the shared history, so a long
+ * GUI turn would resend every one on every call (and can pass the proxy's body
+ * limit). Once more than 6 pile up, keep the newest 3 — in a batch, so the
+ * prompt cache isn't broken on every step.
+ */
+function pruneOldScreenshots(msgs: ChatCompletionMessageParam[]): void {
+    const spots: Array<{ parts: Array<Record<string, unknown>>; i: number }> = [];
+    for (const m of msgs) {
+        if (m.role !== "tool" || !Array.isArray(m.content)) continue;
+        const parts = m.content as unknown as Array<Record<string, unknown>>;
+        parts.forEach((p, i) => {
+            if (p.type === "image_url") spots.push({ parts, i });
+        });
+    }
+    if (spots.length <= 6) return;
+    for (const { parts, i } of spots.slice(0, -3)) parts[i] = { type: "text", text: "[earlier screenshot removed]" };
 }
 
 // ── Turn ID for offload grouping ─────────────
@@ -662,6 +710,27 @@ async function executeAndProcessToolCall(
         }
     }
 
+    // Lift a screenshot out before offload/truncate/fencing, which would
+    // otherwise turn it into a few KB of base64 text the model can't see.
+    let imageUrl: string | undefined;
+    try {
+        const parsed = JSON.parse(rawResult);
+        const b64 = parsed.screenshot_base64 || parsed.zoomed_base64;
+        if (b64) {
+            // The API rejects oversized images (e.g. a full-page browser capture).
+            const { downscaleForVision } = await import("./screen/ui-tars.js");
+            const img = await downscaleForVision(Buffer.from(b64, "base64"));
+            imageUrl = `data:${img.mime};base64,${img.buf.toString("base64")}`;
+            delete parsed.screenshot_base64;
+            delete parsed.zoomed_base64;
+            delete parsed.mime_type;
+            parsed.image_attached = true;
+            rawResult = JSON.stringify(parsed);
+        }
+    } catch {
+        /* not json */
+    }
+
     // Large-output offload: if the raw result is over the offload threshold,
     // save the full content to disk and replace it with a preview + file path.
     // The `read` tool can fetch the full file later if the model needs it.
@@ -703,25 +772,12 @@ async function executeAndProcessToolCall(
 
     const isBrowser = BROWSER_TOOLS.has(fnName);
 
-    // Treat screenshot payload as native image block
-    let finalContent: string | Array<Record<string, unknown>> = result;
-    try {
-        const parsed = JSON.parse(result);
-        if (parsed.screenshot_base64) {
-            const b64 = parsed.screenshot_base64;
-            const mimeType = parsed.mime_type || "image/png";
-            delete parsed.screenshot_base64;
-            delete parsed.mime_type;
-            parsed.image_attached = true;
-
-            finalContent = [
-                { type: "text", text: JSON.stringify(parsed) },
-                { type: "image_url", image_url: { url: `data:${mimeType};base64,${b64}` } },
-            ];
-        }
-    } catch {
-        /* not json */
-    }
+    const finalContent: string | Array<Record<string, unknown>> = imageUrl
+        ? [
+              { type: "text", text: result },
+              { type: "image_url", image_url: { url: imageUrl } },
+          ]
+        : result;
 
     return { toolCallId: toolCall.id, fnName, fnArgs, result, finalContent, isBrowser, isError };
 }
@@ -779,33 +835,64 @@ async function executeToolCallsBatch(
         deferredResults.push(createSyntheticDeferredResult(tc));
     }
 
-    // Fire all non-browser tools in parallel (with 120s safety timeout)
+    // Fire non-browser tools in parallel (with a safety timeout), except
+    // screen-driving ones: they share focus, mouse and keyboard, so a type can
+    // land before the click that focuses its field. Those run in call order.
     const TOOL_BATCH_TIMEOUT_MS = 120_000;
+    const done = new Map<string, ToolCallResult>();
+    const run = async (tc: (typeof toolCalls)[number]) => {
+        const r = await executeAndProcessToolCall(tc, ctx.onToolRequest, ctx.userMessage, ctx.toolAllowlist, ctx.channelContext);
+        done.set(tc.id, r);
+        return r;
+    };
+    // Also anything the verify-before-done gate tracks (e.g. browser_click), so
+    // its "a check after the action" reading matches what actually ran.
+    const drivesScreen = (tc: (typeof toolCalls)[number]) =>
+        /^(win_)?os_/.test(tc.function.name) ||
+        SCREEN_TOOLS.has(tc.function.name) ||
+        isMutator(tc.function.name, {}) ||
+        isVerifier(tc.function.name, {});
+    const screenCalls = nonBrowserCalls.filter(drivesScreen);
+    // Each call already has its own timeout in executeTool, so the in-order
+    // lane gets room for every step. Once the batch is given up on, no further
+    // screen step may START (a late "send" click after a reported failure).
+    const batchTimeoutMs = TOOL_BATCH_TIMEOUT_MS + 35_000 * screenCalls.length;
+    let gaveUp = false;
     const nonBrowserPromise =
         nonBrowserCalls.length > 0
             ? Promise.race([
-                  Promise.all(
-                      nonBrowserCalls.map((tc) =>
-                          executeAndProcessToolCall(tc, ctx.onToolRequest, ctx.userMessage, ctx.toolAllowlist, ctx.channelContext),
-                      ),
-                  ),
+                  (async () => {
+                      const parallel = Promise.all(nonBrowserCalls.filter((tc) => !drivesScreen(tc)).map(run));
+                      parallel.catch(() => {}); // observed below; don't let an early throw leave it unhandled
+                      for (const tc of screenCalls) {
+                          if (gaveUp) break;
+                          await run(tc);
+                      }
+                      await parallel;
+                      return nonBrowserCalls.map((tc) => done.get(tc.id) as ToolCallResult);
+                  })(),
                   new Promise<ToolCallResult[]>((_, reject) =>
-                      setTimeout(
-                          () => reject(new Error(`Tool batch timed out after ${TOOL_BATCH_TIMEOUT_MS / 1000}s`)),
-                          TOOL_BATCH_TIMEOUT_MS,
-                      ),
+                      setTimeout(() => {
+                          gaveUp = true;
+                          reject(new Error(`Tool batch timed out after ${Math.round(batchTimeoutMs / 1000)}s`));
+                      }, batchTimeoutMs),
                   ),
               ]).catch((err) => {
+                  gaveUp = true;
                   console.error(`  ⚠️ Non-browser tool batch error: ${(err as Error).message}`);
-                  return nonBrowserCalls.map((tc) => ({
-                      toolCallId: tc.id,
-                      fnName: tc.function.name,
-                      fnArgs: {} as Record<string, unknown>,
-                      result: JSON.stringify({ error: (err as Error).message }),
-                      finalContent: JSON.stringify({ error: (err as Error).message }),
-                      isBrowser: false,
-                      isError: true,
-                  }));
+                  // Keep the results of steps that did finish; only the rest are errors.
+                  return nonBrowserCalls.map(
+                      (tc) =>
+                          done.get(tc.id) ?? {
+                              toolCallId: tc.id,
+                              fnName: tc.function.name,
+                              fnArgs: {} as Record<string, unknown>,
+                              result: JSON.stringify({ error: `${(err as Error).message}; this step did not finish` }),
+                              finalContent: JSON.stringify({ error: `${(err as Error).message}; this step did not finish` }),
+                              isBrowser: false,
+                              isError: true,
+                          },
+                  );
               })
             : Promise.resolve([] as ToolCallResult[]);
 
@@ -1084,6 +1171,17 @@ async function _runAgentBody(
     let lastUsedModel: string | undefined; // Track model for credit deduction
     // Verify-before-done gate — see src/agents/verify-before-done.ts.
     const verifyGate = newVerifyGateState();
+    let verificationNagged = false;
+    // A non-complex desktop-only turn (set on iteration 1) stays on Haiku and
+    // skips the memory nudge while it's short and nothing has gone wrong.
+    let guiTurn = false;
+    let guiTrouble = false;
+    const guiPinned = () =>
+        guiTurn &&
+        !guiTrouble &&
+        errorCount === 0 &&
+        iterations <= GUI_PIN_MAX_ITERATIONS &&
+        (requestedCategories ?? []).every((c) => GUI_LOOP_CATEGORIES.has(c));
 
     // ── Auto Plan Mode (coding intent only) ──
     // Off by default — opt in with ATLAS_AUTO_PLAN_MODE=true.
@@ -1149,16 +1247,10 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
         !rawUserMessage.includes("http") &&
         rawUserMessage.split(/\s+/).length > 3;
 
-    if (isOsAppTask) {
-        const planHint = `\n\n[OS TASK — Plan all steps upfront, minimize tool calls]
-STRATEGY: Execute in as few tool calls as possible.
-1. Use os_scan ONCE to see all elements on screen
-2. Use os_multi_action to batch clicks, types, and key presses in ONE call
-3. Only screenshot AFTER the full sequence to verify the end result
-4. Use os_click_element (by label number) instead of coordinate clicking
-5. Prefer keyboard shortcuts over mouse clicks — they're faster and more reliable
-6. For known apps: you already know the layout, don't screenshot to "check"`;
-        workingHistory.push({ role: "system", content: planHint });
+    // workingHistory is the shared conversation (trimming keeps system
+    // messages), so add the hint once rather than once per OS-ish message.
+    if (isOsAppTask && !workingHistory.some((m) => m.role === "system" && String(m.content).startsWith(OS_TASK_HINT))) {
+        workingHistory.push({ role: "system", content: OS_TASK_HINT });
     }
 
     // Cascade escalation: only one attempt per agent invocation
@@ -1219,6 +1311,7 @@ STRATEGY: Execute in as few tool calls as possible.
             const NUDGE_COOLDOWN = 5;
             const cooldownPassed = iterations - lastMetaNudgeIter >= NUDGE_COOLDOWN;
             const shouldNudge = metaCheck.loopDetected || metaCheck.struggleDetected;
+            if (shouldNudge) guiTrouble = true; // a looping desktop task goes back to the router's pick
             // One-shot when interventions are off; cooldown-gated repeat otherwise.
             const fire = shouldNudge && (interventionsOff ? !metaNudged : (!metaNudged || cooldownPassed));
             if (fire) {
@@ -1365,7 +1458,9 @@ STRATEGY: Execute in as few tool calls as possible.
         // Every N iterations, nudge the agent to self-evaluate what's worth remembering.
         // This ensures important facts/decisions/preferences are persisted during long
         // conversations, not just at session end.
-        if (iterations > 1 && iterations % MEMORY_NUDGE_INTERVAL === 0) {
+        // Not on a short desktop task: there it lands as the last thing the model
+        // sees and the final answer replies to the nudge instead of the user.
+        if (iterations > 1 && iterations % MEMORY_NUDGE_INTERVAL === 0 && !guiPinned()) {
             const nudge = `[Memory nudge] Review the conversation so far. If any important facts, decisions, user preferences, or task learnings have emerged that aren't yet stored, use memory_store to persist them now. Focus on information that would be valuable in future conversations.`;
             messages.push({ role: "system", content: nudge });
             console.log(`  🧠 Memory nudge injected (iteration ${iterations})`);
@@ -2221,6 +2316,25 @@ STRATEGY: Execute in as few tool calls as possible.
             console.log(`  🧭 Task tier: ${turnTier} → ${claudeTier(model)}${model !== before ? ` (was ${claudeTier(before)})` : ""}, thinking ${iterThinking}`);
         }
 
+        // ── Simple desktop tasks stay on Haiku ──
+        // From iteration 3 the native router moves os_* loops to Sonnet by
+        // iteration count alone, a rule from when the model couldn't see the
+        // screen. A non-complex desktop turn keeps Haiku until a step fails.
+        // GUI-ness comes from the classifier's own categories: the turn's tool
+        // set is padded with chain categories (e.g. shell for system_automation).
+        if (iterations === 1) {
+            guiTurn =
+                !!turnTier &&
+                turnTier !== "complex" &&
+                isGuiOnly(toolSelection.classification?.categories ?? []) &&
+                !opusWarranted(rawUserMessage, errorCount, modelHint);
+        } else if (forcedPick) {
+            guiTrouble = true; // don't undo a forced escalation next iteration
+        } else if (guiPinned() && claudeTier(model) !== "haiku") {
+            console.log(`  🖱️ Desktop task stays on Haiku (router picked ${claudeTier(model)})`);
+            model = MODELS.HAIKU;
+        }
+
         // ── Harness trace: record selected tools ──
         if (iterations === 1 && _harnessTraceId) {
             if (_harnessTraceId) recordToolsSelected(_harnessTraceId, tools.map(t => t.function?.name ?? String(t)).filter(Boolean));
@@ -2265,6 +2379,7 @@ STRATEGY: Execute in as few tool calls as possible.
         // them from user input at the boundary; without this prelude, a
         // model could be coaxed by injection-shaped text into honoring fake
         // reminders that slipped through some upstream sanitizer gap).
+        pruneOldScreenshots(messages);
         let iterationMessages: ChatCompletionMessageParam[] = [
             { role: "system" as const, content: SYSTEM_REMINDER_EXPLANATION },
         ];
@@ -2446,7 +2561,7 @@ Desktop / GUI automation (any "click X", "open app Y", "send via the WhatsApp ap
 - os_smart_click: DEFAULT click-by-description tool. Pass instruction="the Send button" — it cascades click-memory → AX exact → AX fuzzy → OmniParser → UI-TARS local grounding automatically. ALWAYS prefer this over os_nav+os_click_element / raw apple_script for click tasks. Optional: app, window_title, surface_hint=native|canvas|web.
 - os_type: text="hello" or key=Return or combo="command+f". Use AFTER focusing the right field with os_smart_click.
 - os_screenshot: capture the screen for vision-grounding tools or for os_visual_verify.
-- os_visual_verify: REQUIRED after any UI-driving step that claims to have changed state (sent a message, opened a tab, clicked a button). Pass expected_text or expected_element. Without this, "did the click work?" is a guess.
+- os_visual_verify: REQUIRED after any UI-driving step that claims to have changed state (sent a message, opened a tab, clicked a button). Pass expect_text (text that should now be on screen) or expect_gone (text that should have disappeared). Without this, "did the click work?" is a guess.
 - os_inspect / os_click_id: cross-OS AX-based element listing + click-by-id when os_smart_click misses.
 - os_computer_action: structured single-action API with percentage coords (cross-OS).
 - Legacy fallbacks (use only when os_smart_click + os_inspect both miss): os_nav, os_click_element, os_ocr_click, apple_script. Raw AppleScript keystroke sequences are LAST resort — they fire blind, never check focus, and routinely "succeed" while doing nothing.
@@ -2458,7 +2573,7 @@ Music:
 Messaging:
 - whatsapp_send: protocol-level send via Baileys. Works for contacts the bot is already paired with. Use for "message AP saying gym?" when the bot has a WhatsApp session.
 - messages_tool: iMessage only.
-- If whatsapp_send fails OR the contact lives only inside the desktop app: app_manager activate WhatsApp → os_smart_click "new chat button" → os_type the contact name → os_smart_click on that contact in the result list → os_type the message → os_smart_click "send button" → os_visual_verify expected_text=the_message.
+- If whatsapp_send fails OR the contact lives only inside the desktop app: app_manager activate WhatsApp → os_smart_click "new chat button" → os_type the contact name → os_smart_click on that contact in the result list → os_type the message → os_smart_click "send button" → os_visual_verify expect_text=the_message.
 
 Web:
 - browser_navigate / browser_type / browser_click / browser_extract: for web tasks.
@@ -3104,8 +3219,8 @@ PLAN:`,
                         );
                         totalToolCalls += batchResults.length;
                         // Verify-before-done gate — same recording as the main loop site.
-                        for (const r of batchResults) {
-                            recordToolCallForVerifyGate(verifyGate, r.fnName, r.fnArgs || {});
+                        for (const r of gateOrder(batchResults)) {
+                            recordToolCallForVerifyGate(verifyGate, r.fnName, r.fnArgs || {}, r.isError);
                         }
                         for (const r of batchResults) {
                             const errorMsg = getErrorMessage(r.fnName, r.result);
@@ -3306,8 +3421,8 @@ PLAN:`,
         // bookkeeper. Only successful (or even attempted) mutators flip
         // osStateMutated; that's the right semantics because a *failed* click
         // can still leave the UI in a half-changed state we need to verify.
-        for (const r of batchResults) {
-            recordToolCallForVerifyGate(verifyGate, r.fnName, r.fnArgs || {});
+        for (const r of gateOrder(batchResults)) {
+            recordToolCallForVerifyGate(verifyGate, r.fnName, r.fnArgs || {}, r.isError);
         }
 
         // Circuit breaker: tool calls completed = progress
@@ -3501,26 +3616,29 @@ PLAN:`,
 
         // Detect states that need further action
         const hasToolFailure = allResults.includes('"success":false') || allResults.includes('"error"');
+        if (hasToolFailure) guiTrouble = true;
         const hasAppOpened = allResults.includes('"action":"activate"') || allResults.includes('"action":"launch"');
-        const hasClick = allResults.includes('"clicked"') || allResults.includes("os_click");
+        // Click results ("clicked", "double_clicked", "right_clicked", the smart-click
+        // "clicked" field), not the bare tool name, which also appears in tool tips.
+        const hasClick = allResults.includes('clicked"');
         const hasSearch = allResults.includes("search_play") || allResults.includes("search_visible");
         const isPlaying = allResults.includes('"playing":true');
 
         // Key insight: if no verification tool was used in THIS batch, the task isn't done
-        const usedVerification = batchResults.some((r) => {
-            const content = typeof r.finalContent === "string" ? r.finalContent : JSON.stringify(r.finalContent);
-            return (
-                (r.fnName === "spotify" && content.includes("now_playing")) ||
-                r.fnName === "os_visual_verify" ||
-                r.fnName === "os_nav"
-            );
-        });
+        // Same notion of "checked" as the verify-before-done gate (incl. a screenshot).
+        const usedVerification = batchResults.some(
+            (r) => !r.isError && (isVerifier(r.fnName, r.fnArgs || {}) || r.fnName === "os_nav"),
+        );
 
+        if (usedVerification) verificationNagged = false;
         if (
             (hasToolFailure || hasAppOpened || hasSearch || (hasClick && !isPlaying)) &&
             !usedVerification &&
-            !musicFastPathActive
+            !musicFastPathActive &&
+            !verificationNagged
         ) {
+            // Once until a verification happens: one copy per step piled up in history.
+            verificationNagged = true;
             messages.push({
                 role: "system",
                 content: `[VERIFICATION REQUIRED] Your last action may not have completed the task. Before responding to the user:

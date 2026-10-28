@@ -12,6 +12,7 @@ import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { getScreenDimensions, scaleImageToScreen } from "../screen/screen-dimensions.js";
 import type { ToolDefinition } from "./get-current-time.js";
 import { IS_MAC, IS_WIN, runPowerShellInline } from "./platform.js";
 
@@ -834,7 +835,7 @@ export const osDrag: ToolDefinition = {
         function: {
             name: "os_drag",
             description:
-                "Perform a mouse drag from one point to another on macOS. Useful for drag-and-drop, slider adjustment, drawing, and rearranging items. Coordinates should match those from os_screenshot.",
+                "Perform a mouse drag from one point to another on macOS. Useful for drag-and-drop, slider adjustment, drawing, and rearranging items. Coordinates are os_screenshot image pixels (its grid labels), like os_click; pass raw=true for screen points.",
             parameters: {
                 type: "object",
                 properties: {
@@ -846,6 +847,7 @@ export const osDrag: ToolDefinition = {
                         type: "number",
                         description: "Duration of the drag in milliseconds (default: 500). Increase for precision.",
                     },
+                    raw: { type: "boolean", description: "Treat coordinates as raw screen points (default: false)." },
                 },
                 required: ["from_x", "from_y", "to_x", "to_y"],
             },
@@ -856,11 +858,17 @@ export const osDrag: ToolDefinition = {
         if (!IS_MAC) {
             return JSON.stringify({ success: false, error: "os_drag is only available on macOS (uses CoreGraphics)." });
         }
-        const fromX = input.from_x as number;
-        const fromY = input.from_y as number;
-        const toX = input.to_x as number;
-        const toY = input.to_y as number;
-        const durationMs = (input.duration_ms as number) || 500;
+        // Same frame as os_click: pixels of the 1280-wide os_screenshot image.
+        // Number() also keeps non-numeric args out of the JXA source below.
+        const dims = await getScreenDimensions({ focusedWindow: true });
+        const at = (x: unknown, y: unknown) =>
+            scaleImageToScreen({ rawX: Number(x), rawY: Number(y), imageWidth: 1280, dims, raw: input.raw === true });
+        const { x: fromX, y: fromY } = at(input.from_x, input.from_y);
+        const { x: toX, y: toY } = at(input.to_x, input.to_y);
+        if (![fromX, fromY, toX, toY].every(Number.isFinite)) {
+            return JSON.stringify({ success: false, error: "from_x, from_y, to_x and to_y must be numbers." });
+        }
+        const durationMs = Number(input.duration_ms) || 500;
         const steps = Math.max(10, Math.floor(durationMs / 16)); // ~60fps
 
         try {

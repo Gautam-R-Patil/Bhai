@@ -11,7 +11,10 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-export type VisionProfile = "lite" | "standard" | "full";
+// One setup for everyone: accessibility tree → click memory → cloud grounding.
+// "lite" only remains as a diagnostic override (it also skips OmniParser).
+// The old "full" tier (local UI-TARS, ~4.5 GB) is gone; a stored "full" reads as standard.
+export type VisionProfile = "lite" | "standard";
 
 export type GpuClass = "none" | "integrated" | "discrete" | "apple-silicon";
 
@@ -52,7 +55,7 @@ let _cached: CapabilityReport | null = null;
  * benchmark only runs once per week or after a major hardware change.
  *
  * To force a re-probe: pass { force: true }.
- * To override the picked profile: set ATLAS_VISION_PROFILE=lite|standard|full.
+ * To override the profile: set ATLAS_VISION_PROFILE=lite|standard.
  */
 export async function detectCapabilities(opts: { force?: boolean; cacheDir?: string } = {}): Promise<CapabilityReport> {
     if (!opts.force && _cached) return _cached;
@@ -91,7 +94,7 @@ export function clearCapabilityCache(): void {
 
 function applyOverride(report: CapabilityReport): CapabilityReport {
     const override = process.env[OVERRIDE_ENV] || readProfileFromRuntimeEnv();
-    if (override === "lite" || override === "standard" || override === "full") {
+    if (override === "lite" || override === "standard") {
         return {
             ...report,
             profile: override,
@@ -124,7 +127,7 @@ function readProfileFromRuntimeEnv(): string | undefined {
             const m = line.match(/^\s*ATLAS_VISION_PROFILE\s*=\s*(.+?)\s*$/);
             if (m) {
                 const v = m[1].replace(/^['"]|['"]$/g, "");
-                if (v === "lite" || v === "standard" || v === "full") return v;
+                if (v === "lite" || v === "standard") return v;
             }
         }
     } catch {
@@ -162,10 +165,8 @@ async function probeCapabilities(): Promise<CapabilityReport> {
     if (process.platform === "darwin" && !deps.cliclick)
         notes.push("cliclick missing — clicks will use slower JXA CGEvent fallback.");
 
-    const profile = pickProfile({ ramGB, freeRamGB, cpuCores, cpuBenchScore, gpu: gpu.kind, diskFreeGB, online });
-
     return {
-        profile,
+        profile: "standard",
         ramGB: round(ramGB, 1),
         freeRamGB: round(freeRamGB, 1),
         cpuCores,
@@ -182,22 +183,6 @@ async function probeCapabilities(): Promise<CapabilityReport> {
     };
 }
 
-function pickProfile(c: {
-    ramGB: number;
-    freeRamGB: number;
-    cpuCores: number;
-    cpuBenchScore: number;
-    gpu: GpuClass;
-    diskFreeGB: number;
-    online: boolean;
-}): VisionProfile {
-    // Full: discrete GPU OR Apple Silicon, with enough RAM + disk for UI-TARS-7B (~6GB) + Florence-2 (~770MB)
-    if ((c.gpu === "discrete" || c.gpu === "apple-silicon") && c.ramGB >= 12 && c.diskFreeGB >= 6) return "full";
-    // Standard: modern CPU + enough RAM for OmniParser YOLOv8 (~50MB) but no GPU for heavy VLM
-    if (c.ramGB >= 8 && c.cpuBenchScore >= 200 && c.diskFreeGB >= 2) return "standard";
-    // Lite: everything else (works on a 2GB-RAM netbook with internet)
-    return "lite";
-}
 
 interface GpuDetection {
     kind: GpuClass;

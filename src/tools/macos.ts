@@ -215,9 +215,9 @@ export const osScreenshot: ToolDefinition = {
             // Add coordinate grid overlay using Python + Pillow for accurate LLM coordinate picking
             const gridScript = join(getScriptsDir(), "grid_overlay.py");
             try {
-                // Pass screen width so the grid renders labels in SCREEN-space coords.
-                // The LLM then reads the labels and emits clicks the runtime applies 1:1.
-                await execFileAsync("python3", [gridScript, tmpPng, tmpJpg, "160", String(screenWidth)], {
+                // Labels stay in image pixels: os_click scales x/y from this
+                // 1280-wide image to the screen, so screen-point labels got scaled twice.
+                await execFileAsync("python3", [gridScript, tmpPng, tmpJpg, "160"], {
                     timeout: 5000,
                 });
             } catch {
@@ -539,7 +539,7 @@ export const osType: ToolDefinition = {
                     key: {
                         type: "string",
                         description:
-                            "Special key to press: return, tab, escape, delete, space, up, down, left, right, f1-f12",
+                            "Special key to press: return, tab, escape, delete (backspace), forward delete, space, up, down, left, right, home, end, pageup, pagedown, f1-f12",
                     },
                     combo: {
                         type: "string",
@@ -578,47 +578,19 @@ export const osType: ToolDefinition = {
             }
             const modStr = modifiers.length > 0 ? ` using {${modifiers.join(", ")}}` : "";
 
-            // Check if key is a special key name or a character
-            const specialKeys = [
-                "return",
-                "tab",
-                "escape",
-                "delete",
-                "space",
-                "up arrow",
-                "down arrow",
-                "left arrow",
-                "right arrow",
-            ];
-            const mappedKey =
-                key === "up"
-                    ? "up arrow"
-                    : key === "down"
-                      ? "down arrow"
-                      : key === "left"
-                        ? "left arrow"
-                        : key === "right"
-                          ? "right arrow"
-                          : key;
-
-            if (specialKeys.includes(mappedKey)) {
-                script = `tell application "System Events"\n  key code ${getKeyCode(mappedKey)}${modStr}\nend tell\ndelay ${delaySec}`;
+            const code = keyCode(key);
+            if (code !== undefined) {
+                script = `tell application "System Events"\n  key code ${code}${modStr}\nend tell\ndelay ${delaySec}`;
+            } else if (key.length === 1) {
+                script = `tell application "System Events"\n  keystroke "${key.replace(/[\\"]/g, "\\$&")}"${modStr}\nend tell\ndelay ${delaySec}`;
             } else {
-                script = `tell application "System Events"\n  keystroke "${key}"${modStr}\nend tell\ndelay ${delaySec}`;
+                return JSON.stringify({ success: false, error: unknownKey(key) });
             }
         } else if (input.key) {
-            const key = (input.key as string).toLowerCase();
-            const mappedKey =
-                key === "up"
-                    ? "up arrow"
-                    : key === "down"
-                      ? "down arrow"
-                      : key === "left"
-                        ? "left arrow"
-                        : key === "right"
-                          ? "right arrow"
-                          : key;
-            script = `tell application "System Events"\n  key code ${getKeyCode(mappedKey)}\nend tell\ndelay ${delaySec}`;
+            const key = (input.key as string).toLowerCase().trim();
+            const code = keyCode(key);
+            if (code === undefined) return JSON.stringify({ success: false, error: unknownKey(key) });
+            script = `tell application "System Events"\n  key code ${code}\nend tell\ndelay ${delaySec}`;
         } else if (input.text) {
             // Use clipboard method for reliability (handles Unicode, emoji, special chars)
             const textToType = input.text as string;
@@ -693,32 +665,53 @@ delay ${delaySec}`;
     },
 };
 
-// Key code mapping for macOS special keys
-function getKeyCode(key: string): number {
-    const codes: Record<string, number> = {
-        return: 36,
-        tab: 48,
-        escape: 53,
-        delete: 51,
-        space: 49,
-        "up arrow": 126,
-        "down arrow": 125,
-        "left arrow": 123,
-        "right arrow": 124,
-        f1: 122,
-        f2: 120,
-        f3: 99,
-        f4: 118,
-        f5: 96,
-        f6: 97,
-        f7: 98,
-        f8: 100,
-        f9: 101,
-        f10: 109,
-        f11: 103,
-        f12: 111,
-    };
-    return codes[key] ?? 36; // default to Return
+// macOS virtual key codes. Unknown names are an error, never a guess: a
+// Return fallback once turned "esc" into confirming the dialog it meant to close.
+const KEY_CODES: Record<string, number> = {
+    return: 36,
+    enter: 36,
+    tab: 48,
+    escape: 53,
+    esc: 53,
+    delete: 51,
+    backspace: 51,
+    "forward delete": 117,
+    forwarddelete: 117,
+    space: 49,
+    up: 126,
+    down: 125,
+    left: 123,
+    right: 124,
+    "up arrow": 126,
+    "down arrow": 125,
+    "left arrow": 123,
+    "right arrow": 124,
+    home: 115,
+    end: 119,
+    pageup: 116,
+    "page up": 116,
+    pagedown: 121,
+    "page down": 121,
+    f1: 122,
+    f2: 120,
+    f3: 99,
+    f4: 118,
+    f5: 96,
+    f6: 97,
+    f7: 98,
+    f8: 100,
+    f9: 101,
+    f10: 109,
+    f11: 103,
+    f12: 111,
+};
+
+function keyCode(key: string): number | undefined {
+    return Object.hasOwn(KEY_CODES, key) ? KEY_CODES[key] : undefined;
+}
+
+function unknownKey(key: string): string {
+    return `Unknown key "${key}". Use one of: ${Object.keys(KEY_CODES).join(", ")}, or a single character in a combo.`;
 }
 
 // ── OCR Helpers ───────────────────────────────
@@ -743,7 +736,9 @@ function similarity(a: string, b: string): number {
     const al = a.toLowerCase(),
         bl = b.toLowerCase();
     if (al === bl) return 1.0;
-    if (bl.includes(al) || al.includes(bl)) return 0.9;
+    // The query inside a longer OCR line counts; a short OCR fragment inside the
+    // query ("ok" in "message sent") only when it covers most of it.
+    if (bl.includes(al) || (al.includes(bl) && bl.length >= al.length * 0.6)) return 0.9;
     const dist = levenshtein(al, bl);
     return Math.max(0, 1 - dist / Math.max(al.length, bl.length, 1));
 }
@@ -813,6 +808,26 @@ async function runOcr(
 }
 
 /** Find best-matching OCR element for a given label. Returns null if none found above threshold. */
+// Text split across OCR elements (one per word on Windows, one per wrapped
+// line on macOS) still matches: test the query against all of it joined in the
+// helper's reading order. Returns the element where the match starts.
+function matchAcrossElements(elements: OcrElement[], label: string): OcrElement | null {
+    const norm = (t: string) => t.toLowerCase().replace(/\s+/g, " ").trim();
+    const q = norm(label);
+    if (!q.includes(" ")) return null;
+    let joined = "";
+    const starts: number[] = [];
+    for (const el of elements) {
+        starts.push(joined.length);
+        joined += `${norm(el.text)} `;
+    }
+    const at = joined.indexOf(q);
+    if (at < 0) return null;
+    let i = 0;
+    while (i + 1 < starts.length && starts[i + 1] <= at) i++;
+    return elements[i];
+}
+
 function findBestMatch(
     elements: OcrElement[],
     label: string,
@@ -824,7 +839,10 @@ function findBestMatch(
     for (const el of elements) {
         // Try exact substring match first (highest confidence)
         const textLower = el.text.toLowerCase();
-        if (textLower === labelLower || textLower.includes(labelLower) || labelLower.includes(textLower)) {
+        if (
+            textLower.includes(labelLower) ||
+            (labelLower.includes(textLower) && textLower.length >= labelLower.length * 0.6)
+        ) {
             const exactScore = textLower === labelLower ? 1.0 : 0.85;
             if (exactScore > (best?.score ?? threshold)) {
                 best = { element: el, score: exactScore };
@@ -839,8 +857,14 @@ function findBestMatch(
             best = { element: el, score };
         }
     }
+    if (!best || best.score < 0.8) {
+        const spanned = matchAcrossElements(elements, label);
+        if (spanned) return { element: spanned, score: 0.8 };
+    }
     return best;
 }
+
+export { findBestMatch as _findBestMatchForTest };
 
 /** Perform a native click at logical screen coordinates. */
 async function nativeClick(x: number, y: number): Promise<boolean> {
@@ -1511,7 +1535,8 @@ export const osVisualVerify: ToolDefinition = {
             return JSON.stringify({ error: "os_visual_verify is only available on macOS." });
         }
 
-        const expectText = input.expect_text as string | undefined;
+        // expected_text is what older prompts told the model to pass.
+        const expectText = (input.expect_text ?? input.expected_text) as string | undefined;
         const expectGone = input.expect_gone as string | undefined;
         const description = (input.description as string) || "task completion";
 

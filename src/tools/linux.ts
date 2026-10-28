@@ -179,12 +179,12 @@ export const linuxOsScreenshot: ToolDefinition = {
             // Add grid overlay using Python + Pillow
             const gridScript = join(getScriptsDir(), "grid_overlay.py");
             try {
-                await execFileAsync("python3", [gridScript, tmpPng, tmpJpg, "200", String(screen.width)], {
+                await execFileAsync("python3", [gridScript, tmpPng, tmpJpg, "200"], {
                     timeout: 5000,
                 });
             } catch {
                 try {
-                    await execFileAsync("python", [gridScript, tmpPng, tmpJpg, "200", String(screen.width)], {
+                    await execFileAsync("python", [gridScript, tmpPng, tmpJpg, "200"], {
                         timeout: 5000,
                     });
                 } catch {

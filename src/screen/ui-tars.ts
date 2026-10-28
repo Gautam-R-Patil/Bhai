@@ -151,8 +151,9 @@ export async function downscaleForVision(
         const height = meta.height ?? fallback.height;
         if (Math.max(width, height) <= maxSide && !opts.jpeg) return { ...fallback, width, height };
         const pipeline = sharp(input).resize({ width: maxSide, height: maxSide, fit: "inside", withoutEnlargement: true });
-        const out = await (opts.jpeg ? pipeline.jpeg({ quality: 90 }) : pipeline.png()).toBuffer({ resolveWithObject: true });
-        return { buf: out.data, width: out.info.width, height: out.info.height, mime: opts.jpeg ? "image/jpeg" : "image/png" };
+        const asJpeg = opts.jpeg || isJpeg; // a resized JPEG as PNG is ~3x bigger
+        const out = await (asJpeg ? pipeline.jpeg({ quality: 90 }) : pipeline.png()).toBuffer({ resolveWithObject: true });
+        return { buf: out.data, width: out.info.width, height: out.info.height, mime: asJpeg ? "image/jpeg" : "image/png" };
     } catch {
         return fallback; // sharp missing/failed — send as-is
     }
@@ -446,72 +447,4 @@ export async function isUITarsHealthy(
 /** Clears the health-probe cache (e.g. after a model is re-pulled). */
 export function clearUITarsHealthCache(): void {
     _healthCache.clear();
-}
-
-/**
- * Boot-time self-heal for the Full tier. A box can qualify as Full (GPU/Apple
- * Silicon + RAM + disk) yet have UI-TARS un-pulled — e.g. set up outside the
- * full installer wizard, or a pull that failed. In that state tier-5 silently
- * skips and grounding leans on the cloud_grounding tier instead of free local
- * UI-TARS. Surface it clearly, and optionally kick off a background pull.
- *
- * Called once at boot (non-blocking). Only acts when profile is "full".
- * Only warns by default; auto-pulls (~4.7GB) when ATLAS_UI_TARS_AUTOPULL=true
- * (ATLAS_NO_UI_TARS_AUTOPULL=true still forces it off).
- */
-export async function ensureUITarsForFullTier(profile: string): Promise<void> {
-    if (profile !== "full") return;
-    const host = process.env.OLLAMA_HOST || "http://127.0.0.1:11434";
-    const model = process.env.ATLAS_UI_TARS_TAG || DEFAULT_UI_TARS_TAG;
-
-    const avail = await isUITarsAvailable({ host, model }).catch(() => ({ available: false, reason: "probe_failed" }));
-    if (avail.available) {
-        // Pulled + available → warm it now (fire-and-forget) so the model is
-        // resident in RAM (keep_alive 30m) before the user's first click, turning
-        // the cold ~5GB-reload latency into a one-time boot cost instead of a
-        // per-first-click penalty. isUITarsHealthy doubles as the warm-up + the
-        // broken-quant smoke test. Skip with ATLAS_NO_UITARS_HEALTHCHECK.
-        if (process.env.ATLAS_NO_UITARS_HEALTHCHECK !== "true") {
-            void isUITarsHealthy({ host, model }).then((h) => {
-                if (h.healthy) {
-                    console.log("🔧 [vision-nav] UI-TARS warmed at boot (resident 30m) — first click will be fast.");
-                } else {
-                    console.warn(`⚠️  [vision-nav] UI-TARS pulled but unhealthy at boot (${h.reason}) — clicks fall back to cloud grounding.`);
-                }
-            }).catch(() => {});
-        }
-        return; // healthy Full — nothing to do
-    }
-
-    // Ollama not even installed → a different (install-time) problem; the
-    // capability detector already notes that. Only act on model_not_pulled.
-    if (avail.reason !== "model_not_pulled") return;
-
-    // OPT-IN (~4.7GB download, ~5GB resident while warm): only auto-pull when
-    // ATLAS_UI_TARS_AUTOPULL=true. ATLAS_NO_UI_TARS_AUTOPULL=true still forces off.
-    if (process.env.ATLAS_UI_TARS_AUTOPULL === "true" && process.env.ATLAS_NO_UI_TARS_AUTOPULL !== "true") {
-        const hostCheck = validateOllamaHost(host);
-        if (!hostCheck.ok) return;
-        // DETACHED background pull — a plain child dies when the bot process
-        // exits, which orphaned multi-GB pulls mid-download. spawnDetachedLogged
-        // reparents to init + lockfile-guards against double-spawn. `ollama pull`
-        // is resumable, so a partial from a prior run continues. No success
-        // callback (detached can't call back) — the 60s avail-cache TTL means
-        // the next grounding call re-probes /api/tags and picks it up.
-        const { spawnDetachedLogged } = await import("./spawn-detached.js");
-        const r = spawnDetachedLogged("ui-tars-pull", "ollama", ["pull", model]);
-        if (r === "started") {
-            console.log(`🔧 [vision-nav] Full tier but UI-TARS not pulled — pulling ${model} in background (~4.7GB, detached). Local grounding activates once it completes.`);
-        } else if (r === "locked") {
-            console.log(`🔧 [vision-nav] UI-TARS pull already in progress (background).`);
-        } else {
-            console.warn(`⚠️  [vision-nav] Could not start UI-TARS auto-pull. Run manually: \`ollama pull ${model}\`.`);
-        }
-    } else {
-        console.warn(
-            `⚠️  [vision-nav] Full tier but UI-TARS not pulled (auto-pull is opt-in: ` +
-            `ATLAS_UI_TARS_AUTOPULL=true). Clicks use cloud grounding. Enable local grounding: ` +
-            `\`ollama pull ${model}\`.`,
-        );
-    }
 }

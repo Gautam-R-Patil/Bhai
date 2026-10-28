@@ -251,35 +251,35 @@ const CATEGORIES: Record<string, CategoryDef> = {
     },
     os_control: {
         description:
-            "Controlling the computer's operating system, taking screenshots of the desktop, clicking on screen elements by coordinates or OCR text or accessibility-tree id, typing into OS applications, interacting with native desktop apps, visual verification of UI elements, screen capture, mouse control, keyboard input automation, macOS Automator, AppleScript, PowerShell automation, accessibility tree inspection, fast cross-OS element lookup, structured single-action OS calls with percentage coords, GUI grounding via local vision models (OmniParser, UI-TARS), keyboard shortcuts for apps, hierarchical computer use for complex multi-step desktop automation tasks.",
+            "Controlling the computer's operating system, taking screenshots of the desktop, clicking on screen elements by coordinates or OCR text or accessibility-tree id, typing into OS applications, interacting with native desktop apps, visual verification of UI elements, screen capture, mouse control, keyboard input automation, macOS Automator, AppleScript, PowerShell automation, accessibility tree inspection, fast cross-OS element lookup, structured single-action OS calls with percentage coords, GUI grounding by description with cloud vision, keyboard shortcuts for apps, hierarchical computer use for complex multi-step desktop automation tasks.",
         tools: [
-            // ── Phase 4/5 (PRIMARY): cascade-based smart click ──
+            // Order matters: the first tool gets a reserved slot, then only 12 more
+            // per category are offered (MAX_TOOLS_PER_CATEGORY), and the classifier
+            // sees the first 6 names. Keep what the rules-mac prompt and the
+            // verify-before-done gate rely on inside that window.
             "os_smart_click",
-            // ── Phase 2: cross-OS AX-based element inspection + click-by-id ──
             "os_inspect",
             "os_click_id",
-            // ── Phase 1: structured single-action API with percentage coords (cross-OS) ──
-            "os_computer_action",
-            // ── Phase 3: vision grounding when AX is empty (Canvas apps, etc.) ──
-            "os_visualize",
-            "os_ground",
-            // ── Legacy macOS path (still useful for AppleScript-specific tasks) ──
-            "os_nav",
-            "os_click_element",
-            "apple_script",
+            "os_type",
             "os_screenshot",
             "os_click",
-            "os_type",
-            "os_context",
-            "os_ocr_click",
             "os_visual_verify",
+            "os_keyboard_shortcuts",
+            "os_context",
+            "apple_script",
+            "os_computer_action",
+            "os_zoom_region",
+            "os_ocr_click",
+            // Rarely needed / legacy paths, offered when usage history ranks them up.
+            // (os_visualize / os_ground aren't offered: they need local vision
+            // models that no install ships any more; os_smart_click covers them.)
+            "os_nav",
+            "os_click_element",
             "set_brightness",
             "send_screenshot",
             "os_accessibility_tree",
-            "os_keyboard_shortcuts",
             "os_scan",
             "os_multi_action",
-            "os_zoom_region",
             // Windows equivalents (only one platform is loaded at a time)
             "powershell_script",
             "win_os_screenshot",
@@ -290,8 +290,8 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "win_os_visual_verify",
             "win_set_brightness",
             "win_send_screenshot",
-            // Hierarchical computer use agent
-            "computer_use",
+            // computer_use (computer-use-agent.ts) is NOT offered: it plans blind,
+            // types unparsed plan lines into the focused app and always reports success.
         ],
     },
     system_controls: {

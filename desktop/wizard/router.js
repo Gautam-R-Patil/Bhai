@@ -5,9 +5,9 @@
 
 // Order note: signin + permissions intentionally come AFTER install — the user
 // completes setup/installation first, then signs in and grants permissions right
-// before the Ready Hub. install has no dependency on either (buildPhaseList only
-// needs the vision-tier choice, which still precedes install).
-const ALL_STEPS = ["awakening", "welcome", "terms", "profile", "persona", "personalize", "vision-tier", "install", "signin", "permissions"];
+// before the Ready Hub. install has no dependency on either. (There is no
+// vision-tier step: every install gets the same light desktop-control setup.)
+const ALL_STEPS = ["awakening", "welcome", "terms", "profile", "persona", "personalize", "install", "signin", "permissions"];
 
 function envFlag(name) {
     try { if (typeof process !== "undefined" && process.env && process.env[name] === "true") return true; }
@@ -68,23 +68,12 @@ function getSteps(state) {
     out.push("profile");
     out.push("persona");       // ← W2: persona specialization step
     out.push("personalize");
-    out.push("vision-tier");
     if (s.isReconfigure || needsInstall(s)) out.push("install");
     // Post-install: sign in (required to finish — no skip) then grant permissions.
     // Permissions are macOS-only; Windows grants at OS level so the step is omitted.
     if (!signedIn || s.isReconfigure) out.push("signin");
     if (s.platform !== "win32") out.push("permissions");
     return { steps: out, header };
-}
-
-function needsVisionTierChoice(s) {
-    // Show the step ONLY when the user hasn't picked a tier yet. Once they
-    // pick, the install step (gated by needsInstall + getResumeList) handles
-    // dep installation — including the case where the user quits mid-install
-    // and relaunches. Re-prompting the user when their dep happens to be
-    // pending creates a UX trap: they may change their mind and orphan the
-    // partially-installed dep.
-    return !s.visionTierChoice;
 }
 
 function next(i, s) { return (i + 1 < s.length ? i + 1 : -1); }

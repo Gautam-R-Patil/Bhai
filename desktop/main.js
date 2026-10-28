@@ -3809,31 +3809,11 @@ function registerIPC() {
         return {};
     }
 
-    // Inject the user's persisted choices (vision tier etc) into the detection
-    // state so buildPhaseList includes the optional ML-dep phases when warranted.
-    // Validates the stored string against the known tier set (a corrupted prefs
-    // file with e.g. "ultra" must NOT pass through as-is), then caps it against
-    // the freshly-detected max-supported tier so a prefs file copied from a
-    // more capable machine doesn't install Full-tier deps on a Lite-spec box.
-    function augmentStateWithChoices(state) {
-        try {
-            const prefs = store.get("prefs") || {};
-            const stored = prefs.visionTierChoice;
-            const VALID = new Set(["lite", "standard", "full"]);
-            if (!stored || !VALID.has(stored)) return state;
-            const TIER_RANK = { lite: 0, standard: 1, full: 2 };
-            const max = (state.visionTier && state.visionTier.max) || "lite";
-            const cappedMax = VALID.has(max) ? max : "lite";
-            state.visionTierChoice = TIER_RANK[stored] <= TIER_RANK[cappedMax] ? stored : cappedMax;
-        } catch { /* ignore */ }
-        return state;
-    }
-
     ipcMain.handle("setup:install", async (_, options) => {
         const ctx = buildInstallCtx(mainWindow, options);
         try {
             const { runDetection, buildPhaseList, runPhases } = requireInstaller();
-            const state = augmentStateWithChoices(await runDetection(buildDetectionDeps()));
+            const state = await runDetection(buildDetectionDeps());
             const phases = buildPhaseList(state);
             const res = await runPhases(phases, ctx);
             if (res.status === "complete") {
@@ -3858,7 +3838,7 @@ function registerIPC() {
     ipcMain.handle("setup:retry-install-phase", async (_, phaseId) => {
         try {
             const { runDetection, buildPhaseList, runPhases, getResumeList, readSetupState } = requireInstaller();
-            const state = augmentStateWithChoices(await runDetection(buildDetectionDeps()));
+            const state = await runDetection(buildDetectionDeps());
             const full = buildPhaseList(state);
             const idx = full.findIndex((p) => p.id === phaseId);
             if (idx < 0) return { success: false, error: "Unknown phase: " + phaseId };
@@ -3888,7 +3868,7 @@ function registerIPC() {
     ipcMain.handle("setup:resume-install", async () => {
         try {
             const { runDetection, buildPhaseList, runPhases, getResumeList, readSetupState } = requireInstaller();
-            const state = augmentStateWithChoices(await runDetection(buildDetectionDeps()));
+            const state = await runDetection(buildDetectionDeps());
             const full = buildPhaseList(state);
             const remaining = getResumeList(full, readSetupState(DATA_DIR));
             const res = await runPhases(remaining, buildInstallCtx(mainWindow, resolveWorkspaceOptions()));
@@ -3929,11 +3909,10 @@ function registerIPC() {
     ipcMain.handle("setup:get-phase-ids", async () => {
         try {
             const { runDetection, buildPhaseList } = requireInstaller();
-            const state = augmentStateWithChoices(await runDetection(buildDetectionDeps()));
+            const state = await runDetection(buildDetectionDeps());
             state.installed = {};
-            state.visionDeps = {};
             const ids = buildPhaseList(state).map((p) => p.id);
-            return { success: true, ids: ids, tier: state.visionTierChoice || "lite" };
+            return { success: true, ids: ids };
         } catch (err) {
             return { success: false, error: err.message };
         }
@@ -4141,29 +4120,6 @@ function registerIPC() {
     ipcMain.handle("setup:detect", async () => {
         const { runDetection } = requireInstaller();
         const state = await runDetection(buildDetectionDeps());
-        // Carry forward any tier choice the user previously made — drives both
-        // pre-selection in the vision-tier card UI and conditional phase
-        // building. Apply the same cap-against-hardware logic as
-        // augmentStateWithChoices so a prefs file copied from a more capable
-        // machine doesn't pre-select an unsupported card. Persist the capped
-        // value back so reads from prefs stay in sync with reality.
-        try {
-            const prefs = store.get("prefs") || {};
-            const stored = prefs.visionTierChoice;
-            const VALID = new Set(["lite", "standard", "full"]);
-            if (stored && VALID.has(stored)) {
-                const TIER_RANK = { lite: 0, standard: 1, full: 2 };
-                const detMax = (state.visionTier && state.visionTier.max) || "lite";
-                const cap = VALID.has(detMax) ? detMax : "lite";
-                if (TIER_RANK[stored] > TIER_RANK[cap]) {
-                    state.visionTierChoice = cap;
-                    prefs.visionTierChoice = cap;
-                    store.set("prefs", prefs);
-                } else {
-                    state.visionTierChoice = stored;
-                }
-            }
-        } catch { /* ignore */ }
         state.overlayShortcut = getActiveOverlayShortcut();
         state.overlayShortcutLabel = shortcutLabel(state.overlayShortcut);
         return state;
@@ -4442,30 +4398,6 @@ function registerIPC() {
         }
     });
 
-    // Setup: persist user's vision-tier choice (lite/standard/full).
-    // The choice is read by buildPhaseList in installer/phases.js to decide
-    // whether to push Ollama / UI-TARS / OmniParser phases into the install run.
-    // Also mirrored into .env.enc as ATLAS_VISION_PROFILE so the bot's
-    // capability-detector respects the user's selection on boot.
-    ipcMain.handle("setup:save-vision-tier", async (_evt, payload) => {
-        try {
-            const tier = (payload && payload.tier) || "lite";
-            if (!["lite", "standard", "full"].includes(tier)) {
-                return { success: false, error: "Invalid tier: " + tier };
-            }
-            const prefs = store.get("prefs") || {};
-            prefs.visionTierChoice = tier;
-            store.set("prefs", prefs);
-            try {
-                saveEnvKVs({ ATLAS_VISION_PROFILE: tier });
-            } catch (e) {
-                console.warn("[setup:save-vision-tier] env mirror failed:", e.message);
-            }
-            return { success: true, tier: tier };
-        } catch (err) {
-            return { success: false, error: err.message };
-        }
-    });
 
 
     // App info

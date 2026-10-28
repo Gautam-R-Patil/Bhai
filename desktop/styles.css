@@ -3978,68 +3978,6 @@ body[data-step] .signin-cta {
 .perm-row.skipped .perm-status { color: var(--warn); }
 
 /* ────────────────────────────────────────────────────────────────
-   VISION TIER
-   ──────────────────────────────────────────────────────────────── */
-.tier-list { display: flex; flex-direction: column; gap: 10px; }
-.tier {
-    background: var(--surface-1);
-    border: 1px solid var(--hairline-1);
-    border-radius: 16px;
-    padding: 18px 20px;
-    cursor: pointer;
-    transition: all var(--t-quick) ease;
-    display: grid;
-    grid-template-columns: 22px 1fr auto;
-    column-gap: 16px;
-    align-items: flex-start;
-}
-.tier:hover { background: var(--surface-2); border-color: var(--hairline-2); }
-.tier.active {
-    background: var(--surface-2);
-    border-color: rgba(196,140,255,0.5);
-    box-shadow: 0 0 0 1px rgba(196,140,255,0.3);
-}
-.tier-radio {
-    width: 18px; height: 18px;
-    border-radius: 50%;
-    border: 1.5px solid var(--hairline-3);
-    margin-top: 2px;
-    transition: all var(--t-quick) ease;
-    position: relative;
-}
-.tier.active .tier-radio { border-color: rgba(196,140,255,0.7); }
-.tier.active .tier-radio::after {
-    content: ""; position: absolute; inset: 3px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, #6eb6ff, #c48cff);
-}
-.tier-body { min-width: 0; }
-.tier-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
-.tier-name {
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--ink-0);
-    margin: 0;
-    letter-spacing: -0.015em;
-}
-.tier-tag {
-    font-size: 10.5px;
-    font-weight: 600;
-    letter-spacing: 0.1em;
-    color: var(--ink-3);
-    text-transform: uppercase;
-}
-.tier-desc { font-size: 13.5px; color: var(--ink-2); margin: 0; line-height: 1.5; }
-.tier-size {
-    font-size: 12.5px;
-    color: var(--ink-3);
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-    align-self: center;
-    padding-top: 2px;
-}
-
-/* ────────────────────────────────────────────────────────────────
    INSTALL
    ──────────────────────────────────────────────────────────────── */
 .install-hero {
@@ -4599,11 +4537,10 @@ body[data-step] .signin-cta {
 /* Glyph halo + checkbox check stay on the iridescent gradient — looks
    good against both surfaces. Don't override. */
 
-/* Active states (persona, tier, radio, input focus, mm border) — use
+/* Active states (persona, radio, input focus, mm border) — use
    deeper violet on light so the selection actually reads. */
 @media (prefers-color-scheme: light) {
-    :root:not([data-theme="dark"]) .persona-card.active,
-    :root:not([data-theme="dark"]) .tier.active {
+    :root:not([data-theme="dark"]) .persona-card.active {
         border-color: rgba(105,40,185,0.55);
         box-shadow: 0 0 0 1px rgba(105,40,185,0.35), 0 12px 28px rgba(105,40,185,0.10);
     }
@@ -4614,9 +4551,6 @@ body[data-step] .signin-cta {
     }
     :root:not([data-theme="dark"]) .radio-row.active .radio-mark { border-color: rgba(105,40,185,0.7); }
     :root:not([data-theme="dark"]) .radio-row.active .radio-mark::after { background: linear-gradient(135deg, #1464d2, #6928b9); }
-    :root:not([data-theme="dark"]) .tier.active .tier-radio { border-color: rgba(105,40,185,0.7); }
-    :root:not([data-theme="dark"]) .tier.active .tier-radio::after { background: linear-gradient(135deg, #1464d2, #6928b9); }
-    :root:not([data-theme="dark"]) .tier.active .tier-name em,
     :root:not([data-theme="dark"]) .persona-card.active .persona-caps li::before { background: linear-gradient(135deg, #1464d2, #6928b9); }
     :root:not([data-theme="dark"]) .chip.active {
         background: rgba(105,40,185,0.12);
@@ -4646,8 +4580,7 @@ body[data-step] .signin-cta {
     :root:not([data-theme="dark"]) .phase.running .phase-dot::after { background: linear-gradient(135deg, #1464d2, #6928b9); }
     :root:not([data-theme="dark"]) ::selection { background: rgba(105,40,185,0.22); color: var(--ink-0); }
 }
-:root[data-theme="light"] .persona-card.active,
-:root[data-theme="light"] .tier.active {
+:root[data-theme="light"] .persona-card.active {
     border-color: rgba(105,40,185,0.55);
     box-shadow: 0 0 0 1px rgba(105,40,185,0.35), 0 12px 28px rgba(105,40,185,0.10);
 }
@@ -4658,9 +4591,6 @@ body[data-step] .signin-cta {
 }
 :root[data-theme="light"] .radio-row.active .radio-mark { border-color: rgba(105,40,185,0.7); }
 :root[data-theme="light"] .radio-row.active .radio-mark::after { background: linear-gradient(135deg, #1464d2, #6928b9); }
-:root[data-theme="light"] .tier.active .tier-radio { border-color: rgba(105,40,185,0.7); }
-:root[data-theme="light"] .tier.active .tier-radio::after { background: linear-gradient(135deg, #1464d2, #6928b9); }
-:root[data-theme="light"] .tier.active .tier-name em,
 :root[data-theme="light"] .persona-card.active .persona-caps li::before { background: linear-gradient(135deg, #1464d2, #6928b9); }
 :root[data-theme="light"] .chip.active {
     background: rgba(105,40,185,0.12);
@@ -4708,7 +4638,6 @@ body[data-step] .step-profile,
 body[data-step] .step-terms,
 body[data-step] .step-personalize,
 body[data-step] .step-permissions,
-body[data-step] .step-vision-tier,
 body[data-step] .step-install {
     padding: 0;
     background: transparent !important;

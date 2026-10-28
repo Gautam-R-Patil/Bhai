@@ -18,7 +18,7 @@ describe("Copy.get", () => {
     it("every step in the spec's beat table has a title and sub", () => {
         const steps = [
             "awakening", "terms", "signin", "profile", "persona",
-            "personalize", "permissions", "vision-tier", "install", "ready-hub",
+            "personalize", "permissions", "install", "ready-hub",
         ];
         for (const s of steps) {
             // awakening uses dynamic greeting (built in awakening.js); allow missing title.

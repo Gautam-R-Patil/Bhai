@@ -58,7 +58,7 @@ export const osInspect: ToolDefinition = {
                     max_elements: {
                         type: "number",
                         description:
-                            "Cap the returned element list at this many (default 100). Avoids overwhelming the LLM.",
+                            'Cap the returned element list at this many (default 60). For an element past the list, click it with os_click_id text="..." (it searches every element).',
                     },
                 },
                 required: [],
@@ -70,7 +70,7 @@ export const osInspect: ToolDefinition = {
         const pid = typeof input.pid === "number" ? input.pid : 0;
         const depth = typeof input.depth === "number" ? Math.max(1, Math.min(30, input.depth)) : 12;
         const maxElements =
-            typeof input.max_elements === "number" ? Math.max(5, Math.min(500, input.max_elements)) : 100;
+            typeof input.max_elements === "number" ? Math.max(5, Math.min(500, input.max_elements)) : 60;
 
         try {
             const dump = await dumpAccessibilityTree({ pid: pid || undefined, depth });
@@ -95,7 +95,7 @@ export const osInspect: ToolDefinition = {
             const elements = all.slice(0, maxElements);
 
             _lastInspect = {
-                elements,
+                elements: all, // os_click_id text= can match past the listed cap
                 app: dump.app,
                 pid: dump.pid,
                 timestamp: Date.now(),
@@ -105,12 +105,18 @@ export const osInspect: ToolDefinition = {
             // include passwords, account numbers, etc. if a parent app's AX implementation is
             // imperfect) stay in the in-process cache for os_click_id disambiguation but never
             // reach the LLM's prompt context.
-            const summary = elements
-                .map((e) => {
-                    const display = e.label ? truncate(e.label, 60) : `<${e.role.toLowerCase()}>`;
-                    return `[${e.id}] (${e.role}) "${display}" at (${e.center.x},${e.center.y})${e.enabled ? "" : " [disabled]"}`;
-                })
-                .join("\n");
+            // Also capped by bytes: past ~8KB the agent swaps the whole result for a
+            // 2KB preview (non-Latin labels hit that well before 60 elements).
+            const lines: string[] = [];
+            let bytes = 0;
+            for (const e of elements) {
+                const display = e.label ? truncate(e.label, 60) : `<${e.role.toLowerCase()}>`;
+                const line = `[${e.id}] (${e.role}) "${display}" at (${e.center.x},${e.center.y})${e.enabled ? "" : " [disabled]"}`;
+                bytes += Buffer.byteLength(line) + 1;
+                if (bytes > 6000) break;
+                lines.push(line);
+            }
+            const summary = lines.join("\n");
 
             // Phase 2 finding: empty AT-SPI tree on Linux often means Electron/Chromium without
             // --force-renderer-accessibility. Surface this as a hint.
@@ -126,9 +132,9 @@ export const osInspect: ToolDefinition = {
                 pid: dump.pid,
                 elapsed_ms: dump.elapsedMs,
                 source: dump.source,
-                element_count: elements.length,
+                element_count: lines.length,
                 total_count: all.length,
-                truncated: all.length > maxElements,
+                truncated: all.length > lines.length,
                 elements: summary,
                 hint,
                 tip: `Use os_click_id with id=<number> to click an element. Or query by text: os_click_id with text="<query>". Cache TTL: ${Math.round(INSPECT_CACHE_TTL_MS / 1000)}s.`,

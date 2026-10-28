@@ -31,17 +31,17 @@ describe("capability detector — override via env", () => {
         expect(r.profile).toBe("standard");
     });
 
-    it("respects ATLAS_VISION_PROFILE=full override", async () => {
+    it("reads a stored 'full' (the retired tier) as the standard setup", async () => {
         process.env.ATLAS_VISION_PROFILE = "full";
         const r = await detectCapabilities({ force: true });
-        expect(r.profile).toBe("full");
+        expect(r.profile).toBe("standard");
     });
 
     it("ignores invalid override values", async () => {
         process.env.ATLAS_VISION_PROFILE = "rainbow";
         const r = await detectCapabilities({ force: true });
-        // No override → falls back to detected profile, which is one of the 3 valid values
-        expect(["lite", "standard", "full"] as VisionProfile[]).toContain(r.profile);
+        // No override → the one default setup
+        expect(r.profile).toBe("standard" satisfies VisionProfile);
     });
 });
 
@@ -138,44 +138,14 @@ describe(
     { timeout: 30_000 },
 );
 
-describe(
-    "capability detector — profile picker correctness",
-    () => {
-        // We cannot easily mock the per-OS probes, but we can verify the
-        // overall report consistency by checking the picked profile against
-        // its declared min specs.
-        beforeEach(() => {
-            clearCapabilityCache();
-            delete process.env.ATLAS_VISION_PROFILE;
-        });
+describe("capability detector — default", () => {
+    beforeEach(() => {
+        clearCapabilityCache();
+        delete process.env.ATLAS_VISION_PROFILE;
+    });
 
-        it("picked 'full' profile implies discrete GPU or apple-silicon AND ram>=12 AND disk>=6", async () => {
-            const r = await detectCapabilities({ force: true });
-            if (r.profile === "full") {
-                expect(["discrete", "apple-silicon"]).toContain(r.gpu);
-                expect(r.ramGB).toBeGreaterThanOrEqual(12);
-                expect(r.diskFreeGB).toBeGreaterThanOrEqual(6);
-            }
-        });
-
-        it("picked 'standard' profile implies ram>=8 AND cpu bench>=200 AND disk>=2", async () => {
-            const r = await detectCapabilities({ force: true });
-            if (r.profile === "standard") {
-                expect(r.ramGB).toBeGreaterThanOrEqual(8);
-                expect(r.cpuBenchScore).toBeGreaterThanOrEqual(200);
-                expect(r.diskFreeGB).toBeGreaterThanOrEqual(2);
-            }
-        });
-
-        it("never picks a profile that requires more than the current report supports", async () => {
-            const r = await detectCapabilities({ force: true });
-            // If we picked 'full' we must satisfy its constraints AND 'standard's constraints
-            if (r.profile === "full") {
-                expect(r.ramGB).toBeGreaterThanOrEqual(8);
-            }
-            // Always: profile is one of the 3 known values
-            expect(["lite", "standard", "full"]).toContain(r.profile);
-        });
-    },
-    { timeout: 30_000 },
-);
+    it("picks the standard setup on every machine (there is no tier to choose)", async () => {
+        const r = await detectCapabilities({ force: true });
+        expect(r.profile).toBe("standard");
+    }, 30_000);
+});

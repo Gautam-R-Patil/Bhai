@@ -5,7 +5,6 @@
     const ICON = { pending: "\u25CB", running: "\u25D0", done: "\u2713", failed: "\u2715" };
     const PHASE_IDS = [
         "node", "playwright-chromium", "embedding-model", "sox",
-        "ollama", "ui-tars-model", "omniparser-deps",
         "data-dir", "workspace", "setup-state-finalize",
     ];
     function clearChildren(el) {
@@ -19,9 +18,6 @@
             "playwright-chromium":window.Copy.get("install", "phase_playwright"),
             "embedding-model":    window.Copy.get("install", "phase_embedding"),
             "sox":                window.Copy.get("install", "phase_sox"),
-            "ollama":             window.Copy.get("install", "phase_ollama"),
-            "ui-tars-model":      window.Copy.get("install", "phase_vision_model"),
-            "omniparser-deps":    window.Copy.get("install", "phase_vision_deps"),
             "data-dir":           window.Copy.get("install", "phase_data_dir"),
             "workspace":          window.Copy.get("install", "phase_workspace"),
             "setup-state-finalize": window.Copy.get("install", "phase_finalize"),
@@ -147,10 +143,10 @@
         let failedId = null;
 
         // The phases to render. Start with the hardcoded fallback so the list
-        // paints IMMEDIATELY, then swap to the tier-accurate set once the IPC
+        // paints IMMEDIATELY, then swap to the detected set once the IPC
         // resolves (setupGetPhaseIds runs a ~1-3s detection — don't block paint
-        // on it). The IPC returns the FULL tier list (lite=7/standard=8/full=10),
-        // not the install-time remainder, so completed phases still render.
+        // on it). The IPC returns the FULL list, not the install-time
+        // remainder, so completed phases still render.
         let phaseIds = PHASE_IDS.slice();
 
         function renderList(running) {
@@ -175,7 +171,7 @@
         }
         renderList(null); // immediate paint with the fallback list
 
-        // Fetch the tier-accurate phase list; re-render once it lands.
+        // Fetch the detected phase list; re-render once it lands.
         if (typeof atlas.setupGetPhaseIds === "function") {
             try {
                 const r = await atlas.setupGetPhaseIds();
@@ -186,8 +182,8 @@
             } catch { /* keep fallback */ }
         }
 
-        // Decide what to show on mount, scoped to THIS tier's phases (a prior
-        // higher-tier install may have left extra markers).
+        // Decide what to show on mount, scoped to these phases (an older install
+        // may have left markers for the retired vision-tier phases).
         const isDone = function (id) { return !!(completed[id] && completed[id].completedAt); };
         const tierDoneCount = phaseIds.filter(isDone).length;
         if (tierDoneCount > 0 && tierDoneCount < phaseIds.length) {

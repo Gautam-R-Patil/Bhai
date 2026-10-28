@@ -114,21 +114,6 @@ const COPY = {
         "why_location":       "So I remember where you are.",
     },
 
-    "vision-tier": {
-        "eyebrow": "Sight",
-        "title": "How sharp should my eyes be?",
-        "sub": "On-device vision lets me see your screen and reason about UI. Heavier tiers see more but take longer to install.",
-        "tier_lite_name":     "Lite",
-        "tier_lite_tag":      "Snappy",
-        "tier_lite_desc":     "I'll read the text on your screen — enough to answer questions about what's there and act on the things I can identify by name. Runs anywhere.",
-        "tier_standard_name": "Standard",
-        "tier_standard_tag":  "Recommended",
-        "tier_standard_desc": "I'll also understand layouts — which thing is a button, where the form is, what belongs to what. Smoother on most apps.",
-        "tier_full_name":     "Full",
-        "tier_full_tag":      "Heavy",
-        "tier_full_desc":     "I'll see your screen pixel-precise — every icon, every widget, dense dashboards, custom interfaces. Most accurate. Needs a recent machine.",
-    },
-
     "install": {
         "eyebrow": "Assembly",
         "title": "Setting things up.",
@@ -138,9 +123,6 @@ const COPY = {
         "phase_playwright":   "Browser awareness",
         "phase_embedding":    "Memory layer",
         "phase_sox":          "Hearing",
-        "phase_ollama":       "On-device thinking",
-        "phase_vision_model": "Sight",
-        "phase_vision_deps":  "Sharper sight",
         "phase_data_dir":     "Personal vault",
         "phase_workspace":    "Workspace",
         "phase_finalize":     "Final touches",

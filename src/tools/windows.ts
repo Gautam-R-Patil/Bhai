@@ -191,12 +191,12 @@ $bmp.Dispose()
             const projectRoot = join(__dirname, "..", "..");
             const gridScript = join(projectRoot, "scripts", "grid_overlay.py");
             try {
-                await execFileAsync("python", [gridScript, tmpPng, tmpJpg, "200", String(screen.width)], {
+                await execFileAsync("python", [gridScript, tmpPng, tmpJpg, "200"], {
                     timeout: 5000,
                 });
             } catch {
                 try {
-                    await execFileAsync("python3", [gridScript, tmpPng, tmpJpg, "200", String(screen.width)], {
+                    await execFileAsync("python3", [gridScript, tmpPng, tmpJpg, "200"], {
                         timeout: 5000,
                     });
                 } catch {
@@ -603,9 +603,31 @@ function similarity(a: string, b: string): number {
     const al = a.toLowerCase(),
         bl = b.toLowerCase();
     if (al === bl) return 1.0;
-    if (bl.includes(al) || al.includes(bl)) return 0.9;
+    // The query inside a longer OCR line counts; a short OCR fragment inside the
+    // query ("ok" in "message sent") only when it covers most of it.
+    if (bl.includes(al) || (al.includes(bl) && bl.length >= al.length * 0.6)) return 0.9;
     const dist = levenshtein(al, bl);
     return Math.max(0, 1 - dist / Math.max(al.length, bl.length, 1));
+}
+
+// Text split across OCR elements (one per word on Windows, one per wrapped
+// line on macOS) still matches: test the query against all of it joined in the
+// helper's reading order. Returns the element where the match starts.
+function matchAcrossElements(elements: OcrElement[], label: string): OcrElement | null {
+    const norm = (t: string) => t.toLowerCase().replace(/\s+/g, " ").trim();
+    const q = norm(label);
+    if (!q.includes(" ")) return null;
+    let joined = "";
+    const starts: number[] = [];
+    for (const el of elements) {
+        starts.push(joined.length);
+        joined += `${norm(el.text)} `;
+    }
+    const at = joined.indexOf(q);
+    if (at < 0) return null;
+    let i = 0;
+    while (i + 1 < starts.length && starts[i + 1] <= at) i++;
+    return elements[i];
 }
 
 function findBestMatch(
@@ -619,6 +641,10 @@ function findBestMatch(
         if (score > (best?.score ?? threshold)) {
             best = { element: el, score };
         }
+    }
+    if (!best || best.score < 0.8) {
+        const spanned = matchAcrossElements(elements, label);
+        if (spanned) return { element: spanned, score: 0.8 };
     }
     return best;
 }
@@ -898,7 +924,8 @@ export const winOsVisualVerify: ToolDefinition = {
             return JSON.stringify({ error: "os_visual_verify: Windows only." });
         }
 
-        const expectText = input.expect_text as string | undefined;
+        // expected_text is what older prompts told the model to pass.
+        const expectText = (input.expect_text ?? input.expected_text) as string | undefined;
         const expectGone = input.expect_gone as string | undefined;
         const description = (input.description as string) || "task completion";
 
