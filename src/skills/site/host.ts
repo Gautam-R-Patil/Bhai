@@ -6,8 +6,10 @@
 // before the runtime acts on it, so a skill that throws, hangs, exits, runs out
 // of memory or returns garbage yields {fail} instead of taking the bot down.
 //
-// This contains crashes; it is not a security sandbox (the child can still read
-// files and use the network). Store-installed skills need review before they run.
+// Only built-in skills (<bot>/site-skills) get plain require(); every other
+// skill runs in the shim's vm context (no require, no process), and a missing
+// or bad skill.json is a load error. Node's vm is not a security boundary, so
+// store-installed skills still need review before they run.
 
 import { type ChildProcess, fork } from "node:child_process";
 import path from "node:path";

@@ -5,6 +5,7 @@
 // install, the owner's approval and a full run of the minted skill all happen
 // for real; only the model is scripted. No network, no real model.
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -418,7 +419,7 @@ describe("minting a skill from the recorded order", () => {
 });
 
 describe("minted code runs with no require, process or globals of ours", () => {
-    it("loads a minted skill in a fresh vm context, a hand-written one with require", async () => {
+    it("loads a minted skill, and a hand-written one outside the built-in dir, in a fresh vm context", async () => {
         const probe =
             "exports.step = () => ({ done: { summary: [typeof require, typeof process, typeof globalThis.process, typeof URL].join() } });";
         const results: unknown[] = [];
@@ -438,7 +439,7 @@ describe("minted code runs with no require, process or globals of ours", () => {
         }
         expect(results).toEqual([
             { done: { summary: "undefined,undefined,undefined,function" } },
-            { done: { summary: "function,object,object,function" } },
+            { done: { summary: "undefined,undefined,undefined,function" } },
         ]);
     });
 
@@ -474,11 +475,16 @@ exports.step = (phase, ctx, lib) => ({ done: { summary: [
                 host.close();
             }
         }
-        const [mintedOut, handOut] = results.map((r) => r.split(","));
-        expect(mintedOut.slice(0, 8)).toEqual(Array(8).fill("blocked"));
-        expect(mintedOut.slice(8)).toEqual(["/x", "https://x.in/r?q=dal+makhani", "2", "1249"]);
-        // Control: the same probe in a hand-written skill (plain require) does escape, so the probe is real.
-        expect(handOut[0]).toBe("ESCAPED");
+        // Minted or not, a skill outside the built-in dir gets the same vm context.
+        for (const out of results.map((r) => r.split(","))) {
+            expect(out.slice(0, 8)).toEqual(Array(8).fill("blocked"));
+            expect(out.slice(8)).toEqual(["/x", "https://x.in/r?q=dal+makhani", "2", "1249"]);
+        }
+        // Control: the same probe run in this realm does escape, so the probe is real.
+        const lib = createRequire(import.meta.url)("../../../../../scripts/site-skill-lib.cjs");
+        const m = { exports: {} as { step: (...a: unknown[]) => { done: { summary: string } } } };
+        new Function("module", "exports", probe)(m, m.exports);
+        expect(m.exports.step("search", { url: "https://x.in/a?b=2" }, lib).done.summary.split(",")[0]).toBe("ESCAPED");
     });
 });
 

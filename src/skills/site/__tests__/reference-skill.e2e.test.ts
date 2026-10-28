@@ -2,7 +2,7 @@
 // The reference skill drives the synthetic shop in headless Chromium:
 // search → options → select → confirm (consent token) → done, and the OTP path.
 // SITE_E2E_RUNS=100 for the acceptance run; plain `npm test` does 10.
-import { copyFileSync, mkdtempSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -241,7 +241,10 @@ describe("hardening: the commit guard, visible-only matches, Leave site?, richer
         copyFileSync(path.join(fixture, "skill.json"), path.join(d, "skill.json"));
         writeFileSync(
             path.join(d, "skill.cjs"),
-            `const ref = require(${JSON.stringify(path.join(fixture, "skill.cjs"))});
+            // Inlined, not require()d: a non-built-in skill runs in the vm context.
+            `const ref = (() => { const module = { exports: {} }, exports = module.exports;
+${readFileSync(path.join(fixture, "skill.cjs"), "utf8")}
+return module.exports; })();
 exports.step = async (phase, ctx) => {
     const s = ctx.snapshot;
     if (phase === "select" && new URL(s.url).pathname === "/cart" && s.elements.some((e) => e.id === "captcha" && e.checked))

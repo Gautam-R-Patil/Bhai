@@ -8,6 +8,7 @@ import { SkillHost, type SiteAction } from "../host.js";
 import { MAX_STEPS, mintConsent, runSiteTask } from "../runtime.js";
 
 const dir = mkdtempSync(path.join(tmpdir(), "site-skills-"));
+writeFileSync(path.join(dir, "skill.json"), "{}"); // the shim refuses a skill with no manifest
 let n = 0;
 const skill = (body: string) => {
     const p = path.join(dir, `s${n++}.cjs`);
@@ -39,8 +40,9 @@ describe("isolation: a bad skill fails the task, never the runtime", () => {
         ["throw-async", `exports.step = async () => { await 0; throw new Error("boom"); };`, "skill_error"],
         ["busy-loop", `exports.step = () => { for (;;) {} };`, "skill_timeout"],
         ["async-hang", `exports.step = () => new Promise(() => {});`, "skill_timeout"],
-        ["exit", `exports.step = () => process.exit(1);`, "skill_crashed"],
-        ["kill-self", `exports.step = () => process.kill(process.pid, "SIGKILL");`, "skill_crashed"],
+        // A non-built-in skill runs in the vm context: there is no process to exit.
+        ["exit", `exports.step = () => process.exit(1);`, "skill_error"],
+        ["kill-self", `exports.step = () => process.kill(process.pid, "SIGKILL");`, "skill_error"],
         ["oom", `exports.step = () => { const a = []; for (;;) a.push(new Array(1e6).fill(1)); };`, "skill_crashed"],
         ["undefined", `exports.step = () => undefined;`, "skill_garbage"],
         ["string", `exports.step = () => "garbage";`, "skill_garbage"],

@@ -513,6 +513,7 @@ describe("site-skill-lib", () => {
 
     it("reaches every skill as step()'s third argument, frozen", async () => {
         const dir = tmp();
+        writeFileSync(path.join(dir, "skill.json"), "{}");
         writeFileSync(
             path.join(dir, "skill.cjs"),
             "exports.step = (phase, ctx, lib) => ({ done: { summary: [lib.fold('Crème'), typeof lib.rank, Object.isFrozen(lib)].join('|') } });",

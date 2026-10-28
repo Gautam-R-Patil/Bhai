@@ -16,12 +16,18 @@
 // return strings. Node's vm is still not a security boundary; this is defense
 // in depth behind the minter's static gate, replay, review and the owner's
 // approval.
+//
+// Only the built-in skills shipped with the app (<bot>/site-skills, beside this
+// scripts/ dir) run with plain require(). Every other skill (user, store,
+// minted, anywhere else) runs in the vm context whatever its manifest says, and
+// a missing or unparseable skill.json is a load error, never a reason to trust.
 "use strict";
 const fs = require("node:fs");
 const nodePath = require("node:path");
 const vm = require("node:vm");
 const LIB = nodePath.join(__dirname, "site-skill-lib.cjs");
 const lib = Object.freeze(require(LIB));
+const BUILTIN_DIR = nodePath.resolve(__dirname, "..", "site-skills");
 
 // In the context. URL and URLSearchParams are read-only views: after a
 // change to searchParams, href and search are not rebuilt.
@@ -71,9 +77,17 @@ const BOOT = `(function (hostUrl, hostQs, libFactory) {
   return () => {
     const step = globalThis.module.exports.step;
     if (typeof step !== "function") return null;
-    return (phase, ctxJson) => {
+    // Sync: returns the JSON. Async: returns null and settles through
+    // settle(error, json) (strings only); the host never touches the promise.
+    return (phase, ctxJson, settle) => {
       const r = step(String(phase), parse(ctxJson), lib);
-      return stringify(r === undefined ? null : r);
+      if (r === null || (typeof r !== "object" && typeof r !== "function") || typeof r.then !== "function")
+        return stringify(r === undefined ? null : r);
+      Promise.resolve(r).then(
+        (v) => settle(null, stringify(v === undefined ? null : v)),
+        (e) => settle(String((e && e.message) || e), null),
+      );
+      return null;
     };
   };
 })`;
@@ -108,20 +122,40 @@ function loadMinted(file) {
     const run = ready();
     if (typeof run !== "function") return {};
     return {
-        step: (phase, ctxIn) => {
-            const out = run(String(phase), JSON.stringify(ctxIn ?? null));
-            if (typeof out !== "string") throw new Error("skill result is not JSON");
-            return JSON.parse(out);
-        },
+        step: (phase, ctxIn) =>
+            new Promise((resolve, reject) => {
+                const parseOut = (out) => {
+                    if (typeof out !== "string") throw new Error("skill result is not JSON");
+                    return JSON.parse(out);
+                };
+                const out = run(String(phase), JSON.stringify(ctxIn ?? null), (err, json) => {
+                    try {
+                        if (err !== null) throw new Error(String(err));
+                        resolve(parseOut(json));
+                    } catch (e) {
+                        reject(e);
+                    }
+                });
+                if (out !== null) resolve(parseOut(out));
+            }),
     };
 }
 
-function load(file) {
-    let minted = false;
+// realpath both sides: no "..", symlink or /tmp-vs-/private/tmp way in.
+function isBuiltin(file) {
     try {
-        minted = !!JSON.parse(fs.readFileSync(nodePath.join(nodePath.dirname(file), "skill.json"), "utf8")).minted;
-    } catch {}
-    return minted ? loadMinted(file) : require(file);
+        const rel = nodePath.relative(fs.realpathSync(BUILTIN_DIR), fs.realpathSync(file));
+        return !!rel && !rel.startsWith("..") && !nodePath.isAbsolute(rel);
+    } catch {
+        return false;
+    }
+}
+
+function load(file) {
+    // A missing or bad manifest throws: a load error, not a trusted skill.
+    const manifest = JSON.parse(fs.readFileSync(nodePath.join(nodePath.dirname(file), "skill.json"), "utf8"));
+    if (!manifest || typeof manifest !== "object") throw new Error("skill.json is not an object");
+    return manifest.minted || !isBuiltin(file) ? loadMinted(file) : require(file);
 }
 
 let skill;
