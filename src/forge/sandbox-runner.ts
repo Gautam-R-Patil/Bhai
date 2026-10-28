@@ -1,6 +1,6 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 
-import * as vm from "node:vm";
+import { runIsolated } from "../security/vm-isolate.js";
 import type { SynthesisTest } from "./synthesis.js";
 
 export type SandboxResult =
@@ -16,92 +16,35 @@ export interface SandboxRunOpts {
 const DEFAULT_TIMEOUT_MS = 10_000;
 
 export async function runTestInSandbox(opts: SandboxRunOpts): Promise<SandboxResult> {
-    const timeout = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     let stdout = "";
     let stderr = "";
-
-    // Bootstrap-only globals (primitives + reusable safe values). DO NOT pass
-    // host-realm constructors here — Buffer/URL/Promise/Error/etc all carry
-    // .constructor chains that resolve to the host Function ctor, enabling
-    // `Buffer.constructor("...")()` style escapes. The new vm context will
-    // get its OWN realm copies of those builtins on creation.
-    const sandbox: Record<string, unknown> = {
-        // Static value-only globals — no constructor reachable to host realm.
-        Math,
-        JSON,
-        // Static function refs only — these are safe because they don't expose
-        // a .constructor that points back to the host realm in a useful way
-        // through the normal call surface.
-        parseInt,
-        parseFloat,
-        isNaN,
-        isFinite,
-        encodeURIComponent,
-        decodeURIComponent,
-        // Pass Date.now() factory via a wrapper so host Date constructor isn't reachable.
-        // Inside the sandbox, code can still use `new Date(...)` — that resolves to the
-        // vm-realm's own Date constructor (added below by the bootstrap script).
-        console: {
-            log: (...args: unknown[]) => {
-                stdout += `${args.map((a) => String(a)).join(" ")}\n`;
-            },
-            warn: (...args: unknown[]) => {
-                stderr += `${args.map((a) => String(a)).join(" ")}\n`;
-            },
-            error: (...args: unknown[]) => {
-                stderr += `${args.map((a) => String(a)).join(" ")}\n`;
-            },
-            info: (...args: unknown[]) => {
-                stdout += `${args.map((a) => String(a)).join(" ")}\n`;
-            },
-        },
-    };
-    const ctx = vm.createContext(sandbox, {
-        name: "forge-sandbox-test",
-        codeGeneration: { strings: false, wasm: false },
-    });
-
-    // Wrap the handler so that all values it touches (Array, RegExp, Date, Promise,
-    // Error, etc) come from the new context's realm — never from the host. The
-    // wrapper also defines an "isArray" helper that does NOT expose the Array ctor.
-    const wrappedSource = `(async function __test(__input, __utils) {
-        const input = __input;
-        const utils = __utils;
+    // runIsolated hands the handler no host-realm object (a host parseInt,
+    // JSON, console fn or input object all reach the host Function via
+    // .constructor). fetch/exec refuse outright — the kernel sandbox enforces
+    // capabilities for persisted tools; this verifier sandbox has no shell/net.
+    const r = await runIsolated({
+        fn: `async function __test(input, utils, console) {
         const isArray = (x) => Array.isArray(x);
         ${opts.handlerCode}
-    })`;
-
-    try {
-        const script = new vm.Script(wrappedSource, { filename: "forge-test.vm" });
-        const testFn = script.runInContext(ctx, { timeout }) as (
-            i: Record<string, unknown>,
-            u: Record<string, unknown>,
-        ) => Promise<unknown>;
-        // Utils inside the sandbox — fetch/exec/execFile refuse outright. The
-        // kernel-sandbox in Phase 4 will enforce capabilities at the syscall
-        // level; until then, the interim verifier sandbox has no shell/net.
-        const utils = {
+    }`,
+        api: `{
             JSON,
-            fetch: async () => {
-                throw new Error("fetch denied in test sandbox (Phase 4 kernel-sandbox required for net capability)");
-            },
-            exec: async () => {
-                throw new Error("exec denied in test sandbox (Phase 4 kernel-sandbox required for exec capability)");
-            },
-            execFile: async () => {
-                throw new Error("execFile denied in test sandbox (Phase 4 kernel-sandbox required)");
-            },
+            fetch: async () => { throw new Error("fetch denied in test sandbox (Phase 4 kernel-sandbox required for net capability)"); },
+            exec: async () => { throw new Error("exec denied in test sandbox (Phase 4 kernel-sandbox required for exec capability)"); },
+            execFile: async () => { throw new Error("execFile denied in test sandbox (Phase 4 kernel-sandbox required)"); },
             fs: {},
-        };
-        const result = await Promise.race([
-            testFn(opts.input, utils),
-            new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`timeout after ${timeout}ms`)), timeout)),
-        ]);
-        return { ok: true, result, stdout, stderr };
-    } catch (err) {
-        const e = err as Error;
-        return { ok: false, error: e.message, stack: e.stack, stdout, stderr };
-    }
+        }`,
+        input: opts.input,
+        onLog: (level, line) => {
+            if (level === "log") stdout += `${line}\n`;
+            else stderr += `${line}\n`;
+        },
+        timeoutMs: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        filename: "forge-test.vm",
+    });
+    return r.ok
+        ? { ok: true, result: r.result, stdout, stderr }
+        : { ok: false, error: r.error, stack: r.stack, stdout, stderr };
 }
 
 export interface TestScore {

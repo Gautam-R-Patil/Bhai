@@ -22,11 +22,11 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { approveAndExit, enterAwaitingApproval, getPlanModeState, isAwaitingApproval } from "../../agents/plan-mode.js";
-import { ownerSaid } from "../../security/consent.js";
 import { getConvexSiteUrl } from "../../config/keys.js";
 import { getWorkspaceSubdir } from "../../config/paths.js";
 import { encryptedFetch } from "../../crypto-transport.js";
 import { auditLog } from "../../security/audit-log.js";
+import { ownerApproved } from "../../security/consent.js";
 import { getSessionToken, handleAuthError } from "../../session.js";
 import { logToolAction } from "../../utils/debug-log.js";
 import type { ToolDefinition } from "../get-current-time.js";
@@ -268,8 +268,9 @@ export const approveDesignDocsTool: ToolDefinition = {
                 error: "Not in awaiting_approval mode — nothing to approve. Either design docs haven't been generated yet, or approval already landed.",
             });
         }
-        // Must be the owner's own words, sent after the docs were put up for approval.
-        if (!ownerSaid(quote, approvalRequestedAt())) {
+        // Must be the owner's own words from their latest message, sent after
+        // the docs were put up for approval, and actually say yes.
+        if (!ownerApproved(quote, approvalRequestedAt())) {
             return JSON.stringify({
                 success: false,
                 error: "user_quote must be the user's own words from a message sent after the design docs were shown. Ask them to approve first.",

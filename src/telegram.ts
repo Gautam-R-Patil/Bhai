@@ -2,34 +2,55 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import { Bot } from "grammy";
-import type { Config } from "./config.js";
-import type { LLMClient } from "./llm.js";
-import { MODELS } from "./llm.js";
-import { runAgent, getConversationCount, clearConversation, setThinkingLevel, getConversationHistory, type MediaAttachment, type ChannelContext } from "./agent.js";
-import { handleCommand, initCommands, getThinkingLevel } from "./commands/index.js";
-import { classifyQuery } from "./memory/classifier.js";
-import { setTelegramContext } from "./tools/send-file.js";
-import { setSwarmProgress, clearSwarmProgress, setDeepResearchProgress, clearDeepResearchProgress, setLongTaskProgress, clearLongTaskProgress } from "./tools/index.js";
 import { promises as fs } from "node:fs";
-import { basename as nodeBasename, join } from "node:path";
 import { tmpdir } from "node:os";
-import { getSessionToken } from "./session.js";
-import { getConvexSiteUrl } from "./config/keys.js";
-import { encryptedFetch } from "./crypto-transport.js";
+import { join, basename as nodeBasename } from "node:path";
+import { Bot, InlineKeyboard } from "grammy";
 import {
-    getThinkingPhrase,
-    getProgressMessage,
-    getErrorMessage,
+    type ChannelContext,
+    clearConversation,
+    getConversationCount,
+    getConversationHistory,
+    type MediaAttachment,
+    runAgent,
+    setThinkingLevel,
+} from "./agent.js";
+import { resolveInterrupt } from "./agents/human-interrupt.js";
+import {
+    cancelLongTask,
+    getLongTaskStatus,
+    type LongTask as LongTaskType,
+    listActiveLongTasks,
+} from "./agents/long-task.js";
+import {
     categorizeError,
+    getErrorMessage,
+    getProgressMessage,
     getResponseTimeAck,
+    getThinkingPhrase,
+    getVoiceStagePhrase,
     getWaitPhrase,
     smartChunkMessage,
-    getVoiceStagePhrase,
 } from "./alive-ux.js";
-import { resolveInterrupt } from "./agents/human-interrupt.js";
-import { getLongTaskStatus, cancelLongTask, listActiveLongTasks, type LongTask as LongTaskType } from "./agents/long-task.js";
-import { InlineKeyboard } from "grammy";
+import { getThinkingLevel, handleCommand, initCommands } from "./commands/index.js";
+import { getConvexSiteUrl } from "./config/keys.js";
+import { getDataDir } from "./config/paths.js";
+import type { Config } from "./config.js";
+import { encryptedFetch } from "./crypto-transport.js";
+import type { LLMClient } from "./llm.js";
+import { MODELS } from "./llm.js";
+import { classifyQuery } from "./memory/classifier.js";
+import { getSessionToken } from "./session.js";
+import { batchKey } from "./telegram-batch.js";
+import {
+    clearDeepResearchProgress,
+    clearLongTaskProgress,
+    clearSwarmProgress,
+    setDeepResearchProgress,
+    setLongTaskProgress,
+    setSwarmProgress,
+} from "./tools/index.js";
+import { setTelegramContext } from "./tools/send-file.js";
 
 // ── Markdown → Telegram HTML ──────────────────
 
@@ -54,7 +75,7 @@ function sanitizeReply(text: string): string {
         .replace(/<system_log>[\s\S]*?<\/system_log>/g, "")
         .replace(/<tool_log[\s\S]*?<\/tool_log>/g, "")
         .replace(/\[Tool Result [^\]]+\]:[\s\S]*?(?=\n\n|\n[A-Z]|$)/g, "")
-        .replace(/\[SYSTEM NOTE:[^\]]*\]/g, "")  // Strip SYSTEM NOTE metadata from replies
+        .replace(/\[SYSTEM NOTE:[^\]]*\]/g, "") // Strip SYSTEM NOTE metadata from replies
         .trim();
 }
 
@@ -96,7 +117,7 @@ function markdownToTelegramHtml(text: string): string {
     html = html.replace(/^(\d+)\.\s+/gm, "$1. ");
 
     // Bullet points: * item or - item → • item
-    html = html.replace(/^[\s]*[*\-]\s+/gm, "• ");
+    html = html.replace(/^[\s]*[*-]\s+/gm, "• ");
 
     // Simple table support: convert markdown tables to readable plain text format
     // Match table rows like | cell | cell | cell |
@@ -107,7 +128,11 @@ function markdownToTelegramHtml(text: string): string {
             // Skip separator rows (|---|---|)
             if (/^[\s\-:|]+$/.test(content)) return "";
             // Convert cells to tab-separated
-            return content.split("|").map((c: string) => c.trim()).filter(Boolean).join("  │  ");
+            return content
+                .split("|")
+                .map((c: string) => c.trim())
+                .filter(Boolean)
+                .join("  │  ");
         });
         // Remove empty lines from separator removal
         html = html.replace(/\n{2,}/g, "\n");
@@ -145,9 +170,9 @@ function scrubFilePaths(text: string): string {
     return text
         .replace(/(?:\/(?:Users|home|var|tmp|opt|usr|private|etc)\/[\w.\-/]+)/g, "[internal path]")
         .replace(/(?:[A-Z]:\\[\w.\-\\]+)/g, "[internal path]")
-        .replace(/(?:at\s+[\w.]+\s+\(\/[^)]+\))/g, "")    // strip stack trace locations
-        .replace(/\n\s*at\s+.+/g, "")                        // strip stack trace lines
-        .replace(/\n{3,}/g, "\n\n")                           // collapse excess blank lines
+        .replace(/(?:at\s+[\w.]+\s+\(\/[^)]+\))/g, "") // strip stack trace locations
+        .replace(/\n\s*at\s+.+/g, "") // strip stack trace lines
+        .replace(/\n{3,}/g, "\n\n") // collapse excess blank lines
         .trim();
 }
 
@@ -162,9 +187,10 @@ function formatTaskStatusCard(task: LongTaskType): string {
         cancelled: "🛑",
     };
     const icon = statusIcons[task.status] || "📋";
-    const elapsed = task.totalDurationMs > 0
-        ? `${Math.round(task.totalDurationMs / 1000)}s`
-        : `${Math.round((Date.now() - new Date(task.startedAt).getTime()) / 1000)}s`;
+    const elapsed =
+        task.totalDurationMs > 0
+            ? `${Math.round(task.totalDurationMs / 1000)}s`
+            : `${Math.round((Date.now() - new Date(task.startedAt).getTime()) / 1000)}s`;
     const phasesCompleted = Object.keys(task.checkpointData).length;
 
     const lines = [
@@ -189,9 +215,10 @@ function formatTaskStatusCard(task: LongTaskType): string {
 
 /** Format a task completion summary. */
 function formatTaskCompletionCard(task: LongTaskType): string {
-    const elapsed = task.totalDurationMs > 0
-        ? formatDuration(task.totalDurationMs)
-        : formatDuration(Date.now() - new Date(task.startedAt).getTime());
+    const elapsed =
+        task.totalDurationMs > 0
+            ? formatDuration(task.totalDurationMs)
+            : formatDuration(Date.now() - new Date(task.startedAt).getTime());
     const phasesCompleted = Object.keys(task.checkpointData).length;
 
     return [
@@ -238,10 +265,17 @@ export function getTelegramConfig(): Config | null {
 function parseTelegramOwners(config: Config): Set<number> {
     const raw = process.env.OWNER_TELEGRAM_IDS;
     if (!raw) {
-        console.warn("[TG] OWNER_TELEGRAM_IDS not set — defaulting owner set to ALLOWED_USER_IDS. Narrow this by setting OWNER_TELEGRAM_IDS to a strict subset.");
+        console.warn(
+            "[TG] OWNER_TELEGRAM_IDS not set — defaulting owner set to ALLOWED_USER_IDS. Narrow this by setting OWNER_TELEGRAM_IDS to a strict subset.",
+        );
         return new Set(config.allowedUserIds);
     }
-    return new Set(raw.split(",").map(s => Number(s.trim())).filter(n => Number.isFinite(n)));
+    return new Set(
+        raw
+            .split(",")
+            .map((s) => Number(s.trim()))
+            .filter((n) => Number.isFinite(n)),
+    );
 }
 
 export function isPlatformOwner(channel: "telegram", userId: number, config: Config): boolean {
@@ -266,7 +300,9 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
         clearConversation,
         conversationCount: getConversationCount,
         llm,
-        sendProgress: async (msg: string) => { await sendProactiveMessage(bot, config, msg); },
+        sendProgress: async (msg: string) => {
+            await sendProactiveMessage(bot, config, msg);
+        },
     });
 
     // ── Per-sender inbound rate limit (F7) ──
@@ -276,7 +312,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
     function rateLimitAllow(userId: number): boolean {
         const now = Date.now();
         const arr = rateBuckets.get(userId) || [];
-        const fresh = arr.filter(ts => now - ts < RATE_WINDOW_MS);
+        const fresh = arr.filter((ts) => now - ts < RATE_WINDOW_MS);
         if (fresh.length >= RATE_MAX) {
             rateBuckets.set(userId, fresh);
             return false;
@@ -314,10 +350,14 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
     let taskIdCounter = 0;
 
     // ── Track bot message → task mapping for reply routing ──
-    const botMessageToTask = new Map<number, string>();  // bot msgId → taskId
+    const botMessageToTask = new Map<number, string>(); // bot msgId → taskId
 
     // ── Proactive message tracking (read receipt awareness) ──
-    interface ProactiveLog { sentAt: number; topic: string; responded: boolean; }
+    interface ProactiveLog {
+        sentAt: number;
+        topic: string;
+        responded: boolean;
+    }
     const proactiveMessageLog: ProactiveLog[] = [];
     const MAX_PROACTIVE_LOG = 20;
 
@@ -340,9 +380,19 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
     (globalThis as Record<string, unknown>).__atlasProactiveLog = proactiveMessageLog;
 
     // ── Message batching (debounce rapid messages) ──
-    const messageBuffer = new Map<number, { messages: string[]; timer: ReturnType<typeof setTimeout>; triggerMessageId: number; replyToText?: string; replyToAuthor?: string; ctx: typeof bot extends { on: (e: string, cb: (c: infer C) => void) => void } ? C : never }>();
-    const BATCH_DELAY_MS = 500;     // Initial delay: 500ms (reduced from 1500ms)
-    const BATCH_EXTEND_MS = 1000;   // Extend by 1s if more messages arrive
+    const messageBuffer = new Map<
+        string,
+        {
+            messages: string[];
+            timer: ReturnType<typeof setTimeout>;
+            triggerMessageId: number;
+            replyToText?: string;
+            replyToAuthor?: string;
+            ctx: typeof bot extends { on: (e: string, cb: (c: infer C) => void) => void } ? C : never;
+        }
+    >();
+    const BATCH_DELAY_MS = 500; // Initial delay: 500ms (reduced from 1500ms)
+    const BATCH_EXTEND_MS = 1000; // Extend by 1s if more messages arrive
 
     // ── Handle text messages ───────────────────
     bot.on("message:text", async (ctx) => {
@@ -356,7 +406,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
         // framing reflects who actually said it.
         let replyToText: string | undefined;
         let replyToAuthor: string | undefined;
-        if (ctx.message.reply_to_message && 'text' in ctx.message.reply_to_message) {
+        if (ctx.message.reply_to_message && "text" in ctx.message.reply_to_message) {
             const rep = ctx.message.reply_to_message as { text?: string; from?: { id?: number; first_name?: string } };
             replyToText = rep.text;
             const botId = ctx.me?.id;
@@ -365,6 +415,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
             }
         }
         const chatId = ctx.chat.id;
+        const bufKey = batchKey(chatId, ctx.from?.id);
 
         console.log(`\n💬 ${userName}: ${userMessage}`);
 
@@ -379,7 +430,10 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
             const { globalMonitorHitBus } = await import("./proactive/monitors/monitor-hits.js");
             const nativeMod = native as unknown as {
                 monitorCheck?: (
-                    emb: number[], channel: string, sender: string, nowMs: number,
+                    emb: number[],
+                    channel: string,
+                    sender: string,
+                    nowMs: number,
                 ) => Array<{ ruleId: string; score: number }>;
                 monitorMarkFired?: (id: string, tsMs: number) => void;
             };
@@ -425,14 +479,34 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
 
         // ── Stop/Cancel command — instant, no debounce ──
         const lower = userMessage.toLowerCase().trim();
-        const STOP_SIGNALS = ['stop', 'cancel', '/stop', '/cancel', "don't continue", "dont continue", 'never mind', 'nevermind', 'leave it', 'abort', 'quit it', 'stop it', 'yes stop', 'no stop', 'please stop'];
-        const isStopSignal = STOP_SIGNALS.some(s => lower === s || lower.startsWith(s + ' ') || lower.endsWith(' ' + s))
-            || (lower.split(' ').length <= 4 && ['stop', 'cancel', 'abort', 'quit'].some(w => lower.includes(w)));
+        const STOP_SIGNALS = [
+            "stop",
+            "cancel",
+            "/stop",
+            "/cancel",
+            "don't continue",
+            "dont continue",
+            "never mind",
+            "nevermind",
+            "leave it",
+            "abort",
+            "quit it",
+            "stop it",
+            "yes stop",
+            "no stop",
+            "please stop",
+        ];
+        const isStopSignal =
+            STOP_SIGNALS.some((s) => lower === s || lower.startsWith(s + " ") || lower.endsWith(" " + s)) ||
+            (lower.split(" ").length <= 4 && ["stop", "cancel", "abort", "quit"].some((w) => lower.includes(w)));
 
         if (isStopSignal) {
             // Clear any buffered messages too
-            const buf = messageBuffer.get(chatId);
-            if (buf) { clearTimeout(buf.timer); messageBuffer.delete(chatId); }
+            const buf = messageBuffer.get(bufKey);
+            if (buf) {
+                clearTimeout(buf.timer);
+                messageBuffer.delete(bufKey);
+            }
 
             const tasks = activeTasks.get(chatId) || [];
 
@@ -440,12 +514,17 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
             if (replyToText && ctx.message.reply_to_message) {
                 const repliedToMsgId = ctx.message.reply_to_message.message_id;
                 const targetTaskId = botMessageToTask.get(repliedToMsgId);
-                const targetTask = targetTaskId ? tasks.find(t => t.taskId === targetTaskId) : null;
+                const targetTask = targetTaskId ? tasks.find((t) => t.taskId === targetTaskId) : null;
                 if (targetTask) {
                     targetTask.controller.abort();
-                    activeTasks.set(chatId, tasks.filter(t => t.taskId !== targetTaskId));
+                    activeTasks.set(
+                        chatId,
+                        tasks.filter((t) => t.taskId !== targetTaskId),
+                    );
                     console.log(`  🛑 Stopping specific task ${targetTask.taskId}: "${targetTask.description}"`);
-                    await ctx.reply(`🛑 Stopping: ${targetTask.description}`, { reply_parameters: { message_id: triggerMessageId } });
+                    await ctx.reply(`🛑 Stopping: ${targetTask.description}`, {
+                        reply_parameters: { message_id: triggerMessageId },
+                    });
                     return;
                 }
             }
@@ -475,7 +554,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 monitorDeleteRule?: (id: string) => void;
             };
             const result = await tryProactiveCommand(userMessage, {
-                configPath: join(process.cwd(), "data", "proactive-config.json"),
+                configPath: join(getDataDir(), "proactive-config.json"),
                 monitorStore: getMonitorStore() ?? undefined,
                 parseRule: async (phrase) =>
                     parseMonitorRule(phrase, {
@@ -504,9 +583,8 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 if (cmdResult.response) {
                     const cmdLower = userMessage.toLowerCase().split(/\s+/)[0];
                     // Attach inline keyboard for /start and /help
-                    const replyMarkup = (cmdLower === "/start" || cmdLower === "/help")
-                        ? { reply_markup: buildMainMenuKeyboard() }
-                        : {};
+                    const replyMarkup =
+                        cmdLower === "/start" || cmdLower === "/help" ? { reply_markup: buildMainMenuKeyboard() } : {};
                     try {
                         await ctx.reply(markdownToTelegramHtml(cmdResult.response), {
                             parse_mode: "HTML",
@@ -521,7 +599,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
         }
 
         // ── Buffer message and debounce ──
-        const existing = messageBuffer.get(chatId);
+        const existing = messageBuffer.get(bufKey);
         if (existing) {
             // Add to buffer and reset timer
             existing.messages.push(userMessage);
@@ -529,12 +607,18 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
             if (replyToText && !existing.replyToText) existing.replyToText = replyToText;
             if (replyToAuthor && !existing.replyToAuthor) existing.replyToAuthor = replyToAuthor;
             clearTimeout(existing.timer);
-            existing.timer = setTimeout(() => processBuffered(chatId, triggerMessageId), BATCH_EXTEND_MS);
+            existing.timer = setTimeout(
+                () => processBuffered(chatId, triggerMessageId, undefined, undefined, bufKey),
+                BATCH_EXTEND_MS,
+            );
         } else {
             // Start new buffer
-            messageBuffer.set(chatId, {
+            messageBuffer.set(bufKey, {
                 messages: [userMessage],
-                timer: setTimeout(() => processBuffered(chatId, triggerMessageId), BATCH_DELAY_MS),
+                timer: setTimeout(
+                    () => processBuffered(chatId, triggerMessageId, undefined, undefined, bufKey),
+                    BATCH_DELAY_MS,
+                ),
                 triggerMessageId,
                 replyToText,
                 replyToAuthor,
@@ -545,7 +629,13 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
 
     // ── Process buffered messages ───────────────────
     // eslint-disable-next-line @typescript-eslint/no-floating-promises, @typescript-eslint/no-explicit-any
-    function processBuffered(chatId: number, triggerMessageId: number, directMessage?: string, directCtx?: any) {
+    function processBuffered(
+        chatId: number,
+        triggerMessageId: number,
+        directMessage?: string,
+        directCtx?: any,
+        bufKey?: string,
+    ) {
         let combinedMessage: string;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         let ctx: any;
@@ -558,9 +648,10 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
             ctx = directCtx;
             replyToText = undefined;
         } else {
-            const buf = messageBuffer.get(chatId);
+            if (!bufKey) return;
+            const buf = messageBuffer.get(bufKey);
             if (!buf) return;
-            messageBuffer.delete(chatId);
+            messageBuffer.delete(bufKey);
 
             combinedMessage = buf.messages.join("\n");
             ctx = buf.ctx as any;
@@ -586,7 +677,9 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
         // Fire-and-forget: deliver dream results if available
         (async () => {
             try {
-                const { recordUserActivity, getDreamResultsForDelivery, formatDreamResults } = await import("./proactive/dreaming.js");
+                const { recordUserActivity, getDreamResultsForDelivery, formatDreamResults } = await import(
+                    "./proactive/dreaming.js"
+                );
                 recordUserActivity();
 
                 // Mark proactive messages as responded and record engagement
@@ -594,18 +687,22 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 try {
                     const { recordUserEngagement } = await import("./proactive/inner-thoughts.js");
                     recordUserEngagement(true);
-                } catch { /* non-fatal */ }
+                } catch {
+                    /* non-fatal */
+                }
                 try {
                     const { recordResponse } = await import("./proactive/notification-tracker.js");
                     // Find the most recent unresponded notification and mark as engaged
                     recordResponse(0, "engaged", 1);
-                } catch { /* non-fatal */ }
+                } catch {
+                    /* non-fatal */
+                }
 
                 const dreamResults = getDreamResultsForDelivery();
                 if (dreamResults && dreamResults.length > 0) {
                     const dreamMsg = formatDreamResults(dreamResults);
                     await ctx.reply(dreamMsg, { parse_mode: "Markdown" }).catch(() => {
-                        ctx.reply(dreamMsg.replace(/\*\*/g, "")).catch(() => { });
+                        ctx.reply(dreamMsg.replace(/\*\*/g, "")).catch(() => {});
                     });
                 }
             } catch {
@@ -626,7 +723,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
 
         const controller = new AbortController();
         const taskId = `task_${++taskIdCounter}`;
-        const taskDescription = combinedMessage.substring(0, 80).replace(/\n/g, ' ');
+        const taskDescription = combinedMessage.substring(0, 80).replace(/\n/g, " ");
         const task: ActiveTask = {
             controller,
             taskId,
@@ -647,7 +744,11 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
         (async () => {
             await ctx.replyWithChatAction("typing");
             const typingInterval = setInterval(async () => {
-                try { await ctx.replyWithChatAction("typing"); } catch { /* ignore */ }
+                try {
+                    await ctx.replyWithChatAction("typing");
+                } catch {
+                    /* ignore */
+                }
             }, 4000);
 
             // Track response time for awareness
@@ -658,17 +759,42 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
 
                 // ── Detect short acknowledgements ─────────────────────────────
                 const msgLower = combinedMessage.toLowerCase().trim();
-                const ACK_WORDS = ['ok', 'okay', 'got it', 'got that', 'thanks', 'thank you', 'cool', 'great',
-                    'nice', 'alright', 'k', 'noted', 'sounds good', 'awesome', 'perfect',
-                    'good', 'understood', 'sure', 'yep', 'yup', 'yeah', 'yes'];
-                const isAck = ACK_WORDS.some(w => msgLower === w || msgLower === w + '!' || msgLower === w + '.' || msgLower === 'oh ' + w)
-                    && combinedMessage.trim().split(/\s+/).length <= 5;
+                const ACK_WORDS = [
+                    "ok",
+                    "okay",
+                    "got it",
+                    "got that",
+                    "thanks",
+                    "thank you",
+                    "cool",
+                    "great",
+                    "nice",
+                    "alright",
+                    "k",
+                    "noted",
+                    "sounds good",
+                    "awesome",
+                    "perfect",
+                    "good",
+                    "understood",
+                    "sure",
+                    "yep",
+                    "yup",
+                    "yeah",
+                    "yes",
+                ];
+                const isAck =
+                    ACK_WORDS.some(
+                        (w) => msgLower === w || msgLower === w + "!" || msgLower === w + "." || msgLower === "oh " + w,
+                    ) && combinedMessage.trim().split(/\s+/).length <= 5;
 
                 let agentMessage = combinedMessage;
                 let modelHint: "simple" | "complex" | undefined;
                 if (isAck) {
                     console.log(`  💬 Short ack detected — injecting context note to prevent task restart`);
-                    agentMessage = combinedMessage + '\n\n[CONTEXT NOTE: The user is acknowledging the previous response. The task is done. Just reply conversationally — do NOT use tools or restart any previous task.]';
+                    agentMessage =
+                        combinedMessage +
+                        "\n\n[CONTEXT NOTE: The user is acknowledging the previous response. The task is done. Just reply conversationally — do NOT use tools or restart any previous task.]";
                     modelHint = "simple";
                 } else if (classifyQuery(combinedMessage) === "llm_only") {
                     // Fast-path: classifier says this is a greeting/simple message — skip LLM classification
@@ -703,36 +829,43 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 let thinkingTimer: ReturnType<typeof setInterval> | null = null;
                 const startThinkingRotation = () => {
                     if (thinkingTimer) return;
-                    thinkingTimer = setInterval(async () => {
-                        if (controller.signal.aborted || statusCleared) return;
+                    thinkingTimer = setInterval(
+                        async () => {
+                            if (controller.signal.aborted || statusCleared) return;
 
-                        const elapsed = Date.now() - statusStartTime;
+                            const elapsed = Date.now() - statusStartTime;
 
-                        // After 45s without tool progress, show timeout warning
-                        if (elapsed > 45000 && !timeoutWarningShown) {
-                            timeoutWarningShown = true;
-                            const timeoutMsg = getWaitPhrase(elapsed);
-                            if (statusMessageId) {
-                                try {
-                                    await bot.api.editMessageText(chatId, statusMessageId, `⏳ ${timeoutMsg}`);
-                                    lastStatusText = timeoutMsg;
-                                } catch { /* */ }
+                            // After 45s without tool progress, show timeout warning
+                            if (elapsed > 45000 && !timeoutWarningShown) {
+                                timeoutWarningShown = true;
+                                const timeoutMsg = getWaitPhrase(elapsed);
+                                if (statusMessageId) {
+                                    try {
+                                        await bot.api.editMessageText(chatId, statusMessageId, `⏳ ${timeoutMsg}`);
+                                        lastStatusText = timeoutMsg;
+                                    } catch {
+                                        /* */
+                                    }
+                                }
+                                return;
                             }
-                            return;
-                        }
 
-                        // Normal rotation — use alive-ux for fresh phrases
-                        const phrase = `💭 ${getThinkingPhrase(modelHint === "simple" ? "simple" : modelHint === "complex" ? "complex" : "default")}`;
+                            // Normal rotation — use alive-ux for fresh phrases
+                            const phrase = `💭 ${getThinkingPhrase(modelHint === "simple" ? "simple" : modelHint === "complex" ? "complex" : "default")}`;
 
-                        if (!statusMessageId) {
-                            pendingStatus = phrase;
-                        } else if (phrase !== lastStatusText) {
-                            try {
-                                await bot.api.editMessageText(chatId, statusMessageId, phrase);
-                                lastStatusText = phrase;
-                            } catch { /* message may have been deleted */ }
-                        }
-                    }, 5000 + Math.random() * 3000); // 5-8s jitter for naturalness
+                            if (!statusMessageId) {
+                                pendingStatus = phrase;
+                            } else if (phrase !== lastStatusText) {
+                                try {
+                                    await bot.api.editMessageText(chatId, statusMessageId, phrase);
+                                    lastStatusText = phrase;
+                                } catch {
+                                    /* message may have been deleted */
+                                }
+                            }
+                        },
+                        5000 + Math.random() * 3000,
+                    ); // 5-8s jitter for naturalness
                 };
 
                 const progressCallback = async (msg: string) => {
@@ -744,7 +877,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                         // Parse options from the message (format: "Options: A | B")
                         const optionsMatch = msg.match(/Options:\s*(.+)/);
                         const options = optionsMatch
-                            ? optionsMatch[1].split("|").map(o => o.trim())
+                            ? optionsMatch[1].split("|").map((o) => o.trim())
                             : ["Approve", "Skip"];
 
                         // Strip the metadata from the display message
@@ -791,28 +924,31 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                         if (!thinkingText || statusCleared) return;
 
                         // Stop the fake rotation — real thinking has arrived
-                        if (thinkingTimer) { clearInterval(thinkingTimer); thinkingTimer = null; }
+                        if (thinkingTimer) {
+                            clearInterval(thinkingTimer);
+                            thinkingTimer = null;
+                        }
 
                         // Truncate to ~800 chars for Telegram limits
-                        const truncated = thinkingText.length > 800
-                            ? thinkingText.substring(0, 800) + "..."
-                            : thinkingText;
-                        const escaped = truncated
-                            .replace(/&/g, "&amp;")
-                            .replace(/</g, "&lt;")
-                            .replace(/>/g, "&gt;");
+                        const truncated =
+                            thinkingText.length > 800 ? thinkingText.substring(0, 800) + "..." : thinkingText;
+                        const escaped = truncated.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
                         const thinkingHtml = `💭 <blockquote expandable><i>${escaped}</i></blockquote>`;
 
                         try {
                             if (statusMessageId) {
-                                await bot.api.editMessageText(chatId, statusMessageId, thinkingHtml, { parse_mode: "HTML" });
+                                await bot.api.editMessageText(chatId, statusMessageId, thinkingHtml, {
+                                    parse_mode: "HTML",
+                                });
                                 lastStatusText = thinkingHtml;
                             } else {
                                 const sent = await ctx.reply(thinkingHtml, { parse_mode: "HTML" });
                                 statusMessageId = sent.message_id;
                                 lastStatusText = thinkingHtml;
                             }
-                        } catch { /* message send may fail */ }
+                        } catch {
+                            /* message send may fail */
+                        }
                         return;
                     }
 
@@ -830,13 +966,19 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                                         const sent = await ctx.reply(pendingStatus);
                                         // Check AGAIN after the async reply — cleanup may have run while we were awaiting
                                         if (statusCleared) {
-                                            try { await bot.api.deleteMessage(chatId, sent.message_id); } catch { /* */ }
+                                            try {
+                                                await bot.api.deleteMessage(chatId, sent.message_id);
+                                            } catch {
+                                                /* */
+                                            }
                                         } else {
                                             statusMessageId = sent.message_id;
                                             lastStatusText = pendingStatus!;
                                             startThinkingRotation();
                                         }
-                                    } catch { /* ignore */ }
+                                    } catch {
+                                        /* ignore */
+                                    }
                                 }
                                 statusTimeout = null;
                             }, STATUS_DELAY_MS);
@@ -847,17 +989,29 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                             try {
                                 await bot.api.editMessageText(chatId, statusMessageId, humanized);
                                 lastStatusText = humanized;
-                            } catch { /* message may have been deleted */ }
+                            } catch {
+                                /* message may have been deleted */
+                            }
                         }
                     }
                 };
 
                 const clearStatusMessage = async () => {
                     statusCleared = true; // Prevent any in-flight async from setting statusMessageId
-                    if (statusTimeout) { clearTimeout(statusTimeout); statusTimeout = null; }
-                    if (thinkingTimer) { clearInterval(thinkingTimer); thinkingTimer = null; }
+                    if (statusTimeout) {
+                        clearTimeout(statusTimeout);
+                        statusTimeout = null;
+                    }
+                    if (thinkingTimer) {
+                        clearInterval(thinkingTimer);
+                        thinkingTimer = null;
+                    }
                     if (statusMessageId) {
-                        try { await bot.api.deleteMessage(chatId, statusMessageId); } catch { /* */ }
+                        try {
+                            await bot.api.deleteMessage(chatId, statusMessageId);
+                        } catch {
+                            /* */
+                        }
                         statusMessageId = null;
                     }
                 };
@@ -871,13 +1025,19 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                             const sent = await ctx.reply(phrase);
                             // Check AGAIN after async reply
                             if (statusCleared) {
-                                try { await bot.api.deleteMessage(chatId, sent.message_id); } catch { /* */ }
+                                try {
+                                    await bot.api.deleteMessage(chatId, sent.message_id);
+                                } catch {
+                                    /* */
+                                }
                             } else {
                                 statusMessageId = sent.message_id;
                                 lastStatusText = phrase;
                                 startThinkingRotation();
                             }
-                        } catch { /* ignore */ }
+                        } catch {
+                            /* ignore */
+                        }
                     }
                 }, STATUS_DELAY_MS);
 
@@ -888,13 +1048,32 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 setDeepResearchProgress(progressCallback);
                 setLongTaskProgress(progressCallback);
                 const senderIsOwner = !!ctx.from?.id && telegramOwners.has(ctx.from.id);
-                const response = await runAgent(llm, agentMessage, progressCallback, undefined, controller.signal, historyFork, modelHint, undefined, { channel: "telegram", userId: String(ctx.from?.id || ""), userName: ctx.from?.first_name, isOwner: senderIsOwner, isPrivate: ctx.chat?.type === "private" });
+                const response = await runAgent(
+                    llm,
+                    agentMessage,
+                    progressCallback,
+                    undefined,
+                    controller.signal,
+                    historyFork,
+                    modelHint,
+                    undefined,
+                    {
+                        channel: "telegram",
+                        userId: String(ctx.from?.id || ""),
+                        userName: ctx.from?.first_name,
+                        isOwner: senderIsOwner,
+                        isPrivate: ctx.chat?.type === "private",
+                    },
+                );
                 clearSwarmProgress();
                 clearDeepResearchProgress();
                 clearLongTaskProgress();
 
                 clearTimeout(thinkingFallback);
-                if (controller.signal.aborted) { await clearStatusMessage(); return; }
+                if (controller.signal.aborted) {
+                    await clearStatusMessage();
+                    return;
+                }
 
                 const taskDurationMs = Date.now() - taskStartTime;
                 console.log(`🤖 Bhai: ${response.text.substring(0, 200)}... (${(taskDurationMs / 1000).toFixed(1)}s)`);
@@ -908,7 +1087,12 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 const timeAck = getResponseTimeAck(taskDurationMs, response.toolCalls > 0);
                 if (timeAck) {
                     const lowerResp = responseText.toLowerCase();
-                    if (!lowerResp.startsWith("sorry") && !lowerResp.startsWith("apolog") && !lowerResp.startsWith("that took") && !lowerResp.startsWith("took")) {
+                    if (
+                        !lowerResp.startsWith("sorry") &&
+                        !lowerResp.startsWith("apolog") &&
+                        !lowerResp.startsWith("that took") &&
+                        !lowerResp.startsWith("took")
+                    ) {
                         responseText = timeAck + responseText;
                     }
                 }
@@ -941,7 +1125,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                     // Append remaining bubbles via edit-in-place
                     for (let i = 1; i < bubbles.length; i++) {
                         const delay = Math.min(600, Math.max(200, bubbles[i].length * 1.5));
-                        await new Promise(r => setTimeout(r, delay));
+                        await new Promise((r) => setTimeout(r, delay));
                         currentText += "\n\n" + bubbles[i];
 
                         // Check if we'll exceed Telegram's 4096 char limit
@@ -954,13 +1138,17 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                                 const remainChunks = splitMessage(remaining, 4096);
                                 for (const chunk of remainChunks) {
                                     try {
-                                        const sent = await ctx.reply(markdownToTelegramHtml(sanitizeReply(chunk)), { parse_mode: "HTML" });
+                                        const sent = await ctx.reply(markdownToTelegramHtml(sanitizeReply(chunk)), {
+                                            parse_mode: "HTML",
+                                        });
                                         if (sent?.message_id) botMessageToTask.set(sent.message_id, taskId);
                                     } catch {
                                         await ctx.reply(chunk);
                                     }
                                 }
-                            } catch { /* ignore */ }
+                            } catch {
+                                /* ignore */
+                            }
                             break;
                         }
 
@@ -970,10 +1158,17 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                         } catch {
                             // Edit failed — fall back to sending new message
                             try {
-                                const sent = await ctx.reply(markdownToTelegramHtml(sanitizeReply(bubbles[i])), { parse_mode: "HTML" });
-                                if (sent?.message_id) { sentMsgId = sent.message_id; botMessageToTask.set(sentMsgId!, taskId); }
+                                const sent = await ctx.reply(markdownToTelegramHtml(sanitizeReply(bubbles[i])), {
+                                    parse_mode: "HTML",
+                                });
+                                if (sent?.message_id) {
+                                    sentMsgId = sent.message_id;
+                                    botMessageToTask.set(sentMsgId!, taskId);
+                                }
                                 currentText = bubbles[i]; // Reset for future edits
-                            } catch { /* ignore */ }
+                            } catch {
+                                /* ignore */
+                            }
                         }
                     }
                 } else {
@@ -983,7 +1178,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                         if (i > 0) {
                             await ctx.replyWithChatAction("typing");
                             const delay = Math.min(600, Math.max(300, bubble.length * 2));
-                            await new Promise(r => setTimeout(r, delay));
+                            await new Promise((r) => setTimeout(r, delay));
                         }
                         const chunks = splitMessage(bubble, 4096);
                         for (const chunk of chunks) {
@@ -1020,7 +1215,10 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 clearInterval(typingInterval);
                 // Remove this specific task from the active list
                 const tasks = activeTasks.get(chatId) || [];
-                activeTasks.set(chatId, tasks.filter(t => t.taskId !== taskId));
+                activeTasks.set(
+                    chatId,
+                    tasks.filter((t) => t.taskId !== taskId),
+                );
                 if ((activeTasks.get(chatId) || []).length === 0) activeTasks.delete(chatId);
 
                 // Clean up botMessageToTask entries for this completed task (prevent memory leak)
@@ -1050,7 +1248,14 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
     bot.on("message:document", async (ctx) => {
         const mime = ctx.message.document?.mime_type || "";
         if (mime.startsWith("image/") || mime.startsWith("video/")) {
-            await handleMediaMessage(ctx, bot, config, llm, mime.startsWith("image/") ? "image" : "video", messageBuffer as never);
+            await handleMediaMessage(
+                ctx,
+                bot,
+                config,
+                llm,
+                mime.startsWith("image/") ? "image" : "video",
+                messageBuffer as never,
+            );
         }
     });
 
@@ -1095,11 +1300,14 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
             if (resolved) {
                 await ctx.answerCallbackQuery({ text: `Selected: ${answer}` });
                 try {
-                    const originalText = ctx.callbackQuery.message && "text" in ctx.callbackQuery.message
-                        ? (ctx.callbackQuery.message as { text?: string }).text || ""
-                        : "";
+                    const originalText =
+                        ctx.callbackQuery.message && "text" in ctx.callbackQuery.message
+                            ? (ctx.callbackQuery.message as { text?: string }).text || ""
+                            : "";
                     await ctx.editMessageText(`${originalText}\n\n✅ You chose: ${answer}`);
-                } catch { /* message may be too old to edit */ }
+                } catch {
+                    /* message may be too old to edit */
+                }
             } else {
                 await ctx.answerCallbackQuery({ text: "This approval has already expired." });
             }
@@ -1128,7 +1336,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
             if (command === "tasks") {
                 const longTasks = listActiveLongTasks();
                 if (longTasks.length > 0) {
-                    const taskSummaries = longTasks.map(t => formatTaskStatusCard(t)).join("\n\n———\n\n");
+                    const taskSummaries = longTasks.map((t) => formatTaskStatusCard(t)).join("\n\n———\n\n");
                     try {
                         await ctx.reply(markdownToTelegramHtml(taskSummaries), { parse_mode: "HTML" });
                     } catch {
@@ -1141,11 +1349,15 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                                 await ctx.reply(`Task: ${t.description.substring(0, 60)}`, {
                                     reply_markup: buildTaskKeyboard(t.id),
                                 });
-                            } catch { /* ignore */ }
+                            } catch {
+                                /* ignore */
+                            }
                         }
                     }
                 } else {
-                    await ctx.reply("No active long tasks right now. Send me a complex task and I'll track it for you.");
+                    await ctx.reply(
+                        "No active long tasks right now. Send me a complex task and I'll track it for you.",
+                    );
                 }
                 return;
             }
@@ -1167,7 +1379,12 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
             if (command === "memory" && chatId) {
                 // Inject memory request as a simulated user message into the processing pipeline
                 const triggerMsgId = ctx.callbackQuery.message?.message_id || 0;
-                processBuffered(chatId, triggerMsgId, "Give me a snapshot of what you remember about me — core memories, my preferences, relationship notes, and anything notable from our recent conversations.", ctx);
+                processBuffered(
+                    chatId,
+                    triggerMsgId,
+                    "Give me a snapshot of what you remember about me — core memories, my preferences, relationship notes, and anything notable from our recent conversations.",
+                    ctx,
+                );
                 return;
             }
 
@@ -1199,7 +1416,9 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                     await ctx.reply("Task is still running.", {
                         reply_markup: buildTaskKeyboard(ltTaskId),
                     });
-                } catch { /* ignore */ }
+                } catch {
+                    /* ignore */
+                }
             } else if (task.status === "completed") {
                 const completionCard = formatTaskCompletionCard(task);
                 try {
@@ -1219,11 +1438,14 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
             if (cancelled) {
                 await ctx.answerCallbackQuery({ text: "Task cancelled" });
                 try {
-                    const originalText = ctx.callbackQuery.message && "text" in ctx.callbackQuery.message
-                        ? (ctx.callbackQuery.message as { text?: string }).text || ""
-                        : "";
+                    const originalText =
+                        ctx.callbackQuery.message && "text" in ctx.callbackQuery.message
+                            ? (ctx.callbackQuery.message as { text?: string }).text || ""
+                            : "";
                     await ctx.editMessageText(`${originalText}\n\n🛑 Task cancelled by user.`);
-                } catch { /* message may be too old to edit */ }
+                } catch {
+                    /* message may be too old to edit */
+                }
             } else {
                 await ctx.answerCallbackQuery({ text: "Task not found or already finished." });
             }
@@ -1240,12 +1462,23 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
 // ── Media Message Handler ─────────────────────
 
 async function handleMediaMessage(
-    ctx: { message: { caption?: string; photo?: Array<{ file_id: string }>; video?: { file_id: string; mime_type?: string }; document?: { file_id: string; mime_type?: string } }; from: { id?: number; first_name?: string }; chat: { id: number }; reply: Function; replyWithChatAction: Function },
+    ctx: {
+        message: {
+            caption?: string;
+            photo?: Array<{ file_id: string }>;
+            video?: { file_id: string; mime_type?: string };
+            document?: { file_id: string; mime_type?: string };
+        };
+        from: { id?: number; first_name?: string };
+        chat: { id: number };
+        reply: Function;
+        replyWithChatAction: Function;
+    },
     bot: Bot,
     config: Config,
     llm: LLMClient,
     mediaType: "image" | "video",
-    messageBuffer?: Map<number, { messages: string[]; timer: ReturnType<typeof setTimeout>; ctx: never }>,
+    messageBuffer?: Map<string, { messages: string[]; timer: ReturnType<typeof setTimeout>; ctx: never }>,
 ) {
     const userName = ctx.from.first_name || "User";
     let caption = ctx.message.caption || (mediaType === "image" ? "What's in this image?" : "What's in this video?");
@@ -1253,24 +1486,30 @@ async function handleMediaMessage(
     console.log(`\n📎 ${userName} sent a ${mediaType}${caption ? `: ${caption}` : ""}`);
 
     // Wait briefly so follow-up text messages (like 👍 or a comment) can arrive
-    await new Promise(r => setTimeout(r, 1500));
+    await new Promise((r) => setTimeout(r, 1500));
 
     // Absorb any buffered text messages sent right after the image
     if (messageBuffer) {
-        const chatId = ctx.chat.id;
-        const buf = messageBuffer.get(chatId);
+        const key = batchKey(ctx.chat.id, ctx.from?.id);
+        const buf = messageBuffer.get(key);
         if (buf && buf.messages.length > 0) {
             const extra = buf.messages.join("\n");
             caption += "\n" + extra;
-            console.log(`  📦 Absorbed ${buf.messages.length} follow-up text(s) into media context: "${extra.substring(0, 60)}"`);
+            console.log(
+                `  📦 Absorbed ${buf.messages.length} follow-up text(s) into media context: "${extra.substring(0, 60)}"`,
+            );
             clearTimeout(buf.timer);
-            messageBuffer.delete(chatId);
+            messageBuffer.delete(key);
         }
     }
 
     await ctx.replyWithChatAction("typing");
     const typingInterval = setInterval(async () => {
-        try { await ctx.replyWithChatAction("typing"); } catch { /* ignore */ }
+        try {
+            await ctx.replyWithChatAction("typing");
+        } catch {
+            /* ignore */
+        }
     }, 4000);
 
     try {
@@ -1300,7 +1539,9 @@ async function handleMediaMessage(
         const MAX_MEDIA_BYTES = 25 * 1024 * 1024; // 25 MB
         const file = await bot.api.getFile(fileId);
         if (typeof file.file_size === "number" && file.file_size > MAX_MEDIA_BYTES) {
-            await ctx.reply(`That file is too large to process (${Math.round(file.file_size / 1024 / 1024)} MB). Limit is ${MAX_MEDIA_BYTES / 1024 / 1024} MB.`);
+            await ctx.reply(
+                `That file is too large to process (${Math.round(file.file_size / 1024 / 1024)} MB). Limit is ${MAX_MEDIA_BYTES / 1024 / 1024} MB.`,
+            );
             return;
         }
         const fileUrl = `https://api.telegram.org/file/bot${config.telegramBotToken}/${file.file_path}`;
@@ -1321,9 +1562,12 @@ async function handleMediaMessage(
                 if (buffer.length > MAX_MEDIA_BYTES) throw new Error(`Media body too large: ${buffer.length} bytes`);
                 break; // success
             } catch (fetchErr) {
-                console.warn(`  ⚠️ Media download attempt ${attempt}/${MAX_RETRIES} failed:`, (fetchErr as Error).message);
+                console.warn(
+                    `  ⚠️ Media download attempt ${attempt}/${MAX_RETRIES} failed:`,
+                    (fetchErr as Error).message,
+                );
                 if (attempt === MAX_RETRIES) throw fetchErr;
-                await new Promise(r => setTimeout(r, 2000 * attempt)); // backoff: 2s, 4s
+                await new Promise((r) => setTimeout(r, 2000 * attempt)); // backoff: 2s, 4s
             }
         }
         const downloadedBuffer = buffer!; // guaranteed non-null: loop either sets buffer or throws
@@ -1341,7 +1585,21 @@ async function handleMediaMessage(
         await fs.mkdir(mediaDir, { recursive: true, mode: 0o700 });
         const safeExt = (() => {
             const claimed = (mimeType.split("/")[1] || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-            const allowed = new Set(["mp3", "wav", "ogg", "m4a", "aac", "jpg", "jpeg", "png", "gif", "webp", "mp4", "mov", "webm"]);
+            const allowed = new Set([
+                "mp3",
+                "wav",
+                "ogg",
+                "m4a",
+                "aac",
+                "jpg",
+                "jpeg",
+                "png",
+                "gif",
+                "webp",
+                "mp4",
+                "mov",
+                "webm",
+            ]);
             if (allowed.has(claimed)) return claimed;
             return mediaType === "image" ? "jpg" : "mp4";
         })();
@@ -1369,7 +1627,23 @@ async function handleMediaMessage(
         };
 
         const senderIsOwner = !!ctx.from?.id && isPlatformOwner("telegram", ctx.from.id, config);
-        const result = await runAgent(llm, caption, progressCallback, media, undefined, undefined, undefined, undefined, { channel: "telegram", userId: String(ctx.chat.id), userName: ctx.from?.first_name, isOwner: senderIsOwner, isPrivate: (ctx.chat as { type?: string })?.type === "private" });
+        const result = await runAgent(
+            llm,
+            caption,
+            progressCallback,
+            media,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            {
+                channel: "telegram",
+                userId: String(ctx.chat.id),
+                userName: ctx.from?.first_name,
+                isOwner: senderIsOwner,
+                isPrivate: (ctx.chat as { type?: string })?.type === "private",
+            },
+        );
 
         console.log(`🤖 Bhai: ${result.text.substring(0, 200)}...`);
 
@@ -1385,7 +1659,7 @@ async function handleMediaMessage(
             if (i > 0) {
                 await ctx.replyWithChatAction("typing");
                 const delay = Math.min(600, Math.max(300, bubble.length * 2));
-                await new Promise(r => setTimeout(r, delay));
+                await new Promise((r) => setTimeout(r, delay));
             }
             const chunks = splitMessage(bubble, 4096);
             for (const chunk of chunks) {
@@ -1425,7 +1699,11 @@ async function handleAudioMessage(
 
     await ctx.replyWithChatAction("typing");
     const typingInterval = setInterval(async () => {
-        try { await ctx.replyWithChatAction("typing"); } catch { /* ignore */ }
+        try {
+            await ctx.replyWithChatAction("typing");
+        } catch {
+            /* ignore */
+        }
     }, 4000);
 
     try {
@@ -1449,7 +1727,9 @@ async function handleAudioMessage(
         const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
         const file = await bot.api.getFile(fileId);
         if (typeof file.file_size === "number" && file.file_size > MAX_AUDIO_BYTES) {
-            await ctx.reply(`That audio file is too large to process (${Math.round(file.file_size / 1024 / 1024)} MB). Limit is ${MAX_AUDIO_BYTES / 1024 / 1024} MB.`);
+            await ctx.reply(
+                `That audio file is too large to process (${Math.round(file.file_size / 1024 / 1024)} MB). Limit is ${MAX_AUDIO_BYTES / 1024 / 1024} MB.`,
+            );
             return;
         }
         const fileUrl = `https://api.telegram.org/file/bot${config.telegramBotToken}/${file.file_path}`;
@@ -1468,9 +1748,12 @@ async function handleAudioMessage(
                 if (buffer.length > MAX_AUDIO_BYTES) throw new Error(`Audio body too large: ${buffer.length} bytes`);
                 break;
             } catch (fetchErr) {
-                console.warn(`  ⚠️ Audio download attempt ${attempt}/${MAX_RETRIES} failed:`, (fetchErr as Error).message);
+                console.warn(
+                    `  ⚠️ Audio download attempt ${attempt}/${MAX_RETRIES} failed:`,
+                    (fetchErr as Error).message,
+                );
                 if (attempt === MAX_RETRIES) throw fetchErr;
-                await new Promise(r => setTimeout(r, 2000 * attempt));
+                await new Promise((r) => setTimeout(r, 2000 * attempt));
             }
         }
         const audioBuffer = buffer!;
@@ -1517,7 +1800,23 @@ Respond naturally. If music was identified, tell them the song. NEVER mention Ge
         };
 
         const senderIsOwner = !!ctx.from?.id && isPlatformOwner("telegram", ctx.from.id as number, config);
-        const result = await runAgent(llm, enrichedPrompt, progressCallback, undefined, undefined, undefined, undefined, undefined, { channel: "telegram", userId: String(ctx.from?.id || ""), userName: ctx.from?.first_name, isOwner: senderIsOwner, isPrivate: ctx.chat?.type === "private" });
+        const result = await runAgent(
+            llm,
+            enrichedPrompt,
+            progressCallback,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            {
+                channel: "telegram",
+                userId: String(ctx.from?.id || ""),
+                userName: ctx.from?.first_name,
+                isOwner: senderIsOwner,
+                isPrivate: ctx.chat?.type === "private",
+            },
+        );
 
         console.log(`🤖 Bhai: ${result.text.substring(0, 200)}...`);
 
@@ -1533,7 +1832,7 @@ Respond naturally. If music was identified, tell them the song. NEVER mention Ge
             if (i > 0) {
                 await ctx.replyWithChatAction("typing");
                 const delay = Math.min(600, Math.max(300, bubble.length * 2));
-                await new Promise(r => setTimeout(r, delay));
+                await new Promise((r) => setTimeout(r, delay));
             }
             const chunks = splitMessage(bubble, 4096);
             for (const chunk of chunks) {
@@ -1575,7 +1874,7 @@ async function analyzeAudioWithGemini(
         method: "POST",
         headers: {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${sessionToken}`,
+            Authorization: `Bearer ${sessionToken}`,
         },
         body: JSON.stringify({
             model: "google/gemini-3.1-flash-lite-preview",
@@ -1629,7 +1928,7 @@ Be thorough — your analysis directly determines whether the user gets a correc
         throw new Error(`Audio analysis failed: ${response.status} — ${(errData as any).error || "Unknown"}`);
     }
 
-    const data = await response.json() as any;
+    const data = (await response.json()) as any;
     return data.choices?.[0]?.message?.content || "Could not analyze audio content.";
 }
 
@@ -1639,17 +1938,21 @@ Be thorough — your analysis directly determines whether the user gets a correc
  * Uses a fast LLM call to intelligently:
  * 1. Decide if a message is an actionable task needing an upfront acknowledgment
  * 2. Classify message complexity (simple chat vs complex task) for model routing
- * 
+ *
  * Returns { ack, complexity } where:
  * - ack: natural acknowledgment string, or null if not a task
  * - complexity: 'simple' (use Flash) or 'complex' (use Pro)
  */
-async function classifyAndAck(llm: LLMClient, message: string): Promise<{ ack: string | null; complexity: "simple" | "complex" }> {
+async function classifyAndAck(
+    llm: LLMClient,
+    message: string,
+): Promise<{ ack: string | null; complexity: "simple" | "complex" }> {
     try {
         const response = await llm.chat({
-            messages: [{
-                role: "user",
-                content: `Message from user: "${message.substring(0, 500)}"
+            messages: [
+                {
+                    role: "user",
+                    content: `Message from user: "${message.substring(0, 500)}"
 
 Analyze this message and respond with EXACTLY two lines:
 
@@ -1660,7 +1963,8 @@ If it's NOT a task, write exactly "NONE".
 LINE 2 - COMPLEXITY:
 Write "SIMPLE" if this is: a greeting, casual chat, short question, opinion request, reaction, acknowledgment, small talk, general knowledge question, or anything that can be answered from general knowledge without tools.
 Write "COMPLEX" if this: requires tool use, web search, file operations, browsing, code execution, multi-step reasoning, analysis of specific data, or any real work.`,
-            }],
+                },
+            ],
             systemPrompt: `You classify messages. Be precise.
 
 Task acknowledgment examples:
@@ -1695,13 +1999,16 @@ Respond with EXACTLY two lines, nothing else.`,
         });
 
         const text = (response.choices[0]?.message?.content || "NONE\nCOMPLEX").trim();
-        const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+        const lines = text
+            .split("\n")
+            .map((l) => l.trim())
+            .filter(Boolean);
 
         const ackLine = lines[0] || "NONE";
         const complexityLine = (lines[1] || "COMPLEX").toUpperCase();
 
         const ack = ackLine.toUpperCase() === "NONE" || ackLine.toUpperCase().startsWith("NONE") ? null : ackLine;
-        const complexity = complexityLine.includes("SIMPLE") ? "simple" as const : "complex" as const;
+        const complexity = complexityLine.includes("SIMPLE") ? ("simple" as const) : ("complex" as const);
 
         return { ack, complexity };
     } catch (err) {
@@ -1770,7 +2077,10 @@ function humanizeProgress(msg: string): string | null {
         for (const pat of patterns) {
             const match = msg.match(pat);
             if (match?.[1]) {
-                let target = match[1].trim().replace(/\.{3}$/, "").replace(/^["']|["']$/g, "");
+                let target = match[1]
+                    .trim()
+                    .replace(/\.{3}$/, "")
+                    .replace(/^["']|["']$/g, "");
                 if (target.length > 40) target = target.substring(0, 37) + "…";
                 return target;
             }
@@ -1786,33 +2096,49 @@ function humanizeProgress(msg: string): string | null {
 
     // Browse / Navigate
     if (lower.includes("brows") || lower.includes("navigat") || lower.includes("🌐") || lower.includes("opening")) {
-        const url = extractTarget(msg, [/(?:Opening|Navigating to|Browsing)\s+(https?:\/\/\S+)/i, /🌐\s*(?:Opening\s+)?(.+)/]);
+        const url = extractTarget(msg, [
+            /(?:Opening|Navigating to|Browsing)\s+(https?:\/\/\S+)/i,
+            /🌐\s*(?:Opening\s+)?(.+)/,
+        ]);
         if (url) {
             try {
                 const domain = new URL(url.startsWith("http") ? url : `https://${url}`).hostname.replace(/^www\./, "");
                 return getProgressMessage("browse", domain);
-            } catch { return getProgressMessage("browse", url); }
+            } catch {
+                return getProgressMessage("browse", url);
+            }
         }
         return getProgressMessage("browse");
     }
 
     // Shell / command
-    if (lower.includes("shell") || lower.includes("command") || lower.includes("terminal") || lower.includes("running command")) {
-        const cmd = extractTarget(msg, [/[Rr]unning (?:command[:\s]*)?(.+)/i, /⚙️\s*(?:Running (?:command[:\s]*)?)?(.+)/]);
+    if (
+        lower.includes("shell") ||
+        lower.includes("command") ||
+        lower.includes("terminal") ||
+        lower.includes("running command")
+    ) {
+        const cmd = extractTarget(msg, [
+            /[Rr]unning (?:command[:\s]*)?(.+)/i,
+            /⚙️\s*(?:Running (?:command[:\s]*)?)?(.+)/,
+        ]);
         return getProgressMessage("code", cmd || undefined);
     }
 
     // File read
-    if (lower.includes("read") && lower.includes("file") || lower.includes("📖")) {
+    if ((lower.includes("read") && lower.includes("file")) || lower.includes("📖")) {
         const filePath = extractTarget(msg, [/[Rr]eading[:\s]*(.+)/i, /📖\s*(?:Reading[:\s]*)?(.+)/]);
-        const base = filePath ? (nodeBasename(filePath) || filePath) : undefined;
+        const base = filePath ? nodeBasename(filePath) || filePath : undefined;
         return getProgressMessage("read", base);
     }
 
     // File write
-    if (lower.includes("writ") && lower.includes("file") || lower.includes("📝")) {
-        const filePath = extractTarget(msg, [/[Ww]riting (?:file[:\s]*)?(.+)/i, /📝\s*(?:Writing (?:file[:\s]*)?)?(.+)/]);
-        const base = filePath ? (nodeBasename(filePath) || filePath) : undefined;
+    if ((lower.includes("writ") && lower.includes("file")) || lower.includes("📝")) {
+        const filePath = extractTarget(msg, [
+            /[Ww]riting (?:file[:\s]*)?(.+)/i,
+            /📝\s*(?:Writing (?:file[:\s]*)?)?(.+)/,
+        ]);
+        const base = filePath ? nodeBasename(filePath) || filePath : undefined;
         return getProgressMessage("write", base);
     }
 
@@ -1837,7 +2163,12 @@ function humanizeProgress(msg: string): string | null {
 
 // ── Proactive Message Sender ──────────────────
 
-export async function sendProactiveMessage(bot: Bot, config: Config, message: string, filePath?: string): Promise<void> {
+export async function sendProactiveMessage(
+    bot: Bot,
+    config: Config,
+    message: string,
+    filePath?: string,
+): Promise<void> {
     if (config.allowedUserIds.size === 0) {
         console.warn("⚠️ No allowed Telegram users to send proactive message to.");
         return;
@@ -1889,7 +2220,9 @@ export async function sendProactiveMessage(bot: Bot, config: Config, message: st
             console.log("📵 Skipping proactive Telegram message — internet offline");
             return;
         }
-    } catch { /* network monitor not loaded */ }
+    } catch {
+        /* network monitor not loaded */
+    }
 
     // Gate proactive messages through Smart DND (user responses bypass this check)
     try {
@@ -1899,13 +2232,20 @@ export async function sendProactiveMessage(bot: Bot, config: Config, message: st
             console.log("🔕 Proactive Telegram message suppressed by DND");
             return;
         }
-    } catch { /* DND check failed — deliver anyway */ }
+    } catch {
+        /* DND check failed — deliver anyway */
+    }
 
     // Track proactive message for read receipt awareness
-    const log = (globalThis as Record<string, unknown>).__atlasProactiveLog as Array<{ sentAt: number; topic: string; responded: boolean }> | undefined;
+    const log = (globalThis as Record<string, unknown>).__atlasProactiveLog as
+        | Array<{ sentAt: number; topic: string; responded: boolean }>
+        | undefined;
     if (log) {
         // Extract topic from first 80 chars
-        const topic = message.substring(0, 80).replace(/[*_`\n]/g, "").trim();
+        const topic = message
+            .substring(0, 80)
+            .replace(/[*_`\n]/g, "")
+            .trim();
         log.push({ sentAt: Date.now(), topic, responded: false });
         // Keep log bounded
         while (log.length > 20) log.shift();
@@ -1918,14 +2258,21 @@ export async function sendProactiveMessage(bot: Bot, config: Config, message: st
             let sent = false;
             for (let attempt = 1; attempt <= 3 && !sent; attempt++) {
                 try {
-                    await bot.api.sendMessage(userId, markdownToTelegramHtml(sanitizeReply(chunk)), { parse_mode: "HTML" });
+                    await bot.api.sendMessage(userId, markdownToTelegramHtml(sanitizeReply(chunk)), {
+                        parse_mode: "HTML",
+                    });
                     sent = true;
                 } catch (err) {
                     const errMsg = (err as Error)?.message || String(err);
-                    const isTransient = errMsg.includes('ENOTFOUND') || errMsg.includes('ETIMEDOUT') || errMsg.includes('ECONNRESET') || errMsg.includes('ECONNREFUSED') || errMsg.includes('fetch failed');
+                    const isTransient =
+                        errMsg.includes("ENOTFOUND") ||
+                        errMsg.includes("ETIMEDOUT") ||
+                        errMsg.includes("ECONNRESET") ||
+                        errMsg.includes("ECONNREFUSED") ||
+                        errMsg.includes("fetch failed");
                     if (isTransient && attempt < 3) {
                         // Retry transient network errors with backoff
-                        await new Promise(r => setTimeout(r, 2000 * attempt));
+                        await new Promise((r) => setTimeout(r, 2000 * attempt));
                         continue;
                     }
                     console.error(`❌ Failed to send proactive message to ${userId} (attempt ${attempt}):`, err);
@@ -1934,7 +2281,9 @@ export async function sendProactiveMessage(bot: Bot, config: Config, message: st
                         try {
                             await bot.api.sendMessage(userId, chunk);
                             sent = true;
-                        } catch { /* ignore fallback error */ }
+                        } catch {
+                            /* ignore fallback error */
+                        }
                     }
                 }
             }
@@ -1945,17 +2294,19 @@ export async function sendProactiveMessage(bot: Bot, config: Config, message: st
     try {
         const { recordNotification } = await import("./proactive/notification-tracker.js");
         recordNotification("proactive", message);
-    } catch { /* non-fatal */ }
+    } catch {
+        /* non-fatal */
+    }
 }
 
 // ── Read Receipt Helpers ──────────────────────
 
 export function getUnrespondedProactiveTopics(): string[] {
-    const log = (globalThis as Record<string, unknown>).__atlasProactiveLog as Array<{ sentAt: number; topic: string; responded: boolean }> | undefined;
+    const log = (globalThis as Record<string, unknown>).__atlasProactiveLog as
+        | Array<{ sentAt: number; topic: string; responded: boolean }>
+        | undefined;
     if (!log) return [];
     const now = Date.now();
     const STALE_THRESHOLD = 60 * 60 * 1000; // 1 hour
-    return log
-        .filter(e => !e.responded && now - e.sentAt < STALE_THRESHOLD)
-        .map(e => e.topic);
+    return log.filter((e) => !e.responded && now - e.sentAt < STALE_THRESHOLD).map((e) => e.topic);
 }

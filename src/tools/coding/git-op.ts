@@ -77,6 +77,24 @@ function stripBanned(args: string[]): string[] {
     return args.filter((a) => !BANNED_FLAGS.has(a));
 }
 
+// Ref/branch/remote args are passed positionally to git, so a value like
+// "-f", "+main", ":main" or "src:dst" would be read as a flag or refspec and
+// slip past the force-push and protected-branch gates. Plain names only.
+const REF_ARGS = ["name", "from", "branch", "commit", "onto", "to", "remote"] as const;
+export function invalidRefArg(input: Record<string, unknown>): string | null {
+    for (const key of REF_ARGS) {
+        const v = input[key];
+        if (typeof v !== "string" || v === "") continue;
+        if (/^[-+]/.test(v) || /[:\s\p{Cc}]/u.test(v)) return `refused: ${key} "${v}" is not a plain ref name`;
+    }
+    return null;
+}
+
+function isProtectedBranch(branch: string): boolean {
+    const b = branch.replace(/^(refs\/)?heads\//, "");
+    return PROTECTED_BRANCHES.has(b) || b.startsWith(RELEASE_PREFIX);
+}
+
 function requirePhrase(input: Record<string, unknown>, needle: string): string | null {
     const raw = typeof input.evidence_phrase === "string" ? input.evidence_phrase : undefined;
     return checkEvidencePhrase(raw, needle);
@@ -184,6 +202,9 @@ interactive rebase, add -A/-u/.`,
                 });
             }
         }
+
+        const refErr = invalidRefArg(input);
+        if (refErr) return JSON.stringify({ success: false, error: refErr });
 
         try {
             if (operation === "status") {
@@ -408,7 +429,12 @@ interactive rebase, add -A/-u/.`,
                 // Both --force and --force-with-lease can rewrite remote history.
                 // Protected-branch + evidence-phrase gates apply to either variant.
                 const isRewrite = force || forceLease;
-                if (isRewrite && (PROTECTED_BRANCHES.has(branch) || branch.startsWith(RELEASE_PREFIX))) {
+                // Gate on what the push actually lands on: HEAD/@ is the current branch.
+                const dest =
+                    branch === "HEAD" || branch === "@"
+                        ? runGit(root, ["rev-parse", "--abbrev-ref", "HEAD"]).stdout.trim()
+                        : branch;
+                if (isRewrite && isProtectedBranch(dest)) {
                     const variant = force ? "force push" : "force-with-lease push";
                     return JSON.stringify({
                         success: false,

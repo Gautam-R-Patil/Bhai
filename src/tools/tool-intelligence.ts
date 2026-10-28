@@ -395,6 +395,78 @@ const DANGEROUS_SHELL_PATTERNS = [
     /\bgit\s+reset\s+--hard\b/i, // hard reset
 ];
 
+// ── Destructive hotkeys ──
+// Keyboard tools can quit apps, close windows
+// or trash files with one combo, so they go through the same gate as the actions above.
+const MOD_ALIASES: Record<string, string> = {
+    cmd: "cmd",
+    command: "cmd",
+    meta: "cmd",
+    "⌘": "cmd",
+    super: "cmd",
+    ctrl: "ctrl",
+    control: "ctrl",
+    "^": "ctrl",
+    alt: "alt",
+    option: "alt",
+    opt: "alt",
+    "⌥": "alt",
+    shift: "shift",
+    "⇧": "shift",
+};
+const KEY_ALIASES: Record<string, string> = {
+    return: "enter",
+    enter: "enter",
+    "↩": "enter",
+    delete: "delete",
+    del: "delete",
+    backspace: "delete",
+    forwarddelete: "delete",
+    "forward delete": "delete",
+    "⌫": "delete",
+};
+
+/**
+ * True for combos that quit/close/trash: cmd+q, cmd+w, cmd+delete, alt+f4, ctrl+w, ...
+ * Send combos (cmd+return) are left out on purpose: plain Enter sends in most
+ * chat apps anyway, and gating them would block every "send this" the owner asked for.
+ */
+export function isDestructiveHotkey(combo: string): boolean {
+    const parts = String(combo)
+        .toLowerCase()
+        .split("+")
+        .map((p) => p.trim())
+        .filter(Boolean);
+    if (parts.length < 2) return false;
+    const mods = new Set<string>();
+    const keys: string[] = [];
+    for (const p of parts) {
+        if (MOD_ALIASES[p]) mods.add(MOD_ALIASES[p]);
+        else keys.push(KEY_ALIASES[p] ?? p);
+    }
+    if (keys.length !== 1) return false;
+    const key = keys[0];
+    const cmdOrCtrl = mods.has("cmd") || mods.has("ctrl");
+    if ((key === "q" || key === "w") && cmdOrCtrl) return true; // quit / close window or tab
+    if (key === "f4" && (mods.has("alt") || mods.has("ctrl"))) return true; // close window (Windows/Linux)
+    if (key === "delete" && (mods.has("cmd") || mods.has("shift"))) return true; // trash / permanent delete
+    return false;
+}
+
+/** Every hotkey combo a keyboard tool call would press. */
+function hotkeysIn(toolName: string, args: Record<string, unknown>): string[] {
+    const out: string[] = [];
+    if (toolName === "os_type" && typeof args.combo === "string") out.push(args.combo);
+    if (toolName === "os_computer_action" && args.action === "key" && typeof args.text === "string")
+        out.push(args.text);
+    if (toolName === "os_multi_action" && Array.isArray(args.actions)) {
+        for (const a of args.actions as Array<Record<string, unknown>>) {
+            if ((a?.action === "combo" || a?.action === "key") && typeof a.key === "string") out.push(a.key);
+        }
+    }
+    return out;
+}
+
 /**
  * Check if a tool call requires confirmation.
  * Philosophy: NEVER block — only warn. The agent confirms with the user, then executes.
@@ -417,6 +489,14 @@ export function requiresConfirmation(
                 };
             }
         }
+    }
+
+    const hotkey = hotkeysIn(toolName, args).find(isDestructiveHotkey);
+    if (hotkey) {
+        return {
+            needsConfirmation: true,
+            warningMessage: `⚠️ "${hotkey}" can quit an app, close a window or delete files. Confirm with the user before pressing it.`,
+        };
     }
 
     const destructive = DESTRUCTIVE_ACTIONS[toolName];

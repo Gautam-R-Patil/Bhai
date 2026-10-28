@@ -4,9 +4,15 @@
 
 import { execFile } from "node:child_process";
 import { homedir } from "node:os";
-import { basename } from "node:path";
+import { basename, resolve as resolvePath } from "node:path";
 import { promisify } from "node:util";
-import { isShellBypass, isSystemDestructive, shellArgsTargetProtectedPath } from "../security/allowlist.js";
+import {
+    isProtectedPath,
+    isShellBypass,
+    isSystemDestructive,
+    realResolve,
+    shellArgsTargetProtectedPath,
+} from "../security/allowlist.js";
 import { auditLog } from "../security/audit-log.js";
 import { sanitizeSecrets } from "../security/secrets-sanitizer.js";
 import { resolveWindowsShell, wrapForShell } from "../utils/win-shell.js";
@@ -25,7 +31,11 @@ const DEFAULT_TIMEOUT = 30000; // 30s
 // shell layer so the rule applies to shell_exec, sub-agents, and any
 // new tool that funnels through here.
 export function isGitConfigCall(command: string, args: string[]): boolean {
-    const base = command.split(/[\\/]/).pop()?.replace(/\.exe$/i, "") || "";
+    const base =
+        command
+            .split(/[\\/]/)
+            .pop()
+            ?.replace(/\.exe$/i, "") || "";
     if (base !== "git") return false;
     // Reject `git -c config.X=Y …` and `git config …` in any subcommand.
     for (let i = 0; i < args.length; i++) {
@@ -43,6 +53,120 @@ export function hasGitConfigEnvOverride(env: NodeJS.ProcessEnv): boolean {
         if (/^GIT_CONFIG(_|$)/.test(k)) return true;
     }
     return false;
+}
+
+// ── Codebase write protection ────────────────
+// The line runs through a shell, so the first word alone says nothing:
+// `sed -i`, `> file`, `| tee`, `git checkout -- .` all write. Split the line
+// into simple commands, find the ones that write, and check their path
+// operands (resolved against the command's cwd) and the cwd itself.
+// ponytail: lexical, not a shell parser — eval/aliases/scripts that write
+// get past it; the OS-level guard is the real boundary.
+const WRITE_CMDS = new Set([
+    "rm",
+    "rmdir",
+    "mv",
+    "cp",
+    "rsync",
+    "dd",
+    "tee",
+    "truncate",
+    "shred",
+    "unlink",
+    "ln",
+    "install",
+    "chmod",
+    "chown",
+    "touch",
+    "mkdir",
+    "patch",
+    // Windows cmd / PowerShell
+    "del",
+    "erase",
+    "rd",
+    "move",
+    "copy",
+    "xcopy",
+    "robocopy",
+    "ren",
+    "rename",
+    "remove-item",
+    "move-item",
+    "copy-item",
+    "rename-item",
+    "new-item",
+    "set-content",
+    "add-content",
+    "out-file",
+    "clear-content",
+]);
+const IN_PLACE_CMDS = new Set(["sed", "perl", "ruby"]); // write only with -i
+const GIT_WRITE_SUBS = new Set([
+    "clean",
+    "checkout",
+    "reset",
+    "restore",
+    "rm",
+    "mv",
+    "apply",
+    "am",
+    "stash",
+    "pull",
+    "merge",
+    "rebase",
+    "switch",
+    "cherry-pick",
+    "revert",
+]);
+const PREFIX_CMDS = new Set(["sudo", "env", "command", "nice", "nohup", "time", "exec", "doas"]);
+
+const unquote = (t: string) => t.replace(/^["']+|["']+$/g, "");
+const cmdName = (t: string) =>
+    basename(unquote(t))
+        .replace(/\.exe$/i, "")
+        .toLowerCase();
+
+function isWriteSegment(tokens: string[]): boolean {
+    let i = 0;
+    while (
+        i < tokens.length &&
+        (PREFIX_CMDS.has(cmdName(tokens[i])) || /^\w+=/.test(tokens[i]) || tokens[i].startsWith("-"))
+    )
+        i++;
+    const name = i < tokens.length ? cmdName(tokens[i]) : "";
+    const rest = tokens.slice(i + 1).map(unquote);
+    if (WRITE_CMDS.has(name)) return true;
+    if (IN_PLACE_CMDS.has(name)) return rest.some((t) => /^-[a-zA-Z]*i/.test(t) || t.startsWith("--in-place"));
+    if (name === "git") return rest.some((t) => GIT_WRITE_SUBS.has(t));
+    if (name === "find" || name === "xargs") {
+        return rest.some((t) => t === "-delete" || WRITE_CMDS.has(cmdName(t)) || IN_PLACE_CMDS.has(cmdName(t)));
+    }
+    return false;
+}
+
+/** The protected path a write-form shell line would touch, or null. */
+export function shellWriteTargetsProtected(line: string, cwd: string): string | null {
+    const toPath = (t: string) => {
+        const u = unquote(t);
+        return resolvePath(cwd, u === "~" || u.startsWith("~/") ? homedir() + u.slice(1) : u);
+    };
+    // Redirect targets: `> f`, `>> f`, `2> f`, `>| f` (not `2>&1`).
+    for (const m of line.matchAll(/(?<![=-])\d*>{1,2}\|?\s*([^\s;&|<>()]+)/g)) {
+        const hit = shellArgsTargetProtectedPath([toPath(m[1])]);
+        if (hit) return hit;
+    }
+    for (const seg of line.split(/\|\||&&|[;|&\n`()]|\$\(/)) {
+        const tokens = seg.trim().split(/\s+/).filter(Boolean);
+        if (tokens.length === 0 || !isWriteSegment(tokens)) continue;
+        if (isProtectedPath(cwd)) return realResolve(cwd);
+        const operands = tokens
+            .map((t) => (t.startsWith("-") || /^\w+=/.test(t) ? t.slice(t.indexOf("=") + 1) : t))
+            .filter((t) => t && !t.startsWith("-") && !t.startsWith("<") && !t.startsWith(">"))
+            .map(toPath);
+        const hit = shellArgsTargetProtectedPath(operands);
+        if (hit) return hit;
+    }
+    return null;
 }
 
 // ── Cross-Platform Command Executor ──────────
@@ -133,21 +257,12 @@ export const shellExec: ToolDefinition = {
             });
         }
 
-        // Codebase self-protection: block destructive shell commands targeting the atlas folder
-        const DESTRUCTIVE_CMDS = new Set(["rm", "mv", "cp", "rsync", "dd"]);
-        // basename covers both separators so a Windows command path like
-        // "C:\\Windows\\System32\\rm.exe" still resolves to "rm.exe" and
-        // hits the DESTRUCTIVE_CMDS check (after trimming .exe below).
-        const baseCmdRaw = basename(command);
-        const baseCmd = baseCmdRaw.replace(/\.exe$/i, "");
-        if (DESTRUCTIVE_CMDS.has(baseCmd)) {
-            const allTokens = [command, ...args];
-            const hit = shellArgsTargetProtectedPath(allTokens);
-            if (hit) {
-                return JSON.stringify({
-                    error: `Blocked: command "${command}" targets the bot's own codebase path "${hit}". Write/delete operations on the atlas codebase are not allowed.`,
-                });
-            }
+        // Codebase self-protection: block write forms that touch the atlas folder.
+        const hit = shellWriteTargetsProtected(fullCommand, cwd);
+        if (hit) {
+            return JSON.stringify({
+                error: `Blocked: command "${command}" writes to the bot's own codebase path "${hit}". Write/delete operations on the atlas codebase are not allowed.`,
+            });
         }
 
         try {

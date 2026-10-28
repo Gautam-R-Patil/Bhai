@@ -371,6 +371,16 @@ ${mouseFlags}
 
 // ── OS Type Tool (Windows) ────────────────────
 
+/**
+ * A PowerShell expression that evaluates to `s`. The text travels as base64
+ * inside a single-quoted literal, so nothing in it is parsed as PowerShell
+ * (no `$(...)`, backticks or quote breakout) and non-ASCII survives as UTF-8.
+ */
+export function psLiteral(s: string): string {
+    const b64 = Buffer.from(s, "utf-8").toString("base64");
+    return `[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${b64}'))`;
+}
+
 export const winOsType: ToolDefinition = {
     schema: {
         type: "function",
@@ -404,7 +414,7 @@ export const winOsType: ToolDefinition = {
             return JSON.stringify({ error: "os_type is only available on Windows." });
         }
 
-        const delayMs = (input.delay_ms as number) || 200;
+        const delayMs = Math.max(0, Math.floor(Number(input.delay_ms) || 200));
         let psScript: string;
 
         if (input.combo) {
@@ -461,7 +471,7 @@ export const winOsType: ToolDefinition = {
 
             psScript = `
 Add-Type -AssemblyName System.Windows.Forms
-[System.Windows.Forms.SendKeys]::SendWait("${modPrefix}${mappedKey}")
+[System.Windows.Forms.SendKeys]::SendWait(${psLiteral(modPrefix + mappedKey)})
 Start-Sleep -Milliseconds ${delayMs}
 `;
         } else if (input.key) {
@@ -497,7 +507,7 @@ Start-Sleep -Milliseconds ${delayMs}
 
             psScript = `
 Add-Type -AssemblyName System.Windows.Forms
-[System.Windows.Forms.SendKeys]::SendWait("${mapped}")
+[System.Windows.Forms.SendKeys]::SendWait(${psLiteral(mapped)})
 Start-Sleep -Milliseconds ${delayMs}
 `;
         } else if (input.text) {
@@ -505,7 +515,7 @@ Start-Sleep -Milliseconds ${delayMs}
             const escaped = (input.text as string).replace(/([+^%~(){}[\]])/g, "{$1}");
             psScript = `
 Add-Type -AssemblyName System.Windows.Forms
-[System.Windows.Forms.SendKeys]::SendWait("${escaped}")
+[System.Windows.Forms.SendKeys]::SendWait(${psLiteral(escaped)})
 Start-Sleep -Milliseconds ${delayMs}
 `;
         } else {

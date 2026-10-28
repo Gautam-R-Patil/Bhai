@@ -41,7 +41,24 @@ const norm = (t: string) =>
 export function ownerSaid(quote: string, since: number): boolean {
     const q = norm(quote);
     if (q.length < 2) return false;
-    return ownerMessages.some((m) => m.at >= since && norm(m.text).includes(q));
+    // Whole words only: "ok" must not match inside "looks".
+    return ownerMessages.some((m) => m.at >= since && ` ${norm(m.text)} `.includes(` ${q} `));
+}
+
+/**
+ * Approval gate: `quote` is a whole-word excerpt of the owner's LATEST message,
+ * sent at/after `since`, and that whole message reads as a yes (not a no).
+ */
+export function ownerApproved(quote: string, since: number): boolean {
+    const last = ownerMessages.at(-1);
+    if (!last || last.at < since) return false;
+    const q = norm(quote);
+    return (
+        q.length >= 2 &&
+        ` ${norm(last.text)} `.includes(` ${q} `) &&
+        AFFIRMATIVE.test(last.text) &&
+        !NEGATIVE.test(last.text)
+    );
 }
 
 export type ConsentResult = "granted" | "needs_consent";

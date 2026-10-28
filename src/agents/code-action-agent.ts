@@ -15,8 +15,8 @@
  *     in a vm sandbox with `tools.*` providing all registered tool handlers.
  */
 
-import type { LLMClient, ChatCompletionMessageParam } from "../llm.js";
-import * as vm from "node:vm";
+import type { ChatCompletionMessageParam, LLMClient } from "../llm.js";
+import { runIsolated } from "../security/vm-isolate.js";
 
 // ── Types ─────────────────────────────────────
 
@@ -48,46 +48,7 @@ const DANGEROUS_PATTERNS = [
 ];
 
 function containsDangerous(code: string): boolean {
-    return DANGEROUS_PATTERNS.some(p => code.includes(p));
-}
-
-// ── Tool Proxy Builder ────────────────────────
-// Creates a `tools` proxy object where `tools.any_tool_name({ ...params })`
-// routes to the real tool executor. This is the bridge between generated
-// code and the agent's registered tools.
-
-function buildToolsProxy(
-    executor: ToolExecutor,
-    allowedTools?: string[],
-): Record<string, (input: Record<string, unknown>) => Promise<string>> {
-    // Use a Proxy so every property access returns an async tool caller.
-    // This avoids having to enumerate all tool names up front.
-    const allowedSet = allowedTools ? new Set(allowedTools) : null;
-
-    return new Proxy({} as Record<string, (input: Record<string, unknown>) => Promise<string>>, {
-        get(_target, prop: string) {
-            // Allow toString / Symbol.toPrimitive for debugging
-            if (typeof prop === "symbol" || prop === "toJSON" || prop === "then") return undefined;
-
-            return async (input: Record<string, unknown> = {}): Promise<string> => {
-                if (allowedSet && !allowedSet.has(prop)) {
-                    throw new Error(`Tool "${prop}" is not in the allowed tool list. Available: ${[...allowedSet].join(", ")}`);
-                }
-                return executor(prop, input);
-            };
-        },
-        has(_target, prop: string) {
-            if (allowedSet) return allowedSet.has(prop);
-            return true;  // Assume all tools exist — executor handles unknown tools
-        },
-        ownKeys() {
-            return allowedSet ? [...allowedSet] : [];
-        },
-        getOwnPropertyDescriptor(_target, prop: string) {
-            if (allowedSet && !allowedSet.has(prop)) return undefined;
-            return { configurable: true, enumerable: true, writable: false };
-        },
-    });
+    return DANGEROUS_PATTERNS.some((p) => code.includes(p));
 }
 
 // ── Sandbox Execution ─────────────────────────
@@ -95,7 +56,7 @@ function buildToolsProxy(
 // No access to process, require, fs write, or host globals.
 
 const SANDBOX_TIMEOUT_MS = 120_000; // 2 minutes max
-const MAX_OUTPUT_LENGTH = 50_000;   // Truncate very large outputs
+const MAX_OUTPUT_LENGTH = 50_000; // Truncate very large outputs
 
 export async function executeCodeAction(
     code: string,
@@ -115,123 +76,57 @@ export async function executeCodeAction(
     }
 
     const timeout = options?.timeout ?? SANDBOX_TIMEOUT_MS;
-    const toolsProxy = buildToolsProxy(executor, options?.allowedTools);
-
-    // Capture console output
+    const allowedSet = options?.allowedTools ? new Set(options.allowedTools) : null;
     const logs: string[] = [];
-    const sandboxConsole = Object.freeze({
-        log: (...args: unknown[]) => logs.push(args.map(String).join(" ")),
-        warn: (...args: unknown[]) => logs.push(`[WARN] ${args.map(String).join(" ")}`),
-        error: (...args: unknown[]) => logs.push(`[ERROR] ${args.map(String).join(" ")}`),
-        info: (...args: unknown[]) => logs.push(args.map(String).join(" ")),
-    });
 
-    // Wrap user code in an async IIFE that receives tools and console
-    const wrappedSource = `
-        (async function __codeActionSandbox(__tools, __console) {
-            const tools = __tools;
-            const console = __console;
-            ${code}
-        })
-    `;
-
-    let compiledScript: vm.Script;
-    try {
-        compiledScript = new vm.Script(wrappedSource, {
-            filename: "code-action-sandbox.vm",
-        });
-    } catch (err) {
-        return { code, output: "", success: false, error: `Syntax error: ${(err as Error).message}` };
-    }
-
-    // Build sandboxed context — no host globals, no process, no require
-    const sandbox: Record<string, unknown> = {
-        JSON,
-        Math,
-        Date,
-        String,
-        Number,
-        Boolean,
-        Array,
-        Object,
-        RegExp,
-        Map,
-        Set,
-        WeakMap,
-        WeakSet,
-        Promise,
-        Error,
-        TypeError,
-        RangeError,
-        SyntaxError,
-        URIError,
-        Buffer,
-        URL,
-        URLSearchParams,
-        parseInt,
-        parseFloat,
-        isNaN,
-        isFinite,
-        encodeURIComponent,
-        decodeURIComponent,
-        encodeURI,
-        decodeURI,
-        setTimeout: globalThis.setTimeout,
-        clearTimeout: globalThis.clearTimeout,
-        console: sandboxConsole,
-    };
-
-    const context = vm.createContext(sandbox, {
-        name: "code-action-sandbox",
-        codeGeneration: {
-            strings: false,  // Block eval() / new Function()
-            wasm: false,
+    // runIsolated hands the snippet no host-realm object: host builtins,
+    // console fns, Buffer, setTimeout or a host Proxy all reach the host
+    // Function through .constructor. `tools.*` and console cross as JSON.
+    const r = await runIsolated({
+        fn: `async function __codeActionSandbox(__input, tools, console) {\n${code}\n}`,
+        api: `new Proxy({}, { get: (_, p) => typeof p === "string" && p !== "then" && p !== "toJSON" ? (args) => call(p, args === undefined ? {} : args) : undefined })`,
+        onCall: (name, args) => {
+            if (allowedSet && !allowedSet.has(name)) {
+                throw new Error(
+                    `Tool "${name}" is not in the allowed tool list. Available: ${[...allowedSet].join(", ")}`,
+                );
+            }
+            return executor(name, (args ?? {}) as Record<string, unknown>);
         },
+        onLog: (level, line) =>
+            logs.push(level === "warn" ? `[WARN] ${line}` : level === "error" ? `[ERROR] ${line}` : line),
+        timeoutMs: timeout,
+        filename: "code-action-sandbox.vm",
     });
 
-    try {
-        // Get the wrapper function from the sandbox
-        const handlerFn = compiledScript.runInContext(context, {
-            timeout: 30_000,  // Compile-phase timeout
-        }) as (
-            tools: Record<string, (input: Record<string, unknown>) => Promise<string>>,
-            console: Record<string, (...args: unknown[]) => void>,
-        ) => Promise<unknown>;
-
-        // Execute with overall timeout
-        const resultPromise = handlerFn(toolsProxy, sandboxConsole);
-        const timeoutPromise = new Promise<never>((_, reject) => {
-            setTimeout(() => reject(new Error(`Code execution timed out after ${timeout / 1000}s`)), timeout);
-        });
-
-        const rawResult = await Promise.race([resultPromise, timeoutPromise]);
-
-        // Format output
-        let output: string;
-        if (typeof rawResult === "string") {
-            output = rawResult;
-        } else if (rawResult === undefined || rawResult === null) {
-            output = logs.length > 0 ? logs.join("\n") : "[No return value]";
-        } else {
-            output = JSON.stringify(rawResult, null, 2);
-        }
-
-        // Prepend console logs if there were any and the result is separate
-        if (logs.length > 0 && rawResult !== undefined && rawResult !== null) {
-            output = `[Console output]\n${logs.join("\n")}\n\n[Return value]\n${output}`;
-        }
-
-        // Truncate if too large
-        if (output.length > MAX_OUTPUT_LENGTH) {
-            output = output.slice(0, MAX_OUTPUT_LENGTH) + `\n\n[... truncated at ${MAX_OUTPUT_LENGTH} chars]`;
-        }
-
-        return { code, output, success: true };
-    } catch (err) {
-        const errorMsg = (err as Error).message;
+    if (!r.ok) {
+        const errorMsg = r.error.startsWith("timeout after")
+            ? `Code execution timed out after ${timeout / 1000}s`
+            : r.error;
         const consoleOutput = logs.length > 0 ? `\n\n[Console output before error]\n${logs.join("\n")}` : "";
         return { code, output: "", success: false, error: `${errorMsg}${consoleOutput}` };
     }
+
+    const rawResult = r.result;
+    let output: string;
+    if (typeof rawResult === "string") {
+        output = rawResult;
+    } else if (rawResult === undefined || rawResult === null) {
+        output = logs.length > 0 ? logs.join("\n") : "[No return value]";
+    } else {
+        output = JSON.stringify(rawResult, null, 2);
+    }
+
+    // Prepend console logs if there were any and the result is separate
+    if (logs.length > 0 && rawResult !== undefined && rawResult !== null) {
+        output = `[Console output]\n${logs.join("\n")}\n\n[Return value]\n${output}`;
+    }
+
+    if (output.length > MAX_OUTPUT_LENGTH) {
+        output = output.slice(0, MAX_OUTPUT_LENGTH) + `\n\n[... truncated at ${MAX_OUTPUT_LENGTH} chars]`;
+    }
+
+    return { code, output, success: true };
 }
 
 // ── LLM Code Generation (original mode) ──────
@@ -255,7 +150,7 @@ TASK: ${task}
 ${context ? `CONTEXT: ${context}` : ""}
 
 Available tools (call as tools.name({ param: value })):
-${availableTools.map(t => `- tools.${t}(params): Promise<string>`).join("\n")}
+${availableTools.map((t) => `- tools.${t}(params): Promise<string>`).join("\n")}
 
 Rules:
 - Write ONLY executable JavaScript code. Use async/await.
@@ -275,12 +170,16 @@ Example:
     try {
         const response = await llm.chat({
             messages,
-            systemPrompt: "Generate concise JavaScript code that calls tool functions via the tools.* object to complete the task. Output only code, no explanation. The code runs in a sandbox with access to tools.* and console.*.",
+            systemPrompt:
+                "Generate concise JavaScript code that calls tool functions via the tools.* object to complete the task. Output only code, no explanation. The code runs in a sandbox with access to tools.* and console.*.",
         });
 
         let code = response.choices?.[0]?.message?.content?.trim() || "";
         // Strip markdown code fences
-        code = code.replace(/^```(?:javascript|typescript|js|ts)?\n?/i, "").replace(/\n?```$/, "").trim();
+        code = code
+            .replace(/^```(?:javascript|typescript|js|ts)?\n?/i, "")
+            .replace(/\n?```$/, "")
+            .trim();
 
         if (!code || code.length < 10) {
             return { code: "", output: "", success: false, error: "No code generated" };

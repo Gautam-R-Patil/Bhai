@@ -604,6 +604,12 @@ export async function dispatchType(text: string): Promise<void> {
     throw new Error(`type not yet implemented for platform: ${process.platform}`);
 }
 
+// [Console]::In decodes stdin with the OEM code page and mangles non-ASCII;
+// read the raw bytes and decode them as the UTF-8 we write.
+const PS_READ_STDIN_UTF8 =
+    "$ms = New-Object System.IO.MemoryStream; [Console]::OpenStandardInput().CopyTo($ms); " +
+    "$txt = [System.Text.Encoding]::UTF8.GetString($ms.ToArray())";
+
 /**
  * Type literal text on Windows via real synthetic keystrokes (SendKeys), reading
  * the text from stdin so it never appears on a command line. Escapes SendKeys
@@ -611,7 +617,7 @@ export async function dispatchType(text: string): Promise<void> {
  */
 async function typeWindowsViaStdin(text: string): Promise<void> {
     const psScript = `
-$txt = [Console]::In.ReadToEnd()
+${PS_READ_STDIN_UTF8}
 $esc = ($txt.ToCharArray() | ForEach-Object {
     if ('+^%~(){}[]'.Contains($_)) { '{' + $_ + '}' } else { [string]$_ }
 }) -join ''
@@ -649,7 +655,7 @@ $esc = ($txt.ToCharArray() | ForEach-Object {
  */
 async function pasteWindowsViaStdin(text: string): Promise<void> {
     const psScript = `
-$txt = [Console]::In.ReadToEnd()
+${PS_READ_STDIN_UTF8}
 Set-Clipboard -Value $txt
 Start-Sleep -Milliseconds 50
 (New-Object -ComObject WScript.Shell).SendKeys('^v')
@@ -759,7 +765,8 @@ async function dispatchKey(text: string): Promise<void> {
 
 async function sendKeysWindowsViaStdin(sendKeysStr: string): Promise<void> {
     const psScript = `
-$keys = [Console]::In.ReadToEnd()
+${PS_READ_STDIN_UTF8}
+$keys = $txt
 (New-Object -ComObject WScript.Shell).SendKeys($keys)
 `.trim();
     const encoded = Buffer.from(psScript, "utf16le").toString("base64");
@@ -791,13 +798,61 @@ $keys = [Console]::In.ReadToEnd()
 // Lets hold_key (and game movement: w/a/s/d) work for any common key instead of
 // only a handful of modifiers. Returns undefined for unknown single tokens.
 const MAC_KEYCODES: Record<string, number> = {
-    a: 0, s: 1, d: 2, f: 3, h: 4, g: 5, z: 6, x: 7, c: 8, v: 9,
-    b: 11, q: 12, w: 13, e: 14, r: 15, y: 16, t: 17,
-    o: 31, u: 32, i: 34, p: 35, l: 37, j: 38, k: 40, n: 45, m: 46,
-    "1": 18, "2": 19, "3": 20, "4": 21, "5": 23, "6": 22, "7": 26, "8": 28, "9": 25, "0": 29,
-    shift: 56, control: 59, ctrl: 59, option: 58, alt: 58, command: 55, cmd: 55,
-    return: 36, enter: 36, space: 49, tab: 48, escape: 53, esc: 53, delete: 51, backspace: 51,
-    up: 126, down: 125, left: 123, right: 124,
+    a: 0,
+    s: 1,
+    d: 2,
+    f: 3,
+    h: 4,
+    g: 5,
+    z: 6,
+    x: 7,
+    c: 8,
+    v: 9,
+    b: 11,
+    q: 12,
+    w: 13,
+    e: 14,
+    r: 15,
+    y: 16,
+    t: 17,
+    o: 31,
+    u: 32,
+    i: 34,
+    p: 35,
+    l: 37,
+    j: 38,
+    k: 40,
+    n: 45,
+    m: 46,
+    "1": 18,
+    "2": 19,
+    "3": 20,
+    "4": 21,
+    "5": 23,
+    "6": 22,
+    "7": 26,
+    "8": 28,
+    "9": 25,
+    "0": 29,
+    shift: 56,
+    control: 59,
+    ctrl: 59,
+    option: 58,
+    alt: 58,
+    command: 55,
+    cmd: 55,
+    return: 36,
+    enter: 36,
+    space: 49,
+    tab: 48,
+    escape: 53,
+    esc: 53,
+    delete: 51,
+    backspace: 51,
+    up: 126,
+    down: 125,
+    left: 123,
+    right: 124,
 };
 function macKeyCode(token: string): number | undefined {
     return MAC_KEYCODES[token];
@@ -806,9 +861,23 @@ function macKeyCode(token: string): number | undefined {
 // Windows virtual-key codes. Letters/digits map to their ASCII-uppercase code
 // (VK_A=0x41 … VK_0=0x30), so 'w'/'a'/'s'/'d' and any alphanumeric hold works.
 const WIN_VK_NAMED: Record<string, number> = {
-    shift: 0x10, control: 0x11, ctrl: 0x11, alt: 0x12, menu: 0x12,
-    enter: 0x0d, return: 0x0d, space: 0x20, tab: 0x09, escape: 0x1b, esc: 0x1b,
-    backspace: 0x08, delete: 0x2e, up: 0x26, down: 0x28, left: 0x25, right: 0x27,
+    shift: 0x10,
+    control: 0x11,
+    ctrl: 0x11,
+    alt: 0x12,
+    menu: 0x12,
+    enter: 0x0d,
+    return: 0x0d,
+    space: 0x20,
+    tab: 0x09,
+    escape: 0x1b,
+    esc: 0x1b,
+    backspace: 0x08,
+    delete: 0x2e,
+    up: 0x26,
+    down: 0x28,
+    left: 0x25,
+    right: 0x27,
 };
 function winVkCode(token: string): number | undefined {
     if (token in WIN_VK_NAMED) return WIN_VK_NAMED[token];
@@ -849,7 +918,9 @@ async function dispatchHoldKey(text: string, durationMs: number): Promise<void> 
         const lower = text.toLowerCase();
         const code = winVkCode(lower);
         if (code === undefined) {
-            throw new Error(`hold_key on Windows: unsupported key '${text}'. Use a letter/digit, an arrow, or a named key.`);
+            throw new Error(
+                `hold_key on Windows: unsupported key '${text}'. Use a letter/digit, an arrow, or a named key.`,
+            );
         }
         const ps = `
 Add-Type -TypeDefinition @"

@@ -1,6 +1,6 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 import { beforeEach, describe, expect, it } from "vitest";
-import { _resetConsent, checkConsent, noteOwnerMessage, ownerSaid } from "./consent.js";
+import { _resetConsent, checkConsent, noteOwnerMessage, ownerApproved, ownerSaid } from "./consent.js";
 
 const KEY = 'delete_file:{"path":"/Users/me/notes.txt"}';
 
@@ -37,5 +37,21 @@ describe("consent for irreversible actions", () => {
         expect(ownerSaid("Looks good, ship the new tool", askedAt)).toBe(false); // model-written
         noteOwnerMessage("Looks good — ship the new tool!");
         expect(ownerSaid("looks good ship the new tool", askedAt)).toBe(true);
+    });
+
+    it("a short quote can't ride inside another word, and approval must say yes in the latest message", () => {
+        const askedAt = Date.now();
+        noteOwnerMessage("this looks wrong, redo the schema");
+        expect(ownerSaid("ok", askedAt)).toBe(false); // "ok" inside "looks"
+        expect(ownerApproved("ok", askedAt)).toBe(false);
+        expect(ownerApproved("redo the schema", askedAt)).toBe(false); // not a yes
+        noteOwnerMessage("yes go ahead with it");
+        expect(ownerApproved("yes go ahead", askedAt)).toBe(true);
+        noteOwnerMessage("wait, change the API first");
+        expect(ownerApproved("yes go ahead", askedAt)).toBe(false); // superseded by a later message
+        noteOwnerMessage("ok so don't build it yet");
+        expect(ownerApproved("ok so", askedAt)).toBe(false); // the rest of the message says no
+        noteOwnerMessage("yes");
+        expect(ownerApproved("yes", askedAt)).toBe(true); // a plain yes is enough
     });
 });

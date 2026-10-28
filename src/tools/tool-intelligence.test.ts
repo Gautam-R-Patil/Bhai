@@ -9,6 +9,7 @@ import {
     getCached,
     getToolAnalytics,
     isCacheable,
+    isDestructiveHotkey,
     recordToolUsage,
     requiresConfirmation,
     resetRateLimits,
@@ -359,5 +360,42 @@ describe("tool-intelligence — analytics", () => {
         const stats = getToolAnalytics()[tool];
         expect(stats.lastUsed).toBeGreaterThanOrEqual(before);
         expect(stats.lastUsed).toBeLessThanOrEqual(after);
+    });
+});
+
+describe("tool-intelligence — destructive hotkeys", () => {
+    it("normalizes modifier names and order", () => {
+        for (const c of [
+            "cmd+q",
+            "Command+Q",
+            "q+meta",
+            "cmd+w",
+            "cmd+backspace",
+            "shift+cmd+delete",
+            "alt+f4",
+            "ctrl+w",
+            "shift+delete",
+        ]) {
+            expect(isDestructiveHotkey(c), c).toBe(true);
+        }
+        for (const c of ["cmd+c", "cmd+v", "ctrl+s", "command+shift+s", "alt+tab", "q", "return", "delete", "cmd+return", "ctrl+enter"]) {
+            expect(isDestructiveHotkey(c), c).toBe(false);
+        }
+    });
+
+    it("routes keyboard tools through the confirmation gate", () => {
+        expect(requiresConfirmation("os_type", { combo: "command+q" }).needsConfirmation).toBe(true);
+        expect(requiresConfirmation("os_computer_action", { action: "key", text: "alt+f4" }).needsConfirmation).toBe(
+            true,
+        );
+        expect(
+            requiresConfirmation("os_multi_action", {
+                actions: [{ action: "click" }, { action: "combo", key: "cmd+delete" }],
+            }).needsConfirmation,
+        ).toBe(true);
+        expect(requiresConfirmation("os_type", { combo: "command+c" }).needsConfirmation).toBe(false);
+        expect(requiresConfirmation("os_computer_action", { action: "type", text: "cmd+q" }).needsConfirmation).toBe(
+            false,
+        );
     });
 });
