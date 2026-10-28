@@ -176,4 +176,31 @@ describe("agent cursor", () => {
         await agentCursor(slowBox, target);
         expect(calls).toEqual([]);
     });
+
+    it("Chrome bridge: a page that outruns the 1s cap stops getting a cursor", async () => {
+        let evals = 0;
+        const hung = { evaluate: () => (evals++, new Promise((r) => setTimeout(() => r(0), 3000))) };
+        const t0 = Date.now();
+        await agentCursor(hung, { x: 5, y: 5 });
+        expect(Date.now() - t0).toBeLessThan(1300);
+        const t1 = Date.now();
+        await agentCursor(hung, { x: 6, y: 6 });
+        expect(Date.now() - t1).toBeLessThan(50);
+        expect(evals).toBe(1);
+    });
+
+    it("overlapping captures keep the overlay hidden until the last one ends", async (ctx) => {
+        if (!browser) return ctx.skip();
+        const page = await freshPage();
+        await agentCursor(page, { x: 20, y: 20 });
+        const hostVisible = () => page.evaluate(`getComputedStyle(document.getElementById("__bhaiAgentUI")).visibility !== "hidden"`);
+        let release!: () => void;
+        const slow = withAgentUIHidden(page, () => new Promise<number>((r) => (release = () => r(1))));
+        await withAgentUIHidden(page, async () => 2);
+        expect(await hostVisible()).toBe(false); // the slow capture is still running
+        release();
+        await slow;
+        expect(await hostVisible()).toBe(true);
+        await page.context().close();
+    });
 });

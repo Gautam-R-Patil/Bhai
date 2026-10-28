@@ -133,11 +133,12 @@ const call = (arg: Record<string, unknown>) => `(${AGENT_UI_JS})(${JSON.stringif
 
 /**
  * Glide Bhai's cursor to `at` (centre of a box), then return so the caller
- * does the real action. Never throws, never waits more than AGENT_CURSOR_CAP_MS.
+ * does the real action. Never throws; waits at most AGENT_CURSOR_CAP_MS (1s on the Chrome bridge).
  * Omit `at` to just pulse/refresh the tab-in-use glow where the cursor is.
  */
 export async function agentCursor(page: AnyPage, at?: CursorTarget | null, kind: CursorKind = "click"): Promise<void> {
     if (!enabled() || !page || typeof page.evaluate !== "function") return;
+    if (slowBridge.has(page)) return; // this bridge page already outran the cap once
     activeUntil = Date.now() + AGENT_PRESENCE_IDLE_MS;
     // Playwright: a navigation wipes the overlay; put the glow back on the new
     // document while the task is still live. The Chrome bridge re-shows it on
@@ -173,16 +174,29 @@ export async function agentCursor(page: AnyPage, at?: CursorTarget | null, kind:
     })().catch(() => {});
     // The Chrome bridge (no page.on) attaches and detaches the debugger around
     // every eval, so one left in flight can detach in the middle of the real
-    // action's command: wait for it there. Playwright queues a page's evals in
-    // order, so stop waiting at the cap.
-    await (bridge(page) ? run : Promise.race([run, sleep(AGENT_CURSOR_CAP_MS)]));
+    // action's command: wait for it there, but only up to a hard cap (its own
+    // eval timeout is 15s). A page that outruns the cap gets no cursor from then
+    // on, so an overlap happens at most once. Playwright queues a page's evals
+    // in order, so stop waiting at the normal cap.
+    if (!bridge(page)) {
+        await Promise.race([run, sleep(AGENT_CURSOR_CAP_MS)]);
+        return;
+    }
+    const finished = await Promise.race([run.then(() => true), sleep(BRIDGE_CAP_MS).then(() => false)]);
+    if (!finished) slowBridge.add(page);
 }
 
+const BRIDGE_CAP_MS = 1000;
+const slowBridge = new WeakSet<object>();
 const bridge = (page: AnyPage) => typeof page.on !== "function";
+// Counts captures in flight on the host, so overlapping captures restore the
+// overlay only when the last one is done.
 const HIDE_JS = (hide: boolean) => `(() => {
   const h = document.getElementById('${AGENT_UI_HOST_ID}');
   if (!h) return false;
-  h.style.visibility = '${hide ? "hidden" : ""}';
+  const n = Math.max(0, Number(h.dataset.hides || 0) + (${hide} ? 1 : -1));
+  h.dataset.hides = String(n);
+  h.style.visibility = n > 0 ? 'hidden' : '';
   return ${hide} && new Promise((r) => { requestAnimationFrame(() => requestAnimationFrame(() => r(true))); setTimeout(() => r(true), 100); });
 })()`;
 
