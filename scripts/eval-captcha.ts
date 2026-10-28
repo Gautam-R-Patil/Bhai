@@ -92,9 +92,9 @@ async function main() {
     for (const kind of kinds) {
         const rs = results.filter((r) => r.kind === kind);
         const pass = rs.filter((r) => r.ok).length;
-        const methods = Object.entries(
-            rs.reduce<Record<string, number>>((m, r) => ((m[r.method] = (m[r.method] ?? 0) + 1), m), {}),
-        );
+        const counts: Record<string, number> = {};
+        for (const r of rs) counts[r.method] = (counts[r.method] ?? 0) + 1;
+        const methods = Object.entries(counts);
         const avg = (f: (r: Run) => number) => (rs.reduce((s, r) => s + f(r), 0) / rs.length).toFixed(1);
         console.log(
             `${kind}: ${pass}/${rs.length} = ${((100 * pass) / rs.length).toFixed(0)}% | avg ${avg((r) => r.ms / 1000)}s, ${avg((r) => r.modelCalls)} model calls | ${methods.map(([m, n]) => `${m}:${n}`).join(" ")}`,
