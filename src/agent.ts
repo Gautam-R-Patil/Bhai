@@ -1688,7 +1688,12 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             // ── 0. Touch session (track turns) ───────
             // Capture pre-expiry history BEFORE touchSession clears session state
             const preSessionHistory = [...workingHistory];
-            const { isNew, expiredSession } = touchSession(userMessage);
+            // A forked turn (a WhatsApp contact, a group) must not touch the owner's
+            // session: an expiry here reflected on the contact's chat and saved their
+            // "my name is X" as the owner's. Periodic reflection skips forks too.
+            const { isNew, expiredSession } = isForked
+                ? { isNew: false, expiredSession: null }
+                : touchSession(userMessage);
             if (isNew) {
                 console.log(`  📋 New session started`);
                 resetSessionTraitCaps("new");

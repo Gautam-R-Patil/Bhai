@@ -6,42 +6,42 @@
 // Decomposes complex tasks into sub-agent steps, executes them via
 // the Mesh engine, and synthesizes results into a final answer.
 
-import type { LLMClient, ChatCompletionMessageParam } from "../llm.js";
-import { selectForPlanning, selectForSynthesis } from "../model-router.js";
 import { getDimensionValue } from "../harness/registry.js";
-import { executeMesh, type MeshStep } from "./mesh.js";
-import type { AgentRole, SubAgentResult } from "./sub-agent.js";
-import { shouldConsiderReplan, replan } from "./replanner.js";
-import { evaluateAndOptimize } from "./evaluator.js";
-import { getTaskLearningsContext } from "../memory/task-learnings.js";
-import { extractJSON } from "../utils/json-extract.js";
+import type { ChatCompletionMessageParam, LLMClient } from "../llm.js";
 import { generateCounterfactual } from "../memory/counterfactual.js";
-import { classifyComplexity } from "./complexity-classifier.js";
-import { runMCTSPlanning } from "../planning/mcts-planner.js";
-import { shouldUseMoA, synthesizeWithMoA } from "./mixture.js";
-import { findTemplates, saveTemplate, formatTemplateHint } from "./decomposition-library.js";
-import { runMultiCriticDebate } from "./multi-critic.js";
-import { runCodeCriticIfCoder } from "./code-critic.js";
-import { verifyReasoning } from "../planning/logic-verifier.js";
-import { createHierarchicalPlan } from "../planning/hierarchical-planner.js";
 import { getMemoryInformedContext } from "../memory/memory-informed-planning.js";
+import { getTaskLearningsContext } from "../memory/task-learnings.js";
+import { selectForPlanning, selectForSynthesis } from "../model-router.js";
+import { createHierarchicalPlan } from "../planning/hierarchical-planner.js";
+import { verifyReasoning } from "../planning/logic-verifier.js";
+import { runMCTSPlanning } from "../planning/mcts-planner.js";
 import { maybeCreateSkill, type ToolCallRecord } from "../skills/auto-skill-creator.js";
+import { extractJSON } from "../utils/json-extract.js";
+import { runCodeCriticIfCoder } from "./code-critic.js";
+import { classifyComplexity } from "./complexity-classifier.js";
+import { findTemplates, formatTemplateHint, saveTemplate } from "./decomposition-library.js";
+import { evaluateAndOptimize } from "./evaluator.js";
+import { executeMesh, type MeshStep } from "./mesh.js";
+import { shouldUseMoA, synthesizeWithMoA } from "./mixture.js";
+import { runMultiCriticDebate } from "./multi-critic.js";
+import { replan, shouldConsiderReplan } from "./replanner.js";
+import type { AgentRole, SubAgentResult } from "./sub-agent.js";
 
 // ── Types ─────────────────────────────────────
 
 export interface SwarmPlan {
     steps: MeshStep[];
-    reasoning: string;          // Why this decomposition was chosen
+    reasoning: string; // Why this decomposition was chosen
 }
 
 export interface SwarmResult {
     plan: SwarmPlan;
-    synthesis: string;          // Final synthesized answer
+    synthesis: string; // Final synthesized answer
     totalDurationMs: number;
     stepsCompleted: number;
     stepsFailed: number;
-    evaluationScore?: number;   // Quality score from evaluator (#7)
-    replanned?: boolean;        // Whether the plan was revised mid-execution (#6)
+    evaluationScore?: number; // Quality score from evaluator (#7)
+    replanned?: boolean; // Whether the plan was revised mid-execution (#6)
     totalEstimatedCost?: number; // Total estimated cost (#16)
 }
 
@@ -66,7 +66,7 @@ export async function runSwarm(
     const startTime = Date.now();
 
     console.log("[SWARM] 🐝 Starting swarm decomposition...");
-    if (onProgress) await onProgress("🐝 planning task breakdown…").catch(() => { });
+    if (onProgress) await onProgress("🐝 planning task breakdown…").catch(() => {});
 
     // ── Step 1: Decompose (with hierarchical planning for highly complex tasks) ──
     let plan: SwarmPlan | null = null;
@@ -82,11 +82,16 @@ export async function runSwarm(
                 const flatSteps: MeshStep[] = [];
                 for (const goal of hierPlan.abstractGoals) {
                     for (const step of goal.subGoals) {
-                        const role = goal.skillType === "search" ? "researcher"
-                            : goal.skillType === "code" ? "coder"
-                            : goal.skillType === "browse" ? "browser"
-                            : goal.skillType === "communicate" ? "general"
-                            : "general";
+                        const role =
+                            goal.skillType === "search"
+                                ? "researcher"
+                                : goal.skillType === "code"
+                                  ? "coder"
+                                  : goal.skillType === "browse"
+                                    ? "browser"
+                                    : goal.skillType === "communicate"
+                                      ? "general"
+                                      : "general";
                         flatSteps.push({
                             id: step.id,
                             role: role as AgentRole,
@@ -100,7 +105,9 @@ export async function runSwarm(
                         steps: flatSteps.slice(0, MAX_STEPS),
                         reasoning: `Hierarchical plan: ${hierPlan.abstractGoals.length} goals, ${hierPlan.totalSteps} steps (complexity: ${hierPlan.estimatedComplexity}/10)`,
                     };
-                    console.log(`[SWARM] 🏗️ Hierarchical plan: ${hierPlan.abstractGoals.length} goals → ${flatSteps.length} steps`);
+                    console.log(
+                        `[SWARM] 🏗️ Hierarchical plan: ${hierPlan.abstractGoals.length} goals → ${flatSteps.length} steps`,
+                    );
                 }
             }
         }
@@ -131,18 +138,23 @@ export async function runSwarm(
 
     // ── Logic Verification: check plan consistency before execution ──
     try {
-        const stepDescriptions = plan.steps.map(s => `${s.id} [${s.role}]: ${s.description}`);
+        const stepDescriptions = plan.steps.map((s) => `${s.id} [${s.role}]: ${s.description}`);
         const conclusion = `Task "${userRequest}" will be completed via ${plan.steps.length} steps`;
         const verification = await verifyReasoning(llm, stepDescriptions, conclusion);
         if (!verification.isConsistent) {
-            console.warn(`[SWARM] ⚠️ Logic verifier found inconsistencies (soundness: ${verification.soundnessScore.toFixed(2)}):`);
+            console.warn(
+                `[SWARM] ⚠️ Logic verifier found inconsistencies (soundness: ${verification.soundnessScore.toFixed(2)}):`,
+            );
             for (const issue of verification.issues.slice(0, 3)) {
                 console.warn(`  - ${issue}`);
             }
             // Optionally re-decompose if soundness is critically low
             if (verification.soundnessScore < 0.3) {
                 console.log(`[SWARM] 🔄 Soundness critically low — re-decomposing...`);
-                const revisedPlan = await decompose(llm, `${userRequest}\n\nIMPORTANT: A previous plan had logical issues: ${verification.issues.slice(0, 2).join("; ")}. Avoid these.`);
+                const revisedPlan = await decompose(
+                    llm,
+                    `${userRequest}\n\nIMPORTANT: A previous plan had logical issues: ${verification.issues.slice(0, 2).join("; ")}. Avoid these.`,
+                );
                 if (revisedPlan && revisedPlan.steps.length > 0) {
                     plan.steps = revisedPlan.steps;
                     plan.reasoning = revisedPlan.reasoning + " (revised after logic verification)";
@@ -156,7 +168,7 @@ export async function runSwarm(
     }
 
     if (onProgress) {
-        await onProgress(`📋 plan: ${plan.steps.length} steps`).catch(() => { });
+        await onProgress(`📋 plan: ${plan.steps.length} steps`).catch(() => {});
     }
 
     // ── Step 2: Execute via Mesh (with replanning) (#6) ──
@@ -195,7 +207,9 @@ export async function runSwarm(
 
         replanCount++;
         replanned = true;
-        console.log(`[SWARM] 🔄 Replan #${replanCount}: ${decision.revisedSteps.length} revised step(s) — ${decision.reason}`);
+        console.log(
+            `[SWARM] 🔄 Replan #${replanCount}: ${decision.revisedSteps.length} revised step(s) — ${decision.reason}`,
+        );
         if (onProgress) {
             await onProgress(`🔄 replanning: ${decision.revisedSteps.length} new step(s)`).catch(() => {});
         }
@@ -217,10 +231,12 @@ export async function runSwarm(
     const finalWaveResults = [...meshResult.results.values()];
     const stepsCompleted = finalWaveResults.filter((r) => r.success).length;
     const stepsFailed = finalWaveResults.filter((r) => !r.success).length;
-    console.log(`[SWARM] 📊 Mesh complete: ${stepsCompleted} succeeded, ${stepsFailed} failed, ${meshResult.parallelGroups} waves, ${(meshResult.totalDurationMs / 1000).toFixed(1)}s${replanCount > 0 ? `, ${replanCount} replan(s)` : ""}`);
+    console.log(
+        `[SWARM] 📊 Mesh complete: ${stepsCompleted} succeeded, ${stepsFailed} failed, ${meshResult.parallelGroups} waves, ${(meshResult.totalDurationMs / 1000).toFixed(1)}s${replanCount > 0 ? `, ${replanCount} replan(s)` : ""}`,
+    );
 
     // ── Step 3: Synthesize with evaluation (#7) ──
-    if (onProgress) await onProgress("🧩 synthesizing results…").catch(() => { });
+    if (onProgress) await onProgress("🧩 synthesizing results…").catch(() => {});
 
     let { synthesis, evaluationScore } = await evaluateAndOptimize(
         llm,
@@ -248,7 +264,9 @@ export async function runSwarm(
             const planRoles = plan.steps.map((s) => s.role);
             const codeReflection = await runCodeCriticIfCoder(planRoles, userRequest);
             if (codeReflection && codeReflection.key_issues.length > 0) {
-                console.log(`[SWARM] 🧪 Code critic: score ${codeReflection.overall_score}, ${codeReflection.key_issues.length} issues`);
+                console.log(
+                    `[SWARM] 🧪 Code critic: score ${codeReflection.overall_score}, ${codeReflection.key_issues.length} issues`,
+                );
                 if (codeReflection.should_retry && codeReflection.consensus_suggestions.length > 0 && budgetLeft()) {
                     const codeFeedback = `Compile/test/lint checks flagged issues: ${codeReflection.key_issues.slice(0, 3).join("; ")}. ${codeReflection.consensus_suggestions.join(" ")}`;
                     synthesis = await synthesize(llm, userRequest, plan, meshResult.results, codeFeedback);
@@ -267,10 +285,14 @@ export async function runSwarm(
     if (evaluationScore < multiCriticThreshold && budgetLeft()) {
         if (onProgress) await onProgress("🎭 multi-critic…").catch(() => {});
         try {
-            console.log(`[SWARM] 🎭 Evaluation score ${evaluationScore} < ${multiCriticThreshold} — running multi-critic debate...`);
+            console.log(
+                `[SWARM] 🎭 Evaluation score ${evaluationScore} < ${multiCriticThreshold} — running multi-critic debate...`,
+            );
             const debate = await runMultiCriticDebate(llm, userRequest, synthesis);
             if (debate.key_issues.length > 0 && budgetLeft()) {
-                console.log(`[SWARM] 🎭 Multi-critic found ${debate.key_issues.length} issues (consensus score: ${debate.overall_score.toFixed(1)})`);
+                console.log(
+                    `[SWARM] 🎭 Multi-critic found ${debate.key_issues.length} issues (consensus score: ${debate.overall_score.toFixed(1)})`,
+                );
                 const criticFeedback = debate.consensus_suggestions.join("; ");
                 if (criticFeedback) {
                     synthesis = await synthesize(llm, userRequest, plan, meshResult.results, criticFeedback);
@@ -286,7 +308,9 @@ export async function runSwarm(
     if (shouldUseMoA(stepsCompleted, stepsFailed) && evaluationScore < moaThreshold && budgetLeft()) {
         if (onProgress) await onProgress("🔀 MoA…").catch(() => {});
         try {
-            console.log(`[SWARM] 🔀 Evaluation score ${evaluationScore} < ${moaThreshold} — re-synthesizing via MoA...`);
+            console.log(
+                `[SWARM] 🔀 Evaluation score ${evaluationScore} < ${moaThreshold} — re-synthesizing via MoA...`,
+            );
             const moaSynthesis = await synthesizeWithMoA(llm, userRequest, plan, meshResult.results);
             if (moaSynthesis && moaSynthesis.length > 0) {
                 synthesis = moaSynthesis;
@@ -298,7 +322,9 @@ export async function runSwarm(
         }
     }
 
-    console.log(`[SWARM] ✅ Swarm complete in ${((Date.now() - startTime) / 1000).toFixed(1)}s (quality: ${evaluationScore}/100)`);
+    console.log(
+        `[SWARM] ✅ Swarm complete in ${((Date.now() - startTime) / 1000).toFixed(1)}s (quality: ${evaluationScore}/100)`,
+    );
 
     // ── Save decomposition template for future reuse ──
     try {
@@ -310,12 +336,13 @@ export async function runSwarm(
     // ── Counterfactual Reflection (async, non-blocking) ──
     // Generate a "what could have been done differently" reflection for learning
     const choiceDescription = `Decomposed into ${plan.steps.length} steps: ${plan.reasoning}`;
-    const outcomeDescription = stepsFailed > 0
-        ? `Partial success: ${stepsCompleted}/${plan.steps.length} steps completed, ${stepsFailed} failed. Quality: ${evaluationScore}/100.`
-        : `Success: all ${stepsCompleted} steps completed. Quality: ${evaluationScore}/100.`;
+    const outcomeDescription =
+        stepsFailed > 0
+            ? `Partial success: ${stepsCompleted}/${plan.steps.length} steps completed, ${stepsFailed} failed. Quality: ${evaluationScore}/100.`
+            : `Success: all ${stepsCompleted} steps completed. Quality: ${evaluationScore}/100.`;
 
-    generateCounterfactual(llm, userRequest, choiceDescription, outcomeDescription).catch(err =>
-        console.warn("[SWARM] Counterfactual generation failed (non-fatal):", err)
+    generateCounterfactual(llm, userRequest, choiceDescription, outcomeDescription).catch((err) =>
+        console.warn("[SWARM] Counterfactual generation failed (non-fatal):", err),
     );
 
     // ── Auto-Skill Creation ─────────────────────────
@@ -323,7 +350,7 @@ export async function runSwarm(
     try {
         const totalToolCalls = finalWaveResults.reduce((sum, r) => sum + r.toolCalls, 0);
         if (totalToolCalls >= 5) {
-            const toolCallRecords: ToolCallRecord[] = plan.steps.map(step => {
+            const toolCallRecords: ToolCallRecord[] = plan.steps.map((step) => {
                 const result = meshResult.results.get(step.id);
                 return {
                     name: `step_${step.role}_${step.id}`,
@@ -331,11 +358,14 @@ export async function runSwarm(
                     result: (result?.output || "").substring(0, 300),
                 };
             });
-            const swarmOutcome = stepsFailed === 0 ? "success" as const
-                : stepsFailed < plan.steps.length ? "partial" as const
-                : "failure" as const;
-            maybeCreateSkill(llm, userRequest, toolCallRecords, swarmOutcome).catch(err =>
-                console.warn("[SWARM] Auto-skill creation failed (non-fatal):", (err as Error).message)
+            const swarmOutcome =
+                stepsFailed === 0
+                    ? ("success" as const)
+                    : stepsFailed < plan.steps.length
+                      ? ("partial" as const)
+                      : ("failure" as const);
+            maybeCreateSkill(llm, userRequest, toolCallRecords, swarmOutcome).catch((err) =>
+                console.warn("[SWARM] Auto-skill creation failed (non-fatal):", (err as Error).message),
             );
         }
     } catch (skillErr) {
@@ -374,7 +404,9 @@ async function decompose(llm: LLMClient, userRequest: string): Promise<SwarmPlan
         const memCtx = await getMemoryInformedContext(userRequest);
         if (memCtx.contextSummary) {
             memoryHint = `\n\nMEMORY CONTEXT (relevant past experiences and entities):\n${memCtx.contextSummary}\n`;
-            console.log(`[SWARM] 🧠 Memory-informed context: ${memCtx.relevantMemories.length} memories, ${memCtx.taskLearnings.length} learnings, ${memCtx.relevantEntities.length} entities`);
+            console.log(
+                `[SWARM] 🧠 Memory-informed context: ${memCtx.relevantMemories.length} memories, ${memCtx.taskLearnings.length} learnings, ${memCtx.relevantEntities.length} entities`,
+            );
         }
     } catch {
         // Memory-informed planning not available — continue without
@@ -386,7 +418,9 @@ async function decompose(llm: LLMClient, userRequest: string): Promise<SwarmPlan
         const templateMatches = findTemplates(userRequest);
         if (templateMatches.length > 0) {
             templateHint = formatTemplateHint(templateMatches[0]);
-            console.log(`[SWARM] 📚 Found decomposition template (similarity: ${templateMatches[0].similarity.toFixed(2)}, success: ${(templateMatches[0].template.averageSuccessRate * 100).toFixed(0)}%)`);
+            console.log(
+                `[SWARM] 📚 Found decomposition template (similarity: ${templateMatches[0].similarity.toFixed(2)}, success: ${(templateMatches[0].template.averageSuccessRate * 100).toFixed(0)}%)`,
+            );
         }
     } catch {
         // Template library not available — continue without
@@ -442,7 +476,7 @@ User request: ${userRequest}${learningsHint}${memoryHint}${templateHint}`;
         for (const s of parsed.steps.slice(0, MAX_STEPS)) {
             if (!s.id || !s.role || !s.description) continue;
             const validRoles: AgentRole[] = ["researcher", "coder", "browser", "system", "general"];
-            const role = validRoles.includes(s.role) ? s.role as AgentRole : "general";
+            const role = validRoles.includes(s.role) ? (s.role as AgentRole) : "general";
             steps.push({
                 id: s.id,
                 role,
@@ -463,21 +497,29 @@ User request: ${userRequest}${learningsHint}${memoryHint}${templateHint}`;
             try {
                 const complexity = classifyComplexity(userRequest);
                 if (complexity.score >= 0.4) {
-                    console.log(`[SWARM] 🌳 Running MCTS refinement (${steps.length} steps, complexity: ${complexity.score.toFixed(2)})`);
-                    const mctsContext = steps.map(s => `${s.id} [${s.role}]: ${s.description}`).join("\n");
+                    console.log(
+                        `[SWARM] 🌳 Running MCTS refinement (${steps.length} steps, complexity: ${complexity.score.toFixed(2)})`,
+                    );
+                    const mctsContext = steps.map((s) => `${s.id} [${s.role}]: ${s.description}`).join("\n");
                     const mctsResult = await runMCTSPlanning(llm, userRequest, mctsContext, {
-                        maxSimulations: 10,    // Lighter pass — just validating
+                        maxSimulations: 10, // Lighter pass — just validating
                         maxDepth: steps.length,
                         branchingFactor: 2,
                     });
 
                     if (mctsResult.bestPlan.length > 0 && mctsResult.confidence > 0.5) {
-                        console.log(`[SWARM] 🌳 MCTS confidence: ${mctsResult.confidence.toFixed(2)}, nodes explored: ${mctsResult.nodesExplored}`);
+                        console.log(
+                            `[SWARM] 🌳 MCTS confidence: ${mctsResult.confidence.toFixed(2)}, nodes explored: ${mctsResult.nodesExplored}`,
+                        );
                         // MCTS found a high-confidence path — enrich step descriptions with MCTS insights
                         for (let i = 0; i < Math.min(mctsResult.bestPlan.length, steps.length); i++) {
                             const mctsAction = mctsResult.bestPlan[i];
                             // Only enrich if the MCTS suggestion is substantively different
-                            if (mctsAction && mctsAction.length > 10 && !steps[i].description.includes(mctsAction.substring(0, 20))) {
+                            if (
+                                mctsAction &&
+                                mctsAction.length > 10 &&
+                                !steps[i].description.includes(mctsAction.substring(0, 20))
+                            ) {
                                 steps[i].description = `${steps[i].description} [MCTS hint: ${mctsAction}]`;
                             }
                         }
@@ -507,12 +549,18 @@ async function synthesize(
     evaluatorFeedback?: string,
 ): Promise<string> {
     // Build a summary of all step results
-    const resultSummary = plan.steps.map(step => {
-        const result = results.get(step.id);
-        if (!result) return `### Step ${step.id} (${step.role}): NOT EXECUTED`;
-        if (!result.success) return `### Step ${step.id} (${step.role}): FAILED\nError: ${result.error || "unknown"}`;
-        return `### Step ${step.id} (${step.role}): ${step.description}\n${result.output}`;
-    }).join("\n\n");
+    const resultSummary = plan.steps
+        .map((step) => {
+            const result = results.get(step.id);
+            if (!result) return `### Step ${step.id} (${step.role}): NOT EXECUTED`;
+            if (!result.success) {
+                // Keep what a failed step got done (sub-agents return partial output).
+                const partial = result.output?.trim() ? `\nPartial output (incomplete):\n${result.output}` : "";
+                return `### Step ${step.id} (${step.role}): FAILED\nError: ${result.error || "unknown"}${partial}`;
+            }
+            return `### Step ${step.id} (${step.role}): ${step.description}\n${result.output}`;
+        })
+        .join("\n\n");
 
     const feedbackNote = evaluatorFeedback
         ? `\n\nIMPORTANT — A quality review found these issues with a previous response. Fix them:\n${evaluatorFeedback}\n`
@@ -524,12 +572,13 @@ I broke this into ${plan.steps.length} sub-tasks and executed them. Here are the
 
 ${resultSummary}
 ${feedbackNote}
-Now synthesize these results into a single, coherent response for the user. Be concise and natural — don't mention the steps or the decomposition process. Just answer as if you did it all yourself.`;
+Now synthesize these results into a single, coherent response for the user. Be concise and natural — don't mention the steps or the decomposition process. Just answer as if you did it all yourself. If a step FAILED, say plainly what didn't get done; use its partial output, but never present it as finished.`;
 
     try {
         const response = await llm.chat({
             messages: [{ role: "user", content: prompt }] as ChatCompletionMessageParam[],
-            systemPrompt: "You synthesize multi-step results into natural, coherent responses. Write casually and concisely.",
+            systemPrompt:
+                "You synthesize multi-step results into natural, coherent responses. Write casually and concisely.",
             modelOverride: selectForSynthesis(userRequest).modelId,
         });
 
@@ -539,7 +588,7 @@ Now synthesize these results into a single, coherent response for the user. Be c
 
         // Fallback: concatenate results directly
         return plan.steps
-            .map(s => {
+            .map((s) => {
                 const r = results.get(s.id);
                 return r?.output || "";
             })
