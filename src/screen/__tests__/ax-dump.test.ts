@@ -181,7 +181,10 @@ describe("findElementByLabel", () => {
 });
 
 describe("matchElementByLabel — disabled, nested, off-screen", () => {
-    const btn = (label: string, x: number, y: number, enabled = true) => ({ ...node("AXButton", label, x, y), enabled });
+    const btn = (label: string, x: number, y: number, enabled = true) => ({
+        ...node("AXButton", label, x, y),
+        enabled,
+    });
 
     it("never picks a disabled element, and says so", () => {
         const els = flattenInteractive(dump(node("AXWindow", "w", 0, 0, 800, 600, [btn("Send", 10, 10, false)])));
@@ -191,7 +194,9 @@ describe("matchElementByLabel — disabled, nested, off-screen", () => {
     });
 
     it("prefers the enabled one of two equal matches", () => {
-        const els = flattenInteractive(dump(node("AXWindow", "w", 0, 0, 800, 600, [btn("Send", 10, 10, false), btn("Send", 10, 300)])));
+        const els = flattenInteractive(
+            dump(node("AXWindow", "w", 0, 0, 800, 600, [btn("Send", 10, 10, false), btn("Send", 10, 300)])),
+        );
         expect(findElementByLabel(els, "Send")?.center.y).toBe(315);
     });
 
@@ -203,13 +208,17 @@ describe("matchElementByLabel — disabled, nested, off-screen", () => {
     });
 
     it("flags elements scrolled outside their window", () => {
-        const els = flattenInteractive(dump(node("AXWindow", "w", 0, 0, 800, 600, [btn("Visible", 10, 10), btn("Far", 10, 2000)])));
+        const els = flattenInteractive(
+            dump(node("AXWindow", "w", 0, 0, 800, 600, [btn("Visible", 10, 10), btn("Far", 10, 2000)])),
+        );
         expect(els.find((e) => e.label === "Visible")?.offscreen).toBeUndefined();
         expect(els.find((e) => e.label === "Far")?.offscreen).toBe(true);
     });
 
     it("treats Dock items as clickable", () => {
-        const els = flattenInteractive(dump(node("AXApplication", "Dock", 0, 0, 0, 0, [node("AXDockItem", "Safari", 400, 900, 44, 56)])));
+        const els = flattenInteractive(
+            dump(node("AXApplication", "Dock", 0, 0, 0, 0, [node("AXDockItem", "Safari", 400, 900, 44, 56)])),
+        );
         expect(findElementByLabel(els, "Safari in the Dock", 0.8)?.label).toBe("Safari");
     });
 });
@@ -248,17 +257,40 @@ describe("findElementByLabel — Calculator-style instructions", () => {
 
 describe("findElementByLabel — app-name stripping can't pick the wrong element", () => {
     const els = (labels: Array<[string, string?]>) =>
-        flattenInteractive(dump(node("AXWindow", "w", 0, 0, 800, 600, labels.map(([l, v], i) => node("AXButton", l, 10, 10 + i * 40, 100, 30, [], v)))));
+        flattenInteractive(
+            dump(
+                node(
+                    "AXWindow",
+                    "w",
+                    0,
+                    0,
+                    800,
+                    600,
+                    labels.map(([l, v], i) => node("AXButton", l, 10, 10 + i * 40, 100, 30, [], v)),
+                ),
+            ),
+        );
 
     it("'All Mail' in Mail is All Mail, not Install", () => {
         expect(findElementByLabel(els([["Install"], ["All Mail"]]), "All Mail", 0.8, "Mail")?.label).toBe("All Mail");
     });
 
     it("an instruction left with only stopwords still matches on its full words", () => {
-        expect(findElementByLabel(els([["General"], ["Settings"]]), "Settings button", 0.8, "System Settings")?.label).toBe("Settings");
+        expect(
+            findElementByLabel(els([["General"], ["Settings"]]), "Settings button", 0.8, "System Settings")?.label,
+        ).toBe("Settings");
     });
 
     it("label-less static text (macOS puts it in the value) still matches a description", () => {
-        expect(findElementByLabel(els([["", "Downloads"], ["", "Documents"]]), "Downloads folder in the sidebar", 0.8)?.value).toBe("Downloads");
+        expect(
+            findElementByLabel(
+                els([
+                    ["", "Downloads"],
+                    ["", "Documents"],
+                ]),
+                "Downloads folder in the sidebar",
+                0.8,
+            )?.value,
+        ).toBe("Downloads");
     });
 });

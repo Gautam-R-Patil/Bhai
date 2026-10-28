@@ -166,7 +166,13 @@ describe("resolveCoord — coordinate system handling", () => {
     });
 
     it("keeps a screen point that's on another display", async () => {
-        const two: ScreenDimensions = { ...primary, displays: [{ x: 0, y: 0, w: 1440, h: 900 }, { x: 1440, y: 0, w: 1920, h: 1080 }] };
+        const two: ScreenDimensions = {
+            ...primary,
+            displays: [
+                { x: 0, y: 0, w: 1440, h: 900 },
+                { x: 1440, y: 0, w: 1920, h: 1080 },
+            ],
+        };
         expect((await resolveCoord([2000, 1000], { coordSystem: "screen" }, two)).x).toBe(2000);
     });
 

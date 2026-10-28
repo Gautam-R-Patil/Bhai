@@ -22,6 +22,8 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+
+import { type LLMClient, MODELS } from "../llm.js";
 import { axPerformAction, dumpAccessibilityTree } from "../screen/ax-dump.js";
 import { recallClickSite, recordClickMiss, recordClickSuccess } from "../screen/click-memory.js";
 import { applyCalibration, recordCalibrationSample } from "../screen/drift-calibration.js";
@@ -41,7 +43,6 @@ import {
     type Rect,
     type ScreenDimensions,
 } from "../screen/screen-dimensions.js";
-import { type LLMClient, MODELS } from "../llm.js";
 import type { ToolDefinition } from "./get-current-time.js";
 import { executeStructuredAction } from "./os-computer-action.js";
 import { takeScreenshot } from "./platform-bridge.js";

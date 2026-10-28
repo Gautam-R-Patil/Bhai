@@ -371,9 +371,19 @@ const MAX_WALK_DEPTH = 64;
 // matches and the click falls through to the slow vision path. macOS + Windows
 // + Linux text roles.
 const _TEXT_ROLES = new Set([
-    "AXStaticText", "AXText", "AXTextField", "AXHeading",
-    "Text", "Edit", "Document", "Hyperlink",
-    "label", "text", "static", "heading", "push button",
+    "AXStaticText",
+    "AXText",
+    "AXTextField",
+    "AXHeading",
+    "Text",
+    "Edit",
+    "Document",
+    "Hyperlink",
+    "label",
+    "text",
+    "static",
+    "heading",
+    "push button",
 ]);
 
 /**
@@ -546,7 +556,11 @@ export function matchElementByLabel(
             // Values are free text (a display showing "128 × 46", a document): an
             // exact match counts; a fuzzy one only for short label-less text (macOS
             // puts static text in the value), and never against the raw symbol.
-            if (value) score = Math.max(score, value === q || value === raw ? 0.9 : !label && value.length <= 40 ? scoreText(q, value) : 0);
+            if (value)
+                score = Math.max(
+                    score,
+                    value === q || value === raw ? 0.9 : !label && value.length <= 40 ? scoreText(q, value) : 0,
+                );
             scored.push({ el, score });
         }
     }

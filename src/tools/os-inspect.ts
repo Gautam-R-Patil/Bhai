@@ -89,11 +89,11 @@ export const osInspect: ToolDefinition = {
                     error: isAxPermissionError(dump.error) ? AX_PERMISSION_ERROR : dump.error,
                     hint: isAxPermissionError(dump.error)
                         ? "Grant Bhai Accessibility permission in System Settings → Privacy & Security → Accessibility, then retry."
-                            : dump.source === "pyatspi" && dump.error.includes("atspi_not_available")
-                              ? "Install python3-pyatspi (apt install python3-pyatspi). Electron apps need --force-renderer-accessibility."
-                              : dump.source === "powershell"
-                                ? "Ensure UIAutomationClient assemblies are available (PowerShell 5+ on Win 10+)."
-                                : "Inspection unavailable on this platform.",
+                        : dump.source === "pyatspi" && dump.error.includes("atspi_not_available")
+                          ? "Install python3-pyatspi (apt install python3-pyatspi). Electron apps need --force-renderer-accessibility."
+                          : dump.source === "powershell"
+                            ? "Ensure UIAutomationClient assemblies are available (PowerShell 5+ on Win 10+)."
+                            : "Inspection unavailable on this platform.",
                 });
             }
 

@@ -11,11 +11,28 @@ let window = { x: 0, y: 0, w: 1000, h: 800 };
 
 vi.mock("../../screen/perception-router.js", () => ({ findClickTarget, formatCascadeResult: () => "" }));
 vi.mock("../../screen/outcome-classifier.js", () => ({ classifyOutcomeFromImages: classify }));
-vi.mock("../../screen/ax-dump.js", () => ({ dumpAccessibilityTree: async () => ({ app: "Calculator", root: {} }), axPerformAction: press }));
-vi.mock("../../screen/click-memory.js", () => ({ recallClickSite: recall, recordClickMiss: recordMiss, recordClickSuccess: () => {} }));
-vi.mock("../../screen/drift-calibration.js", () => ({ applyCalibration: (_m: string, x: number, y: number) => ({ x, y }), recordCalibrationSample: () => {} }));
+vi.mock("../../screen/ax-dump.js", () => ({
+    dumpAccessibilityTree: async () => ({ app: "Calculator", root: {} }),
+    axPerformAction: press,
+}));
+vi.mock("../../screen/click-memory.js", () => ({
+    recallClickSite: recall,
+    recordClickMiss: recordMiss,
+    recordClickSuccess: () => {},
+}));
+vi.mock("../../screen/drift-calibration.js", () => ({
+    applyCalibration: (_m: string, x: number, y: number) => ({ x, y }),
+    recordCalibrationSample: () => {},
+}));
 vi.mock("../../screen/screen-dimensions.js", () => ({
-    getScreenDimensions: async () => ({ width: 1470, height: 956, originX: 0, originY: 0, monitorId: "m", focusedWindow: window }),
+    getScreenDimensions: async () => ({
+        width: 1470,
+        height: 956,
+        originX: 0,
+        originY: 0,
+        monitorId: "m",
+        focusedWindow: window,
+    }),
     isFallbackDims: () => false,
     captureRegion: async () => Buffer.from("png"),
 }));
@@ -49,7 +66,14 @@ describe("os_smart_click grounding", () => {
     });
 
     it("click memory follows the window, and ignores a resized one", async () => {
-        const row = { xNorm: 0.5, yNorm: 0.5, confidence: 0.95, successCount: 6, lastScreenWidth: 400, lastScreenHeight: 300 };
+        const row = {
+            xNorm: 0.5,
+            yNorm: 0.5,
+            confidence: 0.95,
+            successCount: 6,
+            lastScreenWidth: 400,
+            lastScreenHeight: 300,
+        };
         recall.mockReturnValue(row);
         window = { x: 500, y: 100, w: 400, h: 300 };
         const out = JSON.parse(await osSmartClick.handler({ instruction: "=" }));
@@ -82,14 +106,28 @@ describe("os_smart_click grounding", () => {
     });
 
     it("a menu-bar click outside the window is remembered against the monitor", async () => {
-        recall.mockReturnValue({ xNorm: 60 / 1470, yNorm: 10 / 956, confidence: 0.95, successCount: 6, lastScreenWidth: 1470, lastScreenHeight: 956 });
+        recall.mockReturnValue({
+            xNorm: 60 / 1470,
+            yNorm: 10 / 956,
+            confidence: 0.95,
+            successCount: 6,
+            lastScreenWidth: 1470,
+            lastScreenHeight: 956,
+        });
         window = { x: 500, y: 300, w: 400, h: 300 };
         const out = JSON.parse(await osSmartClick.handler({ instruction: "File menu" }));
         expect(out.clicked).toEqual({ x: 60, y: 10 });
     });
 
     it("a remembered spot that does nothing is forgotten and re-grounded", async () => {
-        recall.mockReturnValue({ xNorm: 0.5, yNorm: 0.5, confidence: 0.95, successCount: 6, lastScreenWidth: 1000, lastScreenHeight: 800 });
+        recall.mockReturnValue({
+            xNorm: 0.5,
+            yNorm: 0.5,
+            confidence: 0.95,
+            successCount: 6,
+            lastScreenWidth: 1000,
+            lastScreenHeight: 800,
+        });
         classify.mockResolvedValueOnce({ outcome: "no_op" });
         findClickTarget.mockResolvedValueOnce({ x: 10, y: 10, confidence: 0.99, source: "ax_exact" });
         const out = JSON.parse(await osSmartClick.handler({ instruction: "=" }));
@@ -99,7 +137,14 @@ describe("os_smart_click grounding", () => {
     });
 
     it("a remembered spot that hit something else is not clicked again", async () => {
-        recall.mockReturnValue({ xNorm: 0.5, yNorm: 0.5, confidence: 0.95, successCount: 6, lastScreenWidth: 1000, lastScreenHeight: 800 });
+        recall.mockReturnValue({
+            xNorm: 0.5,
+            yNorm: 0.5,
+            confidence: 0.95,
+            successCount: 6,
+            lastScreenWidth: 1000,
+            lastScreenHeight: 800,
+        });
         classify.mockResolvedValueOnce({ outcome: "wrong_target" });
         const out = JSON.parse(await osSmartClick.handler({ instruction: "Send" }));
         expect(out).toMatchObject({ success: false, error: "click_unverified", source: "memory" });
@@ -120,7 +165,14 @@ describe("os_smart_click grounding", () => {
 
     it("an off-screen AX element that can't be revealed is an error, not an edge click", async () => {
         const ax = { pid: 42, path: [0], role: "AXRow", bbox: { x: 0, y: 2000, w: 20, h: 20 }, offscreen: true };
-        findClickTarget.mockResolvedValueOnce({ x: 10, y: 2010, confidence: 0.99, source: "ax_exact", ax, matchedLabel: "Row" });
+        findClickTarget.mockResolvedValueOnce({
+            x: 10,
+            y: 2010,
+            confidence: 0.99,
+            source: "ax_exact",
+            ax,
+            matchedLabel: "Row",
+        });
         const out = JSON.parse(await osSmartClick.handler({ instruction: "Row" }));
         expect(out.success).toBe(false);
         expect(out.error).toMatch(/element_offscreen/);

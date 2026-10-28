@@ -22,6 +22,7 @@
  * passes to os_computer_action with coordSystem='screen'.
  */
 
+import type { LLMClient } from "../llm.js";
 import {
     type AxDump,
     type AxFlatElement,
@@ -34,6 +35,7 @@ import {
     matchElementByLabel,
 } from "./ax-dump.js";
 import { type CapabilityReport, detectCapabilities } from "./capability-detector.js";
+import { cloudGroundClick } from "./cloud-grounding.js";
 import {
     detectElements,
     findElementByCaption,
@@ -41,8 +43,6 @@ import {
     omniParserWeightsPresent,
 } from "./omniparser.js";
 import { type ScreenDimensions, scaleImageToScreen } from "./screen-dimensions.js";
-import { cloudGroundClick } from "./cloud-grounding.js";
-import type { LLMClient } from "../llm.js";
 
 export type CascadeTier =
     | "memory"

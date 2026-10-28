@@ -157,7 +157,10 @@ async function executeZoom(
 }
 
 /** Run one parsed action. `dims` (the focused monitor) skips a re-probe when the caller already has it. */
-export async function executeStructuredAction(act: ComputerAction, dims?: ScreenDimensions): Promise<Record<string, unknown>> {
+export async function executeStructuredAction(
+    act: ComputerAction,
+    dims?: ScreenDimensions,
+): Promise<Record<string, unknown>> {
     switch (act.action) {
         case "click":
         case "double_click":
@@ -245,7 +248,8 @@ async function dispatchMouse(
     }
     if (process.platform === "win32") {
         // A shift-click sent as a plain click would report a success it didn't have.
-        if (modifiers?.length) throw new Error("click modifiers are not supported on Windows; use a key action instead");
+        if (modifiers?.length)
+            throw new Error("click modifiers are not supported on Windows; use a key action instead");
         const ps = buildWinMousePs(action, x, y, button);
         await execFileAsync(
             "powershell",
@@ -302,7 +306,8 @@ export function buildMacMouseJxa(
 function buildWinMousePs(action: MouseAction, x: number, y: number, button?: "left" | "right" | "middle"): string {
     // Coords are pre-rounded ints (no injection risk). mouse_event flags: down/up per button.
     const b = action === "right_click" ? "right" : button;
-    const [down, up] = b === "right" ? ["0x0008", "0x0010"] : b === "middle" ? ["0x0020", "0x0040"] : ["0x0002", "0x0004"];
+    const [down, up] =
+        b === "right" ? ["0x0008", "0x0010"] : b === "middle" ? ["0x0020", "0x0040"] : ["0x0002", "0x0004"];
     const one = `[WinMouse]::mouse_event(${down}, 0, 0, 0, [UIntPtr]::Zero); [WinMouse]::mouse_event(${up}, 0, 0, 0, [UIntPtr]::Zero)`;
     const events = Array.from({ length: clickCount(action) }, () => one).join("; Start-Sleep -Milliseconds 50; ");
     return `
@@ -350,7 +355,12 @@ async function dispatchLinuxMouse(
     // One chained xdotool call: hold modifiers, click, release.
     const args = [
         ...(mods ? ["keydown", mods] : []),
-        "click", "--repeat", String(repeats), "--delay", "50", btn,
+        "click",
+        "--repeat",
+        String(repeats),
+        "--delay",
+        "50",
+        btn,
         ...(mods ? ["keyup", mods] : []),
     ];
     await execFileAsync("xdotool", args, { timeout: 3000 });
@@ -784,9 +794,13 @@ export function macKeyScript(combo: string): string {
     const bad = mods.find((m) => !MAC_MOD_DOWN[m]);
     if (bad) throw new Error(`Unknown modifier "${bad}". Use command, shift, option or control.`);
     const using = mods.length ? ` using {${mods.map((m) => MAC_MOD_DOWN[m]).join(", ")}}` : "";
-    if (Object.hasOwn(MAC_KEY_CODES, key)) return `tell application "System Events" to key code ${MAC_KEY_CODES[key]}${using}`;
-    if ([...key].length === 1) return `tell application "System Events" to keystroke "${escapeApplescript(key)}"${using}`;
-    throw new Error(`Unknown key "${key}". Use one of: ${Object.keys(MAC_KEY_CODES).join(", ")}, or a single character.`);
+    if (Object.hasOwn(MAC_KEY_CODES, key))
+        return `tell application "System Events" to key code ${MAC_KEY_CODES[key]}${using}`;
+    if ([...key].length === 1)
+        return `tell application "System Events" to keystroke "${escapeApplescript(key)}"${using}`;
+    throw new Error(
+        `Unknown key "${key}". Use one of: ${Object.keys(MAC_KEY_CODES).join(", ")}, or a single character.`,
+    );
 }
 
 // X11 keysyms for the names agents use (xdotool needs "Return", not "enter").
@@ -832,7 +846,9 @@ export function xdotoolKeySpec(name: string): string {
     const f = /^f([1-9]|1[0-2])$/.exec(k);
     if (f) return `F${f[1]}`;
     if (/^[a-z0-9]$/.test(k)) return k;
-    throw new Error(`Unknown key "${name}". Use a letter/digit, F1-F12, or one of: ${Object.keys(XDO_KEYS).join(", ")}.`);
+    throw new Error(
+        `Unknown key "${name}". Use a letter/digit, F1-F12, or one of: ${Object.keys(XDO_KEYS).join(", ")}.`,
+    );
 }
 
 /** "ctrl+enter" → "ctrl+Return". */
@@ -843,12 +859,42 @@ export function xdotoolCombo(combo: string): string {
 
 // Linux evdev key codes, for ydotool ≥1.0 ("<code>:1" press, "<code>:0" release).
 const EVDEV: Record<string, number> = {
-    esc: 1, escape: 1, backspace: 14, tab: 15, return: 28, enter: 28, ctrl: 29, control: 29, shift: 42,
-    alt: 56, option: 56, space: 57, super: 125, win: 125, cmd: 125, command: 125, meta: 125, home: 102,
-    up: 103, pageup: 104, left: 105, right: 106, end: 107, down: 108, pagedown: 109, insert: 110, delete: 111,
-    f11: 87, f12: 88,
+    esc: 1,
+    escape: 1,
+    backspace: 14,
+    tab: 15,
+    return: 28,
+    enter: 28,
+    ctrl: 29,
+    control: 29,
+    shift: 42,
+    alt: 56,
+    option: 56,
+    space: 57,
+    super: 125,
+    win: 125,
+    cmd: 125,
+    command: 125,
+    meta: 125,
+    home: 102,
+    up: 103,
+    pageup: 104,
+    left: 105,
+    right: 106,
+    end: 107,
+    down: 108,
+    pagedown: 109,
+    insert: 110,
+    delete: 111,
+    f11: 87,
+    f12: 88,
 };
-for (const [row, start] of [["1234567890", 2], ["qwertyuiop", 16], ["asdfghjkl", 30], ["zxcvbnm", 44]] as const) {
+for (const [row, start] of [
+    ["1234567890", 2],
+    ["qwertyuiop", 16],
+    ["asdfghjkl", 30],
+    ["zxcvbnm", 44],
+] as const) {
     [...row].forEach((c, i) => {
         EVDEV[c] = start + i;
     });

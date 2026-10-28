@@ -13,7 +13,9 @@ describe("key names map to real keys on every platform", () => {
     it("macOS: named keys are key codes, unknown names are errors (never typed as words)", () => {
         expect(macKeyScript("home")).toBe('tell application "System Events" to key code 115');
         expect(macKeyScript("f5")).toContain("key code 96");
-        expect(macKeyScript("cmd+shift+s")).toBe('tell application "System Events" to keystroke "s" using {command down, shift down}');
+        expect(macKeyScript("cmd+shift+s")).toBe(
+            'tell application "System Events" to keystroke "s" using {command down, shift down}',
+        );
         expect(macKeyScript("cmd+enter")).toContain("key code 36 using {command down}");
         expect(macKeyScript("cmd++")).toContain('keystroke "+" using {command down}');
         expect(() => macKeyScript("homepage")).toThrow(/Unknown key/);

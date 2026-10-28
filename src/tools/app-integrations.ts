@@ -1074,7 +1074,13 @@ end tell`);
                                 error: `${app} did not come to the front within 5s${now ? ` (frontmost is still ${now.name})` : ""}.`,
                             });
                         }
-                        return JSON.stringify({ success: true, action: "activate", app, frontmost: front.name, pid: front.pid });
+                        return JSON.stringify({
+                            success: true,
+                            action: "activate",
+                            app,
+                            frontmost: front.name,
+                            pid: front.pid,
+                        });
                     }
                     return JSON.stringify({ success: true, action: "activate", app });
                 }
