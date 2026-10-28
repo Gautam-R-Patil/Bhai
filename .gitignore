@@ -90,6 +90,7 @@ desktop/hostinger-upload/
 !src/security/credential-mask.test.ts
 !src/store/installer-npm-env.test.ts
 !src/tools/create-tool-sandbox.test.ts
+!src/tools/document-ingest-limits.test.ts
 !src/tools/web-search-rank.test.ts
 !src/tools/site-task-consent.test.ts
 !src/tools/site-task-restore.test.ts

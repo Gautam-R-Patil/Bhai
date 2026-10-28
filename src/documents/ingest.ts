@@ -4,7 +4,7 @@
 
 // ── PDF → structured-document ingestion ──────────
 // Two-tier approach:
-//   1. Text extraction via `unpdf` (falls back to pdf-parse if unpdf chokes).
+//   1. Text extraction via `unpdf` (50MB cap, 60s parse deadline).
 //      Heuristic parse: regex-driven section split for resumes.
 //   2. Low confidence? Send raw text (+ first 1-2 page screenshots in a
 //      future iteration) to an LLM and ask it to emit JSON Resume. Requires
@@ -43,25 +43,36 @@ function sha256File(filePath: string): string {
 
 // ── Tier 1: text extraction ─────────────────────
 
+// Attachments arrive from any channel and pdf.js runs in the bot's event loop,
+// so cap the input size and give up on parses that run too long.
+const MAX_PDF_BYTES = 50 * 1024 * 1024;
+const PARSE_DEADLINE_MS = 60_000;
+
 async function extractText(filePath: string): Promise<string> {
-    // Prefer unpdf (TS-native, maintained). Fall back to pdf-parse on failure.
-    try {
-        const { extractText: unpdfExtract, getDocumentProxy } = await import("unpdf");
-        const buf = fs.readFileSync(filePath);
-        const pdf = await getDocumentProxy(new Uint8Array(buf));
+    // unpdf ships a current pdf.js; the old pdf-parse fallback (pdf.js 2018) never
+    // rescued a PDF the modern parser rejected, so it was dropped.
+    const { extractText: unpdfExtract, getDocumentProxy } = await import("unpdf");
+    let pdf: Awaited<ReturnType<typeof getDocumentProxy>> | undefined;
+    const parse = (async () => {
+        pdf = await getDocumentProxy(new Uint8Array(fs.readFileSync(filePath)));
         const { text } = await unpdfExtract(pdf, { mergePages: true });
         return Array.isArray(text) ? text.join("\n") : String(text ?? "");
-    } catch (err) {
-        console.warn(`[ingest] unpdf failed, falling back to pdf-parse: ${(err as Error).message}`);
-        try {
-            // @ts-expect-error — pdf-parse has no types; shape is { text: string }
-            const { default: pdfParse } = await import("pdf-parse");
-            const buf = fs.readFileSync(filePath);
-            const res = (await pdfParse(buf)) as { text: string };
-            return res.text ?? "";
-        } catch (err2) {
-            throw new Error(`Both unpdf and pdf-parse failed: ${(err2 as Error).message}`);
-        }
+    })();
+    parse.catch(() => {}); // a parse abandoned at the deadline must not surface as an unhandled rejection
+    let timer: NodeJS.Timeout | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+            () => reject(new Error(`PDF parsing took longer than ${PARSE_DEADLINE_MS / 1000}s and was stopped.`)),
+            PARSE_DEADLINE_MS,
+        );
+    });
+    try {
+        // ponytail: the deadline frees the caller, but a single synchronous pdf.js
+        // step still blocks the loop until it yields; a worker thread fixes that if it bites.
+        return await Promise.race([parse, deadline]);
+    } finally {
+        clearTimeout(timer);
+        void Promise.resolve(pdf?.destroy()).catch(() => {});
     }
 }
 
@@ -316,6 +327,12 @@ export async function ingestPdfToDocument(
     }
     if (!/\.pdf$/i.test(filePath)) {
         throw new Error(`Only .pdf files are supported by ingest: ${path.basename(filePath)}`);
+    }
+    const size = fs.statSync(filePath).size;
+    if (size > MAX_PDF_BYTES) {
+        throw new Error(
+            `PDF is too large (${(size / 1024 / 1024).toFixed(1)}MB). The limit is ${MAX_PDF_BYTES / 1024 / 1024}MB.`,
+        );
     }
 
     const hash = sha256File(filePath);
