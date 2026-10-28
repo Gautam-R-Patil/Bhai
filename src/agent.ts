@@ -2391,6 +2391,17 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             console.log(`  🧭 Task tier: ${turnTier} → ${claudeTier(model)}${model !== before ? ` (was ${claudeTier(before)})` : ""}, thinking ${iterThinking}`);
         }
 
+        // Unhinged (an 18+ owner opt-in) needs a model that holds a persona:
+        // Haiku under a long prompt of calm defaults answers in the normal voice.
+        // Owner turns only; costs 1 credit a turn instead of 0.25 while it's on.
+        if (iterations === 1 && !forcedPick && claudeTier(model) === "haiku" && (!channelContext || channelContext.isOwner)) {
+            const { getActivePreset } = await import("./setup/personality-sync.js");
+            if (getActivePreset() === "unhinged") {
+                model = MODELS.SONNET;
+                console.log("  🧭 Unhinged tone → sonnet");
+            }
+        }
+
         // ── Simple desktop tasks stay on Haiku ──
         // From iteration 3 the native router moves os_* loops to Sonnet by
         // iteration count alone, a rule from when the model couldn't see the

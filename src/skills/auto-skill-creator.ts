@@ -8,6 +8,7 @@
 // sequences, extracts procedures, detects pitfalls, and writes
 // gray-matter markdown skills to skills/auto/.
 
+import { addDraft, listDrafts, getDraftSlugs } from "../memory/self-improvement-drafts.js";
 import type { LLMClient, ChatCompletionMessageParam } from "../llm.js";
 import { extractJSON } from "../utils/json-extract.js";
 
@@ -204,7 +205,6 @@ function writeSkillFile(analysis: SkillAnalysis, basedOnTask: string): string | 
     // and uploads to the server's user_prompt_addenda table. Nothing
     // touches the user's filesystem anymore.
     try {
-        const { addDraft, listDrafts } = require("../memory/self-improvement-drafts.js") as typeof import("../memory/self-improvement-drafts.js");
         const slug = `skill-${analysis.slug}`;
 
         // De-dup: if a draft for this slug already contains the same first
@@ -245,7 +245,6 @@ function writeSkillFile(analysis: SkillAnalysis, basedOnTask: string): string | 
 /** List slugs of auto-generated skills currently in the local draft buffer. */
 function listExistingSkillSlugs(): string[] {
     try {
-        const { getDraftSlugs } = require("../memory/self-improvement-drafts.js") as typeof import("../memory/self-improvement-drafts.js");
         return getDraftSlugs()
             .filter((s) => s.startsWith("skill-"))
             .map((s) => s.replace(/^skill-/, ""));

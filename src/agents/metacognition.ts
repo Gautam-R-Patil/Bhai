@@ -448,8 +448,8 @@ export function logOutcome(
         };
         // Lazy node:fs/path require keeps this module import-light (it is loaded
         // on the hot path) and avoids a top-level fs dependency in tests.
-        const fs = require("node:fs") as typeof import("node:fs");
-        const path = require("node:path") as typeof import("node:path");
+        const fs = nodeFs;
+        const path = nodePath;
         const dir = path.join(process.cwd(), "data");
         fs.mkdirSync(dir, { recursive: true });
         fs.appendFileSync(path.join(dir, "metacog-outcomes.jsonl"), `${JSON.stringify(row)}\n`, "utf8");
@@ -473,6 +473,9 @@ export function logOutcome(
 // Kill switch: ATLAS_NO_META_INTERVENTIONS=true reverts to today's pure
 // nudge-only behavior (the same env already gates the nudge cooldown-repeat).
 
+import * as nodeFs from "node:fs";
+import * as nodePath from "node:path";
+import { createRequire } from "node:module";
 import { MODELS } from "../llm.js";
 
 export interface InterventionContext {
@@ -836,8 +839,8 @@ let _calBundle: CalibratorBundle | null | undefined; // undefined=unloaded, null
 function loadCalibrators(): CalibratorBundle | null {
     if (_calBundle !== undefined) return _calBundle;
     try {
-        const fs = require("node:fs") as typeof import("node:fs");
-        const path = require("node:path") as typeof import("node:path");
+        const fs = nodeFs;
+        const path = nodePath;
         const file = path.join(process.cwd(), "data", "metacog-calibrators.json");
         const raw = fs.readFileSync(file, "utf8");
         _calBundle = JSON.parse(raw) as CalibratorBundle;
@@ -862,8 +865,8 @@ function logCalibrationShadow(row: {
 }): void {
     if (process.env.ATLAS_NO_METACOG_LOG === "true") return;
     try {
-        const fs = require("node:fs") as typeof import("node:fs");
-        const path = require("node:path") as typeof import("node:path");
+        const fs = nodeFs;
+        const path = nodePath;
         const dir = path.join(process.cwd(), "data");
         fs.mkdirSync(dir, { recursive: true });
         const line = JSON.stringify({ ts: new Date().toISOString(), ...row });
@@ -926,10 +929,8 @@ function loadNative(): any {
     if (_nativeLoaded) return _native;
     _nativeLoaded = true;
     try {
-        const { createRequire } = require("node:module");
         const nativeRequire = createRequire(import.meta.url);
-        const path = require("node:path");
-        _native = nativeRequire(path.join(process.cwd(), "native", "index.js"));
+        _native = nativeRequire(nodePath.join(process.cwd(), "native", "index.js"));
         return _native;
     } catch {
         return null;

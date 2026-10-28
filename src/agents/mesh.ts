@@ -6,6 +6,7 @@
 // DAG-based executor: runs independent steps in parallel,
 // dependent steps sequentially, with per-step timeouts.
 
+import { getRawDb } from "../memory/sqlite.js";
 import type { LLMClient } from "../llm.js";
 import { runSubAgent, type SubAgentTask, type SubAgentResult, type AgentRole } from "./sub-agent.js";
 import { executeWithRecovery } from "./error-recovery.js";
@@ -50,7 +51,6 @@ export interface MeshCheckpoint {
 /** Save or update a mesh checkpoint. */
 function saveMeshCheckpoint(checkpoint: MeshCheckpoint): void {
     try {
-        const { getRawDb } = require("../memory/sqlite.js") as { getRawDb: () => import("better-sqlite3").Database | null };
         const raw = getRawDb();
         if (!raw) return;
         const stmt = raw.prepare(`
@@ -75,7 +75,6 @@ function saveMeshCheckpoint(checkpoint: MeshCheckpoint): void {
 /** Load an existing checkpoint for a mesh ID. Returns null if none exists. */
 function loadMeshCheckpoint(meshId: string): MeshCheckpoint | null {
     try {
-        const { getRawDb } = require("../memory/sqlite.js") as { getRawDb: () => import("better-sqlite3").Database | null };
         const raw = getRawDb();
         if (!raw) return null;
         const stmt = raw.prepare("SELECT * FROM mesh_checkpoints WHERE mesh_id = ?");
@@ -99,7 +98,6 @@ function loadMeshCheckpoint(meshId: string): MeshCheckpoint | null {
 /** Delete a checkpoint after successful completion. */
 function deleteMeshCheckpoint(meshId: string): void {
     try {
-        const { getRawDb } = require("../memory/sqlite.js") as { getRawDb: () => import("better-sqlite3").Database | null };
         const raw = getRawDb();
         if (!raw) return;
         const stmt = raw.prepare("DELETE FROM mesh_checkpoints WHERE mesh_id = ?");

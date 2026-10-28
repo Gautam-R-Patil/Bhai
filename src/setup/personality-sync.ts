@@ -233,6 +233,11 @@ export function loadActivePreset(dirs: { userDataDir?: string; dataDir?: string 
     }
 }
 
+/** The preset the owner picked in Settings, or null before any choice is known. */
+export function getActivePreset(): string | null {
+    return activePreset;
+}
+
 /** A short reminder of the user's chosen tone, or null before any choice is known. */
 export function getToneReminder(): string | null {
     return activePreset ? (TONE_REMINDERS[activePreset] ?? null) : null;

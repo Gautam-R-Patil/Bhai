@@ -6,6 +6,8 @@
 // Post-session reflection, dream replay, HMAC audit, emotional/episodic extraction,
 // narrative compression. Strict JSON validation, per-reflection caps.
 
+import * as nodeFs from "node:fs";
+import * as nodePath from "node:path";
 import crypto from "node:crypto";
 import { extractJSON } from "../utils/json-extract.js";
 import type { LLMClient, ChatCompletionMessageParam } from "../llm.js";
@@ -667,8 +669,8 @@ export function runCalibrationFit(): {
     beatsBaseline: boolean;
 } | null {
     if (process.env.ATLAS_NO_METACOG_LOG === "true") return null;
-    const fs = require("node:fs") as typeof import("node:fs");
-    const path = require("node:path") as typeof import("node:path");
+    const fs = nodeFs;
+    const path = nodePath;
     const dataDir = path.join(process.cwd(), "data");
     const logFile = path.join(dataDir, "metacog-outcomes.jsonl");
 

@@ -2,6 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
+import { getCurrentEmotionalIntensity } from "./emotional.js";
 import fs from "node:fs";
 import path from "node:path";
 import BetterSqlite3 from "better-sqlite3";
@@ -1131,7 +1132,6 @@ function _rememberDirect(
     // Boost importance for memories stored during high-emotion sessions
     let adjustedImportance = importance;
     if (boostable) try {
-        const { getCurrentEmotionalIntensity } = require("./emotional.js");
         const intensity = getCurrentEmotionalIntensity?.() ?? 0;
         if (intensity > 0.6) {
             const boost = 1 + 0.5 * intensity;

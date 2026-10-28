@@ -2,6 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
+import * as fsSync from "node:fs";
 import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
@@ -120,7 +121,7 @@ function readProfileFromRuntimeEnv(): string | undefined {
         const path = join(dataDir, ".env.runtime");
         // require-style sync read keeps applyOverride synchronous to match the
         // existing call sites; the file is < 1 KB on any real install.
-        const fs = require("node:fs") as typeof import("node:fs");
+        const fs = fsSync;
         if (!fs.existsSync(path)) return undefined;
         const raw = fs.readFileSync(path, "utf-8");
         for (const line of raw.split(/\r?\n/)) {
