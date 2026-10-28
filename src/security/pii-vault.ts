@@ -14,14 +14,14 @@
 // Values live in memory for this process only, capped so it can't grow forever.
 
 import { redactPii } from "./pii-redactor.js";
-import { redactDiagnosticText } from "./vendor/pomerado-credential-mask.js";
-import { shownForms } from "./vendor/pomerado-value-forms.js";
+import { maskCredentials } from "./credential-mask.js";
+import { knownForms } from "./value-forms.js";
 
 const formsCache = new Map<string, Array<readonly [string, boolean]>>();
 const formsOf = (value: string) => {
     let f = formsCache.get(value);
     if (!f) {
-        f = [...shownForms(value)].sort((a, b) => b[0].length - a[0].length);
+        f = knownForms(value);
         formsCache.set(value, f);
     }
     return f;
@@ -45,15 +45,15 @@ export const CODE_TOOLS = new Set([
 ]);
 
 /**
- * `credentials` (default on): also mask credentials by structure (Pomerado's
- * policy). Off for code-tool results and for what the owner or Bhai wrote.
+ * `credentials` (default on): also mask credentials by structure
+ * (credential-mask.ts). Off for code-tool results and for what the owner or Bhai wrote.
  */
 export function protect(text: string, opts: { credentials?: boolean } = {}): string {
     if (!text) return text;
     // A value revealed for typing can come back bare in a tool result ("typed":
     // "482913") where the patterns no longer see an OTP: hide every known value.
     // Every form a page, URL, form body, JSON or base64 can show the value in
-    // (Pomerado's shownForms), longest first. Short forms (<8 chars) only as whole
+    // (value-forms.ts), longest first. Short forms (<8 chars) only as whole
     // tokens: "1000" must not eat the middle of "10000" or "port 31000".
     for (const [value, handle] of handleOf) {
         for (const [form, short] of formsOf(value)) {
@@ -68,12 +68,12 @@ export function protect(text: string, opts: { credentials?: boolean } = {}): str
     const redacted = redactPii(text, handleOf);
     const handles = redacted.handles;
     // Credentials by structure (Authorization headers, password=…, provider keys,
-    // cookies, JWTs): Pomerado's corpus-tested policy. Masked for good — the model
+    // cookies, JWTs): credential-mask.ts. Masked for good — the model
     // never needs them. ATLAS_NO_CREDENTIAL_POLICY=true turns it off.
     const out =
         opts.credentials === false || process.env.ATLAS_NO_CREDENTIAL_POLICY === "true"
             ? redacted.text
-            : redactDiagnosticText(redacted.text, Number.POSITIVE_INFINITY);
+            : maskCredentials(redacted.text);
     for (const [value, handle] of handles) valueByHandle.set(handle, value);
     if (handleOf.size > MAX_VALUES) {
         // ponytail: drops the oldest values wholesale; an old handle then stays a handle.

@@ -47,6 +47,7 @@
 
   - THINK BEFORE EVERY OS ACTION (mandatory reasoning):
     1. Which app am I acting on, and is it in front? (`app_manager` activate if not)
+    1b. Does the app hold state from before (a calculator display, a half-filled form, a search box with text)? Clear it first (Calculator: `os_type key="escape"` twice, or click "AC"; fields: `cmd+a` then type), or your input lands on top of the old value.
     2. What specific element do I need? Is there a keyboard shortcut instead?
     3. How will I confirm the end result? (`os_visual_verify expect_text="..."`)
     Never click blindly: describe the target to `os_smart_click`, or find it with `os_inspect`.

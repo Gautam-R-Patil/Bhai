@@ -96,6 +96,7 @@ desktop/hostinger-upload/
 !src/tools/browser/page-callbacks.test.ts
 !src/tools/browser/bridge-ready.test.ts
 !src/tools/browser/popup-guard.test.ts
+!src/tools/browser/switch-tab-chrome.test.ts
 !src/memory/self-evolving-safety.test.ts
 !src/memory/task-learnings-relevance.test.ts
 !src/memory/traits-correction.test.ts
@@ -108,10 +109,13 @@ desktop/hostinger-upload/
 !src/tools/__tests__/os-smart-click.test.ts
 !src/skills/site/__tests__/
 !src/skills/site/__tests__/**
+!src/skills/site/mint/__tests__/
+!src/skills/site/mint/__tests__/**
 !src/memory/embedding-cache.test.ts
 !src/memory/resolve-embedding.test.ts
 !src/memory/reflection-cache.test.ts
 !src/whatsapp-sweep.test.ts
+!src/llm-timeout.test.ts
 !convex/credit-cost.test.ts
 !convex/credit_cost.test.ts
 !convex/otpless.test.ts

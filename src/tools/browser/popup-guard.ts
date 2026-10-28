@@ -38,7 +38,7 @@ const ACCEPT_BUTTON_TEXT = [
     "Alles accepteren",
 ];
 
-// Least data first (Pomerado's banner rule, and the privacy default): reject or
+// Least data first (the privacy default): reject or
 // decline when the banner offers it, accept only as the last option.
 const REJECT_BUTTON_TEXT = [
     "Reject all",

@@ -1355,6 +1355,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
     // Circuit breaker — trips after sustained failures or no-progress
     const circuitBreaker = createCircuitBreaker();
 
+    let lastLlmError = ""; // the last model error this turn (to say "out of credits" plainly)
     // Hard stop for a turn that never converges (each step costs credits).
     const MAX_AGENT_ITERATIONS = Number(process.env.ATLAS_MAX_ITERATIONS ?? "60");
 
@@ -2790,6 +2791,7 @@ PLAN:`,
         } catch (llmErr) {
             cbRecordFailure(circuitBreaker);
             console.error(`[AGENT] LLM call threw: ${(llmErr as Error).message} — attempting recovery`);
+            lastLlmError = (llmErr as Error).message ?? "";
             // Try one more model before giving up this iteration
             // Step to a different Claude model, never up to Opus on an error.
             const fallbackModel = claudeTier(model) === "sonnet" ? MODELS.HAIKU : MODELS.SONNET;
@@ -2814,19 +2816,27 @@ PLAN:`,
                     // Guard against returning stale responses from previous turns.
                     // Only use a partial response if it was generated in THIS agent run (iterations > 0),
                     // not a leftover from conversation history.
+                    // Only text written after THIS turn's user message counts (the old
+                    // iterations*3 window reached back into the previous turn, and an
+                    // out-of-credits user got the last turn's answer again).
+                    let turnStart = messages.length - 1;
+                    while (turnStart >= 0 && messages[turnStart].role !== "user") turnStart--;
                     const currentRunResponses = messages
                         .filter(
                             (m, idx) =>
-                                m.role === "assistant" &&
-                                typeof (m as { content?: string }).content === "string" &&
-                                idx >= messages.length - iterations * 3,
+                                m.role === "assistant" && typeof (m as { content?: string }).content === "string" && idx > turnStart,
                         )
                         .map((m) => (m as { content: string }).content)
                         .filter(Boolean);
                     const partialText = currentRunResponses.length > 0 ? currentRunResponses.pop() : null;
                     if (_harnessTraceId) finalizeTrace(_harnessTraceId, false);
+                    const outOfCredits = /run out of (AI )?credits|insufficient credits/i.test(lastLlmError);
                     return {
-                        text: partialText || "I'm having trouble connecting right now. Please try again in a moment.",
+                        text:
+                            partialText ||
+                            (outOfCredits
+                                ? "You're out of AI credits, so I can't do this right now. Top up in Settings → Account and ask me again."
+                                : "I'm having trouble connecting right now. Please try again in a moment."),
                         toolCalls: totalToolCalls,
                     };
                 }

@@ -194,7 +194,7 @@ function truncateDefault(output: string, maxChars: number): string {
 export function smartTruncate(toolName: string, raw: string, maxChars = DEFAULT_MAX_CHARS): string {
     if (raw.length <= maxChars) return raw;
     // Mask before cutting: a cut through "Authorization: Bearer abc…" leaves a
-    // fragment no pattern recognises (Pomerado's redact-then-cut rule).
+    // fragment no pattern recognises.
     const output = protect(raw, { credentials: !CODE_TOOLS.has(toolName) });
     if (output.length <= maxChars) return output;
 
