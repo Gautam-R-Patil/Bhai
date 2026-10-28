@@ -179,6 +179,7 @@ import { siteTask } from "./site-task.js";
 import { approveSiteSkillTool, setSiteMintLLM, siteSkillMintTool } from "./site-skill-mint.js";
 import { getActivePage } from "./browser/core.js";
 import { drainTrace, tracing } from "../skills/site/mint/recorder.js";
+import { vaultAuthorizePayment, vaultList } from "./vault.js";
 export { setSmartClickLLM, setSiteMintLLM };
 import { IS_LINUX, IS_MAC, IS_WIN } from "./platform.js";
 import { platformInfoTool } from "./platform-info.js";
@@ -339,6 +340,8 @@ registry.set(osSmartClick.schema.function.name, osSmartClick);
 registry.set(siteTask.schema.function.name, siteTask);
 registry.set(siteSkillMintTool.schema.function.name, siteSkillMintTool);
 registry.set(approveSiteSkillTool.schema.function.name, approveSiteSkillTool);
+registry.set(vaultList.schema.function.name, vaultList);
+registry.set(vaultAuthorizePayment.schema.function.name, vaultAuthorizePayment);
 
 // ── Platform-specific OS tools ────────────────
 if (IS_MAC) {
@@ -639,6 +642,7 @@ try {
  * Emergency rollback: ATLAS_NO_WHATSAPP_TOOL_GATING=true.
  */
 function isToolOfferable(name: string): boolean {
+    if (name.startsWith("vault_")) return process.env.ATLAS_NO_VAULT !== "true";
     if (process.env.ATLAS_NO_WHATSAPP_TOOL_GATING === "true") return true;
     if (name === "whatsapp_send" || name === "whatsapp_sticker" || name === "whatsapp_group_info") {
         return getWhatsAppStatus() === "connected";
@@ -670,6 +674,7 @@ const TOOL_TIMEOUTS: Record<string, number> = {
     browser_navigate: 30_000,
     browser_click: 15_000,
     browser_type: 30_000, // long text + submit + page-ready can take a while
+    vault_authorize_payment: 150_000, // waits up to 2 min for the owner's CVV
     site_task: 180_000, // up to 40 steps; a cut-off checkout would keep running unseen
     site_skill_mint: 600_000, // start returns at once; a safety net
     // AX dump + activation + capture + grounding (+ one Sonnet re-ground). The

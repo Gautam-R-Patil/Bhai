@@ -159,6 +159,7 @@ const CONVEX_API_URL = process.env.CONVEX_URL || `https://${_CONVEX_DEPLOY_NAME}
 
 const { parseOtplessVerifyResponse, isLegacyUserId } = require("./auth-helpers");
 const { createAgentCursor, parseCursorLine } = require("./agent-cursor");
+const { readVault, registerVaultIpc } = require("./vault-store");
 
 // ── Desktop Session Token Management ─────────────
 // Authenticates the Electron main process with the Convex backend via
@@ -1153,6 +1154,41 @@ async function checkForUpdates() {
 // `killed` turns true as soon as a signal is SENT, while the bot spends seconds
 // shutting down — so liveness comes from the exit fields instead.
 const isAlive = (c) => !!c && c.exitCode === null && c.signalCode === null;
+
+// ── Vault (vault-store.js) ──
+// The decrypted vault exists only here and in the bot, which gets it over its
+// stdin pipe (##BHAI_VAULT##, the reverse of the ##BHAI_BUDDY## stdout markers):
+// at spawn and on every edit. It never touches disk unencrypted.
+const VAULT_PATH = path.join(app.getPath("userData"), "vault.enc");
+const pendingCvv = new Set(); // CVV prompts the bot asked for, by id
+function writeToBot(line) {
+    if (!isAlive(botProcess) || !botProcess.stdin || !botProcess.stdin.writable) return false;
+    botProcess.stdin.write(`${line}\n`);
+    return true;
+}
+function sendVaultToBot(entries) {
+    try {
+        const list = entries || (fs.existsSync(VAULT_PATH) ? readVault(VAULT_PATH, safeStorage).entries : []);
+        writeToBot(`##BHAI_VAULT##${JSON.stringify(list)}`);
+    } catch (e) {
+        console.warn("[vault] not sent to the bot:", e.message);
+    }
+}
+// The bot is about to pay with a saved card: ask the owner for the CVV in the
+// panel. It goes straight back to the bot, used once, never stored.
+function askCvv(req) {
+    const id = Number(req && req.id);
+    if (!mainWindow || mainWindow.isDestroyed()) return writeToBot(`##BHAI_VAULT_CVV##${JSON.stringify({ id, cvv: null })}`);
+    pendingCvv.add(id);
+    mainWindow.show();
+    mainWindow.focus();
+    mainWindow.webContents.send("vault:cvv-request", {
+        id,
+        label: String(req.label || "").slice(0, 80),
+        item: String(req.item || "").slice(0, 120),
+        amount: Number(req.amount) || 0,
+    });
+}
 let stopPromise = null; // resolves when the bot being stopped has really exited
 let botCrashTimes = []; // recent crash times, for restart backoff
 let installInFlight = null; // the running setup install, shared by every caller
@@ -1287,7 +1323,8 @@ async function startBot() {
         sendLog(`❌ Failed to spawn process: ${spawnErr.message}`);
         return { status: "error", error: spawnErr.message };
     }
-    child.stdin.on("error", () => { /* bot gone: cursor acks are best-effort */ });
+    child.stdin.on("error", () => { /* bot gone: cursor acks are best-effort; exit handler deals with EPIPE */ });
+    sendVaultToBot();
 
     let stdoutTail = "";
     botProcess.stdout.on("data", (data) => {
@@ -1302,6 +1339,8 @@ async function startBot() {
                 try { agentCursor?.handle(cursorEvt, (id) => ackCursor(child, id)); } catch { /* cosmetic */ }
                 continue;
             }
+            const cvv = line.match(/^##BHAI_VAULT_CVV##(\{.*\})\s*$/);
+            if (cvv) { try { askCvv(JSON.parse(cvv[1])); } catch { /* malformed line */ } continue; }
             const m = line.match(/^##BHAI_BUDDY##(\{.*\})\s*$/);
             if (!m) { rest.push(line); continue; }
             try { handleBuddyStatus(JSON.parse(m[1])); } catch { /* malformed line */ }
@@ -2465,6 +2504,22 @@ function registerIPC() {
         });
         if (result.canceled) return { canceled: true };
         return { path: result.filePaths[0] };
+    });
+
+    // ── Settings: Vault ──
+    registerVaultIpc({
+        ipcMain,
+        safeStorage,
+        file: VAULT_PATH,
+        trusted: (evt) => !!mainWindow && !mainWindow.isDestroyed() && evt.sender === mainWindow.webContents,
+        canTouchId: () => process.platform === "darwin" && systemPreferences.canPromptTouchID(),
+        promptTouchId: (why) => systemPreferences.promptTouchID(why),
+        onChange: (entries) => sendVaultToBot(entries),
+    });
+    ipcMain.handle("vault:cvv-submit", (evt, id, cvv) => {
+        if (!mainWindow || evt.sender !== mainWindow.webContents || !pendingCvv.delete(Number(id))) return false;
+        const ok = typeof cvv === "string" && /^\d{3,4}$/.test(cvv);
+        return writeToBot(`##BHAI_VAULT_CVV##${JSON.stringify({ id: Number(id), cvv: ok ? cvv : null })}`);
     });
 
     // Bot controls

@@ -236,6 +236,11 @@ export function spendAllowed(amount: number): boolean {
     return amount <= perOrder && today + amount <= perDay;
 }
 
+/** Books a spend against today's cap (the vault's card/UPI authorizations share it). */
+export function recordSpend(amount: number): void {
+    spent.push({ at: Date.now(), amount });
+}
+
 // ── Checkpoints ───────────────────────────────
 
 const fileHash = (p: string) => createHash("sha256").update(readFileSync(p)).digest("hex").slice(0, 16);

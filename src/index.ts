@@ -163,6 +163,10 @@ async function boot() {
         console.warn("[BOOT] registerProtectedPath skipped:", (err as Error).message);
     }
 
+    // Saved secrets from the desktop app's vault arrive on stdin (security/vault.ts).
+    const { initVault } = await import("./security/vault.js");
+    initVault();
+
     // ── Session (must run first — creates auth token for all Convex calls) ──
     // Retry up to 3 times with backoff for transient network failures
     let sessionOk = false;

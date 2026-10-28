@@ -50,6 +50,7 @@ import {
 } from "./agents/tool-call-guardrail.js";
 import { offloadIfLarge } from "./agents/tool-output-offload.js";
 import { trackCursorTurn } from "./screen/agent-cursor.js";
+import { hasVaultToken, resolveVaultArgs } from "./security/vault.js";
 import {
     buildVerifyReminder,
     isMutator,
@@ -762,7 +763,20 @@ async function executeAndProcessToolCall(
 
     // Typing tools get real values for any [OTP_1]-style handles the model used;
     // fnArgs (logs, history, gates) keeps the handles.
-    const execArgs = REVEAL_TOOLS.has(fnName) && channelContext?.isOwner === true ? revealArgs(fnArgs) : fnArgs;
+    let execArgs = REVEAL_TOOLS.has(fnName) && channelContext?.isOwner === true ? revealArgs(fnArgs) : fnArgs;
+    // Saved secrets ({{vault:id.password}}) too, under the vault's domain lock
+    // and consent rules (security/vault.ts). Refused → the model gets the reason.
+    if (REVEAL_TOOLS.has(fnName) && hasVaultToken(fnArgs)) {
+        const v = await resolveVaultArgs(fnName, execArgs, {
+            isOwner: channelContext?.isOwner === true,
+            pageUrl: async () => (await import("./tools/browser/core.js")).getActivePage().then((p) => p.url()),
+        });
+        if ("error" in v) {
+            const err = JSON.stringify({ error: v.error });
+            return { toolCallId: toolCall.id, fnName, fnArgs, result: err, finalContent: err, isBrowser: false, isError: true };
+        }
+        execArgs = v.args;
+    }
     // Stop reaches long waits on the owner, also inside sub-agents/swarms this call starts.
     let rawResult = await withTurnSignal(signal, () => executeTool(fnName, execArgs));
 

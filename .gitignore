@@ -87,6 +87,7 @@ desktop/hostinger-upload/
 !src/security/consent.test.ts
 !src/security/pii-redactor.test.ts
 !src/security/pii-vault.test.ts
+!src/security/vault.test.ts
 !src/security/credential-mask.test.ts
 !src/store/installer-npm-env.test.ts
 !src/tools/create-tool-sandbox.test.ts
@@ -273,6 +274,7 @@ desktop/hostinger-upload/
 !desktop/tests/magic-moment-ranker.test.js
 !desktop/tests/try-this.test.js
 !desktop/tests/wizard.terms.test.js
+!desktop/tests/vault-store.test.js
 !src/setup/wizard-seed.test.ts
 !src/prompts/persona-bias.test.ts
 !src/tool-router.persona.test.ts

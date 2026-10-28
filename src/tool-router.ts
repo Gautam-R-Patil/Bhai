@@ -198,12 +198,14 @@ const CATEGORIES: Record<string, CategoryDef> = {
     },
     browser: {
         description:
-            "Web browsing, navigating to websites and URLs, clicking on web page elements, typing into web forms, scrolling web pages, extracting data from websites, scraping, automating web interactions, filling out online forms, logging into websites, web page analysis, tab management, uploading files to websites, downloading from the web, opening multiple URLs in parallel tabs, batch processing. Includes using the user's real Chrome browser via extension (for their active tab, logged-in sites, current page) or headless Playwright (for independent research, background tasks). When the user references 'my tab', 'this page', 'use my Chrome', or asks about what they're viewing, prefer chrome mode.",
+            "Web browsing, navigating to websites and URLs, clicking on web page elements, typing into web forms, scrolling web pages, extracting data from websites, scraping, automating web interactions, filling out online forms, logging into websites (with the owner's saved logins, cards and UPI IDs from the vault), web page analysis, tab management, uploading files to websites, downloading from the web, opening multiple URLs in parallel tabs, batch processing. Includes using the user's real Chrome browser via extension (for their active tab, logged-in sites, current page) or headless Playwright (for independent research, background tasks). When the user references 'my tab', 'this page', 'use my Chrome', or asks about what they're viewing, prefer chrome mode.",
         tools: [
             "browser_navigate",
             "site_task",
             "site_skill_mint",
             "approve_site_skill",
+            "vault_list",
+            "vault_authorize_payment",
             "browser_click_at",
             "browser_type",
             "browser_scan",

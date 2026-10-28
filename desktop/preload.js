@@ -193,4 +193,15 @@ contextBridge.exposeInMainWorld("atlas", {
     waGenerateOTP: () => ipcRenderer.invoke("wa:generate-otp"),
     waGetPersona: () => ipcRenderer.invoke("wa:get-persona"),
     waSavePersona: (persona) => ipcRenderer.invoke("wa:save-persona", persona),
+
+    // ── Vault (values stay in main; "reveal" needs Touch ID / the vault password) ──
+    vault: {
+        list: () => ipcRenderer.invoke("vault:list"),
+        save: (entry, password) => ipcRenderer.invoke("vault:save", entry, password),
+        remove: (id) => ipcRenderer.invoke("vault:delete", id),
+        reveal: (id, password) => ipcRenderer.invoke("vault:reveal", id, password),
+        setPassword: (password, oldPassword) => ipcRenderer.invoke("vault:set-password", password, oldPassword),
+        submitCvv: (id, cvv) => ipcRenderer.invoke("vault:cvv-submit", id, cvv),
+        onCvvRequest: (callback) => { ipcRenderer.on("vault:cvv-request", (_, req) => callback(req)); },
+    },
 });

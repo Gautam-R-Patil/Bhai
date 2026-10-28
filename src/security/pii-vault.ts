@@ -51,7 +51,8 @@ function knownFormsRe(): RegExp | null {
     formsGen = generation;
     handleByForm.clear();
     // The first value stored keeps a form two values share (as the per-value loop did).
-    for (const [value, handle] of handleOf)
+    // Saved secrets first: a form one shares with a handled value stays the vault token.
+    for (const [value, handle] of [...secrets, ...handleOf])
         for (const [form] of formsOf(value)) if (!handleByForm.has(form)) handleByForm.set(form, handle);
     const forms = [...handleByForm.keys()];
     const long = forms.filter((f) => f.length >= SHORT_FORM).sort(byLength).map(escapeRe);
@@ -159,6 +160,18 @@ function remember(text: string, slot: 0 | 1, out: string) {
         memo.delete(k);
         memoChars -= memoSize(k, v);
     }
+}
+
+// Saved secrets (vault.ts): value → its {{vault:…}} token. Masked like the
+// values above but never evicted, and reveal() never turns them back: only
+// vault.ts resolves a token, under its own domain lock and consent rules.
+let secrets = new Map<string, string>();
+
+/** Replace the set of saved secrets protect() hides (vault.ts calls it on every vault load). */
+export function setSecrets(next: Map<string, string>): void {
+    for (const v of secrets.keys()) formsCache.delete(v);
+    secrets = new Map(next);
+    generation++;
 }
 
 /**
