@@ -95,7 +95,6 @@ import { setTaskTriggerHandler } from "./tools/scheduled.js";
 import { initSpotify } from "./tools/spotify.js";
 import { probeAndLogMacPermissions } from "./utils/macos-permissions.js";
 import { getPlatformCapabilities } from "./utils/platform-capabilities.js";
-import { setupTelegramVoice } from "./voice/telegram-voice.js";
 import { closeWhatsApp, initWhatsApp, sendWhatsAppProactiveMessage } from "./whatsapp.js";
 
 // ── Primary Channel ──────────────────────────
@@ -639,9 +638,6 @@ async function boot() {
             sendPushNotification("Research Complete", msg.substring(0, 180)).catch(() => {});
         }
     });
-
-    // Wire voice handlers (Telegram-only — skipped when bot is null)
-    if (bot) setupTelegramVoice(bot, llm, config);
 
     // Live voice mode (real-time conversation — Gemini Live / OpenAI Realtime)
     try {

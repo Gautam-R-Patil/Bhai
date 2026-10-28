@@ -7,7 +7,7 @@
 // placeholder string) and always fell through.
 //
 // For real transcription use src/voice/transcribe.ts (cloud Whisper
-// via OpenAI-compatible API) or src/voice/telegram-voice.ts. This
+// via OpenAI-compatible API, or the server's /api/stt). This
 // stub is kept so existing callers still link; it returns an empty
 // result with source:"fallback" so they treat it as "no transcription
 // available" rather than crashing.
@@ -31,8 +31,7 @@ export async function transcribeAudio(audioPath: string): Promise<TranscriptionR
     // which only accepts that field for vision models — it always failed
     // silently. The macOS path returned a placeholder string. Both removed.
     //
-    // Use the cloud transcription pipeline in src/voice/transcribe.ts (Whisper
-    // via OpenAI-compatible API) or the Telegram voice message handler
-    // (src/voice/telegram-voice.ts) for actual transcription.
+    // Use src/voice/transcribe.ts (local Whisper key or the server's /api/stt)
+    // for actual transcription.
     return { text: "", language: "en", confidence: 0, durationMs: Date.now() - start, source: "fallback" };
 }

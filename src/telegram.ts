@@ -1762,6 +1762,7 @@ async function handleAudioMessage(
 
         // ── Stage 1: Whisper transcription (accurate STT) ──
         let transcript = "";
+        let sttError = "";
         try {
             const { transcribeBuffer } = await import("./voice/transcribe.js");
             transcript = await transcribeBuffer(audioBuffer, mimeType.includes("wav") ? "audio.wav" : "audio.ogg");
@@ -1769,7 +1770,8 @@ async function handleAudioMessage(
                 console.log(`  📝 Whisper transcription: "${transcript.trim()}"`);
             }
         } catch (err) {
-            console.warn("  ⚠️ Whisper transcription failed:", (err as Error).message);
+            sttError = (err as Error).message;
+            console.warn("  ⚠️ Whisper transcription failed:", sttError);
         }
 
         let enrichedPrompt: string;
@@ -1778,19 +1780,11 @@ async function handleAudioMessage(
             enrichedPrompt = transcript.trim();
             if (caption) enrichedPrompt += `\n\n(caption: "${caption}")`;
         } else {
-            // No speech detected — fall back to Gemini for music/ambient audio analysis
-            console.log("  🔍 No speech — sending to Gemini for audio analysis...");
-            const geminiAnalysis = await analyzeAudioWithGemini(base64Audio, mimeType, caption, llm);
-            console.log(`  ✅ Gemini analysis: "${geminiAnalysis.substring(0, 120)}..."`);
-
-            enrichedPrompt = `[AUDIO MESSAGE FROM USER — no speech detected]
-Audio analysis:
-
-${geminiAnalysis}
-
-${caption ? `User caption: "${caption}"` : ""}
-
-Respond naturally. If music was identified, tell them the song. NEVER mention Gemini or analysis pipelines.`;
+            // No words. The model can't hear audio (the proxy drops it), so it
+            // must not guess songs or sounds: say so honestly.
+            enrichedPrompt = `[AUDIO MESSAGE FROM USER — ${sttError ? `it couldn't be transcribed (${sttError})` : "no speech was detected"}.]
+${caption ? `User caption: "${caption}"\n` : ""}
+You can't listen to audio, so don't guess what's in it (no song names, no sounds). Tell the user briefly and ask them to type what they need.`;
         }
 
         setTelegramContext(bot, ctx.chat.id);
@@ -1856,80 +1850,6 @@ Respond naturally. If music was identified, tell them the song. NEVER mention Ge
     } finally {
         clearInterval(typingInterval);
     }
-}
-
-// ── Gemini Audio Analysis ─────────────────────
-
-async function analyzeAudioWithGemini(
-    base64Audio: string,
-    mimeType: string,
-    caption: string,
-    llm: LLMClient,
-): Promise<string> {
-    const sessionToken = await getSessionToken();
-    if (!sessionToken) throw new Error("Not authenticated");
-
-    const proxyUrl = `${getConvexSiteUrl()}/api/llm/chat`;
-    const response = await encryptedFetch(proxyUrl, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${sessionToken}`,
-        },
-        body: JSON.stringify({
-            model: "google/gemini-3.1-flash-lite-preview",
-            messages: [
-                {
-                    role: "system",
-                    content: `You are an expert audio analysis and music identification assistant. Analyze the audio in extreme detail.
-
-**CRITICAL FOR MUSIC**: If music or a song is playing, you MUST:
-- Transcribe ALL audible lyrics word-for-word, even partial or unclear ones (use [unclear] markers but still attempt)
-- Identify the EXACT song name, artist, album, and year if possible
-- If you're not 100% sure, provide your TOP 3 best guesses with confidence percentages
-- Recognize the genre, subgenre, BPM feel, and musical style
-- NEVER say "unidentifiable" — always give your best guess based on melody, rhythm, vocals, and lyrics
-- Think about the vocal style, production style, and musical characteristics to narrow down the artist
-
-Provide analysis in these categories:
-
-1. **Transcription**: ALL words spoken or sung (transcribe as much as possible, even fragments)
-2. **User's Intent/Command**: What the user wants (if speaking) or what they might be asking about the music
-3. **Tone & Emotion**: Emotional quality of the voice/music
-4. **🎵 Music/Song Identification**:
-   - Best match: [Song Name] by [Artist] (confidence: X%)
-   - Alternative matches if unsure
-   - Genre/subgenre
-   - Key lyrics that helped identification
-   - Musical characteristics (tempo, instruments, vocal style)
-5. **Background Sounds**: Environmental/ambient audio
-6. **Language**: Language(s) detected
-7. **Additional Context**: Audio quality, notable production elements
-
-Be thorough — your analysis directly determines whether the user gets a correct song identification.`,
-                },
-                {
-                    role: "user",
-                    content: [
-                        {
-                            type: "input_audio" as "text",
-                            input_audio: { data: base64Audio, format: mimeType.includes("wav") ? "wav" : "ogg" },
-                        } as any,
-                        ...(caption ? [{ type: "text" as const, text: `Caption: ${caption}` }] : []),
-                    ],
-                },
-            ],
-            max_tokens: 2048,
-        }),
-    });
-
-    if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(`Audio analysis failed: ${response.status} — ${(errData as any).error || "Unknown"}`);
-    }
-
-    const data = (await response.json()) as any;
-    return data.choices?.[0]?.message?.content || "Could not analyze audio content.";
 }
 
 // ── Helpers ───────────────────────────────────

@@ -8,6 +8,7 @@ import { internal } from "./_generated/api";
 import Anthropic from "@anthropic-ai/sdk";
 import { toClaudeRequest, toOpenAIResponse } from "./claude";
 import { callGrok, isGrokModel } from "./grok";
+import { decodeBase64, STT_CREDIT_COST, STT_MAX_AUDIO_BYTES, sttConfigFromEnv, transcribeWithProvider } from "./stt";
 import {
   generateServerKeyPair,
   deriveSharedKey,
@@ -739,6 +740,80 @@ http.route({
         JSON.stringify({ error: "LLM service temporarily unavailable" }),
         { status: 502, headers: { "Content-Type": "application/json" } }
       );
+    }
+  }),
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// POST /api/stt — voice-note transcription (convex/stt.ts). Body (E2E):
+// { audio: base64, mimeType, filename }. 503 when no STT provider is set.
+// ══════════════════════════════════════════════════════════════════════════
+
+http.route({
+  path: "/api/stt",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+
+    const cfg = sttConfigFromEnv(process.env);
+    if (!cfg) return buildResponse({ error: "stt_not_configured" }, 503, false, null);
+
+    let body: any;
+    let isEncrypted = false;
+    try {
+      const parsed = await parseRequestBody(request, account.sharedKey);
+      body = parsed.body;
+      isEncrypted = parsed.encrypted;
+    } catch (err: any) {
+      return buildResponse({ error: err?.message || "Invalid request body" }, 400, false, null);
+    }
+    const reply = (data: unknown, status: number) =>
+      buildResponse(data, status, isEncrypted, account.sharedKey, request);
+
+    if (typeof body?.audio !== "string" || !body.audio) return reply({ error: "audio required" }, 400);
+    let audio: Uint8Array<ArrayBuffer>;
+    try {
+      audio = decodeBase64(body.audio);
+    } catch {
+      return reply({ error: "audio must be base64" }, 400);
+    }
+    if (audio.length > STT_MAX_AUDIO_BYTES) return reply({ error: "audio too large" }, 413);
+    const mimeType = typeof body.mimeType === "string" ? body.mimeType : "audio/ogg";
+    const filename = typeof body.filename === "string" ? body.filename.replace(/[^\w.-]/g, "_") : "audio.ogg";
+
+    const deducted = await ctx.runMutation(internal.accounts.deductCreditsInternal, {
+      otplessUserId: account.otplessUserId,
+      amount: STT_CREDIT_COST,
+    });
+    if (!deducted?.success) return reply({ error: "Insufficient credits" }, 402);
+
+    const startedAt = Date.now();
+    const log = (status: "success" | "failed", errorMessage?: string) =>
+      ctx
+        .runMutation(internal.llmCallLog.record, {
+          accountId: account.accountId,
+          otplessUserId: account.otplessUserId,
+          model: `stt:${cfg.model}`,
+          status,
+          credits: status === "success" ? STT_CREDIT_COST : 0,
+          latencyMs: Date.now() - startedAt,
+          errorMessage,
+          hasMedia: true,
+        })
+        .catch(() => {});
+    try {
+      const text = await transcribeWithProvider(cfg, audio, mimeType, filename);
+      await log("success");
+      return reply({ text }, 200);
+    } catch (err) {
+      const message = (err as Error).message;
+      await ctx
+        .runMutation(internal.accounts.addCreditsInternal, { id: account.accountId, amount: STT_CREDIT_COST })
+        .catch((e: unknown) => console.error("[STT] refund failed:", e));
+      await log("failed", message);
+      return reply({ error: "transcription failed" }, 502);
     }
   }),
 });

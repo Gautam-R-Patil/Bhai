@@ -29,9 +29,6 @@ import { logChatMessage, markChatReset, recentChatContext } from "./chat-log.js"
 import { classifyQuery } from "../memory/classifier.js";
 import { captureScreenshot } from "../tools/platform.js";
 import { getUserPresence } from "../proactive/activity.js";
-import { getSessionToken } from "../session.js";
-import { getConvexSiteUrl } from "../config/keys.js";
-import { encryptedFetch } from "../crypto-transport.js";
 import {
     getThinkingPhrase,
     getProgressMessage,
@@ -1584,12 +1581,14 @@ async function stopVoiceCapture(ws: WebSocket): Promise<void> {
 
         // ── Primary path: Whisper transcription (accurate STT) ──
         let transcript = "";
+        let sttError = "";
         try {
             const { transcribeBuffer } = await import("../voice/transcribe.js");
             transcript = await transcribeBuffer(Buffer.from(audioBuffer), filePath.endsWith(".wav") ? "audio.wav" : "audio.ogg");
             console.log(`[OVERLAY] 🎤 Whisper transcription: "${transcript}"`);
         } catch (whisperErr) {
-            console.warn("[OVERLAY] Whisper transcription failed:", (whisperErr as Error).message);
+            sttError = (whisperErr as Error).message;
+            console.warn("[OVERLAY] Whisper transcription failed:", sttError);
         }
 
         if (transcript && transcript.trim().length > 0) {
@@ -1597,18 +1596,16 @@ async function stopVoiceCapture(ws: WebSocket): Promise<void> {
             // The chat bar puts it in the input and sends it as a normal chat message.
             sendToClient(ws, { type: "voice_result", text: transcript.trim() });
         } else {
-            // No speech detected — fall back to Gemini audio analysis (music, ambient sounds)
-            const base64Audio = audioBuffer.toString("base64");
-            const mimeType = filePath.endsWith(".wav") ? "audio/wav" : "audio/ogg";
-            console.log(`[OVERLAY] 🔍 No speech detected — sending to Gemini for audio analysis...`);
-
-            const geminiAnalysis = await analyzeAudioWithGemini(base64Audio, mimeType);
-            console.log(`[OVERLAY] ✅ Gemini analysis: "${geminiAnalysis.substring(0, 100)}..."`);
-
-            const enrichedPrompt = `[VOICE MESSAGE FROM USER]\nThe user sent a voice message with no clear speech. Audio analysis:\n\n${geminiAnalysis}\n\nIMPORTANT: Respond naturally. If music was identified, tell them the song. If it was ambient sounds, mention them casually. NEVER mention Gemini, analysis pipelines, or internal processing.`;
-
-            sendToClient(ws, { type: "voice_result", text: "" });
-            await handleOverlayMessage(ws, enrichedPrompt, "overlay", "🎤 Voice message");
+            // No words. The model can't hear audio, so don't hand it a guess.
+            sendToClient(ws, {
+                type: "voice_status",
+                status: "error",
+                error: sttError.includes("isn't set up")
+                    ? sttError
+                    : sttError
+                      ? "Voice transcription isn't working right now. Type it instead?"
+                      : "I couldn't make out any words. Try again or type it.",
+            });
         }
 
         // Clean up temp file
@@ -1618,78 +1615,6 @@ async function stopVoiceCapture(ws: WebSocket): Promise<void> {
         sendToClient(ws, { type: "voice_status", status: "error", error: "voice processing failed" });
         try { unlinkSync(filePath); } catch { /* ignore */ }
     }
-}
-
-// ── Gemini Audio Analysis (shared with Telegram) ──
-
-async function analyzeAudioWithGemini(
-    base64Audio: string,
-    mimeType: string,
-): Promise<string> {
-    const sessionToken = await getSessionToken();
-    if (!sessionToken) throw new Error("Not authenticated");
-
-    const proxyUrl = `${getConvexSiteUrl()}/api/llm/chat`;
-    const response = await encryptedFetch(proxyUrl, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${sessionToken}`,
-        },
-        body: JSON.stringify({
-            model: "google/gemini-3.1-flash-lite-preview",
-            messages: [
-                {
-                    role: "system",
-                    content: `You are an expert audio analysis and music identification assistant. Analyze the audio in extreme detail.
-
-**CRITICAL FOR MUSIC**: If music or a song is playing, you MUST:
-- Transcribe ALL audible lyrics word-for-word, even partial or unclear ones (use [unclear] markers but still attempt)
-- Identify the EXACT song name, artist, album, and year if possible
-- If you're not 100% sure, provide your TOP 3 best guesses with confidence percentages
-- Recognize the genre, subgenre, BPM feel, and musical style
-- NEVER say "unidentifiable" — always give your best guess based on melody, rhythm, vocals, and lyrics
-- Think about the vocal style, production style, and musical characteristics to narrow down the artist
-
-Provide analysis in these categories:
-
-1. **Transcription**: ALL words spoken or sung (transcribe as much as possible, even fragments)
-2. **User's Intent/Command**: What the user wants (if speaking) or what they might be asking about the music
-3. **Tone & Emotion**: Emotional quality of the voice/music
-4. **🎵 Music/Song Identification**:
-   - Best match: [Song Name] by [Artist] (confidence: X%)
-   - Alternative matches if unsure
-   - Genre/subgenre
-   - Key lyrics that helped identification
-   - Musical characteristics (tempo, instruments, vocal style)
-5. **Background Sounds**: Environmental/ambient audio
-6. **Language**: Language(s) detected
-7. **Additional Context**: Audio quality, notable production elements
-
-Be thorough — your analysis directly determines whether the user gets a correct song identification.`,
-                },
-                {
-                    role: "user",
-                    content: [
-                        {
-                            type: "input_audio" as "text",
-                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                            input_audio: { data: base64Audio, format: mimeType.includes("wav") ? "wav" : "ogg" },
-                        } as any,
-                    ],
-                },
-            ],
-            max_tokens: 2048,
-        }),
-    });
-
-    if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(`Audio analysis failed: ${response.status} — ${(errData as any).error || "Unknown"}`);
-    }
-
-    const data = await response.json() as any;
-    return data.choices?.[0]?.message?.content || "Could not analyze audio content.";
 }
 
 // ── Live Voice Mode (Gemini Live / OpenAI Realtime) ──
