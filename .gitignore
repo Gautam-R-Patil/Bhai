@@ -164,6 +164,7 @@ desktop/hostinger-upload/
 !src/tools/__tests__/os-grounding.test.ts
 !src/screen/__tests__/capability-detector.test.ts
 !src/screen/__tests__/ax-dump.test.ts
+!src/screen/__tests__/ax-batch.parity.test.ts
 !src/screen/__tests__/ui-tars.test.ts
 !src/screen/__tests__/omniparser.test.ts
 !src/screen/__tests__/perception-router.test.ts
