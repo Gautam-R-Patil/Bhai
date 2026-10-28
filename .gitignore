@@ -88,6 +88,7 @@ desktop/hostinger-upload/
 !src/security/pii-redactor.test.ts
 !src/security/pii-vault.test.ts
 !src/security/credential-mask.test.ts
+!src/store/installer-npm-env.test.ts
 !src/tools/create-tool-sandbox.test.ts
 !src/tools/web-search-rank.test.ts
 !src/tools/site-task-consent.test.ts

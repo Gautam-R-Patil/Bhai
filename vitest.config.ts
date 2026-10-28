@@ -25,6 +25,7 @@ export default defineConfig({
             "src/skills/**/*.test.ts",
             "src/voice/**/*.test.ts",
             "src/forge/**/*.test.ts",
+            "src/store/**/*.test.ts",
             "src/screen/**/*.test.ts",
             "src/research/**/*.test.ts",
             "src/social/**/*.test.ts",

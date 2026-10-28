@@ -21,6 +21,7 @@ import type {
   StoreMCPConfig,
 } from "./types.js";
 import { startInstall, confirmInstall, uninstall as convexUninstall, updateVersion } from "./client.js";
+import { buildMcpEnv } from "../mcp/client.js";
 
 // ── Constants ─────────────────────────────────────
 
@@ -193,12 +194,33 @@ async function extractArchive(archivePath: string, destPath: string): Promise<vo
 
 // ── npm install helper ────────────────────────────
 
-async function runNpmInstall(dir: string): Promise<void> {
+// npm needs a little more than the MCP allowlist: proxy + npm_config_* settings,
+// and on Windows the vars cmd.exe/npm use to find their dirs. Never tokens
+// (TELEGRAM_BOT_TOKEN, GITHUB_TOKEN, EMAIL_PASSWORD, ...); npm reads the user's
+// own registry auth from ~/.npmrc via HOME.
+const NPM_ENV_EXTRAS = /^(npm_config_|HTTPS?_PROXY$|NO_PROXY$|SystemRoot$|ComSpec$|PATHEXT$|APPDATA$|LOCALAPPDATA$|USERPROFILE$)/i;
+
+export function buildNpmInstallEnv(): Record<string, string> {
+  const env = buildMcpEnv();
+  for (const [k, v] of Object.entries(process.env)) {
+    if (typeof v === "string" && NPM_ENV_EXTRAS.test(k) && !/auth|token|password/i.test(k)) env[k] = v;
+  }
+  return env;
+}
+
+// --ignore-scripts: a store package's (or its deps') install/postinstall hooks
+// must not run third-party code at install time. Trade-off: deps that compile
+// a native addon in a script (node-gyp, e.g. better-sqlite3) or download a
+// binary in postinstall are left unbuilt, so store MCP servers must be pure JS
+// or ship prebuilt binaries inside the package. The server itself later runs
+// under buildMcpEnv, also without the bot's secrets.
+export async function runNpmInstall(dir: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const proc = spawn("npm", ["install", "--production", "--no-audit", "--no-fund"], {
+    const proc = spawn("npm", ["install", "--production", "--ignore-scripts", "--no-audit", "--no-fund"], {
       cwd: dir,
       stdio: "pipe",
       shell: true,
+      env: buildNpmInstallEnv(),
     });
 
     let stderr = "";
