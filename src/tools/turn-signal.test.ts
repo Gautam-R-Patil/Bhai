@@ -46,4 +46,10 @@ describe("turn signal", () => {
         await executeTool("browser_wait_for_human", { _signal: ctl.signal });
         expect(seen[0]._signal).toBe(ctl.signal);
     });
+
+    it("ignores a fake _signal in the model's arguments", async () => {
+        const ctl = new AbortController();
+        await withTurnSignal(ctl.signal, () => executeTool("browser_wait_for_human", { _signal: {} }));
+        expect(seen[0]._signal).toBe(ctl.signal);
+    });
 });

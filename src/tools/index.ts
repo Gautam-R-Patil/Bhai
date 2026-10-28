@@ -858,7 +858,8 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         console.warn(`[TOOL] PreToolUse hook chain errored for ${name}: ${(err as Error).message}`);
     }
     // Set after the hooks, so an input they rewrite (a JSON copy) keeps the signal.
-    const stop = (input._signal as AbortSignal | undefined) ?? turnSignal.getStore();
+    // The turn's real Stop signal wins; a model-supplied _signal is only used if it really is one.
+    const stop = turnSignal.getStore() ?? (input._signal instanceof AbortSignal ? input._signal : undefined);
     if (STOPPABLE_TOOLS.has(name) && stop) effectiveInput = { ...effectiveInput, _signal: stop };
 
     try {
