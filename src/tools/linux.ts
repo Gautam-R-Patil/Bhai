@@ -13,7 +13,7 @@ import { existsSync, promises as fs, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { getScriptsDir } from "../config/paths.js";
+import { gridScreenshot } from "../screen/grid-overlay.js";
 import { getScreenDimensions, percentageToScreen, scaleImageToScreen } from "../screen/screen-dimensions.js";
 import type { ToolDefinition } from "./get-current-time.js";
 import { captureScreenshot, getScreenResolution } from "./platform.js";
@@ -168,40 +168,19 @@ export const linuxOsScreenshot: ToolDefinition = {
             // Capture screenshot
             await captureScreenshot(tmpPng);
 
-            // Resize to 1920px width for LLM coordinate accuracy
+            // Resize to 1920px width for LLM coordinate accuracy, with the coordinate grid
             const RESIZE_WIDTH = 1920;
-            try {
-                await execFileAsync("convert", [tmpPng, "-resize", `${RESIZE_WIDTH}x`, tmpPng], { timeout: 10000 });
-            } catch {
-                // ImageMagick not available; proceed with raw size
+            const gridded = await gridScreenshot(await fs.readFile(tmpPng), RESIZE_WIDTH, 200);
+            if (!gridded) {
+                // sharp unusable: resize + JPEG via ImageMagick, else send the raw PNG
+                await execFileAsync("convert", [tmpPng, "-resize", `${RESIZE_WIDTH}x`, "-quality", "85", tmpJpg], {
+                    timeout: 10000,
+                }).catch(() => {});
             }
-
-            // Add grid overlay using Python + Pillow
-            const gridScript = join(getScriptsDir(), "grid_overlay.py");
-            try {
-                await execFileAsync("python3", [gridScript, tmpPng, tmpJpg, "200"], {
-                    timeout: 5000,
-                });
-            } catch {
-                try {
-                    await execFileAsync("python", [gridScript, tmpPng, tmpJpg, "200"], {
-                        timeout: 5000,
-                    });
-                } catch {
-                    // Fallback: convert to JPEG via ImageMagick
-                    try {
-                        await execFileAsync("convert", [tmpPng, "-quality", "85", tmpJpg], { timeout: 5000 });
-                    } catch {
-                        /* use PNG */
-                    }
-                }
-            }
-
-            // Read whichever file we produced
             const finalFile = existsSync(tmpJpg) ? tmpJpg : tmpPng;
-            const buffer = await fs.readFile(finalFile);
+            const buffer = gridded?.buf ?? (await fs.readFile(finalFile));
             const base64 = buffer.toString("base64");
-            const mimeType = finalFile.endsWith(".jpg") ? "image/jpeg" : "image/png";
+            const mimeType = gridded?.mime ?? (finalFile.endsWith(".jpg") ? "image/jpeg" : "image/png");
 
             // Cleanup
             await fs.unlink(tmpPng).catch(() => {});

@@ -224,7 +224,7 @@ Companion for `chrome-backend.ts`. `background.js` (WS bridge), `content.js` (DO
 
 ### Admin Dashboard / Scripts / Docs
 - `admin-dashboard/index.html` — single-file static dashboard (separate from `portals/admin-panel/`)
-- `scripts/` — Swift helpers (`get_location.swift`, `ocr_screen.swift`), vision overlays (`grid_overlay.py`, `som_overlay.py`), OS hotkeys, Convex seeds, `patch-baileys.sh`; `docs/` — internal docs
+- `scripts/` — Swift helpers (`get_location.swift`, `ocr_screen.swift`), vision overlay `som_overlay.py` (the os_screenshot grid is in-process: `src/screen/grid-overlay.ts`), OS hotkeys, Convex seeds, `patch-baileys.sh`; `docs/` — internal docs
 
 ### Configuration
 - `.env` (see `.env.example`). Required: `TELEGRAM_BOT_TOKEN`, `ALLOWED_USER_IDS`, `ATLAS_OTPLESS_USER_ID`. Optional: `EMAIL_USER`/`EMAIL_PASSWORD`, `EMAIL_WHITELIST`, `GITHUB_TOKEN`, `HF_TOKEN`, `MEMORY_DEBUG`.

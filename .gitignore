@@ -152,6 +152,7 @@ desktop/hostinger-upload/
 !src/utils/system-resources.test.ts
 !src/screen/__tests__/
 !src/screen/__tests__/screen-dimensions.test.ts
+!src/screen/__tests__/grid-overlay.test.ts
 !src/screen/__tests__/computer-action.test.ts
 !src/agents/__tests__/
 !src/agents/__tests__/computer-use-agent.test.ts

@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { getScriptsDir } from "../config/paths.js";
 import { hideOverlayForAgent, showOverlayForAgent } from "../overlay/overlay-chat.js";
+import { gridScreenshot } from "../screen/grid-overlay.js";
 import { getScreenDimensions, percentageToScreen, scaleImageToScreen } from "../screen/screen-dimensions.js";
 import type { ToolDefinition } from "./get-current-time.js";
 import { typeTextMac } from "./os-computer-action.js";
@@ -182,7 +183,6 @@ export const osScreenshot: ToolDefinition = {
             return JSON.stringify({ error: "os_screenshot tool is only available on macOS." });
         }
 
-        const tmpPng = join(tmpdir(), `atlas_screen_${Date.now()}.png`);
         const tmpJpg = join(tmpdir(), `atlas_screen_${Date.now()}.jpg`);
 
         try {
@@ -199,53 +199,32 @@ export const osScreenshot: ToolDefinition = {
             hideOverlayForAgent();
             await new Promise((r) => setTimeout(r, 100)); // Wait for opacity transition
 
-            // Capture screenshot (Retina: captures at 2x pixel density)
-            await execFileAsync("screencapture", ["-x", tmpPng], { timeout: 10000 });
+            // Capture screenshot (Retina: captures at 2x pixel density). JPEG is ~2x
+            // faster to capture than PNG and is what we send anyway.
+            await execFileAsync("screencapture", ["-x", "-t", "jpg", tmpJpg], { timeout: 10000 });
 
             // Show overlay again
             showOverlayForAgent();
 
-            // Resize to 1280px width for better LLM coordinate accuracy
+            // Resize to 1280px width for better LLM coordinate accuracy, with the coordinate grid.
+            // Labels stay in image pixels: os_click scales x/y from this
+            // 1280-wide image to the screen, so screen-point labels got scaled twice.
             const RESIZE_WIDTH = 1280;
-            try {
-                await execFileAsync("sips", ["--resampleWidth", String(RESIZE_WIDTH), tmpPng], { timeout: 5000 });
-            } catch {
-                /* proceed with raw */
+            const gridded = await gridScreenshot(await fs.readFile(tmpJpg), RESIZE_WIDTH, 160);
+            if (!gridded) {
+                // sharp unusable: still resize, so os_click's 1280-wide scaling holds.
+                await execFileAsync(
+                    "sips",
+                    ["--resampleWidth", String(RESIZE_WIDTH), "-s", "formatOptions", "85", tmpJpg],
+                    { timeout: 5000 },
+                ).catch(() => {});
             }
-
-            // Add coordinate grid overlay using Python + Pillow for accurate LLM coordinate picking
-            const gridScript = join(getScriptsDir(), "grid_overlay.py");
-            try {
-                // Labels stay in image pixels: os_click scales x/y from this
-                // 1280-wide image to the screen, so screen-point labels got scaled twice.
-                await execFileAsync("python3", [gridScript, tmpPng, tmpJpg, "160"], {
-                    timeout: 5000,
-                });
-            } catch {
-                // Fallback: convert to JPEG without grid
-                try {
-                    await execFileAsync(
-                        "sips",
-                        ["-s", "format", "jpeg", "-s", "formatOptions", "85", tmpPng, "--out", tmpJpg],
-                        { timeout: 3000 },
-                    );
-                } catch {
-                    /* use PNG */
-                }
-            }
-
-            // Read whichever file we produced
-            const finalFile = await fs
-                .access(tmpJpg)
-                .then(() => tmpJpg)
-                .catch(() => tmpPng);
-            const buffer = await fs.readFile(finalFile);
+            const buffer = gridded?.buf ?? (await fs.readFile(tmpJpg));
             _lastScreenshotBuffer = buffer; // Store for caching and diff
             const base64 = buffer.toString("base64");
-            const mimeType = finalFile.endsWith(".jpg") ? "image/jpeg" : "image/png";
+            const mimeType = "image/jpeg";
 
             // Cleanup
-            await fs.unlink(tmpPng).catch(() => {});
             await fs.unlink(tmpJpg).catch(() => {});
 
             // Scale factor: maps image coordinates to logical screen points
@@ -276,7 +255,6 @@ export const osScreenshot: ToolDefinition = {
             });
         } catch (err) {
             showOverlayForAgent(); // Ensure overlay comes back on error
-            await fs.unlink(tmpPng).catch(() => {});
             await fs.unlink(tmpJpg).catch(() => {});
 
             const error = err as { message?: string };

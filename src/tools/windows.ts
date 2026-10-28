@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { gridScreenshot } from "../screen/grid-overlay.js";
 import { getScreenDimensions, percentageToScreen, scaleImageToScreen } from "../screen/screen-dimensions.js";
 import type { ToolDefinition } from "./get-current-time.js";
 import {
@@ -150,7 +151,6 @@ export const winOsScreenshot: ToolDefinition = {
         }
 
         const tmpPng = join(tmpdir(), `atlas_screen_${Date.now()}.png`);
-        const tmpJpg = join(tmpdir(), `atlas_screen_${Date.now()}.jpg`);
 
         try {
             // Get dims for the focused monitor (multi-monitor aware).
@@ -162,12 +162,14 @@ export const winOsScreenshot: ToolDefinition = {
             // Capture screenshot
             await captureScreenshot(tmpPng);
 
-            // Resize to 1920px width for LLM coordinate accuracy
+            // Resize to 1920px width for LLM coordinate accuracy, with the coordinate grid
             const RESIZE_WIDTH = 1920;
-            try {
-                // Use PowerShell to resize
-                await runPowerShell(
-                    `
+            const gridded = await gridScreenshot(await fs.readFile(tmpPng), RESIZE_WIDTH, 200);
+            if (!gridded) {
+                // sharp unusable: resize via PowerShell and send the PNG without the grid
+                try {
+                    await runPowerShell(
+                        `
 Add-Type -AssemblyName System.Drawing
 $img = [System.Drawing.Image]::FromFile("${tmpPng.replace(/\\/g, "\\\\")}")
 $ratio = ${RESIZE_WIDTH} / $img.Width
@@ -181,54 +183,18 @@ $img.Dispose()
 $bmp.Save("${tmpPng.replace(/\\/g, "\\\\")}", [System.Drawing.Imaging.ImageFormat]::Png)
 $bmp.Dispose()
 `,
-                    10000,
-                );
-            } catch {
-                /* proceed with raw size */
-            }
-
-            // Add grid overlay using Python + Pillow
-            const projectRoot = join(__dirname, "..", "..");
-            const gridScript = join(projectRoot, "scripts", "grid_overlay.py");
-            try {
-                await execFileAsync("python", [gridScript, tmpPng, tmpJpg, "200"], {
-                    timeout: 5000,
-                });
-            } catch {
-                try {
-                    await execFileAsync("python3", [gridScript, tmpPng, tmpJpg, "200"], {
-                        timeout: 5000,
-                    });
+                        10000,
+                    );
                 } catch {
-                    // Fallback: convert to JPEG via PowerShell
-                    try {
-                        await runPowerShell(
-                            `
-Add-Type -AssemblyName System.Drawing
-$img = [System.Drawing.Image]::FromFile("${tmpPng.replace(/\\/g, "\\\\")}")
-$encoder = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }
-$encoderParams = New-Object System.Drawing.Imaging.EncoderParameters(1)
-$encoderParams.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality, 85L)
-$img.Save("${tmpJpg.replace(/\\/g, "\\\\")}", $encoder, $encoderParams)
-$img.Dispose()
-`,
-                            5000,
-                        );
-                    } catch {
-                        /* use PNG */
-                    }
+                    /* proceed with raw size */
                 }
             }
-
-            // Read whichever file we produced
-            const finalFile = existsSync(tmpJpg) ? tmpJpg : tmpPng;
-            const buffer = await fs.readFile(finalFile);
+            const buffer = gridded?.buf ?? (await fs.readFile(tmpPng));
             const base64 = buffer.toString("base64");
-            const mimeType = finalFile.endsWith(".jpg") ? "image/jpeg" : "image/png";
+            const mimeType = gridded?.mime ?? "image/png";
 
             // Cleanup
             await fs.unlink(tmpPng).catch(() => {});
-            await fs.unlink(tmpJpg).catch(() => {});
 
             // Scale factor
             const scaleFactor = screen.width / RESIZE_WIDTH;
@@ -248,7 +214,6 @@ $img.Dispose()
             });
         } catch (err) {
             await fs.unlink(tmpPng).catch(() => {});
-            await fs.unlink(tmpJpg).catch(() => {});
             const error = err as { message?: string };
             return JSON.stringify({
                 success: false,
