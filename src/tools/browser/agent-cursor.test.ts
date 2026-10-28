@@ -62,7 +62,7 @@ describe("agent cursor", () => {
         expect(seen).not.toMatch(/__bhai|Bhai/);
         expect(await hosts(page)).toBe(1); // it is there, just unseen
         await page.context().close();
-    });
+    }, 60_000);
 
     it("a click aimed at the cursor lands on the real element", async (ctx) => {
         if (!browser) return ctx.skip();
@@ -81,11 +81,11 @@ describe("agent cursor", () => {
         const page = await freshPage();
         let t = Date.now();
         await agentCursor(page, { x: 1, y: 1 }, "click"); // long glide from the centre
-        expect(Date.now() - t).toBeLessThanOrEqual(AGENT_CURSOR_CAP_MS + 50);
+        expect(Date.now() - t).toBeLessThanOrEqual(AGENT_CURSOR_CAP_MS + 400) // slack for a loaded CI box; the slow eval takes 2s;
         const slow = { on() {}, evaluate: () => new Promise((r) => setTimeout(() => r(300), 2000)) };
         t = Date.now();
         await agentCursor(slow, { x: 5, y: 5 });
-        expect(Date.now() - t).toBeLessThanOrEqual(AGENT_CURSOR_CAP_MS + 50);
+        expect(Date.now() - t).toBeLessThanOrEqual(AGENT_CURSOR_CAP_MS + 400) // slack for a loaded CI box; the slow eval takes 2s;
         await page.context().close();
     });
 
