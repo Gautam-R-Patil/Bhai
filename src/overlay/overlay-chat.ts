@@ -123,29 +123,37 @@ function authorizeRequest(req: IncomingMessage): "native-overlay" | "web-widget"
 // Deny-list patterns enforced even when the resolved path is under workspace.
 // Mix of full-segment matches (dot-files) AND substring matches (credentials,
 // id_rsa, private_key) — the latter is intentionally broad per spec.
-const SENSITIVE_SEGMENT_REGEX = /(?:^|\/)(\.env(?:\..+)?|\.ssh|chrome-bridge-token\.txt|audit\.jsonl|google-credentials\.json|google-tokens)(?:$|\/)/i;
+// Segments split on both separators: Windows paths use "\".
+const SENSITIVE_SEGMENT_REGEX = /(?:^|[\\/])(\.env(?:\..+)?|\.ssh|chrome-bridge-token\.txt|audit\.jsonl|google-credentials\.json|google-tokens)(?:$|[\\/])/i;
 const SENSITIVE_SUBSTRING_REGEX = /(credentials|id_rsa|id_dsa|id_ecdsa|id_ed25519|private[_-]?key)/i;
+
+/** Deny-list check on a canonical path. `win32` also refuses NTFS data streams ("x.env::$DATA"). */
+function isDeniedServePath(real: string, win32 = process.platform === "win32"): boolean {
+    if (win32 && real.indexOf(":", 2) !== -1) return true;
+    return SENSITIVE_SEGMENT_REGEX.test(real) || SENSITIVE_SUBSTRING_REGEX.test(real);
+}
 
 /**
  * Validate that `userPath` resolves under the workspace dir and is not deny-listed.
- * Follows symlinks via realpath. Returns the canonical absolute path or null.
+ * Follows symlinks via the native realpath, which also canonicalizes case and
+ * Windows 8.3 short names (".env" can be opened as "ENV~1"). Returns the
+ * canonical absolute path or null.
  */
 function resolveSafePath(userPath: string): string | null {
     try {
         let p = userPath;
         if (p.startsWith("~/")) p = join(homedir(), p.slice(2));
         const abs = resolvePath(p);
-        const workspace = realpathSync(getWorkspaceDir());
+        const workspace = realpathSync.native(getWorkspaceDir());
         let real: string;
         try {
-            real = realpathSync(abs);
+            real = realpathSync.native(abs);
         } catch {
             return null;
         }
         const wsWithSep = workspace.endsWith(pathSep) ? workspace : workspace + pathSep;
         if (real !== workspace && !real.startsWith(wsWithSep)) return null;
-        if (SENSITIVE_SEGMENT_REGEX.test(real)) return null;
-        if (SENSITIVE_SUBSTRING_REGEX.test(real)) return null;
+        if (isDeniedServePath(real)) return null;
         return real;
     } catch {
         return null;
@@ -153,6 +161,7 @@ function resolveSafePath(userPath: string): string | null {
 }
 
 export { resolveSafePath as _resolveSafePathForTest };
+export { isDeniedServePath as _isDeniedServePathForTest };
 export { isScreenQuery as _isScreenQueryForTest };
 
 let httpServer: ReturnType<typeof createServer> | null = null;

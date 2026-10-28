@@ -17,6 +17,11 @@ import {
 } from "../agents/plan-mode.js";
 import type { Config } from "../config.js";
 
+// /optimize-harness fires the real optimizer in the background. These tests
+// only check the reply, and a leaked real run (tool router, harness evals)
+// starved the next test's fresh import past its 30s timeout on CI.
+vi.mock("../harness/optimizer.js", () => ({ runMetaHarnessOptimization: vi.fn(async () => {}) }));
+
 // ── Test helpers ─────────────────────────────────────────
 
 function makeConfig(overrides: Partial<Config> = {}): Config {

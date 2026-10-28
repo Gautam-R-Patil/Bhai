@@ -97,4 +97,30 @@ describe("F2: resolveSafePath — workspace containment + deny-list", () => {
     it("rejects nonexistent path", () => {
         expect(resolveSafePath(join(workspaceDir, "does-not-exist.txt"))).toBeNull();
     });
+
+    it("rejects a case-variant of a deny-listed name", () => {
+        // Same file on case-insensitive volumes (macOS/Windows); absent elsewhere.
+        expect(resolveSafePath(join(workspaceDir, "DATA", "Audit.JSONL"))).toBeNull();
+    });
+});
+
+describe("F2: deny-list on Windows-shaped paths (runs on every OS)", () => {
+    let isDenied: (real: string, win32?: boolean) => boolean;
+    beforeAll(async () => {
+        isDenied = (await import("../../overlay/overlay-chat.js"))._isDeniedServePathForTest;
+    });
+
+    it("matches segments split by backslashes", () => {
+        expect(isDenied("C:\\Users\\me\\Bhai Files\\.env", true)).toBe(true);
+        expect(isDenied("C:\\Users\\me\\Bhai Files\\.ENV.production", true)).toBe(true);
+        expect(isDenied("C:\\Users\\me\\Bhai Files\\data\\audit.jsonl", true)).toBe(true);
+        expect(isDenied("C:\\Users\\me\\Bhai Files\\.ssh\\config", true)).toBe(true);
+        expect(isDenied("C:\\Users\\me\\Bhai Files\\notes.txt", true)).toBe(false);
+        expect(isDenied("C:\\Users\\me\\Bhai Files\\my.envelope.txt", true)).toBe(false);
+    });
+
+    it("refuses NTFS data streams on win32 only", () => {
+        expect(isDenied("C:\\ws\\notes.txt::$DATA", true)).toBe(true);
+        expect(isDenied("/ws/notes:v2.txt", false)).toBe(false);
+    });
 });

@@ -18,6 +18,7 @@ import {
     getPathBlockedReason,
     isDomainAllowed,
     registerProtectedPath,
+    isPathWithin,
 } from "./allowlist.js";
 
 // PROTECTED_PATHS is populated at runtime by the host (no longer baked
@@ -25,7 +26,9 @@ import {
 // path assertions still hold regardless of where the suite runs from.
 // A real directory (realpath'd: macOS tmp is /private/var/...) so the relative-
 // path and symlink tests can chdir into it and link to files inside it.
-const REPO = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "atlas-protected-")));
+// realpathSync.native, like the product: it expands Windows 8.3 names
+// (RUNNER~1) that the JS realpath keeps.
+const REPO = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "atlas-protected-")));
 fs.mkdirSync(path.join(REPO, "src"));
 fs.writeFileSync(path.join(REPO, "src", "agent.ts"), "");
 beforeAll(() => {
@@ -44,6 +47,11 @@ describe("allowlist — codebase self-protection", () => {
 
         it("returns true for a deep nested file", () => {
             expect(isProtectedPath(`${REPO}/src/agent.ts`)).toBe(true);
+        });
+
+        it("returns true for a case-variant of the protected tree", () => {
+            // Same directory on case-insensitive macOS/Windows volumes.
+            expect(isProtectedPath(path.join(REPO.toUpperCase(), "src", "agent.ts"))).toBe(true);
         });
 
         it("returns false for a sibling with a shared PREFIX (no separator)", () => {
@@ -153,14 +161,15 @@ describe("allowlist — codebase self-protection", () => {
     // process.cwd(). If the test runner happens to be inside the
     // protected tree (it does — tests run from the repo root), a bare
     // "ls" or "cp" arg resolves INTO the protected path, and every
-    // arg-without-flag is "protected." Pin CWD to /tmp so the tests
-    // exercise the intended semantics.
+    // arg-without-flag is "protected." Pin CWD to the OS temp dir (there
+    // is no /tmp on Windows) so the tests exercise the intended semantics.
+    // Expected values use path.join: results come back with the OS separator.
     describe("shellArgsTargetProtectedPath", () => {
         let originalCwd: string;
 
         beforeEach(() => {
             originalCwd = process.cwd();
-            process.chdir("/tmp");
+            process.chdir(os.tmpdir());
         });
 
         afterEach(() => {
@@ -169,7 +178,7 @@ describe("allowlist — codebase self-protection", () => {
 
         it("returns the resolved path when any arg is inside the protected tree", () => {
             const hit = shellArgsTargetProtectedPath(["ls", "-l", `${REPO}/src`]);
-            expect(hit).toEqual(`${REPO}/src`);
+            expect(hit).toEqual(path.join(REPO, "src"));
         });
 
         it("returns null when no arg is protected", () => {
@@ -187,12 +196,12 @@ describe("allowlist — codebase self-protection", () => {
 
         it("catches protected path buried among other args", () => {
             const hit = shellArgsTargetProtectedPath(["cp", "a.txt", `${REPO}/b.txt`, "-v"]);
-            expect(hit).toEqual(`${REPO}/b.txt`);
+            expect(hit).toEqual(path.join(REPO, "b.txt"));
         });
 
         it("returns the FIRST protected arg when multiple match", () => {
-            const first = `${REPO}/a`;
-            const second = `${REPO}/b`;
+            const first = path.join(REPO, "a");
+            const second = path.join(REPO, "b");
             expect(shellArgsTargetProtectedPath(["cp", first, second])).toEqual(first);
         });
 
@@ -206,7 +215,7 @@ describe("allowlist — codebase self-protection", () => {
             process.chdir(REPO);
             try {
                 const hit = shellArgsTargetProtectedPath(["file.txt"]);
-                expect(hit).toEqual(`${REPO}/file.txt`);
+                expect(hit).toEqual(path.join(REPO, "file.txt"));
             } finally {
                 process.chdir(savedCwd);
             }
@@ -469,7 +478,22 @@ describe("allowlist — critical system path protection", () => {
             const reason = getPathBlockedReason("/etc/passwd");
             expect(reason).not.toBeNull();
             expect(reason!).toMatch(/critical operating-system path/);
-            expect(reason!).toContain("/etc/passwd");
+            // path.resolve: on Windows "/etc/passwd" is the current drive's \etc\passwd.
+            expect(reason!).toContain(path.resolve("/etc/passwd"));
+        });
+    });
+
+    describe("isPathWithin (Windows rules via path.win32, on every OS)", () => {
+        const w = path.win32;
+        it("ignores case and slash style", () => {
+            expect(isPathWithin("c:\\bhai\\src\\agent.ts", "C:\\Bhai", w)).toBe(true);
+            expect(isPathWithin("C:/BHAI/src", "C:\\Bhai", w)).toBe(true);
+            expect(isPathWithin("C:\\Windows\\SYSTEM32\\drivers\\x.sys", "C:\\Windows\\System32", w)).toBe(true);
+        });
+        it("keeps the separator guard and the drive letter", () => {
+            expect(isPathWithin("C:\\Bhai-sibling\\x", "C:\\Bhai", w)).toBe(false);
+            expect(isPathWithin("D:\\Bhai\\src", "C:\\Bhai", w)).toBe(false);
+            expect(isPathWithin("D:\\anything", "D:\\", w)).toBe(true);
         });
     });
 });

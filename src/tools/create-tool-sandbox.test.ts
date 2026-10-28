@@ -2,6 +2,8 @@
 // Dynamic tool handlers must not reach the host process. Every one of these
 // used to work: a host function or object in the sandbox leads to the host
 // Function constructor, then process, then child_process.
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { _buildHandlerForTest as buildHandler } from "./create-tool.js";
 
@@ -25,22 +27,25 @@ describe("dynamic tool sandbox", () => {
         });
     }
 
+    // The OS temp dir, not "/tmp": Windows has none, and the sandbox's path is the host's.
+    const dir = tmpdir();
+
     it("still does real work: input, path, read-only fs, require", async () => {
         const out = await buildHandler(`
-            const p = utils.path.join("/tmp", input.name);
-            return { p, exists: typeof utils.fs.existsSync("/tmp") === "boolean", sep: require("path").sep, twice: input.n * 2 };
-        `)({ name: "x.txt", n: 21 });
-        expect(JSON.parse(out)).toEqual({ p: "/tmp/x.txt", exists: true, sep: "/", twice: 42 });
+            const p = utils.path.join(input.dir, input.name);
+            return { p, exists: typeof utils.fs.existsSync(input.dir) === "boolean", sep: require("path").sep, twice: input.n * 2 };
+        `)({ dir, name: "x.txt", n: 21 });
+        expect(JSON.parse(out)).toEqual({ p: path.join(dir, "x.txt"), exists: true, sep: path.sep, twice: 42 });
     });
 
     it("stat and readdir({withFileTypes}) give Node-shaped results with methods", async () => {
         const out = await buildHandler(`
-            const st = utils.fs.statSync("/tmp");
-            const ents = utils.fs.readdirSync("/tmp", { withFileTypes: true });
-            const st2 = await utils.fs.stat("/tmp");
+            const st = utils.fs.statSync(input.dir);
+            const ents = utils.fs.readdirSync(input.dir, { withFileTypes: true });
+            const st2 = await utils.fs.stat(input.dir);
             return { dir: st.isDirectory(), file: st.isFile(), entsOk: ents.every((e) => typeof e.isFile === "function"), asyncDir: st2.isDirectory(),
                      escape: (() => { try { return typeof st.isFile.constructor("return process")(); } catch { return "blocked"; } })() };
-        `)({});
+        `)({ dir });
         expect(JSON.parse(out)).toEqual({ dir: true, file: false, entsOk: true, asyncDir: true, escape: "blocked" });
     });
 

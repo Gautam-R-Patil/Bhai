@@ -58,7 +58,9 @@ describe("atomicTextWrite", () => {
         expect(leftovers).toEqual([]);
     });
 
-    it("preserves existing file permissions on overwrite", async () => {
+    // Windows has no POSIX mode bits: chmod only toggles read-only, so a
+    // 0o600 file reads back as 0o666 before atomicTextWrite even runs.
+    it.skipIf(process.platform === "win32")("preserves existing file permissions on overwrite", async () => {
         const target = path.join(tmpRoot, "secret.env");
         fs.writeFileSync(target, "x");
         fs.chmodSync(target, 0o600);
@@ -123,7 +125,8 @@ describe("atomicReplace", () => {
         const resolved = await atomicReplace(tmp, symlink);
         expect(fs.lstatSync(symlink).isSymbolicLink()).toBe(true);
         expect(fs.readFileSync(realFile, "utf8")).toBe("new");
-        expect(resolved).toBe(fs.realpathSync(realFile));
+        // .native like fs.promises.realpath: expands Windows 8.3 names (RUNNER~1).
+        expect(resolved).toBe(fs.realpathSync.native(realFile));
     });
 });
 

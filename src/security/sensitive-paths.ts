@@ -7,38 +7,17 @@
 // refuse a fixed set of paths that almost always contain credentials:
 // API keys, SSH keys, browser credentials, Bhai internal state, etc.
 //
-// The check is symlink-aware via fs.realpathSync — a symlink in a
+// The check is symlink-aware via realResolve — a symlink in a
 // non-sensitive dir pointing at /etc/passwd is treated as /etc/passwd.
 // `~` expansion, NFC normalisation, and case-folding (on darwin/win32)
 // keep the deny-list robust against trivial bypasses.
 
-import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { realResolve } from "./allowlist.js";
 
 const HOME = os.homedir();
 const IS_CASE_INSENSITIVE_FS = process.platform === "darwin" || process.platform === "win32";
-
-function realResolve(p: string): string {
-    try {
-        return fs.realpathSync(p);
-    } catch {
-        const parts = p.split(path.sep);
-        const trailing: string[] = [];
-        while (parts.length > 1) {
-            const leaf = parts.pop();
-            if (leaf) trailing.unshift(leaf);
-            const candidate = parts.join(path.sep) || path.sep;
-            try {
-                const real = fs.realpathSync(candidate);
-                return trailing.length ? path.join(real, ...trailing) : real;
-            } catch {
-                // keep walking up
-            }
-        }
-        return p;
-    }
-}
 
 function normalize(p: string): string {
     let expanded = p;
@@ -117,6 +96,11 @@ export function isSensitivePath(inputPath: string): SensitivePathCheck {
     if (!inputPath) return { denied: false };
     const resolved = normalize(inputPath);
     const base = path.basename(resolved);
+    // NTFS alternate data streams (".env::$DATA") read the same bytes but dodge
+    // the name patterns below; a colon past the drive letter is never a file name.
+    if (process.platform === "win32" && resolved.indexOf(":", 2) !== -1) {
+        return { denied: true, reason: `Path "${inputPath}" names an NTFS data stream.` };
+    }
 
     for (const pattern of FILENAME_PATTERNS) {
         if (pattern.test(base)) {

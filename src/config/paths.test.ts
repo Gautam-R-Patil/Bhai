@@ -235,7 +235,7 @@ describe("paths — generateFilePath + timestamp format", () => {
         vi.spyOn(fs, "existsSync").mockReturnValue(true);
         const { generateFilePath } = await freshImport();
         const result = generateFilePath("foo", "pdf");
-        expect(path.dirname(result)).toEqual("/ws");
+        expect(path.dirname(result)).toEqual(path.normalize("/ws"));
     });
 
     it("with subdir, places file inside workspace/<subdir>", async () => {

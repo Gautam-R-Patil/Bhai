@@ -53,11 +53,16 @@ export function _clearProtectedPaths(): void {
  * In that case we fall back to realpath-ing the deepest existing
  * ancestor and appending the missing tail, so a brand-new file
  * inside a symlinked directory is still correctly classified.
+ *
+ * The native realpath also canonicalizes what the JS one leaves as typed:
+ * letter case (macOS/Windows), Windows 8.3 short names (C:\PROGRA~1),
+ * trailing dots and \\?\ prefixes. Without it "c:\bhai\src" or
+ * "C:\BHAI~1\src" slipped past a deny check registered as C:\Bhai.
  */
-function realResolve(inputPath: string): string {
+export function realResolve(inputPath: string): string {
     const abs = path.resolve(inputPath);
     try {
-        return fs.realpathSync(abs);
+        return fs.realpathSync.native(abs);
     } catch {
         // Target missing. Walk up the tree to find the nearest real
         // ancestor and reattach the trailing (non-existent) segments
@@ -68,9 +73,11 @@ function realResolve(inputPath: string): string {
         while (parts.length > 1) {
             const leaf = parts.pop();
             if (leaf) trailing.unshift(leaf);
-            const candidate = parts.join(path.sep) || path.sep;
+            // A bare drive ("D:") is D:'s current directory on Windows, not
+            // its root, so re-add the separator (POSIX's [""] becomes "/").
+            const candidate = parts.length === 1 ? parts[0] + path.sep : parts.join(path.sep);
             try {
-                const real = fs.realpathSync(candidate);
+                const real = fs.realpathSync.native(candidate);
                 return trailing.length
                     ? path.join(real, ...trailing)
                     : real;
@@ -85,21 +92,27 @@ function realResolve(inputPath: string): string {
 }
 
 /**
+ * True when `child` is `parent` or lies under it. The `+ sep` guard keeps
+ * "/path/ATLAS-sibling" from matching "/path/ATLAS". Case-insensitive:
+ * these are deny checks (fail-closed) and macOS/Windows volumes ignore
+ * case. `p` is injectable so tests on any OS can exercise path.win32.
+ */
+export function isPathWithin(child: string, parent: string, p: path.PlatformPath = path): boolean {
+    const c = p.normalize(child).toLowerCase();
+    const r = p.normalize(parent).toLowerCase();
+    return c === r || c.startsWith(r.endsWith(p.sep) ? r : r + p.sep);
+}
+
+/**
  * Returns true when the given path lives inside the protected codebase.
  * Write and delete tools should refuse to act on protected paths.
  *
  * Uses realResolve under the hood so a symlink pointing into the
- * protected tree is correctly classified. The sibling-prefix guard
- * (`startsWith(rp + sep)`) prevents "/path/ATLAS-sibling" from
- * matching "/path/ATLAS".
+ * protected tree is correctly classified.
  */
 export function isProtectedPath(filePath: string): boolean {
     const resolved = realResolve(filePath);
-    const sep = path.sep;
-    return PROTECTED_PATHS.some((p) => {
-        const rp = realResolve(p);
-        return resolved === rp || resolved.startsWith(rp + sep);
-    });
+    return PROTECTED_PATHS.some((p) => isPathWithin(resolved, realResolve(p)));
 }
 
 /**
@@ -112,11 +125,7 @@ export function shellArgsTargetProtectedPath(args: string[]): string | null {
         if (arg.startsWith("-")) continue;
         try {
             const resolved = realResolve(arg);
-            const sep = path.sep;
-            if (PROTECTED_PATHS.some((p) => {
-                const rp = realResolve(p);
-                return resolved === rp || resolved.startsWith(rp + sep);
-            })) {
+            if (PROTECTED_PATHS.some((p) => isPathWithin(resolved, realResolve(p)))) {
                 return resolved;
             }
         } catch {
@@ -238,12 +247,8 @@ const CRITICAL_SYSTEM_PATHS: string[] = [
  * is treated as /etc/passwd for the purposes of this check.
  */
 export function isCriticalSystemPath(filePath: string): boolean {
-    const resolved = realResolve(filePath).toLowerCase();
-    const sep = path.sep;
-    return CRITICAL_SYSTEM_PATHS.some((p) => {
-        const rp = realResolve(p).toLowerCase();
-        return resolved === rp || resolved.startsWith(rp + sep);
-    });
+    const resolved = realResolve(filePath);
+    return CRITICAL_SYSTEM_PATHS.some((p) => isPathWithin(resolved, realResolve(p)));
 }
 
 // ── Path Access ────────────────────────────────

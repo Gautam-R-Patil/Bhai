@@ -16,6 +16,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { realResolve } from "../security/allowlist.js";
 
 // ── State ─────────────────────────────────────
 
@@ -291,27 +292,7 @@ export function isToolAllowedInCurrentMode(toolName: string): boolean {
  *
  * Returns { allowed: true } or { allowed: false, reason }.
  */
-function realResolveForGate(p: string): string {
-    const abs = path.resolve(p);
-    try {
-        return fs.realpathSync(abs);
-    } catch {
-        const parts = abs.split(path.sep);
-        const trailing: string[] = [];
-        while (parts.length > 1) {
-            const leaf = parts.pop();
-            if (leaf) trailing.unshift(leaf);
-            const candidate = parts.join(path.sep) || path.sep;
-            try {
-                const real = fs.realpathSync(candidate);
-                return trailing.length ? path.join(real, ...trailing) : real;
-            } catch {
-                // keep walking up
-            }
-        }
-        return abs;
-    }
-}
+const realResolveForGate = realResolve;
 
 /**
  * Spec-mode path gate. Writes in spec mode are restricted to the
