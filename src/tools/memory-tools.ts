@@ -153,24 +153,72 @@ export const identityView: ToolDefinition = {
 // "a.t.l.a.s" canonicalizes to "a t l a s" so include that spaced form here.
 const GUARDED_ORGS = ["xagi labs", "xagi", "bhai", "a t l a s", "bhai agi", "tryatlasagi"];
 const GUARDED_ROLES = [
-    "founder", "co-founder", "cofounder", "co founder",
-    "owner", "co-owner", "creator", "builder", "maker", "architect",
-    "developer of", "ceo", "cto", "coo", "cfo", "chief executive", "chief technology",
-    "head of", "running", "leading", "lead of",
-    "started", "co started", "co-started",
+    "founder",
+    "co-founder",
+    "cofounder",
+    "co founder",
+    "owner",
+    "co-owner",
+    "creator",
+    "builder",
+    "maker",
+    "architect",
+    "developer of",
+    "ceo",
+    "cto",
+    "coo",
+    "cfo",
+    "chief executive",
+    "chief technology",
+    "head of",
+    "running",
+    "leading",
+    "lead of",
+    "started",
+    "co started",
+    "co-started",
     // Ownership-adjacent leadership roles — VP/Director-level claims of
     // affiliation with our own creator org are still unverifiable identity assertions.
-    "vp", "vice president", "president", "director of", "partner of", "principal of", "board",
+    "vp",
+    "vice president",
+    "president",
+    "director of",
+    "partner of",
+    "principal of",
+    "board",
 ];
 
 // Strip diacritics + map common Cyrillic/Greek lookalikes to Latin equivalents
 // so obfuscated affiliation claims still get caught.
 const HOMOGLYPH_MAP: Record<string, string> = {
-    "а": "a", "А": "a", "е": "e", "Е": "e", "о": "o", "О": "o",
-    "р": "p", "Р": "p", "с": "c", "С": "c", "у": "y", "У": "y",
-    "х": "x", "Х": "x", "і": "i", "І": "i", "ѕ": "s", "Ѕ": "s",
-    "ј": "j", "Ј": "j", "ν": "v", "Ν": "n", "ρ": "p", "ο": "o",
-    "α": "a", "ε": "e", "τ": "t", "ι": "i",
+    а: "a",
+    А: "a",
+    е: "e",
+    Е: "e",
+    о: "o",
+    О: "o",
+    р: "p",
+    Р: "p",
+    с: "c",
+    С: "c",
+    у: "y",
+    У: "y",
+    х: "x",
+    Х: "x",
+    і: "i",
+    І: "i",
+    ѕ: "s",
+    Ѕ: "s",
+    ј: "j",
+    Ј: "j",
+    ν: "v",
+    Ν: "n",
+    ρ: "p",
+    ο: "o",
+    α: "a",
+    ε: "e",
+    τ: "t",
+    ι: "i",
 };
 
 function deHomoglyph(s: string): string {
@@ -182,12 +230,17 @@ function deHomoglyph(s: string): string {
 function canonicalize(s: string): string {
     // NFKD splits accented chars into base+combining; we strip combining marks.
     const stripped = s.normalize("NFKD").replace(/\p{M}/gu, "");
-    return deHomoglyph(stripped).toLowerCase().replace(/[.\s\-_]+/g, " ").trim();
+    return deHomoglyph(stripped)
+        .toLowerCase()
+        .replace(/[.\s\-_]+/g, " ")
+        .trim();
 }
 
 function isGuardedOrg(value: string): boolean {
     const c = canonicalize(value);
-    return GUARDED_ORGS.some((g) => c === g || c.endsWith(" " + g) || c.startsWith(g + " ") || c.includes(" " + g + " "));
+    return GUARDED_ORGS.some(
+        (g) => c === g || c.endsWith(" " + g) || c.startsWith(g + " ") || c.includes(" " + g + " "),
+    );
 }
 
 function isGuardedRole(value: string): boolean {
@@ -232,7 +285,7 @@ export const identityUpdate: ToolDefinition = {
         function: {
             name: "identity_update",
             description:
-                "Update the user's identity profile when they share personal information. Pass `verification_level`: 'asserted' (user just said it this turn), 'confirmed' (user said yes after a clarifying ack), 'observed' (you inferred it). Personal fields (name/location/role/company) default to unverified until the user confirms. NOTE: ownership/creator claims about XAGI Labs or Bhai (role=founder/owner/creator + company=XAGI/Atlas) are REJECTED at the tool layer. Non-ownership XAGI affiliations (designer/engineer at XAGI / interested in Bhai / fan of XAGI) ARE allowed — those are normal context, learn them.",
+                "Update the user's identity profile when they share personal information. Pass `verification_level`: 'asserted' (user just said it this turn), 'confirmed' (user said yes after a clarifying ack), 'observed' (you inferred it). What the user states directly (asserted/confirmed) is stored as confirmed; only 'observed' is stored unverified. NOTE: ownership/creator claims about XAGI Labs or Bhai (role=founder/owner/creator + company=XAGI/Atlas) are REJECTED at the tool layer. Non-ownership XAGI affiliations (designer/engineer at XAGI / interested in Bhai / fan of XAGI) ARE allowed — those are normal context, learn them.",
             parameters: {
                 type: "object",
                 properties: {
@@ -251,7 +304,8 @@ export const identityUpdate: ToolDefinition = {
                     verification_level: {
                         type: "string",
                         enum: ["asserted", "confirmed", "observed"],
-                        description: "How this information was obtained. 'asserted' = user said it this turn (default, stored unverified). 'confirmed' = user confirmed after a clarifying ack (stored verified). 'observed' = inferred from behavior (stored unverified).",
+                        description:
+                            "How this information was obtained. 'asserted' = user said it this turn (default, stored verified). 'confirmed' = user confirmed after a clarifying ack (stored verified). 'observed' = inferred from behavior (stored unverified).",
                     },
                 },
                 required: [],
@@ -274,9 +328,11 @@ export const identityUpdate: ToolDefinition = {
         const companyIsGuardedOrg = !!companyStr && isGuardedOrg(companyStr);
         const roleClaimsOwnership = !!roleStr && isGuardedRole(roleStr);
         const roleMentionsOrg = !!roleStr && isGuardedOrg(roleStr);
-        const structuredOwnership = (companyIsGuardedOrg && roleClaimsOwnership) || (roleClaimsOwnership && roleMentionsOrg);
+        const structuredOwnership =
+            (companyIsGuardedOrg && roleClaimsOwnership) || (roleClaimsOwnership && roleMentionsOrg);
         const nameEmbedsOwnership = !!nameStr && fieldEmbedsOwnershipClaim(nameStr);
-        const projectIsBot = !!projectStr && (fieldNamesAtlasDirectly(projectStr) || fieldEmbedsOwnershipClaim(projectStr));
+        const projectIsBot =
+            !!projectStr && (fieldNamesAtlasDirectly(projectStr) || fieldEmbedsOwnershipClaim(projectStr));
         const goalIsBot = !!goalStr && (fieldNamesAtlasDirectly(goalStr) || fieldEmbedsOwnershipClaim(goalStr));
         // Aliased-field gate: prevent the agent from stashing ownership claims
         // in email/communication_style/detail_level fields where they'd
@@ -290,7 +346,11 @@ export const identityUpdate: ToolDefinition = {
             // Internal detail goes to server logs only; client gets a generic
             // refusal to prevent guard-list enumeration via probe-and-read.
             console.warn("[identity_update] refused ownership-claim write", {
-                structuredOwnership, nameEmbedsOwnership, projectIsBot, goalIsBot, aliasEmbedsOwnership,
+                structuredOwnership,
+                nameEmbedsOwnership,
+                projectIsBot,
+                goalIsBot,
+                aliasEmbedsOwnership,
             });
             return JSON.stringify({
                 success: false,
@@ -308,10 +368,12 @@ export const identityUpdate: ToolDefinition = {
         }
 
         const verificationLevel = (input.verification_level as string) || "asserted";
-        const isVerified = verificationLevel === "confirmed";
+        // The user stating it directly is the verification; only inferred values
+        // stay unverified. Non-owners can't reach this tool (NON_OWNER_TOOLS),
+        // and ownership claims are refused above.
+        const isVerified = verificationLevel !== "observed";
 
-        // Build profile update. Verifiable fields wrap in {value,verified} unless
-        // the agent passed verification_level: "confirmed".
+        // Build profile update. Verifiable fields wrap in {value,verified}.
         const wrap = (v: string) => ({ value: v, verified: isVerified });
 
         const fields: Record<string, unknown> = {};

@@ -30,7 +30,9 @@ function makeDb(rows: Array<[number, number, number, number]>) {
         run: (sql: string, params: unknown[] = []) => raw.prepare(sql).run(...params),
     };
     const ids = () => raw.prepare("SELECT id FROM memories ORDER BY id").all().map((r) => r.id as number);
-    return { db, ids };
+    const decay = (id: number) => raw.prepare("SELECT decay_score FROM memories WHERE id = ?").all(id)[0]?.decay_score as number;
+    const setDecay = (id: number, v: number) => raw.prepare("UPDATE memories SET decay_score = ? WHERE id = ?").run(v, id);
+    return { db, ids, decay, setDecay };
 }
 
 describe.skipIf(!DatabaseSync)("synaptic prune safety", () => {
@@ -46,5 +48,19 @@ describe.skipIf(!DatabaseSync)("synaptic prune safety", () => {
         expect(ids()).toHaveLength(41 - r.pruned);
         expect(ids()).toContain(41);
         for (let i = 1; i <= 30; i++) expect(ids()).toContain(i);
+    });
+
+    it("weakens at most once a day and never below the recall-safe floor", () => {
+        const rows: Array<[number, number, number, number]> = [];
+        for (let i = 1; i <= 30; i++) rows.push([i, 5, 20, 1]);
+        // Weak but importance 3: weakened, never pruned.
+        rows.push([31, 3, 1, 120], [32, 3, 1, 120], [33, 3, 1, 120]);
+        const { db, decay, setDecay } = makeDb(rows);
+        setDecay(32, 0.3);
+        setDecay(33, 0); // superseded row: must not be revived
+        for (let pass = 0; pass < 4; pass++) synapticPrune(db as never); // a day of 6h passes
+        expect(decay(31)).toBeCloseTo(0.8);
+        expect(decay(32)).toBeCloseTo(0.25);
+        expect(decay(33)).toBe(0);
     });
 });

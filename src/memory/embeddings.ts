@@ -20,9 +20,9 @@
  *  - getEmbeddingVersion() → 1 | 2
  */
 
-import { join, sep } from "node:path";
 import { existsSync } from "node:fs";
-import { makeCacheKey, getOrFetchCached } from "./embedding-cache.js";
+import { join, sep } from "node:path";
+import { getOrFetchCached, makeCacheKey } from "./embedding-cache.js";
 
 // ── Embedding Model Configuration ───────────────
 // Configurable model registry — switch models via ATLAS_EMBEDDING_MODEL env var.
@@ -70,7 +70,7 @@ export function getActiveEmbeddingModel(): EmbeddingModelConfig {
 }
 
 // ── Resolved active model (set once at module load, immutable after) ──
-let activeModel: EmbeddingModelConfig = getActiveEmbeddingModel();
+const activeModel: EmbeddingModelConfig = getActiveEmbeddingModel();
 
 // Backwards-compatible constants derived from active model config
 const MODEL_NAME = activeModel.modelName;
@@ -127,12 +127,14 @@ async function configureTransformersEnv(): Promise<void> {
                     headers: { Authorization: `Bearer ${sessionToken}` },
                 });
                 if (resp.ok) {
-                    const secrets = await resp.json() as Record<string, string>;
+                    const secrets = (await resp.json()) as Record<string, string>;
                     if (secrets.HF_TOKEN) {
                         process.env.HF_TOKEN = secrets.HF_TOKEN;
                         console.log("[EMBED] HF_TOKEN fetched from server");
                     } else {
-                        console.log("[EMBED] Server returned no HF_TOKEN — set it with: npx convex env set HF_TOKEN <token>");
+                        console.log(
+                            "[EMBED] Server returned no HF_TOKEN — set it with: npx convex env set HF_TOKEN <token>",
+                        );
                     }
                 } else {
                     console.warn(`[EMBED] Failed to fetch secrets: ${resp.status} ${resp.statusText}`);
@@ -181,7 +183,9 @@ export function getLegacyDim(): number {
  * and used for similarity search.
  */
 export function getEffectiveDimension(): number {
-    if (activeModel.matryoshkaDim && activeModel.matryoshkaDim < _activeDim) {
+    // Truncate only the primary model's vectors: a fallback model's own space
+    // must keep its size, or the dimension check can't tell the two apart.
+    if (_activeDim === EMBEDDING_DIM && activeModel.matryoshkaDim && activeModel.matryoshkaDim < _activeDim) {
         return activeModel.matryoshkaDim;
     }
     return _activeDim;
@@ -198,17 +202,17 @@ export function needsEmbeddingMigration(rawDb: import("better-sqlite3").Database
 
     try {
         // Sample a stored embedding to check its dimension
-        const row = rawDb.prepare(
-            "SELECT LENGTH(embedding) as embed_bytes FROM memory_embeddings LIMIT 1"
-        ).get() as { embed_bytes: number } | undefined;
+        const row = rawDb.prepare("SELECT LENGTH(embedding) as embed_bytes FROM memory_embeddings LIMIT 1").get() as
+            | { embed_bytes: number }
+            | undefined;
 
         if (!row) return false; // No embeddings stored yet — nothing to migrate
 
         if (row.embed_bytes !== expectedBytes) {
             console.log(
                 `[EMBED] Migration needed: stored=${row.embed_bytes / 4}-dim, ` +
-                `active=${effectiveDim}-dim (model=${activeModel.modelName}` +
-                `${activeModel.matryoshkaDim ? `, matryoshka=${activeModel.matryoshkaDim}` : ""})`
+                    `active=${effectiveDim}-dim (model=${activeModel.modelName}` +
+                    `${activeModel.matryoshkaDim ? `, matryoshka=${activeModel.matryoshkaDim}` : ""})`,
             );
             return true;
         }
@@ -247,7 +251,9 @@ async function ensureModel(): Promise<void> {
                     console.log("[EMBED] sharp installed — retrying import...");
                     transformers = await import("@xenova/transformers");
                 } catch {
-                    console.error("[EMBED] ❌ Cannot load @xenova/transformers: sharp unavailable and auto-install failed.");
+                    console.error(
+                        "[EMBED] ❌ Cannot load @xenova/transformers: sharp unavailable and auto-install failed.",
+                    );
                     console.error("[EMBED] Fix: run 'npm install --os=win32 --cpu=x64 sharp' in the bot directory.");
                     _initPromise = null;
                     throw new Error("Embedding model requires sharp. Install with: npm install sharp");
@@ -282,7 +288,9 @@ async function ensureModel(): Promise<void> {
             _activeDim = FALLBACK_EMBEDDING_DIM;
             _ready = true;
             console.warn(`[EMBED] ✅ Fallback model loaded: ${FALLBACK_MODEL_NAME} (${FALLBACK_EMBEDDING_DIM}-dim)`);
-            console.warn(`[EMBED] ⚠️ Existing ${EMBEDDING_DIM}-dim embeddings will not match — set HF_TOKEN in .env for the primary model`);
+            console.warn(
+                `[EMBED] ⚠️ Existing ${EMBEDDING_DIM}-dim embeddings will not match — set HF_TOKEN in .env for the primary model`,
+            );
         } catch (fallbackErr) {
             console.error("[EMBED] ❌ All models failed:", (fallbackErr as Error).message);
             _initPromise = null; // Allow retry
@@ -347,8 +355,8 @@ export async function warmup(): Promise<void> {
  * cosine similarity (= dot product on unit vectors) remains correct.
  */
 function applyMatryoshkaTruncation(embedding: Float32Array): Float32Array {
-    const targetDim = activeModel.matryoshkaDim;
-    if (!targetDim || embedding.length <= targetDim) return embedding;
+    const targetDim = getEffectiveDimension();
+    if (embedding.length <= targetDim) return embedding;
 
     // Slice to the first targetDim dimensions
     const truncated = new Float32Array(embedding.buffer, embedding.byteOffset, targetDim);
@@ -393,7 +401,9 @@ export async function embedText(text: string, type: "query" | "document" = "quer
     // Models with task-specific prefixes (e.g. Nomic) — not applicable to fallback models
     const useTaskPrefix = activeModel.usesTaskPrefix && _activeDim === EMBEDDING_DIM;
     const prefixed = useTaskPrefix
-        ? (type === "query" ? `search_query: ${truncated}` : `search_document: ${truncated}`)
+        ? type === "query"
+            ? `search_query: ${truncated}`
+            : `search_document: ${truncated}`
         : truncated;
 
     return getOrFetchCached(cacheKey, async () => {
@@ -440,13 +450,11 @@ export async function embedBatch(texts: string[], type: "query" | "document" = "
     const BATCH_SIZE = 8;
 
     const useTaskPrefix = activeModel.usesTaskPrefix && _activeDim === EMBEDDING_DIM;
-    const prefix = useTaskPrefix
-        ? (type === "query" ? "search_query: " : "search_document: ")
-        : "";
+    const prefix = useTaskPrefix ? (type === "query" ? "search_query: " : "search_document: ") : "";
     const maxLen = activeModel.maxInputChars ?? (_activeDim === EMBEDDING_DIM ? 8000 : 2000);
 
     for (let i = 0; i < texts.length; i += BATCH_SIZE) {
-        const batch = texts.slice(i, i + BATCH_SIZE).map(t => {
+        const batch = texts.slice(i, i + BATCH_SIZE).map((t) => {
             const truncated = t.length > maxLen ? t.substring(0, maxLen) : t;
             return `${prefix}${truncated}`;
         });

@@ -57,8 +57,17 @@ function strengthScore(
  *
  * Global median recalculated each run → self-calibrates as memories grow.
  */
+// Decay runs every 6h but weakening is meant to be nightly: compounding ×0.8
+// four times a day pushed weak memories under the 0.2 recall floor in ~2 days.
+const lastWeakenDay = new WeakMap<object, string>();
+/** Weakening never pushes a memory below this; recall hides rows at <= 0.2. */
+export const WEAKEN_FLOOR = 0.25;
+
 export function synapticPrune(db: Database): { pruned: number; weakened: number; strengthened: number } {
     const stats = { pruned: 0, weakened: 0, strengthened: 0 };
+    const today = new Date().toISOString().slice(0, 10);
+    const canWeaken = lastWeakenDay.get(db) !== today;
+    if (canWeaken) lastWeakenDay.set(db, today);
 
     const results = db.exec(
         `SELECT id, importance, access_count, decay_score,
@@ -119,10 +128,13 @@ export function synapticPrune(db: Database): { pruned: number; weakened: number;
                 }
                 stats.pruned++;
             } else if (m.strength < weakenThreshold && m.importance < 8 && !isNewMemory && !isUnaccessed) {
-                // WEAKEN — reduce decay score by 20% (but not new/unaccessed memories)
-                const newDecay = Math.max(0.05, m.decay_score * 0.8);
-                db.run("UPDATE memories SET decay_score = ? WHERE id = ?", [newDecay, m.id]);
-                stats.weakened++;
+                // WEAKEN — reduce decay score by 20%, once a day, never below the
+                // floor (and never raise a row already below it, e.g. superseded = 0).
+                if (canWeaken && m.decay_score > WEAKEN_FLOOR) {
+                    const newDecay = Math.max(WEAKEN_FLOOR, m.decay_score * 0.8);
+                    db.run("UPDATE memories SET decay_score = ? WHERE id = ?", [newDecay, m.id]);
+                    stats.weakened++;
+                }
             } else {
                 // STRENGTHEN — boost decay score by 5%
                 const newDecay = Math.min(1.0, m.decay_score * 1.05);

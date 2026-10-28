@@ -4,64 +4,99 @@
 
 import "./security/log-redaction.js"; // first: redacts secrets/PII from every log line
 import { join } from "node:path";
+import { checkAccountStatus, initAccountGuard } from "./account-guard.js";
+import { runAgent } from "./agent.js";
+import { autoResumeInterruptedTasks } from "./agents/long-task.js";
+import { closeCanvas, initCanvas } from "./canvas/server.js";
 import { getDataDir } from "./config/paths.js";
 import { loadConfig } from "./config.js";
+import { loadJobs } from "./cron/store.js";
+import { startCronTicker, stopCronTicker } from "./cron/tick.js";
+import { closeDiscord, initDiscord, sendDiscordProactiveMessage } from "./discord.js";
+import { closeEmail, initEmail } from "./email.js";
+import { initForge } from "./forge/orchestrator.js";
+import { initRegistry } from "./harness/registry.js";
 import { createLLMClient } from "./llm.js";
-import { createTelegramBot, sendProactiveMessage } from "./telegram.js";
-import { initWhatsApp, closeWhatsApp, sendWhatsAppProactiveMessage } from "./whatsapp.js";
-import { getToolNames, setSwarmLLM, setDeepResearchLLM, setLongTaskLLM, setDeepResearchNotifier, initDeepResearch, rotateAuditLog, loadDynamicTools, setCodeActionLLM, setCodeActionExecutor, setComputerUseLLM, executeTool, registerChannelSender, setPresentationLLM, setIngestLLM, setBrandAuditLLM, setScriptWriterLLM, setCampaignPlannerLLM, setOutreachLLM, setProductHuntLLM, setSmartClickLLM, setSiteMintLLM } from "./tools/index.js";
-import { initMemoryDB, embedExistingMemories, setMemoryLLM } from "./memory/sqlite.js";
-import { initKnowledgeGraph } from "./memory/knowledge-graph.js";
-import { initSupabase } from "./memory/supabase.js";
-import { getFieldValue, getIdentityProfile, initIdentityDB, updateIdentityProfile } from "./memory/identity.js";
-import { initTraitsDB, setMemoryDebug } from "./memory/traits.js";
-import { seedProfileIfPresent } from "./setup/wizard-seed.js";
-import { runDailyDecay, runDreamReplay } from "./memory/reflection.js";
-import { initSelfStateDB } from "./memory/self-state.js";
+import { initLocationService, onLocationChange, refreshLocation } from "./location/index.js";
+import { startNetworkWatcher, stopNetworkWatcher } from "./location/network-watcher.js";
+import { closeMatrix, initMatrix, sendMatrixProactiveMessage } from "./matrix.js";
+import { closeMCPServers, initMCPServers } from "./mcp/client.js";
+import { initCounterfactualMemory } from "./memory/counterfactual.js";
+import { embedText, isReady as isEmbeddingsReady, warmup as warmupEmbeddings } from "./memory/embeddings.js";
 import { initEmotionalMemory } from "./memory/emotional.js";
 import { initEpisodicMemory } from "./memory/episodic.js";
-import { initRelationshipState } from "./memory/relationship.js";
-import { initWorkingMemory } from "./memory/working-memory.js";
-import { initMCPServers, closeMCPServers } from "./mcp/client.js";
-import { initToolRouter, setToolRouterLLM } from "./tool-router.js";
-import { initSkillMetadata } from "./skills/loader.js";
-import { setupTelegramVoice } from "./voice/telegram-voice.js";
-import { startHeartbeat, stopHeartbeat } from "./proactive/heartbeat.js";
-import { startCronTicker, stopCronTicker } from "./cron/tick.js";
-import { loadJobs } from "./cron/store.js";
-import { runAgent } from "./agent.js";
-import { setTaskTriggerHandler } from "./tools/scheduled.js";
-import { initSandbox } from "./security/sandbox.js";
-import { closeBrowser, initChromeBridge, closeChromeBridge, registerPlaywrightBackend, registerChromeBackend, initActionCache } from "./tools/browser/index.js";
-import { initBrowserMemory } from "./tools/browser-memory.js";
-import { initTaskLearnings } from "./memory/task-learnings.js";
-import { initStrategyLibrary } from "./memory/strategy-library.js";
-import { initCounterfactualMemory } from "./memory/counterfactual.js";
-import { initWorldModel } from "./memory/world-model.js";
-import { initUserModel } from "./memory/user-model.js";
-import { initSelfModel } from "./memory/self-model.js";
 import { initGoals } from "./memory/goals.js";
-import { closeCanvas, initCanvas } from "./canvas/server.js";
-import { initGoogleAPI } from "./tools/google-api.js";
-import { initSpotify } from "./tools/spotify.js";
-import { initOverlayChat, closeOverlayChat, sendOverlayNotification } from "./overlay/overlay-chat.js";
-import { initEmail, closeEmail } from "./email.js";
-import { initSlack, closeSlack, sendSlackProactiveMessage } from "./slack.js";
-import { initDiscord, closeDiscord, sendDiscordProactiveMessage } from "./discord.js";
-import { initMatrix, closeMatrix, sendMatrixProactiveMessage } from "./matrix.js";
-import { sendPushNotification, getSubscriptionCount } from "./notifications/push.js";
-import { initAccountGuard, checkAccountStatus } from "./account-guard.js";
-import { initSession, revokeCurrentSession } from "./session.js";
-import { startNetworkMonitor, stopNetworkMonitor, onNetworkStatusChange, getOnlineNotificationMessage } from "./network-health.js";
-import { warmup as warmupEmbeddings, isReady as isEmbeddingsReady, embedText } from "./memory/embeddings.js";
-import { autoResumeInterruptedTasks } from "./agents/long-task.js";
+import { getIdentityProfile, initIdentityDB, updateIdentityProfile } from "./memory/identity.js";
+import { initKnowledgeGraph } from "./memory/knowledge-graph.js";
+import { runDailyDecay, runDreamReplay } from "./memory/reflection.js";
+import { initRelationshipState } from "./memory/relationship.js";
+import { initSelfModel } from "./memory/self-model.js";
+import { initSelfStateDB } from "./memory/self-state.js";
+import { embedExistingMemories, initMemoryDB, setMemoryLLM } from "./memory/sqlite.js";
+import { initStrategyLibrary } from "./memory/strategy-library.js";
+import { initSupabase } from "./memory/supabase.js";
+import { initTaskLearnings } from "./memory/task-learnings.js";
+import { initTraitsDB, setMemoryDebug } from "./memory/traits.js";
+import { initUserModel } from "./memory/user-model.js";
+import { initWorkingMemory } from "./memory/working-memory.js";
+import { initWorldModel } from "./memory/world-model.js";
+import {
+    getOnlineNotificationMessage,
+    onNetworkStatusChange,
+    startNetworkMonitor,
+    stopNetworkMonitor,
+} from "./network-health.js";
+import { getSubscriptionCount, sendPushNotification } from "./notifications/push.js";
+import { closeOverlayChat, initOverlayChat, sendOverlayNotification } from "./overlay/overlay-chat.js";
+import { startHeartbeat, stopHeartbeat } from "./proactive/heartbeat.js";
 import { initCredibilityModel } from "./research/credibility-model.js";
-import { initLocationService, refreshLocation, onLocationChange } from "./location/index.js";
-import { startNetworkWatcher, stopNetworkWatcher } from "./location/network-watcher.js";
-import { getPlatformCapabilities } from "./utils/platform-capabilities.js";
+import { initSandbox } from "./security/sandbox.js";
+import { initSession, revokeCurrentSession } from "./session.js";
+import { seedProfileIfPresent } from "./setup/wizard-seed.js";
+import { initSkillMetadata } from "./skills/loader.js";
+import { closeSlack, initSlack, sendSlackProactiveMessage } from "./slack.js";
+import { createTelegramBot, sendProactiveMessage } from "./telegram.js";
+import { initToolRouter, setToolRouterLLM } from "./tool-router.js";
+import {
+    closeBrowser,
+    closeChromeBridge,
+    initActionCache,
+    initChromeBridge,
+    registerChromeBackend,
+    registerPlaywrightBackend,
+} from "./tools/browser/index.js";
+import { initBrowserMemory } from "./tools/browser-memory.js";
+import { initGoogleAPI } from "./tools/google-api.js";
+import {
+    executeTool,
+    getToolNames,
+    initDeepResearch,
+    loadDynamicTools,
+    registerChannelSender,
+    rotateAuditLog,
+    setBrandAuditLLM,
+    setCampaignPlannerLLM,
+    setCodeActionExecutor,
+    setCodeActionLLM,
+    setComputerUseLLM,
+    setDeepResearchLLM,
+    setDeepResearchNotifier,
+    setIngestLLM,
+    setLongTaskLLM,
+    setOutreachLLM,
+    setPresentationLLM,
+    setProductHuntLLM,
+    setScriptWriterLLM,
+    setSiteMintLLM,
+    setSmartClickLLM,
+    setSwarmLLM,
+} from "./tools/index.js";
+import { setTaskTriggerHandler } from "./tools/scheduled.js";
+import { initSpotify } from "./tools/spotify.js";
 import { probeAndLogMacPermissions } from "./utils/macos-permissions.js";
-import { initRegistry } from "./harness/registry.js";
-import { initForge } from "./forge/orchestrator.js";
+import { getPlatformCapabilities } from "./utils/platform-capabilities.js";
+import { setupTelegramVoice } from "./voice/telegram-voice.js";
+import { closeWhatsApp, initWhatsApp, sendWhatsAppProactiveMessage } from "./whatsapp.js";
 
 // ── Primary Channel ──────────────────────────
 const PRIMARY_CHANNEL = process.env.PRIMARY_CHANNEL || "telegram";
@@ -79,23 +114,23 @@ console.log(`
 
 const config = loadConfig();
 const llm = createLLMClient(config);
-setSwarmLLM(llm);          // Inject into swarm tool
-setToolRouterLLM(llm);     // Inject into tool router for LLM intent classification
-setDeepResearchLLM(llm);   // Inject into deep research tool
-setLongTaskLLM(llm);       // Inject into long task executor
-setCodeActionLLM(llm);     // Inject into code-as-action agent tool
-setCodeActionExecutor(executeTool);  // Inject tool executor for code_execute sandbox
-setComputerUseLLM(llm);    // Inject into computer use agent tool
-setSmartClickLLM(llm);     // Inject into os_smart_click cloud-grounding cascade tier
-setSiteMintLLM(llm);       // Inject into the Site Skill Minter (site_skill_mint)
-setMemoryLLM(llm);         // Inject into memory for smart write decisions
-setPresentationLLM(llm);   // Inject into presentation generator
-setIngestLLM(llm);         // Inject into PDF → JSON ingestion (vision-LLM fallback)
-setBrandAuditLLM(llm);        // Inject into brand audit orchestrator
-setScriptWriterLLM(llm);      // Inject into marketing script writer
-setCampaignPlannerLLM(llm);   // Inject into campaign planner
-setOutreachLLM(llm);          // Inject into cold outreach engine
-setProductHuntLLM(llm);       // Inject into Product Hunt launch module
+setSwarmLLM(llm); // Inject into swarm tool
+setToolRouterLLM(llm); // Inject into tool router for LLM intent classification
+setDeepResearchLLM(llm); // Inject into deep research tool
+setLongTaskLLM(llm); // Inject into long task executor
+setCodeActionLLM(llm); // Inject into code-as-action agent tool
+setCodeActionExecutor(executeTool); // Inject tool executor for code_execute sandbox
+setComputerUseLLM(llm); // Inject into computer use agent tool
+setSmartClickLLM(llm); // Inject into os_smart_click cloud-grounding cascade tier
+setSiteMintLLM(llm); // Inject into the Site Skill Minter (site_skill_mint)
+setMemoryLLM(llm); // Inject into memory for smart write decisions
+setPresentationLLM(llm); // Inject into presentation generator
+setIngestLLM(llm); // Inject into PDF → JSON ingestion (vision-LLM fallback)
+setBrandAuditLLM(llm); // Inject into brand audit orchestrator
+setScriptWriterLLM(llm); // Inject into marketing script writer
+setCampaignPlannerLLM(llm); // Inject into campaign planner
+setOutreachLLM(llm); // Inject into cold outreach engine
+setProductHuntLLM(llm); // Inject into Product Hunt launch module
 
 // ── Initialize Subsystems ─────────────────────
 
@@ -121,7 +156,9 @@ async function boot() {
                 native.addProtectedPath(botRoot);
                 native.addProtectedPath(process.cwd());
             }
-        } catch { /* native helper optional */ }
+        } catch {
+            /* native helper optional */
+        }
     } catch (err) {
         console.warn("[BOOT] registerProtectedPath skipped:", (err as Error).message);
     }
@@ -135,7 +172,7 @@ async function boot() {
         if (attempt < 3) {
             const delay = attempt * 3000;
             console.warn(`⚠️  Session creation failed (attempt ${attempt}/3) — retrying in ${delay / 1000}s...`);
-            await new Promise(r => setTimeout(r, delay));
+            await new Promise((r) => setTimeout(r, delay));
         }
     }
     if (!sessionOk) {
@@ -150,7 +187,9 @@ async function boot() {
         if (event.next === "online" && event.prev === "offline") {
             // Notify user that internet is back
             sendOverlayNotification(getOnlineNotificationMessage());
-            refreshLocation().catch(() => { /* non-fatal */ });
+            refreshLocation().catch(() => {
+                /* non-fatal */
+            });
         }
     });
 
@@ -186,10 +225,13 @@ async function boot() {
         // after successful seed. Source lives in the Electron app's userData dir,
         // exposed to the bot via ATLAS_USER_DATA_DIR; falls back to ATLAS_DATA_DIR.
         try {
-            const seedResult = seedProfileIfPresent({
-                userDataDir: process.env.ATLAS_USER_DATA_DIR,
-                dataDir: process.env.ATLAS_DATA_DIR,
-            }, { log: (m) => console.log(m) });
+            const seedResult = seedProfileIfPresent(
+                {
+                    userDataDir: process.env.ATLAS_USER_DATA_DIR,
+                    dataDir: process.env.ATLAS_DATA_DIR,
+                },
+                { log: (m) => console.log(m) },
+            );
             if (seedResult.ran) {
                 console.log(`🌱 Wizard profile seeded: ${seedResult.seeded?.name}`);
             }
@@ -237,7 +279,8 @@ async function boot() {
                 { userDataDir: process.env.ATLAS_USER_DATA_DIR, dataDir: process.env.ATLAS_DATA_DIR },
                 (res) => {
                     if (res.ran) console.log(`🎨 Personality updated from Settings (v${res.version})`);
-                    else if (res.reason !== "no-file") console.warn(`[personality-sync] ${res.reason}${res.error ? `: ${res.error}` : ""}`);
+                    else if (res.reason !== "no-file")
+                        console.warn(`[personality-sync] ${res.reason}${res.error ? `: ${res.error}` : ""}`);
                 },
             );
         } catch (err) {
@@ -361,56 +404,65 @@ async function boot() {
     // Each is wrapped with .catch() for fail-open resilience.
     await Promise.all([
         // MCP servers
-        initMCPServers().catch(e => console.warn("[BOOT] MCP:", (e as Error).message)),
+        initMCPServers().catch((e) => console.warn("[BOOT] MCP:", (e as Error).message)),
         // Skills (fetch metadata from server — instructions stay server-side)
-        initSkillMetadata().catch(e => console.warn("[BOOT] Skills:", (e as Error).message)),
+        initSkillMetadata().catch((e) => console.warn("[BOOT] Skills:", (e as Error).message)),
         // Load persisted dynamic tools (created by create_tool with persistent=true)
-        loadDynamicTools().catch(e => console.warn("[BOOT] Dynamic tools:", (e as Error).message)),
+        loadDynamicTools().catch((e) => console.warn("[BOOT] Dynamic tools:", (e as Error).message)),
         // Skill Forge (Phase 1) — kill switch: ATLAS_NO_FORGE=true
-        initForge({ embedFn: embedText }).catch(e => console.warn("[BOOT] Forge:", (e as Error).message)),
+        initForge({ embedFn: embedText }).catch((e) => console.warn("[BOOT] Forge:", (e as Error).message)),
         // Hooks (user + project ~/.atlas/hooks.json and .atlas/hooks.json)
-        import("./hooks/index.js").then((mod) => mod.loadHooks())
-            .catch(e => console.warn("[BOOT] Hooks:", (e as Error).message)),
+        import("./hooks/index.js")
+            .then((mod) => mod.loadHooks())
+            .catch((e) => console.warn("[BOOT] Hooks:", (e as Error).message)),
         // Tool intelligence: rotate audit log on boot (keep last 7 days)
-        rotateAuditLog().catch(e => console.warn("[BOOT] Audit log rotation:", (e as Error).message)),
+        rotateAuditLog().catch((e) => console.warn("[BOOT] Audit log rotation:", (e as Error).message)),
         // Canvas (WebSocket)
-        Promise.resolve().then(() => initCanvas()).catch(e => console.warn("[BOOT] Canvas:", (e as Error).message)),
+        Promise.resolve()
+            .then(() => initCanvas())
+            .catch((e) => console.warn("[BOOT] Canvas:", (e as Error).message)),
         // Google APIs (load saved accounts)
-        Promise.resolve().then(() => initGoogleAPI()).catch(e => console.warn("[BOOT] Google API:", (e as Error).message)),
+        Promise.resolve()
+            .then(() => initGoogleAPI())
+            .catch((e) => console.warn("[BOOT] Google API:", (e as Error).message)),
         // Spotify (load saved tokens)
-        Promise.resolve().then(() => initSpotify()).catch(e => console.warn("[BOOT] Spotify:", (e as Error).message)),
+        Promise.resolve()
+            .then(() => initSpotify())
+            .catch((e) => console.warn("[BOOT] Spotify:", (e as Error).message)),
         // Overlay chat (desktop "Type to Bhai")
-        Promise.resolve().then(() => initOverlayChat(llm)).catch(e => console.warn("[BOOT] Overlay:", (e as Error).message)),
+        Promise.resolve()
+            .then(() => initOverlayChat(llm))
+            .catch((e) => console.warn("[BOOT] Overlay:", (e as Error).message)),
         // Email channel (IMAP listener + SMTP sender)
-        initEmail(llm, config).catch(e => console.warn("[BOOT] Email:", (e as Error).message)),
+        initEmail(llm, config).catch((e) => console.warn("[BOOT] Email:", (e as Error).message)),
         // Slack bot (Socket Mode — only if SLACK_BOT_TOKEN is set)
-        initSlack(llm).catch(e => console.warn("[BOOT] Slack:", (e as Error).message)),
+        initSlack(llm).catch((e) => console.warn("[BOOT] Slack:", (e as Error).message)),
         // WhatsApp channel (Baileys QR pairing — only if WHATSAPP_ALLOWED_JIDS is set)
-        initWhatsApp(llm).catch(e => console.warn("[BOOT] WhatsApp:", (e as Error).message)),
+        initWhatsApp(llm).catch((e) => console.warn("[BOOT] WhatsApp:", (e as Error).message)),
         // Discord bot (slash commands + @mention — only if DISCORD_BOT_TOKEN is set)
-        initDiscord(llm).catch(e => console.warn("[BOOT] Discord:", (e as Error).message)),
+        initDiscord(llm).catch((e) => console.warn("[BOOT] Discord:", (e as Error).message)),
         // Matrix/Element bot (CS API long-poll — only if MATRIX_HOMESERVER is set)
-        initMatrix(llm).catch(e => console.warn("[BOOT] Matrix:", (e as Error).message)),
+        initMatrix(llm).catch((e) => console.warn("[BOOT] Matrix:", (e as Error).message)),
         // Location service (GPS → Wi-Fi → IP fallback chain)
-        initLocationService().catch(e => console.warn("[BOOT] Location:", (e as Error).message)),
+        initLocationService().catch((e) => console.warn("[BOOT] Location:", (e as Error).message)),
     ]);
 
     // Location: start SSID watcher + hook into network recovery
     startNetworkWatcher();
 
-    // Auto-update identity profile when location changes. Identity is hoisted
-    // to a top-level import because the prior `require()` call threw a silent
-    // ReferenceError in ESM, so location was never written to the profile.
+    // Record the device location on the identity profile as current_location.
+    // Never touch `location`: that is where the user said they live, and a
+    // trip or a VPN exit must not overwrite it.
     onLocationChange((data) => {
         try {
             const locationStr = [data.city, data.region, data.countryName || data.country].filter(Boolean).join(", ");
-            const currentProfile = getIdentityProfile();
-            // Verified: the OS reported it (a raw string reads as an unverified claim).
-            if (getFieldValue(currentProfile.location) !== locationStr && locationStr) {
-                updateIdentityProfile({ location: { value: locationStr, verified: true } });
-                console.log(`[LOCATION] Identity updated: ${locationStr}`);
+            if (locationStr && getIdentityProfile().current_location !== locationStr) {
+                updateIdentityProfile({ current_location: locationStr });
+                console.log(`[LOCATION] Current location: ${locationStr}`);
             }
-        } catch { /* identity not initialized */ }
+        } catch {
+            /* identity not initialized */
+        }
     });
 
     // Browser strategy memory + action cache + unified task learnings (sync inits, fast)
@@ -438,12 +490,15 @@ async function boot() {
     // Will load on first use if warmup hasn't completed yet.
     warmupEmbeddings()
         .then(() => console.log("   Embed  : model pre-warmed ✅"))
-        .catch(err => console.warn("[BOOT] Embedding warmup failed (non-fatal — will load on first use):", (err as Error).message));
+        .catch((err) =>
+            console.warn(
+                "[BOOT] Embedding warmup failed (non-fatal — will load on first use):",
+                (err as Error).message,
+            ),
+        );
 
     // Semantic embeddings migration (async, non-blocking — runs in background)
-    embedExistingMemories().catch(err =>
-        console.warn("[BOOT] Embedding migration failed (non-fatal):", err)
-    );
+    embedExistingMemories().catch((err) => console.warn("[BOOT] Embedding migration failed (non-fatal):", err));
 
     // HNSW embedding version migration (async, non-blocking)
     // If the embedding model version changed, re-embed old memories in batches
@@ -455,7 +510,9 @@ async function boot() {
             if (raw) {
                 const result = await migrateEmbeddingsBatch(raw, 50);
                 if (result.migrated > 0) {
-                    console.log(`   Migrate : ${result.migrated} embeddings re-embedded (${result.remaining} remaining)`);
+                    console.log(
+                        `   Migrate : ${result.migrated} embeddings re-embedded (${result.remaining} remaining)`,
+                    );
                 }
             }
         } catch (migErr) {
@@ -471,14 +528,16 @@ async function boot() {
                 const { bufferToEmbedding } = await import("./memory/embeddings.js");
                 const memRawDb = (await import("./memory/sqlite.js")).getRawDb();
                 if (memRawDb) {
-                    const rows = memRawDb.prepare(
-                        `SELECT e.memory_id, e.embedding, m.content
+                    const rows = memRawDb
+                        .prepare(
+                            `SELECT e.memory_id, e.embedding, m.content
                          FROM memory_embeddings e
                          JOIN memories m ON e.memory_id = m.id
-                         LIMIT 500`
-                    ).all() as Array<{ memory_id: number; embedding: Buffer; content: string }>;
+                         LIMIT 500`,
+                        )
+                        .all() as Array<{ memory_id: number; embedding: Buffer; content: string }>;
                     if (rows.length > 0) {
-                        const entries = rows.map(r => ({
+                        const entries = rows.map((r) => ({
                             id: r.memory_id,
                             embedding: bufferToEmbedding(r.embedding),
                             content: r.content,
@@ -493,13 +552,13 @@ async function boot() {
     })();
 
     // Smart tool router (pre-compute category embeddings — async, non-blocking)
-    initToolRouter().catch(err =>
-        console.warn("[BOOT] Tool router init failed (non-fatal, will use structural fallback):", err)
+    initToolRouter().catch((err) =>
+        console.warn("[BOOT] Tool router init failed (non-fatal, will use structural fallback):", err),
     );
 
     // Warm up platform capability probe (non-blocking)
     if (process.env.ATLAS_SKIP_CAPABILITY_PROBE !== "true") {
-        getPlatformCapabilities().catch(err => console.warn("[boot] capability probe failed:", err));
+        getPlatformCapabilities().catch((err) => console.warn("[boot] capability probe failed:", err));
     }
 
     // macOS-only — probe Accessibility + Screen Recording for real, with actionable
@@ -515,7 +574,7 @@ async function boot() {
                 console.log(`   Tasks  : ${resumed.length} interrupted task(s) auto-resumed`);
             }
         })
-        .catch(err => console.warn("[BOOT] Long task auto-resume failed (non-fatal):", err));
+        .catch((err) => console.warn("[BOOT] Long task auto-resume failed (non-fatal):", err));
 
     // ── Create Telegram Bot (optional) ────────
     // bot is null when TELEGRAM_BOT_TOKEN / ALLOWED_USER_IDS aren't configured.
@@ -553,14 +612,21 @@ async function boot() {
             discord: () => sendDiscordProactiveMessage(msg),
             slack: () => sendSlackProactiveMessage(msg),
             matrix: () => sendMatrixProactiveMessage(msg),
-            overlay: () => { sendOverlayNotification(msg); return Promise.resolve(); },
+            overlay: () => {
+                sendOverlayNotification(msg);
+                return Promise.resolve();
+            },
         };
         if (bot) sendPrimary.telegram = () => sendProactiveMessage(bot, config, msg);
 
         // Send to primary channel
         const primaryFn = sendPrimary[PRIMARY_CHANNEL];
         if (primaryFn) {
-            try { await primaryFn(); } catch { /* primary failed, will try others */ }
+            try {
+                await primaryFn();
+            } catch {
+                /* primary failed, will try others */
+            }
         }
 
         // Send to other active channels as backup (non-blocking)
@@ -591,7 +657,9 @@ async function boot() {
     console.log(`\n📋 Config loaded`);
     console.log(`   Model   : Pro`);
     console.log(`   Provider: XAGI Labs`);
-    console.log(`   Telegram: ${config.telegramEnabled ? `${config.allowedUserIds.size} allowed user(s)` : "disabled"}`);
+    console.log(
+        `   Telegram: ${config.telegramEnabled ? `${config.allowedUserIds.size} allowed user(s)` : "disabled"}`,
+    );
     console.log(`   Tools   : ${toolNames.length} registered`);
     console.log(`   Skills  : server-side (metadata cached)`);
     console.log();
@@ -640,23 +708,31 @@ async function boot() {
                 const { dispatchProactiveMessage } = await import("./proactive/dispatch.js");
                 const intent = intentFromThought(message, { hourNow: new Date().getHours() });
                 const channelOrder: Array<"telegram" | "whatsapp" | "discord" | "slack" | "matrix" | "overlay"> = [
-                    "telegram", "whatsapp", "discord", "slack", "matrix", "overlay",
+                    "telegram",
+                    "whatsapp",
+                    "discord",
+                    "slack",
+                    "matrix",
+                    "overlay",
                 ];
                 const primary = channelOrder.find((c) => c === PRIMARY_CHANNEL);
                 const rest = channelOrder.filter((c) => c !== primary);
-                const sendOne = async (channel: typeof channelOrder[number]): Promise<void> => {
+                const sendOne = async (channel: (typeof channelOrder)[number]): Promise<void> => {
                     const composed = await compose(intent, channel, { tone: getToneReminder() ?? "warm" }, [], { llm });
                     if (!composed) return;
                     await dispatchProactiveMessage(channel, composed.text, composed.modeTag);
                 };
                 if (primary) {
-                    try { await sendOne(primary); } catch (err) {
+                    try {
+                        await sendOne(primary);
+                    } catch (err) {
                         console.log(`proactive dispatch failed (${primary}):`, (err as Error).message);
                     }
                 }
-                for (const c of rest) sendOne(c).catch((err) => {
-                    console.log(`proactive dispatch failed (${c}):`, (err as Error).message);
-                });
+                for (const c of rest)
+                    sendOne(c).catch((err) => {
+                        console.log(`proactive dispatch failed (${c}):`, (err as Error).message);
+                    });
                 if (getSubscriptionCount() > 0) {
                     sendPushNotification("Bhai", message.substring(0, 180)).catch(() => {});
                 }
@@ -673,7 +749,7 @@ async function boot() {
             const { join } = await import("node:path");
             const obs = new Observer({
                 llm,
-                configPath: join(process.cwd(), "data", "proactive-config.json"),
+                configPath: join(getDataDir(), "proactive-config.json"),
             });
             obs.start();
             setObserver(obs);
@@ -707,27 +783,25 @@ async function boot() {
                         executor: (toolCalls) => executeApprovedIntent(toolCalls, { executeTool }),
                     });
                     setInboxManager(manager);
-                    console.log(
-                        "💓 Inbox manager ready (%d pending)",
-                        manager.listPending().length,
-                    );
+                    console.log("💓 Inbox manager ready (%d pending)", manager.listPending().length);
 
                     // Periodic expiry sweep (every hour; items older than 7d expire)
                     const EXPIRY_MS = 7 * 24 * 60 * 60_000;
-                    const _expireT = setInterval(() => { manager.expireOlderThan(EXPIRY_MS); }, 60 * 60_000);
+                    const _expireT = setInterval(() => {
+                        manager.expireOlderThan(EXPIRY_MS);
+                    }, 60 * 60_000);
                     _expireT.unref?.();
 
                     // Periodic deferred-ready sweep (every minute)
-                    const _readyT = setInterval(() => { manager.readyDeferred(); }, 60_000);
+                    const _readyT = setInterval(() => {
+                        manager.readyDeferred();
+                    }, 60_000);
                     _readyT.unref?.();
                 } else {
                     console.log("[BOOT] InboxManager skipped: no raw DB handle");
                 }
             } catch (err) {
-                console.log(
-                    "[BOOT] InboxManager init failed (non-fatal):",
-                    (err as Error).message,
-                );
+                console.log("[BOOT] InboxManager init failed (non-fatal):", (err as Error).message);
             }
 
             // ── Chat fallback subscription (Phase 4.3) ──
@@ -748,14 +822,19 @@ async function boot() {
                 const { tick: innerTick } = await import("./proactive/inner-thoughts.js");
                 const { getUserPresence } = await import("./proactive/activity.js");
                 const { embedText } = await import("./memory/embeddings.js");
-                obs.registerSource(makeMemoryAnticipationSource({
-                    tick: async (ctxIn) => innerTick(ctxIn),
-                    embedText: async (t) => await embedText(t, "query"),
-                    getPresence: () => getUserPresence(),
-                }));
+                obs.registerSource(
+                    makeMemoryAnticipationSource({
+                        tick: async (ctxIn) => innerTick(ctxIn),
+                        embedText: async (t) => await embedText(t, "query"),
+                        getPresence: () => getUserPresence(),
+                    }),
+                );
                 console.log("💓 Registered source: memory_anticipation");
             } catch (err) {
-                console.log("[BOOT] memory_anticipation source registration failed (non-fatal):", (err as Error).message);
+                console.log(
+                    "[BOOT] memory_anticipation source registration failed (non-fatal):",
+                    (err as Error).message,
+                );
             }
 
             // ── Register long_task_status source (Phase 3 Task 3.3) ──
@@ -775,7 +854,10 @@ async function boot() {
                 obs.registerSource(onboardingGraduationSource);
                 console.log("💓 Registered source: onboarding_graduation");
             } catch (err) {
-                console.log("[BOOT] onboarding_graduation source registration failed (non-fatal):", (err as Error).message);
+                console.log(
+                    "[BOOT] onboarding_graduation source registration failed (non-fatal):",
+                    (err as Error).message,
+                );
             }
 
             // ── Register latent_topic_monitor source (Phase 3 Task 3.9d) ──
@@ -788,9 +870,7 @@ async function boot() {
                 const { getRawDb } = await import("./memory/sqlite.js");
                 const { MonitorStore } = await import("./proactive/monitors/monitor-store.js");
                 const { setMonitorStore } = await import("./proactive/monitors/store-singleton.js");
-                const { makeLatentTopicMonitorSource } = await import(
-                    "./proactive/sources/latent-topic-monitor.js"
-                );
+                const { makeLatentTopicMonitorSource } = await import("./proactive/sources/latent-topic-monitor.js");
                 const { ruleToRust } = await import("./proactive/chat-commands.js");
                 const native = await import("../native/index.js");
                 const rawDb = getRawDb();
@@ -806,9 +886,7 @@ async function boot() {
                 if (typeof nativeMon.monitorLoadRules === "function") {
                     const activeRules = store.list(true).map(ruleToRust);
                     nativeMon.monitorLoadRules(activeRules);
-                    console.log(
-                        `💓 Loaded ${activeRules.length} monitor rule(s) into Rust matcher`,
-                    );
+                    console.log(`💓 Loaded ${activeRules.length} monitor rule(s) into Rust matcher`);
                 }
                 obs.registerSource(makeLatentTopicMonitorSource());
                 console.log("💓 Registered source: latent_topic_monitor");
@@ -972,14 +1050,21 @@ async function boot() {
             discord: () => sendDiscordProactiveMessage(message),
             slack: () => sendSlackProactiveMessage(message),
             matrix: () => sendMatrixProactiveMessage(message),
-            overlay: () => { sendOverlayNotification(message); return Promise.resolve(); },
+            overlay: () => {
+                sendOverlayNotification(message);
+                return Promise.resolve();
+            },
         };
         if (bot) sendPrimary.telegram = () => sendProactiveMessage(bot, config, message);
 
         // Send to primary channel
         const primaryFn = sendPrimary[PRIMARY_CHANNEL];
         if (primaryFn) {
-            try { await primaryFn(); } catch { /* primary failed, will try others */ }
+            try {
+                await primaryFn();
+            } catch {
+                /* primary failed, will try others */
+            }
         }
 
         // Send to other active channels as backup (non-blocking)
@@ -1000,32 +1085,43 @@ async function boot() {
         const msUntil = next3am.getTime() - now.getTime();
 
         // Memory over time (24h soak: must stay under 1GB). One line per 10 min.
-        const _memT = setInterval(() => {
-            const m = process.memoryUsage();
-            const line = { t: new Date().toISOString(), rssMb: Math.round(m.rss / 1e6), heapMb: Math.round(m.heapUsed / 1e6) };
-            import("node:fs")
-                .then(({ appendFileSync }) => appendFileSync(join(getDataDir(), "mem.jsonl"), `${JSON.stringify(line)}\n`))
-                .catch(() => {});
-        }, 10 * 60 * 1000);
+        const _memT = setInterval(
+            () => {
+                const m = process.memoryUsage();
+                const line = {
+                    t: new Date().toISOString(),
+                    rssMb: Math.round(m.rss / 1e6),
+                    heapMb: Math.round(m.heapUsed / 1e6),
+                };
+                import("node:fs")
+                    .then(({ appendFileSync }) =>
+                        appendFileSync(join(getDataDir(), "mem.jsonl"), `${JSON.stringify(line)}\n`),
+                    )
+                    .catch(() => {});
+            },
+            10 * 60 * 1000,
+        );
         _memT.unref?.();
 
         // First run at 3am, then decay every 6h
         setTimeout(() => {
             runDailyDecay();
-            runDreamReplay(llm).catch(err =>
-                console.error("[MEMORY][REPLAY] Dream replay failed:", err)
-            );
+            runDreamReplay(llm).catch((err) => console.error("[MEMORY][REPLAY] Dream replay failed:", err));
             // Decay runs every 6 hours for cleaner memory
-            const _decayT = setInterval(() => {
-                runDailyDecay();
-            }, 6 * 60 * 60 * 1000);
+            const _decayT = setInterval(
+                () => {
+                    runDailyDecay();
+                },
+                6 * 60 * 60 * 1000,
+            );
             _decayT.unref?.();
             // Dream replay stays nightly (24h)
-            const _replayT = setInterval(() => {
-                runDreamReplay(llm).catch(err =>
-                    console.error("[MEMORY][REPLAY] Dream replay failed:", err)
-                );
-            }, 24 * 60 * 60 * 1000);
+            const _replayT = setInterval(
+                () => {
+                    runDreamReplay(llm).catch((err) => console.error("[MEMORY][REPLAY] Dream replay failed:", err));
+                },
+                24 * 60 * 60 * 1000,
+            );
             _replayT.unref?.();
         }, msUntil);
 
@@ -1062,7 +1158,11 @@ async function boot() {
                 const channel = job.deliverTo;
                 if (!channel || !response) return true;
                 if (channel === "telegram") {
-                    const { getTelegramBot, getTelegramConfig, sendProactiveMessage: sendTg } = await import("./telegram.js");
+                    const {
+                        getTelegramBot,
+                        getTelegramConfig,
+                        sendProactiveMessage: sendTg,
+                    } = await import("./telegram.js");
                     const tb = getTelegramBot();
                     const cfg = getTelegramConfig();
                     if (!tb || !cfg) return false;
@@ -1146,7 +1246,9 @@ async function boot() {
         try {
             const { stopWebhookServer } = await import("./tools/webhook.js");
             stopWebhookServer();
-        } catch { /* never loaded */ }
+        } catch {
+            /* never loaded */
+        }
         await closeMCPServers();
         await closeBrowser();
         try {
@@ -1166,7 +1268,9 @@ async function boot() {
         try {
             const { stopKokoro } = await import("./voice/live/kokoro-tts.js");
             stopKokoro();
-        } catch { /* never loaded — live voice wasn't used */ }
+        } catch {
+            /* never loaded — live voice wasn't used */
+        }
         await revokeCurrentSession();
         process.exit(0);
     }

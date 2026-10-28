@@ -126,3 +126,15 @@ describe("identity_update ownership gate", () => {
         expect(r.success).toBe(true);
     });
 });
+
+describe("identity_update verification", () => {
+    it("stores what the user states as verified, inferred values as unverified", async () => {
+        const { updateIdentityProfile } = await import("../memory/identity.js");
+        const upd = vi.mocked(updateIdentityProfile);
+        upd.mockClear();
+        await call({ name: "Dheeraj" }); // default level = asserted
+        expect(upd.mock.calls[0][0]).toMatchObject({ name: { value: "Dheeraj", verified: true } });
+        await call({ location: "Pune", verification_level: "observed" });
+        expect(upd.mock.calls[1][0]).toMatchObject({ location: { value: "Pune", verified: false } });
+    });
+});

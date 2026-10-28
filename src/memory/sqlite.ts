@@ -2,32 +2,31 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import { getCurrentEmotionalIntensity } from "./emotional.js";
 import fs from "node:fs";
 import path from "node:path";
 import BetterSqlite3 from "better-sqlite3";
-import type { LLMClient } from "../llm.js";
 import { getDimensionValue } from "../harness/registry.js";
+import type { LLMClient } from "../llm.js";
 import {
     bufferToEmbedding,
     cosineSimilarity,
     embeddingToBuffer,
     embedText,
-    getActiveDim,
+    getEffectiveDimension,
     isReady as isEmbeddingReady,
     warmup as warmupEmbeddings,
 } from "./embeddings.js";
+import { getCurrentEmotionalIntensity } from "./emotional.js";
+import { CONVERSATIONS_FTS_SYNC_SQL, MEMORIES_FTS_SYNC_SQL } from "./fts-triggers.js";
+import { buildTrigramQuery, containsCjk, sanitizeFts5Query } from "./fts5-query.js";
+import { logGateDecision } from "./gate-audit.js";
 import { initProspectiveDB } from "./prospective.js";
 import { boostMemory } from "./self-evolving.js";
 import { mergeSANResults, spreadActivation } from "./spreading-activation.js";
-import { computeRPE, surpriseDecayMultiplier, surpriseImportanceBoost } from "./surprise-gate.js";
 import { getTemporalCache } from "./temporal-cache.js";
+import { hardAllow, hardReject, llmGate, threatReject } from "./value-gate.js";
 // ── Brain-Inspired Module Imports ─────────────
 import { buildIndexFromDB, getHNSWIndex } from "./vector-index.js";
-import { buildTrigramQuery, containsCjk, sanitizeFts5Query } from "./fts5-query.js";
-import { CONVERSATIONS_FTS_SYNC_SQL, MEMORIES_FTS_SYNC_SQL } from "./fts-triggers.js";
-import { hardAllow, hardReject, llmGate, threatReject } from "./value-gate.js";
-import { logGateDecision } from "./gate-audit.js";
 
 // ── Constants ─────────────────────────────────
 
@@ -237,6 +236,13 @@ export async function initMemoryDB(): Promise<CompatDatabase> {
     }
     try {
         db.run("CREATE INDEX IF NOT EXISTS idx_memories_pinned ON memories(pinned) WHERE pinned = 1");
+    } catch {
+        /* */
+    }
+    // The old surprise gate stored decay_score up to 1.5, so routine
+    // importance-5 rows outranked importance-7 ones. 1.0 is the cap.
+    try {
+        db.run("UPDATE memories SET decay_score = 1.0 WHERE decay_score > 1.0");
     } catch {
         /* */
     }
@@ -562,9 +568,7 @@ export async function initMemoryDB(): Promise<CompatDatabase> {
             backfillConversationMessages();
         }
 
-        console.log(
-            "🧠 Memory database initialized (WAL + FTS5 porter+trigram + Living Continuity)",
-        );
+        console.log("🧠 Memory database initialized (WAL + FTS5 porter+trigram + Living Continuity)");
     } catch (err) {
         console.log("🧠 Memory database initialized (WAL + Living Continuity, FTS5 setup failed)");
         console.error("  FTS5 error:", (err as Error).message);
@@ -699,9 +703,9 @@ export function backfillFTS5(): void {
         let trigramExists = true;
         let trigramN = 0;
         try {
-            const trigramCount = rawDb
-                .prepare("SELECT COUNT(*) as c FROM memories_fts_trigram")
-                .get() as { c: number } | undefined;
+            const trigramCount = rawDb.prepare("SELECT COUNT(*) as c FROM memories_fts_trigram").get() as
+                | { c: number }
+                | undefined;
             trigramN = trigramCount?.c ?? 0;
         } catch {
             trigramExists = false;
@@ -716,9 +720,7 @@ export function backfillFTS5(): void {
         const trigramSynced = !trigramExists || (trigramN >= memN && memN > 0);
 
         if (unicodeSynced && trigramSynced) {
-            console.log(
-                `  [FTS5] Indexes already synced (unicode61=${ftsN}, trigram=${trigramN}, memories=${memN})`,
-            );
+            console.log(`  [FTS5] Indexes already synced (unicode61=${ftsN}, trigram=${trigramN}, memories=${memN})`);
             return;
         }
 
@@ -735,13 +737,10 @@ export function backfillFTS5(): void {
             );
         }
 
-        const finalUni = rawDb
-            .prepare("SELECT COUNT(*) as c FROM memories_fts")
-            .get() as { c: number } | undefined;
+        const finalUni = rawDb.prepare("SELECT COUNT(*) as c FROM memories_fts").get() as { c: number } | undefined;
         const finalTri = trigramExists
-            ? ((rawDb.prepare("SELECT COUNT(*) as c FROM memories_fts_trigram").get() as
-                  | { c: number }
-                  | undefined)?.c ?? 0)
+            ? ((rawDb.prepare("SELECT COUNT(*) as c FROM memories_fts_trigram").get() as { c: number } | undefined)
+                  ?.c ?? 0)
             : 0;
 
         console.log(
@@ -781,7 +780,8 @@ export function extractMsgText(msg: unknown): string {
         const parts: string[] = [];
         for (const p of content) {
             if (
-                typeof p === "object" && p !== null &&
+                typeof p === "object" &&
+                p !== null &&
                 (p as { type?: unknown }).type === "text" &&
                 typeof (p as { text?: unknown }).text === "string"
             ) {
@@ -865,7 +865,9 @@ export function indexConversationMessages(
         try {
             stmt.run(conversationId, sessionId, i, getMsgRole(messages[i]), text, createdAt ?? null);
             inserted++;
-        } catch { /* skip malformed row */ }
+        } catch {
+            /* skip malformed row */
+        }
     }
     return inserted;
 }
@@ -899,7 +901,9 @@ export function backfillConversationMessages(): void {
                     if (Array.isArray(parsed)) {
                         total += indexConversationMessages(row.id, row.session_id, parsed, row.created_at);
                     }
-                } catch { /* skip malformed messages_json */ }
+                } catch {
+                    /* skip malformed messages_json */
+                }
             }
             commitTransaction();
         } catch (err) {
@@ -936,10 +940,32 @@ export function searchSessionMessages(query: string, limit = 10): SessionMessage
             const sanitized = sanitizeFts5Query(rawQuery);
             if (!sanitized) return [];
             const stopWords = new Set([
-                "a", "an", "the", "is", "are", "do", "you", "know",
-                "who", "what", "where", "when", "why", "how",
-                "i", "am", "my", "me", "to", "for", "in", "on",
-                "of", "and", "or", "with",
+                "a",
+                "an",
+                "the",
+                "is",
+                "are",
+                "do",
+                "you",
+                "know",
+                "who",
+                "what",
+                "where",
+                "when",
+                "why",
+                "how",
+                "i",
+                "am",
+                "my",
+                "me",
+                "to",
+                "for",
+                "in",
+                "on",
+                "of",
+                "and",
+                "or",
+                "with",
             ]);
             const tokens: string[] = [];
             const phraseRe = /"[^"]+"|\S+/g;
@@ -967,14 +993,14 @@ export function searchSessionMessages(query: string, limit = 10): SessionMessage
                  LIMIT ?`,
             )
             .all(ftsQuery, limit) as Array<{
-                conversation_id: number;
-                session_id: string;
-                role: string;
-                content: string;
-                created_at: string | null;
-                snip: string;
-                rank: number;
-            }>;
+            conversation_id: number;
+            session_id: string;
+            role: string;
+            content: string;
+            created_at: string | null;
+            snip: string;
+            rank: number;
+        }>;
 
         return rows.map((r) => ({
             conversation_id: r.conversation_id,
@@ -1006,12 +1032,12 @@ export function browseRecentMessages(limit = 20): SessionMessageHit[] {
                  LIMIT ?`,
             )
             .all(limit) as Array<{
-                conversation_id: number;
-                session_id: string;
-                role: string;
-                content: string;
-                created_at: string | null;
-            }>;
+            conversation_id: number;
+            session_id: string;
+            role: string;
+            content: string;
+            created_at: string | null;
+        }>;
         return rows.map((r) => ({
             conversation_id: r.conversation_id,
             session_id: r.session_id,
@@ -1096,7 +1122,9 @@ export async function remember(
             });
         }
 
-        if (gateDecision === "reject" && !shadow) {
+        // Shadow mode only defers the soft (LLM value) verdict, which never sets
+        // gateDecision. A reject here is threat/binary/oversize/etc: always drop.
+        if (gateDecision === "reject") {
             return null;
         }
     }
@@ -1131,36 +1159,23 @@ function _rememberDirect(
     // ── Emotional Salience Gating (Amygdala Effect) ──
     // Boost importance for memories stored during high-emotion sessions
     let adjustedImportance = importance;
-    if (boostable) try {
-        const intensity = getCurrentEmotionalIntensity?.() ?? 0;
-        if (intensity > 0.6) {
-            const boost = 1 + 0.5 * intensity;
-            adjustedImportance = Math.min(10, Math.round(importance * boost));
+    if (boostable)
+        try {
+            const intensity = getCurrentEmotionalIntensity?.() ?? 0;
+            if (intensity > 0.6) {
+                const boost = 1 + 0.5 * intensity;
+                adjustedImportance = Math.min(10, Math.round(importance * boost));
+            }
+        } catch {
+            /* emotional module not loaded yet */
         }
-    } catch {
-        /* emotional module not loaded yet */
-    }
-
-    // ── Surprise Gate (D-MEM Inspired) ──
-    // Surprising memories (importance far from baseline) get boosted importance
-    // and slower decay; routine/predictable memories decay faster.
-    let decayScore = 1.0;
-    try {
-        const predicted = 5 / 10; // baseline prediction (default importance normalized to 0-1)
-        const actual = adjustedImportance / 10; // current importance normalized to 0-1
-        const rpe = computeRPE(predicted, actual);
-        if (boostable) adjustedImportance = Math.round(surpriseImportanceBoost(adjustedImportance, rpe));
-        decayScore = surpriseDecayMultiplier(rpe);
-    } catch {
-        /* surprise gate not loaded */
-    }
 
     // At most one step above what was asked, so 8, 9 and 10 stay distinct.
     adjustedImportance = Math.min(adjustedImportance, importance + 1, 10);
 
     db.run(
         "INSERT INTO memories (content, category, tags, importance, source, decay_score, scope) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [content, category, tags, adjustedImportance, source, decayScore, scope],
+        [content, category, tags, adjustedImportance, source, 1.0, scope],
     );
 
     // Get last insert id
@@ -1415,17 +1430,6 @@ async function embedAndStore(memoryId: number, content: string): Promise<void> {
         const embedding = await embedText(content, "document");
         const buffer = embeddingToBuffer(embedding);
 
-        // ── Context-Dependent Retrieval: compute context vector ──
-        const now = new Date();
-        const contextStr = `${now.getHours() < 6 ? "late_night" : now.getHours() < 12 ? "morning" : now.getHours() < 18 ? "afternoon" : "evening"} ${["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"][now.getDay()]}`;
-        let contextBuf: Buffer | null = null;
-        try {
-            const contextEmb = await embedText(contextStr, "document");
-            contextBuf = embeddingToBuffer(contextEmb);
-        } catch {
-            /* non-fatal */
-        }
-
         const { getEmbeddingVersion } = await import("./embeddings.js");
         // The row may have been removed (smart-write NOOP/UPDATE, prune) while
         // we were embedding — don't re-insert an orphan vector. No await between
@@ -1433,9 +1437,9 @@ async function embedAndStore(memoryId: number, content: string): Promise<void> {
         if (!rawDb.prepare("SELECT 1 FROM memories WHERE id = ?").get(memoryId)) return;
         rawDb
             .prepare(
-                "INSERT OR REPLACE INTO memory_embeddings (memory_id, embedding, context_embedding, embedding_version) VALUES (?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO memory_embeddings (memory_id, embedding, embedding_version) VALUES (?, ?, ?)",
             )
-            .run(memoryId, buffer, contextBuf, getEmbeddingVersion());
+            .run(memoryId, buffer, getEmbeddingVersion());
 
         // ── Add to HNSW index ──
         const index = getHNSWIndex();
@@ -1492,10 +1496,32 @@ export function keywordSearch(
             if (!sanitized) return [];
 
             const stopWords = new Set([
-                "a", "an", "the", "is", "are", "do", "you", "know",
-                "who", "what", "where", "when", "why", "how",
-                "i", "am", "my", "me", "to", "for", "in", "on",
-                "of", "and", "or", "with",
+                "a",
+                "an",
+                "the",
+                "is",
+                "are",
+                "do",
+                "you",
+                "know",
+                "who",
+                "what",
+                "where",
+                "when",
+                "why",
+                "how",
+                "i",
+                "am",
+                "my",
+                "me",
+                "to",
+                "for",
+                "in",
+                "on",
+                "of",
+                "and",
+                "or",
+                "with",
             ]);
             // Split only on whitespace that's NOT inside a quoted phrase.
             // Simpler heuristic: keep quoted phrases as single tokens.
@@ -2125,7 +2151,8 @@ export async function recall(
         queryMode === "retrieve" &&
         isEmbeddingReady() &&
         (fusedScores.length < (getDimensionValue<number>("memory.hyde.minResults") ?? 3) ||
-            (fusedScores.length > 0 && fusedScores[0].score < (getDimensionValue<number>("memory.hyde.minTopScore") ?? 0.15)))
+            (fusedScores.length > 0 &&
+                fusedScores[0].score < (getDimensionValue<number>("memory.hyde.minTopScore") ?? 0.15)))
     ) {
         try {
             console.log(
@@ -2155,8 +2182,7 @@ export async function recall(
                     for (const hit of validHits) {
                         const existing = fusedScores.find((f) => f.id === hit.id);
                         if (existing) {
-                            existing.score +=
-                                0.8 * wRel * normalizedFusionScore([validHits.indexOf(hit) + 1], 1, k);
+                            existing.score += 0.8 * wRel * normalizedFusionScore([validHits.indexOf(hit) + 1], 1, k);
                         } else {
                             newHydeHits.push(hit);
                         }
@@ -2446,11 +2472,7 @@ export function setMemoryPinned(id: number, pinned: boolean): boolean {
     return true;
 }
 
-export function forgetMemoryWithReason(
-    id: number,
-    reason: string,
-    source: "user" | "system" = "user",
-): boolean {
+export function forgetMemoryWithReason(id: number, reason: string, source: "user" | "system" = "user"): boolean {
     if (!db) throw new Error("Memory DB not initialized");
     try {
         beginTransaction();
@@ -2458,7 +2480,7 @@ export function forgetMemoryWithReason(
         const snapResult = db.exec("SELECT content FROM memories WHERE id = ? LIMIT 1", [id]);
         const snapshot =
             snapResult.length > 0 && snapResult[0].values.length > 0
-                ? (snapResult[0].values[0]?.[0] as string | null) ?? null
+                ? ((snapResult[0].values[0]?.[0] as string | null) ?? null)
                 : null;
         db.run(
             "INSERT INTO memory_forget_log (kind, original_id, content_snapshot, reason, source) VALUES (?, ?, ?, ?, ?)",
@@ -2481,11 +2503,7 @@ export function forgetMemoryWithReason(
     }
 }
 
-export function bulkForget(
-    ids: number[],
-    reason: string,
-    source: "user" | "system" = "user",
-): { forgotten: number } {
+export function bulkForget(ids: number[], reason: string, source: "user" | "system" = "user"): { forgotten: number } {
     if (!db) throw new Error("Memory DB not initialized");
     let count = 0;
     try {
@@ -2494,7 +2512,7 @@ export function bulkForget(
             const snapResult = db.exec("SELECT content FROM memories WHERE id = ? LIMIT 1", [id]);
             const snapshot =
                 snapResult.length > 0 && snapResult[0].values.length > 0
-                    ? (snapResult[0].values[0]?.[0] as string | null) ?? null
+                    ? ((snapResult[0].values[0]?.[0] as string | null) ?? null)
                     : null;
             db.run(
                 "INSERT INTO memory_forget_log (kind, original_id, content_snapshot, reason, source) VALUES (?, ?, ?, ?, ?)",
@@ -2529,7 +2547,7 @@ export function forgetEntity(
         beginTransaction();
         const snap = db.exec("SELECT name FROM entities WHERE id = ? LIMIT 1", [id]);
         const snapshot =
-            snap.length > 0 && snap[0].values.length > 0 ? (snap[0].values[0]?.[0] as string | null) ?? null : null;
+            snap.length > 0 && snap[0].values.length > 0 ? ((snap[0].values[0]?.[0] as string | null) ?? null) : null;
         if (cascade) {
             // FK cascade is set; counting first for the report.
             const r = db.exec("SELECT COUNT(*) FROM relationships WHERE from_id = ? OR to_id = ?", [id, id]);
@@ -2744,7 +2762,10 @@ export async function embedExistingMemories(): Promise<void> {
     try {
         // Warm up the embedding model first
         await warmupEmbeddings();
-        const activeDim = getActiveDim();
+        // Stored vectors are Matryoshka-truncated (nomic 768 → 256), so compare
+        // against the effective dim, not the raw model dim, or every boot
+        // re-embeds the whole store.
+        const activeDim = getEffectiveDimension();
 
         // 1. Find memories without any embeddings
         const unembedded = rawDb

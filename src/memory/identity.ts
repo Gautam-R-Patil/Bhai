@@ -17,6 +17,8 @@ export interface UserProfile {
     email?: VerifiedField | string;
     name?: VerifiedField | string;
     location?: VerifiedField | string;
+    /** Device location (GPS/Wi-Fi/IP). Never the user's stated home in `location`. */
+    current_location?: string;
     role?: VerifiedField | string;
     company?: VerifiedField | string;
     projects?: string[];
@@ -60,15 +62,19 @@ export function initIdentityDB(db: Database): void {
   `);
 
     // Safe migration: add version column if missing
-    try { db.run("ALTER TABLE user_profiles ADD COLUMN version INTEGER DEFAULT 1"); } catch { /* already exists */ }
+    try {
+        db.run("ALTER TABLE user_profiles ADD COLUMN version INTEGER DEFAULT 1");
+    } catch {
+        /* already exists */
+    }
 
     // Ensure a default profile row exists
     const existing = db.exec("SELECT user_id FROM user_profiles WHERE user_id = ?", [DEFAULT_USER_ID]);
     if (existing.length === 0 || existing[0].values.length === 0) {
-        db.run(
-            "INSERT INTO user_profiles (user_id, profile_json, version) VALUES (?, ?, 1)",
-            [DEFAULT_USER_ID, JSON.stringify({ user_id: DEFAULT_USER_ID, version: 1 })]
-        );
+        db.run("INSERT INTO user_profiles (user_id, profile_json, version) VALUES (?, ?, 1)", [
+            DEFAULT_USER_ID,
+            JSON.stringify({ user_id: DEFAULT_USER_ID, version: 1 }),
+        ]);
     }
 
     console.log("🪪 Identity memory initialized (v1)");
@@ -79,10 +85,7 @@ export function initIdentityDB(db: Database): void {
 export function getIdentityProfile(userId = DEFAULT_USER_ID): UserProfile {
     if (!_db) return { user_id: userId };
 
-    const results = _db.exec(
-        "SELECT profile_json FROM user_profiles WHERE user_id = ?",
-        [userId]
-    );
+    const results = _db.exec("SELECT profile_json FROM user_profiles WHERE user_id = ?", [userId]);
 
     if (results.length === 0 || results[0].values.length === 0) {
         return { user_id: userId };
@@ -97,10 +100,7 @@ export function getIdentityProfile(userId = DEFAULT_USER_ID): UserProfile {
 
 // ── Update Profile ────────────────────────────
 
-export function updateIdentityProfile(
-    fields: Partial<UserProfile>,
-    userId = DEFAULT_USER_ID
-): UserProfile {
+export function updateIdentityProfile(fields: Partial<UserProfile>, userId = DEFAULT_USER_ID): UserProfile {
     if (!_db) throw new Error("Identity DB not initialized");
 
     const current = getIdentityProfile(userId);
@@ -109,6 +109,7 @@ export function updateIdentityProfile(
     if (fields.email !== undefined) updated.email = fields.email;
     if (fields.name !== undefined) updated.name = fields.name;
     if (fields.location !== undefined) updated.location = fields.location;
+    if (fields.current_location !== undefined) updated.current_location = fields.current_location;
     if (fields.role !== undefined) updated.role = fields.role;
     if (fields.company !== undefined) updated.company = fields.company;
     if (fields.projects !== undefined) updated.projects = fields.projects;
@@ -126,7 +127,7 @@ export function updateIdentityProfile(
 
     _db.run(
         "INSERT OR REPLACE INTO user_profiles (user_id, profile_json, version, updated_at) VALUES (?, ?, ?, datetime('now'))",
-        [userId, JSON.stringify(updated), updated.version]
+        [userId, JSON.stringify(updated), updated.version],
     );
 
     return updated;
@@ -137,11 +138,7 @@ export function updateIdentityProfile(
 /**
  * Set a verified identity field (e.g., email confirmed by user).
  */
-export function setVerifiedField(
-    fieldName: string,
-    value: string,
-    userId = DEFAULT_USER_ID
-): UserProfile {
+export function setVerifiedField(fieldName: string, value: string, userId = DEFAULT_USER_ID): UserProfile {
     const field: VerifiedField = { value, verified: true };
     return updateIdentityProfile({ [fieldName]: field } as Partial<UserProfile>, userId);
 }
@@ -204,8 +201,8 @@ export function getIdentityPromptSnippet(userId = DEFAULT_USER_ID): string {
     }
     if (unverified.length > 0) {
         sections.push(
-            "⚠️ USER CLAIMED THIS SESSION (UNVERIFIED — do NOT treat as fact, do NOT echo back as truth):\n" +
-            unverified.join("\n"),
+            "⚠️ USER IDENTITY (INFERRED, NOT STATED BY THE USER — do NOT treat as fact, do NOT echo back as truth):\n" +
+                unverified.join("\n"),
         );
     }
     return sections.join("\n\n");
@@ -213,7 +210,7 @@ export function getIdentityPromptSnippet(userId = DEFAULT_USER_ID): string {
 
 // Mark a previously-asserted field as confirmed by the user. Idempotent.
 export function confirmIdentityField(
-    fieldName: typeof VERIFIABLE_FIELDS[number],
+    fieldName: (typeof VERIFIABLE_FIELDS)[number],
     userId = DEFAULT_USER_ID,
 ): UserProfile {
     const current = getIdentityProfile(userId);
@@ -254,12 +251,12 @@ export function addGoal(goal: string, userId = DEFAULT_USER_ID): UserProfile {
 
 export function removeProject(projectName: string, userId = DEFAULT_USER_ID): UserProfile {
     const profile = getIdentityProfile(userId);
-    const projects = (profile.projects || []).filter(p => p !== projectName);
+    const projects = (profile.projects || []).filter((p) => p !== projectName);
     return updateIdentityProfile({ projects }, userId);
 }
 
 export function removeGoal(goal: string, userId = DEFAULT_USER_ID): UserProfile {
     const profile = getIdentityProfile(userId);
-    const goals = (profile.important_goals || []).filter(g => g !== goal);
+    const goals = (profile.important_goals || []).filter((g) => g !== goal);
     return updateIdentityProfile({ important_goals: goals }, userId);
 }

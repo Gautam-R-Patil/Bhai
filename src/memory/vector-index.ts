@@ -16,9 +16,15 @@
  */
 
 import fs from "node:fs";
-import path from "node:path";
 import { createRequire } from "node:module";
-import { EMBEDDING_DIM, LEGACY_EMBEDDING_DIM, getEmbeddingVersion, getActiveDim, getEffectiveDimension } from "./embeddings.js";
+import path from "node:path";
+import {
+    EMBEDDING_DIM,
+    getActiveDim,
+    getEffectiveDimension,
+    getEmbeddingVersion,
+    LEGACY_EMBEDDING_DIM,
+} from "./embeddings.js";
 
 // Create a require function for loading CommonJS modules (like native addons)
 const esmRequire = createRequire(import.meta.url);
@@ -28,7 +34,11 @@ const esmRequire = createRequire(import.meta.url);
 
 interface NativeModule {
     cosineSimilarity: (a: Float32Array, b: Float32Array) => number;
-    findTopKSimilar: (query: Float32Array, vectors: Float32Array[], k: number) => Array<{ index: number; score: number }>;
+    findTopKSimilar: (
+        query: Float32Array,
+        vectors: Float32Array[],
+        k: number,
+    ) => Array<{ index: number; score: number }>;
     batchCosineSimilarity: (query: Float32Array, vectors: Float32Array[]) => number[];
     hasSimdSupport: () => boolean;
     getVersion: () => string;
@@ -45,9 +55,7 @@ async function loadNativeModuleAsync(): Promise<NativeModule | null> {
         // Try loading from various locations
         // CWD-based path works for both dev mode and bundled app
         // (in bundled app, CWD is set to bot directory which contains native/)
-        const possiblePaths = [
-            path.join(process.cwd(), "native", "index.js"),
-        ];
+        const possiblePaths = [path.join(process.cwd(), "native", "index.js")];
 
         for (const modulePath of possiblePaths) {
             try {
@@ -58,7 +66,9 @@ async function loadNativeModuleAsync(): Promise<NativeModule | null> {
                 // Use the module-level require to load CommonJS native module
                 const native = esmRequire(modulePath);
                 if (native && typeof native.cosineSimilarity === "function") {
-                    console.log(`[HNSW] Native SIMD module loaded (v${native.getVersion()}, SIMD: ${native.hasSimdSupport()})`);
+                    console.log(
+                        `[HNSW] Native SIMD module loaded (v${native.getVersion()}, SIMD: ${native.hasSimdSupport()})`,
+                    );
                     nativeModule = native;
                     return native;
                 }
@@ -89,10 +99,10 @@ loadNativeModule();
 
 const DATA_DIR = process.env.ATLAS_DATA_DIR || path.resolve("data");
 const INDEX_PATH = path.join(DATA_DIR, "memory.hnsw.json");
-const M = 16;                   // Max links per node per layer
-const EF_CONSTRUCTION = 200;    // Build-time search width (higher = better recall)
-const EF_SEARCH = 50;           // Query-time search width
-const ML = 1 / Math.log(M);    // Level generation factor
+const M = 16; // Max links per node per layer
+const EF_CONSTRUCTION = 200; // Build-time search width (higher = better recall)
+const EF_SEARCH = 50; // Query-time search width
+const ML = 1 / Math.log(M); // Level generation factor
 
 // ── Float16 Helpers ───────────────────────────
 // Cuts storage in half with invisible precision loss for RAG.
@@ -107,8 +117,8 @@ function f32ToF16(val: number): number {
     const exponent = ((f32 >> 23) & 0xff) - 127 + 15;
     const mantissa = (f32 >> 13) & 0x3ff;
 
-    if (exponent <= 0) return sign;                    // Underflow → zero
-    if (exponent >= 31) return sign | 0x7c00;          // Overflow → infinity
+    if (exponent <= 0) return sign; // Underflow → zero
+    if (exponent >= 31) return sign | 0x7c00; // Overflow → infinity
     return sign | (exponent << 10) | mantissa;
 }
 
@@ -118,11 +128,17 @@ function f16ToF32(h: number): number {
     const mantissa = h & 0x3ff;
 
     if (exponent === 0) {
-        if (mantissa === 0) { f16View.setUint32(0, sign); return f16View.getFloat32(0); }
+        if (mantissa === 0) {
+            f16View.setUint32(0, sign);
+            return f16View.getFloat32(0);
+        }
         // Denormalized
         let e = -1;
         let m = mantissa;
-        do { e++; m <<= 1; } while (!(m & 0x400));
+        do {
+            e++;
+            m <<= 1;
+        } while (!(m & 0x400));
         f16View.setUint32(0, sign | ((e + 127 - 15 + 1) << 23) | ((m & 0x3ff) << 13));
         return f16View.getFloat32(0);
     }
@@ -150,7 +166,7 @@ function decompressVec(compressed: Uint16Array): Float32Array {
 
 interface HNSWNode {
     id: number;
-    vector: Uint16Array;   // Float16 compressed
+    vector: Uint16Array; // Float16 compressed
     level: number;
     neighbors: number[][]; // neighbors[layer] = list of neighbor IDs
 }
@@ -168,7 +184,7 @@ interface SerializedIndex {
     embeddingVersion?: number; // 1 = bge-small (384), 2 = nomic (768)
     nodes: Array<{
         id: number;
-        vector: number[];  // Float16 values as numbers
+        vector: number[]; // Float16 values as numbers
         level: number;
         neighbors: number[][];
     }>;
@@ -240,7 +256,7 @@ export class HNSWIndex {
         query: Float32Array,
         entryIds: number[],
         ef: number,
-        layer: number
+        layer: number,
     ): Array<{ id: number; dist: number }> {
         const visited = new Set<number>(entryIds);
         const candidates: Array<{ id: number; dist: number }> = [];
@@ -258,9 +274,10 @@ export class HNSWIndex {
 
         while (candidates.length > 0) {
             const nearest = candidates.shift()!;
-            const farthestResult = results.length > 0
-                ? results.reduce((max, r) => r.dist > max.dist ? r : max, results[0])
-                : { dist: Infinity };
+            const farthestResult =
+                results.length > 0
+                    ? results.reduce((max, r) => (r.dist > max.dist ? r : max), results[0])
+                    : { dist: Infinity };
 
             if (nearest.dist > farthestResult.dist && results.length >= ef) break;
 
@@ -290,14 +307,11 @@ export class HNSWIndex {
     }
 
     // ── Select neighbors (simple strategy: keep M closest) ──
-    private selectNeighbors(
-        candidates: Array<{ id: number; dist: number }>,
-        maxNeighbors: number
-    ): number[] {
+    private selectNeighbors(candidates: Array<{ id: number; dist: number }>, maxNeighbors: number): number[] {
         return candidates
             .sort((a, b) => a.dist - b.dist)
             .slice(0, maxNeighbors)
-            .map(c => c.id);
+            .map((c) => c.id);
     }
 
     // ── Public API ────────────────────────────────
@@ -353,7 +367,7 @@ export class HNSWIndex {
 
                 // Trim if over capacity
                 if (neighbor.neighbors[l].length > M * 2) {
-                    const neighborCandidates = neighbor.neighbors[l].map(nid => {
+                    const neighborCandidates = neighbor.neighbors[l].map((nid) => {
                         const n = this.nodes.get(nid);
                         return { id: nid, dist: n ? this.distance(neighbor.vector, n.vector) : Infinity };
                     });
@@ -361,7 +375,7 @@ export class HNSWIndex {
                 }
             }
 
-            currentEntryIds = candidates.map(c => c.id);
+            currentEntryIds = candidates.map((c) => c.id);
         }
 
         // Update entry point if new node has higher level
@@ -381,7 +395,7 @@ export class HNSWIndex {
             for (const neighborId of node.neighbors[l] || []) {
                 const neighbor = this.nodes.get(neighborId);
                 if (neighbor && neighbor.neighbors[l]) {
-                    neighbor.neighbors[l] = neighbor.neighbors[l].filter(nid => nid !== id);
+                    neighbor.neighbors[l] = neighbor.neighbors[l].filter((nid) => nid !== id);
                 }
             }
         }
@@ -398,7 +412,10 @@ export class HNSWIndex {
                 let bestId = -1;
                 let bestLevel = -1;
                 for (const [nid, n] of this.nodes) {
-                    if (n.level > bestLevel) { bestId = nid; bestLevel = n.level; }
+                    if (n.level > bestLevel) {
+                        bestId = nid;
+                        bestLevel = n.level;
+                    }
                 }
                 this.entryPoint = bestId;
                 this.maxLevel = bestLevel;
@@ -424,7 +441,7 @@ export class HNSWIndex {
         return results
             .sort((a, b) => a.dist - b.dist)
             .slice(0, k)
-            .map(r => ({ id: r.id, distance: r.dist }));
+            .map((r) => ({ id: r.id, distance: r.dist }));
     }
 
     /** Number of vectors in the index */
@@ -435,6 +452,11 @@ export class HNSWIndex {
     /** Check if a vector exists */
     has(id: number): boolean {
         return this.nodes.has(id);
+    }
+
+    /** Ids of every indexed vector */
+    ids(): number[] {
+        return [...this.nodes.keys()];
     }
 
     /** Check if native SIMD acceleration is available */
@@ -461,7 +483,7 @@ export class HNSWIndex {
         if (nativeModule) {
             // Use native parallel top-k search (10-50x faster)
             const results = nativeModule.findTopKSimilar(query, vectors, k);
-            return results.map(r => ({
+            return results.map((r) => ({
                 id: ids[r.index],
                 distance: 1 - r.score, // Convert similarity to distance
             }));
@@ -476,9 +498,7 @@ export class HNSWIndex {
             return { id: ids[i], distance: 1 - dot };
         });
 
-        return scored
-            .sort((a, b) => a.distance - b.distance)
-            .slice(0, k);
+        return scored.sort((a, b) => a.distance - b.distance).slice(0, k);
     }
 
     // ── Persistence ───────────────────────────────
@@ -520,7 +540,9 @@ export class HNSWIndex {
             // Detect embedding version mismatch — old index needs rebuild
             const storedEmbVer = data.embeddingVersion || 1;
             if (storedEmbVer !== getEmbeddingVersion()) {
-                console.warn(`[HNSW] Embedding version mismatch (index: v${storedEmbVer}, current: v${getEmbeddingVersion()}), will rebuild`);
+                console.warn(
+                    `[HNSW] Embedding version mismatch (index: v${storedEmbVer}, current: v${getEmbeddingVersion()}), will rebuild`,
+                );
                 // Back up old index for legacy queries during migration
                 const backupPath = `${INDEX_PATH}.v${storedEmbVer}.bak`;
                 if (!fs.existsSync(backupPath)) {
@@ -636,14 +658,15 @@ export async function buildIndexFromDB(rawDb: import("better-sqlite3").Database)
     // Fall back to all embeddings if embedding_version column doesn't exist yet
     let rows: Array<{ memory_id: number; embedding: Buffer }>;
     try {
-        rows = rawDb.prepare(
-            "SELECT memory_id, embedding FROM memory_embeddings WHERE embedding_version = ?"
-        ).all(currentVersion) as Array<{ memory_id: number; embedding: Buffer }>;
+        rows = rawDb
+            .prepare("SELECT memory_id, embedding FROM memory_embeddings WHERE embedding_version = ?")
+            .all(currentVersion) as Array<{ memory_id: number; embedding: Buffer }>;
     } catch {
         // Column doesn't exist yet — load all (they're all v1)
-        rows = rawDb.prepare(
-            "SELECT memory_id, embedding FROM memory_embeddings"
-        ).all() as Array<{ memory_id: number; embedding: Buffer }>;
+        rows = rawDb.prepare("SELECT memory_id, embedding FROM memory_embeddings").all() as Array<{
+            memory_id: number;
+            embedding: Buffer;
+        }>;
     }
 
     if (rows.length === 0) {
@@ -651,8 +674,9 @@ export async function buildIndexFromDB(rawDb: import("better-sqlite3").Database)
         return;
     }
 
-    // Check if index is already up to date
-    if (index.size === rows.length) {
+    // Up to date only when the id sets match: a forget + store leaves the
+    // count unchanged while the new memory is missing from the index.
+    if (index.size === rows.length && rows.every((r) => index.has(r.memory_id))) {
         console.log(`[HNSW] Index already up to date (${index.size} v${currentVersion} vectors)`);
         return;
     }
@@ -668,14 +692,25 @@ export async function buildIndexFromDB(rawDb: import("better-sqlite3").Database)
         const firstVec = new Float32Array(new Uint8Array(rows[0].embedding).buffer);
         detectedDim = firstVec.length;
         if (detectedDim !== index.getDimension()) {
-            console.log(`[HNSW] Dimension mismatch: index=${index.getDimension()}, embeddings=${detectedDim}. Recreating index.`);
+            console.log(
+                `[HNSW] Dimension mismatch: index=${index.getDimension()}, embeddings=${detectedDim}. Recreating index.`,
+            );
             _index = new HNSWIndex(detectedDim);
         }
     }
 
     const activeIndex = _index || index;
 
+    // Drop vectors whose memory is gone, so search can't return dead ids.
+    const wanted = new Set(rows.map((r) => r.memory_id));
+    for (const id of activeIndex.ids()) {
+        if (!wanted.has(id)) activeIndex.removeVector(id);
+    }
+
+    let seen = 0;
     for (const row of rows) {
+        // Boot runs this; don't hold the event loop for the whole store.
+        if (++seen % 50 === 0) await new Promise((r) => setImmediate(r));
         if (activeIndex.has(row.memory_id)) continue;
 
         // Convert Buffer → Float32Array
@@ -707,7 +742,7 @@ export async function buildIndexFromDB(rawDb: import("better-sqlite3").Database)
  */
 export async function migrateEmbeddingsBatch(
     rawDb: import("better-sqlite3").Database,
-    batchSize = 50
+    batchSize = 50,
 ): Promise<{ migrated: number; remaining: number }> {
     const { embedText, embeddingToBuffer } = await import("./embeddings.js");
     const currentVersion = getEmbeddingVersion();
@@ -715,13 +750,15 @@ export async function migrateEmbeddingsBatch(
     // Find unmigrated memories
     let unmigrated: Array<{ memory_id: number; content: string }>;
     try {
-        unmigrated = rawDb.prepare(`
+        unmigrated = rawDb
+            .prepare(`
             SELECT e.memory_id, m.content
             FROM memory_embeddings e
             JOIN memories m ON e.memory_id = m.id
             WHERE e.embedding_version < ?
             LIMIT ?
-        `).all(currentVersion, batchSize) as Array<{ memory_id: number; content: string }>;
+        `)
+            .all(currentVersion, batchSize) as Array<{ memory_id: number; content: string }>;
     } catch {
         return { migrated: 0, remaining: 0 };
     }
@@ -739,9 +776,11 @@ export async function migrateEmbeddingsBatch(
             const newEmbedding = await embedText(row.content, "document");
 
             // Update in database
-            rawDb.prepare(
-                "UPDATE memory_embeddings SET embedding = ?, embedding_version = ?, created_at = datetime('now') WHERE memory_id = ?"
-            ).run(embeddingToBuffer(newEmbedding), currentVersion, row.memory_id);
+            rawDb
+                .prepare(
+                    "UPDATE memory_embeddings SET embedding = ?, embedding_version = ?, created_at = datetime('now') WHERE memory_id = ?",
+                )
+                .run(embeddingToBuffer(newEmbedding), currentVersion, row.memory_id);
 
             // Update in HNSW index
             index.addVector(row.memory_id, newEmbedding);
@@ -759,17 +798,20 @@ export async function migrateEmbeddingsBatch(
     // Count remaining
     let remaining = 0;
     try {
-        const result = rawDb.prepare(
-            "SELECT COUNT(*) as cnt FROM memory_embeddings WHERE embedding_version < ?"
-        ).get(currentVersion) as { cnt: number } | undefined;
+        const result = rawDb
+            .prepare("SELECT COUNT(*) as cnt FROM memory_embeddings WHERE embedding_version < ?")
+            .get(currentVersion) as { cnt: number } | undefined;
         remaining = result?.cnt ?? 0;
-    } catch { /* */ }
+    } catch {
+        /* */
+    }
 
     console.log(`[HNSW-MIGRATE] Migrated ${migrated}/${unmigrated.length} embeddings (${remaining} remaining)`);
 
     // Update migration state
     try {
-        rawDb.prepare(`
+        rawDb
+            .prepare(`
             INSERT OR REPLACE INTO embedding_migration_state
             (id, source_version, target_version, total_memories, migrated_memories, status, updated_at)
             VALUES (1, 1, ?,
@@ -777,8 +819,11 @@ export async function migrateEmbeddingsBatch(
                 (SELECT COUNT(*) FROM memory_embeddings WHERE embedding_version = ?),
                 CASE WHEN ? = 0 THEN 'completed' ELSE 'in_progress' END,
                 datetime('now'))
-        `).run(currentVersion, currentVersion, remaining);
-    } catch { /* migration table might not exist */ }
+        `)
+            .run(currentVersion, currentVersion, remaining);
+    } catch {
+        /* migration table might not exist */
+    }
 
     return { migrated, remaining };
 }
