@@ -20,7 +20,7 @@
         "protect:standalone": "node build/obfuscate.js ../dist ../dist-obfuscated && node build/compile-bytecode.js --in-place ../dist-obfuscated"
     },
     "dependencies": {
-        "@whiskeysockets/baileys": "^7.0.0-rc.9",
+        "@whiskeysockets/baileys": "^7.0.0-rc14",
         "adm-zip": "^0.5.16",
         "better-sqlite3": "^12.6.2",
         "electron-store": "^8.2.0",
@@ -35,7 +35,7 @@
         "esbuild": "^0.28.0",
         "javascript-obfuscator": "^4.1.1",
         "jsdom": "^29.0.2",
-        "vitest": "^2.1.9"
+        "vitest": "^4.1.12"
     },
     "build": {
         "appId": "com.xagilabs.bhai",
@@ -168,7 +168,9 @@
         ],
         "win": {
             "signtoolOptions": {
-                "signingHashAlgorithms": ["sha256"]
+                "signingHashAlgorithms": [
+                    "sha256"
+                ]
             },
             "target": [
                 {
@@ -269,11 +271,15 @@
             "target": [
                 {
                     "target": "AppImage",
-                    "arch": ["x64"]
+                    "arch": [
+                        "x64"
+                    ]
                 },
                 {
                     "target": "deb",
-                    "arch": ["x64"]
+                    "arch": [
+                        "x64"
+                    ]
                 }
             ],
             "icon": "logo.png",

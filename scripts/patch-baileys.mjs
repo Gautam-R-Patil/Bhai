@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Cross-platform replacement for patch-baileys.sh
-// Patches Baileys 7.0.0-rc.9 to fix 405 connection failure
+// Patches Baileys 7.0.0-rc (rc.9 through rc14) to fix 405 connection failure; [1/4] is a no-op from rc14 on
 
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -14,7 +14,7 @@ if (!existsSync(BAILEYS)) {
     process.exit(0);
 }
 
-console.log("[patch-baileys] Patching Baileys v7.0.0-rc.9...");
+console.log("[patch-baileys] Patching Baileys v7.0.0-rc...");
 
 function patchFile(filePath, search, replace, label) {
     if (!existsSync(filePath)) return;
@@ -42,7 +42,7 @@ if (existsSync(vcPath)) {
     if (content.includes("lidDbMigrated: false")) {
         content = content
             .split("\n")
-            .filter(line => !line.includes("lidDbMigrated: false"))
+            .filter((line) => !line.includes("lidDbMigrated: false"))
             .join("\n")
             .replace(/device: device,\s*$/m, "device: device");
         writeFileSync(vcPath, content, "utf-8");
@@ -53,6 +53,11 @@ if (existsSync(vcPath)) {
 }
 
 // Patch 4: Remove await from noise.finishInit() race condition
-patchFile(join(BAILEYS, "Socket", "socket.js"), "await noise.finishInit()", "noise.finishInit()", "[4/4] Noise race condition");
+patchFile(
+    join(BAILEYS, "Socket", "socket.js"),
+    "await noise.finishInit()",
+    "noise.finishInit()",
+    "[4/4] Noise race condition",
+);
 
 console.log("[patch-baileys] Done!");

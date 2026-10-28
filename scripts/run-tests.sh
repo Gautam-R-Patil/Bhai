@@ -56,6 +56,5 @@ WORKERS="${ATLAS_TEST_WORKERS:-4}"
 # which some Bhai tests use for cwd-relative path resolution.
 exec npx vitest run \
     --pool=forks \
-    --poolOptions.forks.minForks=1 \
-    --poolOptions.forks.maxForks="$WORKERS" \
+    --maxWorkers="$WORKERS" \
     "$@"

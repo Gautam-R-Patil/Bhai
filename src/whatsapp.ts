@@ -2,90 +2,81 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import makeWASocket, {
-    useMultiFileAuthState,
-    DisconnectReason,
-    makeCacheableSignalKeyStore,
-    downloadMediaMessage,
-    getContentType,
-    Browsers,
-    type WASocket,
-    type WAMessage,
-    type BaileysEventMap,
-} from "@whiskeysockets/baileys";
-import { Boom } from "@hapi/boom";
-import qrcode from "qrcode-terminal";
-import { basename as pathBasename, join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
-import { randomUUID } from "node:crypto";
-import pino from "pino";
+import { join, basename as pathBasename } from "node:path";
+import type { Boom } from "@hapi/boom";
+import makeWASocket, {
+    type BaileysEventMap,
+    Browsers,
+    DisconnectReason,
+    downloadMediaMessage,
+    getContentType,
+    makeCacheableSignalKeyStore,
+    useMultiFileAuthState,
+    type WAMessage,
+    type WASocket,
+} from "@whiskeysockets/baileys";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
+import pino from "pino";
+import qrcode from "qrcode-terminal";
+import { type MediaAttachment, runAgent } from "./agent.js";
+import { categorizeError, getErrorMessage, smartChunkMessage } from "./alive-ux.js";
 import type { LLMClient } from "./llm.js";
-import { runAgent, type MediaAttachment, type ChannelContext } from "./agent.js";
-import { sweepStaleWhatsAppMaps } from "./whatsapp-sweep.js";
+import { recall } from "./memory/sqlite.js";
 import {
-    smartChunkMessage,
-    categorizeError,
-    getErrorMessage,
-} from "./alive-ux.js";
-import type { ToolDefinition } from "./tools/get-current-time.js";
-import {
-    initWhatsAppUsers,
-    generateOTP,
-    getActiveOTP,
-    verifyOTP,
-    isOwner,
-    isContact,
-    isBlocked,
-    addOwner,
-    allowContact,
-    blockContact,
-    getContactConversation,
-    appendContactMessage,
-    getContactProfile,
-    updateContactProfile,
-    searchContacts,
-    addContactMemory,
-    getPersona,
-    setPersona,
-    createContactRequest,
-    resolveContactRequest,
-    getPendingRequests,
-    getOwners,
-    getContacts,
-    jidToPhone,
-    // Group functions:
-    getGroup,
-    isGroupActive,
-    isGroupPending,
-    isGroupMuted,
-    addGroup as addGroupData,
-    approveGroup,
-    muteGroup,
-    unmuteGroup,
-    removeGroup as removeGroupData,
-    appendGroupMessage,
-    getGroupHistory,
-    getGroupParticipant,
-    updateGroupParticipant,
-    updateGroupMetadata,
-    getActiveGroups,
-    getPendingGroups,
-    getAllGroups,
-    searchGroups,
-    type GroupMessage,
-    type WhatsAppGroup,
-} from "./whatsapp-users.js";
-import { recall, remember } from "./memory/sqlite.js";
-import {
-    askOwnerTool,
     getPendingQueriesForOwner,
     registerOwnerRelaySender,
     resolveLatestQueryForOwner,
     resolveQueryByContactName,
     setRelayContactContext,
 } from "./tools/ask-owner.js";
+import type { ToolDefinition } from "./tools/get-current-time.js";
+import { sweepStaleWhatsAppMaps } from "./whatsapp-sweep.js";
+import {
+    addGroup as addGroupData,
+    addOwner,
+    allowContact,
+    appendContactMessage,
+    appendGroupMessage,
+    approveGroup,
+    blockContact,
+    createContactRequest,
+    type GroupMessage,
+    generateOTP,
+    getActiveGroups,
+    getActiveOTP,
+    getAllGroups,
+    getContactConversation,
+    getContactProfile,
+    getContacts,
+    // Group functions:
+    getGroup,
+    getGroupHistory,
+    getGroupParticipant,
+    getOwners,
+    getPendingGroups,
+    getPendingRequests,
+    getPersona,
+    initWhatsAppUsers,
+    isBlocked,
+    isContact,
+    isOwner,
+    jidToPhone,
+    muteGroup,
+    removeGroup as removeGroupData,
+    resolveContactRequest,
+    searchContacts,
+    searchGroups,
+    setPersona,
+    unmuteGroup,
+    updateContactProfile,
+    updateGroupMetadata,
+    updateGroupParticipant,
+    verifyOTP,
+    type WhatsAppGroup,
+} from "./whatsapp-users.js";
 
 // ── Constants ────────────────────────────────
 
@@ -96,7 +87,7 @@ const MAX_MESSAGE_LENGTH = 4096;
 const RATE_LIMIT = {
     MAX_PER_HOUR: 50,
     MIN_INTERVAL_MS: 2000,
-    TYPING_MS_PER_CHAR: 15,    // ~15ms per char typing simulation
+    TYPING_MS_PER_CHAR: 15, // ~15ms per char typing simulation
     MAX_TYPING_DELAY_MS: 3000,
     MIN_TYPING_DELAY_MS: 1000,
 };
@@ -201,19 +192,21 @@ function sanitizeIncomingChannelText(text: string): string {
 // ── Strip internal debug blocks before sending ──
 
 function sanitizeReply(text: string): string {
-    return text
-        .replace(/<system_log>[\s\S]*?<\/system_log>/g, "")
-        .replace(/<tool_log[\s\S]*?<\/tool_log>/g, "")
-        .replace(/\[Tool Result [^\]]+\]:[\s\S]*?(?=\n\n|\n[A-Z]|$)/g, "")
-        .replace(/\[SYSTEM NOTE:[^\]]*\]/g, "")
-        // Strip bare inline tool-call narrations that appear when the agent narrates
-        // tool usage as plain text (e.g. "web_search: query" or "spotify action='play'").
-        // Matches snake_case tool names followed by colon+arg or key=value params.
-        .replace(/^[a-z]+(?:_[a-z0-9]+)+:\s+\S.+$/gm, "")
-        .replace(/^[a-z][a-z0-9]* (?:action|url|query|format|input)=['"].+$/gm, "")
-        // Collapse any resulting multiple blank lines
-        .replace(/\n{3,}/g, "\n\n")
-        .trim();
+    return (
+        text
+            .replace(/<system_log>[\s\S]*?<\/system_log>/g, "")
+            .replace(/<tool_log[\s\S]*?<\/tool_log>/g, "")
+            .replace(/\[Tool Result [^\]]+\]:[\s\S]*?(?=\n\n|\n[A-Z]|$)/g, "")
+            .replace(/\[SYSTEM NOTE:[^\]]*\]/g, "")
+            // Strip bare inline tool-call narrations that appear when the agent narrates
+            // tool usage as plain text (e.g. "web_search: query" or "spotify action='play'").
+            // Matches snake_case tool names followed by colon+arg or key=value params.
+            .replace(/^[a-z]+(?:_[a-z0-9]+)+:\s+\S.+$/gm, "")
+            .replace(/^[a-z][a-z0-9]* (?:action|url|query|format|input)=['"].+$/gm, "")
+            // Collapse any resulting multiple blank lines
+            .replace(/\n{3,}/g, "\n\n")
+            .trim()
+    );
 }
 
 // ── Markdown to WhatsApp plain text ──────────
@@ -249,7 +242,7 @@ function markdownToWhatsApp(text: string): string {
     result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1 — $2");
 
     // Bullet points: * item or - item -> • item (avoid conflict with WhatsApp bold)
-    result = result.replace(/^[\s]*[*\-]\s+/gm, "• ");
+    result = result.replace(/^[\s]*[*-]\s+/gm, "• ");
 
     // Numbered lists: preserve as-is
     result = result.replace(/^(\d+)\.\s+/gm, "$1. ");
@@ -259,7 +252,11 @@ function markdownToWhatsApp(text: string): string {
     if (tableMatch && tableMatch.length >= 2) {
         result = result.replace(/^\|(.+)\|$/gm, (_, content) => {
             if (/^[\s\-:|]+$/.test(content)) return "";
-            return content.split("|").map((c: string) => c.trim()).filter(Boolean).join("  |  ");
+            return content
+                .split("|")
+                .map((c: string) => c.trim())
+                .filter(Boolean)
+                .join("  |  ");
         });
         result = result.replace(/\n{2,}/g, "\n");
     }
@@ -292,7 +289,7 @@ async function enforceMinInterval(): Promise<void> {
     const now = Date.now();
     const elapsed = now - lastMessageTime;
     if (elapsed < RATE_LIMIT.MIN_INTERVAL_MS) {
-        await new Promise(r => setTimeout(r, RATE_LIMIT.MIN_INTERVAL_MS - elapsed));
+        await new Promise((r) => setTimeout(r, RATE_LIMIT.MIN_INTERVAL_MS - elapsed));
     }
     lastMessageTime = Date.now();
 }
@@ -331,7 +328,7 @@ function splitIntoBubbles(text: string): string[] {
     const merged: string[] = [];
     for (const part of parts) {
         if (merged.length > 0 && merged[merged.length - 1].length < 40 && part.length < 40) {
-            merged[merged.length - 1] += "\n\n" + part;
+            merged[merged.length - 1] += `\n\n${part}`;
         } else {
             merged.push(part);
         }
@@ -359,7 +356,7 @@ async function sendMessage(jid: string, text: string, quotedMsg?: WAMessage): Pr
     for (let i = 0; i < chunks.length; i++) {
         const formatted = markdownToWhatsApp(sanitizeReply(chunks[i]));
         // Only quote the original message on the FIRST chunk (not on splits)
-        const opts = (i === 0 && quotedMsg) ? { quoted: quotedMsg } : undefined;
+        const opts = i === 0 && quotedMsg ? { quoted: quotedMsg } : undefined;
         try {
             await socket.sendMessage(jid, { text: formatted }, opts);
         } catch (err) {
@@ -373,7 +370,9 @@ async function sendMessage(jid: string, text: string, quotedMsg?: WAMessage): Pr
                     .replace(/`([^`]+)`/g, "$1")
                     .replace(/```[\s\S]*?```/g, (m: string) => m.replace(/```\w*\n?/g, "").trim());
                 await socket.sendMessage(jid, { text: sanitizeReply(plain) });
-            } catch { /* give up */ }
+            } catch {
+                /* give up */
+            }
         }
     }
 }
@@ -432,8 +431,9 @@ function extractQuotedContext(message: WAMessage): string | null {
     if (!contextInfo?.quotedMessage) return null;
 
     const quoted = contextInfo.quotedMessage;
-    const isFromMe = contextInfo.participant === socket?.user?.id ||
-                     contextInfo.participant?.includes(socket?.user?.id?.split(":")[0] || "__none__");
+    const isFromMe =
+        contextInfo.participant === socket?.user?.id ||
+        contextInfo.participant?.includes(socket?.user?.id?.split(":")[0] || "__none__");
 
     // Extract text from the quoted message
     let quotedText: string | null = null;
@@ -459,7 +459,7 @@ function extractQuotedContext(message: WAMessage): string | null {
     if (!quotedText) return null;
 
     // Truncate long quoted text
-    const truncated = quotedText.length > 300 ? quotedText.substring(0, 300) + "..." : quotedText;
+    const truncated = quotedText.length > 300 ? `${quotedText.substring(0, 300)}...` : quotedText;
     const sender = isFromMe ? "Bhai (you)" : "the user";
 
     return `[Replying to ${sender}'s message: "${truncated}"]`;
@@ -546,7 +546,7 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
 
     try {
         if (contentType === "imageMessage" && msg.imageMessage) {
-            const buffer = await downloadMediaMessage(message, "buffer", {}) as Buffer;
+            const buffer = (await downloadMediaMessage(message, "buffer", {})) as Buffer;
             const mimeType = msg.imageMessage.mimetype || "image/jpeg";
             const base64 = buffer.toString("base64");
 
@@ -563,7 +563,7 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
         }
 
         if (contentType === "videoMessage" && msg.videoMessage) {
-            const buffer = await downloadMediaMessage(message, "buffer", {}) as Buffer;
+            const buffer = (await downloadMediaMessage(message, "buffer", {})) as Buffer;
             const mimeType = msg.videoMessage.mimetype || "video/mp4";
             const base64 = buffer.toString("base64");
 
@@ -578,11 +578,11 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
         }
 
         if (contentType === "audioMessage" && msg.audioMessage) {
-            const buffer = await downloadMediaMessage(message, "buffer", {}) as Buffer;
+            const buffer = (await downloadMediaMessage(message, "buffer", {})) as Buffer;
             const mediaDir = join(tmpdir(), "atlas_media");
             await fs.mkdir(mediaDir, { recursive: true });
             const isVoiceNote = msg.audioMessage.ptt === true;
-            const ext = isVoiceNote ? "ogg" : (msg.audioMessage.mimetype?.split("/")[1]?.split(";")[0] || "ogg");
+            const ext = isVoiceNote ? "ogg" : msg.audioMessage.mimetype?.split("/")[1]?.split(";")[0] || "ogg";
             const tmpFilePath = join(mediaDir, `whatsapp_audio_${randomUUID()}.${ext}`);
             await fs.writeFile(tmpFilePath, buffer);
 
@@ -594,7 +594,8 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
                     if (transcript?.trim()) {
                         enrichedText = transcript.trim();
                     } else {
-                        enrichedText = "[VOICE NOTE FROM USER -- no speech detected. Ask them to try again or type their message.]";
+                        enrichedText =
+                            "[VOICE NOTE FROM USER -- no speech detected. Ask them to try again or type their message.]";
                     }
                 } catch {
                     enrichedText = "[VOICE NOTE FROM USER -- transcription failed. Ask them to type their message.]";
@@ -607,7 +608,7 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
 
         // Sticker messages
         if (contentType === "stickerMessage" && msg.stickerMessage) {
-            const buffer = await downloadMediaMessage(message, "buffer", {}) as Buffer;
+            const buffer = (await downloadMediaMessage(message, "buffer", {})) as Buffer;
             const mediaDir = join(tmpdir(), "atlas_media");
             await fs.mkdir(mediaDir, { recursive: true });
             const isAnimated = msg.stickerMessage.isAnimated;
@@ -624,7 +625,7 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
             const lng = msg.locationMessage.degreesLongitude;
             const name = msg.locationMessage.name || "";
             const address = msg.locationMessage.address || "";
-            enrichedText = `User shared a location: ${name ? name + " — " : ""}${address ? address + " — " : ""}${lat}, ${lng}\nGoogle Maps: https://maps.google.com/?q=${lat},${lng}`;
+            enrichedText = `User shared a location: ${name ? `${name} — ` : ""}${address ? `${address} — ` : ""}${lat}, ${lng}\nGoogle Maps: https://maps.google.com/?q=${lat},${lng}`;
         }
 
         // Live location messages
@@ -646,22 +647,27 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
         // Contact array messages
         if (contentType === "contactsArrayMessage" && msg.contactsArrayMessage) {
             const contacts = msg.contactsArrayMessage.contacts || [];
-            const list = contacts.map(c => {
-                const phoneMatch = (c.vcard || "").match(/TEL[^:]*:([+\d\s-]+)/);
-                return `${c.displayName || "Unknown"} (${phoneMatch ? phoneMatch[1].trim() : "no phone"})`;
-            }).join("\n• ");
+            const list = contacts
+                .map((c) => {
+                    const phoneMatch = (c.vcard || "").match(/TEL[^:]*:([+\d\s-]+)/);
+                    return `${c.displayName || "Unknown"} (${phoneMatch ? phoneMatch[1].trim() : "no phone"})`;
+                })
+                .join("\n• ");
             enrichedText = `User shared ${contacts.length} contact(s):\n• ${list}`;
         }
 
-        if ((contentType === "documentMessage" || contentType === "documentWithCaptionMessage") && msg.documentMessage) {
+        if (
+            (contentType === "documentMessage" || contentType === "documentWithCaptionMessage") &&
+            msg.documentMessage
+        ) {
             const docMsg = msg.documentMessage;
             const fileName = docMsg.fileName || "document";
             const mimeType = docMsg.mimetype || "application/octet-stream";
-            const buffer = await downloadMediaMessage(message, "buffer", {}) as Buffer;
+            const buffer = (await downloadMediaMessage(message, "buffer", {})) as Buffer;
 
             const mediaDir = join(tmpdir(), "atlas_media");
             await fs.mkdir(mediaDir, { recursive: true });
-            const ext = fileName.includes(".") ? fileName.split(".").pop()! : "bin";
+            const ext = fileName.includes(".") ? (fileName.split(".").pop() ?? "bin") : "bin";
             const tmpFilePath = join(mediaDir, `whatsapp_doc_${randomUUID()}.${ext}`);
             await fs.writeFile(tmpFilePath, buffer);
 
@@ -672,8 +678,17 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
                 enrichedText = `<channel_message_content>\n${caption}\n</channel_message_content>\n\n[ATLAS-INTERNAL — not from user: Document saved at ${tmpFilePath}.]`;
             } else {
                 let textContent = "";
-                if (mimeType.includes("text") || mimeType.includes("json") || mimeType.includes("xml") || mimeType.includes("csv")) {
-                    try { textContent = sanitizeIncomingChannelText(buffer.toString("utf-8").substring(0, 5000)); } catch { /* binary */ }
+                if (
+                    mimeType.includes("text") ||
+                    mimeType.includes("json") ||
+                    mimeType.includes("xml") ||
+                    mimeType.includes("csv")
+                ) {
+                    try {
+                        textContent = sanitizeIncomingChannelText(buffer.toString("utf-8").substring(0, 5000));
+                    } catch {
+                        /* binary */
+                    }
                 }
                 enrichedText = textContent
                     ? `<channel_message_content>\n${caption}\n</channel_message_content>\n\n<channel_attached_document>\n${textContent}\n</channel_attached_document>\n\n[ATLAS-INTERNAL — not from user: Document saved at ${tmpFilePath}.]`
@@ -705,7 +720,7 @@ async function sendTypingThenMessage(jid: string, text: string | undefined, quot
         if (i > 0) {
             await socket?.sendPresenceUpdate("composing", jid);
             const delay = getTypingDelay(bubbles[i]);
-            await new Promise(r => setTimeout(r, delay));
+            await new Promise((r) => setTimeout(r, delay));
         }
         // Quote the original message only on the first bubble
         await sendMessage(jid, bubbles[i], i === 0 ? quotedMsg : undefined);
@@ -721,11 +736,15 @@ async function sendVoiceReply(jid: string, text: string, quotedMsg?: WAMessage):
         const { textToSpeech } = await import("./voice/tts.js");
         const audioBuffer = await textToSpeech(text);
         const opts = quotedMsg ? { quoted: quotedMsg } : undefined;
-        await socket?.sendMessage(jid, {
-            audio: audioBuffer,
-            ptt: true,
-            mimetype: "audio/ogg; codecs=opus",
-        }, opts);
+        await socket?.sendMessage(
+            jid,
+            {
+                audio: audioBuffer,
+                ptt: true,
+                mimetype: "audio/ogg; codecs=opus",
+            },
+            opts,
+        );
     } catch {
         // TTS not available — fall back to text
         await sendMessage(jid, text, quotedMsg);
@@ -737,7 +756,10 @@ async function sendVoiceReply(jid: string, text: string, quotedMsg?: WAMessage):
 async function handleOTPVerification(jid: string, text: string, pushName: string | null | undefined): Promise<void> {
     const success = verifyOTP(jid, text.trim());
     if (success) {
-        await sendMessage(jid, "Verified! You are now registered as an owner of Bhai. You have full access to all capabilities.");
+        await sendMessage(
+            jid,
+            "Verified! You are now registered as an owner of Bhai. You have full access to all capabilities.",
+        );
         console.log(`[WHATSAPP] Owner verified: ${jid} (${pushName || "unknown"})`);
     } else {
         await sendMessage(jid, "Invalid or expired code. Please try again.");
@@ -840,7 +862,9 @@ async function handleOwnerMessage(
             const saved = [
                 relation ? `relation: ${relation}` : null,
                 ownerNickname ? `you call them "${ownerNickname}"` : null,
-            ].filter(Boolean).join(", ");
+            ]
+                .filter(Boolean)
+                .join(", ");
             await sendMessage(jid, `Allowed ${contactName}. Noted — ${saved}. I'll respond to them now.`);
         } else {
             await sendMessage(jid, `Allowed ${contactName}. I'll respond to them now.`);
@@ -860,15 +884,18 @@ async function handleOwnerMessage(
         const rest = text.substring("set contact ".length);
         const colonIdx = rest.indexOf(":");
         if (colonIdx === -1) {
-            await sendMessage(jid, `Usage: set contact <name>: <context>\nExample: set contact Sunitha: she's my college friend, I call her Sunni`);
+            await sendMessage(
+                jid,
+                `Usage: set contact <name>: <context>\nExample: set contact Sunitha: she's my college friend, I call her Sunni`,
+            );
             return;
         }
         const searchName = rest.substring(0, colonIdx).trim().toLowerCase();
         const contextText = rest.substring(colonIdx + 1).trim();
         const allContacts = getContacts();
-        const match = allContacts.find(c =>
-            (c.displayName || "").toLowerCase().includes(searchName) ||
-            (c.phoneNumber || "").includes(searchName),
+        const match = allContacts.find(
+            (c) =>
+                (c.displayName || "").toLowerCase().includes(searchName) || (c.phoneNumber || "").includes(searchName),
         );
         if (!match) {
             await sendMessage(jid, `No contact found matching "${searchName}".`);
@@ -885,7 +912,9 @@ async function handleOwnerMessage(
         const saved = [
             relation ? `relation: ${relation}` : null,
             ownerNickname ? `you call them "${ownerNickname}"` : null,
-        ].filter(Boolean).join(", ");
+        ]
+            .filter(Boolean)
+            .join(", ");
         await sendMessage(jid, `Updated ${match.displayName || match.phoneNumber} — ${saved}.`);
         return;
     }
@@ -947,11 +976,14 @@ async function handleOwnerMessage(
     if (lower.startsWith("set tools:")) {
         const raw = text.substring("set tools:".length).trim();
         if (raw) {
-            const tools = raw.split(",").map(t => t.trim()).filter(Boolean);
+            const tools = raw
+                .split(",")
+                .map((t) => t.trim())
+                .filter(Boolean);
             setPersona({ allowedToolNames: tools });
             await sendMessage(jid, `Allowed tools updated to: ${tools.join(", ")}`);
         } else {
-            await sendMessage(jid, "Usage: set tools: tool1, tool2, tool3\nSend \"set tools: none\" to allow no tools.");
+            await sendMessage(jid, 'Usage: set tools: tool1, tool2, tool3\nSend "set tools: none" to allow no tools.');
         }
         return;
     }
@@ -976,7 +1008,7 @@ async function handleOwnerMessage(
         const toolName = text.substring("remove tool:".length).trim();
         if (toolName) {
             const current = getPersona().allowedToolNames ?? [];
-            const updated = current.filter(t => t !== toolName);
+            const updated = current.filter((t) => t !== toolName);
             if (updated.length !== current.length) {
                 setPersona({ allowedToolNames: updated });
                 await sendMessage(jid, `Removed "${toolName}" from allowed tools.`);
@@ -1005,7 +1037,7 @@ async function handleOwnerMessage(
     if (lower.startsWith("approve ")) {
         const groupName = text.substring("approve ".length).trim();
         const pending = getPendingGroups();
-        const match = pending.find(g => g.name.toLowerCase().includes(groupName.toLowerCase()));
+        const match = pending.find((g) => g.name.toLowerCase().includes(groupName.toLowerCase()));
         if (match) {
             approveGroup(match.jid, jid);
             await sendMessage(jid, `Approved group "${match.name}". I'll start participating naturally.`);
@@ -1017,7 +1049,7 @@ async function handleOwnerMessage(
     if (lower.startsWith("decline ") || lower.startsWith("leave ")) {
         const groupName = text.substring(text.indexOf(" ") + 1).trim();
         const allGroups = getAllGroups();
-        const match = allGroups.find(g => g.name.toLowerCase().includes(groupName.toLowerCase()));
+        const match = allGroups.find((g) => g.name.toLowerCase().includes(groupName.toLowerCase()));
         if (match) {
             await socket?.groupLeave(match.jid).catch(() => {});
             removeGroupData(match.jid);
@@ -1030,27 +1062,35 @@ async function handleOwnerMessage(
     if (lower === "groups") {
         const active = getActiveGroups();
         const pending = getPendingGroups();
-        const muted = getAllGroups().filter(g => g.status === "muted");
+        const muted = getAllGroups().filter((g) => g.status === "muted");
         let response = "*WhatsApp Groups*\n\n";
-        if (active.length) response += `*Active (${active.length}):*\n${active.map(g => `• ${g.name} — ${g.totalMessageCount || 0} msgs, ${Object.keys(g.participants).length} people`).join("\n")}\n\n`;
-        if (pending.length) response += `*Pending approval (${pending.length}):*\n${pending.map(g => `• ${g.name}`).join("\n")}\n\n`;
-        if (muted.length) response += `*Muted (${muted.length}):*\n${muted.map(g => `• ${g.name}`).join("\n")}\n\n`;
+        if (active.length)
+            response += `*Active (${active.length}):*\n${active.map((g) => `• ${g.name} — ${g.totalMessageCount || 0} msgs, ${Object.keys(g.participants).length} people`).join("\n")}\n\n`;
+        if (pending.length)
+            response += `*Pending approval (${pending.length}):*\n${pending.map((g) => `• ${g.name}`).join("\n")}\n\n`;
+        if (muted.length) response += `*Muted (${muted.length}):*\n${muted.map((g) => `• ${g.name}`).join("\n")}\n\n`;
         if (!active.length && !pending.length && !muted.length) response += "No groups yet.";
         await sendMessage(jid, response.trim());
         return;
     }
     if (lower.startsWith("mute group ")) {
         const groupName = text.substring("mute group ".length).trim();
-        const match = getActiveGroups().find(g => g.name.toLowerCase().includes(groupName.toLowerCase()));
-        if (match) { muteGroup(match.jid); await sendMessage(jid, `Muted group "${match.name}". I'll still observe but won't respond.`); }
-        else await sendMessage(jid, `No active group matching "${groupName}".`);
+        const match = getActiveGroups().find((g) => g.name.toLowerCase().includes(groupName.toLowerCase()));
+        if (match) {
+            muteGroup(match.jid);
+            await sendMessage(jid, `Muted group "${match.name}". I'll still observe but won't respond.`);
+        } else await sendMessage(jid, `No active group matching "${groupName}".`);
         return;
     }
     if (lower.startsWith("unmute group ")) {
         const groupName = text.substring("unmute group ".length).trim();
-        const match = getAllGroups().filter(g => g.status === "muted").find(g => g.name.toLowerCase().includes(groupName.toLowerCase()));
-        if (match) { unmuteGroup(match.jid); await sendMessage(jid, `Unmuted group "${match.name}". I'll participate naturally again.`); }
-        else await sendMessage(jid, `No muted group matching "${groupName}".`);
+        const match = getAllGroups()
+            .filter((g) => g.status === "muted")
+            .find((g) => g.name.toLowerCase().includes(groupName.toLowerCase()));
+        if (match) {
+            unmuteGroup(match.jid);
+            await sendMessage(jid, `Unmuted group "${match.name}". I'll participate naturally again.`);
+        } else await sendMessage(jid, `No muted group matching "${groupName}".`);
         return;
     }
 
@@ -1060,7 +1100,7 @@ async function handleOwnerMessage(
     if (lower.startsWith("reply ")) {
         const body = text.substring("reply ".length).trim();
         const toMatch = body.match(/^to\s+([\w\s]{1,30}):\s*(.+)$/i);
-        let resolved;
+        let resolved: ReturnType<typeof resolveLatestQueryForOwner>;
         let answer: string;
 
         if (toMatch) {
@@ -1077,7 +1117,10 @@ async function handleOwnerMessage(
                 await sendMessage(jid, "No pending contact questions to reply to.");
             } else {
                 const list = pending.map((q, i) => `${i + 1}. *${q.contactName}*: "${q.question}"`).join("\n");
-                await sendMessage(jid, `Pending questions:\n${list}\n\nUse "reply to <name>: <answer>" to respond to a specific one.`);
+                await sendMessage(
+                    jid,
+                    `Pending questions:\n${list}\n\nUse "reply to <name>: <answer>" to respond to a specific one.`,
+                );
             }
             return;
         }
@@ -1101,8 +1144,16 @@ async function handleOwnerMessage(
         if (pending.length === 0) {
             await sendMessage(jid, "No pending contact questions.");
         } else {
-            const list = pending.map((q, i) => `${i + 1}. *${q.contactName}* (${new Date(q.askedAt).toLocaleTimeString()}): "${q.question}"`).join("\n");
-            await sendMessage(jid, `*Pending questions from contacts:*\n${list}\n\nUse "reply <answer>" for the latest or "reply to <name>: <answer>" for a specific one.`);
+            const list = pending
+                .map(
+                    (q, i) =>
+                        `${i + 1}. *${q.contactName}* (${new Date(q.askedAt).toLocaleTimeString()}): "${q.question}"`,
+                )
+                .join("\n");
+            await sendMessage(
+                jid,
+                `*Pending questions from contacts:*\n${list}\n\nUse "reply <answer>" for the latest or "reply to <name>: <answer>" for a specific one.`,
+            );
         }
         return;
     }
@@ -1120,17 +1171,21 @@ async function handleOwnerMessage(
             const nameHint = iCallMatch[1].trim().toLowerCase();
             const nickname = iCallMatch[2].trim();
             const pronouns = new Set(["her", "him", "them", "it"]);
-            let target = pronouns.has(nameHint)
+            const target = pronouns.has(nameHint)
                 ? allContacts.sort((a, b) => (b.lastActive ?? 0) - (a.lastActive ?? 0))[0]
-                : allContacts.find(c =>
-                    (c.displayName || "").toLowerCase().includes(nameHint) ||
-                    (c.phoneNumber || "").includes(nameHint),
-                );
+                : allContacts.find(
+                      (c) =>
+                          (c.displayName || "").toLowerCase().includes(nameHint) ||
+                          (c.phoneNumber || "").includes(nameHint),
+                  );
             if (target) {
                 updateContactProfile(target.jid, {
                     context: { ...(target.context ?? {}), ownerNickname: nickname },
                 });
-                await sendMessage(jid, `Got it — I'll know "${nickname}" means ${target.displayName || target.phoneNumber}.`);
+                await sendMessage(
+                    jid,
+                    `Got it — I'll know "${nickname}" means ${target.displayName || target.phoneNumber}.`,
+                );
                 ctxUpdated = true;
             }
         }
@@ -1142,10 +1197,11 @@ async function handleOwnerMessage(
                 const nameHint = isMyMatch[1].trim().toLowerCase();
                 const article = isMyMatch[2];
                 const role = isMyMatch[3].trim().replace(/[,.]$/, "");
-                const target = allContacts.find(c =>
-                    (c.displayName || "").toLowerCase().includes(nameHint) ||
-                    (c.phoneNumber || "").includes(nameHint) ||
-                    (c.context?.ownerNickname || "").toLowerCase() === nameHint,
+                const target = allContacts.find(
+                    (c) =>
+                        (c.displayName || "").toLowerCase().includes(nameHint) ||
+                        (c.phoneNumber || "").includes(nameHint) ||
+                        (c.context?.ownerNickname || "").toLowerCase() === nameHint,
                 );
                 if (target) {
                     const relation = `${article} ${role}`;
@@ -1177,7 +1233,10 @@ async function handleOwnerMessage(
         const { globalMonitorHitBus } = await import("./proactive/monitors/monitor-hits.js");
         const nativeMod = native as unknown as {
             monitorCheck?: (
-                emb: number[], channel: string, sender: string, nowMs: number,
+                emb: number[],
+                channel: string,
+                sender: string,
+                nowMs: number,
             ) => Array<{ ruleId: string; score: number }>;
             monitorMarkFired?: (id: string, tsMs: number) => void;
         };
@@ -1224,9 +1283,21 @@ async function handleOwnerMessage(
     }
 
     // Stop/cancel commands
-    const STOP_SIGNALS = ["stop", "cancel", "/stop", "/cancel", "abort", "quit it", "stop it", "leave it", "never mind", "nevermind"];
-    const isStopSignal = STOP_SIGNALS.some(s => lower === s || lower.startsWith(s + " ") || lower.endsWith(" " + s))
-        || (lower.split(" ").length <= 4 && ["stop", "cancel", "abort", "quit"].some(w => lower.includes(w)));
+    const STOP_SIGNALS = [
+        "stop",
+        "cancel",
+        "/stop",
+        "/cancel",
+        "abort",
+        "quit it",
+        "stop it",
+        "leave it",
+        "never mind",
+        "nevermind",
+    ];
+    const isStopSignal =
+        STOP_SIGNALS.some((s) => lower === s || lower.startsWith(`${s} `) || lower.endsWith(` ${s}`)) ||
+        (lower.split(" ").length <= 4 && ["stop", "cancel", "abort", "quit"].some((w) => lower.includes(w)));
 
     if (isStopSignal) {
         const tasks = activeTasks.get(jid) || [];
@@ -1253,6 +1324,7 @@ async function handleOwnerMessage(
             monitorUpsertRule?: (r: unknown) => void;
             monitorDeleteRule?: (id: string) => void;
         };
+        const { monitorUpsertRule: upsertRule, monitorDeleteRule: deleteRule } = nativeMon;
         const result = await tryProactiveCommand(text, {
             configPath: join(process.cwd(), "data", "proactive-config.json"),
             monitorStore: getMonitorStore() ?? undefined,
@@ -1262,12 +1334,8 @@ async function handleOwnerMessage(
                     embedText: async (t) => await embedText(t, "query"),
                 }),
             nativeMonitor:
-                typeof nativeMon.monitorUpsertRule === "function" &&
-                typeof nativeMon.monitorDeleteRule === "function"
-                    ? {
-                          upsertRule: (r) => nativeMon.monitorUpsertRule!(r),
-                          deleteRule: (id) => nativeMon.monitorDeleteRule!(id),
-                      }
+                typeof upsertRule === "function" && typeof deleteRule === "function"
+                    ? { upsertRule: (r) => upsertRule(r), deleteRule: (id) => deleteRule(id) }
                     : undefined,
         });
         if (result) {
@@ -1294,28 +1362,48 @@ async function handleOwnerMessage(
 
     // Detect specific task types with high confidence
     const taskMsg =
-        taskLower.includes("weather") && /\b(what|how|check|tell)\b/.test(taskLower) ? "let me check the weather for you"
-        : (taskLower.includes("send") || taskLower.includes("forward")) && /\b(file|doc|photo|image|video|to |this)\b/.test(taskLower) ? "sending that now"
-        : taskLower.includes("search") && /\b(for|about|find)\b/.test(taskLower) ? "let me look that up"
-        : taskLower.includes("research") || (taskLower.includes("deep") && taskLower.includes("dive")) ? "digging into that for you"
-        : (taskLower.includes("download") || taskLower.includes("upload")) ? "working on that file"
-        : taskLower.includes("browse") || (taskLower.includes("open") && /\b(website|site|page|url|link)\b/.test(taskLower)) ? "pulling that up"
-        : (taskLower.includes("schedule") || taskLower.includes("calendar")) && /\b(check|what|show|my|any)\b/.test(taskLower) ? "checking your schedule"
-        : taskLower.includes("remind") && /\b(me|to|at|in)\b/.test(taskLower) ? "setting that reminder"
-        : (taskLower.includes("email") || taskLower.includes("mail")) && /\b(check|read|send|my)\b/.test(taskLower) ? "checking your email"
-        : (taskLower.includes("translate") || taskLower.includes("translation")) ? "translating that"
-        : (taskLower.includes("summarize") || taskLower.includes("summary")) ? "summarizing that for you"
-        : (taskLower.includes("screenshot") || taskLower.includes("screen")) && /\b(take|capture|grab)\b/.test(taskLower) ? "taking a screenshot"
-        : (taskLower.includes("install") || taskLower.includes("setup")) ? "setting that up"
-        : null; // null = not a clear task, no acknowledgment
+        taskLower.includes("weather") && /\b(what|how|check|tell)\b/.test(taskLower)
+            ? "let me check the weather for you"
+            : (taskLower.includes("send") || taskLower.includes("forward")) &&
+                /\b(file|doc|photo|image|video|to |this)\b/.test(taskLower)
+              ? "sending that now"
+              : taskLower.includes("search") && /\b(for|about|find)\b/.test(taskLower)
+                ? "let me look that up"
+                : taskLower.includes("research") || (taskLower.includes("deep") && taskLower.includes("dive"))
+                  ? "digging into that for you"
+                  : taskLower.includes("download") || taskLower.includes("upload")
+                    ? "working on that file"
+                    : taskLower.includes("browse") ||
+                        (taskLower.includes("open") && /\b(website|site|page|url|link)\b/.test(taskLower))
+                      ? "pulling that up"
+                      : (taskLower.includes("schedule") || taskLower.includes("calendar")) &&
+                          /\b(check|what|show|my|any)\b/.test(taskLower)
+                        ? "checking your schedule"
+                        : taskLower.includes("remind") && /\b(me|to|at|in)\b/.test(taskLower)
+                          ? "setting that reminder"
+                          : (taskLower.includes("email") || taskLower.includes("mail")) &&
+                              /\b(check|read|send|my)\b/.test(taskLower)
+                            ? "checking your email"
+                            : taskLower.includes("translate") || taskLower.includes("translation")
+                              ? "translating that"
+                              : taskLower.includes("summarize") || taskLower.includes("summary")
+                                ? "summarizing that for you"
+                                : (taskLower.includes("screenshot") || taskLower.includes("screen")) &&
+                                    /\b(take|capture|grab)\b/.test(taskLower)
+                                  ? "taking a screenshot"
+                                  : taskLower.includes("install") || taskLower.includes("setup")
+                                    ? "setting that up"
+                                    : null; // null = not a clear task, no acknowledgment
 
     // Send task acknowledgment IMMEDIATELY (not after a delay), then resume typing indicator
     if (taskMsg) {
         progressSent = true;
-        sendMessage(jid, taskMsg).then(() => {
-            // Resume typing indicator after acknowledgment so user still sees "typing..."
-            socket?.sendPresenceUpdate("composing", jid).catch(() => {});
-        }).catch(() => {});
+        sendMessage(jid, taskMsg)
+            .then(() => {
+                // Resume typing indicator after acknowledgment so user still sees "typing..."
+                socket?.sendPresenceUpdate("composing", jid).catch(() => {});
+            })
+            .catch(() => {});
     }
     const progressTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -1338,8 +1426,8 @@ async function handleOwnerMessage(
         // Inject all known contacts so the owner can ask about them by name or nickname.
         // Include anyone who has ever messaged (messageCount > 0) or messaged in the last 7 days.
         const allContacts = getContacts()
-            .filter(c => c.messageCount > 0 || c.lastActive > Date.now() - 7 * 24 * 60 * 60 * 1000)
-            .map(c => {
+            .filter((c) => c.messageCount > 0 || c.lastActive > Date.now() - 7 * 24 * 60 * 60 * 1000)
+            .map((c) => {
                 const lastMsg = c.chatHistory.length > 0 ? c.chatHistory[c.chatHistory.length - 1] : null;
                 const extras: string[] = [];
                 if (c.context?.relation) extras.push(c.context.relation);
@@ -1365,7 +1453,13 @@ async function handleOwnerMessage(
             historyFork.length > 0 ? historyFork : undefined,
             undefined,
             undefined,
-            { channel: "whatsapp", userId: jid, userName: pushName || undefined, isOwner: true, isPrivate: !jid.endsWith("@g.us") },
+            {
+                channel: "whatsapp",
+                userId: jid,
+                userName: pushName || undefined,
+                isOwner: true,
+                isPrivate: !jid.endsWith("@g.us"),
+            },
         );
 
         if (progressTimer) clearTimeout(progressTimer);
@@ -1408,7 +1502,7 @@ async function handleOwnerMessage(
                 if (i > 0) {
                     await socket?.sendPresenceUpdate("composing", jid);
                     const delay = getTypingDelay(bubbles[i]);
-                    await new Promise(r => setTimeout(r, delay));
+                    await new Promise((r) => setTimeout(r, delay));
                 }
                 await sendMessage(jid, bubbles[i], i === 0 && shouldQuote ? message : undefined);
             }
@@ -1426,7 +1520,10 @@ async function handleOwnerMessage(
         }
     } finally {
         const tasks = activeTasks.get(jid) || [];
-        activeTasks.set(jid, tasks.filter(t => t.taskId !== taskId));
+        activeTasks.set(
+            jid,
+            tasks.filter((t) => t.taskId !== taskId),
+        );
         if ((activeTasks.get(jid) || []).length === 0) activeTasks.delete(jid);
         await socket?.sendPresenceUpdate("paused", jid);
     }
@@ -1451,7 +1548,9 @@ async function handleContactMessage(
     const owners = getOwners();
     const ownerName = owners[0]?.displayName || "the owner";
     const contactName = profile?.displayName || pushName || jidToPhone(jid);
-    const allowedTools = [...(persona.allowedToolNames ?? []), "ask_owner"].filter((v, i, a) => a.indexOf(v) === i).join(", ");
+    const allowedTools = [...(persona.allowedToolNames ?? []), "ask_owner"]
+        .filter((v, i, a) => a.indexOf(v) === i)
+        .join(", ");
     const systemPrompt = `You are ${ownerName}'s personal assistant, answering on their behalf on WhatsApp.
 
 WHO YOU ARE AND WHO YOU SERVE:
@@ -1496,7 +1595,7 @@ ${persona.systemPrompt}`;
     // Build history fork with system prompt + prior conversation
     const historyFork: ChatCompletionMessageParam[] = [
         { role: "system", content: systemPrompt },
-        ...contactHistory.slice(-40).map(m => ({
+        ...contactHistory.slice(-40).map((m) => ({
             role: m.role as "user" | "assistant",
             content: m.content,
         })),
@@ -1505,17 +1604,22 @@ ${persona.systemPrompt}`;
     // Context-aware task acknowledgment for contacts — immediate for clear tasks
     let contactProgressSent = false;
     const contactLower = text.toLowerCase();
-    const contactTaskMsg =
-        contactLower.includes("weather") ? "let me check the weather"
-        : (contactLower.includes("schedule") || contactLower.includes("available") || contactLower.includes("free")) && /\b(check|is|are|when)\b/.test(contactLower) ? "checking availability"
-        : contactLower.includes("search") || contactLower.includes("find") ? "looking that up"
-        : null;
+    const contactTaskMsg = contactLower.includes("weather")
+        ? "let me check the weather"
+        : (contactLower.includes("schedule") || contactLower.includes("available") || contactLower.includes("free")) &&
+            /\b(check|is|are|when)\b/.test(contactLower)
+          ? "checking availability"
+          : contactLower.includes("search") || contactLower.includes("find")
+            ? "looking that up"
+            : null;
 
     if (contactTaskMsg) {
         contactProgressSent = true;
-        sendMessage(jid, contactTaskMsg).then(() => {
-            socket?.sendPresenceUpdate("composing", jid).catch(() => {});
-        }).catch(() => {});
+        sendMessage(jid, contactTaskMsg)
+            .then(() => {
+                socket?.sendPresenceUpdate("composing", jid).catch(() => {});
+            })
+            .catch(() => {});
     }
     const contactProgressTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -1536,9 +1640,7 @@ ${persona.systemPrompt}`;
 
         // Always include ask_owner so the agent can escalate when tools fail
         const baseAllowlist = persona.allowedToolNames?.length ? persona.allowedToolNames : [];
-        const toolAllowlist = baseAllowlist.includes("ask_owner")
-            ? baseAllowlist
-            : [...baseAllowlist, "ask_owner"];
+        const toolAllowlist = baseAllowlist.includes("ask_owner") ? baseAllowlist : [...baseAllowlist, "ask_owner"];
 
         const result = await runAgent(
             llm,
@@ -1547,9 +1649,15 @@ ${persona.systemPrompt}`;
             undefined,
             undefined,
             historyFork,
-            "simple",   // Contact messages default to lighter model
+            "simple", // Contact messages default to lighter model
             toolAllowlist,
-            { channel: "whatsapp", userId: jid, userName: pushName || profile?.displayName, isOwner: false, contactProfile: profile },
+            {
+                channel: "whatsapp",
+                userId: jid,
+                userName: pushName || profile?.displayName,
+                isOwner: false,
+                contactProfile: profile,
+            },
         );
 
         if (contactProgressTimer) clearTimeout(contactProgressTimer);
@@ -1631,8 +1739,11 @@ async function handleGroupMessage(
     // Step 3: Decide whether to respond
     const botJid = socket?.user?.id || "";
     const directlyMentioned = /\batlas\b|a\.t\.l\.a\.s/i.test(text);
-    const repliedToBot = message.message?.extendedTextMessage?.contextInfo?.participant === botJid ||
-        (message.message?.extendedTextMessage?.contextInfo?.participant || "").includes(botJid.split(":")[0] || "__none__");
+    const repliedToBot =
+        message.message?.extendedTextMessage?.contextInfo?.participant === botJid ||
+        (message.message?.extendedTextMessage?.contextInfo?.participant || "").includes(
+            botJid.split(":")[0] || "__none__",
+        );
 
     // ALWAYS respond when mentioned or replied to
     if (directlyMentioned || repliedToBot) {
@@ -1651,10 +1762,13 @@ async function handleGroupMessage(
     // LLM-driven decision: should I chime in?
     try {
         const recentMsgs = getGroupHistory(groupJid, 10);
-        const recentContext = recentMsgs.map(m => `${m.senderName}: ${m.content.substring(0, 150)}`).join("\n");
+        const recentContext = recentMsgs.map((m) => `${m.senderName}: ${m.content.substring(0, 150)}`).join("\n");
 
         const decisionResult = await llm.chat({
-            messages: [{ role: "user", content: `You are Bhai in WhatsApp group "${group.name}".
+            messages: [
+                {
+                    role: "user",
+                    content: `You are Bhai in WhatsApp group "${group.name}".
 Recent conversation:
 ${recentContext}
 
@@ -1674,7 +1788,9 @@ Say NO if:
 - Your response would feel forced or interrupt the flow
 - You responded recently
 
-Reply ONLY "YES" or "NO" then a 5-word reason.` }],
+Reply ONLY "YES" or "NO" then a 5-word reason.`,
+                },
+            ],
             modelOverride: "openai/gpt-4.1-nano",
         });
 
@@ -1706,7 +1822,10 @@ async function respondInGroup(
     try {
         const results = await recall(text, 5, llm, undefined, [`group:${groupJid}`]);
         if (results && Array.isArray(results)) {
-            groupMemories = results.map(r => r.content).filter(Boolean).join("\n");
+            groupMemories = results
+                .map((r) => r.content)
+                .filter(Boolean)
+                .join("\n");
         }
     } catch {}
 
@@ -1731,7 +1850,7 @@ ${senderInfo?.messageCount ? `Active: ${senderInfo.messageCount} messages in gro
 ${groupMemories ? `GROUP MEMORIES:\n${groupMemories}` : ""}
 
 RECENT GROUP CONVERSATION:
-${recentMessages.map(m => `${m.isFromBot ? "Bhai" : m.senderName}: ${m.content.substring(0, 200)}`).join("\n")}
+${recentMessages.map((m) => `${m.isFromBot ? "Bhai" : m.senderName}: ${m.content.substring(0, 200)}`).join("\n")}
 
 Respond to ${senderName}'s latest message. Be concise, natural, and match the group energy.`;
 
@@ -1747,16 +1866,26 @@ Respond to ${senderName}'s latest message. Be concise, natural, and match the gr
         await socket?.presenceSubscribe(groupJid).catch(() => {});
         await socket?.sendPresenceUpdate("composing", groupJid);
 
-        const result = await runAgent(llm, text, undefined, undefined, undefined, historyFork, "simple", toolAllowlist, {
-            channel: "whatsapp",
-            userId: senderJid,
-            userName: senderName,
-            isOwner: senderIsOwner,
-        });
+        const result = await runAgent(
+            llm,
+            text,
+            undefined,
+            undefined,
+            undefined,
+            historyFork,
+            "simple",
+            toolAllowlist,
+            {
+                channel: "whatsapp",
+                userId: senderJid,
+                userName: senderName,
+                isOwner: senderIsOwner,
+            },
+        );
 
         await socket?.sendPresenceUpdate("paused", groupJid).catch(() => {});
 
-        if (result.text && result.text.trim() && result.text.trim() !== "[NO_REPLY]") {
+        if (result.text?.trim() && result.text.trim() !== "[NO_REPLY]") {
             await sendMessage(groupJid, result.text, message);
 
             // Log bot's response
@@ -1887,16 +2016,27 @@ async function handleIncomingMessage(message: WAMessage, llm: LLMClient): Promis
     }
 
     // Determine the effective text for routing (for media-only, use a default)
-    let effectiveText = text || (contentType === "imageMessage" ? (msg.imageMessage?.caption || "What's in this image?") :
-        contentType === "videoMessage" ? (msg.videoMessage?.caption || "User sent a video.") :
-        contentType === "audioMessage" ? "[voice message]" :
-        contentType === "documentMessage" ? (msg.documentMessage?.caption || `User sent a document: ${msg.documentMessage?.fileName || "file"}`) :
-        contentType === "stickerMessage" ? "User sent a sticker." :
-        contentType === "locationMessage" ? "User shared a location." :
-        contentType === "liveLocationMessage" ? "User is sharing live location." :
-        contentType === "contactMessage" ? "User shared a contact." :
-        contentType === "contactsArrayMessage" ? "User shared contacts." :
-        null);
+    let effectiveText =
+        text ||
+        (contentType === "imageMessage"
+            ? msg.imageMessage?.caption || "What's in this image?"
+            : contentType === "videoMessage"
+              ? msg.videoMessage?.caption || "User sent a video."
+              : contentType === "audioMessage"
+                ? "[voice message]"
+                : contentType === "documentMessage"
+                  ? msg.documentMessage?.caption || `User sent a document: ${msg.documentMessage?.fileName || "file"}`
+                  : contentType === "stickerMessage"
+                    ? "User sent a sticker."
+                    : contentType === "locationMessage"
+                      ? "User shared a location."
+                      : contentType === "liveLocationMessage"
+                        ? "User is sharing live location."
+                        : contentType === "contactMessage"
+                          ? "User shared a contact."
+                          : contentType === "contactsArrayMessage"
+                            ? "User shared contacts."
+                            : null);
 
     if (!effectiveText) {
         // Silently ignore internal WhatsApp system message types that carry no
@@ -1965,9 +2105,10 @@ export async function initWhatsApp(llm: LLMClient): Promise<void> {
         console.log("[WHATSAPP] Auto mode — will accept messages from all contacts after pairing");
     } else {
         allowedJids = new Set(
-            jidsRaw.split(",")
-                .map(s => s.trim())
-                .filter(Boolean)
+            jidsRaw
+                .split(",")
+                .map((s) => s.trim())
+                .filter(Boolean),
         );
 
         if (allowedJids.size === 0) {
@@ -1976,7 +2117,9 @@ export async function initWhatsApp(llm: LLMClient): Promise<void> {
         }
     }
 
-    console.log(`[WHATSAPP] Initializing${allowAllJids ? " (auto mode)" : ` with ${allowedJids.size} allowed JID(s)`}...`);
+    console.log(
+        `[WHATSAPP] Initializing${allowAllJids ? " (auto mode)" : ` with ${allowedJids.size} allowed JID(s)`}...`,
+    );
 
     // Ensure auth directory exists
     await fs.mkdir(AUTH_DIR, { recursive: true });
@@ -1991,16 +2134,15 @@ async function connectWhatsApp(llm: LLMClient): Promise<void> {
     const logger = pino({ level: "silent" }) as any;
 
     socket = makeWASocket({
-        // Override version to fix 405 bug in Baileys v7.0.0-rc.9
-        // See: https://github.com/WhiskeySockets/Baileys/issues/2376
-        version: [2, 3000, 1034074495],
+        // No version pin: rc14's default WA version is newer than the old
+        // rc.9 405 workaround (https://github.com/WhiskeySockets/Baileys/issues/2376).
         auth: {
             creds: state.creds,
             keys: makeCacheableSignalKeyStore(state.keys, logger),
         },
-        browser: Browsers.macOS("Chrome"),  // Use recognized browser to avoid 405
+        browser: Browsers.macOS("Chrome"), // Use recognized browser to avoid 405
         logger,
-        printQRInTerminal: true,  // Also print to terminal as backup
+        printQRInTerminal: true, // Also print to terminal as backup
         // generateHighQualityLinkPreview fetches arbitrary URLs from inbound
         // messages, which is a server-side SSRF surface (private IPs, cloud
         // metadata, loopback). Left disabled: Baileys does the fetch internally
@@ -2009,8 +2151,9 @@ async function connectWhatsApp(llm: LLMClient): Promise<void> {
         // a custom getMessage/preview path that runs isSafeUrl before fetching.
         generateHighQualityLinkPreview: false,
         syncFullHistory: false,
-        getMessage: async () => undefined,  // Required in v7
+        getMessage: async () => undefined, // Required in v7
     });
+    const sock = socket;
 
     // ── QR Code Display ──────────────────────
     socket.ev.on("connection.update", async (update) => {
@@ -2018,7 +2161,7 @@ async function connectWhatsApp(llm: LLMClient): Promise<void> {
 
         if (qr) {
             currentQR = qr;
-            console.log("##ATLAS_QR##" + qr + "##END_QR##");
+            console.log(`##ATLAS_QR##${qr}##END_QR##`);
             console.log("\n[WHATSAPP] Scan this QR code with WhatsApp on your phone:\n");
             qrcode.generate(qr, { small: true });
             console.log("[WHATSAPP] Open WhatsApp > Settings > Linked Devices > Link a Device\n");
@@ -2048,7 +2191,7 @@ async function connectWhatsApp(llm: LLMClient): Promise<void> {
 
             // Refresh group metadata
             try {
-                const allParticipating = await socket!.groupFetchAllParticipating();
+                const allParticipating = await sock.groupFetchAllParticipating();
                 for (const [gjid, meta] of Object.entries(allParticipating)) {
                     const existing = getGroup(gjid);
                     if (existing) {
@@ -2072,7 +2215,9 @@ async function connectWhatsApp(llm: LLMClient): Promise<void> {
 
             if (isBadSession || isLoggedOut) {
                 // Clear stale auth and reconnect fresh to get a new QR code
-                console.log(`[WHATSAPP] ${isBadSession ? "Bad session" : "Logged out"} — clearing auth for fresh QR pairing...`);
+                console.log(
+                    `[WHATSAPP] ${isBadSession ? "Bad session" : "Logged out"} — clearing auth for fresh QR pairing...`,
+                );
                 try {
                     const authFiles = await fs.readdir(AUTH_DIR);
                     for (const file of authFiles) {
@@ -2084,19 +2229,23 @@ async function connectWhatsApp(llm: LLMClient): Promise<void> {
                 }
                 socket = null;
                 reconnectAttempts = 0;
-                await new Promise(r => setTimeout(r, 2000));
+                await new Promise((r) => setTimeout(r, 2000));
                 await connectWhatsApp(llm);
             } else {
                 // Transient error — reconnect with backoff
                 reconnectAttempts++;
-                const delay = Math.min(3000 * Math.pow(2, reconnectAttempts - 1), 120000);
-                console.log(`[WHATSAPP] Reconnecting (attempt ${reconnectAttempts}, delay ${Math.round(delay / 1000)}s)...`);
+                const delay = Math.min(3000 * 2 ** (reconnectAttempts - 1), 120000);
+                console.log(
+                    `[WHATSAPP] Reconnecting (attempt ${reconnectAttempts}, delay ${Math.round(delay / 1000)}s)...`,
+                );
                 if (reconnectAttempts > 20) {
-                    console.error("[WHATSAPP] Max reconnect attempts (20) reached. Giving up. Restart the app to retry.");
+                    console.error(
+                        "[WHATSAPP] Max reconnect attempts (20) reached. Giving up. Restart the app to retry.",
+                    );
                     socket = null;
                     return;
                 }
-                await new Promise(r => setTimeout(r, delay));
+                await new Promise((r) => setTimeout(r, delay));
                 await connectWhatsApp(llm);
             }
         }
@@ -2109,10 +2258,14 @@ async function connectWhatsApp(llm: LLMClient): Promise<void> {
     socket.ev.on("groups.upsert", async (newGroups) => {
         for (const grp of newGroups) {
             try {
-                const metadata = await socket!.groupMetadata(grp.id);
+                const metadata = await sock.groupMetadata(grp.id);
                 const existing = getGroup(grp.id);
                 if (existing) {
-                    updateGroupMetadata(grp.id, { name: metadata.subject, description: metadata.desc || undefined, participantCount: metadata.participants.length });
+                    updateGroupMetadata(grp.id, {
+                        name: metadata.subject,
+                        description: metadata.desc || undefined,
+                        participantCount: metadata.participants.length,
+                    });
                 } else {
                     addGroupData(grp.id, metadata.subject, metadata.owner || "unknown");
                     // Auto-approve if an owner is in the group
@@ -2123,7 +2276,10 @@ async function connectWhatsApp(llm: LLMClient): Promise<void> {
                     } else {
                         const ownerList = getOwners();
                         if (ownerList.length > 0) {
-                            await sendMessage(ownerList[0].jid, `I've been added to group "${metadata.subject}" (${metadata.participants.length} members).\n\nReply:\n• "approve ${metadata.subject}" to participate\n• "decline ${metadata.subject}" to leave`);
+                            await sendMessage(
+                                ownerList[0].jid,
+                                `I've been added to group "${metadata.subject}" (${metadata.participants.length} members).\n\nReply:\n• "approve ${metadata.subject}" to participate\n• "decline ${metadata.subject}" to leave`,
+                            );
                         }
                         console.log(`[WA-GROUP] Pending approval for group "${metadata.subject}"`);
                     }
@@ -2136,7 +2292,7 @@ async function connectWhatsApp(llm: LLMClient): Promise<void> {
 
     socket.ev.on("group-participants.update", async (update) => {
         const botJid = socket?.user?.id;
-        if (update.action === "remove" && update.participants.some(p => p.id === botJid)) {
+        if (update.action === "remove" && update.participants.some((p) => p.id === botJid)) {
             removeGroupData(update.id);
             console.log(`[WA-GROUP] Removed from group ${update.id}`);
         }
@@ -2146,7 +2302,7 @@ async function connectWhatsApp(llm: LLMClient): Promise<void> {
     socket.ev.on("call", async (calls) => {
         for (const call of calls) {
             if (call.status === "offer") {
-                await socket!.rejectCall(call.id, call.from).catch(() => {});
+                await sock.rejectCall(call.id, call.from).catch(() => {});
                 const msg = call.isVideo
                     ? "Hey! I can't take video calls \u2014 I'm a text-based AI assistant. Send me a message or voice note instead! \u{1F642}"
                     : "Hey! I can't take voice calls \u2014 I'm a text-based AI assistant. Send me a message or voice note instead! \u{1F642}";
@@ -2203,7 +2359,7 @@ export async function sendWhatsAppProactiveMessage(message: string, filePath?: s
     for (const jid of targetJids) {
         try {
             await socket.sendPresenceUpdate("composing", jid);
-            await new Promise(r => setTimeout(r, getTypingDelay(message)));
+            await new Promise((r) => setTimeout(r, getTypingDelay(message)));
 
             if (filePath) {
                 // Send document attachment with the message as caption
@@ -2352,7 +2508,9 @@ export const whatsappSendTool: ToolDefinition = {
 
         const jid = resolveContactJid(to);
         if (!jid) {
-            return JSON.stringify({ error: `Could not resolve recipient "${to}". Try using their phone number with country code.` });
+            return JSON.stringify({
+                error: `Could not resolve recipient "${to}". Try using their phone number with country code.`,
+            });
         }
 
         try {
@@ -2364,23 +2522,47 @@ export const whatsappSendTool: ToolDefinition = {
 
                 // MIME type detection
                 const MIME_MAP: Record<string, string> = {
-                    jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", gif: "image/gif",
-                    webp: "image/webp", svg: "image/svg+xml", bmp: "image/bmp", ico: "image/x-icon",
-                    mp4: "video/mp4", mov: "video/quicktime", avi: "video/x-msvideo", mkv: "video/x-matroska",
-                    webm: "video/webm", m4v: "video/x-m4v",
-                    mp3: "audio/mpeg", ogg: "audio/ogg", wav: "audio/wav", m4a: "audio/mp4",
-                    aac: "audio/aac", flac: "audio/flac", wma: "audio/x-ms-wma",
-                    pdf: "application/pdf", doc: "application/msword",
+                    jpg: "image/jpeg",
+                    jpeg: "image/jpeg",
+                    png: "image/png",
+                    gif: "image/gif",
+                    webp: "image/webp",
+                    svg: "image/svg+xml",
+                    bmp: "image/bmp",
+                    ico: "image/x-icon",
+                    mp4: "video/mp4",
+                    mov: "video/quicktime",
+                    avi: "video/x-msvideo",
+                    mkv: "video/x-matroska",
+                    webm: "video/webm",
+                    m4v: "video/x-m4v",
+                    mp3: "audio/mpeg",
+                    ogg: "audio/ogg",
+                    wav: "audio/wav",
+                    m4a: "audio/mp4",
+                    aac: "audio/aac",
+                    flac: "audio/flac",
+                    wma: "audio/x-ms-wma",
+                    pdf: "application/pdf",
+                    doc: "application/msword",
                     docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                     xls: "application/vnd.ms-excel",
                     xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     ppt: "application/vnd.ms-powerpoint",
                     pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                    zip: "application/zip", rar: "application/x-rar-compressed",
-                    tar: "application/x-tar", gz: "application/gzip",
-                    txt: "text/plain", csv: "text/csv", json: "application/json",
-                    xml: "application/xml", html: "text/html", css: "text/css",
-                    js: "application/javascript", ts: "text/typescript", py: "text/x-python",
+                    zip: "application/zip",
+                    rar: "application/x-rar-compressed",
+                    tar: "application/x-tar",
+                    gz: "application/gzip",
+                    txt: "text/plain",
+                    csv: "text/csv",
+                    json: "application/json",
+                    xml: "application/xml",
+                    html: "text/html",
+                    css: "text/css",
+                    js: "application/javascript",
+                    ts: "text/typescript",
+                    py: "text/x-python",
                     apk: "application/vnd.android.package-archive",
                 };
                 const mimetype = MIME_MAP[ext] || "application/octet-stream";
@@ -2391,7 +2573,8 @@ export const whatsappSendTool: ToolDefinition = {
                 const stickerExts = new Set(["webp"]); // Only webp can be stickers
 
                 // Check if user explicitly wants to send as sticker
-                const sendAsSticker = message?.toLowerCase().includes("sticker") || message?.toLowerCase().includes("as sticker");
+                const sendAsSticker =
+                    message?.toLowerCase().includes("sticker") || message?.toLowerCase().includes("as sticker");
 
                 if (sendAsSticker && (imageExts.has(ext) || ext === "webp")) {
                     // Send image as sticker — convert to webp if needed via sharp, or send directly if already webp
@@ -2412,7 +2595,8 @@ export const whatsappSendTool: ToolDefinition = {
                 } else if (audioExts.has(ext)) {
                     const fileBuffer = await fs.readFile(filePath);
                     // Send as voice note if explicitly requested, otherwise as audio file
-                    const asVoiceNote = message?.toLowerCase().includes("voice") || message?.toLowerCase().includes("ptt");
+                    const asVoiceNote =
+                        message?.toLowerCase().includes("voice") || message?.toLowerCase().includes("ptt");
                     await socket.sendMessage(jid, {
                         audio: fileBuffer,
                         mimetype: mimetype,
@@ -2481,10 +2665,10 @@ export const contactLookupTool: ToolDefinition = {
             return JSON.stringify({ results: [], message: `No contacts found matching "${query}".` });
         }
 
-        const results = matches.slice(0, 10).map(contact => {
+        const results = matches.slice(0, 10).map((contact) => {
             const profile = getContactProfile(contact.jid);
             const conversation = getContactConversation(contact.jid);
-            const recentMessages = conversation.slice(-5).map(m => ({
+            const recentMessages = conversation.slice(-5).map((m) => ({
                 role: m.role,
                 content: m.content.substring(0, 200),
                 timestamp: m.timestamp,
@@ -2529,7 +2713,8 @@ export const whatsappStickerTool: ToolDefinition = {
                     },
                     to: {
                         type: "string",
-                        description: "Optional: contact name, phone number, or JID. If omitted, sends to the current chat.",
+                        description:
+                            "Optional: contact name, phone number, or JID. If omitted, sends to the current chat.",
                     },
                 },
                 required: ["image_path"],
@@ -2576,10 +2761,12 @@ export const whatsappStickerTool: ToolDefinition = {
             if (ext !== "webp") {
                 try {
                     const sharp = (await import("sharp")).default;
-                    stickerBuffer = Buffer.from(await sharp(fileBuffer)
-                        .resize(512, 512, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
-                        .webp({ quality: 80 })
-                        .toBuffer());
+                    stickerBuffer = Buffer.from(
+                        await sharp(fileBuffer)
+                            .resize(512, 512, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
+                            .webp({ quality: 80 })
+                            .toBuffer(),
+                    );
                 } catch {
                     // sharp not available — send raw image as sticker (Baileys may handle conversion)
                     console.warn("[WA] sharp not available for sticker conversion — sending raw image");
@@ -2590,7 +2777,11 @@ export const whatsappStickerTool: ToolDefinition = {
                 sticker: stickerBuffer,
             });
 
-            return JSON.stringify({ success: true, sent_to: recipientJid, format: ext === "webp" ? "webp" : "converted to webp" });
+            return JSON.stringify({
+                success: true,
+                sent_to: recipientJid,
+                format: ext === "webp" ? "webp" : "converted to webp",
+            });
         } catch (err) {
             return JSON.stringify({ error: `Failed to send sticker: ${(err as Error).message}` });
         }
@@ -2605,7 +2796,8 @@ export const whatsappGroupInfoTool: ToolDefinition = {
         type: "function",
         function: {
             name: "whatsapp_group_info",
-            description: "Get detailed information about WhatsApp groups. Returns group name, members, who's active, what people are talking about, and recent messages. Use when the owner asks 'what's happening in [group]?', 'who's in [group]?', 'what did they say in [group]?', or anything about group activity.",
+            description:
+                "Get detailed information about WhatsApp groups. Returns group name, members, who's active, what people are talking about, and recent messages. Use when the owner asks 'what's happening in [group]?', 'who's in [group]?', 'what did they say in [group]?', or anything about group activity.",
             parameters: {
                 type: "object",
                 properties: {
@@ -2616,33 +2808,35 @@ export const whatsappGroupInfoTool: ToolDefinition = {
         },
     },
     handler: async (input: Record<string, unknown>): Promise<string> => {
-        const query = (input.query as string || "").toLowerCase();
+        const query = ((input.query as string) || "").toLowerCase();
         const groups = query === "all" ? getAllGroups() : searchGroups(query);
         if (groups.length === 0) return JSON.stringify({ error: "No groups found" });
-        return JSON.stringify(groups.map(g => ({
-            name: g.name,
-            description: g.description || "",
-            status: g.status,
-            memberCount: Object.keys(g.participants).length,
-            totalMessages: g.totalMessageCount,
-            botMessages: g.botMessageCount,
-            tone: g.tone || "unknown",
-            // Active participants with their info
-            activeMembers: Object.values(g.participants)
-                .sort((a, b) => b.lastActive - a.lastActive)
-                .slice(0, 10)
-                .map(p => ({
-                    name: p.name,
-                    messages: p.messageCount,
-                    lastActive: new Date(p.lastActive).toISOString(),
-                    topics: p.topics.slice(0, 5),
+        return JSON.stringify(
+            groups.map((g) => ({
+                name: g.name,
+                description: g.description || "",
+                status: g.status,
+                memberCount: Object.keys(g.participants).length,
+                totalMessages: g.totalMessageCount,
+                botMessages: g.botMessageCount,
+                tone: g.tone || "unknown",
+                // Active participants with their info
+                activeMembers: Object.values(g.participants)
+                    .sort((a, b) => b.lastActive - a.lastActive)
+                    .slice(0, 10)
+                    .map((p) => ({
+                        name: p.name,
+                        messages: p.messageCount,
+                        lastActive: new Date(p.lastActive).toISOString(),
+                        topics: p.topics.slice(0, 5),
+                    })),
+                // Recent 15 messages for full context
+                recentConversation: g.messageHistory.slice(-15).map((m) => ({
+                    from: m.isFromBot ? "Bhai" : m.senderName,
+                    text: m.content.substring(0, 300),
+                    time: new Date(m.timestamp).toISOString(),
                 })),
-            // Recent 15 messages for full context
-            recentConversation: g.messageHistory.slice(-15).map(m => ({
-                from: m.isFromBot ? "Bhai" : m.senderName,
-                text: m.content.substring(0, 300),
-                time: new Date(m.timestamp).toISOString(),
             })),
-        })));
+        );
     },
 };
