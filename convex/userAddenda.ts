@@ -31,6 +31,9 @@ const USER_CONTROLLED_SLUGS = new Set(["user-personality"]);
 const MAX_CONTENT_BYTES = 50_000;
 const MAX_ADDENDA_PER_USER = 12;
 const WRITE_RATE_LIMIT_PER_DAY = 10;
+// The user's own Settings choices have their own budget: they never use up the
+// agent's 10, so switching a mode back always lands.
+const USER_CONTROLLED_WRITES_PER_DAY = 50;
 
 // ── Queries ──────────────────────────────────────
 
@@ -68,15 +71,27 @@ export const getHistoryForAddendum = internalQuery({
 
 // ── Helpers ──────────────────────────────────────
 
-async function checkRateLimit(ctx: any, otplessUserId: string): Promise<{ allowed: boolean; recent: number }> {
+/** Whether one more write fits: the agent's budget excludes user-controlled slugs. */
+export function rateDecision(slug: string, recentSlugs: string[]): { allowed: boolean; recent: number; max: number } {
+  const userControlled = USER_CONTROLLED_SLUGS.has(slug);
+  const max = userControlled ? USER_CONTROLLED_WRITES_PER_DAY : WRITE_RATE_LIMIT_PER_DAY;
+  const recent = recentSlugs.filter((s) => (userControlled ? s === slug : !USER_CONTROLLED_SLUGS.has(s))).length;
+  return { allowed: recent < max, recent, max };
+}
+
+async function checkRateLimit(ctx: any, otplessUserId: string, slug: string): Promise<{ allowed: boolean; recent: number; max: number }> {
   const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
-  // Use the composite [otplessUserId, authoredAt] index so the time window
-  // is pushed to the index, not filtered post-scan.
-  const recent = await ctx.db
-    .query("user_prompt_addendum_history")
-    .withIndex("by_user_authoredAt", (q: any) => q.eq("otplessUserId", otplessUserId).gte("authoredAt", dayAgo))
-    .take(WRITE_RATE_LIMIT_PER_DAY + 1);
-  return { allowed: recent.length < WRITE_RATE_LIMIT_PER_DAY, recent: recent.length };
+  const rows = USER_CONTROLLED_SLUGS.has(slug)
+    ? await ctx.db
+        .query("user_prompt_addendum_history")
+        .withIndex("by_user_slug_authoredAt", (q: any) => q.eq("otplessUserId", otplessUserId).eq("slug", slug).gte("authoredAt", dayAgo))
+        .take(USER_CONTROLLED_WRITES_PER_DAY + 1)
+    : // Both budgets together bound how many rows a full day can hold.
+      await ctx.db
+        .query("user_prompt_addendum_history")
+        .withIndex("by_user_authoredAt", (q: any) => q.eq("otplessUserId", otplessUserId).gte("authoredAt", dayAgo))
+        .take(WRITE_RATE_LIMIT_PER_DAY + USER_CONTROLLED_WRITES_PER_DAY * USER_CONTROLLED_SLUGS.size + 1);
+  return rateDecision(slug, rows.map((r: { slug: string }) => r.slug));
 }
 
 function validateInput(input: { slug: string; content: string; reason: string }): string | null {
@@ -116,9 +131,9 @@ export const upsertAddendum = internalMutation({
       return { success: false, error: `slug '${args.slug}' is user-controlled (set via wizard/Settings); the agent cannot write to it` };
     }
 
-    const rate = await checkRateLimit(ctx, args.otplessUserId);
+    const rate = await checkRateLimit(ctx, args.otplessUserId, args.slug);
     if (!rate.allowed) {
-      return { success: false, error: `rate limit exceeded (${rate.recent} writes in last 24h, max ${WRITE_RATE_LIMIT_PER_DAY})` };
+      return { success: false, error: `rate limit exceeded (${rate.recent} writes in last 24h, max ${rate.max})` };
     }
 
     const now = Date.now();

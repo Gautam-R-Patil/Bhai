@@ -149,6 +149,9 @@ export async function syncPersonalityIfPresent(dirs: { userDataDir?: string; dat
     return { ran: true, reason: "synced", version: push.version };
 }
 
+/** Backoff for a failed push (exported for tests). */
+export const RETRY_MS = [60_000, 120_000, 300_000, 900_000, 1_800_000];
+
 /**
  * Push a new choice as soon as Settings writes it — no restart needed. Watches
  * the folder (the file comes and goes) and syncs on change, debounced.
@@ -162,14 +165,22 @@ export function watchPersonalityFile(
     if (!source || !path.isAbsolute(source)) return () => {};
     let timer: ReturnType<typeof setTimeout> | undefined;
     let running = false;
+    let failures = 0;
     const run = async () => {
         if (running || !fs.existsSync(source)) return;
         running = true;
         try {
             const r = await syncPersonalityIfPresent(dirs);
             onResult?.(r);
-            // Saved again mid-push: the newer file is still there, sync it too.
-            if (r.ran && fs.existsSync(source)) timer = setTimeout(run, 400);
+            if (r.reason === "push-failed") {
+                // Offline, rate-limited or signed out: the unsynced file stays, so
+                // keep trying instead of leaving the server on the old tone.
+                timer = setTimeout(run, RETRY_MS[Math.min(failures++, RETRY_MS.length - 1)]);
+            } else {
+                failures = 0;
+                // Saved again mid-push: the newer file is still there, sync it too.
+                if (r.ran && fs.existsSync(source)) timer = setTimeout(run, 400);
+            }
         } finally {
             running = false;
         }
@@ -179,11 +190,14 @@ export function watchPersonalityFile(
         watcher = fs.watch(path.dirname(source), (_event, name) => {
             if (name !== FILENAME) return;
             clearTimeout(timer);
+            failures = 0;
             timer = setTimeout(run, 400);
         });
     } catch {
         return () => {};
     }
+    // A file still here at start means the boot sync failed: retry it.
+    if (fs.existsSync(source)) timer = setTimeout(run, RETRY_MS[0]);
     return () => {
         clearTimeout(timer);
         watcher.close();
@@ -195,6 +209,9 @@ export function watchPersonalityFile(
 // prompt full of default style rules it barely moved replies. A one-line
 // restatement next to the user's message (agent.ts, owner turns only) does.
 const TONE_REMINDERS: Record<string, string> = {
+    // Said even for the default: earlier replies in the chat (or a server prompt
+    // that hasn't caught up yet) may still be in another mode.
+    casual_playful: "Tone right now: CASUAL, the default (the user set this in Settings). Any other mode used earlier in this chat, including unhinged, is OFF: no swearing, no roasting, Hinglish only if they write it.",
     professional_concise: "Tone right now: PROFESSIONAL (the user set this in Settings). Answer first, no slang, no emoji, no Hindi catchphrases, no jokes.",
     warm_supportive: "Tone right now: WARM (the user set this in Settings). Acknowledge how they feel before any fix; gentle, patient, no sarcasm or teasing.",
     direct_terse: "Tone right now: DIRECT (the user set this in Settings). Open with the answer or action — no sympathy or acknowledgement first. Two short lines max.",
@@ -216,7 +233,7 @@ export function loadActivePreset(dirs: { userDataDir?: string; dataDir?: string 
     }
 }
 
-/** A short reminder of the user's chosen tone, or null for the default. */
+/** A short reminder of the user's chosen tone, or null before any choice is known. */
 export function getToneReminder(): string | null {
     return activePreset ? (TONE_REMINDERS[activePreset] ?? null) : null;
 }

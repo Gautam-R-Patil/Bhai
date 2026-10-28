@@ -123,6 +123,7 @@ desktop/hostinger-upload/
 !convex/credit-cost.test.ts
 !convex/credit_cost.test.ts
 !convex/otpless.test.ts
+!convex/user-addenda.test.ts
 !src/security/secrets-sanitizer.test.ts
 !src/security/url-safety.test.ts
 !src/security/threat-patterns.test.ts

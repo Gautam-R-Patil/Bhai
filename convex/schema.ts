@@ -423,5 +423,6 @@ export default defineSchema({
   })
     .index("by_addendum_version", ["addendumId", "version"])
     .index("by_user", ["otplessUserId"])
-    .index("by_user_authoredAt", ["otplessUserId", "authoredAt"]),
+    .index("by_user_authoredAt", ["otplessUserId", "authoredAt"])
+    .index("by_user_slug_authoredAt", ["otplessUserId", "slug", "authoredAt"]),
 });
