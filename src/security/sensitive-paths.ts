@@ -14,6 +14,7 @@
 
 import os from "node:os";
 import path from "node:path";
+import { getDataDir } from "../config/paths.js";
 import { realResolve } from "./allowlist.js";
 
 const HOME = os.homedir();
@@ -35,9 +36,7 @@ function eq(a: string, b: string): boolean {
 }
 
 function startsWith(a: string, b: string): boolean {
-    return IS_CASE_INSENSITIVE_FS
-        ? a.toLowerCase().startsWith(b.toLowerCase())
-        : a.startsWith(b);
+    return IS_CASE_INSENSITIVE_FS ? a.toLowerCase().startsWith(b.toLowerCase()) : a.startsWith(b);
 }
 
 // Exact-file deny list. Each entry is resolved + normalized lazily.
@@ -50,10 +49,10 @@ function exactDeniedPaths(): string[] {
         path.join(HOME, ".zsh_history"),
         path.join(HOME, ".docker", "config.json"),
         path.join(HOME, ".kube", "config"),
-        path.resolve("data", "google-credentials.json"),
-        path.resolve("data", "chrome-bridge-token.txt"),
-        path.resolve("data", "audit.jsonl"),
-        path.resolve("data", "memories.db"),
+        path.join(getDataDir(), "google-credentials.json"),
+        path.join(getDataDir(), "chrome-bridge-token.txt"),
+        path.join(getDataDir(), "audit.jsonl"),
+        path.join(getDataDir(), "memories.db"),
     ];
 }
 
@@ -64,7 +63,7 @@ function deniedDirPrefixes(): string[] {
         path.join(HOME, ".aws"),
         path.join(HOME, ".gnupg"),
         path.join(HOME, ".atlas"),
-        path.resolve("data", "google-tokens"),
+        path.join(getDataDir(), "google-tokens"),
     ];
 }
 

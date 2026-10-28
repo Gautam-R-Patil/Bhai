@@ -14,6 +14,7 @@ import { createRequire as _bridgeCreateRequire } from "node:module";
 import { homedir } from "node:os";
 import path from "node:path";
 import { type WebSocket, WebSocketServer } from "ws";
+import { getDataDir } from "../../config/paths.js";
 import { getOverlayLocalToken } from "../../overlay/overlay-chat.js";
 import { isLoopbackHost, isWebOrigin } from "../../security/loopback.js";
 import { resetBackend } from "./browser-backend.js";
@@ -49,7 +50,7 @@ try {
 // ── State ────────────────────────────────────
 
 const BRIDGE_PORT = 18800;
-const TOKEN_FILE = path.resolve("data", "chrome-bridge-token.txt");
+const TOKEN_FILE = path.join(getDataDir(), "chrome-bridge-token.txt");
 const DISCOVERY_FILE = path.join(homedir(), ".atlas", "chrome-bridge.json");
 // F10: local-only access token for CLI/native callers. Lives at 0o600 and
 // is required to call /discover-local. The chrome-extension /discover path
@@ -579,7 +580,9 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
 
     httpServer.on("error", (err: NodeJS.ErrnoException) => {
         if (err.code === "EADDRINUSE") {
-            console.error(`🔌 [CHROME-BRIDGE] Port ${port} already in use — another Bhai instance is likely running. Chrome extension bridge disabled this run.`);
+            console.error(
+                `🔌 [CHROME-BRIDGE] Port ${port} already in use — another Bhai instance is likely running. Chrome extension bridge disabled this run.`,
+            );
         } else {
             console.error(`🔌 [CHROME-BRIDGE] HTTP server error: ${err.message}`);
         }

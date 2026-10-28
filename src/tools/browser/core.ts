@@ -9,6 +9,7 @@ import fs from "node:fs";
 import { createRequire as _createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { getDataDir } from "../../config/paths.js";
 import { runOCR } from "../../models/local-ocr.js";
 import { getActiveBackend, getCurrentMode } from "./browser-backend.js";
 import { type ChromeExtensionBackend, ChromePageProxy } from "./chrome-backend.js";
@@ -26,7 +27,7 @@ import type {
 let pw: PlaywrightModule = null;
 let browserContext: BrowserContext = null;
 
-const BROWSER_PROFILE_DIR = path.resolve("data", "browser-profile");
+const BROWSER_PROFILE_DIR = path.join(getDataDir(), "browser-profile");
 
 // ── Idle close ────────────────────────────────────
 // A persistent Playwright Chromium context holds 200-500 MB of RAM after

@@ -15,6 +15,7 @@ import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
+import { getDataDir } from "../../config/paths.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -180,6 +181,6 @@ export function getProfileLaunchOptions(): {
 } {
     return {
         channel: "chrome",
-        userDataDir: path.resolve("data", "browser-profile"),
+        userDataDir: path.join(getDataDir(), "browser-profile"),
     };
 }

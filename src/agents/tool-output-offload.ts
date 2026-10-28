@@ -14,15 +14,9 @@
 // session for debugging. A best-effort GC prunes old turn directories
 // when they exceed a count threshold.
 
-import {
-    existsSync,
-    mkdirSync,
-    readdirSync,
-    rmSync,
-    statSync,
-    writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { getDataDir } from "../config/paths.js";
 
 // ── Tuning ────────────────────────────────────
 
@@ -41,7 +35,7 @@ const OFFLOAD_THRESHOLD_BYTES = 8 * 1024;
 const PREVIEW_BYTES = 2 * 1024;
 
 /** Absolute directory root for offloaded outputs. */
-const OFFLOAD_ROOT = path.resolve("data", "tool-outputs");
+const OFFLOAD_ROOT = path.join(getDataDir(), "tool-outputs");
 
 /** Retain at most this many turn directories; GC drops oldest. */
 const MAX_TURN_DIRS = 50;
@@ -61,13 +55,21 @@ function gcOldTurnDirs(): void {
             .map((e) => {
                 const p = path.join(OFFLOAD_ROOT, e.name);
                 let mtime = 0;
-                try { mtime = statSync(p).mtimeMs; } catch { /* ignore */ }
+                try {
+                    mtime = statSync(p).mtimeMs;
+                } catch {
+                    /* ignore */
+                }
                 return { p, mtime };
             });
         if (dirs.length <= MAX_TURN_DIRS) return;
         dirs.sort((a, b) => a.mtime - b.mtime); // oldest first
         for (let i = 0; i < dirs.length - MAX_TURN_DIRS; i++) {
-            try { rmSync(dirs[i].p, { recursive: true, force: true }); } catch { /* */ }
+            try {
+                rmSync(dirs[i].p, { recursive: true, force: true });
+            } catch {
+                /* */
+            }
         }
     } catch {
         /* GC failures are never fatal */
@@ -95,12 +97,7 @@ export interface OffloadResult {
  * any filesystem error falls through to returning the original output
  * untouched.
  */
-export function offloadIfLarge(
-    toolName: string,
-    toolCallId: string,
-    turnId: string,
-    result: string,
-): OffloadResult {
+export function offloadIfLarge(toolName: string, toolCallId: string, turnId: string, result: string): OffloadResult {
     const size = Buffer.byteLength(result, "utf-8");
     if (size <= OFFLOAD_THRESHOLD_BYTES) {
         return { content: result, offloaded: false };

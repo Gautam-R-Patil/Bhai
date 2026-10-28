@@ -13,6 +13,7 @@ import pino from "pino";
 import qrcode from "qrcode-terminal";
 import { type MediaAttachment, runAgent } from "./agent.js";
 import { categorizeError, getErrorMessage, smartChunkMessage } from "./alive-ux.js";
+import { getDataDir } from "./config/paths.js";
 import type { LLMClient } from "./llm.js";
 import { recall } from "./memory/sqlite.js";
 import {
@@ -70,7 +71,7 @@ import {
 
 // ── Constants ────────────────────────────────
 
-const AUTH_DIR = join(process.cwd(), "data", "whatsapp-auth");
+const AUTH_DIR = join(getDataDir(), "whatsapp-auth");
 const MAX_MESSAGE_LENGTH = 4096;
 
 // Rate limiting for ban prevention
@@ -1319,7 +1320,7 @@ async function handleOwnerMessage(
         };
         const { monitorUpsertRule: upsertRule, monitorDeleteRule: deleteRule } = nativeMon;
         const result = await tryProactiveCommand(text, {
-            configPath: join(process.cwd(), "data", "proactive-config.json"),
+            configPath: join(getDataDir(), "proactive-config.json"),
             monitorStore: getMonitorStore() ?? undefined,
             parseRule: async (phrase) =>
                 parseMonitorRule(phrase, {
@@ -2122,7 +2123,13 @@ export async function initWhatsApp(llm: LLMClient): Promise<void> {
 
 async function connectWhatsApp(llm: LLMClient): Promise<void> {
     baileys ??= await import("@whiskeysockets/baileys");
-    const { default: makeWASocket, useMultiFileAuthState, makeCacheableSignalKeyStore, Browsers, DisconnectReason } = baileys;
+    const {
+        default: makeWASocket,
+        useMultiFileAuthState,
+        makeCacheableSignalKeyStore,
+        Browsers,
+        DisconnectReason,
+    } = baileys;
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
 
     // Suppress Baileys verbose logging in production

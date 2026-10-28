@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { OAuth2Client } from "google-auth-library";
 import type { calendar_v3 } from "googleapis";
+import { getDataDir } from "../config/paths.js";
 import { getTimezone } from "../location/index.js";
 import type { ToolDefinition } from "./get-current-time.js";
 
@@ -63,7 +64,7 @@ function loadCredentials(): { client_id: string; client_secret: string; redirect
     const paths = [
         CREDENTIALS_PATH,
         // Fallback: bundled credentials in app resources (read-only but valid for reading)
-        join(process.cwd(), "data", "google-credentials.json"),
+        join(getDataDir(), "google-credentials.json"),
         // Windows uses USERPROFILE instead of HOME
         join(
             process.env.HOME || process.env.USERPROFILE || "",

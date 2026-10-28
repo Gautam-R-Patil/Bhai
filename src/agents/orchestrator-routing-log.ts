@@ -4,6 +4,7 @@
 
 import { appendFileSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { getDataDir } from "../config/paths.js";
 
 let logPathOverride: string | null = null;
 let rotationThresholdOverride: number | null = null;
@@ -32,7 +33,7 @@ export function __setRotationThresholdForTesting(bytes: number | null): void {
 
 function getLogPath(): string {
     if (logPathOverride) return logPathOverride;
-    return join(process.cwd(), "data", "orchestrator-routing.jsonl");
+    return join(getDataDir(), "orchestrator-routing.jsonl");
 }
 
 function getRotationThreshold(): number {

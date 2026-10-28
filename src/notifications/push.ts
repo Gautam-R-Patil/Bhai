@@ -7,10 +7,11 @@
 // Generates and persists VAPID keys on first run, stores subscriptions
 // in memory, and provides sendPushNotification() for the proactive system.
 
-// @ts-ignore -- web-push has no type declarations
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+// @ts-expect-error -- web-push has no type declarations
 import webPush from "web-push";
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { getDataDir } from "../config/paths.js";
 
 // -- Types ------------------------------------------------
 
@@ -29,8 +30,8 @@ interface PushSubscriptionData {
 
 // -- State ------------------------------------------------
 
-const VAPID_PATH = join(process.cwd(), "data", "vapid-keys.json");
-const SUBSCRIPTIONS_PATH = join(process.cwd(), "data", "push-subscriptions.json");
+const VAPID_PATH = join(getDataDir(), "vapid-keys.json");
+const SUBSCRIPTIONS_PATH = join(getDataDir(), "push-subscriptions.json");
 
 let vapidKeys: StoredVapidKeys | null = null;
 const subscriptions: Map<string, PushSubscriptionData> = new Map();
@@ -77,11 +78,7 @@ export function initPushNotifications(): void {
 
     // Configure web-push with VAPID details
     const contactEmail = process.env.EMAIL_USER || "atlas@localhost";
-    webPush.setVapidDetails(
-        `mailto:${contactEmail}`,
-        vapidKeys.publicKey,
-        vapidKeys.privateKey,
-    );
+    webPush.setVapidDetails(`mailto:${contactEmail}`, vapidKeys.publicKey, vapidKeys.privateKey);
 
     // Load persisted subscriptions
     if (existsSync(SUBSCRIPTIONS_PATH)) {

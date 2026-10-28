@@ -450,7 +450,7 @@ export function logOutcome(
         // on the hot path) and avoids a top-level fs dependency in tests.
         const fs = nodeFs;
         const path = nodePath;
-        const dir = path.join(process.cwd(), "data");
+        const dir = getDataDir();
         fs.mkdirSync(dir, { recursive: true });
         fs.appendFileSync(path.join(dir, "metacog-outcomes.jsonl"), `${JSON.stringify(row)}\n`, "utf8");
     } catch {
@@ -474,8 +474,9 @@ export function logOutcome(
 // nudge-only behavior (the same env already gates the nudge cooldown-repeat).
 
 import * as nodeFs from "node:fs";
-import * as nodePath from "node:path";
 import { createRequire } from "node:module";
+import * as nodePath from "node:path";
+import { getDataDir } from "../config/paths.js";
 import { MODELS } from "../llm.js";
 
 export interface InterventionContext {
@@ -841,7 +842,7 @@ function loadCalibrators(): CalibratorBundle | null {
     try {
         const fs = nodeFs;
         const path = nodePath;
-        const file = path.join(process.cwd(), "data", "metacog-calibrators.json");
+        const file = path.join(getDataDir(), "metacog-calibrators.json");
         const raw = fs.readFileSync(file, "utf8");
         _calBundle = JSON.parse(raw) as CalibratorBundle;
     } catch {
@@ -867,7 +868,7 @@ function logCalibrationShadow(row: {
     try {
         const fs = nodeFs;
         const path = nodePath;
-        const dir = path.join(process.cwd(), "data");
+        const dir = getDataDir();
         fs.mkdirSync(dir, { recursive: true });
         const line = JSON.stringify({ ts: new Date().toISOString(), ...row });
         fs.appendFileSync(path.join(dir, "metacog-calibration-shadow.jsonl"), `${line}\n`, "utf8");

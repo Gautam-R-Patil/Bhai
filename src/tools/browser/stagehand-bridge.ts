@@ -13,6 +13,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { getDataDir } from "../../config/paths.js";
 import type { Page } from "./types.js";
 
 // ── Types ─────────────────────────────────────
@@ -37,7 +38,7 @@ interface ActionResult {
 
 // ── State ─────────────────────────────────────
 
-const CACHE_DIR = path.resolve("data", "browser-cache");
+const CACHE_DIR = path.join(getDataDir(), "browser-cache");
 let actionCache: Map<string, CachedAction[]> = new Map();
 let cacheLoaded = false;
 

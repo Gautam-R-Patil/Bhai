@@ -15,8 +15,9 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import path from "node:path";
+import { getDataDir } from "../config/paths.js";
 
-const WORKTREES_ROOT = path.resolve("data", "agent-worktrees");
+const WORKTREES_ROOT = path.join(getDataDir(), "agent-worktrees");
 const BRANCH_PREFIX = "atlas/agent";
 
 // ── Detection ────────────────────────────────
@@ -91,7 +92,11 @@ function pruneOrphanWorktrees(cwd: string): void {
             if (!entry.isDirectory()) continue;
             const full = path.join(WORKTREES_ROOT, entry.name);
             if (!known.has(full)) {
-                try { rmSync(full, { recursive: true, force: true }); } catch { /* */ }
+                try {
+                    rmSync(full, { recursive: true, force: true });
+                } catch {
+                    /* */
+                }
             }
         }
     } catch {

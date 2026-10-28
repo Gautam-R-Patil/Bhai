@@ -2,19 +2,42 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import { recall } from "../../../memory/sqlite.js";
-import { embedText } from "../../../memory/embeddings.js";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { getDataDir } from "../../../config/paths.js";
+import { embedText } from "../../../memory/embeddings.js";
+import { recall } from "../../../memory/sqlite.js";
 
 const WEEK_MS = 7 * 86_400_000;
-const VECTOR_FILE = path.join(process.cwd(), "data", "interest-vector.bin");
+const VECTOR_FILE = path.join(getDataDir(), "interest-vector.bin");
 const KEYWORD_COUNT = 3;
 
 const STOP = new Set([
-    "the", "and", "for", "with", "that", "this", "from", "have", "are",
-    "was", "were", "not", "but", "you", "can", "all", "has", "her",
-    "his", "they", "their", "what", "will", "when", "how",
+    "the",
+    "and",
+    "for",
+    "with",
+    "that",
+    "this",
+    "from",
+    "have",
+    "are",
+    "was",
+    "were",
+    "not",
+    "but",
+    "you",
+    "can",
+    "all",
+    "has",
+    "her",
+    "his",
+    "they",
+    "their",
+    "what",
+    "will",
+    "when",
+    "how",
 ]);
 
 type InterestResult = {
