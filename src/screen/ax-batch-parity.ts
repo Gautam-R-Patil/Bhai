@@ -30,7 +30,7 @@ export interface TimedDump {
 export function runDump(bin: string, pid: number, batch: boolean, extraEnv: Record<string, string> = {}): TimedDump {
     // The helper's 3 s walk budget would cut both trees on a loaded machine; parity
     // compares whole trees, so lift it (callers can still set their own).
-    const env = { ...process.env, ATLAS_AX_BUDGET_MS: "15000", ...extraEnv };
+    const env: NodeJS.ProcessEnv = { ...process.env, ATLAS_AX_BUDGET_MS: "15000", ...extraEnv };
     delete env.ATLAS_AX_BATCH;
     if (batch) env.ATLAS_AX_BATCH = "true";
     const t0 = performance.now();

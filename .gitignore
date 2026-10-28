@@ -113,6 +113,9 @@ desktop/hostinger-upload/
 !src/tools/__tests__/mac-typing.test.ts
 !src/tools/__tests__/os-smart-click.test.ts
 !src/tools/__tests__/lazy-heavy-imports.test.ts
+!src/tools/__tests__/create-tool-realm.test.ts
+!src/agents/__tests__/code-action-realm.test.ts
+!src/security/vm-isolate.test.ts
 !src/skills/site/__tests__/
 !src/skills/site/__tests__/**
 !src/skills/site/__tests__/site-primitives.test.ts
