@@ -19,10 +19,68 @@ export const ALREADY_NUDGED_NOTE =
 const ROLLOVER_HOUR = 4;
 const NIGHT_START_HOUR = 21;
 
-// ponytail: phrase heuristic, built from real late-night replies. A miss just
-// means one more nudge; a false hit just mutes time talk for the night.
-const NUDGE_RE =
-    /\b(?:past midnight|it[’']?s (?:about |almost |nearly |already |like )?\d{1,2}(?::\d{2})? ?a\.?m\b|\d{1,2} baj gaye|(?:be|get|go(?:ing)?(?: to)?) (?:asleep|to sleep|to bed|some sleep|sleep)\b|still up\b|up (?:this|so) late|at this hour|night owl|after you sleep|sleep on it)/i;
+// ponytail: hand-written detector checked against the labelled corpus in
+// late-night-nudge.test.ts; add a miss or false hit there before touching it.
+// A miss costs one more remark; a false hit mutes time talk for the night.
+
+// "it's 1:15 AM", "almost 1 o'clock", "nearly midnight": the current local time.
+const CLOCK_RE =
+    /\b(?:it[’']?s|it is|already|almost|nearly|now|past)\s+(?:about |almost |nearly |already |like |just |past |gone )?(?:(\d{1,2})(?::\d{2})?\s*(a\.?m\b|p\.?m\b|o[’']?\s?clock\b|in the morning\b|at night\b)|midnight\b)(?!,?\s+(?:there|for (?:them|him|her))\b)/gi;
+// Talk aimed at the user's own night: rest, still being up, the late hour.
+const REMARK_RE = new RegExp(
+    [
+        String.raw`\b(?:past|after) midnight\b`,
+        String.raw`\b\d{1,2} baj gaye\b`,
+        String.raw`\blate[ -]night\b`,
+        String.raw`\b(?:up|on|working|awake) (?:this|so) late\b`,
+        String.raw`\bnight owl\b`,
+        String.raw`\b(?:get|grab|catch) some (?:rest|sleep|shut-?eye)\b`,
+        String.raw`\btime to (?:crash|sleep|hit the (?:sack|hay|bed)|call it a night)\b`,
+        String.raw`\bcall it a night\b`,
+        String.raw`\b(?:hit|head to) (?:the )?(?:sack|hay|bed)\b`,
+        // imperative "go (to) sleep/bed/crash", not "the Mac will go to sleep"
+        String.raw`(?:^|\b(?:now|just|so|pls|please|then|and|should|gotta|need to|must|better)\s+)go (?:to )?(?:sleep|bed|crash)\b`,
+        String.raw`\bshouldn[’']?t you be (?:asleep|sleeping|in bed)\b`,
+        String.raw`\byou (?:should|need to|gotta|must|better) (?:sleep|rest|crash)\b`,
+        String.raw`(?:\b(?:you[’']?re|you are|are you|you)\s|^|,\s*)still (?:up|awake)\b(?! for\b)`,
+        String.raw`\bwhy are you (?:still )?(?:up|awake)\b`,
+        String.raw`\b(?:up|awake) at this hour\b`,
+    ].join("|"),
+    "i",
+);
+// Sentence is about a device, service or timer, not the user ("your Mac is going to sleep").
+const DEVICE_RE =
+    /\b(?:mac(?:book)?|laptop|computer|pc|display|screen|monitor|server|service|timer|spotify|music|playback|device|phone|iphone|system|machine|app|process|container|pod|database|db|site|website|api|bot|cron|job|build|deploy(?:ment)?|instance|battery)s?\b/i;
+// Sentence is about opening hours or another place's clock ("9 AM in New York").
+const PLACE_RE =
+    /\b(?:open|opens|closed?|closes|closing|(?:business|opening|open|store) hours|deliver(?:y|s)?|store|shop|pharmacy|restaurant|diner|caf[eé]|time ?zone|utc|gmt|[ecmp][sd]t)\b/i;
+const OTHER_PLACE_RE = /\b(?:in|over in|for) (?:[A-Z][a-z]+|the (?:US|UK))\b/;
+// The reply is about an alarm/reminder/schedule, so a clock mention is information.
+const SCHEDULE_RE = /\b(?:alarm|remind(?:er)?s?|timer|wake you|wake-?up|scheduled?|calendar|meeting|flight|set for)\b/i;
+// The owner asked for the time or a time-based action.
+const TIME_QUESTION_RE =
+    /\b(?:what(?:[’']?s| is)? (?:the )?time|time is it|what time|alarm|remind(?:er)?|timer|wake me|time in|time zone|timezone)\b/i;
+
+function isNightClock(hourStr: string | undefined, suffix: string | undefined): boolean {
+    if (hourStr === undefined) return true; // midnight
+    const h = Number(hourStr);
+    const s = (suffix ?? "").toLowerCase().replace(/[.\s’']/g, "");
+    if (s.startsWith("p") || s === "atnight") return h >= 9 && h <= 11;
+    if (s.startsWith("a") || s === "inthemorning") return h === 12 || (h >= 1 && h <= 3);
+    return h >= 9 || h <= 3; // o'clock
+}
+
+/** True when `reply` remarks on the user being up late (not a time answer, device or opening hours). */
+export function isLateHourRemark(reply: string, userText = ""): boolean {
+    const clockAllowed = !TIME_QUESTION_RE.test(userText) && !SCHEDULE_RE.test(reply);
+    for (const sentence of reply.split(/(?<=[.!?…])\s+|\n+/)) {
+        const s = sentence.trim();
+        if (!s || PLACE_RE.test(s) || OTHER_PLACE_RE.test(s)) continue;
+        if (REMARK_RE.test(s) && !DEVICE_RE.test(s)) return true;
+        if (clockAllowed) for (const m of s.matchAll(CLOCK_RE)) if (isNightClock(m[1], m[2])) return true;
+    }
+    return false;
+}
 
 let nudgedNight: string | null | undefined; // undefined = not loaded yet
 
@@ -37,9 +95,23 @@ function isNight(now: Date, tz: string): boolean {
     return h >= NIGHT_START_HOUR || h < ROLLOVER_HOUR;
 }
 
-/** Local date of the night `now` belongs to: 1 AM on the 29th → "…-28". */
+/** Local date of the night `now` belongs to: 1 AM on the 29th → "…-28". Local
+ *  hours, not elapsed ones, so the DST fall-back night (25 h) stays one night. */
 function nightKey(now: Date, tz: string): string {
-    return new Date(now.getTime() - ROLLOVER_HOUR * 3_600_000).toLocaleDateString("en-CA", { timeZone: tz });
+    const p = Object.fromEntries(
+        new Intl.DateTimeFormat("en-US", {
+            timeZone: tz,
+            year: "numeric",
+            month: "numeric",
+            day: "numeric",
+            hour: "numeric",
+            hourCycle: "h23",
+        })
+            .formatToParts(now)
+            .map((x) => [x.type, Number(x.value)]),
+    );
+    const back = p.hour < ROLLOVER_HOUR ? 1 : 0;
+    return new Date(Date.UTC(p.year, p.month - 1, p.day - back)).toISOString().slice(0, 10);
 }
 
 function loadNight(): string | null {
@@ -53,9 +125,9 @@ function loadNight(): string | null {
     return nudgedNight ?? null;
 }
 
-/** Call with each reply sent to the owner; records the night if it nudged about the hour. */
-export function noteOwnerReply(text: string, now = new Date(), tz = getTimezone()): void {
-    if (!text || !isNight(now, tz) || !NUDGE_RE.test(text)) return;
+/** Call with each reply sent to the owner (and what they said); records the night if it remarked on the hour. */
+export function noteOwnerReply(text: string, userText = "", now = new Date(), tz = getTimezone()): void {
+    if (!text || !isNight(now, tz) || !isLateHourRemark(text, userText)) return;
     const key = nightKey(now, tz);
     if (loadNight() === key) return;
     nudgedNight = key;

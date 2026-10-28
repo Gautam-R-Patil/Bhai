@@ -1098,7 +1098,7 @@ export async function runAgent(
         ) {
             res.text = reveal(res.text);
         }
-        if (callerIsOwner && !channelContext?.autonomous && typeof res?.text === "string") noteOwnerReply(res.text);
+        if (callerIsOwner && !channelContext?.autonomous && typeof res?.text === "string") noteOwnerReply(res.text, userMessage);
         return res;
     };
     if (!isForked) {
@@ -2621,8 +2621,8 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             if (tone) iterationMessages.push({ role: "system", content: tone });
         }
         // identity.md allows one late-hour remark per night; the model can't
-        // remember it made one, so say so (owner only).
-        if (channelContext?.isOwner === true) {
+        // remember it made one, so say so (owner only, once per turn).
+        if (iterations === 1 && channelContext?.isOwner === true) {
             const lateNote = lateNightNote();
             if (lateNote) iterationMessages.push({ role: "system", content: lateNote });
         }
