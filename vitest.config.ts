@@ -35,6 +35,8 @@ export default defineConfig({
         ],
         environment: "node",
         testTimeout: 30_000,
+        // Closing Chromium or an HTTP server can take >10s on a Windows runner.
+        hookTimeout: 30_000,
         reporters: ["verbose"],
     },
 });

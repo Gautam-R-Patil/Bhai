@@ -74,9 +74,6 @@ jobs:
   native:
     name: Native / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    # ponytail: the Linux forge sandbox (seccomp/landlock) doesn't compile against
-    # its locked crate versions; non-blocking until fixed, then drop this line.
-    continue-on-error: ${{ matrix.os == 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -104,16 +101,15 @@ jobs:
   rust-quality:
     name: Rust quality
     runs-on: ubuntu-latest
-    # ponytail: native/ was never rustfmt'd (76 files) and has ~30 clippy errors;
-    # non-blocking until one cleanup pass lands, then drop this line.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
-          toolchain: stable
+          # Pinned so a new stable clippy can't turn CI red without a code change.
+          # Bump deliberately (and fix the new lints) when upgrading.
+          toolchain: "1.94.1"
           components: clippy, rustfmt
       - run: cargo fmt --check
         working-directory: native
