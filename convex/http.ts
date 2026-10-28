@@ -2383,6 +2383,9 @@ http.route({
     if (hfToken) secrets.HF_TOKEN = hfToken;
 
     // CAPTCHA solving keys — stored in Convex, never in the app bundle
+    const nocaptchaKey = process.env.NOCAPTCHAAI_API_KEY;
+    if (nocaptchaKey) secrets.NOCAPTCHAAI_API_KEY = nocaptchaKey;
+
     const nopechaKey = process.env.NOPECHA_API_KEY;
     if (nopechaKey) secrets.NOPECHA_API_KEY = nopechaKey;
 

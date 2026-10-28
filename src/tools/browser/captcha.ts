@@ -39,7 +39,12 @@ let _captchaKeysFetchInFlight: Promise<void> | null = null;
 async function ensureCaptchaKeys(): Promise<void> {
     if (_captchaKeysFetched) return;
     // Skip Convex fetch if any solving key already present locally
-    if (process.env.NOPECHA_API_KEY || process.env.CAPTCHA_API_KEY || process.env.TWO_CAPTCHA_API_KEY) {
+    if (
+        process.env.NOCAPTCHAAI_API_KEY ||
+        process.env.NOPECHA_API_KEY ||
+        process.env.CAPTCHA_API_KEY ||
+        process.env.TWO_CAPTCHA_API_KEY
+    ) {
         _captchaKeysFetched = true;
         return;
     }
@@ -68,6 +73,10 @@ async function ensureCaptchaKeys(): Promise<void> {
             // Only mark fetched on success so a transient failure (no session
             // yet, network blip) doesn't disable key loading for the process.
             _captchaKeysFetched = true;
+            if (secrets.NOCAPTCHAAI_API_KEY && !process.env.NOCAPTCHAAI_API_KEY) {
+                process.env.NOCAPTCHAAI_API_KEY = secrets.NOCAPTCHAAI_API_KEY;
+                console.log("  🔑 CAPTCHA: NOCAPTCHAAI_API_KEY loaded from Convex");
+            }
             if (secrets.NOPECHA_API_KEY && !process.env.NOPECHA_API_KEY) {
                 process.env.NOPECHA_API_KEY = secrets.NOPECHA_API_KEY;
                 console.log("  🔑 CAPTCHA: NOPECHA_API_KEY loaded from Convex");
@@ -446,6 +455,81 @@ async function solveAudioCaptcha(page: any): Promise<string | null> {
     }
 }
 
+// ─── NoCaptchaAI (token solver — set NOCAPTCHAAI_API_KEY) ────────────────
+// Its token API only covers Turnstile; hCaptcha/reCAPTCHA are image-grid tasks there.
+// ponytail: Turnstile only, add ReCaptchaV2Image/PopularCaptchaImage grid solving if those sites matter.
+
+const NOCAPTCHA_TYPE_MAP: Partial<Record<CaptchaType, string>> = {
+    turnstile: "AntiTurnstileTaskProxyLess",
+};
+
+export async function solveViaNoCaptchaAI(type: CaptchaType, siteKey: string, pageUrl: string): Promise<string | null> {
+    const apiKey = process.env.NOCAPTCHAAI_API_KEY;
+    if (!apiKey) return null;
+
+    const taskType = NOCAPTCHA_TYPE_MAP[type];
+    if (!taskType) return null;
+
+    try {
+        const taskBody = { type: taskType, websiteURL: pageUrl, websiteKey: siteKey };
+        const submitRes = await fetch("https://api.nocaptchaai.com/createTask", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ clientKey: apiKey, task: taskBody }),
+        });
+        if (!submitRes.ok) {
+            console.warn(`  ⚠️ NoCaptchaAI submit HTTP ${submitRes.status}`);
+            return null;
+        }
+        const submitData = (await submitRes.json()) as {
+            errorId?: number;
+            taskId?: string;
+            error?: string;
+            errorDescription?: string;
+        };
+        if (submitData.errorId) {
+            console.warn(
+                `  ⚠️ NoCaptchaAI submit error: ${submitData.errorDescription ?? submitData.error ?? submitData.errorId}`,
+            );
+            return null;
+        }
+        const taskId = submitData.taskId;
+        if (!taskId) return null;
+
+        // Poll for result (max 120s, 3s intervals)
+        for (let i = 0; i < 40; i++) {
+            await new Promise((r) => setTimeout(r, 3000));
+            const pollRes = await fetch("https://api.nocaptchaai.com/getTaskResult", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ clientKey: apiKey, taskId }),
+            });
+            if (!pollRes.ok) continue;
+            const pollData = (await pollRes.json()) as {
+                status?: string;
+                solution?: { token?: string };
+                errorId?: number;
+            };
+            if (pollData.status === "ready") {
+                const token = pollData.solution?.token;
+                if (token) {
+                    console.log(`  🟢 NoCaptchaAI: solved ${type} (${(i + 1) * 3}s)`);
+                    return token;
+                }
+            }
+            if (pollData.status === "failed" || (pollData.errorId && pollData.errorId > 0)) {
+                console.warn(`  ⚠️ NoCaptchaAI: task failed`);
+                return null;
+            }
+        }
+        console.warn("  ⚠️ NoCaptchaAI: timeout waiting for solution");
+        return null;
+    } catch (err) {
+        console.warn(`  ⚠️ NoCaptchaAI error: ${(err as Error).message}`);
+        return null;
+    }
+}
+
 // ─── NopeCHA (free tier: 100 solves/day, no signup) ──────────────────────
 // Handles reCAPTCHA v2/v3, hCaptcha, Cloudflare Turnstile.
 // Set NOPECHA_API_KEY env var (get from nopecha.com — free plan available).
@@ -546,7 +630,16 @@ export async function handleCaptchaIfPresent(
         }
     }
 
-    // ── Tier 3: NopeCHA (free 100/day — set NOPECHA_API_KEY) ─────────────────
+    // ── Tier 3: NoCaptchaAI (set NOCAPTCHAAI_API_KEY) ─────────────────────────
+    if (info.siteKey && process.env.NOCAPTCHAAI_API_KEY) {
+        const token = await solveViaNoCaptchaAI(info.type, info.siteKey, page.url());
+        if (token) {
+            await injectToken(page, info.type, token);
+            return { handled: true, type: info.type, method: "nocaptchaai" };
+        }
+    }
+
+    // ── Tier 4: NopeCHA (free 100/day — set NOPECHA_API_KEY) ─────────────────
     if (info.siteKey && process.env.NOPECHA_API_KEY) {
         const token = await solveViaNopeCHA(info.type, info.siteKey, page.url());
         if (token) {
@@ -555,7 +648,7 @@ export async function handleCaptchaIfPresent(
         }
     }
 
-    // ── Tier 4: 2captcha (paid fallback — set CAPTCHA_API_KEY or TWO_CAPTCHA_API_KEY) ──
+    // ── Tier 5: 2captcha (paid fallback — set CAPTCHA_API_KEY or TWO_CAPTCHA_API_KEY) ──
     if (info.siteKey && (process.env.CAPTCHA_API_KEY || process.env.TWO_CAPTCHA_API_KEY)) {
         const token = await solve2captcha(info.type, info.siteKey, page.url());
         if (token) {
@@ -564,7 +657,7 @@ export async function handleCaptchaIfPresent(
         }
     }
 
-    // ── Tier 5: human handoff — surface the page and wait for the user ──
+    // ── Tier 6: human handoff — surface the page and wait for the user ──
     if (await handOffToHuman(page)) return { handled: true, type: info.type, method: "human" };
 
     return { handled: false, type: info.type, method: "unsolved" };
@@ -636,7 +729,7 @@ export const browserHandleCaptcha: ToolDefinition = {
         function: {
             name: "browser_handle_captcha",
             description:
-                "Detect and solve CAPTCHA challenges on the current page. Waterfall: 1) Cloudflare Turnstile — passive wait; 2) reCAPTCHA v2 — audio challenge; 3) NopeCHA API (NOPECHA_API_KEY); 4) 2captcha API (CAPTCHA_API_KEY); 5) if all fail, hands off to the user — brings the page to the front, notifies them, and waits (up to ~5 min) until they solve it, then returns success with method 'human'. If it returns requires_user:true, do NOT retry — tell the user the page needs a manual CAPTCHA solve. Call this when a page is blocked by a CAPTCHA before proceeding.",
+                "Detect and solve CAPTCHA challenges on the current page. Waterfall: 1) Cloudflare Turnstile — passive wait; 2) reCAPTCHA v2 — audio challenge; 3) NoCaptchaAI API for Turnstile (NOCAPTCHAAI_API_KEY); 4) NopeCHA API (NOPECHA_API_KEY); 5) 2captcha API (CAPTCHA_API_KEY); 6) if all fail, hands off to the user — brings the page to the front, notifies them, and waits (up to ~5 min) until they solve it, then returns success with method 'human'. If it returns requires_user:true, do NOT retry — tell the user the page needs a manual CAPTCHA solve. Call this when a page is blocked by a CAPTCHA before proceeding.",
             parameters: {
                 type: "object",
                 properties: {},

@@ -12,7 +12,42 @@ vi.mock("./chrome-bridge.js", () => ({ getActiveExtensionTab: vi.fn(), sendBridg
 vi.mock("./browser-backend.js", () => ({ getCurrentMode: () => "playwright" }));
 vi.mock("../../voice/transcribe.js", () => ({ transcribeBuffer: vi.fn() }));
 
-const { waitForCaptchaCleared } = await import("./captcha.js");
+const { waitForCaptchaCleared, solveViaNoCaptchaAI } = await import("./captcha.js");
+
+describe("solveViaNoCaptchaAI", () => {
+    const json = (body: unknown) => ({ ok: true, json: async () => body }) as Response;
+
+    it("creates a Turnstile task, polls, and returns the token", async () => {
+        vi.useFakeTimers();
+        process.env.NOCAPTCHAAI_API_KEY = "k";
+        const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockResolvedValueOnce(json({ errorId: 0, taskId: "t1" }))
+            .mockResolvedValueOnce(json({ status: "processing" }))
+            .mockResolvedValueOnce(json({ status: "ready", solution: { token: "tok" } }));
+        const p = solveViaNoCaptchaAI("turnstile", "sk", "https://x.test");
+        await vi.advanceTimersByTimeAsync(7000);
+        expect(await p).toBe("tok");
+        const sent = JSON.parse(fetchMock.mock.calls[0][1]?.body as string);
+        expect(sent).toEqual({
+            clientKey: "k",
+            task: { type: "AntiTurnstileTaskProxyLess", websiteURL: "https://x.test", websiteKey: "sk" },
+        });
+        fetchMock.mockRestore();
+        vi.useRealTimers();
+    });
+
+    it("returns null on a rejected key and skips unsupported types", async () => {
+        process.env.NOCAPTCHAAI_API_KEY = "k";
+        const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockResolvedValueOnce(json({ errorId: 1, error: "Invalid apikey. errorid 1" }));
+        expect(await solveViaNoCaptchaAI("turnstile", "sk", "https://x.test")).toBeNull();
+        expect(await solveViaNoCaptchaAI("hcaptcha", "sk", "https://x.test")).toBeNull();
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        fetchMock.mockRestore();
+    });
+});
 
 describe("waitForCaptchaCleared", () => {
     it("polls through errors until the CAPTCHA clears", async () => {
