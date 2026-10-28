@@ -168,7 +168,8 @@ export async function quickCaptchaCheck(page: unknown): Promise<CaptchaType | nu
     }
 }
 
-export const CAPTCHA_HINT = "A CAPTCHA is on this page — call browser_handle_captcha before continuing.";
+export const CAPTCHA_HINT =
+    "A human-verification check (CAPTCHA) is on this page. Don't tick or solve it yourself: call browser_wait_for_human so the owner can do it, then continue the task.";
 
 // ─── Solver (2captcha) ────────────────────────
 

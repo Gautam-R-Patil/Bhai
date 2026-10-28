@@ -193,6 +193,7 @@ const ROLE_TOOLS: Record<AgentRole, string[]> = {
         "browser_close",
         "browser_scroll_element",
         "browser_handle_captcha",
+        "browser_wait_for_human",
         "get_current_time",
     ],
     system: [
