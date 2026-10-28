@@ -28,13 +28,13 @@ const ADOPTION_THRESHOLD: f64 = 0.05;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PromptVariant {
     pub id: String,
-    pub segment_name: String,      // Which prompt section this is for
-    pub content_hash: String,      // Hash of the prompt content
+    pub segment_name: String, // Which prompt section this is for
+    pub content_hash: String, // Hash of the prompt content
     pub success_count: u32,
     pub failure_count: u32,
     pub total_uses: u32,
-    pub avg_quality_score: f64,    // 0-1 from evaluator
-    pub avg_token_count: f64,      // Avg tokens used in responses
+    pub avg_quality_score: f64,     // 0-1 from evaluator
+    pub avg_token_count: f64,       // Avg tokens used in responses
     pub avg_user_satisfaction: f64, // 0-1 proxy from engagement signals
     pub created_at_ms: f64,
 }
@@ -49,7 +49,7 @@ pub struct PromptScore {
     pub efficiency_score: f64,
     pub satisfaction_score: f64,
     pub sample_size: u32,
-    pub is_significant: bool,      // Has enough samples
+    pub is_significant: bool, // Has enough samples
 }
 
 #[napi(object)]
@@ -58,7 +58,7 @@ pub struct EvolutionDecision {
     pub should_evolve: bool,
     pub current_best_id: String,
     pub challenger_id: String,
-    pub improvement: f64,          // How much better the challenger is
+    pub improvement: f64, // How much better the challenger is
     pub reasoning: String,
 }
 
@@ -98,10 +98,7 @@ pub fn score_prompt_variant(variant: PromptVariant) -> PromptScore {
 
 /// Compare two prompt variants and decide whether to adopt the challenger.
 #[napi]
-pub fn compare_variants(
-    current: PromptVariant,
-    challenger: PromptVariant,
-) -> EvolutionDecision {
+pub fn compare_variants(current: PromptVariant, challenger: PromptVariant) -> EvolutionDecision {
     let current_score = score_prompt_variant(current.clone());
     let challenger_score = score_prompt_variant(challenger.clone());
 
@@ -175,7 +172,8 @@ pub fn update_variant_metrics(
     variant.avg_token_count = variant.avg_token_count * (1.0 - alpha) + token_count as f64 * alpha;
 
     let satisfaction = if user_engaged { 0.8 } else { 0.3 };
-    variant.avg_user_satisfaction = variant.avg_user_satisfaction * (1.0 - alpha) + satisfaction * alpha;
+    variant.avg_user_satisfaction =
+        variant.avg_user_satisfaction * (1.0 - alpha) + satisfaction * alpha;
 }
 
 /// Rank multiple prompt variants by composite score.

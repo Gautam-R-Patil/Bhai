@@ -22,13 +22,13 @@ pub struct TimestampedEvent {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DetectedHabit {
     pub event_type: String,
-    pub pattern: String,        // "daily_morning" | "weekday_evening" | "weekly_monday" etc
+    pub pattern: String, // "daily_morning" | "weekday_evening" | "weekly_monday" etc
     pub typical_hour: f64,
     pub typical_day: Option<u32>,
     pub frequency: u32,
-    pub consistency: f64,       // 0-1 (low stddev = high consistency)
+    pub consistency: f64, // 0-1 (low stddev = high consistency)
     pub confidence: f64,
-    pub next_expected_ms: f64,  // Predicted next occurrence
+    pub next_expected_ms: f64, // Predicted next occurrence
 }
 
 // ── Habit Detection ────────────────────────────────
@@ -42,32 +42,50 @@ pub fn detect_habits(events: Vec<TimestampedEvent>, min_frequency: u32) -> Vec<D
     // Group events by type
     let mut by_type: HashMap<String, Vec<&TimestampedEvent>> = HashMap::new();
     for event in &events {
-        by_type.entry(event.event_type.clone()).or_default().push(event);
+        by_type
+            .entry(event.event_type.clone())
+            .or_default()
+            .push(event);
     }
 
     for (event_type, type_events) in &by_type {
-        if (type_events.len() as u32) < min_freq { continue; }
+        if (type_events.len() as u32) < min_freq {
+            continue;
+        }
 
         // Analyze hour-of-day patterns
         let hours: Vec<f64> = type_events.iter().map(|e| e.hour_of_day).collect();
         let mean_hour = hours.iter().sum::<f64>() / hours.len() as f64;
-        let variance = hours.iter().map(|h| (h - mean_hour).powi(2)).sum::<f64>() / hours.len() as f64;
+        let variance =
+            hours.iter().map(|h| (h - mean_hour).powi(2)).sum::<f64>() / hours.len() as f64;
         let stddev = variance.sqrt();
 
-        if stddev > 3.0 { continue; } // Too inconsistent
+        if stddev > 3.0 {
+            continue;
+        } // Too inconsistent
 
         // Analyze day-of-week patterns
         let mut day_counts = [0u32; 7];
-        for e in type_events { day_counts[e.day_of_week as usize % 7] += 1; }
+        for e in type_events {
+            day_counts[e.day_of_week as usize % 7] += 1;
+        }
 
         let total = type_events.len() as f64;
         let weekday_ratio: f64 = day_counts[1..6].iter().sum::<u32>() as f64 / total;
 
         let (pattern, typical_day) = if weekday_ratio > 0.85 {
             // Check for specific day
-            let max_day = day_counts.iter().enumerate().max_by_key(|(_, &c)| c).map(|(i, _)| i).unwrap_or(0);
+            let max_day = day_counts
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, &c)| c)
+                .map(|(i, _)| i)
+                .unwrap_or(0);
             if day_counts[max_day] as f64 / total > 0.5 {
-                (format!("weekly_{}", day_name(max_day)), Some(max_day as u32))
+                (
+                    format!("weekly_{}", day_name(max_day)),
+                    Some(max_day as u32),
+                )
             } else {
                 ("weekday".to_string(), None)
             }
@@ -77,10 +95,15 @@ pub fn detect_habits(events: Vec<TimestampedEvent>, min_frequency: u32) -> Vec<D
             ("daily".to_string(), None)
         };
 
-        let time_label = if mean_hour < 6.0 { "night" }
-            else if mean_hour < 12.0 { "morning" }
-            else if mean_hour < 18.0 { "afternoon" }
-            else { "evening" };
+        let time_label = if mean_hour < 6.0 {
+            "night"
+        } else if mean_hour < 12.0 {
+            "morning"
+        } else if mean_hour < 18.0 {
+            "afternoon"
+        } else {
+            "evening"
+        };
 
         let consistency = (1.0 - stddev / 3.0).clamp(0.0, 1.0);
         let confidence = (type_events.len() as f64 / 10.0).min(1.0) * consistency;
@@ -90,7 +113,7 @@ pub fn detect_habits(events: Vec<TimestampedEvent>, min_frequency: u32) -> Vec<D
         let avg_interval = if type_events.len() > 1 {
             let mut intervals: Vec<f64> = Vec::new();
             for i in 1..type_events.len() {
-                intervals.push(type_events[i].timestamp_ms - type_events[i-1].timestamp_ms);
+                intervals.push(type_events[i].timestamp_ms - type_events[i - 1].timestamp_ms);
             }
             intervals.iter().sum::<f64>() / intervals.len() as f64
         } else {
@@ -109,19 +132,31 @@ pub fn detect_habits(events: Vec<TimestampedEvent>, min_frequency: u32) -> Vec<D
         });
     }
 
-    habits.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+    habits.sort_by(|a, b| {
+        b.confidence
+            .partial_cmp(&a.confidence)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     habits
 }
 
 fn day_name(day: usize) -> &'static str {
-    ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"][day % 7]
+    [
+        "sunday",
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+    ][day % 7]
 }
 
 /// Check if now is within the expected window for a habit.
 #[napi]
 pub fn is_habit_due(habit: DetectedHabit, current_hour: f64, current_day: u32) -> bool {
     let hour_match = (current_hour - habit.typical_hour).abs() < 1.0;
-    let day_match = habit.typical_day.map_or(true, |d| d == current_day);
+    let day_match = habit.typical_day.is_none_or(|d| d == current_day);
     hour_match && day_match
 }
 
@@ -156,16 +191,22 @@ pub fn habit_detect_anomalies(
             let d = (habit.typical_hour as i32 - now_hour as i32).abs();
             d.min(24 - d)
         };
-        if hour_diff > 1 { continue; }
+        if hour_diff > 1 {
+            continue;
+        }
 
-        let seen = recent_events.iter().any(|e| {
-            e.event_type == habit.event_type && e.ts_ms >= six_h_ago
-        });
-        if seen { continue; }
+        let seen = recent_events
+            .iter()
+            .any(|e| e.event_type == habit.event_type && e.ts_ms >= six_h_ago);
+        if seen {
+            continue;
+        }
 
         let proximity = 1.0 - (hour_diff as f64) * 0.5;
         let confidence = habit.confidence * proximity;
-        if confidence < 0.3 { continue; }
+        if confidence < 0.3 {
+            continue;
+        }
 
         let last_ts = recent_events
             .iter()

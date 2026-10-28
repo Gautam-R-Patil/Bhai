@@ -67,7 +67,11 @@ pub fn calendar_analyze(
     timezone_offset_min: i32,
 ) -> CalendarAnalysis {
     let mut filtered: Vec<CalendarEvent> = events.into_iter().filter(|e| !e.is_all_day).collect();
-    filtered.sort_by(|a, b| a.start_ms.partial_cmp(&b.start_ms).unwrap_or(std::cmp::Ordering::Equal));
+    filtered.sort_by(|a, b| {
+        a.start_ms
+            .partial_cmp(&b.start_ms)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     let mut conflicts: Vec<EventPair> = Vec::new();
     let mut back_to_back: Vec<EventPair> = Vec::new();
@@ -80,9 +84,14 @@ pub fn calendar_analyze(
         for j in (i + 1)..filtered.len() {
             let a = &filtered[i];
             let b = &filtered[j];
-            if b.start_ms >= a.end_ms { break; }
+            if b.start_ms >= a.end_ms {
+                break;
+            }
             if a.start_ms <= b.start_ms && b.start_ms < a.end_ms {
-                conflicts.push(EventPair { first: a.id.clone(), second: b.id.clone() });
+                conflicts.push(EventPair {
+                    first: a.id.clone(),
+                    second: b.id.clone(),
+                });
             }
         }
     }
@@ -93,11 +102,14 @@ pub fn calendar_analyze(
         let b = &w[1];
         let gap_ms = b.start_ms - a.end_ms;
         if gap_ms > 0.0 && gap_ms < 5.0 * 60_000.0 {
-            back_to_back.push(EventPair { first: a.id.clone(), second: b.id.clone() });
+            back_to_back.push(EventPair {
+                first: a.id.clone(),
+                second: b.id.clone(),
+            });
         }
         if gap_ms >= 90.0 * 60_000.0 {
-            let start_hr_of_day = ((a.end_ms + tz_offset_ms) % 86_400_000.0) / 3600_000.0;
-            let end_hr_of_day = ((b.start_ms + tz_offset_ms) % 86_400_000.0) / 3600_000.0;
+            let start_hr_of_day = ((a.end_ms + tz_offset_ms) % 86_400_000.0) / 3_600_000.0;
+            let end_hr_of_day = ((b.start_ms + tz_offset_ms) % 86_400_000.0) / 3_600_000.0;
             if start_hr_of_day >= work_start_hr as f64 && end_hr_of_day <= work_end_hr as f64 {
                 long_gaps.push(LongGap {
                     start_ms: a.end_ms,
@@ -110,12 +122,15 @@ pub fn calendar_analyze(
         }
     }
 
-    let next_event_id = filtered.iter().find(|e| e.start_ms > now_ms).map(|e| e.id.clone());
+    let next_event_id = filtered
+        .iter()
+        .find(|e| e.start_ms > now_ms)
+        .map(|e| e.id.clone());
 
     let mut morning_meeting_count = 0u32;
     let mut afternoon_meeting_count = 0u32;
     for e in filtered.iter() {
-        let hr_of_day = ((e.start_ms + tz_offset_ms) % 86_400_000.0) / 3600_000.0;
+        let hr_of_day = ((e.start_ms + tz_offset_ms) % 86_400_000.0) / 3_600_000.0;
         if hr_of_day < 12.0 {
             morning_meeting_count += 1;
         } else {
@@ -140,22 +155,34 @@ pub fn calendar_prep_intents(
     offset_minutes: i32,
 ) -> Vec<PrepIntent> {
     let mut out = Vec::new();
-    let day_ms = 24.0 * 3600_000.0;
+    let day_ms = 24.0 * 3_600_000.0;
 
     for e in events.into_iter() {
-        if e.is_all_day { continue; }
+        if e.is_all_day {
+            continue;
+        }
         let (anchor_ms, fire_at_ms) = if offset_minutes >= 0 {
             let anchor = e.start_ms;
             let fire = anchor - (offset_minutes as f64) * 60_000.0;
-            if fire <= now_ms { continue; }
-            if anchor <= now_ms + 60_000.0 { continue; }
-            if anchor - now_ms > day_ms { continue; }
+            if fire <= now_ms {
+                continue;
+            }
+            if anchor <= now_ms + 60_000.0 {
+                continue;
+            }
+            if anchor - now_ms > day_ms {
+                continue;
+            }
             (anchor, fire)
         } else {
             let anchor = e.end_ms;
             let fire = anchor + (-offset_minutes as f64) * 60_000.0;
-            if fire <= now_ms { continue; }
-            if fire - now_ms > day_ms { continue; }
+            if fire <= now_ms {
+                continue;
+            }
+            if fire - now_ms > day_ms {
+                continue;
+            }
             (anchor, fire)
         };
         out.push(PrepIntent {
@@ -206,24 +233,30 @@ mod tests {
 
     #[test]
     fn back_to_back_detected() {
-        let events = vec![ev("a", 9.0e6, 10.0e6), ev("b", 10.0e6 + 3.0 * 60_000.0, 11.0e6)];
+        let events = vec![
+            ev("a", 9.0e6, 10.0e6),
+            ev("b", 10.0e6 + 3.0 * 60_000.0, 11.0e6),
+        ];
         let r = calendar_analyze(events, 8.0e6, 9, 18, 0);
         assert_eq!(r.back_to_back.len(), 1);
     }
 
     #[test]
     fn no_back_to_back_when_gap_over_5min() {
-        let events = vec![ev("a", 9.0e6, 10.0e6), ev("b", 10.0e6 + 6.0 * 60_000.0, 11.0e6)];
+        let events = vec![
+            ev("a", 9.0e6, 10.0e6),
+            ev("b", 10.0e6 + 6.0 * 60_000.0, 11.0e6),
+        ];
         let r = calendar_analyze(events, 8.0e6, 9, 18, 0);
         assert_eq!(r.back_to_back.len(), 0);
     }
 
     #[test]
     fn long_gap_within_work_hours() {
-        let t9 = 9.0 * 3600_000.0;
-        let t10 = 10.0 * 3600_000.0;
-        let t15 = 15.0 * 3600_000.0;
-        let t16 = 16.0 * 3600_000.0;
+        let t9 = 9.0 * 3_600_000.0;
+        let t10 = 10.0 * 3_600_000.0;
+        let t15 = 15.0 * 3_600_000.0;
+        let t16 = 16.0 * 3_600_000.0;
         let events = vec![ev("a", t9, t10), ev("b", t15, t16)];
         let r = calendar_analyze(events, 0.0, 9, 18, 0);
         assert!(r.long_gaps.len() >= 1);
@@ -241,9 +274,9 @@ mod tests {
 
     #[test]
     fn prep_intents_for_upcoming_events() {
-        let now = 10.0 * 3600_000.0;
-        let start = now + 2.0 * 3600_000.0;
-        let events = vec![ev("a", start, start + 3600_000.0)];
+        let now = 10.0 * 3_600_000.0;
+        let start = now + 2.0 * 3_600_000.0;
+        let events = vec![ev("a", start, start + 3_600_000.0)];
         let prep = calendar_prep_intents(events, now, 15);
         assert_eq!(prep.len(), 1);
         assert!((prep[0].fire_at_ms - (start - 15.0 * 60_000.0)).abs() < 1.0);
@@ -251,16 +284,16 @@ mod tests {
 
     #[test]
     fn prep_intents_positive_offset_skips_past_events() {
-        let now = 10.0 * 3600_000.0;
-        let events = vec![ev("a", now - 3600_000.0, now - 1800_000.0)];
+        let now = 10.0 * 3_600_000.0;
+        let events = vec![ev("a", now - 3_600_000.0, now - 1800_000.0)];
         let prep = calendar_prep_intents(events, now, 15);
         assert_eq!(prep.len(), 0);
     }
 
     #[test]
     fn prep_intents_negative_offset_emits_followup() {
-        let now = 10.0 * 3600_000.0;
-        let events = vec![ev("a", now - 3600_000.0, now - 60_000.0)];
+        let now = 10.0 * 3_600_000.0;
+        let events = vec![ev("a", now - 3_600_000.0, now - 60_000.0)];
         let prep = calendar_prep_intents(events, now, -10);
         assert_eq!(prep.len(), 1);
         assert!(prep[0].fire_at_ms > now);

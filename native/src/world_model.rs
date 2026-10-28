@@ -24,7 +24,7 @@ const ACCESSIBLE_THRESHOLD: f64 = 0.3;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct WorldEntity {
     pub name: String,
-    pub entity_type: String,     // "api" | "website" | "tool" | "document" | "contact" | "service"
+    pub entity_type: String, // "api" | "website" | "tool" | "document" | "contact" | "service"
     pub last_verified_hours_ago: f64,
     pub failure_count_24h: u32,
     pub success_count_24h: u32,
@@ -36,19 +36,19 @@ pub struct WorldEntity {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct EntityConfidence {
     pub name: String,
-    pub confidence: f64,       // 0-1
-    pub status: String,        // "healthy" | "degraded" | "unreachable" | "unknown"
+    pub confidence: f64, // 0-1
+    pub status: String,  // "healthy" | "degraded" | "unreachable" | "unknown"
     pub hours_since_verified: f64,
 }
 
 #[napi(object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct FeasibilityResult {
-    pub overall_feasibility: f64,  // 0-1
-    pub bottleneck: String,        // The least-confident required entity
+    pub overall_feasibility: f64, // 0-1
+    pub bottleneck: String,       // The least-confident required entity
     pub bottleneck_confidence: f64,
     pub entity_confidences: Vec<EntityConfidence>,
-    pub recommendation: String,    // "proceed" | "verify_first" | "risky" | "blocked"
+    pub recommendation: String, // "proceed" | "verify_first" | "risky" | "blocked"
 }
 
 // ── Entity Confidence Decay ────────────────────────
@@ -98,10 +98,7 @@ pub fn entity_confidence_decay(entity: WorldEntity) -> EntityConfidence {
 /// Batch compute confidences for multiple entities.
 #[napi]
 pub fn batch_entity_confidence(entities: Vec<WorldEntity>) -> Vec<EntityConfidence> {
-    entities
-        .into_iter()
-        .map(entity_confidence_decay)
-        .collect()
+    entities.into_iter().map(entity_confidence_decay).collect()
 }
 
 // ── Accessibility Aggregation ──────────────────────

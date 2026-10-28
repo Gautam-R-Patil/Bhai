@@ -69,10 +69,22 @@ impl Worker {
     /// Wrap an already-spawned Tokio `Child` plus its piped stdio. Caller
     /// (Pool::get_or_spawn → Sandbox::spawn) is responsible for choosing the
     /// OS sandbox; this constructor only sets up framing.
-    pub async fn from_child(slug: String, paths: Sandpath, mut child: Child) -> Result<Self, InvokeError> {
-        let pid = child.id().ok_or_else(|| InvokeError::Other("child has no pid".into()))?;
-        let stdin = child.stdin.take().ok_or_else(|| InvokeError::Other("child stdin not piped".into()))?;
-        let stdout = child.stdout.take().ok_or_else(|| InvokeError::Other("child stdout not piped".into()))?;
+    pub async fn from_child(
+        slug: String,
+        paths: Sandpath,
+        mut child: Child,
+    ) -> Result<Self, InvokeError> {
+        let pid = child
+            .id()
+            .ok_or_else(|| InvokeError::Other("child has no pid".into()))?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| InvokeError::Other("child stdin not piped".into()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| InvokeError::Other("child stdout not piped".into()))?;
         let mut stdout_lines = BufReader::new(stdout).lines();
 
         let boot = tokio::time::timeout(Duration::from_secs(5), stdout_lines.next_line()).await;
@@ -136,11 +148,17 @@ impl Worker {
             "input": input,
             "deadline_ms": deadline.as_millis() as u64,
         });
-        let mut line = serde_json::to_string(&request).map_err(|e| InvokeError::Other(e.to_string()))?;
+        let mut line =
+            serde_json::to_string(&request).map_err(|e| InvokeError::Other(e.to_string()))?;
         line.push('\n');
 
-        let stdin = self.stdin.as_mut().ok_or_else(|| InvokeError::Pipe(io::Error::new(io::ErrorKind::BrokenPipe, "stdin closed")))?;
-        stdin.write_all(line.as_bytes()).await.map_err(InvokeError::Pipe)?;
+        let stdin = self.stdin.as_mut().ok_or_else(|| {
+            InvokeError::Pipe(io::Error::new(io::ErrorKind::BrokenPipe, "stdin closed"))
+        })?;
+        stdin
+            .write_all(line.as_bytes())
+            .await
+            .map_err(InvokeError::Pipe)?;
         stdin.flush().await.map_err(InvokeError::Pipe)?;
 
         let read = tokio::time::timeout(deadline, self.stdout_lines.next_line()).await;
@@ -150,12 +168,18 @@ impl Worker {
             Ok(Err(e)) => return Err(InvokeError::Pipe(e)),
             Err(_) => {
                 let _ = self.child.start_kill();
-                return Err(InvokeError::Timeout { budget_ms: deadline.as_millis() as u64 });
+                return Err(InvokeError::Timeout {
+                    budget_ms: deadline.as_millis() as u64,
+                });
             }
         };
 
-        let value: Value = serde_json::from_str(&raw)
-            .map_err(|e| InvokeError::Ipc(format!("response not JSON: {e}; raw={}", truncate(&raw, 200))))?;
+        let value: Value = serde_json::from_str(&raw).map_err(|e| {
+            InvokeError::Ipc(format!(
+                "response not JSON: {e}; raw={}",
+                truncate(&raw, 200)
+            ))
+        })?;
 
         let resp_id = value.get("id").and_then(|i| i.as_str()).unwrap_or("");
         if resp_id != req_id {
@@ -229,7 +253,9 @@ mod tests {
     #[tokio::test]
     async fn from_child_reads_boot_line_and_succeeds() {
         let child = spawn_fake_child(true).await.expect("spawn");
-        let paths = Sandpath { handler_dir: std::env::temp_dir() };
+        let paths = Sandpath {
+            handler_dir: std::env::temp_dir(),
+        };
         let w = Worker::from_child("test".into(), paths, child).await;
         assert!(w.is_ok(), "expected boot success, got {:?}", w.err());
         let w = w.unwrap();
@@ -241,7 +267,9 @@ mod tests {
     #[tokio::test]
     async fn from_child_rejects_boot_false() {
         let child = spawn_fake_child(false).await.expect("spawn");
-        let paths = Sandpath { handler_dir: std::env::temp_dir() };
+        let paths = Sandpath {
+            handler_dir: std::env::temp_dir(),
+        };
         let w = Worker::from_child("bad".into(), paths, child).await;
         assert!(w.is_err());
         match w.err().unwrap() {
@@ -253,12 +281,22 @@ mod tests {
     #[tokio::test]
     async fn try_acquire_inflight_is_single_flight() {
         let child = spawn_fake_child(true).await.expect("spawn");
-        let paths = Sandpath { handler_dir: std::env::temp_dir() };
-        let w = Worker::from_child("test".into(), paths, child).await.unwrap();
-        assert!(w.try_acquire_inflight().is_ok(), "first acquire must succeed");
+        let paths = Sandpath {
+            handler_dir: std::env::temp_dir(),
+        };
+        let w = Worker::from_child("test".into(), paths, child)
+            .await
+            .unwrap();
+        assert!(
+            w.try_acquire_inflight().is_ok(),
+            "first acquire must succeed"
+        );
         assert!(matches!(w.try_acquire_inflight(), Err(InvokeError::Busy)));
         w.release_inflight();
-        assert!(w.try_acquire_inflight().is_ok(), "after release, acquire succeeds again");
+        assert!(
+            w.try_acquire_inflight().is_ok(),
+            "after release, acquire succeeds again"
+        );
     }
 
     async fn spawn_echo_child() -> Child {
@@ -275,12 +313,19 @@ mod tests {
     #[tokio::test]
     async fn invoke_round_trips_via_echo_child() {
         let child = spawn_echo_child().await;
-        let paths = Sandpath { handler_dir: std::env::temp_dir() };
-        let mut w = Worker::from_child("echo".into(), paths, child).await.expect("boot");
+        let paths = Sandpath {
+            handler_dir: std::env::temp_dir(),
+        };
+        let mut w = Worker::from_child("echo".into(), paths, child)
+            .await
+            .expect("boot");
 
         let req = serde_json::json!({"echo": "hello"});
         w.try_acquire_inflight().expect("acquire");
-        let resp = w.invoke(req.clone(), Duration::from_secs(5)).await.expect("invoke");
+        let resp = w
+            .invoke(req.clone(), Duration::from_secs(5))
+            .await
+            .expect("invoke");
         w.release_inflight();
 
         assert!(resp.get("id").is_some(), "response has id");
@@ -298,15 +343,21 @@ mod tests {
             .stderr(Stdio::piped())
             .spawn()
             .expect("spawn");
-        let paths = Sandpath { handler_dir: std::env::temp_dir() };
-        let mut w = Worker::from_child("dies".into(), paths, child).await.expect("boot");
+        let paths = Sandpath {
+            handler_dir: std::env::temp_dir(),
+        };
+        let mut w = Worker::from_child("dies".into(), paths, child)
+            .await
+            .expect("boot");
 
         w.try_acquire_inflight().expect("acquire");
-        let first = w.invoke(serde_json::json!({"x":1}), Duration::from_secs(2)).await;
+        let first = w
+            .invoke(serde_json::json!({"x":1}), Duration::from_secs(2))
+            .await;
         w.release_inflight();
         match first {
-            Err(InvokeError::Ipc(m)) if m.contains("closed") => {},
-            Err(InvokeError::Pipe(_)) => {},
+            Err(InvokeError::Ipc(m)) if m.contains("closed") => {}
+            Err(InvokeError::Pipe(_)) => {}
             other => panic!("expected EOF-style error, got {other:?}"),
         }
     }
@@ -347,12 +398,18 @@ mod tests {
             .stderr(Stdio::piped())
             .spawn()
             .expect("spawn");
-        let paths = Sandpath { handler_dir: std::env::temp_dir() };
-        let mut w = Worker::from_child("slow".into(), paths, child).await.expect("boot");
+        let paths = Sandpath {
+            handler_dir: std::env::temp_dir(),
+        };
+        let mut w = Worker::from_child("slow".into(), paths, child)
+            .await
+            .expect("boot");
 
         w.try_acquire_inflight().expect("acquire");
         let start = Instant::now();
-        let r = w.invoke(serde_json::json!({}), Duration::from_millis(200)).await;
+        let r = w
+            .invoke(serde_json::json!({}), Duration::from_millis(200))
+            .await;
         let elapsed = start.elapsed();
         w.release_inflight();
 
@@ -360,7 +417,10 @@ mod tests {
             Err(InvokeError::Timeout { budget_ms }) => assert_eq!(budget_ms, 200),
             other => panic!("expected Timeout, got {other:?}"),
         }
-        assert!(elapsed < Duration::from_secs(5), "invoke should have killed quickly, took {elapsed:?}");
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "invoke should have killed quickly, took {elapsed:?}"
+        );
     }
 
     #[cfg(unix)]
@@ -374,18 +434,27 @@ mod tests {
             .stderr(Stdio::piped())
             .spawn()
             .expect("spawn");
-        let paths = Sandpath { handler_dir: std::env::temp_dir() };
-        let mut w = Worker::from_child("leak".into(), paths, child).await.expect("boot");
+        let paths = Sandpath {
+            handler_dir: std::env::temp_dir(),
+        };
+        let mut w = Worker::from_child("leak".into(), paths, child)
+            .await
+            .expect("boot");
         let pid = w.pid;
 
         w.try_acquire_inflight().expect("acquire");
-        let _ = w.invoke(serde_json::json!({}), Duration::from_millis(100)).await;
+        let _ = w
+            .invoke(serde_json::json!({}), Duration::from_millis(100))
+            .await;
         w.release_inflight();
 
         drop(w);
         tokio::time::sleep(Duration::from_millis(200)).await;
         let kill_check = unsafe { libc::kill(pid as i32, 0) };
-        assert!(kill_check != 0, "child pid {pid} should be reaped after Worker drop");
+        assert!(
+            kill_check != 0,
+            "child pid {pid} should be reaped after Worker drop"
+        );
     }
 
     #[tokio::test]
@@ -398,14 +467,25 @@ mod tests {
             .stderr(Stdio::piped())
             .spawn()
             .expect("spawn");
-        let paths = Sandpath { handler_dir: std::env::temp_dir() };
-        let mut w = Worker::from_child("graceful".into(), paths, child).await.expect("boot");
+        let paths = Sandpath {
+            handler_dir: std::env::temp_dir(),
+        };
+        let mut w = Worker::from_child("graceful".into(), paths, child)
+            .await
+            .expect("boot");
 
         let start = Instant::now();
         let r = w.shutdown().await;
         let elapsed = start.elapsed();
-        assert!(r.is_ok(), "shutdown should succeed cleanly, got {:?}", r.err());
-        assert!(elapsed < Duration::from_secs(1), "expected clean exit < 1s, took {elapsed:?}");
+        assert!(
+            r.is_ok(),
+            "shutdown should succeed cleanly, got {:?}",
+            r.err()
+        );
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "expected clean exit < 1s, took {elapsed:?}"
+        );
     }
 
     #[tokio::test]
@@ -418,14 +498,24 @@ mod tests {
             .stderr(Stdio::piped())
             .spawn()
             .expect("spawn");
-        let paths = Sandpath { handler_dir: std::env::temp_dir() };
-        let mut w = Worker::from_child("stubborn".into(), paths, child).await.expect("boot");
+        let paths = Sandpath {
+            handler_dir: std::env::temp_dir(),
+        };
+        let mut w = Worker::from_child("stubborn".into(), paths, child)
+            .await
+            .expect("boot");
 
         let start = Instant::now();
         let r = w.shutdown().await;
         let elapsed = start.elapsed();
         assert!(r.is_ok());
-        assert!(elapsed < Duration::from_secs(3), "shutdown should be fast, took {elapsed:?}");
-        assert!(elapsed >= Duration::from_millis(900), "should wait grace period, took {elapsed:?}");
+        assert!(
+            elapsed < Duration::from_secs(3),
+            "shutdown should be fast, took {elapsed:?}"
+        );
+        assert!(
+            elapsed >= Duration::from_millis(900),
+            "should wait grace period, took {elapsed:?}"
+        );
     }
 }

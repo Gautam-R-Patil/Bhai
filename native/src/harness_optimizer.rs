@@ -22,17 +22,17 @@ use std::collections::HashMap;
 #[napi(object)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HarnessBenchmarkInput {
-    pub task_completion_score: f64,   // 0-1
-    pub memory_recall_score: f64,     // 0-1
-    pub tool_selection_score: f64,    // 0-1
-    pub token_efficiency: f64,        // 0-1
-    pub tokens_used: f64,             // raw token count
+    pub task_completion_score: f64, // 0-1
+    pub memory_recall_score: f64,   // 0-1
+    pub tool_selection_score: f64,  // 0-1
+    pub token_efficiency: f64,      // 0-1
+    pub tokens_used: f64,           // raw token count
 }
 
 #[napi(object)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HarnessCompositeScore {
-    pub composite: f64,               // 0-100
+    pub composite: f64, // 0-100
     pub weighted_task: f64,
     pub weighted_memory: f64,
     pub weighted_tools: f64,
@@ -58,7 +58,8 @@ pub fn compute_harness_composite(input: HarnessBenchmarkInput) -> HarnessComposi
     let weighted_tools = s * W_TOOL;
     let weighted_efficiency = e * W_EFF;
 
-    let composite = (weighted_task + weighted_memory + weighted_tools + weighted_efficiency) * 100.0;
+    let composite =
+        (weighted_task + weighted_memory + weighted_tools + weighted_efficiency) * 100.0;
 
     HarnessCompositeScore {
         composite: (composite * 10.0).round() / 10.0,
@@ -76,7 +77,7 @@ pub fn compute_harness_composite(input: HarnessBenchmarkInput) -> HarnessComposi
 pub struct CandidateComparisonResult {
     pub challenger_wins: bool,
     pub delta: f64,
-    pub significant: bool,  // |delta| > significance_threshold
+    pub significant: bool, // |delta| > significance_threshold
     pub significance_threshold: f64,
 }
 
@@ -134,10 +135,8 @@ pub fn clamp_proposed_dimensions(
     proposed: Vec<(String, f64)>,
     constraints: Vec<DimensionConstraint>,
 ) -> ClampedDimensions {
-    let constraint_map: HashMap<String, &DimensionConstraint> = constraints
-        .iter()
-        .map(|c| (c.id.clone(), c))
-        .collect();
+    let constraint_map: HashMap<String, &DimensionConstraint> =
+        constraints.iter().map(|c| (c.id.clone(), c)).collect();
 
     let mut violations_fixed = 0u32;
     let mut dimensions = Vec::with_capacity(proposed.len());
@@ -170,7 +169,10 @@ pub fn clamp_proposed_dimensions(
         }
     }
 
-    ClampedDimensions { dimensions, violations_fixed }
+    ClampedDimensions {
+        dimensions,
+        violations_fixed,
+    }
 }
 
 // ── Config diff ──────────────────────────────────────────────────────────────
@@ -242,7 +244,7 @@ pub struct TraceAggregate {
     pub avg_duration_ms: f64,
     pub avg_tools_count: f64,
     pub p50_eval_score: f64,
-    pub p10_eval_score: f64,  // worst-decile performance
+    pub p10_eval_score: f64, // worst-decile performance
 }
 
 /// Aggregate trace statistics using numerically stable Welford online algorithm.
@@ -265,18 +267,26 @@ pub fn aggregate_traces(traces: Vec<TraceInput>) -> TraceAggregate {
 
     let n = traces.len() as f64;
     let successes = traces.iter().filter(|t| t.task_succeeded).count() as f64;
-    let avg_eval = traces.iter()
+    let avg_eval = traces
+        .iter()
         .filter_map(|t| t.evaluation_score)
-        .sum::<f64>() / n;
-    let avg_mem_hits = traces.iter().map(|t| t.memory_hit_count as f64).sum::<f64>() / n;
+        .sum::<f64>()
+        / n;
+    let avg_mem_hits = traces
+        .iter()
+        .map(|t| t.memory_hit_count as f64)
+        .sum::<f64>()
+        / n;
     let avg_mem_score = traces.iter().map(|t| t.memory_top_score).sum::<f64>() / n;
     let avg_dur = traces.iter().map(|t| t.duration_ms).sum::<f64>() / n;
-    let avg_tools = traces.iter().map(|t| t.tools_selected_count as f64).sum::<f64>() / n;
+    let avg_tools = traces
+        .iter()
+        .map(|t| t.tools_selected_count as f64)
+        .sum::<f64>()
+        / n;
 
     // Percentile estimates for eval scores
-    let mut eval_scores: Vec<f64> = traces.iter()
-        .filter_map(|t| t.evaluation_score)
-        .collect();
+    let mut eval_scores: Vec<f64> = traces.iter().filter_map(|t| t.evaluation_score).collect();
     eval_scores.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
     let p50 = percentile(&eval_scores, 50.0);
@@ -318,9 +328,14 @@ pub struct RankedLeaderboard {
 #[napi]
 pub fn rank_harness_candidates(mut candidates: Vec<CandidateEntry>) -> RankedLeaderboard {
     // Stable sort descending by objective
-    candidates.sort_by(|a, b| b.objective.partial_cmp(&a.objective).unwrap_or(std::cmp::Ordering::Equal));
+    candidates.sort_by(|a, b| {
+        b.objective
+            .partial_cmp(&a.objective)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
-    let baseline_score = candidates.iter()
+    let baseline_score = candidates
+        .iter()
         .find(|c| c.outcome == "baseline")
         .map(|c| c.objective)
         .unwrap_or(0.0);
@@ -346,10 +361,10 @@ pub fn rank_harness_candidates(mut candidates: Vec<CandidateEntry>) -> RankedLea
 #[napi(object)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ObjectiveVector {
-    pub task: f64,       // 0-100
-    pub token_eff: f64,  // 0-1
-    pub mem_prec: f64,   // 0-1
-    pub tool_acc: f64,   // 0-1
+    pub task: f64,      // 0-100
+    pub token_eff: f64, // 0-1
+    pub mem_prec: f64,  // 0-1
+    pub tool_acc: f64,  // 0-1
 }
 
 #[napi(object)]
@@ -375,7 +390,9 @@ pub fn compute_pareto_dominance(
 
     for i in 0..n {
         for j in 0..n {
-            if i == j { continue; }
+            if i == j {
+                continue;
+            }
             if pareto_dominates(&candidates[i].1, &candidates[j].1) {
                 dominates_list[i].push(j);
             } else if pareto_dominates(&candidates[j].1, &candidates[i].1) {
@@ -385,9 +402,7 @@ pub fn compute_pareto_dominance(
     }
 
     let mut ranks = vec![0u32; n];
-    let mut current_front: Vec<usize> = (0..n)
-        .filter(|&i| dominated_by_count[i] == 0)
-        .collect();
+    let mut current_front: Vec<usize> = (0..n).filter(|&i| dominated_by_count[i] == 0).collect();
     let mut current_rank: u32 = 1;
     let mut remaining_dominated = dominated_by_count.clone();
 
@@ -508,12 +523,20 @@ pub fn fit_and_predict_gp(
 ) -> GpPrediction {
     let n = observations_x.len();
     if n == 0 || observations_y.len() != n || query_x.is_empty() {
-        return GpPrediction { mean: 0.0, variance: 1.0, expected_improvement: 0.0 };
+        return GpPrediction {
+            mean: 0.0,
+            variance: 1.0,
+            expected_improvement: 0.0,
+        };
     }
     let d = query_x.len();
     for row in &observations_x {
         if row.len() != d {
-            return GpPrediction { mean: gp_mean_vec(&observations_y), variance: 1.0, expected_improvement: 0.0 };
+            return GpPrediction {
+                mean: gp_mean_vec(&observations_y),
+                variance: 1.0,
+                expected_improvement: 0.0,
+            };
         }
     }
 
@@ -532,10 +555,16 @@ pub fn fit_and_predict_gp(
     }
 
     let Some(l_chol) = gp_cholesky(&k_mat) else {
-        return GpPrediction { mean: mean_y, variance: 1.0, expected_improvement: 0.0 };
+        return GpPrediction {
+            mean: mean_y,
+            variance: 1.0,
+            expected_improvement: 0.0,
+        };
     };
     let alpha = gp_chol_solve(&l_chol, &y_c);
-    let k_star: Vec<f64> = (0..n).map(|i| gp_rbf(&query_x, &observations_x[i], l2)).collect();
+    let k_star: Vec<f64> = (0..n)
+        .map(|i| gp_rbf(&query_x, &observations_x[i], l2))
+        .collect();
     let mu = mean_y + gp_dot(&k_star, &alpha);
     let v = gp_chol_fwd(&l_chol, &k_star);
     let var_ = (1.0 - gp_dot(&v, &v)).max(1e-9);
@@ -549,21 +578,32 @@ pub fn fit_and_predict_gp(
         (mu - best_so_far - xi) * gp_normal_cdf(z) + sigma * gp_normal_pdf(z)
     };
 
-    GpPrediction { mean: mu, variance: var_, expected_improvement: ei.max(0.0) }
+    GpPrediction {
+        mean: mu,
+        variance: var_,
+        expected_improvement: ei.max(0.0),
+    }
 }
 
-#[inline] fn gp_rbf(a: &[f64], b: &[f64], l2: f64) -> f64 {
+#[inline]
+fn gp_rbf(a: &[f64], b: &[f64], l2: f64) -> f64 {
     let s: f64 = a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum();
     (-s / l2).exp()
 }
 
 fn gp_median_pairwise_dist(xs: &[Vec<f64>]) -> f64 {
     let n = xs.len();
-    if n < 2 { return 1.0; }
+    if n < 2 {
+        return 1.0;
+    }
     let mut dists: Vec<f64> = Vec::with_capacity(n * (n - 1) / 2);
     for i in 0..n {
         for j in (i + 1)..n {
-            let s: f64 = xs[i].iter().zip(xs[j].iter()).map(|(a, b)| (a - b).powi(2)).sum();
+            let s: f64 = xs[i]
+                .iter()
+                .zip(xs[j].iter())
+                .map(|(a, b)| (a - b).powi(2))
+                .sum();
             dists.push(s.sqrt());
         }
     }
@@ -579,7 +619,9 @@ fn gp_cholesky(a: &[Vec<f64>]) -> Option<Vec<Vec<f64>>> {
             let s: f64 = (0..j).map(|k| l[i][k] * l[j][k]).sum();
             if i == j {
                 let v = a[i][i] - s;
-                if v <= 0.0 { return None; }
+                if v <= 0.0 {
+                    return None;
+                }
                 l[i][j] = v.sqrt();
             } else {
                 l[i][j] = (a[i][j] - s) / l[j][j];
@@ -610,22 +652,38 @@ fn gp_chol_solve(l: &[Vec<f64>], b: &[f64]) -> Vec<f64> {
     x
 }
 
-#[inline] fn gp_dot(a: &[f64], b: &[f64]) -> f64 { a.iter().zip(b.iter()).map(|(x, y)| x * y).sum() }
+#[inline]
+fn gp_dot(a: &[f64], b: &[f64]) -> f64 {
+    a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
+}
 
-#[inline] fn gp_mean_vec(xs: &[f64]) -> f64 {
-    if xs.is_empty() { return 0.0; }
+#[inline]
+fn gp_mean_vec(xs: &[f64]) -> f64 {
+    if xs.is_empty() {
+        return 0.0;
+    }
     xs.iter().sum::<f64>() / xs.len() as f64
 }
 
-#[inline] fn gp_normal_pdf(z: f64) -> f64 { (-0.5 * z * z).exp() / (2.0 * std::f64::consts::PI).sqrt() }
+#[inline]
+fn gp_normal_pdf(z: f64) -> f64 {
+    (-0.5 * z * z).exp() / (2.0 * std::f64::consts::PI).sqrt()
+}
 
-#[inline] fn gp_normal_cdf(z: f64) -> f64 { 0.5 * (1.0 + gp_erf(z / std::f64::consts::SQRT_2)) }
+#[inline]
+fn gp_normal_cdf(z: f64) -> f64 {
+    0.5 * (1.0 + gp_erf(z / std::f64::consts::SQRT_2))
+}
 
 fn gp_erf(x: f64) -> f64 {
     let sign = if x < 0.0 { -1.0 } else { 1.0 };
     let ax = x.abs();
     let t = 1.0 / (1.0 + 0.3275911 * ax);
-    let y = 1.0 - (((((1.061405429_f64 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * (-ax * ax).exp();
+    let y = 1.0
+        - (((((1.061405429_f64 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t
+            + 0.254829592)
+            * t
+            * (-ax * ax).exp();
     sign * y
 }
 
@@ -633,11 +691,13 @@ fn gp_erf(x: f64) -> f64 {
 
 #[inline]
 fn clamp01(v: f64) -> f64 {
-    v.max(0.0).min(1.0)
+    v.clamp(0.0, 1.0)
 }
 
 fn percentile(sorted: &[f64], p: f64) -> f64 {
-    if sorted.is_empty() { return 0.0; }
+    if sorted.is_empty() {
+        return 0.0;
+    }
     let idx = (p / 100.0 * (sorted.len() - 1) as f64).round() as usize;
     sorted[idx.min(sorted.len() - 1)]
 }

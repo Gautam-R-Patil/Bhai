@@ -27,32 +27,32 @@ const ROUTINE_WINDOW_DAYS: f64 = 14.0;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct InteractionEvent {
     pub timestamp_ms: f64,
-    pub hour_of_day: f64,       // 0-23.99
-    pub day_of_week: u32,       // 0-6
-    pub topic: String,          // main topic/category
-    pub message_length: u32,    // characters
+    pub hour_of_day: f64,    // 0-23.99
+    pub day_of_week: u32,    // 0-6
+    pub topic: String,       // main topic/category
+    pub message_length: u32, // characters
     pub had_emoji: bool,
-    pub response_time_ms: f64,  // time user took to respond (-1 if N/A)
+    pub response_time_ms: f64, // time user took to respond (-1 if N/A)
 }
 
 #[napi(object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DetectedRoutine {
-    pub time_bucket: String,    // e.g. "morning_6_10", "afternoon_14_18"
-    pub day_pattern: String,    // "daily" | "weekdays" | "weekends" | specific days
+    pub time_bucket: String, // e.g. "morning_6_10", "afternoon_14_18"
+    pub day_pattern: String, // "daily" | "weekdays" | "weekends" | specific days
     pub typical_topics: Vec<String>,
     pub frequency: u32,
-    pub consistency: f64,       // 0-1 (low stddev = high consistency)
-    pub confidence: f64,        // 0-1
+    pub consistency: f64, // 0-1 (low stddev = high consistency)
+    pub confidence: f64,  // 0-1
 }
 
 #[napi(object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct CommunicationStyle {
     pub avg_message_length: f64,
-    pub preferred_length: String,   // "terse" | "normal" | "detailed"
-    pub formality_score: f64,       // 0-1
-    pub emoji_frequency: f64,       // 0-1
+    pub preferred_length: String, // "terse" | "normal" | "detailed"
+    pub formality_score: f64,     // 0-1
+    pub emoji_frequency: f64,     // 0-1
     pub avg_response_time_mins: f64,
     pub response_time_expectation: String, // "instant" | "quick" | "relaxed"
 }
@@ -62,8 +62,8 @@ pub struct CommunicationStyle {
 pub struct PredictedNeed {
     pub need: String,
     pub confidence: f64,
-    pub basis: String,          // What evidence supports this prediction
-    pub time_window: String,    // When this need is likely to manifest
+    pub basis: String,       // What evidence supports this prediction
+    pub time_window: String, // When this need is likely to manifest
 }
 
 // ── Routine Detection ──────────────────────────────
@@ -104,8 +104,8 @@ pub fn detect_routines(events: Vec<InteractionEvent>) -> Vec<DetectedRoutine> {
             // Compute time consistency (stddev of hours within bucket)
             let hours: Vec<f64> = topic_events_list.iter().map(|e| e.hour_of_day).collect();
             let mean_hour = hours.iter().sum::<f64>() / hours.len() as f64;
-            let variance = hours.iter().map(|h| (h - mean_hour).powi(2)).sum::<f64>()
-                / hours.len() as f64;
+            let variance =
+                hours.iter().map(|h| (h - mean_hour).powi(2)).sum::<f64>() / hours.len() as f64;
             let stddev = variance.sqrt();
 
             if stddev > MAX_ROUTINE_STDDEV {
@@ -141,9 +141,10 @@ pub fn detect_routines(events: Vec<InteractionEvent>) -> Vec<DetectedRoutine> {
     // Merge routines with same bucket and day pattern
     let mut merged: Vec<DetectedRoutine> = Vec::new();
     for routine in routines {
-        if let Some(existing) = merged.iter_mut().find(|r| {
-            r.time_bucket == routine.time_bucket && r.day_pattern == routine.day_pattern
-        }) {
+        if let Some(existing) = merged
+            .iter_mut()
+            .find(|r| r.time_bucket == routine.time_bucket && r.day_pattern == routine.day_pattern)
+        {
             existing.typical_topics.extend(routine.typical_topics);
             existing.frequency += routine.frequency;
             existing.confidence = existing.confidence.max(routine.confidence);
@@ -284,7 +285,7 @@ pub fn predict_needs(
         if routine.time_bucket == current_bucket {
             let day_matches = match routine.day_pattern.as_str() {
                 "daily" => true,
-                "weekdays" => current_day >= 1 && current_day <= 5,
+                "weekdays" => (1..=5).contains(&current_day),
                 "weekends" => current_day == 0 || current_day == 6,
                 _ => true,
             };

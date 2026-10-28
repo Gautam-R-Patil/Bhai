@@ -229,14 +229,15 @@ pub fn aes_encrypt(plaintext: String, master_key: String) -> napi::Result<String
     getrandom::getrandom(&mut iv)
         .map_err(|e| Error::from_reason(format!("Random generation failed: {}", e)))?;
 
-    use aes_gcm::{Aes256Gcm, KeyInit, aead::Aead};
     use aes_gcm::aead::generic_array::GenericArray;
+    use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit};
 
     let key = GenericArray::from_slice(&derived);
     let cipher = Aes256Gcm::new(key);
     let nonce = GenericArray::from_slice(&iv[..12]);
 
-    let ciphertext = cipher.encrypt(nonce, plaintext.as_bytes())
+    let ciphertext = cipher
+        .encrypt(nonce, plaintext.as_bytes())
         .map_err(|e| Error::from_reason(format!("Encryption failed: {}", e)))?;
 
     // ciphertext includes the tag appended (last 16 bytes)
@@ -270,18 +271,18 @@ pub fn aes_decrypt(encrypted: String, master_key: String) -> napi::Result<String
         ));
     }
 
-    let iv_bytes = hex::decode(parts[0])
-        .map_err(|e| Error::from_reason(format!("Invalid IV hex: {}", e)))?;
-    let tag_bytes = hex::decode(parts[1])
-        .map_err(|e| Error::from_reason(format!("Invalid tag hex: {}", e)))?;
+    let iv_bytes =
+        hex::decode(parts[0]).map_err(|e| Error::from_reason(format!("Invalid IV hex: {}", e)))?;
+    let tag_bytes =
+        hex::decode(parts[1]).map_err(|e| Error::from_reason(format!("Invalid tag hex: {}", e)))?;
     let ct_bytes = hex::decode(parts[2])
         .map_err(|e| Error::from_reason(format!("Invalid ciphertext hex: {}", e)))?;
 
     let derived = derive_key(&master_key, version)
         .map_err(|e| Error::from_reason(format!("Key derivation failed: {}", e)))?;
 
-    use aes_gcm::{Aes256Gcm, KeyInit, aead::Aead};
     use aes_gcm::aead::generic_array::GenericArray;
+    use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit};
 
     let key = GenericArray::from_slice(&derived);
     let cipher = Aes256Gcm::new(key);
@@ -291,7 +292,8 @@ pub fn aes_decrypt(encrypted: String, master_key: String) -> napi::Result<String
     let mut combined = ct_bytes;
     combined.extend_from_slice(&tag_bytes);
 
-    let plaintext = cipher.decrypt(nonce, combined.as_slice())
+    let plaintext = cipher
+        .decrypt(nonce, combined.as_slice())
         .map_err(|_| Error::from_reason("Decryption failed: invalid key or corrupted data"))?;
 
     String::from_utf8(plaintext)
@@ -312,7 +314,12 @@ pub fn is_debugger_attached() -> bool {
         // a debugger is already attached.
         // PT_DENY_ATTACH = 31
         unsafe {
-            let ret = libc::ptrace(31 /* PT_DENY_ATTACH */, 0, std::ptr::null_mut::<libc::c_char>(), 0);
+            let ret = libc::ptrace(
+                31, /* PT_DENY_ATTACH */
+                0,
+                std::ptr::null_mut::<libc::c_char>(),
+                0,
+            );
             if ret == -1 {
                 // EBUSY (16) means debugger is already attached
                 return *libc::__error() == libc::EBUSY;
@@ -327,7 +334,9 @@ pub fn is_debugger_attached() -> bool {
         if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
             for line in status.lines() {
                 if line.starts_with("TracerPid:") {
-                    let pid: i32 = line.split_whitespace().nth(1)
+                    let pid: i32 = line
+                        .split_whitespace()
+                        .nth(1)
                         .and_then(|s| s.parse().ok())
                         .unwrap_or(0);
                     return pid != 0;
@@ -425,7 +434,12 @@ mod tests {
         let (n1, r1, p1) = scrypt_params_for_version(CRYPT_VERSION_LEGACY).unwrap();
         let (n2, r2, p2) = scrypt_params_for_version(CRYPT_VERSION_LATEST).unwrap();
         // v2 must use strictly more memory than v1 (that's the whole point).
-        assert!(n2 > n1, "v2 scrypt log_n={} must exceed v1 log_n={}", n2, n1);
+        assert!(
+            n2 > n1,
+            "v2 scrypt log_n={} must exceed v1 log_n={}",
+            n2,
+            n1
+        );
         // Other params stay constant across versions.
         assert_eq!(r1, r2);
         assert_eq!(p1, p2);
@@ -449,7 +463,10 @@ mod tests {
     fn derive_key_v1_and_v2_differ_for_same_master_key() {
         let k1 = derive_key("master", CRYPT_VERSION_LEGACY).unwrap();
         let k2 = derive_key("master", CRYPT_VERSION_LATEST).unwrap();
-        assert_ne!(k1, k2, "v1 and v2 must produce different keys — params differ");
+        assert_ne!(
+            k1, k2,
+            "v1 and v2 must produce different keys — params differ"
+        );
     }
 
     #[test]
@@ -500,8 +517,8 @@ mod tests {
         // derive_key and formatting WITHOUT the version prefix, then
         // verify aes_decrypt still reads it (parse_version_prefix
         // falls back to legacy for hex-first input).
-        use aes_gcm::{Aes256Gcm, KeyInit, aead::Aead};
         use aes_gcm::aead::generic_array::GenericArray;
+        use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit};
 
         let master = "legacy-key";
         let derived = derive_key(master, CRYPT_VERSION_LEGACY).unwrap();

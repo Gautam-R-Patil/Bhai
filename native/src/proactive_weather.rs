@@ -18,10 +18,7 @@ pub struct WeatherInput {
 
 #[napi]
 pub fn weather_actionable(w: WeatherInput) -> bool {
-    w.has_outdoor_event
-        || w.rain_prob > 0.3
-        || w.temp_c < 10.0
-        || w.temp_c > 38.0
+    w.has_outdoor_event || w.rain_prob > 0.3 || w.temp_c < 10.0 || w.temp_c > 38.0
 }
 
 #[cfg(test)]
@@ -37,9 +34,24 @@ mod tests {
         }
     }
 
-    #[test] fn outdoor_event_is_actionable() { assert!(weather_actionable(mk(0.1, 22.0, true))); }
-    #[test] fn rain_over_30_percent_actionable() { assert!(weather_actionable(mk(0.4, 22.0, false))); }
-    #[test] fn cold_below_10c_actionable() { assert!(weather_actionable(mk(0.1, 5.0, false))); }
-    #[test] fn hot_above_38c_actionable() { assert!(weather_actionable(mk(0.1, 40.0, false))); }
-    #[test] fn mild_indoor_clear_not_actionable() { assert!(!weather_actionable(mk(0.1, 22.0, false))); }
+    #[test]
+    fn outdoor_event_is_actionable() {
+        assert!(weather_actionable(mk(0.1, 22.0, true)));
+    }
+    #[test]
+    fn rain_over_30_percent_actionable() {
+        assert!(weather_actionable(mk(0.4, 22.0, false)));
+    }
+    #[test]
+    fn cold_below_10c_actionable() {
+        assert!(weather_actionable(mk(0.1, 5.0, false)));
+    }
+    #[test]
+    fn hot_above_38c_actionable() {
+        assert!(weather_actionable(mk(0.1, 40.0, false)));
+    }
+    #[test]
+    fn mild_indoor_clear_not_actionable() {
+        assert!(!weather_actionable(mk(0.1, 22.0, false)));
+    }
 }

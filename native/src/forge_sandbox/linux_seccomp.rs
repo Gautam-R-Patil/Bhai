@@ -210,6 +210,10 @@ mod tests {
     fn filter_compiles_to_bpf_program() {
         let caps = empty_caps();
         let bpf = build_filter(&caps).expect("compile");
-        assert!(bpf.len() >= 10, "BPF program suspiciously short: {}", bpf.len());
+        assert!(
+            bpf.len() >= 10,
+            "BPF program suspiciously short: {}",
+            bpf.len()
+        );
     }
 }

@@ -77,6 +77,7 @@ pub struct ToolCount {
 
 // ── State ────────────────────────────────────
 
+#[derive(Default)]
 struct AnalyticsState {
     data: CoOccurrenceData,
     initialized: bool,
@@ -95,7 +96,9 @@ fn maybe_decay_cooccurrence(state: &mut AnalyticsState) {
         Some(last) => last.elapsed().as_millis() >= DECAY_INTERVAL_MS,
         None => true,
     };
-    if !should_decay { return; }
+    if !should_decay {
+        return;
+    }
 
     // Decay all co-occurrence counts
     for row in state.data.matrix.values_mut() {
@@ -118,18 +121,6 @@ fn maybe_decay_cooccurrence(state: &mut AnalyticsState) {
 
     state.last_decay = Some(Instant::now());
     state.dirty = true;
-}
-
-impl Default for AnalyticsState {
-    fn default() -> Self {
-        Self {
-            data: CoOccurrenceData::default(),
-            initialized: false,
-            last_save: None,
-            last_decay: None,
-            dirty: false,
-        }
-    }
 }
 
 lazy_static! {
@@ -205,23 +196,14 @@ fn do_init(state: &mut AnalyticsState) {
                 Ok(loaded) => {
                     let count = loaded.matrix.len();
                     state.data = loaded;
-                    eprintln!(
-                        "📊 Tool Analytics: Loaded {} tool patterns",
-                        count
-                    );
+                    eprintln!("📊 Tool Analytics: Loaded {} tool patterns", count);
                 }
                 Err(e) => {
-                    eprintln!(
-                        "📊 Tool Analytics: Failed to parse, starting fresh: {}",
-                        e
-                    );
+                    eprintln!("📊 Tool Analytics: Failed to parse, starting fresh: {}", e);
                 }
             },
             Err(e) => {
-                eprintln!(
-                    "📊 Tool Analytics: Failed to load, starting fresh: {}",
-                    e
-                );
+                eprintln!("📊 Tool Analytics: Failed to load, starting fresh: {}", e);
             }
         }
     } else {
@@ -478,9 +460,7 @@ pub fn detect_task_chain(message: String) -> Option<String> {
     let lower = message.to_lowercase();
 
     if lower.contains("research")
-        && (lower.contains("deep")
-            || lower.contains("investigate")
-            || lower.contains("thorough"))
+        && (lower.contains("deep") || lower.contains("investigate") || lower.contains("thorough"))
     {
         return Some("deep_investigation".to_string());
     }
@@ -522,7 +502,9 @@ pub fn detect_task_chain(message: String) -> Option<String> {
     if lower.contains("download") {
         return Some("download_task".to_string());
     }
-    if lower.contains("review") && (lower.contains("pr") || lower.contains("pull request") || lower.contains("code")) {
+    if lower.contains("review")
+        && (lower.contains("pr") || lower.contains("pull request") || lower.contains("code"))
+    {
         return Some("code_review".to_string());
     }
     if lower.contains("click") || lower.contains("open app") || lower.contains("desktop") {

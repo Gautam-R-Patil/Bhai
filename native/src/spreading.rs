@@ -82,7 +82,10 @@ struct ActivatedNode {
 /// `_typed`) differ only in how they obtain that map. Pulled out to keep
 /// the algorithm in one place and let perf reviews focus on the marshalling
 /// boundary, not the BFS itself.
-fn run_bfs(seed_entities: &[SeedEntity], adjacency: HashMap<i64, Vec<EntityRelation>>) -> Vec<ActivationResult> {
+fn run_bfs(
+    seed_entities: &[SeedEntity],
+    adjacency: HashMap<i64, Vec<EntityRelation>>,
+) -> Vec<ActivationResult> {
     let mut activated: HashMap<i64, ActivatedNode> = HashMap::new();
     let mut queue: VecDeque<ActivatedNode> = VecDeque::new();
     let mut total_activated: usize = 0;
@@ -121,7 +124,11 @@ fn run_bfs(seed_entities: &[SeedEntity], adjacency: HashMap<i64, Vec<EntityRelat
 
         // Sort by weight descending, take top MAX_BRANCH_FACTOR
         let mut sorted_rels = rels.clone();
-        sorted_rels.sort_by(|a, b| b.weight.partial_cmp(&a.weight).unwrap_or(std::cmp::Ordering::Equal));
+        sorted_rels.sort_by(|a, b| {
+            b.weight
+                .partial_cmp(&a.weight)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         let top_rels: Vec<_> = sorted_rels.into_iter().take(MAX_BRANCH_FACTOR).collect();
 
         for rel in top_rels {
@@ -215,8 +222,10 @@ pub fn spread_activation_bfs_typed(
     seed_entities: Vec<SeedEntity>,
     adjacency: Vec<SpreadAdjacencyEntry>,
 ) -> Vec<ActivationResult> {
-    let map: HashMap<i64, Vec<EntityRelation>> =
-        adjacency.into_iter().map(|e| (e.entity_id, e.relations)).collect();
+    let map: HashMap<i64, Vec<EntityRelation>> = adjacency
+        .into_iter()
+        .map(|e| (e.entity_id, e.relations))
+        .collect();
     run_bfs(&seed_entities, map)
 }
 
@@ -264,7 +273,11 @@ pub fn merge_san_results(
         .map(|(id, score)| FusedScore { id, score })
         .collect();
 
-    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     results
 }
 
@@ -277,8 +290,7 @@ pub fn spread_via_traits(
     seed_scores_json: String,
     trait_edges_json: String,
 ) -> Vec<ActivationResult> {
-    let seed_scores: Vec<SeedScore> =
-        serde_json::from_str(&seed_scores_json).unwrap_or_default();
+    let seed_scores: Vec<SeedScore> = serde_json::from_str(&seed_scores_json).unwrap_or_default();
 
     #[derive(Deserialize)]
     struct TraitEdge {
@@ -287,11 +299,11 @@ pub fn spread_via_traits(
         weight: f64,
     }
 
-    let trait_edges: Vec<TraitEdge> =
-        serde_json::from_str(&trait_edges_json).unwrap_or_default();
+    let trait_edges: Vec<TraitEdge> = serde_json::from_str(&trait_edges_json).unwrap_or_default();
 
     let mut results: Vec<ActivationResult> = Vec::new();
-    let seed_ids: std::collections::HashSet<i64> = seed_scores.iter().map(|s| s.memory_id).collect();
+    let seed_ids: std::collections::HashSet<i64> =
+        seed_scores.iter().map(|s| s.memory_id).collect();
 
     for edge in &trait_edges {
         if edge.weight <= 0.3 {

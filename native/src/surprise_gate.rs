@@ -144,7 +144,11 @@ pub fn rank_by_surprise(
 
         // Surprise score considers RPE magnitude, recency, and access patterns
         let recency_factor = (1.0 / (1.0 + memories[i].days_old * 0.1)).min(1.0);
-        let novelty_factor = if memories[i].access_count <= 1 { 1.2 } else { 1.0 };
+        let novelty_factor = if memories[i].access_count <= 1 {
+            1.2
+        } else {
+            1.0
+        };
         let surprise_score = abs_rpe * recency_factor * novelty_factor;
 
         scored.push((memories[i].id, surprise_score));

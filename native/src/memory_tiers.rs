@@ -25,8 +25,8 @@ pub struct TierableMemory {
     pub importance: f64,
     pub decay_score: f64,
     pub access_count: i64,
-    pub created_at_ms: f64,      // milliseconds since epoch
-    pub last_accessed_ms: f64,   // milliseconds since epoch (0 if never)
+    pub created_at_ms: f64,       // milliseconds since epoch
+    pub last_accessed_ms: f64,    // milliseconds since epoch (0 if never)
     pub emotional_intensity: f64, // 0 if not set
 }
 
@@ -160,11 +160,7 @@ pub fn count_tiers(assignments: Vec<TierAssignment>) -> TierCounts {
 #[napi]
 pub fn get_search_tiers(query_mode: String) -> Vec<String> {
     match query_mode.as_str() {
-        "retrieve" => vec![
-            "hot".to_string(),
-            "warm".to_string(),
-            "cold".to_string(),
-        ],
+        "retrieve" => vec!["hot".to_string(), "warm".to_string(), "cold".to_string()],
         "llm_with_traits" => vec!["hot".to_string(), "warm".to_string()],
         "llm_only" => vec!["hot".to_string()],
         _ => vec!["hot".to_string(), "warm".to_string()],

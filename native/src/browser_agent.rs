@@ -106,20 +106,33 @@ pub fn score_element_candidates(
             // 1. Token overlap with visible text
             let text_tokens: Vec<&str> = el_text.split_whitespace().collect();
             let aria_tokens: Vec<&str> = el_aria.split_whitespace().collect();
-            let class_tokens: Vec<&str> = el_class.split(|c: char| !c.is_alphanumeric()).filter(|s| !s.is_empty()).collect();
+            let class_tokens: Vec<&str> = el_class
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|s| !s.is_empty())
+                .collect();
 
-            let all_tokens: Vec<&str> = text_tokens.iter().chain(aria_tokens.iter()).chain(class_tokens.iter()).copied().collect();
+            let all_tokens: Vec<&str> = text_tokens
+                .iter()
+                .chain(aria_tokens.iter())
+                .chain(class_tokens.iter())
+                .copied()
+                .collect();
 
             let mut overlap = 0u32;
             for dt in &desc_tokens {
-                if all_tokens.iter().any(|et| et.contains(dt) || dt.contains(*et)) {
+                if all_tokens
+                    .iter()
+                    .any(|et| et.contains(dt) || dt.contains(*et))
+                {
                     overlap += 1;
                 }
             }
             if !desc_tokens.is_empty() {
                 let overlap_ratio = overlap as f64 / desc_tokens.len() as f64;
                 score += overlap_ratio * 0.40;
-                if overlap_ratio > 0.0 { reasons.push("token_overlap"); }
+                if overlap_ratio > 0.0 {
+                    reasons.push("token_overlap");
+                }
             }
 
             // 2. Exact text match bonus
@@ -132,7 +145,9 @@ pub fn score_element_candidates(
             }
 
             // 3. Tag affinity
-            if prefer_button && (el_tag == "button" || el_class.contains("btn") || el_class.contains("button")) {
+            if prefer_button
+                && (el_tag == "button" || el_class.contains("btn") || el_class.contains("button"))
+            {
                 score += 0.12;
                 reasons.push("button_tag");
             }
@@ -150,11 +165,15 @@ pub fn score_element_candidates(
                 score += 0.30;
                 reasons.push("ytp_mute_class");
             }
-            if (desc_lower.contains("caption") || desc_lower.contains("subtitle")) && el_class.contains("ytp-subtitles") {
+            if (desc_lower.contains("caption") || desc_lower.contains("subtitle"))
+                && el_class.contains("ytp-subtitles")
+            {
                 score += 0.30;
                 reasons.push("ytp_subtitle_class");
             }
-            if (desc_lower.contains("play") || desc_lower.contains("pause")) && el_class.contains("ytp-play") {
+            if (desc_lower.contains("play") || desc_lower.contains("pause"))
+                && el_class.contains("ytp-play")
+            {
                 score += 0.30;
                 reasons.push("ytp_play_class");
             }
@@ -205,13 +224,17 @@ pub fn score_element_candidates(
 
             ScoredElement {
                 label: el.label,
-                score: score.max(0.0).min(1.0),
+                score: score.clamp(0.0, 1.0),
                 reason: reason_str,
             }
         })
         .collect();
 
-    scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    scored.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     scored
 }
 
@@ -360,12 +383,7 @@ pub fn check_browser_action_rate_limit(action_type: String, url: String) -> bool
 /// Record an executed browser action. Call this after every tool execution.
 /// Used by the loop detector and for stats.
 #[napi]
-pub fn record_browser_action(
-    action_type: String,
-    url: String,
-    selector: String,
-    success: bool,
-) {
+pub fn record_browser_action(action_type: String, url: String, selector: String, success: bool) {
     let norm_url = normalise_url(&url);
     let loop_key = format!("{}|{}|{}", action_type, selector, norm_url);
     let mut state = ACTION_STATE.lock();
@@ -473,10 +491,18 @@ pub fn get_hover_hint(url: String, selector: String) -> Option<HoverHint> {
     let cache = HOVER_CACHE.lock();
     cache.get(&key).and_then(|e| {
         let total = (e.successes + e.failures) as f64;
-        if total < 1.0 { return None; }
+        if total < 1.0 {
+            return None;
+        }
         let confidence = e.successes as f64 / total;
-        if confidence < 0.30 { return None; }
-        Some(HoverHint { x: e.x, y: e.y, confidence })
+        if confidence < 0.30 {
+            return None;
+        }
+        Some(HoverHint {
+            x: e.x,
+            y: e.y,
+            confidence,
+        })
     })
 }
 
@@ -496,10 +522,17 @@ pub fn record_hover_success(url: String, selector: String, x: f64, y: f64) {
                 ca.partial_cmp(&cb).unwrap_or(std::cmp::Ordering::Equal)
             })
             .map(|(k, _)| k.clone());
-        if let Some(k) = worst { cache.remove(&k); }
+        if let Some(k) = worst {
+            cache.remove(&k);
+        }
     }
 
-    let entry = cache.entry(key).or_insert(HoverEntry { x, y, successes: 0, failures: 0 });
+    let entry = cache.entry(key).or_insert(HoverEntry {
+        x,
+        y,
+        successes: 0,
+        failures: 0,
+    });
     // EMA update: blend new coordinates 20% toward recorded coords
     entry.x = entry.x * 0.80 + x * 0.20;
     entry.y = entry.y * 0.80 + y * 0.20;
@@ -511,7 +544,12 @@ pub fn record_hover_success(url: String, selector: String, x: f64, y: f64) {
 pub fn record_hover_failure(url: String, selector: String) {
     let key = hover_key(&url, &selector);
     let mut cache = HOVER_CACHE.lock();
-    let entry = cache.entry(key).or_insert(HoverEntry { x: 0.0, y: 0.0, successes: 0, failures: 0 });
+    let entry = cache.entry(key).or_insert(HoverEntry {
+        x: 0.0,
+        y: 0.0,
+        successes: 0,
+        failures: 0,
+    });
     entry.failures += 1;
 }
 

@@ -128,7 +128,8 @@ pub fn validate_decomposition_response(response_text: String) -> Option<SwarmPla
         };
 
         // Parse depends_on
-        let depends_on = s.get("depends_on")
+        let depends_on = s
+            .get("depends_on")
             .and_then(|v| v.as_array())
             .map(|arr| {
                 arr.iter()
@@ -145,7 +146,8 @@ pub fn validate_decomposition_response(response_text: String) -> Option<SwarmPla
         });
     }
 
-    let reasoning = parsed.get("reasoning")
+    let reasoning = parsed
+        .get("reasoning")
         .and_then(|v| v.as_str())
         .unwrap_or("No reasoning provided")
         .to_string();
@@ -164,21 +166,28 @@ pub fn build_synthesis_prompt(
     results: Vec<SwarmStepResult>,
 ) -> String {
     // Build result map for quick lookup
-    let result_map: std::collections::HashMap<String, &SwarmStepResult> = results.iter()
-        .map(|r| (r.id.clone(), r))
-        .collect();
+    let result_map: std::collections::HashMap<String, &SwarmStepResult> =
+        results.iter().map(|r| (r.id.clone(), r)).collect();
 
     // Build a summary of all step results
-    let result_summary: String = plan.steps.iter()
-        .map(|step| {
-            match result_map.get(&step.id) {
-                None => format!("### Step {} ({}): NOT EXECUTED", step.id, step.role),
-                Some(r) if !r.success => {
-                    format!("### Step {} ({}): FAILED\nError: {}", step.id, step.role, r.error.as_deref().unwrap_or("unknown"))
-                }
-                Some(r) => {
-                    format!("### Step {} ({}): {}\n{}", step.id, step.role, step.description, r.output)
-                }
+    let result_summary: String = plan
+        .steps
+        .iter()
+        .map(|step| match result_map.get(&step.id) {
+            None => format!("### Step {} ({}): NOT EXECUTED", step.id, step.role),
+            Some(r) if !r.success => {
+                format!(
+                    "### Step {} ({}): FAILED\nError: {}",
+                    step.id,
+                    step.role,
+                    r.error.as_deref().unwrap_or("unknown")
+                )
+            }
+            Some(r) => {
+                format!(
+                    "### Step {} ({}): {}\n{}",
+                    step.id, step.role, step.description, r.output
+                )
             }
         })
         .collect::<Vec<_>>()
@@ -192,7 +201,9 @@ I broke this into {} sub-tasks and executed them. Here are the results:
 {}
 
 Now synthesize these results into a single, coherent response for the user. Be concise and natural — don't mention the steps or the decomposition process. Just answer as if you did it all yourself."#,
-        user_request, plan.steps.len(), result_summary
+        user_request,
+        plan.steps.len(),
+        result_summary
     )
 }
 
@@ -200,9 +211,14 @@ Now synthesize these results into a single, coherent response for the user. Be c
 /// Used when the LLM synthesis call fails.
 #[napi]
 pub fn build_fallback_synthesis(results: Vec<SwarmStepResult>) -> String {
-    results.iter()
+    results
+        .iter()
         .filter_map(|r| {
-            if r.output.is_empty() { None } else { Some(r.output.as_str()) }
+            if r.output.is_empty() {
+                None
+            } else {
+                Some(r.output.as_str())
+            }
         })
         .collect::<Vec<_>>()
         .join("\n\n")
@@ -250,7 +266,10 @@ pub fn format_step_log(step: SwarmStep) -> String {
     } else {
         format!(" (after: {})", step.depends_on.join(", "))
     };
-    format!("  \u{2192} {} [{}]: {}{}", step.id, step.role, step.description, deps)
+    format!(
+        "  \u{2192} {} [{}]: {}{}",
+        step.id, step.role, step.description, deps
+    )
 }
 
 // ── Helper: Extract JSON object from text ───

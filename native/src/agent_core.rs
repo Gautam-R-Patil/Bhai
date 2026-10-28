@@ -58,7 +58,6 @@ lazy_static! {
         s.insert("browser_recall_strategy");
         s
     };
-
     static ref HARD_DECISION_TOOLS: HashSet<&'static str> = {
         let mut s = HashSet::new();
         s.insert("web_search");
@@ -86,7 +85,8 @@ pub fn is_hard_decision_tool(name: String) -> bool {
 /// Returns None if the tool has no milestone description.
 #[napi]
 pub fn get_milestone_message(tool_name: String, args_json: String) -> Option<String> {
-    let args: serde_json::Value = serde_json::from_str(&args_json).unwrap_or(serde_json::Value::Null);
+    let args: serde_json::Value =
+        serde_json::from_str(&args_json).unwrap_or(serde_json::Value::Null);
 
     match tool_name.as_str() {
         "browser_navigate" => {
@@ -107,7 +107,10 @@ pub fn get_milestone_message(tool_name: String, args_json: String) -> Option<Str
         "browser_analyze" => Some("\u{1F50E} Analyzing page elements...".into()),
         "browser_run_js" => Some("\u{1F4CA} Extracting data from the page...".into()),
         "browser_save_strategy" => {
-            let pattern = args.get("task_pattern").and_then(|v| v.as_str()).unwrap_or("");
+            let pattern = args
+                .get("task_pattern")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             Some(format!("\u{1F4BE} Saving strategy: \"{}\"", pattern))
         }
         "write_file" => {
@@ -136,7 +139,10 @@ pub fn get_error_message(tool_name: String, result: String) -> Option<String> {
     };
     if let Some(err) = parsed.get("error").and_then(|v| v.as_str()) {
         let truncated = safe_truncate(err, 80);
-        Some(format!("\u{26A0}\u{FE0F} {} failed: {}. Trying another approach...", tool_name, truncated))
+        Some(format!(
+            "\u{26A0}\u{FE0F} {} failed: {}. Trying another approach...",
+            tool_name, truncated
+        ))
     } else {
         None
     }
@@ -281,43 +287,136 @@ pub fn get_onboarding_nudge() -> String {
 /// be nudged to continue.
 const STOP_WORDS: &[&str] = &[
     // Explicit stop signals
-    "stop", "cancel", "no", "don't", "dont", "quit", "abort", "never mind", "nevermind", "enough", "leave it",
+    "stop",
+    "cancel",
+    "no",
+    "don't",
+    "dont",
+    "quit",
+    "abort",
+    "never mind",
+    "nevermind",
+    "enough",
+    "leave it",
     // Short acknowledgements
-    "ok", "okay", "got it", "got that", "thanks", "thank you", "cool", "great", "nice",
-    "alright", "noted", "sounds good", "awesome", "perfect", "understood", "sure",
-    "yep", "yup", "yeah", "good", "that's fine", "thats fine",
+    "ok",
+    "okay",
+    "got it",
+    "got that",
+    "thanks",
+    "thank you",
+    "cool",
+    "great",
+    "nice",
+    "alright",
+    "noted",
+    "sounds good",
+    "awesome",
+    "perfect",
+    "understood",
+    "sure",
+    "yep",
+    "yup",
+    "yeah",
+    "good",
+    "that's fine",
+    "thats fine",
     // Greetings / casual
-    "hi", "hey", "hello", "hii", "yo", "sup", "hola",
-    "good morning", "good night", "gm", "gn",
-    "how are you", "what's up", "whats up",
+    "hi",
+    "hey",
+    "hello",
+    "hii",
+    "yo",
+    "sup",
+    "hola",
+    "good morning",
+    "good night",
+    "gm",
+    "gn",
+    "how are you",
+    "what's up",
+    "whats up",
     // Confirmations of completion
-    "done", "thats it", "that's it", "all good", "looks good",
-    "\u{1F44D}", "\u{2705}", "\u{1FAE1}", "\u{1F64C}", "\u{1F60A}", "\u{2764}\u{FE0F}", "\u{1F525}",
+    "done",
+    "thats it",
+    "that's it",
+    "all good",
+    "looks good",
+    "\u{1F44D}",
+    "\u{2705}",
+    "\u{1FAE1}",
+    "\u{1F64C}",
+    "\u{1F60A}",
+    "\u{2764}\u{FE0F}",
+    "\u{1F525}",
 ];
 
 /// Keywords that indicate the agent's response is wrapping up / reporting completion.
 const WRAPPING_UP_KEYWORDS: &[&str] = &[
-    "stopping", "stopped", "closed the tab", "closed the browser",
-    "task complete", "all done", "done", "complete", "finished",
-    "here's", "here is", "sent", "delivered", "briefing", "summary",
-    "good morning", "good night", "all systems",
-    "phone verification", "verification required",
-    "couldn't complete", "wasn't able", "giving up",
-    "as requested", "cancelled", "deleted", "removed", "cleaned",
-    "updated", "saved", "created", "installed", "fixed", "resolved",
-    "confirmed", "verified", "ready", "set up", "looks good",
+    "stopping",
+    "stopped",
+    "closed the tab",
+    "closed the browser",
+    "task complete",
+    "all done",
+    "done",
+    "complete",
+    "finished",
+    "here's",
+    "here is",
+    "sent",
+    "delivered",
+    "briefing",
+    "summary",
+    "good morning",
+    "good night",
+    "all systems",
+    "phone verification",
+    "verification required",
+    "couldn't complete",
+    "wasn't able",
+    "giving up",
+    "as requested",
+    "cancelled",
+    "deleted",
+    "removed",
+    "cleaned",
+    "updated",
+    "saved",
+    "created",
+    "installed",
+    "fixed",
+    "resolved",
+    "confirmed",
+    "verified",
+    "ready",
+    "set up",
+    "looks good",
 ];
 
 /// Keywords that indicate the agent is asking the user for something.
 const ASKING_USER_PATTERNS: &[&str] = &[
-    "would you like", "do you want", "could you", "please provide",
-    "need your", "what is your", "enter the otp", "waiting for",
-    "let me know", "should i",
+    "would you like",
+    "do you want",
+    "could you",
+    "please provide",
+    "need your",
+    "what is your",
+    "enter the otp",
+    "waiting for",
+    "let me know",
+    "should i",
 ];
 
 /// Patterns for detecting the agent exploring its own codebase (ran out of real work).
 const SELF_CODEBASE_PATTERNS: &[&str] = &[
-    "package.json", "src/", "tsconfig", "git status", "npm run build", "node_modules", "dist/",
+    "package.json",
+    "src/",
+    "tsconfig",
+    "git status",
+    "npm run build",
+    "node_modules",
+    "dist/",
 ];
 
 #[napi(object)]
@@ -365,7 +464,9 @@ pub fn evaluate_persistence_nudge(input: PersistenceNudgeInput) -> PersistenceNu
     // 2. Asking the user for something?
     let ends_with_question = input.response_text.trim().ends_with('?');
     let is_asking_user = ends_with_question
-        || ASKING_USER_PATTERNS.iter().any(|p| response_lower.contains(p));
+        || ASKING_USER_PATTERNS
+            .iter()
+            .any(|p| response_lower.contains(p));
     if is_asking_user {
         return PersistenceNudgeResult {
             should_nudge: false,
@@ -374,7 +475,9 @@ pub fn evaluate_persistence_nudge(input: PersistenceNudgeInput) -> PersistenceNu
     }
 
     // 3. Agent is wrapping up
-    let is_wrapping_up = WRAPPING_UP_KEYWORDS.iter().any(|k| response_lower.contains(k));
+    let is_wrapping_up = WRAPPING_UP_KEYWORDS
+        .iter()
+        .any(|k| response_lower.contains(k));
     if is_wrapping_up {
         return PersistenceNudgeResult {
             should_nudge: false,
@@ -383,9 +486,10 @@ pub fn evaluate_persistence_nudge(input: PersistenceNudgeInput) -> PersistenceNu
     }
 
     // 4. Agent was exploring its own codebase
-    let is_exploring_own_code = input.recent_message_texts.iter().any(|txt| {
-        SELF_CODEBASE_PATTERNS.iter().any(|p| txt.contains(p))
-    });
+    let is_exploring_own_code = input
+        .recent_message_texts
+        .iter()
+        .any(|txt| SELF_CODEBASE_PATTERNS.iter().any(|p| txt.contains(p)));
     if is_exploring_own_code {
         return PersistenceNudgeResult {
             should_nudge: false,
@@ -395,8 +499,8 @@ pub fn evaluate_persistence_nudge(input: PersistenceNudgeInput) -> PersistenceNu
 
     // 5. User's last message is simple — greeting, ack, or stop
     let user_word_count = input.last_user_text.split_whitespace().count();
-    let is_user_stopping = user_word_count <= 10
-        && STOP_WORDS.iter().any(|w| input.last_user_text.contains(w));
+    let is_user_stopping =
+        user_word_count <= 10 && STOP_WORDS.iter().any(|w| input.last_user_text.contains(w));
     if is_user_stopping {
         return PersistenceNudgeResult {
             should_nudge: false,
@@ -471,12 +575,35 @@ pub fn classify_query_mode(message: String) -> String {
     if word_count <= 3 {
         // Check if it's a greeting or ack
         let short_patterns = [
-            "hi", "hey", "hello", "hii", "yo", "sup", "hola",
-            "ok", "okay", "thanks", "thank you", "cool", "great", "nice",
-            "yes", "no", "yep", "yeah", "sure", "alright",
-            "gm", "gn", "good morning", "good night",
+            "hi",
+            "hey",
+            "hello",
+            "hii",
+            "yo",
+            "sup",
+            "hola",
+            "ok",
+            "okay",
+            "thanks",
+            "thank you",
+            "cool",
+            "great",
+            "nice",
+            "yes",
+            "no",
+            "yep",
+            "yeah",
+            "sure",
+            "alright",
+            "gm",
+            "gn",
+            "good morning",
+            "good night",
         ];
-        if short_patterns.iter().any(|p| trimmed == *p || trimmed.starts_with(&format!("{} ", p))) {
+        if short_patterns
+            .iter()
+            .any(|p| trimmed == *p || trimmed.starts_with(&format!("{} ", p)))
+        {
             return "llm_only".into();
         }
     }
@@ -484,9 +611,21 @@ pub fn classify_query_mode(message: String) -> String {
     // Medium messages without strong retrieval signals → llm_with_traits
     if word_count <= 10 {
         let retrieval_signals = [
-            "remember", "recall", "you told", "last time", "previously",
-            "earlier", "before", "history", "search", "find", "look up",
-            "what did", "when did", "who is", "what is",
+            "remember",
+            "recall",
+            "you told",
+            "last time",
+            "previously",
+            "earlier",
+            "before",
+            "history",
+            "search",
+            "find",
+            "look up",
+            "what did",
+            "when did",
+            "who is",
+            "what is",
         ];
         let has_retrieval = retrieval_signals.iter().any(|s| trimmed.contains(s));
         if !has_retrieval {
@@ -500,25 +639,13 @@ pub fn classify_query_mode(message: String) -> String {
 
 // ── Agent Loop State ────────────────────────
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 struct AgentLoopState {
     iterations: i32,
     total_tool_calls: i32,
     error_count: i32,
     used_browser_tools: bool,
     last_progress_time_ms: u64,
-}
-
-impl Default for AgentLoopState {
-    fn default() -> Self {
-        Self {
-            iterations: 0,
-            total_tool_calls: 0,
-            error_count: 0,
-            used_browser_tools: false,
-            last_progress_time_ms: 0,
-        }
-    }
 }
 
 lazy_static! {
@@ -628,7 +755,8 @@ pub fn get_agent_state_snapshot() -> String {
         "totalToolCalls": state.total_tool_calls,
         "errorCount": state.error_count,
         "usedBrowserTools": state.used_browser_tools,
-    }).to_string()
+    })
+    .to_string()
 }
 
 // ── Source Tag Stripping ────────────────────

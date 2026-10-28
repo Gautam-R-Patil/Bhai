@@ -27,14 +27,14 @@ const ACCESS_BOOST: f64 = 0.3;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct WMItem {
     pub id: String,
-    pub content_type: String,      // "fact" | "task_context" | "tool_result" | "user_message" | "agent_thought"
-    pub summary: String,           // Brief content for injection
-    pub attention_score: f64,      // 0-1, how relevant right now
-    pub importance: f64,           // 0-1, intrinsic importance
+    pub content_type: String, // "fact" | "task_context" | "tool_result" | "user_message" | "agent_thought"
+    pub summary: String,      // Brief content for injection
+    pub attention_score: f64, // 0-1, how relevant right now
+    pub importance: f64,      // 0-1, intrinsic importance
     pub access_count: u32,
     pub created_tick: u32,
     pub last_accessed_tick: u32,
-    pub token_estimate: u32,       // Estimated tokens this item consumes
+    pub token_estimate: u32, // Estimated tokens this item consumes
 }
 
 #[napi(object)]
@@ -44,14 +44,14 @@ pub struct WMState {
     pub current_tick: u32,
     pub total_tokens: u32,
     pub capacity: u32,
-    pub token_budget: u32,         // Max tokens for WM injection
+    pub token_budget: u32, // Max tokens for WM injection
 }
 
 #[napi(object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SpillDecision {
-    pub items_to_spill: Vec<String>,  // IDs of items to move to LTM
-    pub items_to_keep: Vec<String>,   // IDs of items to keep
+    pub items_to_spill: Vec<String>, // IDs of items to move to LTM
+    pub items_to_keep: Vec<String>,  // IDs of items to keep
     pub freed_tokens: u32,
 }
 
@@ -60,7 +60,7 @@ pub struct SpillDecision {
 pub struct RetainDecision {
     pub should_retain: bool,
     pub attention_score: f64,
-    pub replaces_id: String,        // Empty if no replacement needed
+    pub replaces_id: String, // Empty if no replacement needed
 }
 
 // ── Working Memory Operations ──────────────────────
@@ -83,7 +83,7 @@ pub fn create_wm_state(capacity: Option<u32>, token_budget: Option<u32>) -> WMSt
 #[napi]
 pub fn update_attention_scores(
     mut state: WMState,
-    relevance_scores: Vec<f64>,  // Parallel to state.items: relevance to current query
+    relevance_scores: Vec<f64>, // Parallel to state.items: relevance to current query
 ) -> Vec<f64> {
     state.current_tick += 1;
     let tick = state.current_tick;
@@ -99,8 +99,9 @@ pub fn update_attention_scores(
         let relevance = relevance_scores.get(i).copied().unwrap_or(0.0);
 
         // New attention = decayed old attention + relevance + importance baseline
-        let new_attention = (item.attention_score * decay + relevance * 0.5 + item.importance * 0.1)
-            .clamp(0.0, 1.0);
+        let new_attention =
+            (item.attention_score * decay + relevance * 0.5 + item.importance * 0.1)
+                .clamp(0.0, 1.0);
 
         item.attention_score = new_attention;
         updated_scores.push(new_attention);
@@ -112,7 +113,11 @@ pub fn update_attention_scores(
 /// Decide whether to retain a new item in working memory.
 /// If WM is full, identifies the lowest-attention item for replacement.
 #[napi]
-pub fn should_retain(state: WMState, new_item_importance: f64, new_item_tokens: u32) -> RetainDecision {
+pub fn should_retain(
+    state: WMState,
+    new_item_importance: f64,
+    new_item_tokens: u32,
+) -> RetainDecision {
     // If there's room, always retain
     if (state.items.len() as u32) < state.capacity
         && state.total_tokens + new_item_tokens <= state.token_budget
@@ -155,7 +160,9 @@ pub fn should_retain(state: WMState, new_item_importance: f64, new_item_tokens: 
 /// Called when WM is over capacity or token budget.
 #[napi]
 pub fn compute_spill_decisions(state: WMState) -> SpillDecision {
-    let mut items_with_scores: Vec<(&WMItem, f64)> = state.items.iter()
+    let mut items_with_scores: Vec<(&WMItem, f64)> = state
+        .items
+        .iter()
         .map(|item| {
             // Combined score: attention + importance + recency
             let recency = 1.0 / (1.0 + (state.current_tick - item.last_accessed_tick) as f64 * 0.1);
@@ -198,7 +205,11 @@ pub fn compute_spill_decisions(state: WMState) -> SpillDecision {
 #[napi]
 pub fn select_for_injection(state: WMState, max_tokens: u32) -> Vec<String> {
     let mut sorted: Vec<&WMItem> = state.items.iter().collect();
-    sorted.sort_by(|a, b| b.attention_score.partial_cmp(&a.attention_score).unwrap_or(std::cmp::Ordering::Equal));
+    sorted.sort_by(|a, b| {
+        b.attention_score
+            .partial_cmp(&a.attention_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     let mut selected = Vec::new();
     let mut token_count = 0u32;

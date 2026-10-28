@@ -114,8 +114,14 @@ mod mac {
         }
         detach(view); // idempotent: re-attaching replaces the previous glass
 
-        let frame = CGRect { x: 0.0, y: 0.0, w: width, h: height };
-        let glass: Id = msg!(Id; msg!(Id; glass_class, c"alloc"), c"initWithFrame:", CGRect = frame);
+        let frame = CGRect {
+            x: 0.0,
+            y: 0.0,
+            w: width,
+            h: height,
+        };
+        let glass: Id =
+            msg!(Id; msg!(Id; glass_class, c"alloc"), c"initWithFrame:", CGRect = frame);
         if glass.is_null() {
             return false;
         }
@@ -202,7 +208,10 @@ mod tests {
 
     #[test]
     fn parses_hex_tints() {
-        assert_eq!(parse_hex_rgba("#FF000080"), Some([1.0, 0.0, 0.0, 128.0 / 255.0]));
+        assert_eq!(
+            parse_hex_rgba("#FF000080"),
+            Some([1.0, 0.0, 0.0, 128.0 / 255.0])
+        );
         assert_eq!(parse_hex_rgba("00ff00"), Some([0.0, 1.0, 0.0, 1.0]));
         assert_eq!(parse_hex_rgba("#12345"), None);
         assert_eq!(parse_hex_rgba("+12345"), None);

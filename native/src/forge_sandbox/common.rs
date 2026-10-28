@@ -18,8 +18,8 @@ struct CapsWire {
 /// arrays — the TS shim is the source of truth for canonicalization (path
 /// expansion, host validation); Rust trusts only the parsed shape.
 pub fn parse_capabilities(json: &str) -> Result<Capabilities, String> {
-    let wire: CapsWire = serde_json::from_str(json)
-        .map_err(|e| format!("capabilities parse error: {e}"))?;
+    let wire: CapsWire =
+        serde_json::from_str(json).map_err(|e| format!("capabilities parse error: {e}"))?;
     Ok(Capabilities {
         fs_read: wire.fs_read,
         fs_write: wire.fs_write,
@@ -78,6 +78,10 @@ mod tests {
     #[test]
     fn handler_shim_source_is_nonempty() {
         let src = handler_shim_source();
-        assert!(src.len() > 50, "shim should be ~30 lines, got {} bytes", src.len());
+        assert!(
+            src.len() > 50,
+            "shim should be ~30 lines, got {} bytes",
+            src.len()
+        );
     }
 }

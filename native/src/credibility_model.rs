@@ -37,7 +37,7 @@ pub struct CredibilityUpdate {
 pub fn update_credibility(
     current: SourceCredibility,
     claim_confirmed: bool,
-    evidence_strength: f64,  // 0-1
+    evidence_strength: f64, // 0-1
 ) -> CredibilityUpdate {
     // Beta distribution parameters from current state
     let alpha = (current.confirmed_claims as f64) + 1.0;
@@ -55,9 +55,15 @@ pub fn update_credibility(
     let delta = new_score - current.credibility_score;
 
     let reason = if claim_confirmed {
-        format!("Claim confirmed (strength {:.2}), score {:.3} → {:.3}", evidence_strength, current.credibility_score, new_score)
+        format!(
+            "Claim confirmed (strength {:.2}), score {:.3} → {:.3}",
+            evidence_strength, current.credibility_score, new_score
+        )
     } else {
-        format!("Claim contradicted (strength {:.2}), score {:.3} → {:.3}", evidence_strength, current.credibility_score, new_score)
+        format!(
+            "Claim contradicted (strength {:.2}), score {:.3} → {:.3}",
+            evidence_strength, current.credibility_score, new_score
+        )
     };
 
     CredibilityUpdate {
@@ -72,8 +78,11 @@ pub fn update_credibility(
 #[napi]
 pub fn rank_sources_by_credibility(sources: Vec<SourceCredibility>) -> Vec<SourceCredibility> {
     let mut sorted = sources;
-    sorted.sort_by(|a, b| b.credibility_score.partial_cmp(&a.credibility_score)
-        .unwrap_or(std::cmp::Ordering::Equal));
+    sorted.sort_by(|a, b| {
+        b.credibility_score
+            .partial_cmp(&a.credibility_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     sorted
 }
 

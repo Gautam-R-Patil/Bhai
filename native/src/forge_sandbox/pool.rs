@@ -64,8 +64,13 @@ impl Pool {
         handler_dir: &Path,
         caps: &Capabilities,
     ) -> Result<Worker, SpawnError> {
-        let child = self.sandbox.spawn(slug, handler_dir, caps).map_err(SpawnError::Io)?;
-        let paths = Sandpath { handler_dir: handler_dir.to_path_buf() };
+        let child = self
+            .sandbox
+            .spawn(slug, handler_dir, caps)
+            .map_err(SpawnError::Io)?;
+        let paths = Sandpath {
+            handler_dir: handler_dir.to_path_buf(),
+        };
         Worker::from_child(slug.to_string(), paths, child)
             .await
             .map_err(SpawnError::Boot)
@@ -81,7 +86,11 @@ impl Pool {
 
         if guard.contains(slug) {
             let _ = guard.get(slug);
-            return Ok(PoolGuard { pool: self.clone(), slug: slug.to_string(), guard });
+            return Ok(PoolGuard {
+                pool: self.clone(),
+                slug: slug.to_string(),
+                guard,
+            });
         }
 
         if guard.len() >= guard.cap().get() {
@@ -93,7 +102,11 @@ impl Pool {
 
         let worker = self.spawn_worker(slug, handler_dir, caps).await?;
         let _ = guard.put(slug.to_string(), worker);
-        Ok(PoolGuard { pool: self.clone(), slug: slug.to_string(), guard })
+        Ok(PoolGuard {
+            pool: self.clone(),
+            slug: slug.to_string(),
+            guard,
+        })
     }
 
     pub async fn evict(&self, slug: &str) {
@@ -142,7 +155,12 @@ mod tests {
 
     struct MockSandbox;
     impl Sandbox for MockSandbox {
-        fn spawn(&self, _slug: &str, _handler_dir: &Path, _caps: &Capabilities) -> std::io::Result<tokio::process::Child> {
+        fn spawn(
+            &self,
+            _slug: &str,
+            _handler_dir: &Path,
+            _caps: &Capabilities,
+        ) -> std::io::Result<tokio::process::Child> {
             TokioCommand::new("/bin/sh")
                 .arg("-c")
                 .arg(r#"echo '{"id":"__boot__","ok":true}'; cat"#)
@@ -187,11 +205,19 @@ mod tests {
         let pool = Arc::new(Pool::new(Box::new(MockSandbox), 2));
         let caps = Capabilities::default();
         let dir = std::env::temp_dir();
-        { let _g = pool.get_or_spawn("a", &dir, &caps).await.expect("a"); }
-        { let _g = pool.get_or_spawn("b", &dir, &caps).await.expect("b"); }
+        {
+            let _g = pool.get_or_spawn("a", &dir, &caps).await.expect("a");
+        }
+        {
+            let _g = pool.get_or_spawn("b", &dir, &caps).await.expect("b");
+        }
         assert_eq!(pool.len().await, 2);
-        { let _g = pool.get_or_spawn("a", &dir, &caps).await.expect("a-touch"); }
-        { let _g = pool.get_or_spawn("c", &dir, &caps).await.expect("c"); }
+        {
+            let _g = pool.get_or_spawn("a", &dir, &caps).await.expect("a-touch");
+        }
+        {
+            let _g = pool.get_or_spawn("c", &dir, &caps).await.expect("c");
+        }
         assert_eq!(pool.len().await, 2);
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
@@ -201,7 +227,9 @@ mod tests {
         let pool = Arc::new(Pool::new(Box::new(MockSandbox), 4));
         let caps = Capabilities::default();
         let dir = std::env::temp_dir();
-        { let _g = pool.get_or_spawn("x", &dir, &caps).await.expect("x"); }
+        {
+            let _g = pool.get_or_spawn("x", &dir, &caps).await.expect("x");
+        }
         assert_eq!(pool.len().await, 1);
         pool.evict("x").await;
         assert_eq!(pool.len().await, 0);
@@ -231,9 +259,16 @@ mod tests {
         };
         assert_eq!(pool.len().await, 2);
 
-        let g = pool.get_or_spawn("a", &dir, &caps).await.expect("a-still-there");
+        let g = pool
+            .get_or_spawn("a", &dir, &caps)
+            .await
+            .expect("a-still-there");
         let pid_after = g.guard.peek(&"a".to_string()).map(|w| w.pid);
-        assert_eq!(pid_after, Some(pid_a), "inflight worker should NOT have been evicted");
+        assert_eq!(
+            pid_after,
+            Some(pid_a),
+            "inflight worker should NOT have been evicted"
+        );
     }
 
     #[tokio::test]
@@ -244,11 +279,17 @@ mod tests {
 
         {
             let mut g = pool.get_or_spawn("a", &dir, &caps).await.expect("a");
-            g.worker_mut().unwrap().try_acquire_inflight().expect("acquire a");
+            g.worker_mut()
+                .unwrap()
+                .try_acquire_inflight()
+                .expect("acquire a");
         }
         {
             let mut g = pool.get_or_spawn("b", &dir, &caps).await.expect("b");
-            g.worker_mut().unwrap().try_acquire_inflight().expect("acquire b");
+            g.worker_mut()
+                .unwrap()
+                .try_acquire_inflight()
+                .expect("acquire b");
         }
         assert_eq!(pool.len().await, 2);
 

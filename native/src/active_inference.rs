@@ -18,17 +18,17 @@ const EXPLOITATION_WEIGHT: f64 = 0.7;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct BeliefState {
     pub hypotheses: Vec<String>,
-    pub probabilities: Vec<f64>,     // P(hypothesis) for each
-    pub evidence_counts: Vec<u32>,   // How much evidence for each
+    pub probabilities: Vec<f64>,   // P(hypothesis) for each
+    pub evidence_counts: Vec<u32>, // How much evidence for each
 }
 
 #[napi(object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct FreeEnergyResult {
     pub free_energy: f64,
-    pub entropy: f64,                // Uncertainty in beliefs
-    pub expected_accuracy: f64,      // How well beliefs predict observations
-    pub should_explore: bool,        // High entropy → should seek more info
+    pub entropy: f64,           // Uncertainty in beliefs
+    pub expected_accuracy: f64, // How well beliefs predict observations
+    pub should_explore: bool,   // High entropy → should seek more info
 }
 
 #[napi(object)]
@@ -49,7 +49,10 @@ pub struct InfoGainResult {
 pub fn compute_free_energy(beliefs: BeliefState) -> FreeEnergyResult {
     if beliefs.probabilities.is_empty() {
         return FreeEnergyResult {
-            free_energy: 0.0, entropy: 0.0, expected_accuracy: 0.0, should_explore: false,
+            free_energy: 0.0,
+            entropy: 0.0,
+            expected_accuracy: 0.0,
+            should_explore: false,
         };
     }
 
@@ -63,7 +66,8 @@ pub fn compute_free_energy(beliefs: BeliefState) -> FreeEnergyResult {
     };
 
     // Entropy: H = -sum(p * log(p))
-    let entropy: f64 = probs.iter()
+    let entropy: f64 = probs
+        .iter()
         .filter(|&&p| p > 1e-10)
         .map(|&p| -p * p.ln())
         .sum();
@@ -95,8 +99,8 @@ pub fn compute_free_energy(beliefs: BeliefState) -> FreeEnergyResult {
 #[napi]
 pub fn update_beliefs(
     beliefs: BeliefState,
-    evidence_for_hypothesis: u32,  // Which hypothesis the evidence supports
-    evidence_strength: f64,        // 0-1 how strongly it supports
+    evidence_for_hypothesis: u32, // Which hypothesis the evidence supports
+    evidence_strength: f64,       // 0-1 how strongly it supports
 ) -> BeliefState {
     let mut new_probs = beliefs.probabilities.clone();
     let mut new_counts = beliefs.evidence_counts.clone();
@@ -110,7 +114,9 @@ pub fn update_beliefs(
         // Renormalize
         let sum: f64 = new_probs.iter().sum();
         if sum > 0.0 {
-            for p in &mut new_probs { *p /= sum; }
+            for p in &mut new_probs {
+                *p /= sum;
+            }
         }
     }
 
@@ -137,7 +143,8 @@ pub fn rank_queries_by_info_gain(
         return vec![];
     };
 
-    let current_entropy: f64 = probs.iter()
+    let current_entropy: f64 = probs
+        .iter()
         .filter(|&&p| p > 1e-10)
         .map(|&p| -p * p.ln())
         .sum();
@@ -149,24 +156,31 @@ pub fn rank_queries_by_info_gain(
         let mut expected_posterior_entropy = 0.0f64;
 
         for (hi, &prior) in probs.iter().enumerate() {
-            if hi >= relevances.len() { continue; }
+            if hi >= relevances.len() {
+                continue;
+            }
             let relevance = relevances[hi].clamp(0.0, 1.0);
 
             // P(evidence supports h_i) ≈ prior * relevance
             let p_evidence = prior * relevance + (1.0 - prior) * (1.0 - relevance);
 
-            if p_evidence < 1e-10 { continue; }
+            if p_evidence < 1e-10 {
+                continue;
+            }
 
             // Posterior after evidence
             let mut posterior = probs.clone();
             posterior[hi] *= 1.0 + relevance;
             let post_sum: f64 = posterior.iter().sum();
             if post_sum > 0.0 {
-                for p in &mut posterior { *p /= post_sum; }
+                for p in &mut posterior {
+                    *p /= post_sum;
+                }
             }
 
             // Entropy of posterior
-            let post_entropy: f64 = posterior.iter()
+            let post_entropy: f64 = posterior
+                .iter()
                 .filter(|&&p| p > 1e-10)
                 .map(|&p| -p * p.ln())
                 .sum();
@@ -185,8 +199,11 @@ pub fn rank_queries_by_info_gain(
     }
 
     // Sort by info gain descending
-    results.sort_by(|a, b| b.expected_info_gain.partial_cmp(&a.expected_info_gain)
-        .unwrap_or(std::cmp::Ordering::Equal));
+    results.sort_by(|a, b| {
+        b.expected_info_gain
+            .partial_cmp(&a.expected_info_gain)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     results
 }
@@ -200,7 +217,11 @@ pub fn exploration_exploitation_decision(
     min_evidence: u32,
 ) -> f64 {
     // Returns exploration score: 0 = exploit, 1 = explore
-    let entropy_ratio = if max_entropy > 0.0 { entropy / max_entropy } else { 0.0 };
+    let entropy_ratio = if max_entropy > 0.0 {
+        entropy / max_entropy
+    } else {
+        0.0
+    };
     let evidence_ratio = if min_evidence > 0 {
         1.0 - (evidence_count as f64 / min_evidence as f64).min(1.0)
     } else {

@@ -42,10 +42,7 @@ lazy_static::lazy_static! {
 #[napi]
 pub fn classify_query(user_message: String) -> String {
     // Normalize apostrophes
-    let trimmed = user_message
-        .trim()
-        .replace('\u{2018}', "'")
-        .replace('\u{2019}', "'");
+    let trimmed = user_message.trim().replace(['\u{2018}', '\u{2019}'], "'");
 
     // Short messages that are simple greetings
     if trimmed.len() < 30 {

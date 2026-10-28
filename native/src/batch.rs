@@ -197,7 +197,9 @@ fn cosine_similarity_internal(a: &[f32], b: &[f32]) -> f64 {
 #[inline]
 fn linear_to_pair(idx: usize, n: usize) -> (usize, usize) {
     // Solve: idx = i*n - i*(i+1)/2 + j - i - 1
-    let i = n - 2 - ((((8 * (n * (n - 1) / 2 - 1 - idx) + 1) as f64).sqrt() - 1.0) / 2.0).floor() as usize;
+    let i = n
+        - 2
+        - ((((8 * (n * (n - 1) / 2 - 1 - idx) + 1) as f64).sqrt() - 1.0) / 2.0).floor() as usize;
     let j = idx - i * (n - 1) + (i + 1) * i / 2 + i + 1;
     (i, j)
 }

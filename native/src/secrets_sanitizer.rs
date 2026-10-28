@@ -65,32 +65,65 @@ pub struct SanitizeResultNapi {
 // group-preserving DB_URI_PASSWORD / URL_USERINFO passes (TS indices 20, 21).
 // `sanitize_secrets` dispatches HEAD → DB/URL → TAIL → ENV_VAR in this order.
 const STANDARD_PATTERNS_HEAD: &[(&str, &str)] = &[
-    ("ANTHROPIC_API_KEY", r"sk-ant-(?:api|sid|admin)\d+-[A-Za-z0-9_-]{80,}"),
+    (
+        "ANTHROPIC_API_KEY",
+        r"sk-ant-(?:api|sid|admin)\d+-[A-Za-z0-9_-]{80,}",
+    ),
     ("OPENROUTER_API_KEY", r"\bsk-or-v\d+-[A-Fa-f0-9]{32,}\b"),
     ("OPENAI_API_KEY", r"\bsk-(?:proj-)?[A-Za-z0-9_-]{32,}\b"),
     ("AWS_ACCESS_KEY", r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
     ("STRIPE_LIVE_KEY", r"\b(?:sk|pk|rk)_live_[A-Za-z0-9]{24,}\b"),
     ("STRIPE_TEST_KEY", r"\b(?:sk|pk|rk)_test_[A-Za-z0-9]{24,}\b"),
-    ("GITHUB_TOKEN", r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}\b"),
-    ("GITHUB_FINE_GRAINED_TOKEN", r"\bgithub_pat_[A-Za-z0-9_]{22,}_[A-Za-z0-9]{59,}\b"),
+    (
+        "GITHUB_TOKEN",
+        r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}\b",
+    ),
+    (
+        "GITHUB_FINE_GRAINED_TOKEN",
+        r"\bgithub_pat_[A-Za-z0-9_]{22,}_[A-Za-z0-9]{59,}\b",
+    ),
     ("GOOGLE_API_KEY", r"\bAIza[A-Za-z0-9_-]{35}\b"),
     ("SLACK_TOKEN", r"\bxox[abprs]-[A-Za-z0-9-]{10,}\b"),
-    ("SLACK_WEBHOOK_URL", r"\bhttps://hooks\.slack\.com/services/T[A-Z0-9]{8,}/B[A-Z0-9]{8,}/[A-Za-z0-9]{20,}\b"),
-    ("DISCORD_BOT_TOKEN", r"\b[MNO][A-Za-z0-9_-]{23,27}\.[A-Za-z0-9_-]{6,7}\.[A-Za-z0-9_-]{27,}\b"),
-    ("DISCORD_WEBHOOK_URL", r"\bhttps://discord(?:app)?\.com/api/webhooks/\d{17,20}/[A-Za-z0-9_-]{60,}\b"),
+    (
+        "SLACK_WEBHOOK_URL",
+        r"\bhttps://hooks\.slack\.com/services/T[A-Z0-9]{8,}/B[A-Z0-9]{8,}/[A-Za-z0-9]{20,}\b",
+    ),
+    (
+        "DISCORD_BOT_TOKEN",
+        r"\b[MNO][A-Za-z0-9_-]{23,27}\.[A-Za-z0-9_-]{6,7}\.[A-Za-z0-9_-]{27,}\b",
+    ),
+    (
+        "DISCORD_WEBHOOK_URL",
+        r"\bhttps://discord(?:app)?\.com/api/webhooks/\d{17,20}/[A-Za-z0-9_-]{60,}\b",
+    ),
     ("TWILIO_ACCOUNT_SID", r"\bAC[a-f0-9]{32}\b"),
     ("TWILIO_AUTH_TOKEN", r"\bSK[a-f0-9]{32}\b"),
-    ("SENDGRID_API_KEY", r"\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}\b"),
-    ("MAPBOX_TOKEN", r"\b(?:pk|sk)\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b"),
+    (
+        "SENDGRID_API_KEY",
+        r"\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}\b",
+    ),
+    (
+        "MAPBOX_TOKEN",
+        r"\b(?:pk|sk)\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b",
+    ),
     ("NPM_TOKEN", r"\bnpm_[A-Za-z0-9]{36}\b"),
-    ("NOTION_SECRET", r"\b(?:secret_[A-Za-z0-9]{43}|ntn_[A-Za-z0-9]{45,})\b"),
+    (
+        "NOTION_SECRET",
+        r"\b(?:secret_[A-Za-z0-9]{43}|ntn_[A-Za-z0-9]{45,})\b",
+    ),
     ("SQUARE_ACCESS_TOKEN", r"\bEAAA[A-Za-z0-9_-]{60,}\b"),
 ];
 
 const STANDARD_PATTERNS_TAIL: &[(&str, &str)] = &[
-    ("JWT", r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b"),
+    (
+        "JWT",
+        r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b",
+    ),
     ("BEARER_TOKEN", r"\b[Bb]earer\s+[A-Za-z0-9\-._~+/]{20,}=*"),
-    ("PRIVATE_KEY_PEM", r"(?s)-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----.+?-----END (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----"),
+    (
+        "PRIVATE_KEY_PEM",
+        r"(?s)-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----.+?-----END (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----",
+    ),
 ];
 
 // Group-preserving patterns. Group 1 = scheme://user: prefix, group 2 =
@@ -98,8 +131,7 @@ const STANDARD_PATTERNS_TAIL: &[(&str, &str)] = &[
 // `regex` has no lookbehind, so the prefix `\b` and the structure live in the
 // pattern; the `(?!\[REDACTED:)` of the TS URL_USERINFO is emulated by the
 // post-match `value_is_already_redacted` skip in `apply_url_userinfo`.
-const DB_URI_PASSWORD_PATTERN: &str =
-    r"\b((?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|rediss|amqp|amqps)://[^\s:@/]+:)([^@\s/]+)(@)";
+const DB_URI_PASSWORD_PATTERN: &str = r"\b((?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|rediss|amqp|amqps)://[^\s:@/]+:)([^@\s/]+)(@)";
 const URL_USERINFO_PATTERN: &str = r"\b([a-z][a-z0-9+.-]*://[^\s:@/]+:)([^@\s/]+)(@)";
 
 const ENV_VAR_PATTERN: &str = r#"\b[A-Z0-9_]*(?:SECRET|PASSWORD|PASSPHRASE|API[_-]?KEY|PRIVATE[_-]?KEY|ACCESS[_-]?KEY|TOKEN|CLIENT[_-]?SECRET|DATABASE[_-]?URL|CONNECTION[_-]?STRING|DSN)\s*=\s*(?P<value>"[^"\n]{8,}"|'[^'\n]{8,}'|[^\s"'\n]{8,})"#;
@@ -275,8 +307,12 @@ pub fn sanitize_secrets(input: String) -> SanitizeResultNapi {
     // DB_URI_PASSWORD then URL_USERINFO (group-preserving). Order mirrors the
     // TS PATTERNS array: DB schemes redact first with their specific marker,
     // then the generic URL pass skips any already-redacted password.
-    let (after_db, db_hits) =
-        apply_group_password(&current, &DB_URI_PASSWORD_REGEX, DB_URI_PASSWORD_MARKER, false);
+    let (after_db, db_hits) = apply_group_password(
+        &current,
+        &DB_URI_PASSWORD_REGEX,
+        DB_URI_PASSWORD_MARKER,
+        false,
+    );
     if db_hits > 0 {
         counts.insert("DB_URI_PASSWORD", db_hits);
         current = Cow::Owned(after_db.into_owned());
@@ -305,7 +341,8 @@ pub fn sanitize_secrets(input: String) -> SanitizeResultNapi {
     let total: u32 = counts.values().sum();
     SanitizeResultNapi {
         sanitized: current.into_owned(),
-        redactions_by_type_json: serde_json::to_string(&counts).unwrap_or_else(|_| "{}".to_string()),
+        redactions_by_type_json: serde_json::to_string(&counts)
+            .unwrap_or_else(|_| "{}".to_string()),
         total_redactions: total,
     }
 }

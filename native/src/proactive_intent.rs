@@ -29,9 +29,15 @@ pub struct RustValidationResult {
 }
 
 const VALID_SOURCES: &[&str] = &[
-    "latent_topic_monitor", "memory_anticipation", "calendar_fact_check",
-    "calendar_fusion", "stale_todo", "meeting_followup",
-    "habit_anomaly", "env_context", "long_task_status",
+    "latent_topic_monitor",
+    "memory_anticipation",
+    "calendar_fact_check",
+    "calendar_fusion",
+    "stale_todo",
+    "meeting_followup",
+    "habit_anomaly",
+    "env_context",
+    "long_task_status",
     "convex_notification",
 ];
 const VALID_MODES: &[&str] = &["fyi", "question", "review"];
@@ -40,31 +46,58 @@ const VALID_URGENCIES: &[&str] = &["urgent", "normal", "ambient"];
 #[napi]
 pub fn validate_intent_rust(intent: RustProactiveIntent) -> RustValidationResult {
     if intent.id.is_empty() {
-        return RustValidationResult { ok: false, error: Some("id missing".into()) };
+        return RustValidationResult {
+            ok: false,
+            error: Some("id missing".into()),
+        };
     }
     if !VALID_SOURCES.contains(&intent.source.as_str()) {
-        return RustValidationResult { ok: false, error: Some(format!("bad source: {}", intent.source)) };
+        return RustValidationResult {
+            ok: false,
+            error: Some(format!("bad source: {}", intent.source)),
+        };
     }
     if !VALID_MODES.contains(&intent.mode.as_str()) {
-        return RustValidationResult { ok: false, error: Some(format!("bad mode: {}", intent.mode)) };
+        return RustValidationResult {
+            ok: false,
+            error: Some(format!("bad mode: {}", intent.mode)),
+        };
     }
     if !VALID_URGENCIES.contains(&intent.urgency.as_str()) {
-        return RustValidationResult { ok: false, error: Some(format!("bad urgency: {}", intent.urgency)) };
+        return RustValidationResult {
+            ok: false,
+            error: Some(format!("bad urgency: {}", intent.urgency)),
+        };
     }
     if intent.topic_embedding.len() != 384 {
         return RustValidationResult {
             ok: false,
-            error: Some(format!("embedding must be length 384, got {}", intent.topic_embedding.len())),
+            error: Some(format!(
+                "embedding must be length 384, got {}",
+                intent.topic_embedding.len()
+            )),
         };
     }
     if intent.payload_kind.is_empty() {
-        return RustValidationResult { ok: false, error: Some("payload.kind missing".into()) };
+        return RustValidationResult {
+            ok: false,
+            error: Some("payload.kind missing".into()),
+        };
     }
     if intent.expires_at <= intent.created_at {
-        return RustValidationResult { ok: false, error: Some("expiresAt <= createdAt".into()) };
+        return RustValidationResult {
+            ok: false,
+            error: Some("expiresAt <= createdAt".into()),
+        };
     }
     if intent.mode == "review" && !intent.has_suggested_action {
-        return RustValidationResult { ok: false, error: Some("review mode requires suggestedAction".into()) };
+        return RustValidationResult {
+            ok: false,
+            error: Some("review mode requires suggestedAction".into()),
+        };
     }
-    RustValidationResult { ok: true, error: None }
+    RustValidationResult {
+        ok: true,
+        error: None,
+    }
 }

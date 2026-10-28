@@ -122,13 +122,17 @@ pub fn validate_dag(steps: Vec<MeshStep>) -> ValidationResult {
 
         for dep in &step.depends_on {
             if ids.contains(dep) {
-                adjacency.entry(dep.clone()).or_default().push(step.id.clone());
+                adjacency
+                    .entry(dep.clone())
+                    .or_default()
+                    .push(step.id.clone());
             }
         }
     }
 
     // Start with all zero-in-degree nodes
-    let mut queue: VecDeque<String> = steps.iter()
+    let mut queue: VecDeque<String> = steps
+        .iter()
         .filter(|s| {
             let effective_deps: usize = s.depends_on.iter().filter(|d| ids.contains(*d)).count();
             effective_deps == 0
@@ -156,7 +160,8 @@ pub fn validate_dag(steps: Vec<MeshStep>) -> ValidationResult {
     }
 
     if visited != steps.len() {
-        let unreachable: Vec<String> = steps.iter()
+        let unreachable: Vec<String> = steps
+            .iter()
             .filter(|s| !topo_order.contains(&s.id))
             .map(|s| s.id.clone())
             .collect();
@@ -190,7 +195,11 @@ pub fn compute_execution_plan(steps: Vec<MeshStep>) -> napi::Result<ExecutionPla
     // Validate first
     let validation = validate_dag(steps.clone());
     if !validation.valid {
-        let msgs: Vec<String> = validation.errors.iter().map(|e| e.message.clone()).collect();
+        let msgs: Vec<String> = validation
+            .errors
+            .iter()
+            .map(|e| e.message.clone())
+            .collect();
         return Err(napi::Error::new(
             napi::Status::InvalidArg,
             format!("Invalid DAG: {}", msgs.join("; ")),
@@ -204,10 +213,10 @@ pub fn compute_execution_plan(steps: Vec<MeshStep>) -> napi::Result<ExecutionPla
 
     while completed.len() < steps.len() {
         // Find all steps whose dependencies are met
-        let ready: Vec<String> = steps.iter()
+        let ready: Vec<String> = steps
+            .iter()
             .filter(|s| {
-                !completed.contains(&s.id)
-                    && s.depends_on.iter().all(|dep| completed.contains(dep))
+                !completed.contains(&s.id) && s.depends_on.iter().all(|dep| completed.contains(dep))
             })
             .map(|s| s.id.clone())
             .collect();
@@ -260,7 +269,8 @@ pub fn gather_dependency_context(
 
     let step_map: HashMap<String, &MeshStep> = steps.iter().map(|s| (s.id.clone(), s)).collect();
 
-    step.depends_on.iter()
+    step.depends_on
+        .iter()
         .filter_map(|dep_id| {
             let dep_result = results.get(dep_id)?;
             let dep_step = step_map.get(dep_id);
@@ -276,11 +286,7 @@ pub fn gather_dependency_context(
 /// Check if a set of steps would form a valid DAG if a new dependency edge were added.
 /// Useful for incremental plan building.
 #[napi]
-pub fn would_create_cycle(
-    steps: Vec<MeshStep>,
-    from_step_id: String,
-    to_step_id: String,
-) -> bool {
+pub fn would_create_cycle(steps: Vec<MeshStep>, from_step_id: String, to_step_id: String) -> bool {
     // Check if to_step_id can reach from_step_id via existing dependencies
     // If so, adding from_step_id -> to_step_id would create a cycle
     let adjacency: HashMap<String, Vec<String>> = {
@@ -288,7 +294,9 @@ pub fn would_create_cycle(
         for step in &steps {
             for dep in &step.depends_on {
                 // dep -> step.id (dep must complete before step)
-                adj.entry(dep.clone()).or_insert_with(Vec::new).push(step.id.clone());
+                adj.entry(dep.clone())
+                    .or_insert_with(Vec::new)
+                    .push(step.id.clone());
             }
         }
         adj
@@ -345,7 +353,9 @@ pub fn get_critical_path_length(steps: Vec<MeshStep>) -> i32 {
             None => return 1,
         };
 
-        let max_dep = step.depends_on.iter()
+        let max_dep = step
+            .depends_on
+            .iter()
             .map(|dep| compute_longest(dep, step_map, longest))
             .max()
             .unwrap_or(0);
@@ -355,7 +365,8 @@ pub fn get_critical_path_length(steps: Vec<MeshStep>) -> i32 {
         result
     }
 
-    steps.iter()
+    steps
+        .iter()
         .map(|s| compute_longest(&s.id, &step_map, &mut longest))
         .max()
         .unwrap_or(0)
@@ -397,7 +408,9 @@ pub fn compute_critical_path(steps: Vec<MeshStep>) -> Vec<String> {
             Some(s) => s,
             None => return 1,
         };
-        let max_dep = step.depends_on.iter()
+        let max_dep = step
+            .depends_on
+            .iter()
             .map(|dep| compute_longest_dp(dep, step_map, longest))
             .max()
             .unwrap_or(0);
@@ -419,7 +432,8 @@ pub fn compute_critical_path(steps: Vec<MeshStep>) -> Vec<String> {
 
     // Trace back the critical path from the terminal node with max_len
     let mut path: Vec<String> = Vec::new();
-    let mut current_id: Option<String> = steps.iter()
+    let mut current_id: Option<String> = steps
+        .iter()
         .find(|s| longest.get(&s.id).copied() == Some(max_len))
         .map(|s| s.id.clone());
 
@@ -430,7 +444,9 @@ pub fn compute_critical_path(steps: Vec<MeshStep>) -> Vec<String> {
             None => break,
         };
         // Follow the dependency with the longest path
-        current_id = step.depends_on.iter()
+        current_id = step
+            .depends_on
+            .iter()
             .max_by_key(|dep| longest.get(*dep).copied().unwrap_or(0))
             .cloned();
     }
@@ -466,7 +482,9 @@ pub fn get_step_priorities(steps: Vec<MeshStep>) -> Vec<StepPriority> {
             Some(s) => s,
             None => return 1,
         };
-        let max_dep = step.depends_on.iter()
+        let max_dep = step
+            .depends_on
+            .iter()
             .map(|dep| compute_len(dep, step_map, longest))
             .max()
             .unwrap_or(0);
@@ -483,31 +501,38 @@ pub fn get_step_priorities(steps: Vec<MeshStep>) -> Vec<StepPriority> {
     let mut dependents: HashMap<String, Vec<String>> = HashMap::new();
     for s in &steps {
         for dep in &s.depends_on {
-            dependents.entry(dep.clone()).or_default().push(s.id.clone());
+            dependents
+                .entry(dep.clone())
+                .or_default()
+                .push(s.id.clone());
         }
     }
 
-    steps.iter().map(|s| {
-        let path_length = longest.get(&s.id).copied().unwrap_or(1);
+    steps
+        .iter()
+        .map(|s| {
+            let path_length = longest.get(&s.id).copied().unwrap_or(1);
 
-        let priority = if critical_set.contains(&s.id) {
-            "critical".to_string()
-        } else {
-            // Check if this step feeds into a critical step (1 hop)
-            let feeds_critical = dependents.get(&s.id)
-                .map(|deps| deps.iter().any(|d| critical_set.contains(d)))
-                .unwrap_or(false);
-            if feeds_critical {
-                "normal".to_string()
+            let priority = if critical_set.contains(&s.id) {
+                "critical".to_string()
             } else {
-                "low".to_string()
-            }
-        };
+                // Check if this step feeds into a critical step (1 hop)
+                let feeds_critical = dependents
+                    .get(&s.id)
+                    .map(|deps| deps.iter().any(|d| critical_set.contains(d)))
+                    .unwrap_or(false);
+                if feeds_critical {
+                    "normal".to_string()
+                } else {
+                    "low".to_string()
+                }
+            };
 
-        StepPriority {
-            step_id: s.id.clone(),
-            priority,
-            path_length,
-        }
-    }).collect()
+            StepPriority {
+                step_id: s.id.clone(),
+                priority,
+                path_length,
+            }
+        })
+        .collect()
 }

@@ -19,20 +19,20 @@ pub mod worker;
 pub mod macos;
 
 #[cfg(target_os = "linux")]
-pub mod linux_seccomp;
+pub mod linux;
 #[cfg(target_os = "linux")]
 pub mod linux_landlock;
 #[cfg(target_os = "linux")]
-pub mod linux;
+pub mod linux_seccomp;
 
+#[cfg(target_os = "windows")]
+pub mod windows;
 #[cfg(target_os = "windows")]
 pub mod windows_appcontainer;
 #[cfg(target_os = "windows")]
 pub mod windows_jobobject;
 #[cfg(target_os = "windows")]
 pub mod windows_managed_process;
-#[cfg(target_os = "windows")]
-pub mod windows;
 
 /// Validated set of resources a persisted tool may touch. Mirrors the TS
 /// `Capabilities` shape in `src/forge/capabilities.ts` exactly — Plan 4 wires
@@ -54,12 +54,7 @@ pub struct Capabilities {
 /// sandbox the OS supports. The returned `Child` MUST have its stdin and
 /// stdout configured to `Stdio::piped()` so the Worker can take them.
 pub trait Sandbox: Send + Sync {
-    fn spawn(
-        &self,
-        slug: &str,
-        handler_dir: &Path,
-        caps: &Capabilities,
-    ) -> io::Result<Child>;
+    fn spawn(&self, slug: &str, handler_dir: &Path, caps: &Capabilities) -> io::Result<Child>;
 }
 
 /// Compile-time factory. Returns the per-OS impl, or a stub that errors with
@@ -93,12 +88,7 @@ pub struct UnsupportedSandbox;
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 impl Sandbox for UnsupportedSandbox {
-    fn spawn(
-        &self,
-        _slug: &str,
-        _handler_dir: &Path,
-        _caps: &Capabilities,
-    ) -> io::Result<Child> {
+    fn spawn(&self, _slug: &str, _handler_dir: &Path, _caps: &Capabilities) -> io::Result<Child> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "forge sandbox: platform_unsupported",

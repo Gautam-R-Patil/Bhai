@@ -173,7 +173,11 @@ pub fn encrypt_bridge_message(plaintext: String) -> napi::Result<String> {
         .map_err(|e| napi::Error::from_reason(format!("Encryption failed: {e}")))?;
 
     // Format: hex(nonce) + ":" + hex(ciphertext)
-    Ok(format!("{}:{}", hex::encode(nonce_bytes), hex::encode(ciphertext)))
+    Ok(format!(
+        "{}:{}",
+        hex::encode(nonce_bytes),
+        hex::encode(ciphertext)
+    ))
 }
 
 /// Decrypt a bridge message payload.
@@ -186,7 +190,9 @@ pub fn decrypt_bridge_message(encrypted: String) -> napi::Result<String> {
 
     let parts: Vec<&str> = encrypted.splitn(2, ':').collect();
     if parts.len() != 2 {
-        return Err(napi::Error::from_reason("Invalid encrypted format: expected nonce:ciphertext"));
+        return Err(napi::Error::from_reason(
+            "Invalid encrypted format: expected nonce:ciphertext",
+        ));
     }
 
     let nonce_bytes = hex::decode(parts[0])
@@ -217,9 +223,7 @@ pub fn check_bridge_rate_limit(command_type: String) -> bool {
         .as_millis() as u64;
 
     let mut limits = RATE_LIMITS.lock();
-    let entry = limits
-        .entry(command_type)
-        .or_insert((0, now));
+    let entry = limits.entry(command_type).or_insert((0, now));
 
     // Reset window if >1 second elapsed
     if now - entry.1 > 1000 {

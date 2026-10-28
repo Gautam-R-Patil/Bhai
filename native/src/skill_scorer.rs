@@ -41,41 +41,51 @@ pub fn rank_skills(
     let task_lower = task_text.to_lowercase();
     let keywords: Vec<String> = task_keywords.iter().map(|k| k.to_lowercase()).collect();
 
-    let mut rankings: Vec<SkillRanking> = candidates.iter().map(|skill| {
-        // Trigger matching
-        let trigger_match = skill.triggers.iter().any(|t| {
-            let t_lower = t.to_lowercase();
-            task_lower.contains(&t_lower) || keywords.iter().any(|k| t_lower.contains(k))
-        });
+    let mut rankings: Vec<SkillRanking> = candidates
+        .iter()
+        .map(|skill| {
+            // Trigger matching
+            let trigger_match = skill.triggers.iter().any(|t| {
+                let t_lower = t.to_lowercase();
+                task_lower.contains(&t_lower) || keywords.iter().any(|k| t_lower.contains(k))
+            });
 
-        // Description keyword overlap
-        let desc_lower = skill.description.to_lowercase();
-        let desc_words: std::collections::HashSet<&str> = desc_lower.split_whitespace()
-            .filter(|w| w.len() > 3).collect();
-        let task_words: std::collections::HashSet<&str> = task_lower.split_whitespace()
-            .filter(|w| w.len() > 3).collect();
+            // Description keyword overlap
+            let desc_lower = skill.description.to_lowercase();
+            let desc_words: std::collections::HashSet<&str> = desc_lower
+                .split_whitespace()
+                .filter(|w| w.len() > 3)
+                .collect();
+            let task_words: std::collections::HashSet<&str> = task_lower
+                .split_whitespace()
+                .filter(|w| w.len() > 3)
+                .collect();
 
-        let overlap = desc_words.intersection(&task_words).count() as f64;
-        let union = desc_words.union(&task_words).count().max(1) as f64;
-        let description_match = overlap / union;
+            let overlap = desc_words.intersection(&task_words).count() as f64;
+            let union = desc_words.union(&task_words).count().max(1) as f64;
+            let description_match = overlap / union;
 
-        // Composite score
-        let trigger_bonus = if trigger_match { 0.5 } else { 0.0 };
-        let success_bonus = skill.success_rate * 0.1;
-        let usage_bonus = (skill.use_count as f64 / 20.0).min(0.1);
+            // Composite score
+            let trigger_bonus = if trigger_match { 0.5 } else { 0.0 };
+            let success_bonus = skill.success_rate * 0.1;
+            let usage_bonus = (skill.use_count as f64 / 20.0).min(0.1);
 
-        let relevance = (description_match * 0.4 + trigger_bonus + success_bonus + usage_bonus)
-            .clamp(0.0, 1.0);
+            let relevance = (description_match * 0.4 + trigger_bonus + success_bonus + usage_bonus)
+                .clamp(0.0, 1.0);
 
-        SkillRanking {
-            slug: skill.slug.clone(),
-            relevance_score: relevance,
-            trigger_match,
-            description_match,
-        }
-    }).collect();
+            SkillRanking {
+                slug: skill.slug.clone(),
+                relevance_score: relevance,
+                trigger_match,
+                description_match,
+            }
+        })
+        .collect();
 
-    rankings.sort_by(|a, b| b.relevance_score.partial_cmp(&a.relevance_score)
-        .unwrap_or(std::cmp::Ordering::Equal));
+    rankings.sort_by(|a, b| {
+        b.relevance_score
+            .partial_cmp(&a.relevance_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     rankings
 }

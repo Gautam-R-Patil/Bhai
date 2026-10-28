@@ -31,17 +31,26 @@ pub fn compute_pagerank(
     iterations: u32,
 ) -> Vec<PageRankResult> {
     let n = node_ids.len();
-    if n == 0 { return vec![]; }
+    if n == 0 {
+        return vec![];
+    }
 
     let d = damping.clamp(0.0, 1.0);
-    let id_to_idx: HashMap<&str, usize> = node_ids.iter().enumerate().map(|(i, id)| (id.as_str(), i)).collect();
+    let id_to_idx: HashMap<&str, usize> = node_ids
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (id.as_str(), i))
+        .collect();
 
     // Build adjacency: outlinks[i] = list of nodes i links to
     let mut outlinks: Vec<Vec<usize>> = vec![vec![]; n];
     let mut inlinks: Vec<Vec<usize>> = vec![vec![]; n];
 
     for edge in &edges {
-        if let (Some(&from), Some(&to)) = (id_to_idx.get(edge.from_id.as_str()), id_to_idx.get(edge.to_id.as_str())) {
+        if let (Some(&from), Some(&to)) = (
+            id_to_idx.get(edge.from_id.as_str()),
+            id_to_idx.get(edge.to_id.as_str()),
+        ) {
             outlinks[from].push(to);
             inlinks[to].push(from);
         }
@@ -60,10 +69,19 @@ pub fn compute_pagerank(
         scores = new_scores;
     }
 
-    let mut results: Vec<PageRankResult> = node_ids.iter().enumerate()
-        .map(|(i, id)| PageRankResult { node_id: id.clone(), score: scores[i] })
+    let mut results: Vec<PageRankResult> = node_ids
+        .iter()
+        .enumerate()
+        .map(|(i, id)| PageRankResult {
+            node_id: id.clone(),
+            score: scores[i],
+        })
         .collect();
-    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     results
 }
 
@@ -71,12 +89,21 @@ pub fn compute_pagerank(
 #[napi]
 pub fn compute_betweenness(node_ids: Vec<String>, edges: Vec<CitationEdge>) -> Vec<PageRankResult> {
     let n = node_ids.len();
-    if n == 0 { return vec![]; }
+    if n == 0 {
+        return vec![];
+    }
 
-    let id_to_idx: HashMap<&str, usize> = node_ids.iter().enumerate().map(|(i, id)| (id.as_str(), i)).collect();
+    let id_to_idx: HashMap<&str, usize> = node_ids
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (id.as_str(), i))
+        .collect();
     let mut adj: Vec<Vec<usize>> = vec![vec![]; n];
     for edge in &edges {
-        if let (Some(&from), Some(&to)) = (id_to_idx.get(edge.from_id.as_str()), id_to_idx.get(edge.to_id.as_str())) {
+        if let (Some(&from), Some(&to)) = (
+            id_to_idx.get(edge.from_id.as_str()),
+            id_to_idx.get(edge.to_id.as_str()),
+        ) {
             adj[from].push(to);
             adj[to].push(from); // Undirected for betweenness
         }
@@ -115,17 +142,32 @@ pub fn compute_betweenness(node_ids: Vec<String>, edges: Vec<CitationEdge>) -> V
                     delta[v] += (paths[v] as f64 / paths[w] as f64) * (1.0 + delta[w]);
                 }
             }
-            if w != s { centrality[w] += delta[w]; }
+            if w != s {
+                centrality[w] += delta[w];
+            }
         }
     }
 
     // Normalize
     let max_c = centrality.iter().cloned().fold(0.0f64, f64::max);
-    if max_c > 0.0 { for c in &mut centrality { *c /= max_c; } }
+    if max_c > 0.0 {
+        for c in &mut centrality {
+            *c /= max_c;
+        }
+    }
 
-    let mut results: Vec<PageRankResult> = node_ids.iter().enumerate()
-        .map(|(i, id)| PageRankResult { node_id: id.clone(), score: centrality[i] })
+    let mut results: Vec<PageRankResult> = node_ids
+        .iter()
+        .enumerate()
+        .map(|(i, id)| PageRankResult {
+            node_id: id.clone(),
+            score: centrality[i],
+        })
         .collect();
-    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     results
 }

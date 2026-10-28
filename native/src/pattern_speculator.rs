@@ -24,11 +24,11 @@ const SPECULATION_THRESHOLD: f64 = 0.7;
 #[napi(object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ToolCallPattern {
-    pub sequence: Vec<String>,     // e.g., ["web_search", "read_url", "summarize"]
-    pub next_tool: String,         // Predicted next tool after this sequence
-    pub count: u32,                // How many times this pattern was observed
-    pub success_rate: f64,         // How often the predicted next tool succeeded
-    pub avg_data_dependency: f64,  // 0=independent, 1=fully dependent on previous output
+    pub sequence: Vec<String>, // e.g., ["web_search", "read_url", "summarize"]
+    pub next_tool: String,     // Predicted next tool after this sequence
+    pub count: u32,            // How many times this pattern was observed
+    pub success_rate: f64,     // How often the predicted next tool succeeded
+    pub avg_data_dependency: f64, // 0=independent, 1=fully dependent on previous output
 }
 
 #[napi(object)]
@@ -38,7 +38,7 @@ pub struct SpeculationDecision {
     pub predicted_tool: String,
     pub confidence: f64,
     pub pattern_sequence: Vec<String>,
-    pub is_safe: bool,             // True if the tool is read-only / side-effect-free
+    pub is_safe: bool, // True if the tool is read-only / side-effect-free
     pub needs_previous_output: bool,
 }
 
@@ -68,9 +68,11 @@ pub fn record_tool_sequence(
         let sequence: Vec<String> = recent_tools[start..].to_vec();
 
         // Find or create pattern
-        if let Some(pattern) = db.patterns.iter_mut().find(|p| {
-            p.sequence == sequence && p.next_tool == next_tool
-        }) {
+        if let Some(pattern) = db
+            .patterns
+            .iter_mut()
+            .find(|p| p.sequence == sequence && p.next_tool == next_tool)
+        {
             pattern.count += 1;
             // Update success rate with exponential moving average
             let alpha = 0.1;
@@ -89,7 +91,8 @@ pub fn record_tool_sequence(
 
     // Prune patterns with very low counts (cleanup)
     if db.patterns.len() > 1000 {
-        db.patterns.retain(|p| p.count >= 2 || db.total_sequences_observed < 100);
+        db.patterns
+            .retain(|p| p.count >= 2 || db.total_sequences_observed < 100);
     }
 }
 
@@ -110,7 +113,7 @@ pub fn create_pattern_db() -> PatternDatabase {
 pub fn should_speculate(
     db: PatternDatabase,
     recent_tools: Vec<String>,
-    safe_tools: Vec<String>,       // Tools that are read-only / safe to speculate
+    safe_tools: Vec<String>, // Tools that are read-only / safe to speculate
 ) -> SpeculationDecision {
     if recent_tools.is_empty() || db.patterns.is_empty() {
         return empty_decision();
@@ -136,8 +139,9 @@ pub fn should_speculate(
                 // Confidence = count-based + success rate + length bonus
                 let count_factor = (pattern.count as f64 / 10.0).min(1.0);
                 let length_bonus = len as f64 * 0.1;
-                let confidence = (count_factor * 0.4 + pattern.success_rate * 0.4 + length_bonus * 0.2)
-                    .clamp(0.0, 1.0);
+                let confidence =
+                    (count_factor * 0.4 + pattern.success_rate * 0.4 + length_bonus * 0.2)
+                        .clamp(0.0, 1.0);
 
                 if confidence > best_confidence {
                     best_confidence = confidence;
@@ -186,9 +190,11 @@ pub fn update_dependency(
     next_tool: String,
     was_dependent: bool,
 ) {
-    if let Some(pattern) = db.patterns.iter_mut().find(|p| {
-        p.sequence == sequence && p.next_tool == next_tool
-    }) {
+    if let Some(pattern) = db
+        .patterns
+        .iter_mut()
+        .find(|p| p.sequence == sequence && p.next_tool == next_tool)
+    {
         let alpha = 0.15;
         let dep_val = if was_dependent { 1.0 } else { 0.0 };
         pattern.avg_data_dependency = pattern.avg_data_dependency * (1.0 - alpha) + dep_val * alpha;

@@ -16,8 +16,8 @@ const PRUNE_KEEP_RECENT: usize = 10;
 #[napi(object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ContextMessageInfo {
-    pub role: String,       // "user" | "assistant" | "system" | "tool"
-    pub content: String,    // text content (may be truncated)
+    pub role: String,    // "user" | "assistant" | "system" | "tool"
+    pub content: String, // text content (may be truncated)
     pub has_tool_calls: bool,
     pub tool_call_id: Option<String>,
     /// Serialized tool_calls array if present
@@ -182,7 +182,9 @@ pub fn compress_tool_history(messages: Vec<ContextMessageInfo>) -> Vec<Compresse
         if msg.role == "tool" {
             let content_preview = if msg.content.len() > 500 {
                 let mut end = 500;
-                while end > 0 && !msg.content.is_char_boundary(end) { end -= 1; }
+                while end > 0 && !msg.content.is_char_boundary(end) {
+                    end -= 1;
+                }
                 format!("{}...(truncated)", &msg.content[..end])
             } else {
                 msg.content.clone()

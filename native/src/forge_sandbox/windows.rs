@@ -42,12 +42,7 @@ impl WindowsSandbox {
 }
 
 impl Sandbox for WindowsSandbox {
-    fn spawn(
-        &self,
-        _slug: &str,
-        _handler_dir: &Path,
-        _caps: &Capabilities,
-    ) -> io::Result<Child> {
+    fn spawn(&self, _slug: &str, _handler_dir: &Path, _caps: &Capabilities) -> io::Result<Child> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "WindowsSandbox: AppContainer-isolated spawn requires tokio Child::from_raw_handles \

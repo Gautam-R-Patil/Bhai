@@ -177,11 +177,7 @@ pub fn compute_confidence(signals: MetaSignals) -> MetaAssessment {
     let reasoning = if reasons.is_empty() {
         format!("Confidence {:.2} — proceeding normally", confidence)
     } else {
-        format!(
-            "Confidence {:.2} — {}",
-            confidence,
-            reasons.join("; ")
-        )
+        format!("Confidence {:.2} — {}", confidence, reasons.join("; "))
     };
 
     MetaAssessment {

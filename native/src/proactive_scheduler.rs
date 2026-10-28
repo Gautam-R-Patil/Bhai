@@ -6,8 +6,8 @@ use napi_derive::napi;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -130,17 +130,19 @@ fn priority(q: &QueuedIntent, now: f64) -> f64 {
 #[napi]
 pub fn scheduler_configure(posture: PostureParams) {
     let mut st = STATE.lock();
-    let entry = st.entry(posture.channel.clone()).or_insert_with(|| ChannelState {
-        queue: VecDeque::new(),
-        posture: posture.clone(),
-        last_sent_ms: 0.0,
-        sent_today: 0,
-        day_bucket: day_index(now_ms()),
-        boundary_window_until_ms: 0.0,
-        dnd_active: false,
-        recent_topic_embeddings: VecDeque::new(),
-        pending_scheduled: BinaryHeap::new(),
-    });
+    let entry = st
+        .entry(posture.channel.clone())
+        .or_insert_with(|| ChannelState {
+            queue: VecDeque::new(),
+            posture: posture.clone(),
+            last_sent_ms: 0.0,
+            sent_today: 0,
+            day_bucket: day_index(now_ms()),
+            boundary_window_until_ms: 0.0,
+            dnd_active: false,
+            recent_topic_embeddings: VecDeque::new(),
+            pending_scheduled: BinaryHeap::new(),
+        });
     entry.posture = posture;
 }
 
@@ -170,7 +172,8 @@ pub fn scheduler_enqueue(intent: QueuedIntent) -> String {
     }
 
     let six_h_ago = now - 6.0 * 3600.0 * 1000.0;
-    cs.recent_topic_embeddings.retain(|(ts, _)| *ts >= six_h_ago);
+    cs.recent_topic_embeddings
+        .retain(|(ts, _)| *ts >= six_h_ago);
     for (_, emb) in cs.recent_topic_embeddings.iter() {
         if cosine(&intent.topic_embedding, emb) > 0.9 {
             return "dedup".into();
@@ -198,7 +201,9 @@ pub fn scheduler_drain_scheduled(channel: String) -> Vec<String> {
     let now = now_ms() as u64;
     let mut promoted = Vec::new();
     while let Some(Reverse(top)) = cs.pending_scheduled.peek() {
-        if top.scheduled_for > now { break; }
+        if top.scheduled_for > now {
+            break;
+        }
         let Reverse(entry) = cs.pending_scheduled.pop().unwrap();
         let id = entry.intent.id.clone();
         cs.queue.push_back(entry.intent);
@@ -267,7 +272,8 @@ fn _release_candidates(
 
         cs.last_sent_ms = now;
         cs.sent_today += 1;
-        cs.recent_topic_embeddings.push_back((now, q.topic_embedding.clone()));
+        cs.recent_topic_embeddings
+            .push_back((now, q.topic_embedding.clone()));
         selected.push(q);
     }
 
@@ -279,7 +285,12 @@ pub fn scheduler_try_release(channel: String) -> ReleaseResult {
     let mut st = STATE.lock();
     let cs = match st.get_mut(&channel) {
         Some(c) => c,
-        None => return ReleaseResult { released: vec![], dropped: vec![] },
+        None => {
+            return ReleaseResult {
+                released: vec![],
+                dropped: vec![],
+            }
+        }
     };
     let now = now_ms();
     let today = day_index(now);
@@ -321,11 +332,13 @@ pub fn scheduler_release_grouped(channel: String) -> GroupedReleaseResult {
     let mut st = STATE.lock();
     let cs = match st.get_mut(&channel) {
         Some(c) => c,
-        None => return GroupedReleaseResult {
-            morning_batch: vec![],
-            singles: vec![],
-            dropped: vec![],
-        },
+        None => {
+            return GroupedReleaseResult {
+                morning_batch: vec![],
+                singles: vec![],
+                dropped: vec![],
+            }
+        }
     };
     let now = now_ms();
     let today = day_index(now);
@@ -348,7 +361,7 @@ pub fn scheduler_release_grouped(channel: String) -> GroupedReleaseResult {
     }
 
     if morning.len() < 2 {
-        singles_vec.extend(morning.drain(..));
+        singles_vec.append(&mut morning);
     }
 
     GroupedReleaseResult {
@@ -400,7 +413,13 @@ mod tests {
         }
     }
 
-    fn configure(channel: &str, max_per_day: u32, min_gap_min: u32, boundary_only: bool, urgent_bypass: bool) {
+    fn configure(
+        channel: &str,
+        max_per_day: u32,
+        min_gap_min: u32,
+        boundary_only: bool,
+        urgent_bypass: bool,
+    ) {
         scheduler_configure(PostureParams {
             channel: channel.into(),
             max_per_day,
@@ -422,10 +441,16 @@ mod tests {
     fn dedup_rejects_same_topic() {
         fresh();
         configure("t", 10, 0, false, true);
-        assert_eq!(scheduler_enqueue(mk("a", "t", "normal", vec![1.0, 0.0, 0.0])), "enqueued");
+        assert_eq!(
+            scheduler_enqueue(mk("a", "t", "normal", vec![1.0, 0.0, 0.0])),
+            "enqueued"
+        );
         let r = scheduler_try_release("t".into());
         assert!(r.released.contains(&"a".to_string()));
-        assert_eq!(scheduler_enqueue(mk("b", "t", "normal", vec![1.0, 0.0, 0.0])), "dedup");
+        assert_eq!(
+            scheduler_enqueue(mk("b", "t", "normal", vec![1.0, 0.0, 0.0])),
+            "dedup"
+        );
     }
 
     #[test]
@@ -434,7 +459,10 @@ mod tests {
         configure("t", 10, 0, true, true);
         scheduler_enqueue(mk("q", "t", "normal", vec![1.0, 0.0]));
         let r = scheduler_try_release("t".into());
-        assert!(r.released.is_empty(), "non-urgent should be held without boundary");
+        assert!(
+            r.released.is_empty(),
+            "non-urgent should be held without boundary"
+        );
         scheduler_mark_boundary("t".into(), 60_000.0);
         let r2 = scheduler_try_release("t".into());
         assert_eq!(r2.released, vec!["q".to_string()]);
@@ -478,7 +506,10 @@ mod tests {
         scheduler_enqueue(q);
         let r = scheduler_try_release("t".into());
         assert!(r.released.is_empty());
-        assert!(r.dropped.iter().any(|d| d.id == "old" && d.reason == "expired"));
+        assert!(r
+            .dropped
+            .iter()
+            .any(|d| d.id == "old" && d.reason == "expired"));
     }
 
     #[test]
@@ -574,7 +605,8 @@ mod tests_scheduled_fire {
         });
         let future = now_ms() + 3600_000.0;
         for i in 0..500 {
-            let res = scheduler_enqueue(mk_intent(&format!("i{}", i), "sfire_c", future + i as f64));
+            let res =
+                scheduler_enqueue(mk_intent(&format!("i{}", i), "sfire_c", future + i as f64));
             assert_eq!(res, "scheduled");
         }
         let res = scheduler_enqueue(mk_intent("i500", "sfire_c", future + 500.0));

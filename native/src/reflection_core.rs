@@ -113,7 +113,9 @@ pub fn build_transcript(history: Vec<TranscriptMessage>) -> String {
             // Node host on multi-byte UTF-8 input (release uses panic=abort).
             let content_preview = if m.content.len() > 250 {
                 let mut end = 250;
-                while end > 0 && !m.content.is_char_boundary(end) { end -= 1; }
+                while end > 0 && !m.content.is_char_boundary(end) {
+                    end -= 1;
+                }
                 &m.content[..end]
             } else {
                 &m.content
@@ -177,14 +179,8 @@ pub fn validate_extraction_json(text: String) -> Option<ExtractionResult> {
         if key.is_empty() || value.is_empty() {
             continue; // skip invalid, don't fail
         }
-        let evidence = t
-            .get("evidence")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.5);
-        let explicit = t
-            .get("explicit")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        let evidence = t.get("evidence").and_then(|v| v.as_f64()).unwrap_or(0.5);
+        let explicit = t.get("explicit").and_then(|v| v.as_bool()).unwrap_or(false);
         let topics = t
             .get("topics")
             .and_then(|v| v.as_array())
@@ -235,10 +231,7 @@ pub fn validate_extraction_json(text: String) -> Option<ExtractionResult> {
                 .filter_map(|em| {
                     let emotion = em.get("emotion")?.as_str()?.to_string();
                     let context = em.get("context")?.as_str()?.to_string();
-                    let intensity = em
-                        .get("intensity")
-                        .and_then(|v| v.as_f64())
-                        .unwrap_or(0.5);
+                    let intensity = em.get("intensity").and_then(|v| v.as_f64()).unwrap_or(0.5);
                     Some(EmotionalSignal {
                         emotion,
                         context,
@@ -257,10 +250,7 @@ pub fn validate_extraction_json(text: String) -> Option<ExtractionResult> {
                 .filter_map(|ep| {
                     let ep_type = ep.get("type")?.as_str()?.to_string();
                     let description = ep.get("description")?.as_str()?.to_string();
-                    let importance = ep
-                        .get("importance")
-                        .and_then(|v| v.as_f64())
-                        .unwrap_or(0.5);
+                    let importance = ep.get("importance").and_then(|v| v.as_f64()).unwrap_or(0.5);
                     Some(EpisodicSignal {
                         r#type: ep_type,
                         description,
@@ -394,7 +384,8 @@ pub fn compute_hmac_signature(payload_json: String) -> String {
 #[napi]
 pub fn build_audit_log_entry(action: String, details_json: String) -> String {
     let now = now_iso();
-    let mut payload: serde_json::Value = serde_json::from_str(&details_json).unwrap_or(serde_json::json!({}));
+    let mut payload: serde_json::Value =
+        serde_json::from_str(&details_json).unwrap_or(serde_json::json!({}));
 
     if let Some(obj) = payload.as_object_mut() {
         obj.insert("action".to_string(), serde_json::json!(action));
@@ -416,8 +407,8 @@ pub fn build_audit_log_entry(action: String, details_json: String) -> String {
 
 fn extract_keywords_set(text: &str) -> HashSet<String> {
     let stopwords: HashSet<&str> = [
-        "the", "a", "an", "is", "are", "was", "to", "of", "in", "for", "and", "or", "this",
-        "that", "with", "on", "at", "by", "it",
+        "the", "a", "an", "is", "are", "was", "to", "of", "in", "for", "and", "or", "this", "that",
+        "with", "on", "at", "by", "it",
     ]
     .iter()
     .copied()
@@ -473,7 +464,7 @@ fn hmac_sha256(key: &[u8], message: &[u8]) -> String {
     // SHA-256 block size is 64 bytes
     const BLOCK_SIZE: usize = 64;
 
-    let mut padded_key = vec![0u8; BLOCK_SIZE];
+    let mut padded_key = [0u8; BLOCK_SIZE];
     if key.len() > BLOCK_SIZE {
         // Hash the key if it's too long
         let hashed = sha256(key);

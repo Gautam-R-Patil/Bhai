@@ -46,7 +46,9 @@ fn mode_from_u8(level: u8) -> VadMode {
 #[napi]
 pub fn is_speech_frame_16khz(pcm: Buffer, aggressiveness: u8) -> Result<bool> {
     if pcm.len() % 2 != 0 {
-        return Err(Error::from_reason("PCM buffer length must be even (i16 samples)"));
+        return Err(Error::from_reason(
+            "PCM buffer length must be even (i16 samples)",
+        ));
     }
     let sample_count = pcm.len() / 2;
     if !matches!(sample_count, 160 | 320 | 480) {
@@ -60,7 +62,8 @@ pub fn is_speech_frame_16khz(pcm: Buffer, aggressiveness: u8) -> Result<bool> {
         samples.push(i16::from_le_bytes([chunk[0], chunk[1]]));
     }
 
-    let mut vad = Vad::new_with_rate_and_mode(VadSampleRate::Rate16kHz, mode_from_u8(aggressiveness));
+    let mut vad =
+        Vad::new_with_rate_and_mode(VadSampleRate::Rate16kHz, mode_from_u8(aggressiveness));
     match vad.is_voice_segment(&samples) {
         Ok(speech) => Ok(speech),
         // libfvad rejected the frame shape — exposed as a TS-side error rather
@@ -85,7 +88,8 @@ pub fn any_speech_frame_16khz(pcm: Buffer, aggressiveness: u8) -> Result<bool> {
         )));
     }
 
-    let mut vad = Vad::new_with_rate_and_mode(VadSampleRate::Rate16kHz, mode_from_u8(aggressiveness));
+    let mut vad =
+        Vad::new_with_rate_and_mode(VadSampleRate::Rate16kHz, mode_from_u8(aggressiveness));
 
     for frame_bytes in pcm.chunks_exact(640) {
         let mut samples: Vec<i16> = Vec::with_capacity(320);

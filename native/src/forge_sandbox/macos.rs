@@ -18,12 +18,7 @@ use tokio::process::{Child, Command};
 pub struct MacosSandbox;
 
 impl Sandbox for MacosSandbox {
-    fn spawn(
-        &self,
-        slug: &str,
-        handler_dir: &Path,
-        caps: &Capabilities,
-    ) -> io::Result<Child> {
+    fn spawn(&self, slug: &str, handler_dir: &Path, caps: &Capabilities) -> io::Result<Child> {
         let node = locate_node()?;
         // sandbox-exec evaluates process-exec against the REALPATH of the binary.
         // Homebrew node is a symlink (`/opt/homebrew/bin/node` → Cellar). Resolve
@@ -40,7 +35,8 @@ impl Sandbox for MacosSandbox {
         write_atomic(&shim_path, shim_src.as_bytes())?;
 
         Command::new("/usr/bin/sandbox-exec")
-            .arg("-f").arg(&sbpl_path)
+            .arg("-f")
+            .arg(&sbpl_path)
             .arg(&node)
             .arg(&shim_path)
             .stdin(Stdio::piped())
@@ -72,7 +68,10 @@ fn locate_node() -> io::Result<PathBuf> {
             return Ok(PathBuf::from(guess));
         }
     }
-    Err(io::Error::new(io::ErrorKind::NotFound, "node binary not found in PATH or known macOS locations"))
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        "node binary not found in PATH or known macOS locations",
+    ))
 }
 
 pub fn build_sbpl_profile(node_path: &Path, caps: &Capabilities) -> String {
@@ -81,7 +80,10 @@ pub fn build_sbpl_profile(node_path: &Path, caps: &Capabilities) -> String {
     buf.push_str("(deny default)\n");
 
     buf.push_str("(allow process-fork)\n");
-    buf.push_str(&format!("(allow process-exec (literal \"{}\"))\n", escape_sbpl_string(&node_path.to_string_lossy())));
+    buf.push_str(&format!(
+        "(allow process-exec (literal \"{}\"))\n",
+        escape_sbpl_string(&node_path.to_string_lossy())
+    ));
     buf.push_str("(allow process-info* (target self))\n");
     buf.push_str("(allow signal (target self))\n");
 
@@ -103,13 +105,23 @@ pub fn build_sbpl_profile(node_path: &Path, caps: &Capabilities) -> String {
     } else if node_str.starts_with("/usr/local/") {
         buf.push_str("(allow file-read* (subpath \"/usr/local\"))\n");
     } else if let Some(parent) = node_path.parent() {
-        buf.push_str(&format!("(allow file-read* (subpath \"{}\"))\n", escape_sbpl_string(&parent.to_string_lossy())));
+        buf.push_str(&format!(
+            "(allow file-read* (subpath \"{}\"))\n",
+            escape_sbpl_string(&parent.to_string_lossy())
+        ));
         if let Some(prefix) = parent.parent() {
-            buf.push_str(&format!("(allow file-read* (subpath \"{}\"))\n", escape_sbpl_string(&prefix.to_string_lossy())));
+            buf.push_str(&format!(
+                "(allow file-read* (subpath \"{}\"))\n",
+                escape_sbpl_string(&prefix.to_string_lossy())
+            ));
         }
     }
-    buf.push_str("(allow file-read* (subpath \"/private/tmp\") (subpath \"/private/var/folders\"))\n");
-    buf.push_str("(allow file-write* (subpath \"/private/tmp\") (subpath \"/private/var/folders\"))\n");
+    buf.push_str(
+        "(allow file-read* (subpath \"/private/tmp\") (subpath \"/private/var/folders\"))\n",
+    );
+    buf.push_str(
+        "(allow file-write* (subpath \"/private/tmp\") (subpath \"/private/var/folders\"))\n",
+    );
 
     buf.push_str("(allow mach-lookup (global-name \"com.apple.system.notification_center\"))\n");
     buf.push_str("(allow mach-lookup (global-name \"com.apple.distributed_notifications.2\"))\n");
@@ -133,11 +145,20 @@ pub fn build_sbpl_profile(node_path: &Path, caps: &Capabilities) -> String {
     buf.push_str("(allow signal)\n");
 
     for path in &caps.fs_read {
-        buf.push_str(&format!("(allow file-read* (subpath \"{}\"))\n", escape_sbpl_string(path)));
+        buf.push_str(&format!(
+            "(allow file-read* (subpath \"{}\"))\n",
+            escape_sbpl_string(path)
+        ));
     }
     for path in &caps.fs_write {
-        buf.push_str(&format!("(allow file-read* (subpath \"{}\"))\n", escape_sbpl_string(path)));
-        buf.push_str(&format!("(allow file-write* (subpath \"{}\"))\n", escape_sbpl_string(path)));
+        buf.push_str(&format!(
+            "(allow file-read* (subpath \"{}\"))\n",
+            escape_sbpl_string(path)
+        ));
+        buf.push_str(&format!(
+            "(allow file-write* (subpath \"{}\"))\n",
+            escape_sbpl_string(path)
+        ));
     }
     for host in &caps.net {
         let _ = host;
@@ -146,7 +167,10 @@ pub fn build_sbpl_profile(node_path: &Path, caps: &Capabilities) -> String {
         buf.push_str("(allow network-outbound (remote ip \"*:53\"))\n");
     }
     for exec in &caps.exec {
-        buf.push_str(&format!("(allow process-exec (literal \"{}\"))\n", escape_sbpl_string(exec)));
+        buf.push_str(&format!(
+            "(allow process-exec (literal \"{}\"))\n",
+            escape_sbpl_string(exec)
+        ));
     }
 
     buf
@@ -194,8 +218,10 @@ mod tests {
     fn profile_allows_node_exec() {
         let node = PathBuf::from("/opt/homebrew/bin/node");
         let p = build_sbpl_profile(&node, &Capabilities::default());
-        assert!(p.contains("(allow process-exec (literal \"/opt/homebrew/bin/node\"))"),
-                "profile must allow node exec; got:\n{p}");
+        assert!(
+            p.contains("(allow process-exec (literal \"/opt/homebrew/bin/node\"))"),
+            "profile must allow node exec; got:\n{p}"
+        );
     }
 
     #[test]
@@ -228,13 +254,19 @@ mod tests {
         };
         let p = build_sbpl_profile(Path::new("/usr/local/bin/node"), &caps);
         assert!(p.contains("(allow network-outbound (remote ip \"*:443\"))"));
-        assert!(p.contains("(allow network-outbound (remote ip \"*:53\"))"), "DNS allowed for resolver");
+        assert!(
+            p.contains("(allow network-outbound (remote ip \"*:53\"))"),
+            "DNS allowed for resolver"
+        );
     }
 
     #[test]
     fn profile_with_no_net_blocks_outbound() {
         let p = build_sbpl_profile(Path::new("/usr/local/bin/node"), &Capabilities::default());
-        assert!(!p.contains("network-outbound"), "no caps.net → no outbound allows");
+        assert!(
+            !p.contains("network-outbound"),
+            "no caps.net → no outbound allows"
+        );
     }
 
     #[test]
@@ -263,14 +295,19 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let handler_dir = dir.path();
 
-        let handler_src = b"module.exports = async function(input) { return { doubled: input.x * 2 }; };\n";
+        let handler_src =
+            b"module.exports = async function(input) { return { doubled: input.x * 2 }; };\n";
         std::fs::write(handler_dir.join("handler.js"), handler_src).expect("write handler");
 
         let sandbox = MacosSandbox;
         let caps = Capabilities::default();
-        let child = sandbox.spawn("itest", handler_dir, &caps).expect("spawn under sandbox-exec");
+        let child = sandbox
+            .spawn("itest", handler_dir, &caps)
+            .expect("spawn under sandbox-exec");
 
-        let paths = crate::forge_sandbox::worker::Sandpath { handler_dir: handler_dir.to_path_buf() };
+        let paths = crate::forge_sandbox::worker::Sandpath {
+            handler_dir: handler_dir.to_path_buf(),
+        };
         let mut w = crate::forge_sandbox::worker::Worker::from_child("itest".into(), paths, child)
             .await
             .expect("boot under sandbox-exec");
@@ -279,12 +316,21 @@ mod tests {
         let resp = tokio::time::timeout(
             Duration::from_secs(10),
             w.invoke(serde_json::json!({"x": 21}), Duration::from_secs(5)),
-        ).await.expect("timeout").expect("invoke");
+        )
+        .await
+        .expect("timeout")
+        .expect("invoke");
         w.release_inflight();
 
-        assert!(resp.get("ok").and_then(|o| o.as_bool()).unwrap_or(false), "expected ok:true, got {resp}");
+        assert!(
+            resp.get("ok").and_then(|o| o.as_bool()).unwrap_or(false),
+            "expected ok:true, got {resp}"
+        );
         let result = resp.get("result").expect("result field");
-        let doubled = result.get("doubled").and_then(|d| d.as_i64()).expect("doubled field");
+        let doubled = result
+            .get("doubled")
+            .and_then(|d| d.as_i64())
+            .expect("doubled field");
         assert_eq!(doubled, 42, "21*2 should be 42, got {doubled}");
 
         let _ = w.shutdown().await;
@@ -311,22 +357,35 @@ mod tests {
 
         let sandbox = MacosSandbox;
         let caps = Capabilities::default();
-        let child = sandbox.spawn("denytest", handler_dir, &caps).expect("spawn");
-        let paths = crate::forge_sandbox::worker::Sandpath { handler_dir: handler_dir.to_path_buf() };
-        let mut w = crate::forge_sandbox::worker::Worker::from_child("denytest".into(), paths, child)
-            .await
-            .expect("boot");
+        let child = sandbox
+            .spawn("denytest", handler_dir, &caps)
+            .expect("spawn");
+        let paths = crate::forge_sandbox::worker::Sandpath {
+            handler_dir: handler_dir.to_path_buf(),
+        };
+        let mut w =
+            crate::forge_sandbox::worker::Worker::from_child("denytest".into(), paths, child)
+                .await
+                .expect("boot");
 
         w.try_acquire_inflight().expect("acquire");
-        let resp = w.invoke(serde_json::json!({}), std::time::Duration::from_secs(5)).await.expect("invoke");
+        let resp = w
+            .invoke(serde_json::json!({}), std::time::Duration::from_secs(5))
+            .await
+            .expect("invoke");
         w.release_inflight();
         let _ = w.shutdown().await;
 
         let result = resp.get("result").expect("result");
-        let denied = result.get("denied").and_then(|d| d.as_bool()).unwrap_or(false);
+        let denied = result
+            .get("denied")
+            .and_then(|d| d.as_bool())
+            .unwrap_or(false);
         let code = result.get("code").and_then(|c| c.as_str()).unwrap_or("");
         assert!(denied, "expected denied:true, got {result}");
-        assert!(code == "EACCES" || code == "EPERM",
-                "expected EACCES/EPERM from sandbox, got code={code}");
+        assert!(
+            code == "EACCES" || code == "EPERM",
+            "expected EACCES/EPERM from sandbox, got code={code}"
+        );
     }
 }

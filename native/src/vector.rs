@@ -15,7 +15,11 @@ pub fn cosine_similarity(a: Float32Array, b: Float32Array) -> Result<f64> {
     if a_slice.len() != b_slice.len() {
         return Err(Error::new(
             Status::InvalidArg,
-            format!("Vector length mismatch: {} vs {}", a_slice.len(), b_slice.len()),
+            format!(
+                "Vector length mismatch: {} vs {}",
+                a_slice.len(),
+                b_slice.len()
+            ),
         ));
     }
 
@@ -35,7 +39,11 @@ pub fn dot_product(a: Float32Array, b: Float32Array) -> Result<f64> {
     if a_slice.len() != b_slice.len() {
         return Err(Error::new(
             Status::InvalidArg,
-            format!("Vector length mismatch: {} vs {}", a_slice.len(), b_slice.len()),
+            format!(
+                "Vector length mismatch: {} vs {}",
+                a_slice.len(),
+                b_slice.len()
+            ),
         ));
     }
 
@@ -51,7 +59,11 @@ pub fn euclidean_distance(a: Float32Array, b: Float32Array) -> Result<f64> {
     if a_slice.len() != b_slice.len() {
         return Err(Error::new(
             Status::InvalidArg,
-            format!("Vector length mismatch: {} vs {}", a_slice.len(), b_slice.len()),
+            format!(
+                "Vector length mismatch: {} vs {}",
+                a_slice.len(),
+                b_slice.len()
+            ),
         ));
     }
 
@@ -106,7 +118,9 @@ fn dot_product_simd(a: &[f32], b: &[f32]) -> f64 {
 /// simsimd exposes `sqeuclidean` (squared Euclidean); sqrt to get plain L2.
 #[inline]
 fn euclidean_distance_simd(a: &[f32], b: &[f32]) -> f64 {
-    let sq = f32::sqeuclidean(a, b).filter(|d| !d.is_nan()).unwrap_or(0.0);
+    let sq = f32::sqeuclidean(a, b)
+        .filter(|d| !d.is_nan())
+        .unwrap_or(0.0);
     sq.sqrt()
 }
 

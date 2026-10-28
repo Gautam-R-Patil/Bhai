@@ -135,11 +135,7 @@ pub fn generate_task_id() -> String {
 
 /// Create a new LongTask from a description and planned phases.
 #[napi]
-pub fn create_long_task(
-    id: String,
-    description: String,
-    phases: Vec<TaskPhase>,
-) -> LongTask {
+pub fn create_long_task(id: String, description: String, phases: Vec<TaskPhase>) -> LongTask {
     let now = chrono_now_iso();
 
     let task = LongTask {
@@ -164,8 +160,12 @@ pub fn create_long_task(
 /// Store a task in the active tasks map.
 #[napi]
 pub fn store_active_task(task_json: String) -> napi::Result<()> {
-    let task: LongTask = serde_json::from_str(&task_json)
-        .map_err(|e| napi::Error::new(napi::Status::InvalidArg, format!("Invalid task JSON: {}", e)))?;
+    let task: LongTask = serde_json::from_str(&task_json).map_err(|e| {
+        napi::Error::new(
+            napi::Status::InvalidArg,
+            format!("Invalid task JSON: {}", e),
+        )
+    })?;
     ACTIVE_TASKS.lock().insert(task.id.clone(), task);
     Ok(())
 }
@@ -173,7 +173,9 @@ pub fn store_active_task(task_json: String) -> napi::Result<()> {
 /// Get a task from the active tasks map.
 #[napi]
 pub fn get_active_task(task_id: String) -> Option<String> {
-    ACTIVE_TASKS.lock().get(&task_id)
+    ACTIVE_TASKS
+        .lock()
+        .get(&task_id)
         .and_then(|t| serde_json::to_string(t).ok())
 }
 
@@ -186,7 +188,9 @@ pub fn list_active_task_ids() -> Vec<String> {
 /// List all active tasks as JSON strings.
 #[napi]
 pub fn list_active_tasks() -> Vec<String> {
-    ACTIVE_TASKS.lock().values()
+    ACTIVE_TASKS
+        .lock()
+        .values()
         .filter_map(|t| serde_json::to_string(t).ok())
         .collect()
 }
@@ -263,7 +267,10 @@ Task: {}"#,
 /// Takes the raw LLM response text and returns validated phases.
 /// Falls back to a single "general" phase if parsing fails.
 #[napi]
-pub fn validate_phase_plan_response(response_text: String, fallback_description: String) -> Vec<TaskPhase> {
+pub fn validate_phase_plan_response(
+    response_text: String,
+    fallback_description: String,
+) -> Vec<TaskPhase> {
     let fallback = vec![TaskPhase {
         id: "p1".into(),
         role: "general".into(),
@@ -287,14 +294,13 @@ pub fn validate_phase_plan_response(response_text: String, fallback_description:
     let mut phases: Vec<TaskPhase> = Vec::new();
 
     for (idx, p) in parsed.iter().enumerate().take(MAX_PHASES) {
-        let id = p.get("id")
+        let id = p
+            .get("id")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .unwrap_or_else(|| format!("p{}", idx + 1));
 
-        let role_raw = p.get("role")
-            .and_then(|v| v.as_str())
-            .unwrap_or("general");
+        let role_raw = p.get("role").and_then(|v| v.as_str()).unwrap_or("general");
         let role = if VALID_ROLES.contains(&role_raw) {
             role_raw.to_string()
         } else {
@@ -306,7 +312,8 @@ pub fn validate_phase_plan_response(response_text: String, fallback_description:
             None => continue, // Skip phases without descriptions
         };
 
-        let depends_on = p.get("depends_on")
+        let depends_on = p
+            .get("depends_on")
             .and_then(|v| v.as_array())
             .map(|arr| {
                 arr.iter()
@@ -315,12 +322,12 @@ pub fn validate_phase_plan_response(response_text: String, fallback_description:
             })
             .unwrap_or_default();
 
-        let max_iterations = p.get("maxIterations")
+        let max_iterations = p
+            .get("maxIterations")
             .and_then(|v| v.as_i64())
             .map(|n| n as i32);
 
-        let timeout_ms = p.get("timeoutMs")
-            .and_then(|v| v.as_f64());
+        let timeout_ms = p.get("timeoutMs").and_then(|v| v.as_f64());
 
         phases.push(TaskPhase {
             id,
@@ -382,10 +389,8 @@ pub fn store_phase_error_checkpoint(
     let mut tasks = ACTIVE_TASKS.lock();
     let task = tasks.get_mut(&task_id)?;
 
-    task.checkpoint_data.insert(
-        phase_id,
-        format!("PHASE ERROR: {}", error_message),
-    );
+    task.checkpoint_data
+        .insert(phase_id, format!("PHASE ERROR: {}", error_message));
     task.updated_at = chrono_now_iso();
 
     serde_json::to_string(task).ok()
@@ -453,10 +458,7 @@ pub fn update_task_duration(task_id: String, total_duration_ms: f64) {
 
 /// Gather context from dependency phases for a given phase.
 #[napi]
-pub fn gather_phase_dependency_context(
-    task_id: String,
-    phase_id: String,
-) -> String {
+pub fn gather_phase_dependency_context(task_id: String, phase_id: String) -> String {
     let tasks = ACTIVE_TASKS.lock();
     let task = match tasks.get(&task_id) {
         Some(t) => t,
@@ -468,10 +470,14 @@ pub fn gather_phase_dependency_context(
         None => return String::new(),
     };
 
-    phase.depends_on.iter()
+    phase
+        .depends_on
+        .iter()
         .filter_map(|dep_id| {
             let output = task.checkpoint_data.get(dep_id)?;
-            if output.is_empty() { return None; }
+            if output.is_empty() {
+                return None;
+            }
             Some(format!("### Result from phase {}:\n{}", dep_id, output))
         })
         .collect::<Vec<_>>()
@@ -490,7 +496,8 @@ pub fn find_next_uncompleted_phase(task_id: String) -> i32 {
         None => return -1,
     };
 
-    task.phases.iter()
+    task.phases
+        .iter()
         .position(|p| !task.checkpoint_data.contains_key(&p.id))
         .map(|i| i as i32)
         .unwrap_or(-1)
@@ -529,11 +536,7 @@ pub fn is_task_completed(status: TaskStatus) -> bool {
 
 /// Build a LongTaskProgress object from the current task state.
 #[napi]
-pub fn build_task_progress(
-    task_id: String,
-    phase_index: i32,
-    elapsed_ms: f64,
-) -> Option<String> {
+pub fn build_task_progress(task_id: String, phase_index: i32, elapsed_ms: f64) -> Option<String> {
     let tasks = ACTIVE_TASKS.lock();
     let task = tasks.get(&task_id)?;
 
@@ -544,9 +547,13 @@ pub fn build_task_progress(
         task_id: task.id.clone(),
         phases_total,
         phases_completed: phase_index,
-        current_phase_id: current_phase.map(|p| p.id.clone()).unwrap_or_else(|| "done".into()),
-        current_phase_description: current_phase.map(|p| p.description.clone()).unwrap_or_else(|| "All phases completed".into()),
-        status: task.status.clone(),
+        current_phase_id: current_phase
+            .map(|p| p.id.clone())
+            .unwrap_or_else(|| "done".into()),
+        current_phase_description: current_phase
+            .map(|p| p.description.clone())
+            .unwrap_or_else(|| "All phases completed".into()),
+        status: task.status,
         elapsed_ms,
     };
 
@@ -596,24 +603,40 @@ pub fn get_phase_timeout_ms(phase_timeout: Option<f64>) -> f64 {
 #[napi]
 pub fn serialize_task(task_json: String) -> napi::Result<String> {
     // Validate it's valid JSON by parsing and re-serializing
-    let task: LongTask = serde_json::from_str(&task_json)
-        .map_err(|e| napi::Error::new(napi::Status::InvalidArg, format!("Invalid task JSON: {}", e)))?;
-    serde_json::to_string_pretty(&task)
-        .map_err(|e| napi::Error::new(napi::Status::GenericFailure, format!("Serialization failed: {}", e)))
+    let task: LongTask = serde_json::from_str(&task_json).map_err(|e| {
+        napi::Error::new(
+            napi::Status::InvalidArg,
+            format!("Invalid task JSON: {}", e),
+        )
+    })?;
+    serde_json::to_string_pretty(&task).map_err(|e| {
+        napi::Error::new(
+            napi::Status::GenericFailure,
+            format!("Serialization failed: {}", e),
+        )
+    })
 }
 
 /// Deserialize a LongTask from JSON string (for loading checkpoints).
 #[napi]
 pub fn deserialize_task(json: String) -> napi::Result<String> {
     // Validate and normalize
-    let task: LongTask = serde_json::from_str(&json)
-        .map_err(|e| napi::Error::new(napi::Status::InvalidArg, format!("Invalid task JSON: {}", e)))?;
+    let task: LongTask = serde_json::from_str(&json).map_err(|e| {
+        napi::Error::new(
+            napi::Status::InvalidArg,
+            format!("Invalid task JSON: {}", e),
+        )
+    })?;
 
     // Store in active tasks
     ACTIVE_TASKS.lock().insert(task.id.clone(), task.clone());
 
-    serde_json::to_string(&task)
-        .map_err(|e| napi::Error::new(napi::Status::GenericFailure, format!("Serialization failed: {}", e)))
+    serde_json::to_string(&task).map_err(|e| {
+        napi::Error::new(
+            napi::Status::GenericFailure,
+            format!("Serialization failed: {}", e),
+        )
+    })
 }
 
 /// Remove a task from the active tasks map.

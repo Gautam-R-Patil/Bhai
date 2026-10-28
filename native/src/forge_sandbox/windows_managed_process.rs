@@ -22,7 +22,11 @@ pub struct WindowsManagedProcess {
 
 impl WindowsManagedProcess {
     pub fn new(process: HANDLE, thread: HANDLE, pid: u32) -> Self {
-        Self { process, thread, pid }
+        Self {
+            process,
+            thread,
+            pid,
+        }
     }
 
     pub fn pid(&self) -> u32 {

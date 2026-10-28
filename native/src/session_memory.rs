@@ -153,7 +153,9 @@ pub fn session_append_turn(role: String, content: String) -> Option<SessionState
     // char boundary instead.
     let truncated = if content.len() > 500 {
         let mut end = 497;
-        while end > 0 && !content.is_char_boundary(end) { end -= 1; }
+        while end > 0 && !content.is_char_boundary(end) {
+            end -= 1;
+        }
         format!("{}...", &content[..end])
     } else {
         content
@@ -221,7 +223,7 @@ pub fn session_time_remaining() -> Option<f64> {
 #[napi]
 pub fn session_should_warn_expiry() -> bool {
     if let Some(remaining) = session_time_remaining() {
-        return remaining >= 5.0 && remaining <= 8.0;
+        return (5.0..=8.0).contains(&remaining);
     }
     false
 }
@@ -286,7 +288,9 @@ pub fn session_get_summary() -> String {
             // valid UTF-8 codepoint edge. Without this, multi-byte chars at
             // position len-297 panic-abort the host (release uses panic=abort).
             let mut start = session.short_summary.len() - 297;
-            while start < session.short_summary.len() && !session.short_summary.is_char_boundary(start) {
+            while start < session.short_summary.len()
+                && !session.short_summary.is_char_boundary(start)
+            {
                 start += 1;
             }
             format!("...{}", &session.short_summary[start..])
@@ -379,9 +383,7 @@ fn recompress_summary(summary: &str) -> String {
     let target = (MAX_SHORT_SUMMARY_CHARS as f64 * 0.6) as usize;
 
     // Split on sentence boundaries
-    let sentences: Vec<&str> = summary
-        .split_inclusive(|c: char| c == '.' || c == '!' || c == '?')
-        .collect();
+    let sentences: Vec<&str> = summary.split_inclusive(['.', '!', '?']).collect();
 
     let mut kept: Vec<&str> = Vec::new();
     let mut total_len: usize = 0;
@@ -407,8 +409,12 @@ fn now_ms_f64() -> f64 {
 }
 
 fn char_safe_truncate(s: &str, max_len: usize) -> &str {
-    if s.len() <= max_len { return s; }
+    if s.len() <= max_len {
+        return s;
+    }
     let mut end = max_len;
-    while end > 0 && !s.is_char_boundary(end) { end -= 1; }
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
     &s[..end]
 }

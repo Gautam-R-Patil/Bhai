@@ -5,8 +5,8 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::Arc;
 
 // ── Constants ──────────────────────────────────────
@@ -38,7 +38,7 @@ fn f32_to_f16(val: f32) -> u16 {
 }
 
 fn f16_to_f32(h: u16) -> f32 {
-    let sign = ((h as u32 & 0x8000) as u32) << 16;
+    let sign = (h as u32 & 0x8000) << 16;
     let exponent = ((h >> 10) & 0x1f) as u32;
     let mantissa = (h & 0x3ff) as u32;
 
@@ -248,7 +248,7 @@ impl HNSWIndexInner {
         results
     }
 
-    fn select_neighbors(&self, candidates: &mut Vec<DistIdPair>, max_neighbors: usize) -> Vec<i64> {
+    fn select_neighbors(&self, candidates: &mut [DistIdPair], max_neighbors: usize) -> Vec<i64> {
         candidates.sort_by(|a, b| a.dist.partial_cmp(&b.dist).unwrap_or(Ordering::Equal));
         candidates
             .iter()
@@ -462,7 +462,7 @@ impl HNSWIndexInner {
         serde_json::to_string(&serialized).unwrap_or_default()
     }
 
-    fn from_json(&mut self, json: &str) -> bool {
+    fn load_json(&mut self, json: &str) -> bool {
         let data: SerializedIndex = match serde_json::from_str(json) {
             Ok(d) => d,
             Err(_) => return false,
@@ -497,7 +497,7 @@ impl HNSWIndexInner {
 use std::cell::Cell;
 
 thread_local! {
-    static RNG_STATE: Cell<u64> = Cell::new(0);
+    static RNG_STATE: Cell<u64> = const { Cell::new(0) };
 }
 
 fn rand_f64() -> f64 {
@@ -658,7 +658,7 @@ pub fn hnsw_save() -> String {
 #[napi]
 pub fn hnsw_load(json: String) -> bool {
     let mut idx = HNSW_INDEX.lock();
-    idx.from_json(&json)
+    idx.load_json(&json)
 }
 
 /// Float16 compress a Float32 vector (returns u16 array as f64 for JS interop)

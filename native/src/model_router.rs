@@ -61,361 +61,524 @@ fn build_model_registry() -> HashMap<String, ModelInfo> {
     let mut m = HashMap::new();
 
     // ── Tier 0: Premium (complex reasoning, deep emotions) ──
-    m.insert("anthropic/claude-opus-4.6".into(), ModelInfo {
-        id: "anthropic/claude-opus-4.6".into(),
-        display_name: "Opus 4.6".into(),
-        input_cost_per_1m: 5.00,
-        output_cost_per_1m: 25.00,
-        tier: 0,
-        speed: Speed::Slow,
-        strengths: vec!["creative".into(), "emotional".into(), "nuanced".into(), "complex_reasoning".into(), "error_recovery".into()],
-        max_tokens: 16384,
-        context_window: 1_000_000,
-        supports_tools: true,
-        supports_parallel_tools: true,
-        supports_vision: true,
-        provider: Provider::Anthropic,
-    });
+    m.insert(
+        "anthropic/claude-opus-4.6".into(),
+        ModelInfo {
+            id: "anthropic/claude-opus-4.6".into(),
+            display_name: "Opus 4.6".into(),
+            input_cost_per_1m: 5.00,
+            output_cost_per_1m: 25.00,
+            tier: 0,
+            speed: Speed::Slow,
+            strengths: vec![
+                "creative".into(),
+                "emotional".into(),
+                "nuanced".into(),
+                "complex_reasoning".into(),
+                "error_recovery".into(),
+            ],
+            max_tokens: 16384,
+            context_window: 1_000_000,
+            supports_tools: true,
+            supports_parallel_tools: true,
+            supports_vision: true,
+            provider: Provider::Anthropic,
+        },
+    );
 
     // ── Tier 2: User-facing mid (emotional conversations) ──
-    m.insert("anthropic/claude-sonnet-4.6".into(), ModelInfo {
-        id: "anthropic/claude-sonnet-4.6".into(),
-        display_name: "Sonnet 4.6".into(),
-        input_cost_per_1m: 3.00,
-        output_cost_per_1m: 15.00,
-        tier: 2,
-        speed: Speed::Medium,
-        strengths: vec!["conversational".into(), "balanced".into(), "personality".into(), "writing".into()],
-        max_tokens: 8192,
-        context_window: 1_000_000,
-        supports_tools: true,
-        supports_parallel_tools: true,
-        supports_vision: true,
-        provider: Provider::Anthropic,
-    });
+    m.insert(
+        "anthropic/claude-sonnet-4.6".into(),
+        ModelInfo {
+            id: "anthropic/claude-sonnet-4.6".into(),
+            display_name: "Sonnet 4.6".into(),
+            input_cost_per_1m: 3.00,
+            output_cost_per_1m: 15.00,
+            tier: 2,
+            speed: Speed::Medium,
+            strengths: vec![
+                "conversational".into(),
+                "balanced".into(),
+                "personality".into(),
+                "writing".into(),
+            ],
+            max_tokens: 8192,
+            context_window: 1_000_000,
+            supports_tools: true,
+            supports_parallel_tools: true,
+            supports_vision: true,
+            provider: Provider::Anthropic,
+        },
+    );
 
-    m.insert("anthropic/claude-sonnet-4.5".into(), ModelInfo {
-        id: "anthropic/claude-sonnet-4.5".into(),
-        display_name: "Sonnet 4.5".into(),
-        input_cost_per_1m: 3.00,
-        output_cost_per_1m: 15.00,
-        tier: 2,
-        speed: Speed::Medium,
-        strengths: vec!["agentic".into(), "conversational".into(), "tool_use".into(), "personality".into()],
-        max_tokens: 8192,
-        context_window: 1_000_000,
-        supports_tools: true,
-        supports_parallel_tools: true,
-        supports_vision: true,
-        provider: Provider::Anthropic,
-    });
+    m.insert(
+        "anthropic/claude-sonnet-4.5".into(),
+        ModelInfo {
+            id: "anthropic/claude-sonnet-4.5".into(),
+            display_name: "Sonnet 4.5".into(),
+            input_cost_per_1m: 3.00,
+            output_cost_per_1m: 15.00,
+            tier: 2,
+            speed: Speed::Medium,
+            strengths: vec![
+                "agentic".into(),
+                "conversational".into(),
+                "tool_use".into(),
+                "personality".into(),
+            ],
+            max_tokens: 8192,
+            context_window: 1_000_000,
+            supports_tools: true,
+            supports_parallel_tools: true,
+            supports_vision: true,
+            provider: Provider::Anthropic,
+        },
+    );
 
     // ── Tier 3: Mid-tier (research, complex tools) ──
-    m.insert("google/gemini-3.1-pro-preview-customtools".into(), ModelInfo {
-        id: "google/gemini-3.1-pro-preview-customtools".into(),
-        display_name: "Gemini 3.1 Pro".into(),
-        input_cost_per_1m: 2.00,
-        output_cost_per_1m: 12.00,
-        tier: 3,
-        speed: Speed::Fast,
-        strengths: vec!["tool_use".into(), "multimodal".into(), "long_context".into(), "agentic".into()],
-        max_tokens: 8192,
-        context_window: 1_000_000,
-        supports_tools: true,
-        supports_parallel_tools: false,
-        supports_vision: true,
-        provider: Provider::Google,
-    });
+    m.insert(
+        "google/gemini-3.1-pro-preview-customtools".into(),
+        ModelInfo {
+            id: "google/gemini-3.1-pro-preview-customtools".into(),
+            display_name: "Gemini 3.1 Pro".into(),
+            input_cost_per_1m: 2.00,
+            output_cost_per_1m: 12.00,
+            tier: 3,
+            speed: Speed::Fast,
+            strengths: vec![
+                "tool_use".into(),
+                "multimodal".into(),
+                "long_context".into(),
+                "agentic".into(),
+            ],
+            max_tokens: 8192,
+            context_window: 1_000_000,
+            supports_tools: true,
+            supports_parallel_tools: false,
+            supports_vision: true,
+            provider: Provider::Google,
+        },
+    );
 
     // ── Tier 4: Background mid (tool loops, sub-agents) ──
-    m.insert("amazon/nova-pro-v1".into(), ModelInfo {
-        id: "amazon/nova-pro-v1".into(),
-        display_name: "Nova Pro".into(),
-        input_cost_per_1m: 0.80,
-        output_cost_per_1m: 3.20,
-        tier: 4,
-        speed: Speed::Fast,
-        strengths: vec!["tool_use".into(), "balanced".into(), "agentic".into()],
-        max_tokens: 8192,
-        context_window: 300_000,
-        supports_tools: true,
-        supports_parallel_tools: true,
-        supports_vision: true,
-        provider: Provider::Amazon,
-    });
+    m.insert(
+        "amazon/nova-pro-v1".into(),
+        ModelInfo {
+            id: "amazon/nova-pro-v1".into(),
+            display_name: "Nova Pro".into(),
+            input_cost_per_1m: 0.80,
+            output_cost_per_1m: 3.20,
+            tier: 4,
+            speed: Speed::Fast,
+            strengths: vec!["tool_use".into(), "balanced".into(), "agentic".into()],
+            max_tokens: 8192,
+            context_window: 300_000,
+            supports_tools: true,
+            supports_parallel_tools: true,
+            supports_vision: true,
+            provider: Provider::Amazon,
+        },
+    );
 
     // ── Tier 5: User-facing light / background capable ──
-    m.insert("anthropic/claude-haiku-4.5".into(), ModelInfo {
-        id: "anthropic/claude-haiku-4.5".into(),
-        display_name: "Haiku 4.5".into(),
-        input_cost_per_1m: 1.00,
-        output_cost_per_1m: 5.00,
-        tier: 5,
-        speed: Speed::Fast,
-        strengths: vec!["classification".into(), "simple_qa".into(), "fast_response".into(), "ack".into(), "conversational".into()],
-        max_tokens: 4096,
-        context_window: 200_000,
-        supports_tools: true,
-        supports_parallel_tools: true,
-        supports_vision: true,
-        provider: Provider::Anthropic,
-    });
+    m.insert(
+        "anthropic/claude-haiku-4.5".into(),
+        ModelInfo {
+            id: "anthropic/claude-haiku-4.5".into(),
+            display_name: "Haiku 4.5".into(),
+            input_cost_per_1m: 1.00,
+            output_cost_per_1m: 5.00,
+            tier: 5,
+            speed: Speed::Fast,
+            strengths: vec![
+                "classification".into(),
+                "simple_qa".into(),
+                "fast_response".into(),
+                "ack".into(),
+                "conversational".into(),
+            ],
+            max_tokens: 4096,
+            context_window: 200_000,
+            supports_tools: true,
+            supports_parallel_tools: true,
+            supports_vision: true,
+            provider: Provider::Anthropic,
+        },
+    );
 
-    m.insert("google/gemini-2.5-flash".into(), ModelInfo {
-        id: "google/gemini-2.5-flash".into(),
-        display_name: "Gemini 2.5 Flash".into(),
-        input_cost_per_1m: 0.30,
-        output_cost_per_1m: 2.50,
-        tier: 5,
-        speed: Speed::Fast,
-        strengths: vec!["agentic".into(), "tool_use".into(), "reasoning".into(), "balanced".into()],
-        max_tokens: 8192,
-        context_window: 1_000_000,
-        supports_tools: true,
-        supports_parallel_tools: true,
-        supports_vision: true,
-        provider: Provider::Google,
-    });
+    m.insert(
+        "google/gemini-2.5-flash".into(),
+        ModelInfo {
+            id: "google/gemini-2.5-flash".into(),
+            display_name: "Gemini 2.5 Flash".into(),
+            input_cost_per_1m: 0.30,
+            output_cost_per_1m: 2.50,
+            tier: 5,
+            speed: Speed::Fast,
+            strengths: vec![
+                "agentic".into(),
+                "tool_use".into(),
+                "reasoning".into(),
+                "balanced".into(),
+            ],
+            max_tokens: 8192,
+            context_window: 1_000_000,
+            supports_tools: true,
+            supports_parallel_tools: true,
+            supports_vision: true,
+            provider: Provider::Google,
+        },
+    );
 
     // ── Tier 6: Cheap background (synthesis, bulk) ──
-    m.insert("google/gemini-3-flash-preview".into(), ModelInfo {
-        id: "google/gemini-3-flash-preview".into(),
-        display_name: "Gemini 3 Flash".into(),
-        input_cost_per_1m: 0.50,
-        output_cost_per_1m: 3.00,
-        tier: 6,
-        speed: Speed::VeryFast,
-        strengths: vec!["synthesis".into(), "bulk_processing".into(), "data_extraction".into(), "summarization".into()],
-        max_tokens: 8192,
-        context_window: 1_000_000,
-        supports_tools: true,
-        supports_parallel_tools: true,
-        supports_vision: true,
-        provider: Provider::Google,
-    });
+    m.insert(
+        "google/gemini-3-flash-preview".into(),
+        ModelInfo {
+            id: "google/gemini-3-flash-preview".into(),
+            display_name: "Gemini 3 Flash".into(),
+            input_cost_per_1m: 0.50,
+            output_cost_per_1m: 3.00,
+            tier: 6,
+            speed: Speed::VeryFast,
+            strengths: vec![
+                "synthesis".into(),
+                "bulk_processing".into(),
+                "data_extraction".into(),
+                "summarization".into(),
+            ],
+            max_tokens: 8192,
+            context_window: 1_000_000,
+            supports_tools: true,
+            supports_parallel_tools: true,
+            supports_vision: true,
+            provider: Provider::Google,
+        },
+    );
 
     // ── Tier 7: Ultra-cheap background ──
-    m.insert("google/gemini-3.1-flash-lite-preview".into(), ModelInfo {
-        id: "google/gemini-3.1-flash-lite-preview".into(),
-        display_name: "Flash Lite".into(),
-        input_cost_per_1m: 0.25,
-        output_cost_per_1m: 1.50,
-        tier: 7,
-        speed: Speed::UltraFast,
-        strengths: vec!["audio_analysis".into(), "video_analysis".into(), "transcription".into()],
-        max_tokens: 2048,
-        context_window: 1_000_000,
-        supports_tools: false,
-        supports_parallel_tools: false,
-        supports_vision: true,
-        provider: Provider::Google,
-    });
+    m.insert(
+        "google/gemini-3.1-flash-lite-preview".into(),
+        ModelInfo {
+            id: "google/gemini-3.1-flash-lite-preview".into(),
+            display_name: "Flash Lite".into(),
+            input_cost_per_1m: 0.25,
+            output_cost_per_1m: 1.50,
+            tier: 7,
+            speed: Speed::UltraFast,
+            strengths: vec![
+                "audio_analysis".into(),
+                "video_analysis".into(),
+                "transcription".into(),
+            ],
+            max_tokens: 2048,
+            context_window: 1_000_000,
+            supports_tools: false,
+            supports_parallel_tools: false,
+            supports_vision: true,
+            provider: Provider::Google,
+        },
+    );
 
-    m.insert("google/gemini-2.5-flash-lite".into(), ModelInfo {
-        id: "google/gemini-2.5-flash-lite".into(),
-        display_name: "Gemini 2.5 Flash Lite".into(),
-        input_cost_per_1m: 0.10,
-        output_cost_per_1m: 0.40,
-        tier: 7,
-        speed: Speed::Fast,
-        strengths: vec!["bulk_processing".into(), "fast_response".into(), "cheap_tools".into()],
-        max_tokens: 8192,
-        context_window: 1_000_000,
-        supports_tools: true,
-        supports_parallel_tools: true,
-        supports_vision: true,
-        provider: Provider::Google,
-    });
+    m.insert(
+        "google/gemini-2.5-flash-lite".into(),
+        ModelInfo {
+            id: "google/gemini-2.5-flash-lite".into(),
+            display_name: "Gemini 2.5 Flash Lite".into(),
+            input_cost_per_1m: 0.10,
+            output_cost_per_1m: 0.40,
+            tier: 7,
+            speed: Speed::Fast,
+            strengths: vec![
+                "bulk_processing".into(),
+                "fast_response".into(),
+                "cheap_tools".into(),
+            ],
+            max_tokens: 8192,
+            context_window: 1_000_000,
+            supports_tools: true,
+            supports_parallel_tools: true,
+            supports_vision: true,
+            provider: Provider::Google,
+        },
+    );
 
     // ── Tier 8-9: Cheapest background agents ──
-    m.insert("amazon/nova-lite-v1".into(), ModelInfo {
-        id: "amazon/nova-lite-v1".into(),
-        display_name: "Nova Lite".into(),
-        input_cost_per_1m: 0.06,
-        output_cost_per_1m: 0.24,
-        tier: 8,
-        speed: Speed::VeryFast,
-        strengths: vec!["bulk_processing".into(), "fast_response".into(), "classification".into(), "simple_tools".into()],
-        max_tokens: 8192,
-        context_window: 300_000,
-        supports_tools: true,
-        supports_parallel_tools: true,
-        supports_vision: true,
-        provider: Provider::Amazon,
-    });
+    m.insert(
+        "amazon/nova-lite-v1".into(),
+        ModelInfo {
+            id: "amazon/nova-lite-v1".into(),
+            display_name: "Nova Lite".into(),
+            input_cost_per_1m: 0.06,
+            output_cost_per_1m: 0.24,
+            tier: 8,
+            speed: Speed::VeryFast,
+            strengths: vec![
+                "bulk_processing".into(),
+                "fast_response".into(),
+                "classification".into(),
+                "simple_tools".into(),
+            ],
+            max_tokens: 8192,
+            context_window: 300_000,
+            supports_tools: true,
+            supports_parallel_tools: true,
+            supports_vision: true,
+            provider: Provider::Amazon,
+        },
+    );
 
-    m.insert("amazon/nova-micro-v1".into(), ModelInfo {
-        id: "amazon/nova-micro-v1".into(),
-        display_name: "Nova Micro".into(),
-        input_cost_per_1m: 0.04,
-        output_cost_per_1m: 0.14,
-        tier: 9,
-        speed: Speed::UltraFast,
-        strengths: vec!["classification".into(), "fast_response".into(), "cheapest".into()],
-        max_tokens: 4096,
-        context_window: 128_000,
-        supports_tools: true,
-        supports_parallel_tools: true,
-        supports_vision: false,
-        provider: Provider::Amazon,
-    });
+    m.insert(
+        "amazon/nova-micro-v1".into(),
+        ModelInfo {
+            id: "amazon/nova-micro-v1".into(),
+            display_name: "Nova Micro".into(),
+            input_cost_per_1m: 0.04,
+            output_cost_per_1m: 0.14,
+            tier: 9,
+            speed: Speed::UltraFast,
+            strengths: vec![
+                "classification".into(),
+                "fast_response".into(),
+                "cheapest".into(),
+            ],
+            max_tokens: 4096,
+            context_window: 128_000,
+            supports_tools: true,
+            supports_parallel_tools: true,
+            supports_vision: false,
+            provider: Provider::Amazon,
+        },
+    );
 
-    m.insert("deepseek/deepseek-chat-v3.1".into(), ModelInfo {
-        id: "deepseek/deepseek-chat-v3.1".into(),
-        display_name: "DeepSeek V3.1".into(),
-        input_cost_per_1m: 0.27,
-        output_cost_per_1m: 1.10,
-        tier: 5,
-        speed: Speed::Fast,
-        strengths: vec!["agentic".into(), "reasoning".into(), "coding".into(), "balanced".into()],
-        max_tokens: 8192,
-        context_window: 160_000,
-        // OpenRouter no longer routes V3.1 to any provider that supports
-        // tool use — every tool-bearing call 404s with "No endpoints found
-        // that support tool use". Mark as no-tools so failover skips it
-        // when tools are present.
-        supports_tools: false,
-        supports_parallel_tools: false,
-        supports_vision: false,
-        provider: Provider::Deepseek,
-    });
+    m.insert(
+        "deepseek/deepseek-chat-v3.1".into(),
+        ModelInfo {
+            id: "deepseek/deepseek-chat-v3.1".into(),
+            display_name: "DeepSeek V3.1".into(),
+            input_cost_per_1m: 0.27,
+            output_cost_per_1m: 1.10,
+            tier: 5,
+            speed: Speed::Fast,
+            strengths: vec![
+                "agentic".into(),
+                "reasoning".into(),
+                "coding".into(),
+                "balanced".into(),
+            ],
+            max_tokens: 8192,
+            context_window: 160_000,
+            // OpenRouter no longer routes V3.1 to any provider that supports
+            // tool use — every tool-bearing call 404s with "No endpoints found
+            // that support tool use". Mark as no-tools so failover skips it
+            // when tools are present.
+            supports_tools: false,
+            supports_parallel_tools: false,
+            supports_vision: false,
+            provider: Provider::Deepseek,
+        },
+    );
 
-    m.insert("deepseek/deepseek-v3.2-exp".into(), ModelInfo {
-        id: "deepseek/deepseek-v3.2-exp".into(),
-        display_name: "DeepSeek V3.2 (exp)".into(),
-        input_cost_per_1m: 0.27,
-        output_cost_per_1m: 0.40,
-        tier: 5,
-        speed: Speed::Fast,
-        strengths: vec!["agentic".into(), "tool_use".into(), "reasoning".into(), "experimental".into()],
-        max_tokens: 8192,
-        context_window: 160_000,
-        supports_tools: true,
-        supports_parallel_tools: true,
-        supports_vision: false,
-        provider: Provider::Deepseek,
-    });
+    m.insert(
+        "deepseek/deepseek-v3.2-exp".into(),
+        ModelInfo {
+            id: "deepseek/deepseek-v3.2-exp".into(),
+            display_name: "DeepSeek V3.2 (exp)".into(),
+            input_cost_per_1m: 0.27,
+            output_cost_per_1m: 0.40,
+            tier: 5,
+            speed: Speed::Fast,
+            strengths: vec![
+                "agentic".into(),
+                "tool_use".into(),
+                "reasoning".into(),
+                "experimental".into(),
+            ],
+            max_tokens: 8192,
+            context_window: 160_000,
+            supports_tools: true,
+            supports_parallel_tools: true,
+            supports_vision: false,
+            provider: Provider::Deepseek,
+        },
+    );
 
-    m.insert("deepseek/deepseek-v4-pro".into(), ModelInfo {
-        id: "deepseek/deepseek-v4-pro".into(),
-        display_name: "DeepSeek V4 Pro".into(),
-        input_cost_per_1m: 0.435,
-        output_cost_per_1m: 0.87,
-        tier: 5,
-        speed: Speed::Fast,
-        strengths: vec!["agentic".into(), "tool_use".into(), "reasoning".into(), "long_context".into()],
-        max_tokens: 8192,
-        context_window: 1_000_000,
-        supports_tools: true,
-        supports_parallel_tools: true,
-        supports_vision: false,
-        provider: Provider::Deepseek,
-    });
+    m.insert(
+        "deepseek/deepseek-v4-pro".into(),
+        ModelInfo {
+            id: "deepseek/deepseek-v4-pro".into(),
+            display_name: "DeepSeek V4 Pro".into(),
+            input_cost_per_1m: 0.435,
+            output_cost_per_1m: 0.87,
+            tier: 5,
+            speed: Speed::Fast,
+            strengths: vec![
+                "agentic".into(),
+                "tool_use".into(),
+                "reasoning".into(),
+                "long_context".into(),
+            ],
+            max_tokens: 8192,
+            context_window: 1_000_000,
+            supports_tools: true,
+            supports_parallel_tools: true,
+            supports_vision: false,
+            provider: Provider::Deepseek,
+        },
+    );
 
-    m.insert("z-ai/glm-4.6".into(), ModelInfo {
-        id: "z-ai/glm-4.6".into(),
-        display_name: "GLM 4.6".into(),
-        input_cost_per_1m: 0.55,
-        output_cost_per_1m: 2.20,
-        tier: 5,
-        speed: Speed::Fast,
-        strengths: vec!["tool_use".into(), "agentic".into(), "long_context".into(), "balanced".into()],
-        max_tokens: 8192,
-        context_window: 200_000,
-        supports_tools: true,
-        supports_parallel_tools: true,
-        supports_vision: false,
-        provider: Provider::Zai,
-    });
+    m.insert(
+        "z-ai/glm-4.6".into(),
+        ModelInfo {
+            id: "z-ai/glm-4.6".into(),
+            display_name: "GLM 4.6".into(),
+            input_cost_per_1m: 0.55,
+            output_cost_per_1m: 2.20,
+            tier: 5,
+            speed: Speed::Fast,
+            strengths: vec![
+                "tool_use".into(),
+                "agentic".into(),
+                "long_context".into(),
+                "balanced".into(),
+            ],
+            max_tokens: 8192,
+            context_window: 200_000,
+            supports_tools: true,
+            supports_parallel_tools: true,
+            supports_vision: false,
+            provider: Provider::Zai,
+        },
+    );
 
-    m.insert("openai/gpt-5-mini".into(), ModelInfo {
-        id: "openai/gpt-5-mini".into(),
-        display_name: "GPT-5 mini".into(),
-        input_cost_per_1m: 0.25,
-        output_cost_per_1m: 2.00,
-        tier: 5,
-        speed: Speed::Fast,
-        strengths: vec!["reasoning".into(), "tool_use".into(), "coding".into(), "balanced".into()],
-        max_tokens: 8192,
-        context_window: 400_000,
-        supports_tools: true,
-        supports_parallel_tools: true,
-        supports_vision: true,
-        provider: Provider::Openai,
-    });
+    m.insert(
+        "openai/gpt-5-mini".into(),
+        ModelInfo {
+            id: "openai/gpt-5-mini".into(),
+            display_name: "GPT-5 mini".into(),
+            input_cost_per_1m: 0.25,
+            output_cost_per_1m: 2.00,
+            tier: 5,
+            speed: Speed::Fast,
+            strengths: vec![
+                "reasoning".into(),
+                "tool_use".into(),
+                "coding".into(),
+                "balanced".into(),
+            ],
+            max_tokens: 8192,
+            context_window: 400_000,
+            supports_tools: true,
+            supports_parallel_tools: true,
+            supports_vision: true,
+            provider: Provider::Openai,
+        },
+    );
 
-    m.insert("openai/gpt-5-nano".into(), ModelInfo {
-        id: "openai/gpt-5-nano".into(),
-        display_name: "GPT-5 nano".into(),
-        input_cost_per_1m: 0.05,
-        output_cost_per_1m: 0.40,
-        tier: 7,
-        speed: Speed::Fast,
-        strengths: vec!["fast_response".into(), "simple_qa".into(), "classification".into(), "conversational".into()],
-        max_tokens: 4096,
-        context_window: 400_000,
-        supports_tools: true,
-        supports_parallel_tools: true,
-        supports_vision: false,
-        provider: Provider::Openai,
-    });
+    m.insert(
+        "openai/gpt-5-nano".into(),
+        ModelInfo {
+            id: "openai/gpt-5-nano".into(),
+            display_name: "GPT-5 nano".into(),
+            input_cost_per_1m: 0.05,
+            output_cost_per_1m: 0.40,
+            tier: 7,
+            speed: Speed::Fast,
+            strengths: vec![
+                "fast_response".into(),
+                "simple_qa".into(),
+                "classification".into(),
+                "conversational".into(),
+            ],
+            max_tokens: 4096,
+            context_window: 400_000,
+            supports_tools: true,
+            supports_parallel_tools: true,
+            supports_vision: false,
+            provider: Provider::Openai,
+        },
+    );
 
     // GPT-4.1 nano — genuinely non-reasoning (no over-thinking latency),
     // sub-second, cheap. Used for the ack fast-path where speed matters and
     // gpt-5-nano's mandatory reasoning made greetings take ~11s.
-    m.insert("openai/gpt-4.1-nano".into(), ModelInfo {
-        id: "openai/gpt-4.1-nano".into(),
-        display_name: "GPT-4.1 nano".into(),
-        input_cost_per_1m: 0.10,
-        output_cost_per_1m: 0.40,
-        tier: 7,
-        speed: Speed::Fast,
-        strengths: vec!["fast_response".into(), "simple_qa".into(), "ack".into(), "conversational".into(), "classification".into()],
-        max_tokens: 4096,
-        context_window: 1_000_000,
-        supports_tools: true,
-        supports_parallel_tools: true,
-        supports_vision: true,
-        provider: Provider::Openai,
-    });
+    m.insert(
+        "openai/gpt-4.1-nano".into(),
+        ModelInfo {
+            id: "openai/gpt-4.1-nano".into(),
+            display_name: "GPT-4.1 nano".into(),
+            input_cost_per_1m: 0.10,
+            output_cost_per_1m: 0.40,
+            tier: 7,
+            speed: Speed::Fast,
+            strengths: vec![
+                "fast_response".into(),
+                "simple_qa".into(),
+                "ack".into(),
+                "conversational".into(),
+                "classification".into(),
+            ],
+            max_tokens: 4096,
+            context_window: 1_000_000,
+            supports_tools: true,
+            supports_parallel_tools: true,
+            supports_vision: true,
+            provider: Provider::Openai,
+        },
+    );
 
     // Qwen3.7-Plus — primary CLOUD grounding model for vision-nav (Lite/Standard
     // tiers + degraded-Full). Strong GUI grounding (ScreenSpot-Pro ~79%); takes a
     // screenshot + instruction → click coords. Not in the agentic routing tiers.
-    m.insert("qwen/qwen3.7-plus".into(), ModelInfo {
-        id: "qwen/qwen3.7-plus".into(),
-        display_name: "Qwen3.7-Plus".into(),
-        input_cost_per_1m: 0.40,
-        output_cost_per_1m: 1.60,
-        tier: 5,
-        speed: Speed::Fast,
-        strengths: vec!["multimodal".into(), "grounding".into(), "tool_use".into(), "agentic".into()],
-        max_tokens: 8192,
-        context_window: 1_000_000,
-        supports_tools: true,
-        supports_parallel_tools: true,
-        supports_vision: true,
-        provider: Provider::Qwen,
-    });
+    m.insert(
+        "qwen/qwen3.7-plus".into(),
+        ModelInfo {
+            id: "qwen/qwen3.7-plus".into(),
+            display_name: "Qwen3.7-Plus".into(),
+            input_cost_per_1m: 0.40,
+            output_cost_per_1m: 1.60,
+            tier: 5,
+            speed: Speed::Fast,
+            strengths: vec![
+                "multimodal".into(),
+                "grounding".into(),
+                "tool_use".into(),
+                "agentic".into(),
+            ],
+            max_tokens: 8192,
+            context_window: 1_000_000,
+            supports_tools: true,
+            supports_parallel_tools: true,
+            supports_vision: true,
+            provider: Provider::Qwen,
+        },
+    );
 
     // Qwen3-VL-235B-Instruct — confirmed-GA fallback for cloud grounding when
     // qwen3.7-plus errors/404s. OSWorld 66.7%, ScreenSpot ~62% (≈ local UI-TARS
     // parity). Use the Instruct variant (Thinking hurts time-sensitive GUI tasks).
-    m.insert("qwen/qwen3-vl-235b-a22b-instruct".into(), ModelInfo {
-        id: "qwen/qwen3-vl-235b-a22b-instruct".into(),
-        display_name: "Qwen3-VL 235B".into(),
-        input_cost_per_1m: 0.25,
-        output_cost_per_1m: 1.20,
-        tier: 5,
-        speed: Speed::Fast,
-        strengths: vec!["multimodal".into(), "grounding".into(), "tool_use".into(), "agentic".into()],
-        max_tokens: 8192,
-        context_window: 256_000,
-        supports_tools: true,
-        supports_parallel_tools: true,
-        supports_vision: true,
-        provider: Provider::Qwen,
-    });
+    m.insert(
+        "qwen/qwen3-vl-235b-a22b-instruct".into(),
+        ModelInfo {
+            id: "qwen/qwen3-vl-235b-a22b-instruct".into(),
+            display_name: "Qwen3-VL 235B".into(),
+            input_cost_per_1m: 0.25,
+            output_cost_per_1m: 1.20,
+            tier: 5,
+            speed: Speed::Fast,
+            strengths: vec![
+                "multimodal".into(),
+                "grounding".into(),
+                "tool_use".into(),
+                "agentic".into(),
+            ],
+            max_tokens: 8192,
+            context_window: 256_000,
+            supports_tools: true,
+            supports_parallel_tools: true,
+            supports_vision: true,
+            provider: Provider::Qwen,
+        },
+    );
 
     m
 }
@@ -450,7 +613,9 @@ fn signals_cache_key(message: &str, iteration: i32, error_count: i32, has_media:
     h = h.wrapping_mul(0x100000001b3);
     h ^= error_count as u64;
     h = h.wrapping_mul(0x100000001b3);
-    if has_media { h ^= 0xff; }
+    if has_media {
+        h ^= 0xff;
+    }
     h
 }
 
@@ -464,7 +629,10 @@ pub fn get_model_info(model_id: String) -> Option<ModelInfo> {
 /// (smallest safe assumption) for unknown ids.
 #[napi]
 pub fn get_context_window(model_id: String) -> u32 {
-    MODEL_REGISTRY.get(&model_id).map(|m| m.context_window).unwrap_or(200_000)
+    MODEL_REGISTRY
+        .get(&model_id)
+        .map(|m| m.context_window)
+        .unwrap_or(200_000)
 }
 
 /// Get all model IDs in the registry
@@ -573,7 +741,8 @@ impl Default for ConversationContext {
 }
 
 lazy_static! {
-    static ref CONVERSATION_CTX: Mutex<ConversationContext> = Mutex::new(ConversationContext::default());
+    static ref CONVERSATION_CTX: Mutex<ConversationContext> =
+        Mutex::new(ConversationContext::default());
 }
 
 #[napi]
@@ -657,9 +826,9 @@ const CIRCUIT_BREAKER_THRESHOLD: u32 = 3;
 // Staggered cooldowns per provider to prevent ALL models from being blocked simultaneously
 // during brief network outages. Shorter cooldowns for primary providers.
 const CIRCUIT_BREAKER_COOLDOWN_MS_DEFAULT: u64 = 120 * 1000; // 2 minutes default
-const CIRCUIT_BREAKER_COOLDOWN_ANTHROPIC: u64 = 60 * 1000;   // 60 seconds for Anthropic
-const CIRCUIT_BREAKER_COOLDOWN_GOOGLE: u64 = 90 * 1000;      // 90 seconds for Google
-const CIRCUIT_BREAKER_COOLDOWN_AMAZON: u64 = 120 * 1000;     // 120 seconds for Amazon
+const CIRCUIT_BREAKER_COOLDOWN_ANTHROPIC: u64 = 60 * 1000; // 60 seconds for Anthropic
+const CIRCUIT_BREAKER_COOLDOWN_GOOGLE: u64 = 90 * 1000; // 90 seconds for Google
+const CIRCUIT_BREAKER_COOLDOWN_AMAZON: u64 = 120 * 1000; // 120 seconds for Amazon
 
 fn get_circuit_breaker_cooldown(model_id: &str) -> u64 {
     if model_id.starts_with("anthropic/") {
@@ -685,11 +854,11 @@ struct TaskTypeStats {
 
 #[derive(Debug, Clone, Default)]
 struct FailureStats {
-    server_errors: u32,      // 500s
-    rate_limits: u32,        // 429s
-    context_overflow: u32,   // context window exceeded
-    content_filter: u32,     // content policy violations
-    timeouts: u32,           // 408s / network timeouts
+    server_errors: u32,    // 500s
+    rate_limits: u32,      // 429s
+    context_overflow: u32, // context window exceeded
+    content_filter: u32,   // content policy violations
+    timeouts: u32,         // 408s / network timeouts
 }
 
 #[derive(Debug, Clone, Default)]
@@ -710,7 +879,7 @@ struct ModelStats {
     // model out for 1-2 minutes. See is_circuit_open + IsTransientStatus.
     consecutive_transient_failures: u32,
     consecutive_permanent_failures: u32,
-    circuit_open_since: Option<u64>,  // epoch ms when breaker tripped, None = closed
+    circuit_open_since: Option<u64>, // epoch ms when breaker tripped, None = closed
     /** Set at trip time iff every failure contributing to the trip was a transient upstream error. */
     last_trip_was_transient_only: bool,
     // Per-task-type tracking (Phase 3)
@@ -762,11 +931,22 @@ pub fn update_model_stats(
         stats.error_count += 1;
         // Classify failure type (Phase 7)
         match http_status {
-            Some(429) => { stats.rate_limit_count += 1; stats.failures.rate_limits += 1; }
-            Some(408) => { stats.failures.timeouts += 1; }
-            Some(413) => { stats.failures.context_overflow += 1; }
-            Some(451) | Some(403) => { stats.failures.content_filter += 1; }
-            Some(s) if s >= 500 => { stats.failures.server_errors += 1; }
+            Some(429) => {
+                stats.rate_limit_count += 1;
+                stats.failures.rate_limits += 1;
+            }
+            Some(408) => {
+                stats.failures.timeouts += 1;
+            }
+            Some(413) => {
+                stats.failures.context_overflow += 1;
+            }
+            Some(451) | Some(403) => {
+                stats.failures.content_filter += 1;
+            }
+            Some(s) if s >= 500 => {
+                stats.failures.server_errors += 1;
+            }
             _ => {}
         }
         // Split consecutive-failure bookkeeping by transient/permanent
@@ -800,10 +980,15 @@ pub fn update_model_stats(
             stats.circuit_open_since = Some(now_ms);
             stats.last_trip_was_transient_only = stats.consecutive_permanent_failures == 0;
             let cooldown_ms = get_effective_cooldown_ms(&model_id, stats);
-            let display = MODEL_REGISTRY.get(&model_id)
+            let display = MODEL_REGISTRY
+                .get(&model_id)
                 .map(|m| m.display_name.clone())
                 .unwrap_or_else(|| model_id.clone());
-            let kind = if stats.last_trip_was_transient_only { "transient-only" } else { "mixed/permanent" };
+            let kind = if stats.last_trip_was_transient_only {
+                "transient-only"
+            } else {
+                "mixed/permanent"
+            };
             eprintln!(
                 "  ⚡ Circuit breaker OPEN for {} — skipping for {}s after {} consecutive failures ({})",
                 display, cooldown_ms / 1000, stats.consecutive_failures, kind
@@ -874,7 +1059,9 @@ pub fn is_circuit_open_napi(model_id: String) -> bool {
 fn is_rate_limited(model_id: &str) -> bool {
     let stats_map = MODEL_STATS.lock();
     if let Some(stats) = stats_map.get(model_id) {
-        if stats.total_calls == 0 { return false; }
+        if stats.total_calls == 0 {
+            return false;
+        }
         stats.rate_limit_count >= 2
     } else {
         false
@@ -884,7 +1071,9 @@ fn is_rate_limited(model_id: &str) -> bool {
 fn get_error_rate(model_id: &str) -> f64 {
     let stats_map = MODEL_STATS.lock();
     if let Some(stats) = stats_map.get(model_id) {
-        if stats.total_calls == 0 { return 0.0; }
+        if stats.total_calls == 0 {
+            return 0.0;
+        }
         stats.error_count as f64 / stats.total_calls as f64
     } else {
         0.0
@@ -894,7 +1083,9 @@ fn get_error_rate(model_id: &str) -> f64 {
 fn get_avg_latency(model_id: &str) -> f64 {
     let stats_map = MODEL_STATS.lock();
     if let Some(stats) = stats_map.get(model_id) {
-        if stats.total_calls == 0 { return 0.0; }
+        if stats.total_calls == 0 {
+            return 0.0;
+        }
         stats.total_latency_ms as f64 / stats.total_calls as f64
     } else {
         0.0
@@ -928,14 +1119,18 @@ pub fn update_tool_stats(model_id: String, success: bool, task_type: Option<Stri
     if let Some(tt) = task_type {
         let task_stats = stats.per_task.entry(tt).or_default();
         task_stats.tool_attempts += 1;
-        if success { task_stats.tool_successes += 1; }
+        if success {
+            task_stats.tool_successes += 1;
+        }
     }
 }
 
 fn get_tool_success_rate(model_id: &str) -> f64 {
     let stats_map = MODEL_STATS.lock();
     if let Some(stats) = stats_map.get(model_id) {
-        if stats.tool_calls_attempted == 0 { return 1.0; }
+        if stats.tool_calls_attempted == 0 {
+            return 1.0;
+        }
         stats.tool_calls_succeeded as f64 / stats.tool_calls_attempted as f64
     } else {
         1.0
@@ -946,7 +1141,9 @@ fn get_tool_success_rate_for_task(model_id: &str, task_type: &str) -> Option<f64
     let stats_map = MODEL_STATS.lock();
     if let Some(stats) = stats_map.get(model_id) {
         if let Some(task_stats) = stats.per_task.get(task_type) {
-            if task_stats.tool_attempts == 0 { return None; }
+            if task_stats.tool_attempts == 0 {
+                return None;
+            }
             return Some(task_stats.tool_successes as f64 / task_stats.tool_attempts as f64);
         }
     }
@@ -957,7 +1154,9 @@ fn get_quality_score(model_id: &str, task_type: &str) -> f64 {
     let stats_map = MODEL_STATS.lock();
     if let Some(stats) = stats_map.get(model_id) {
         if let Some(task_stats) = stats.per_task.get(task_type) {
-            if task_stats.calls == 0 { return 1.0; }
+            if task_stats.calls == 0 {
+                return 1.0;
+            }
             // Quality = 1 - (escalation rate)
             1.0 - (task_stats.cascade_escalations as f64 / task_stats.calls as f64)
         } else {
@@ -980,16 +1179,27 @@ fn get_dominant_failure_type(model_id: &str) -> String {
     let stats_map = MODEL_STATS.lock();
     if let Some(stats) = stats_map.get(model_id) {
         let f = &stats.failures;
-        let max = f.rate_limits
+        let max = f
+            .rate_limits
             .max(f.server_errors)
             .max(f.context_overflow)
             .max(f.content_filter)
             .max(f.timeouts);
-        if max == 0 { return "server_error".to_string(); }
-        if max == f.rate_limits { return "rate_limit".to_string(); }
-        if max == f.context_overflow { return "context_overflow".to_string(); }
-        if max == f.content_filter { return "content_filter".to_string(); }
-        if max == f.timeouts { return "timeout".to_string(); }
+        if max == 0 {
+            return "server_error".to_string();
+        }
+        if max == f.rate_limits {
+            return "rate_limit".to_string();
+        }
+        if max == f.context_overflow {
+            return "context_overflow".to_string();
+        }
+        if max == f.content_filter {
+            return "content_filter".to_string();
+        }
+        if max == f.timeouts {
+            return "timeout".to_string();
+        }
     }
     "server_error".to_string()
 }
@@ -1000,13 +1210,11 @@ pub fn get_horizontal_failover(model_id: String) -> Option<String> {
 }
 
 #[napi]
-pub fn get_horizontal_failover_excluding(
-    model_id: String,
-    exclude: Vec<String>,
-) -> Option<String> {
+pub fn get_horizontal_failover_excluding(model_id: String, exclude: Vec<String>) -> Option<String> {
     let model = MODEL_REGISTRY.get(&model_id)?;
 
-    let mut candidates: Vec<&ModelInfo> = MODEL_REGISTRY.values()
+    let mut candidates: Vec<&ModelInfo> = MODEL_REGISTRY
+        .values()
         .filter(|m| {
             m.id != model_id
                 && !exclude.contains(&m.id)
@@ -1020,7 +1228,11 @@ pub fn get_horizontal_failover_excluding(
         let da = (a.tier as i32 - model.tier as i32).unsigned_abs();
         let db = (b.tier as i32 - model.tier as i32).unsigned_abs();
         da.cmp(&db)
-            .then_with(|| a.input_cost_per_1m.partial_cmp(&b.input_cost_per_1m).unwrap_or(std::cmp::Ordering::Equal))
+            .then_with(|| {
+                a.input_cost_per_1m
+                    .partial_cmp(&b.input_cost_per_1m)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
             .then_with(|| a.id.cmp(&b.id))
     });
 
@@ -1036,16 +1248,26 @@ pub fn get_session_cost_summary() -> String {
     let mut lines = vec![format!("Model Usage (session: {:.1}min)", duration_min)];
 
     for (model_id, stats) in stats_map.iter() {
-        let name = MODEL_REGISTRY.get(model_id)
+        let name = MODEL_REGISTRY
+            .get(model_id)
             .map(|m| m.display_name.clone())
-            .unwrap_or_else(|| model_id.split('/').next_back().unwrap_or(model_id).to_string());
+            .unwrap_or_else(|| {
+                model_id
+                    .split('/')
+                    .next_back()
+                    .unwrap_or(model_id)
+                    .to_string()
+            });
         let avg_ms = if stats.total_calls > 0 {
             (stats.total_latency_ms as f64 / stats.total_calls as f64).round() as u64
         } else {
             0
         };
         let err_pct = if stats.total_calls > 0 {
-            format!("{:.1}", (stats.error_count as f64 / stats.total_calls as f64) * 100.0)
+            format!(
+                "{:.1}",
+                (stats.error_count as f64 / stats.total_calls as f64) * 100.0
+            )
         } else {
             "0".to_string()
         };
@@ -1144,12 +1366,16 @@ lazy_static! {
 /// Check if a string contains any character repeated 3+ times consecutively
 fn has_repeated_chars(text: &str) -> bool {
     let chars: Vec<char> = text.chars().collect();
-    if chars.len() < 3 { return false; }
+    if chars.len() < 3 {
+        return false;
+    }
     let mut count = 1u32;
     for i in 1..chars.len() {
         if chars[i] == chars[i - 1] {
             count += 1;
-            if count >= 3 { return true; }
+            if count >= 3 {
+                return true;
+            }
         } else {
             count = 1;
         }
@@ -1163,37 +1389,55 @@ fn count_matches(re: &Regex, text: &str) -> usize {
 
 fn analyze_question_structure(message: &str) -> i32 {
     let lower = message.to_lowercase();
-    let sentences: Vec<&str> = RE_SENTENCE_SPLIT.split(message)
+    let sentences: Vec<&str> = RE_SENTENCE_SPLIT
+        .split(message)
         .filter(|s| s.trim().len() > 3)
         .collect();
     let mut score: i32 = 0;
 
     // Has question marks
     let question_count = count_matches(&RE_QUESTION_MARK, message);
-    if question_count > 0 { score += 3; }
-    if question_count > 2 { score += 2; }
+    if question_count > 0 {
+        score += 3;
+    }
+    if question_count > 2 {
+        score += 2;
+    }
 
     // Multi-clause questions
-    let question_sentences: Vec<&&str> = sentences.iter()
-        .filter(|s| s.contains('?'))
-        .collect();
+    let question_sentences: Vec<&&str> = sentences.iter().filter(|s| s.contains('?')).collect();
     for q in &question_sentences {
         let clauses = RE_CLAUSE_SPLIT.split(q).count();
-        if clauses >= 3 { score += 4; }
-        else if clauses >= 2 { score += 2; }
+        if clauses >= 3 {
+            score += 4;
+        } else if clauses >= 2 {
+            score += 2;
+        }
     }
 
     // Conditional/hypothetical
-    if RE_CONDITIONAL.is_match(&lower) { score += 3; }
+    if RE_CONDITIONAL.is_match(&lower) {
+        score += 3;
+    }
 
     // Comparative
-    if RE_VERSUS.is_match(&lower) { score += 3; }
-    if RE_COMPARATIVE.is_match(&lower) { score += 3; }
-    if RE_WHICH_BETTER.is_match(&lower) { score += 2; }
+    if RE_VERSUS.is_match(&lower) {
+        score += 3;
+    }
+    if RE_COMPARATIVE.is_match(&lower) {
+        score += 3;
+    }
+    if RE_WHICH_BETTER.is_match(&lower) {
+        score += 2;
+    }
 
     // Deep reasoning
-    if RE_WHY_DEEP.is_match(&lower) { score += 2; }
-    if RE_HOW_AFFECT.is_match(&lower) { score += 3; }
+    if RE_WHY_DEEP.is_match(&lower) {
+        score += 2;
+    }
+    if RE_HOW_AFFECT.is_match(&lower) {
+        score += 3;
+    }
 
     // Multi-scenario reasoning
     if question_count >= 2 && RE_MULTI_SCENARIO.is_match(&lower) {
@@ -1201,7 +1445,9 @@ fn analyze_question_structure(message: &str) -> i32 {
     }
     // Multiple sequential actions
     let action_seq = count_matches(&RE_ACTION_SEQUENCE, &lower);
-    if action_seq >= 3 { score += 3; }
+    if action_seq >= 3 {
+        score += 3;
+    }
 
     // Long question
     if question_count > 0 && message.split_whitespace().count() > 30 {
@@ -1214,7 +1460,8 @@ fn analyze_question_structure(message: &str) -> i32 {
 fn analyze_action_intent(message: &str) -> i32 {
     let lower = message.to_lowercase();
     let trimmed = lower.trim();
-    let sentences: Vec<&str> = RE_SENTENCE_SPLIT.split(message)
+    let sentences: Vec<&str> = RE_SENTENCE_SPLIT
+        .split(message)
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
         .collect();
@@ -1231,10 +1478,14 @@ fn analyze_action_intent(message: &str) -> i32 {
     }
 
     // URLs
-    if RE_URL.is_match(message) { score += 4; }
+    if RE_URL.is_match(message) {
+        score += 4;
+    }
 
     // File paths
-    if RE_FILE_PATH.is_match(message) { score += 3; }
+    if RE_FILE_PATH.is_match(message) {
+        score += 3;
+    }
 
     // Multi-step phrasing
     if RE_MULTI_STEP_FIRST.is_match(trimmed) && RE_MULTI_STEP_THEN.is_match(trimmed) {
@@ -1242,26 +1493,38 @@ fn analyze_action_intent(message: &str) -> i32 {
     }
 
     // Request pattern
-    if RE_REQUEST_PATTERN.is_match(&lower) { score += 2; }
+    if RE_REQUEST_PATTERN.is_match(&lower) {
+        score += 2;
+    }
 
     // Quoted text / backtick refs
-    if RE_BACKTICK.is_match(message) || RE_QUOTED.is_match(message) { score += 1; }
+    if RE_BACKTICK.is_match(message) || RE_QUOTED.is_match(message) {
+        score += 1;
+    }
 
     // Multiple sentences
-    if sentences.len() >= 3 { score += 2; }
+    if sentences.len() >= 3 {
+        score += 2;
+    }
 
     score.min(20)
 }
 
 fn analyze_emotional_intensity(message: &str) -> i32 {
-    let words: Vec<&str> = message.split_whitespace().filter(|w| !w.is_empty()).collect();
+    let words: Vec<&str> = message
+        .split_whitespace()
+        .filter(|w| !w.is_empty())
+        .collect();
     let word_count = words.len();
     let mut score: i32 = 0;
 
     // Exclamation density
     let exclamations = count_matches(&RE_EXCLAMATION, message);
-    if exclamations >= 3 { score += 3; }
-    else if exclamations >= 1 { score += 1; }
+    if exclamations >= 3 {
+        score += 3;
+    } else if exclamations >= 1 {
+        score += 1;
+    }
 
     // Consecutive punctuation
     let emphatic = count_matches(&RE_EMPHATIC, message);
@@ -1269,27 +1532,42 @@ fn analyze_emotional_intensity(message: &str) -> i32 {
 
     // ALL CAPS ratio
     if word_count > 3 {
-        let caps_words = words.iter()
-            .filter(|w| w.len() > 1 && *w == &w.to_uppercase() && w.chars().any(|c| c.is_ascii_uppercase()))
+        let caps_words = words
+            .iter()
+            .filter(|w| {
+                w.len() > 1 && *w == &w.to_uppercase() && w.chars().any(|c| c.is_ascii_uppercase())
+            })
             .count();
         let caps_ratio = caps_words as f64 / word_count as f64;
-        if caps_ratio > 0.5 { score += 4; }
-        else if caps_ratio > 0.3 { score += 2; }
+        if caps_ratio > 0.5 {
+            score += 4;
+        } else if caps_ratio > 0.3 {
+            score += 2;
+        }
     }
 
     // Emoji density
     let emoji_count = count_matches(&RE_EMOJI, message);
-    if emoji_count >= 3 { score += 3; }
-    else if emoji_count >= 1 { score += 1; }
+    if emoji_count >= 3 {
+        score += 3;
+    } else if emoji_count >= 1 {
+        score += 1;
+    }
 
     // Ellipsis, dashes
-    if RE_ELLIPSIS_DASH.is_match(message) { score += 1; }
+    if RE_ELLIPSIS_DASH.is_match(message) {
+        score += 1;
+    }
 
     // Repeated characters (not in code blocks)
-    if has_repeated_chars(message) && !RE_CODE_BLOCK_CHECK.is_match(message) { score += 1; }
+    if has_repeated_chars(message) && !RE_CODE_BLOCK_CHECK.is_match(message) {
+        score += 1;
+    }
 
     // Very short + intense
-    if word_count <= 3 && (exclamations >= 2 || emphatic > 0) { score += 2; }
+    if word_count <= 3 && (exclamations >= 2 || emphatic > 0) {
+        score += 2;
+    }
 
     score.min(10)
 }
@@ -1298,37 +1576,60 @@ fn analyze_technical_density(message: &str) -> i32 {
     let mut score: i32 = 0;
 
     // Code blocks
-    if RE_FENCED_CODE.is_match(message) { score += 5; }
-    if RE_INDENTED_CODE.is_match(message) { score += 2; }
+    if RE_FENCED_CODE.is_match(message) {
+        score += 5;
+    }
+    if RE_INDENTED_CODE.is_match(message) {
+        score += 2;
+    }
 
     // Inline code
     let inline_code = count_matches(&RE_INLINE_CODE, message);
     score += (inline_code as i32).min(3);
 
     // File extensions
-    let file_exts: Vec<_> = RE_FILE_EXT.find_iter(message)
+    let file_exts: Vec<_> = RE_FILE_EXT
+        .find_iter(message)
         .filter(|m| RE_FILE_EXT_VALID.is_match(m.as_str()))
         .collect();
-    if file_exts.len() >= 2 { score += 3; }
-    else if file_exts.len() == 1 { score += 1; }
+    if file_exts.len() >= 2 {
+        score += 3;
+    } else if file_exts.len() == 1 {
+        score += 1;
+    }
 
     // camelCase or snake_case
     let camel = count_matches(&RE_CAMEL_CASE, message);
     let snake = count_matches(&RE_SNAKE_CASE, message);
-    if camel + snake >= 3 { score += 3; }
-    else if camel + snake >= 1 { score += 1; }
+    if camel + snake >= 3 {
+        score += 3;
+    } else if camel + snake >= 1 {
+        score += 1;
+    }
 
     // Import/export syntax
-    if RE_IMPORT_EXPORT.is_match(message) { score += 2; }
-    if RE_FUNC_CLASS.is_match(message) { score += 2; }
+    if RE_IMPORT_EXPORT.is_match(message) {
+        score += 2;
+    }
+    if RE_FUNC_CLASS.is_match(message) {
+        score += 2;
+    }
 
     // Syntax chars density
     let syntax_chars = count_matches(&RE_SYNTAX_CHARS, message);
-    let syntax_ratio = if !message.is_empty() { syntax_chars as f64 / message.len() as f64 } else { 0.0 };
-    if syntax_ratio > 0.05 { score += 2; }
+    let syntax_ratio = if !message.is_empty() {
+        syntax_chars as f64 / message.len() as f64
+    } else {
+        0.0
+    };
+    if syntax_ratio > 0.05 {
+        score += 2;
+    }
 
     // Error messages
-    if RE_ERROR_MESSAGES.is_match(message) { score += 3; }
+    if RE_ERROR_MESSAGES.is_match(message) {
+        score += 3;
+    }
 
     // JSON structure
     let trimmed = message.trim();
@@ -1344,31 +1645,37 @@ fn analyze_urgency(message: &str) -> i32 {
     let word_count = message.split_whitespace().filter(|w| !w.is_empty()).count();
 
     // Very short messages
-    if word_count <= 3 && word_count > 0 { score += 1; }
+    if word_count <= 3 && word_count > 0 {
+        score += 1;
+    }
 
     // Triple+ punctuation
-    if RE_TRIPLE_PUNCT.is_match(message) { score += 2; }
+    if RE_TRIPLE_PUNCT.is_match(message) {
+        score += 2;
+    }
 
     // ALL CAPS short message
-    if word_count <= 8 && message == message.to_uppercase() && message.chars().any(|c| c.is_ascii_uppercase()) {
+    if word_count <= 8
+        && message == message.to_uppercase()
+        && message.chars().any(|c| c.is_ascii_uppercase())
+    {
         score += 2;
     }
 
     // Time patterns
-    if RE_TIME_PATTERN.is_match(message) { score += 1; }
+    if RE_TIME_PATTERN.is_match(message) {
+        score += 1;
+    }
 
     // Short imperative
-    if word_count <= 5 { score += 1; }
+    if word_count <= 5 {
+        score += 1;
+    }
 
     score.min(5)
 }
 
-fn extract_signals(
-    message: &str,
-    iteration: i32,
-    error_count: i32,
-    has_media: bool,
-) -> Signals {
+fn extract_signals(message: &str, iteration: i32, error_count: i32, has_media: bool) -> Signals {
     // Check cache first — avoids redundant regex analysis on repeated/similar messages
     let cache_key = signals_cache_key(message, iteration, error_count, has_media);
     {
@@ -1387,7 +1694,9 @@ fn extract_signals(
     // the entire Node process under the release `panic = abort` profile.
     let sample = if message.len() > 300 {
         let mut end = 300;
-        while end > 0 && !message.is_char_boundary(end) { end -= 1; }
+        while end > 0 && !message.is_char_boundary(end) {
+            end -= 1;
+        }
         &message[..end]
     } else {
         message
@@ -1437,7 +1746,12 @@ fn extract_signals(
     };
 
     // Dampen iteration factor for trivially simple messages
-    if iteration <= 1 && word_count <= 5 && action_intent < 3 && technical_density < 2 && question_complexity < 3 {
+    if iteration <= 1
+        && word_count <= 5
+        && action_intent < 3
+        && technical_density < 2
+        && question_complexity < 3
+    {
         iteration_factor = 4;
     }
 
@@ -1465,10 +1779,13 @@ fn extract_signals(
             let now = Instant::now();
             cache.retain(|_, v| now.duration_since(v.timestamp).as_millis() < SIGNALS_CACHE_TTL_MS);
         }
-        cache.insert(cache_key, SignalsCacheEntry {
-            signals: signals.clone(),
-            timestamp: Instant::now(),
-        });
+        cache.insert(
+            cache_key,
+            SignalsCacheEntry {
+                signals: signals.clone(),
+                timestamp: Instant::now(),
+            },
+        );
     }
 
     signals
@@ -1530,50 +1847,85 @@ fn task_thinking_map(task: &TaskType, score: i32) -> ThinkingLevel {
         TaskType::Classify => ThinkingLevel::Off,
         TaskType::SimpleChat => ThinkingLevel::Off,
         TaskType::ComplexChat => {
-            if score > 85 { ThinkingLevel::Max }
-            else if score > 70 { ThinkingLevel::High }
-            else { ThinkingLevel::Medium }
-        },
+            if score > 85 {
+                ThinkingLevel::Max
+            } else if score > 70 {
+                ThinkingLevel::High
+            } else {
+                ThinkingLevel::Medium
+            }
+        }
         TaskType::ToolLoop => {
-            if score > 80 { ThinkingLevel::High }
-            else if score > 60 { ThinkingLevel::Medium }
-            else { ThinkingLevel::Low }
-        },
+            if score > 80 {
+                ThinkingLevel::High
+            } else if score > 60 {
+                ThinkingLevel::Medium
+            } else {
+                ThinkingLevel::Low
+            }
+        }
         TaskType::Coding => {
-            if score > 80 { ThinkingLevel::High }
-            else if score > 55 { ThinkingLevel::Medium }
-            else { ThinkingLevel::Low }
-        },
+            if score > 80 {
+                ThinkingLevel::High
+            } else if score > 55 {
+                ThinkingLevel::Medium
+            } else {
+                ThinkingLevel::Low
+            }
+        }
         TaskType::Planning => {
-            if score > 75 { ThinkingLevel::High }
-            else if score > 50 { ThinkingLevel::Medium }
-            else { ThinkingLevel::Low }
-        },
+            if score > 75 {
+                ThinkingLevel::High
+            } else if score > 50 {
+                ThinkingLevel::Medium
+            } else {
+                ThinkingLevel::Low
+            }
+        }
         TaskType::Synthesis => {
-            if score > 70 { ThinkingLevel::Medium }
-            else { ThinkingLevel::Low }
-        },
+            if score > 70 {
+                ThinkingLevel::Medium
+            } else {
+                ThinkingLevel::Low
+            }
+        }
         TaskType::FinalAnswer => {
-            if score > 70 { ThinkingLevel::High }
-            else if score > 40 { ThinkingLevel::Medium }
-            else { ThinkingLevel::Low }
-        },
+            if score > 70 {
+                ThinkingLevel::High
+            } else if score > 40 {
+                ThinkingLevel::Medium
+            } else {
+                ThinkingLevel::Low
+            }
+        }
         TaskType::Research => {
-            if score > 80 { ThinkingLevel::High }
-            else if score > 50 { ThinkingLevel::Medium }
-            else { ThinkingLevel::Low }
-        },
+            if score > 80 {
+                ThinkingLevel::High
+            } else if score > 50 {
+                ThinkingLevel::Medium
+            } else {
+                ThinkingLevel::Low
+            }
+        }
         TaskType::SubAgent => {
-            if score > 70 { ThinkingLevel::High }
-            else if score > 40 { ThinkingLevel::Medium }
-            else { ThinkingLevel::Low }
-        },
+            if score > 70 {
+                ThinkingLevel::High
+            } else if score > 40 {
+                ThinkingLevel::Medium
+            } else {
+                ThinkingLevel::Low
+            }
+        }
         TaskType::AudioAnalysis => ThinkingLevel::Off,
         TaskType::Vision => {
-            if score > 70 { ThinkingLevel::High }
-            else if score > 40 { ThinkingLevel::Medium }
-            else { ThinkingLevel::Low }
-        },
+            if score > 70 {
+                ThinkingLevel::High
+            } else if score > 40 {
+                ThinkingLevel::Medium
+            } else {
+                ThinkingLevel::Low
+            }
+        }
         TaskType::FirstIteration => ThinkingLevel::Off, // handled by score_to_thinking_ref
         TaskType::ErrorRecovery => ThinkingLevel::Max,
         TaskType::ToolSynthesis => ThinkingLevel::High,
@@ -1581,30 +1933,68 @@ fn task_thinking_map(task: &TaskType, score: i32) -> ThinkingLevel {
 }
 
 fn is_user_facing_task(task: &TaskType) -> bool {
-    matches!(*task,
+    matches!(
+        *task,
         TaskType::SimpleChat
-        | TaskType::ComplexChat
-        | TaskType::FirstIteration
-        | TaskType::FinalAnswer
-        | TaskType::ErrorRecovery
+            | TaskType::ComplexChat
+            | TaskType::FirstIteration
+            | TaskType::FinalAnswer
+            | TaskType::ErrorRecovery
     )
 }
 
 // ── Personality Need ─────────────────────────
 
 const PURE_ACKS: &[&str] = &[
-    "ok", "okay", "k", "yes", "yep", "yeah", "yup", "sure", "cool", "great", "nice",
-    "got it", "noted", "done", "thanks", "ty", "thx", "np", "no problem", "alright",
-    "fine", "good", "understood",
+    "ok",
+    "okay",
+    "k",
+    "yes",
+    "yep",
+    "yeah",
+    "yup",
+    "sure",
+    "cool",
+    "great",
+    "nice",
+    "got it",
+    "noted",
+    "done",
+    "thanks",
+    "ty",
+    "thx",
+    "np",
+    "no problem",
+    "alright",
+    "fine",
+    "good",
+    "understood",
 ];
 
 // Emoji acks checked separately: single-char emoji matches
 const EMOJI_ACKS: &[&str] = &["\u{1F44D}", "\u{2705}", "\u{1FAE1}", "\u{1F44C}"];
 
 const GREETINGS: &[&str] = &[
-    "hi", "hey", "hello", "hii", "yo", "sup", "hola", "heya", "hiya",
-    "good morning", "good afternoon", "good evening", "good night", "gm", "gn",
-    "how are you", "what's up", "whats up", "how's it going", "howdy",
+    "hi",
+    "hey",
+    "hello",
+    "hii",
+    "yo",
+    "sup",
+    "hola",
+    "heya",
+    "hiya",
+    "good morning",
+    "good afternoon",
+    "good evening",
+    "good night",
+    "gm",
+    "gn",
+    "how are you",
+    "what's up",
+    "whats up",
+    "how's it going",
+    "howdy",
 ];
 
 fn starts_with_any(msg: &str, patterns: &[&str]) -> bool {
@@ -1623,7 +2013,9 @@ fn compute_personality_need(signals: &Signals, task_type: &TaskType, message: &s
 
     // Detect pure acks
     let is_pure_ack = word_count <= 3
-        && (PURE_ACKS.iter().any(|ack| trimmed == *ack || trimmed.starts_with(&format!("{} ", ack)))
+        && (PURE_ACKS
+            .iter()
+            .any(|ack| trimmed == *ack || trimmed.starts_with(&format!("{} ", ack)))
             || EMOJI_ACKS.contains(&trimmed));
 
     // Detect greetings
@@ -1645,38 +2037,62 @@ fn compute_personality_need(signals: &Signals, task_type: &TaskType, message: &s
     let mut need = 0.0_f64;
 
     // BASE: user-facing tasks
-    if *task_type == TaskType::FirstIteration || *task_type == TaskType::FinalAnswer { need += 2.0; }
-    if *task_type == TaskType::ComplexChat { need += 4.0; }
-    if *task_type == TaskType::SimpleChat { need += 2.0; }
+    if *task_type == TaskType::FirstIteration || *task_type == TaskType::FinalAnswer {
+        need += 2.0;
+    }
+    if *task_type == TaskType::ComplexChat {
+        need += 4.0;
+    }
+    if *task_type == TaskType::SimpleChat {
+        need += 2.0;
+    }
 
     // Emotional messages
     need += signals.emotional_intensity as f64 * 0.7;
 
     // Longer messages
-    if signals.message_length >= 6 { need += 2.0; }
-    else if signals.message_length >= 4 { need += 1.0; }
+    if signals.message_length >= 6 {
+        need += 2.0;
+    } else if signals.message_length >= 4 {
+        need += 1.0;
+    }
 
     // Complex questions
-    if signals.question_complexity >= 8 { need += 2.0; }
-    else if signals.question_complexity >= 4 { need += 1.0; }
+    if signals.question_complexity >= 8 {
+        need += 2.0;
+    } else if signals.question_complexity >= 4 {
+        need += 1.0;
+    }
 
     // Conversation depth
-    if signals.conversation_depth >= 4 { need += 1.0; }
+    if signals.conversation_depth >= 4 {
+        need += 1.0;
+    }
 
     // Short non-greeting/ack
-    if word_count <= 3 { need -= 1.0; }
+    if word_count <= 3 {
+        need -= 1.0;
+    }
 
     // Action-heavy
-    if signals.action_intent >= 12 { need -= 1.0; }
+    if signals.action_intent >= 12 {
+        need -= 1.0;
+    }
 
     // Background tasks
-    if !is_user_facing_task(task_type) { need -= 5.0; }
+    if !is_user_facing_task(task_type) {
+        need -= 5.0;
+    }
 
     // Escalation stickiness
     {
         let ctx = CONVERSATION_CTX.lock();
-        if ctx.escalated_this_session { need += 1.0; }
-        if ctx.current_mood == Mood::Emotional { need += 2.0; }
+        if ctx.escalated_this_session {
+            need += 1.0;
+        }
+        if ctx.current_mood == Mood::Emotional {
+            need += 2.0;
+        }
     }
 
     (need.round() as i32).clamp(0, 10)
@@ -1688,12 +2104,24 @@ fn select_dynamic_model(score: i32, personality_need: i32, task_type: &TaskType)
     // Background tasks: cost-optimized across the cheap stable pool. The user
     // never sees this prose, so optimize hard for cost-per-capability.
     if !is_user_facing_task(task_type) {
-        if score <= 15 { return "amazon/nova-micro-v1"; }
-        if score <= 25 { return "openai/gpt-5-nano"; }
-        if score <= 40 { return "deepseek/deepseek-chat-v3.1"; }
-        if score <= 55 { return "google/gemini-2.5-flash"; }
-        if score <= 70 { return "openai/gpt-5-mini"; }
-        if score <= 85 { return "z-ai/glm-4.6"; }
+        if score <= 15 {
+            return "amazon/nova-micro-v1";
+        }
+        if score <= 25 {
+            return "openai/gpt-5-nano";
+        }
+        if score <= 40 {
+            return "deepseek/deepseek-chat-v3.1";
+        }
+        if score <= 55 {
+            return "google/gemini-2.5-flash";
+        }
+        if score <= 70 {
+            return "openai/gpt-5-mini";
+        }
+        if score <= 85 {
+            return "z-ai/glm-4.6";
+        }
         return "anthropic/claude-sonnet-4.6";
     }
 
@@ -1706,51 +2134,73 @@ fn select_dynamic_model(score: i32, personality_need: i32, task_type: &TaskType)
     // Plain single-turn chat (FirstIteration / SimpleChat) caps at Sonnet:
     // Opus is reserved for ComplexChat and the explicit-complexity branches,
     // none of which reach this function.
-    let plain_single_turn =
-        matches!(task_type, TaskType::FirstIteration | TaskType::SimpleChat);
+    let plain_single_turn = matches!(task_type, TaskType::FirstIteration | TaskType::SimpleChat);
 
     if personality_need <= 4 {
         // Ultra-trivial → GPT-4.1 nano: fast, non-reasoning (no over-think
         // latency), cheap. gpt-5-nano was slow here because it always reasons.
-        if personality_need <= 3 && score <= 15 { return "openai/gpt-4.1-nano"; }
+        if personality_need <= 3 && score <= 15 {
+            return "openai/gpt-4.1-nano";
+        }
         return "openai/gpt-5-mini";
     }
     if personality_need <= 6 {
         return "anthropic/claude-sonnet-4.6";
     }
     if personality_need <= 8 {
-        if score <= 60 || plain_single_turn { return "anthropic/claude-sonnet-4.6"; }
+        if score <= 60 || plain_single_turn {
+            return "anthropic/claude-sonnet-4.6";
+        }
         return "anthropic/claude-opus-4.6";
     }
     // 9-10: deep emotions / complex reasoning
-    if score <= 50 || plain_single_turn { return "anthropic/claude-sonnet-4.6"; }
+    if score <= 50 || plain_single_turn {
+        return "anthropic/claude-sonnet-4.6";
+    }
     "anthropic/claude-opus-4.6"
 }
 
 fn score_to_thinking_ref(score: i32, task_type: &TaskType) -> ThinkingLevel {
     // For user-facing first-iteration / simple chat: full 5-level dynamic
     if *task_type == TaskType::FirstIteration || *task_type == TaskType::SimpleChat {
-        if score <= 25 { return ThinkingLevel::Off; }
-        if score <= 40 { return ThinkingLevel::Low; }
-        if score <= 60 { return ThinkingLevel::Medium; }
-        if score <= 80 { return ThinkingLevel::High; }
+        if score <= 25 {
+            return ThinkingLevel::Off;
+        }
+        if score <= 40 {
+            return ThinkingLevel::Low;
+        }
+        if score <= 60 {
+            return ThinkingLevel::Medium;
+        }
+        if score <= 80 {
+            return ThinkingLevel::High;
+        }
         return ThinkingLevel::Max;
     }
 
     // Other task types: score-aware map (already uses 5 levels)
     let task_thinking = task_thinking_map(task_type, score);
-    if task_thinking != ThinkingLevel::Off || matches!(*task_type,
-        TaskType::Classify | TaskType::SimpleChat | TaskType::AudioAnalysis
-    ) {
+    if task_thinking != ThinkingLevel::Off
+        || matches!(
+            *task_type,
+            TaskType::Classify | TaskType::SimpleChat | TaskType::AudioAnalysis
+        )
+    {
         return task_thinking;
     }
 
     // Fallback: 5-level score mapping
-    if score <= 20 { ThinkingLevel::Off }
-    else if score <= 40 { ThinkingLevel::Low }
-    else if score <= 60 { ThinkingLevel::Medium }
-    else if score <= 85 { ThinkingLevel::High }
-    else { ThinkingLevel::Max }
+    if score <= 20 {
+        ThinkingLevel::Off
+    } else if score <= 40 {
+        ThinkingLevel::Low
+    } else if score <= 60 {
+        ThinkingLevel::Medium
+    } else if score <= 85 {
+        ThinkingLevel::High
+    } else {
+        ThinkingLevel::Max
+    }
 }
 
 #[napi]
@@ -1787,7 +2237,11 @@ fn infer_task_type(message: &str, signals: &Signals, opts: &SelectModelOptions) 
     }
 
     // Short, low-complexity
-    if word_count <= 5 && signals.action_intent < 3 && signals.technical_density < 2 && signals.question_complexity < 5 {
+    if word_count <= 5
+        && signals.action_intent < 3
+        && signals.technical_density < 2
+        && signals.question_complexity < 5
+    {
         return TaskType::SimpleChat;
     }
 
@@ -1858,39 +2312,70 @@ pub struct ModelSelection {
 fn is_low_signal_ack(msg: &str) -> bool {
     // Strip channel tags like [SOURCE: ...] that get appended to user messages
     let trimmed = msg.split("\n\n[").next().unwrap_or(msg).trim();
-    if trimmed.is_empty() { return false; }
+    if trimmed.is_empty() {
+        return false;
+    }
 
     let word_count = trimmed.split_whitespace().count();
     // Must be short (≤ 3 words)
-    if word_count > 3 { return false; }
+    if word_count > 3 {
+        return false;
+    }
 
     // Must not contain a question
-    if trimmed.contains('?') { return false; }
+    if trimmed.contains('?') {
+        return false;
+    }
 
     // Must not contain URLs, file paths, or backtick code
-    if trimmed.contains("://") || trimmed.contains('/') || trimmed.contains('`') { return false; }
+    if trimmed.contains("://") || trimmed.contains('/') || trimmed.contains('`') {
+        return false;
+    }
 
     // Must not contain action-request patterns ("can you", "please", "I need")
     let lower = trimmed.to_lowercase();
-    if lower.contains("can you") || lower.contains("please") || lower.contains("i need")
-        || lower.contains("i want") || lower.contains("could you") || lower.contains("do this")
-        || lower.contains("tell me") || lower.contains("show me") || lower.contains("find")
-        || lower.contains("search") || lower.contains("open") || lower.contains("send")
-        || lower.contains("create") || lower.contains("make") || lower.contains("write")
-        || lower.contains("run") || lower.contains("install") || lower.contains("delete")
-        || lower.contains("fix") || lower.contains("build") || lower.contains("update")
-        || lower.contains("check") || lower.contains("download") {
+    if lower.contains("can you")
+        || lower.contains("please")
+        || lower.contains("i need")
+        || lower.contains("i want")
+        || lower.contains("could you")
+        || lower.contains("do this")
+        || lower.contains("tell me")
+        || lower.contains("show me")
+        || lower.contains("find")
+        || lower.contains("search")
+        || lower.contains("open")
+        || lower.contains("send")
+        || lower.contains("create")
+        || lower.contains("make")
+        || lower.contains("write")
+        || lower.contains("run")
+        || lower.contains("install")
+        || lower.contains("delete")
+        || lower.contains("fix")
+        || lower.contains("build")
+        || lower.contains("update")
+        || lower.contains("check")
+        || lower.contains("download")
+    {
         return false;
     }
 
     // Must not contain technical syntax (braces, brackets, operators, code)
-    if trimmed.contains('{') || trimmed.contains('}') || trimmed.contains('[')
-        || trimmed.contains(']') || trimmed.contains('=') || trimmed.contains(';') {
+    if trimmed.contains('{')
+        || trimmed.contains('}')
+        || trimmed.contains('[')
+        || trimmed.contains(']')
+        || trimmed.contains('=')
+        || trimmed.contains(';')
+    {
         return false;
     }
 
     // If it's 1 word and > 20 chars, it's probably a URL or path, not an ack
-    if word_count == 1 && trimmed.len() > 20 { return false; }
+    if word_count == 1 && trimmed.len() > 20 {
+        return false;
+    }
 
     true
 }
@@ -1907,7 +2392,10 @@ fn estimate_tokens(message: &str, task_type: &TaskType) -> (f64, f64) {
         TaskType::ComplexChat => 1.0,
         _ => 1.0,
     };
-    (input_base.min(4000.0), (input_base * output_mult).min(4000.0))
+    (
+        input_base.min(4000.0),
+        (input_base * output_mult).min(4000.0),
+    )
 }
 
 #[napi]
@@ -2010,7 +2498,12 @@ pub fn select_model(opts: SelectModelOptions) -> ModelSelection {
             model_id = "anthropic/claude-opus-4.6".to_string();
             reason = format!("subagent_critical:score{}", adjusted_score);
         }
-    } else if opts.task_type.is_some() && !matches!(task_type, TaskType::ToolLoop | TaskType::ErrorRecovery | TaskType::Coding) {
+    } else if opts.task_type.is_some()
+        && !matches!(
+            task_type,
+            TaskType::ToolLoop | TaskType::ErrorRecovery | TaskType::Coding
+        )
+    {
         model_id = task_model_map(&task_type).to_string();
         reason = format!("explicit:{}", task_type_to_str(&task_type));
     } else if task_type == TaskType::ToolLoop {
@@ -2020,10 +2513,16 @@ pub fn select_model(opts: SelectModelOptions) -> ModelSelection {
         // Tiered error recovery: simple errors → Sonnet, complex → Opus
         if error_count <= 2 && adjusted_score <= 50 {
             model_id = "anthropic/claude-sonnet-4.6".to_string();
-            reason = format!("error_recovery_simple:{}errors/score{}", error_count, adjusted_score);
+            reason = format!(
+                "error_recovery_simple:{}errors/score{}",
+                error_count, adjusted_score
+            );
         } else {
             model_id = "anthropic/claude-opus-4.6".to_string();
-            reason = format!("error_recovery_complex:{}errors/score{}", error_count, adjusted_score);
+            reason = format!(
+                "error_recovery_complex:{}errors/score{}",
+                error_count, adjusted_score
+            );
         }
     } else if task_type == TaskType::Coding {
         // Tiered coding: simple → Gemini 2.5 Flash, medium → Sonnet, complex → Opus
@@ -2051,8 +2550,8 @@ pub fn select_model(opts: SelectModelOptions) -> ModelSelection {
     // tasks to the priciest model (Gemini 3.1 Pro). Generic words removed;
     // remaining ones are design-specific.
     let msg_lower = message.to_lowercase();
-    let is_creative_task = message.len() <= 600 && (
-        msg_lower.contains("ui/ux") || msg_lower.contains("ui ux")
+    let is_creative_task = message.len() <= 600
+        && (msg_lower.contains("ui/ux") || msg_lower.contains("ui ux")
         || msg_lower.contains("mockup") || msg_lower.contains("wireframe")
         || msg_lower.contains("figma") || msg_lower.contains("redesign")
         || msg_lower.contains("color scheme") || msg_lower.contains("typography")
@@ -2062,10 +2561,13 @@ pub fn select_model(opts: SelectModelOptions) -> ModelSelection {
         || (msg_lower.contains("design") && (msg_lower.contains("ui")
             || msg_lower.contains("page") || msg_lower.contains("interface")
             || msg_lower.contains("screen") || msg_lower.contains("component")
-            || msg_lower.contains("app") || msg_lower.contains("website")))
-    );
+            || msg_lower.contains("app") || msg_lower.contains("website"))));
 
-    if is_creative_task && (task_type == TaskType::Coding || task_type == TaskType::ToolLoop || task_type == TaskType::FirstIteration) {
+    if is_creative_task
+        && (task_type == TaskType::Coding
+            || task_type == TaskType::ToolLoop
+            || task_type == TaskType::FirstIteration)
+    {
         model_id = "google/gemini-3.1-pro-preview-customtools".to_string();
         reason = format!("creative_uiux:score{}", adjusted_score);
     }
@@ -2085,18 +2587,35 @@ pub fn select_model(opts: SelectModelOptions) -> ModelSelection {
     // for a 12-token confirmation. Genuinely-agentic interaction (click/type/scroll/
     // drag/smart_click) is NOT here and still escalates.
     let read_only_screen_tools = [
-        "os_screenshot", "os_context", "os_ocr", "os_ocr_click", "os_inspect",
-        "os_accessibility_tree", "os_scan", "screen_record", "browser_scan",
-        "browser_extract", "browser_extract_article", "browser_analyze",
-        "browser_chrome_status", "browser_network_requests", "browser_form_state",
-        "browser_navigate", "browser_back", "browser_wait", "browser_wait_for_selector",
+        "os_screenshot",
+        "os_context",
+        "os_ocr",
+        "os_ocr_click",
+        "os_inspect",
+        "os_accessibility_tree",
+        "os_scan",
+        "screen_record",
+        "browser_scan",
+        "browser_extract",
+        "browser_extract_article",
+        "browser_analyze",
+        "browser_chrome_status",
+        "browser_network_requests",
+        "browser_form_state",
+        "browser_navigate",
+        "browser_back",
+        "browser_wait",
+        "browser_wait_for_selector",
     ];
-    let has_action_browser_os = opts.last_tool_calls
+    let has_action_browser_os = opts
+        .last_tool_calls
         .as_ref()
-        .map(|calls| calls.iter().any(|tc| {
-            let is_browser_os = browser_os_prefixes.iter().any(|p| tc.name.starts_with(p));
-            is_browser_os && !read_only_screen_tools.contains(&tc.name.as_str())
-        }))
+        .map(|calls| {
+            calls.iter().any(|tc| {
+                let is_browser_os = browser_os_prefixes.iter().any(|p| tc.name.starts_with(p));
+                is_browser_os && !read_only_screen_tools.contains(&tc.name.as_str())
+            })
+        })
         .unwrap_or(false);
     if has_action_browser_os && task_type == TaskType::ToolLoop {
         // ── Graduated browser/OS routing ──
@@ -2109,30 +2628,37 @@ pub fn select_model(opts: SelectModelOptions) -> ModelSelection {
         // message keywords (is_creative_task) + has_media as the proxy.
         // gpt-5-nano has NO vision: it serves text-DOM-only steps; any vision
         // step (screenshot/scan/grounding) must go to a vision-capable model.
-        let tool_names: Vec<&str> = opts.last_tool_calls
+        let tool_names: Vec<&str> = opts
+            .last_tool_calls
             .as_ref()
             .map(|calls| calls.iter().map(|tc| tc.name.as_str()).collect())
             .unwrap_or_default();
         let vision_bearing_tools = [
-            "os_screenshot", "browser_scan", "os_smart_click", "os_ground",
-            "os_visualize", "os_click", "os_ocr_click", "browser_click_at",
+            "os_screenshot",
+            "browser_scan",
+            "os_smart_click",
+            "os_ground",
+            "os_visualize",
+            "os_click",
+            "os_ocr_click",
+            "browser_click_at",
         ];
-        let has_vision_step = has_media
-            || tool_names.iter().any(|n| vision_bearing_tools.contains(n));
+        let has_vision_step =
+            has_media || tool_names.iter().any(|n| vision_bearing_tools.contains(n));
         let has_captcha_tool = tool_names.contains(&"browser_handle_captcha");
         let auth_keywords = msg_lower.contains("captcha")
-            || msg_lower.contains("login") || msg_lower.contains("log in")
-            || msg_lower.contains("sign in") || msg_lower.contains("checkout")
-            || msg_lower.contains("password") || msg_lower.contains("2fa")
+            || msg_lower.contains("login")
+            || msg_lower.contains("log in")
+            || msg_lower.contains("sign in")
+            || msg_lower.contains("checkout")
+            || msg_lower.contains("password")
+            || msg_lower.contains("2fa")
             || msg_lower.contains(" otp");
 
         // complex (~3-5%) → Sonnet: canvas/design page, visual grounding,
         // error/retry loop, or CAPTCHA/auth flow.
-        let is_complex_browser = is_creative_task
-            || has_media
-            || error_count >= 2
-            || has_captcha_tool
-            || auth_keywords;
+        let is_complex_browser =
+            is_creative_task || has_media || error_count >= 2 || has_captcha_tool || auth_keywords;
 
         if is_complex_browser {
             let vision_fallbacks = [
@@ -2187,7 +2713,11 @@ pub fn select_model(opts: SelectModelOptions) -> ModelSelection {
                 let failover_rate = get_tool_success_rate_for_task(&failover, task_type_str)
                     .unwrap_or_else(|| get_tool_success_rate(&failover));
                 if failover_rate > tool_rate {
-                    reason.push_str(&format!(":tool_failover({}%→{}%)", (tool_rate*100.0) as i32, (failover_rate*100.0) as i32));
+                    reason.push_str(&format!(
+                        ":tool_failover({}%→{}%)",
+                        (tool_rate * 100.0) as i32,
+                        (failover_rate * 100.0) as i32
+                    ));
                     model_id = failover;
                 }
             }
@@ -2211,7 +2741,8 @@ pub fn select_model(opts: SelectModelOptions) -> ModelSelection {
     let current_tier = MODEL_REGISTRY.get(&model_id).map(|m| m.tier).unwrap_or(3);
     let avg_latency = get_avg_latency(&model_id);
     if avg_latency > 0.0 {
-        let mut candidates: Vec<&ModelInfo> = MODEL_REGISTRY.values()
+        let mut candidates: Vec<&ModelInfo> = MODEL_REGISTRY
+            .values()
             .filter(|m| {
                 m.tier == current_tier
                     && m.id != model_id
@@ -2227,7 +2758,10 @@ pub fn select_model(opts: SelectModelOptions) -> ModelSelection {
         if let Some(alt) = candidates.first() {
             let alt_latency = get_avg_latency(&alt.id);
             // Only swap if alternative is >2x faster AND has low error rate
-            if alt_latency > 0.0 && alt_latency < avg_latency * 0.5 && get_error_rate(&alt.id) < 0.05 {
+            if alt_latency > 0.0
+                && alt_latency < avg_latency * 0.5
+                && get_error_rate(&alt.id) < 0.05
+            {
                 reason.push_str(":latency_tiebreak");
                 model_id = alt.id.clone();
             }
@@ -2240,11 +2774,13 @@ pub fn select_model(opts: SelectModelOptions) -> ModelSelection {
         let current_tier = MODEL_REGISTRY.get(&model_id).map(|m| m.tier).unwrap_or(3);
         if current_tier < 5 {
             // Find cheapest model with tool support, tier >= 5
-            let cheap_model = MODEL_REGISTRY.values()
+            let cheap_model = MODEL_REGISTRY
+                .values()
                 .filter(|m| m.tier >= 5 && m.supports_tools)
                 .max_by_key(|m| m.tier); // Cheapest = highest tier number
             if let Some(cm) = cheap_model {
-                let old_name = MODEL_REGISTRY.get(&model_id)
+                let old_name = MODEL_REGISTRY
+                    .get(&model_id)
                     .map(|m| m.display_name.clone())
                     .unwrap_or_default();
                 reason.push_str(&format!(":bg_downgrade_from_{}", old_name));
@@ -2257,7 +2793,8 @@ pub fn select_model(opts: SelectModelOptions) -> ModelSelection {
     let err_rate = get_error_rate(&model_id);
     if err_rate > 0.15 && model_id != "anthropic/claude-opus-4.6" {
         let failure_type = get_dominant_failure_type(&model_id);
-        let old_name = MODEL_REGISTRY.get(&model_id)
+        let old_name = MODEL_REGISTRY
+            .get(&model_id)
             .map(|m| m.display_name.clone())
             .unwrap_or_default();
         let current_tier = MODEL_REGISTRY.get(&model_id).map(|m| m.tier).unwrap_or(3);
@@ -2274,8 +2811,14 @@ pub fn select_model(opts: SelectModelOptions) -> ModelSelection {
             }
             "context_overflow" => {
                 // Context too large → model with larger max_tokens at same tier or higher
-                let bigger_model = MODEL_REGISTRY.values()
-                    .filter(|m| m.id != model_id && m.max_tokens > 8192 && m.supports_tools && !is_circuit_open(&m.id))
+                let bigger_model = MODEL_REGISTRY
+                    .values()
+                    .filter(|m| {
+                        m.id != model_id
+                            && m.max_tokens > 8192
+                            && m.supports_tools
+                            && !is_circuit_open(&m.id)
+                    })
                     .min_by_key(|m| m.tier);
                 if let Some(bm) = bigger_model {
                     reason.push_str(&format!(":context_overflow_from_{}", old_name));
@@ -2293,7 +2836,8 @@ pub fn select_model(opts: SelectModelOptions) -> ModelSelection {
             }
             "timeout" => {
                 // Timeout → faster model at same quality tier
-                let faster_model = MODEL_REGISTRY.values()
+                let faster_model = MODEL_REGISTRY
+                    .values()
                     .filter(|m| {
                         m.id != model_id
                             && m.supports_tools
@@ -2310,15 +2854,18 @@ pub fn select_model(opts: SelectModelOptions) -> ModelSelection {
             _ => {
                 // Generic server error (500) → Vertical escalation to better tier
                 // For user-facing tasks, only escalate within Claude family
-                let better_model = MODEL_REGISTRY.values()
+                let better_model = MODEL_REGISTRY
+                    .values()
                     .filter(|m| {
-                        m.tier < current_tier
-                            && m.supports_tools
-                            && !is_circuit_open(&m.id)
+                        m.tier < current_tier && m.supports_tools && !is_circuit_open(&m.id)
                     })
                     .max_by_key(|m| m.tier);
                 if let Some(bm) = better_model {
-                    reason.push_str(&format!(":escalated_from_{}(err={}%)", old_name, (err_rate * 100.0) as i32));
+                    reason.push_str(&format!(
+                        ":escalated_from_{}(err={}%)",
+                        old_name,
+                        (err_rate * 100.0) as i32
+                    ));
                     model_id = bm.id.clone();
                 }
             }
@@ -2328,7 +2875,8 @@ pub fn select_model(opts: SelectModelOptions) -> ModelSelection {
     // ── Circuit breaker final check ──
     // If the selected model's circuit breaker is open, reroute to a healthy alternative
     if is_circuit_open(&model_id) {
-        let old_name = MODEL_REGISTRY.get(&model_id)
+        let old_name = MODEL_REGISTRY
+            .get(&model_id)
             .map(|m| m.display_name.clone())
             .unwrap_or_else(|| model_id.clone());
 
@@ -2360,16 +2908,20 @@ pub fn select_model(opts: SelectModelOptions) -> ModelSelection {
 
     // ── Thinking level ──
     // Sparse thinking: disable reasoning for repetitive OS tool loops (iteration 4+)
-    let is_repetitive_os = opts.last_tool_calls
+    let is_repetitive_os = opts
+        .last_tool_calls
         .as_ref()
-        .map(|calls| !calls.is_empty() && calls.iter().all(|tc|
-            tc.name.starts_with("os_") || tc.name == "app_manager"
-        ))
+        .map(|calls| {
+            !calls.is_empty()
+                && calls
+                    .iter()
+                    .all(|tc| tc.name.starts_with("os_") || tc.name == "app_manager")
+        })
         .unwrap_or(false);
 
-    let mut thinking_level = if urgency == "background" {
-        ThinkingLevel::Off
-    } else if is_repetitive_os && iteration > 3 && task_type == TaskType::ToolLoop {
+    let mut thinking_level = if urgency == "background"
+        || (is_repetitive_os && iteration > 3 && task_type == TaskType::ToolLoop)
+    {
         ThinkingLevel::Off
     } else {
         score_to_thinking_ref(adjusted_score, &task_type)
@@ -2461,14 +3013,23 @@ pub fn select_model(opts: SelectModelOptions) -> ModelSelection {
         }
 
         // Track dominant task type for cascade chain
-        if matches!(task_type, TaskType::ToolLoop | TaskType::Coding | TaskType::Research) {
+        if matches!(
+            task_type,
+            TaskType::ToolLoop | TaskType::Coding | TaskType::Research
+        ) {
             ctx.dominant_task_type = Some(task_type);
         }
     }
 
     let display_name = model_info
         .map(|m| m.display_name.clone())
-        .unwrap_or_else(|| model_id.split('/').next_back().unwrap_or(&model_id).to_string());
+        .unwrap_or_else(|| {
+            model_id
+                .split('/')
+                .next_back()
+                .unwrap_or(&model_id)
+                .to_string()
+        });
 
     ModelSelection {
         model_id,
@@ -2522,13 +3083,16 @@ pub fn should_cascade_escalate(
     }
 
     // 3. Excessive repetition
-    let sentences: Vec<String> = RE_SENTENCE_SPLIT.split(&response)
+    let sentences: Vec<String> = RE_SENTENCE_SPLIT
+        .split(&response)
         .map(|s| s.trim().to_lowercase())
         .filter(|s| !s.is_empty())
         .collect();
     let unique_count = {
         let mut set = std::collections::HashSet::new();
-        for s in &sentences { set.insert(s.clone()); }
+        for s in &sentences {
+            set.insert(s.clone());
+        }
         set.len()
     };
     if sentences.len() >= 4 && unique_count < sentences.len() / 2 {
@@ -2539,8 +3103,16 @@ pub fn should_cascade_escalate(
     }
 
     // 4. Tone mismatch
-    let casual_markers = ["bro", "dude", "man", "lol", "haha", "yo", "bruh", "nah", "yeah", "gonna", "wanna"];
-    let formal_markers = ["furthermore", "nevertheless", "consequently", "henceforth", "it is imperative"];
+    let casual_markers = [
+        "bro", "dude", "man", "lol", "haha", "yo", "bruh", "nah", "yeah", "gonna", "wanna",
+    ];
+    let formal_markers = [
+        "furthermore",
+        "nevertheless",
+        "consequently",
+        "henceforth",
+        "it is imperative",
+    ];
     let is_casual_input = casual_markers.iter().any(|m| orig_lower.contains(m));
     let is_formal_response = formal_markers.iter().any(|m| lower.contains(m));
     if is_casual_input && is_formal_response {
@@ -2581,7 +3153,9 @@ fn get_cascade_next_internal(current_model_id: &str, task_type: &TaskType) -> Op
             "google/gemini-2.5-flash-lite" => Some("google/gemini-2.5-flash".to_string()),
             "google/gemini-2.5-flash" => Some("google/gemini-3-flash-preview".to_string()),
             "google/gemini-3-flash-preview" => Some("anthropic/claude-sonnet-4.6".to_string()),
-            "google/gemini-3.1-pro-preview-customtools" => Some("anthropic/claude-sonnet-4.6".to_string()),
+            "google/gemini-3.1-pro-preview-customtools" => {
+                Some("anthropic/claude-sonnet-4.6".to_string())
+            }
             "anthropic/claude-sonnet-4.6" => Some("anthropic/claude-opus-4.6".to_string()),
             _ => Some("google/gemini-2.5-flash".to_string()),
         };
@@ -2648,7 +3222,12 @@ pub fn select_for_agent(
     let mut task_type: Option<TaskType> = None;
     if has_media.unwrap_or(false) {
         task_type = Some(TaskType::Vision);
-    } else if iteration > 1 && last_tool_calls.as_ref().map(|c| !c.is_empty()).unwrap_or(false) {
+    } else if iteration > 1
+        && last_tool_calls
+            .as_ref()
+            .map(|c| !c.is_empty())
+            .unwrap_or(false)
+    {
         task_type = Some(TaskType::ToolLoop);
     }
 
@@ -2758,9 +3337,16 @@ mod circuit_breaker_tests {
         for _ in 0..CIRCUIT_BREAKER_THRESHOLD {
             update_model_stats(model.to_string(), 10.0, false, 0.0, 0.0, Some(400));
         }
-        assert!(is_circuit_open(model), "breaker should be open after {} permanent failures", CIRCUIT_BREAKER_THRESHOLD);
+        assert!(
+            is_circuit_open(model),
+            "breaker should be open after {} permanent failures",
+            CIRCUIT_BREAKER_THRESHOLD
+        );
         let stats = MODEL_STATS.lock().get(model).cloned().unwrap();
-        assert!(!stats.last_trip_was_transient_only, "permanent trip should NOT be marked transient-only");
+        assert!(
+            !stats.last_trip_was_transient_only,
+            "permanent trip should NOT be marked transient-only"
+        );
         reset(model);
     }
 
@@ -2791,7 +3377,10 @@ mod circuit_breaker_tests {
         }
         assert!(is_circuit_open(model));
         let stats = MODEL_STATS.lock().get(model).cloned().unwrap();
-        assert!(stats.last_trip_was_transient_only, "all-transient trip should set the flag");
+        assert!(
+            stats.last_trip_was_transient_only,
+            "all-transient trip should set the flag"
+        );
         reset(model);
     }
 
@@ -2895,7 +3484,9 @@ mod browser_routing_tests {
     use super::*;
 
     fn tc(name: &str) -> ToolCallRef {
-        ToolCallRef { name: name.to_string() }
+        ToolCallRef {
+            name: name.to_string(),
+        }
     }
 
     // Build a tool-loop selection for a browser/OS action loop. iteration>=2
@@ -2928,50 +3519,77 @@ mod browser_routing_tests {
         // escalation block entirely → stay on the cheap tool_loop base model.
         // This is the "open google should not use Sonnet" fix.
         let r = browser_reason("open google", 2, 0, false, vec!["browser_navigate"]);
-        assert!(!r.contains("sonnet"), "pure nav must not be Sonnet, got: {r}");
-        assert!(!r.contains(":browser_complex"), "pure nav is not complex, got: {r}");
+        assert!(
+            !r.contains("sonnet"),
+            "pure nav must not be Sonnet, got: {r}"
+        );
+        assert!(
+            !r.contains(":browser_complex"),
+            "pure nav is not complex, got: {r}"
+        );
     }
 
     #[test]
     fn simple_text_dom_action_uses_nano() {
         // An action click-by-selector with no vision tool in the loop → nano.
         let r = browser_reason("click the link", 2, 0, false, vec!["browser_click"]);
-        assert!(r.contains(":browser_simple_nano"), "expected nano, got: {r}");
+        assert!(
+            r.contains(":browser_simple_nano"),
+            "expected nano, got: {r}"
+        );
     }
 
     #[test]
     fn simple_vision_step_uses_mini() {
         let r = browser_reason("click the blue button", 2, 0, false, vec!["os_smart_click"]);
-        assert!(r.contains(":browser_simple_mini"), "expected mini, got: {r}");
+        assert!(
+            r.contains(":browser_simple_mini"),
+            "expected mini, got: {r}"
+        );
     }
 
     #[test]
     fn error_loop_escalates_to_sonnet() {
         let r = browser_reason("click the link", 2, 2, false, vec!["browser_click"]);
-        assert!(r.contains(":browser_complex_sonnet"), "expected sonnet, got: {r}");
+        assert!(
+            r.contains(":browser_complex_sonnet"),
+            "expected sonnet, got: {r}"
+        );
     }
 
     #[test]
     fn has_media_escalates_to_sonnet() {
         let r = browser_reason("click around", 2, 0, true, vec!["browser_click"]);
-        assert!(r.contains(":browser_complex_sonnet"), "expected sonnet, got: {r}");
+        assert!(
+            r.contains(":browser_complex_sonnet"),
+            "expected sonnet, got: {r}"
+        );
     }
 
     #[test]
     fn captcha_tool_escalates_to_sonnet() {
         let r = browser_reason("solve it", 2, 0, false, vec!["browser_handle_captcha"]);
-        assert!(r.contains(":browser_complex_sonnet"), "expected sonnet, got: {r}");
+        assert!(
+            r.contains(":browser_complex_sonnet"),
+            "expected sonnet, got: {r}"
+        );
     }
 
     #[test]
     fn login_keyword_escalates_to_sonnet() {
         let r = browser_reason("log in to my account", 2, 0, false, vec!["browser_type"]);
-        assert!(r.contains(":browser_complex_sonnet"), "expected sonnet, got: {r}");
+        assert!(
+            r.contains(":browser_complex_sonnet"),
+            "expected sonnet, got: {r}"
+        );
     }
 
     #[test]
     fn deep_iteration_uses_gemini() {
         let r = browser_reason("keep going", 3, 0, false, vec!["browser_click"]);
-        assert!(r.contains(":browser_mod_gemini"), "expected gemini, got: {r}");
+        assert!(
+            r.contains(":browser_mod_gemini"),
+            "expected gemini, got: {r}"
+        );
     }
 }

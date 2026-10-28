@@ -44,11 +44,11 @@ pub struct ThoughtScores {
 #[napi(object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TriggerSignal {
-    pub source: String,        // "monitor", "activity", "memory", "time", "emotional", "prospective"
-    pub signal_type: String,   // specific signal identifier
-    pub weight: f64,           // 0-1 importance weight
-    pub timestamp_ms: f64,     // when the signal was detected
-    pub metadata: String,      // JSON-encoded extra context
+    pub source: String, // "monitor", "activity", "memory", "time", "emotional", "prospective"
+    pub signal_type: String, // specific signal identifier
+    pub weight: f64,    // 0-1 importance weight
+    pub timestamp_ms: f64, // when the signal was detected
+    pub metadata: String, // JSON-encoded extra context
 }
 
 #[napi(object)]
@@ -158,8 +158,8 @@ pub fn compute_adaptive_thresholds(entries: Vec<JournalEntry>) -> Vec<f64> {
     }
 
     if !ignored_scores.is_empty() {
-        let ignore_ratio = ignored_scores.len() as f64
-            / (engaged_scores.len() + ignored_scores.len()) as f64;
+        let ignore_ratio =
+            ignored_scores.len() as f64 / (engaged_scores.len() + ignored_scores.len()) as f64;
         // If >60% of surfaced thoughts are ignored, raise threshold
         if ignore_ratio > 0.6 {
             surface_thresh = (surface_thresh + 0.05).min(0.85);
@@ -247,7 +247,7 @@ pub fn compute_novelty_score(
 #[napi]
 pub fn aggregate_triggers(
     signals: Vec<TriggerSignal>,
-    last_activation_times: Vec<f64>,    // Parallel array: timestamp of last activation per source
+    last_activation_times: Vec<f64>, // Parallel array: timestamp of last activation per source
     last_activation_sources: Vec<String>, // Parallel array: source names
     activation_threshold: Option<f64>,
 ) -> Vec<ActivationEvent> {
@@ -283,11 +283,7 @@ pub fn aggregate_triggers(
     let mut events: Vec<ActivationEvent> = Vec::new();
 
     for (source, signals) in groups {
-        let combined_weight: f64 = signals
-            .iter()
-            .map(|s| s.weight)
-            .sum::<f64>()
-            .min(1.0); // Cap at 1.0
+        let combined_weight: f64 = signals.iter().map(|s| s.weight).sum::<f64>().min(1.0); // Cap at 1.0
 
         let should_activate = combined_weight >= act_thresh;
 
@@ -300,7 +296,11 @@ pub fn aggregate_triggers(
     }
 
     // Sort by combined weight descending
-    events.sort_by(|a, b| b.combined_weight.partial_cmp(&a.combined_weight).unwrap_or(std::cmp::Ordering::Equal));
+    events.sort_by(|a, b| {
+        b.combined_weight
+            .partial_cmp(&a.combined_weight)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     events
 }
@@ -430,7 +430,7 @@ pub fn prioritize_queued_thoughts(
             break;
         }
         let trigger = &thoughts[idx].trigger_type;
-        if seen_triggers.contains(trigger) && selected.len() >= 1 {
+        if seen_triggers.contains(trigger) && !selected.is_empty() {
             continue; // Allow first duplicate but not second
         }
         seen_triggers.insert(trigger.clone());

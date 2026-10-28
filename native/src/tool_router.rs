@@ -261,7 +261,10 @@ const CATEGORY_EXPIRY_ITERATIONS: u32 = 10;
 
 fn now_ms() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 /// SHA-256 hash, truncated to 12 hex chars (collision-free for practical purposes).
@@ -278,7 +281,7 @@ fn simple_hash(s: &str) -> String {
     // For now this is an internal cache key, so consistency across
     // JS/Rust is not required (each side manages its own cache).
     let mut h1: u64 = 0xcbf29ce484222325; // FNV offset basis
-    let mut h2: u64 = 0x100000001b3;      // second seed
+    let mut h2: u64 = 0x100000001b3; // second seed
     for b in s.bytes() {
         h1 ^= b as u64;
         h1 = h1.wrapping_mul(0x100000001b3);
@@ -305,7 +308,8 @@ pub fn get_all_categories() -> String {
 /// Get tool names for a specific category
 #[napi]
 pub fn get_category_tools(category: String) -> Vec<String> {
-    CATEGORIES.get(category.as_str())
+    CATEGORIES
+        .get(category.as_str())
         .map(|c| c.tools.clone())
         .unwrap_or_default()
 }
@@ -476,7 +480,9 @@ pub fn get_requested_categories() -> Vec<String> {
         return Vec::new();
     }
 
-    let iterations_unused = state.current_iteration.saturating_sub(state.active_requested_last_iter);
+    let iterations_unused = state
+        .current_iteration
+        .saturating_sub(state.active_requested_last_iter);
     if iterations_unused > CATEGORY_EXPIRY_ITERATIONS {
         state.active_requested_categories.clear();
         return Vec::new();
@@ -550,7 +556,8 @@ pub fn score_categories_by_similarity(
 /// Get relevant skill names for given categories
 #[napi]
 pub fn get_relevant_skill_names(selected_categories: Vec<String>) -> Vec<String> {
-    let selected_set: std::collections::HashSet<&str> = selected_categories.iter().map(|s| s.as_str()).collect();
+    let selected_set: std::collections::HashSet<&str> =
+        selected_categories.iter().map(|s| s.as_str()).collect();
     let mut relevant = Vec::new();
 
     for (skill_name, skill_cats) in SKILL_CATEGORIES.iter() {
@@ -566,11 +573,7 @@ pub fn get_relevant_skill_names(selected_categories: Vec<String>) -> Vec<String>
 /// Mirrors the JS: semantic → max(0.15, topScore * 0.45); structural → 0.25
 /// Low confidence → lower threshold → include more tools.
 #[napi]
-pub fn compute_threshold(
-    top_score: f64,
-    top_confidence: f64,
-    embeddings_ready: bool,
-) -> f64 {
+pub fn compute_threshold(top_score: f64, top_confidence: f64, embeddings_ready: bool) -> f64 {
     let mut threshold = if embeddings_ready {
         f64::max(0.15, top_score * 0.45)
     } else {
@@ -600,9 +603,8 @@ pub fn score_categories_by_embedding(
     category_embeddings_json: String,
 ) -> napi::Result<String> {
     let msg = message_embedding.as_ref();
-    let cat_map: HashMap<String, Vec<f32>> =
-        serde_json::from_str(&category_embeddings_json)
-            .map_err(|e| napi::Error::new(Status::InvalidArg, format!("Bad JSON: {}", e)))?;
+    let cat_map: HashMap<String, Vec<f32>> = serde_json::from_str(&category_embeddings_json)
+        .map_err(|e| napi::Error::new(Status::InvalidArg, format!("Bad JSON: {}", e)))?;
 
     let msg_mag = magnitude_f32(msg);
     let mut scores: Vec<(String, f64)> = Vec::with_capacity(cat_map.len());
@@ -657,9 +659,8 @@ pub fn score_mcp_tools_batch(
     threshold: f64,
 ) -> napi::Result<String> {
     let msg = message_embedding.as_ref();
-    let tool_map: HashMap<String, Vec<f32>> =
-        serde_json::from_str(&tool_embeddings_json)
-            .map_err(|e| napi::Error::new(Status::InvalidArg, format!("Bad JSON: {}", e)))?;
+    let tool_map: HashMap<String, Vec<f32>> = serde_json::from_str(&tool_embeddings_json)
+        .map_err(|e| napi::Error::new(Status::InvalidArg, format!("Bad JSON: {}", e)))?;
 
     let msg_mag = magnitude_f32(msg);
     let mut results: HashMap<String, f64> = HashMap::new();
@@ -744,7 +745,11 @@ pub fn classify_with_boosts(
     }
 
     // Sort by score descending
-    scores.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    scores.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     serde_json::to_string(&scores)
         .map_err(|e| napi::Error::new(Status::GenericFailure, format!("JSON error: {}", e)))
@@ -898,10 +903,7 @@ pub fn is_request_tools_call(tool_name: String) -> bool {
 ///
 /// This function handles the structural fallback.
 #[napi]
-pub fn handle_tool_request_structural(
-    capability: String,
-    reason: String,
-) -> String {
+pub fn handle_tool_request_structural(capability: String, reason: String) -> String {
     // Use structural classification on the capability description
     let msg = capability.to_lowercase();
     let mut fallback_scores: Vec<(String, f64)> = Vec::new();
@@ -948,11 +950,8 @@ pub fn handle_tool_request_structural(
     // Register these as active categories
     {
         let mut state = CACHE_STATE.lock();
-        let mut combined: HashSet<String> = state
-            .active_requested_categories
-            .iter()
-            .cloned()
-            .collect();
+        let mut combined: HashSet<String> =
+            state.active_requested_categories.iter().cloned().collect();
         for c in &matched_categories {
             combined.insert(c.clone());
         }
@@ -993,10 +992,7 @@ pub fn handle_tool_request_structural(
 /// Merges matched_categories into the active requested set.
 /// Returns JSON with the formatted response.
 #[napi]
-pub fn apply_tool_request(
-    capability: String,
-    matched_categories: Vec<String>,
-) -> String {
+pub fn apply_tool_request(capability: String, matched_categories: Vec<String>) -> String {
     if matched_categories.is_empty() {
         let all_cats: Vec<&str> = CATEGORIES.keys().copied().collect();
         return serde_json::json!({
@@ -1013,11 +1009,8 @@ pub fn apply_tool_request(
     // Register as active categories
     {
         let mut state = CACHE_STATE.lock();
-        let mut combined: HashSet<String> = state
-            .active_requested_categories
-            .iter()
-            .cloned()
-            .collect();
+        let mut combined: HashSet<String> =
+            state.active_requested_categories.iter().cloned().collect();
         for c in &matched_categories {
             combined.insert(c.clone());
         }

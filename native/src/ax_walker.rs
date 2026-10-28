@@ -76,18 +76,59 @@ struct AxFlatElement {
 static INTERACTIVE_ROLES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     [
         // macOS AX
-        "AXButton", "AXLink", "AXTextField", "AXTextArea", "AXCheckBox", "AXRadioButton",
-        "AXPopUpButton", "AXMenuButton", "AXMenuItem", "AXMenuBarItem", "AXDisclosureTriangle",
-        "AXSlider", "AXIncrementor",
-        "AXComboBox", "AXTabGroup", "AXTab", "AXRow", "AXCell", "AXImage", "AXStaticText",
+        "AXButton",
+        "AXLink",
+        "AXTextField",
+        "AXTextArea",
+        "AXCheckBox",
+        "AXRadioButton",
+        "AXPopUpButton",
+        "AXMenuButton",
+        "AXMenuItem",
+        "AXMenuBarItem",
+        "AXDisclosureTriangle",
+        "AXSlider",
+        "AXIncrementor",
+        "AXComboBox",
+        "AXTabGroup",
+        "AXTab",
+        "AXRow",
+        "AXCell",
+        "AXImage",
+        "AXStaticText",
         // Windows UIA
-        "Button", "Hyperlink", "Edit", "Document", "CheckBox", "RadioButton",
-        "ComboBox", "MenuItem", "Slider", "Tab", "TabItem", "DataItem", "ListItem", "TreeItem",
-        "Image", "Text",
+        "Button",
+        "Hyperlink",
+        "Edit",
+        "Document",
+        "CheckBox",
+        "RadioButton",
+        "ComboBox",
+        "MenuItem",
+        "Slider",
+        "Tab",
+        "TabItem",
+        "DataItem",
+        "ListItem",
+        "TreeItem",
+        "Image",
+        "Text",
         // Linux AT-SPI
-        "push button", "link", "text", "entry", "check box", "radio button",
-        "combo box", "menu item", "slider", "tab", "page tab", "table cell", "table row",
-        "image", "label",
+        "push button",
+        "link",
+        "text",
+        "entry",
+        "check box",
+        "radio button",
+        "combo box",
+        "menu item",
+        "slider",
+        "tab",
+        "page tab",
+        "table cell",
+        "table row",
+        "image",
+        "label",
     ]
     .into_iter()
     .collect()
@@ -111,7 +152,9 @@ fn flatten_recursive(
     path: &mut Vec<u32>,
     depth: u32,
 ) {
-    if depth > MAX_WALK_DEPTH { return; }
+    if depth > MAX_WALK_DEPTH {
+        return;
+    }
     if is_interactive(&node.role) && node.w > 0 && node.h > 0 {
         let label = node.label.as_deref().unwrap_or("").trim().to_string();
         let value = node.value.as_deref().unwrap_or("").trim().to_string();
@@ -122,8 +165,16 @@ fn flatten_recursive(
                 role: node.role.clone().unwrap_or_default(),
                 label,
                 value,
-                bbox: Bbox { x: node.x, y: node.y, w: node.w, h: node.h },
-                center: Center { x: node.x + node.w / 2, y: node.y + node.h / 2 },
+                bbox: Bbox {
+                    x: node.x,
+                    y: node.y,
+                    w: node.w,
+                    h: node.h,
+                },
+                center: Center {
+                    x: node.x + node.w / 2,
+                    y: node.y + node.h / 2,
+                },
                 focusable: node.focusable,
                 enabled: node.enabled,
                 path: path.clone(),
@@ -151,14 +202,19 @@ pub fn ax_flatten_interactive(dump_json: String) -> napi::Result<String> {
     let mut next_id: u64 = 0;
     let mut path: Vec<u32> = Vec::new();
     flatten_recursive(&dump.root, &mut out, &mut next_id, &mut path, 0);
-    serde_json::to_string(&out)
-        .map_err(|e| napi::Error::from_reason(format!("encode failed: {e}")))
+    serde_json::to_string(&out).map_err(|e| napi::Error::from_reason(format!("encode failed: {e}")))
 }
 
 fn score_text(q: &str, hay: &str) -> f64 {
-    if hay.is_empty() { return 0.0; }
-    if hay == q { return 1.0; }
-    if hay.contains(q) || q.contains(hay) { return 0.85; }
+    if hay.is_empty() {
+        return 0.0;
+    }
+    if hay == q {
+        return 1.0;
+    }
+    if hay.contains(q) || q.contains(hay) {
+        return 0.85;
+    }
     // Char-overlap similarity.
     let hay_set: HashSet<char> = hay.chars().collect();
     let q_chars: HashSet<char> = q.chars().collect();
@@ -170,7 +226,11 @@ fn score_text(q: &str, hay: &str) -> f64 {
 /// Find the best label/value match in a previously-flattened element list.
 /// Returns the matching element JSON, or "" if nothing meets min_score.
 #[napi]
-pub fn ax_find_by_label(elements_json: String, query: String, min_score: f64) -> napi::Result<String> {
+pub fn ax_find_by_label(
+    elements_json: String,
+    query: String,
+    min_score: f64,
+) -> napi::Result<String> {
     if query.is_empty() {
         return Ok(String::new());
     }

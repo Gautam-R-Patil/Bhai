@@ -316,7 +316,14 @@ pub fn summarize_old_messages(messages: Vec<MessageInfo>) -> String {
             }
         } else if msg.role == "tool" {
             // Extract first line of tool outputs (usually the most informative)
-            let first_line: String = msg.content.lines().next().unwrap_or("").chars().take(200).collect();
+            let first_line: String = msg
+                .content
+                .lines()
+                .next()
+                .unwrap_or("")
+                .chars()
+                .take(200)
+                .collect();
             if first_line.len() > 20 && !first_line.starts_with('{') {
                 key_outputs.push(first_line);
             }

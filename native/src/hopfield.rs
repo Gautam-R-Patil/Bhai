@@ -18,11 +18,11 @@ const TEMPERATURE: f64 = 0.1; // Lower = sharper retrieval
 #[napi(object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct HopfieldResult {
-    pub pattern_index: i32,        // Index of the closest stored pattern (-1 if no match)
-    pub similarity: f64,           // Cosine similarity to the matched pattern
-    pub iterations: u32,           // Convergence iterations
+    pub pattern_index: i32, // Index of the closest stored pattern (-1 if no match)
+    pub similarity: f64,    // Cosine similarity to the matched pattern
+    pub iterations: u32,    // Convergence iterations
     pub converged: bool,
-    pub energy: f64,               // Final energy (lower = better match)
+    pub energy: f64, // Final energy (lower = better match)
 }
 
 // ── Modern Continuous Hopfield Network ─────────────
@@ -44,7 +44,11 @@ pub fn hopfield_retrieve(
 
     if patterns.is_empty() || query.is_empty() {
         return HopfieldResult {
-            pattern_index: -1, similarity: 0.0, iterations: 0, converged: false, energy: 0.0,
+            pattern_index: -1,
+            similarity: 0.0,
+            iterations: 0,
+            converged: false,
+            energy: 0.0,
         };
     }
 
@@ -63,8 +67,14 @@ pub fn hopfield_retrieve(
         let mut logits: Vec<f64> = Vec::with_capacity(patterns.len());
         for pattern in &patterns {
             let p = pattern.as_ref();
-            if p.len() != dim { continue; }
-            let dot: f64 = state.iter().zip(p.iter()).map(|(&s, &p)| s * p as f64).sum();
+            if p.len() != dim {
+                continue;
+            }
+            let dot: f64 = state
+                .iter()
+                .zip(p.iter())
+                .map(|(&s, &p)| s * p as f64)
+                .sum();
             logits.push(b * dot);
         }
 
@@ -78,7 +88,9 @@ pub fn hopfield_retrieve(
         let mut new_state = vec![0.0f64; dim];
         for (i, pattern) in patterns.iter().enumerate() {
             let p = pattern.as_ref();
-            if i >= weights.len() || p.len() != dim { continue; }
+            if i >= weights.len() || p.len() != dim {
+                continue;
+            }
             let w = weights[i];
             for j in 0..dim {
                 new_state[j] += w * p[j] as f64;
@@ -88,20 +100,30 @@ pub fn hopfield_retrieve(
         // Normalize
         let norm: f64 = new_state.iter().map(|x| x * x).sum::<f64>().sqrt();
         if norm > 1e-10 {
-            for x in &mut new_state { *x /= norm; }
+            for x in &mut new_state {
+                *x /= norm;
+            }
         }
 
         // Compute energy
-        let energy = -logits.iter().zip(weights.iter()).map(|(&l, &w)| w * l).sum::<f64>();
+        let energy = -logits
+            .iter()
+            .zip(weights.iter())
+            .map(|(&l, &w)| w * l)
+            .sum::<f64>();
 
         // Check convergence
-        let state_diff: f64 = state.iter().zip(new_state.iter())
+        let state_diff: f64 = state
+            .iter()
+            .zip(new_state.iter())
             .map(|(&a, &b)| (a - b).powi(2))
             .sum::<f64>();
 
         state = new_state;
 
-        if state_diff < CONVERGENCE_THRESHOLD || (prev_energy - energy).abs() < CONVERGENCE_THRESHOLD {
+        if state_diff < CONVERGENCE_THRESHOLD
+            || (prev_energy - energy).abs() < CONVERGENCE_THRESHOLD
+        {
             converged = true;
             prev_energy = energy;
             break;
@@ -115,8 +137,14 @@ pub fn hopfield_retrieve(
 
     for (i, pattern) in patterns.iter().enumerate() {
         let p = pattern.as_ref();
-        if p.len() != dim { continue; }
-        let sim: f64 = state.iter().zip(p.iter()).map(|(&s, &p)| s * p as f64).sum();
+        if p.len() != dim {
+            continue;
+        }
+        let sim: f64 = state
+            .iter()
+            .zip(p.iter())
+            .map(|(&s, &p)| s * p as f64)
+            .sum();
         if sim > best_sim {
             best_sim = sim;
             best_idx = i as i32;
@@ -147,11 +175,7 @@ pub fn hopfield_batch_retrieve(
 /// Compute the energy of a state given stored patterns.
 /// Lower energy = state is closer to a stored pattern.
 #[napi]
-pub fn hopfield_energy(
-    patterns: Vec<Float32Array>,
-    state: Float32Array,
-    beta: Option<f64>,
-) -> f64 {
+pub fn hopfield_energy(patterns: Vec<Float32Array>, state: Float32Array, beta: Option<f64>) -> f64 {
     let b = beta.unwrap_or(1.0 / TEMPERATURE);
     let s = state.as_ref();
 
@@ -166,16 +190,30 @@ pub fn hopfield_energy(
     // First pass: find max for numerical stability
     for pattern in &patterns {
         let p = pattern.as_ref();
-        if p.len() != dim { continue; }
-        let dot: f64 = s.iter().zip(p.iter()).map(|(&si, &pi)| si as f64 * pi as f64).sum();
-        if b * dot > max_dot { max_dot = b * dot; }
+        if p.len() != dim {
+            continue;
+        }
+        let dot: f64 = s
+            .iter()
+            .zip(p.iter())
+            .map(|(&si, &pi)| si as f64 * pi as f64)
+            .sum();
+        if b * dot > max_dot {
+            max_dot = b * dot;
+        }
     }
 
     // Second pass: log-sum-exp
     for pattern in &patterns {
         let p = pattern.as_ref();
-        if p.len() != dim { continue; }
-        let dot: f64 = s.iter().zip(p.iter()).map(|(&si, &pi)| si as f64 * pi as f64).sum();
+        if p.len() != dim {
+            continue;
+        }
+        let dot: f64 = s
+            .iter()
+            .zip(p.iter())
+            .map(|(&si, &pi)| si as f64 * pi as f64)
+            .sum();
         log_sum_exp += (b * dot - max_dot).exp();
     }
 

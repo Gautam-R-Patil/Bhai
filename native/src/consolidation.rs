@@ -102,16 +102,12 @@ pub fn cluster_by_embedding(
         let mut cluster_indices: Vec<usize> = vec![idx_i];
         assigned.insert(idx_i);
 
-        for j in (i + 1)..with_embeddings.len() {
-            let (idx_j, _) = with_embeddings[j];
+        for &(idx_j, _) in &with_embeddings[i + 1..] {
             if assigned.contains(&idx_j) {
                 continue;
             }
 
-            let sim = cosine_similarity(
-                &memories[idx_i].embedding,
-                &memories[idx_j].embedding,
-            );
+            let sim = cosine_similarity(&memories[idx_i].embedding, &memories[idx_j].embedding);
 
             if sim >= threshold {
                 cluster_indices.push(idx_j);
@@ -120,7 +116,10 @@ pub fn cluster_by_embedding(
         }
 
         // Build cluster
-        let member_ids: Vec<i64> = cluster_indices.iter().map(|&idx| memories[idx].id).collect();
+        let member_ids: Vec<i64> = cluster_indices
+            .iter()
+            .map(|&idx| memories[idx].id)
+            .collect();
         let centroid_content: String = cluster_indices
             .iter()
             .map(|&idx| memories[idx].content.as_str())

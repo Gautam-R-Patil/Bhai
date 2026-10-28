@@ -155,7 +155,12 @@ mod tests {
         fresh();
         let r = mk("r1", vec![1.0, 0.0, 0.0], vec!["*"]);
         monitor_load_rules(vec![r]);
-        let hits = monitor_check(vec![0.9, 0.1, 0.0], "whatsapp".into(), "alice".into(), 1000.0);
+        let hits = monitor_check(
+            vec![0.9, 0.1, 0.0],
+            "whatsapp".into(),
+            "alice".into(),
+            1000.0,
+        );
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].rule_id, "r1");
         assert!(hits[0].score > 0.9);
@@ -166,7 +171,12 @@ mod tests {
         fresh();
         let r = mk("r1", vec![1.0, 0.0, 0.0], vec!["*"]);
         monitor_load_rules(vec![r]);
-        let hits = monitor_check(vec![0.0, 1.0, 0.0], "whatsapp".into(), "alice".into(), 1000.0);
+        let hits = monitor_check(
+            vec![0.0, 1.0, 0.0],
+            "whatsapp".into(),
+            "alice".into(),
+            1000.0,
+        );
         assert_eq!(hits.len(), 0);
     }
 
@@ -203,7 +213,12 @@ mod tests {
         let hits = monitor_check(vec![1.0, 0.0], "whatsapp".into(), "alice".into(), 1500.0);
         assert_eq!(hits.len(), 0);
         // After 61 minutes — cooldown passed
-        let hits2 = monitor_check(vec![1.0, 0.0], "whatsapp".into(), "alice".into(), 1000.0 + 61.0 * 60_000.0);
+        let hits2 = monitor_check(
+            vec![1.0, 0.0],
+            "whatsapp".into(),
+            "alice".into(),
+            1000.0 + 61.0 * 60_000.0,
+        );
         assert_eq!(hits2.len(), 1);
     }
 
@@ -223,7 +238,7 @@ mod tests {
     fn exclude_self_skips_self_sender() {
         fresh();
         let r = mk("anywhere", vec![1.0, 0.0], vec!["*"]);
-        monitor_load_rules(vec![r]);  // exclude_self defaults to true in mk()
+        monitor_load_rules(vec![r]); // exclude_self defaults to true in mk()
         let hits = monitor_check(vec![1.0, 0.0], "whatsapp".into(), "self".into(), 1000.0);
         assert_eq!(hits.len(), 0);
     }
@@ -285,7 +300,12 @@ mod tests {
         fresh();
         let r = mk("r", vec![1.0, 0.0, 0.0], vec!["*"]);
         monitor_load_rules(vec![r]);
-        let hits = monitor_check(vec![0.0, 0.0, 0.0], "whatsapp".into(), "alice".into(), 1000.0);
+        let hits = monitor_check(
+            vec![0.0, 0.0, 0.0],
+            "whatsapp".into(),
+            "alice".into(),
+            1000.0,
+        );
         assert_eq!(hits.len(), 0);
     }
 }

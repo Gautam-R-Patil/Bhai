@@ -36,21 +36,21 @@ pub struct WakeTimeEstimate {
 #[napi(object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct NotificationEntry {
-    pub notification_type: String,  // "briefing" | "thought" | "monitor_alert" | "proactive"
-    pub sent_at_hour: f64,          // Hour of day (0-23.99)
-    pub response_time_mins: f64,    // -1 if no response
-    pub response_type: String,      // "engaged" | "read_no_reply" | "ignored" | ""
-    pub day_of_week: u32,           // 0-6 (Sunday=0)
+    pub notification_type: String, // "briefing" | "thought" | "monitor_alert" | "proactive"
+    pub sent_at_hour: f64,         // Hour of day (0-23.99)
+    pub response_time_mins: f64,   // -1 if no response
+    pub response_type: String,     // "engaged" | "read_no_reply" | "ignored" | ""
+    pub day_of_week: u32,          // 0-6 (Sunday=0)
 }
 
 #[napi(object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct EngagementScore {
     pub notification_type: String,
-    pub engagement_rate: f64,      // 0-1
+    pub engagement_rate: f64, // 0-1
     pub avg_response_time_mins: f64,
-    pub best_hour: f64,            // Hour of day with highest engagement
-    pub best_day: u32,             // Day of week with highest engagement
+    pub best_hour: f64, // Hour of day with highest engagement
+    pub best_day: u32,  // Day of week with highest engagement
     pub sample_size: u32,
 }
 
@@ -60,7 +60,7 @@ pub struct FatigueStatus {
     pub is_fatigued: bool,
     pub recent_notification_count: u32,
     pub recent_engagement_rate: f64,
-    pub recommendation: String,    // "proceed" | "reduce_frequency" | "suppress"
+    pub recommendation: String, // "proceed" | "reduce_frequency" | "suppress"
 }
 
 // ── Wake Time Estimation ───────────────────────────
@@ -97,7 +97,10 @@ pub fn estimate_wake_time(first_message_hours: Vec<f64>) -> WakeTimeEstimate {
     let has_late = hours.iter().any(|&h| h > 22.0);
     let has_early = hours.iter().any(|&h| h < 4.0);
     let adjusted: Vec<f64> = if has_late && has_early {
-        hours.iter().map(|&h| if h > 22.0 { h - 24.0 } else { h }).collect()
+        hours
+            .iter()
+            .map(|&h| if h > 22.0 { h - 24.0 } else { h })
+            .collect()
     } else {
         hours.clone()
     };
@@ -106,11 +109,7 @@ pub fn estimate_wake_time(first_message_hours: Vec<f64>) -> WakeTimeEstimate {
     let mean = adjusted.iter().sum::<f64>() / n;
 
     // Compute stddev
-    let variance = adjusted
-        .iter()
-        .map(|&h| (h - mean).powi(2))
-        .sum::<f64>()
-        / n;
+    let variance = adjusted.iter().map(|&h| (h - mean).powi(2)).sum::<f64>() / n;
     let std_dev = variance.sqrt().max(0.25); // Floor at 15 minutes
 
     // Normalize mean back to 0-24 range
@@ -193,7 +192,9 @@ pub fn compute_engagement_scores(entries: Vec<NotificationEntry>) -> Vec<Engagem
             .max_by(|a, b| {
                 let rate_a = a.1 .0 as f64 / a.1 .1.max(1) as f64;
                 let rate_b = b.1 .0 as f64 / b.1 .1.max(1) as f64;
-                rate_a.partial_cmp(&rate_b).unwrap_or(std::cmp::Ordering::Equal)
+                rate_a
+                    .partial_cmp(&rate_b)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             })
             .map(|(&h, _)| h as f64)
             .unwrap_or(9.0);
@@ -213,7 +214,9 @@ pub fn compute_engagement_scores(entries: Vec<NotificationEntry>) -> Vec<Engagem
             .max_by(|a, b| {
                 let rate_a = a.1 .0 as f64 / a.1 .1.max(1) as f64;
                 let rate_b = b.1 .0 as f64 / b.1 .1.max(1) as f64;
-                rate_a.partial_cmp(&rate_b).unwrap_or(std::cmp::Ordering::Equal)
+                rate_a
+                    .partial_cmp(&rate_b)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             })
             .map(|(&d, _)| d)
             .unwrap_or(1); // Default Monday

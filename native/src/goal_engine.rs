@@ -28,11 +28,11 @@ const CURIOSITY_GAP_THRESHOLD: f64 = 0.3;
 pub struct GoalCandidate {
     pub title: String,
     pub description: String,
-    pub source: String,       // "user_explicit" | "pattern_observed" | "curiosity" | "dream"
+    pub source: String, // "user_explicit" | "pattern_observed" | "curiosity" | "dream"
     pub evidence_strength: f64, // 0-1 how strong the evidence for this goal
     pub user_interest_score: f64, // 0-1 how relevant to user's interests
-    pub feasibility: f64,     // 0-1 how achievable
-    pub urgency: f64,         // 0-1 how time-sensitive
+    pub feasibility: f64, // 0-1 how achievable
+    pub urgency: f64,   // 0-1 how time-sensitive
 }
 
 #[napi(object)]
@@ -67,7 +67,7 @@ pub struct KnowledgeGraphEntity {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct CuriositySignal {
     pub topic: String,
-    pub signal_type: String,   // "knowledge_gap" | "declining_interest" | "unexplored" | "stale_entity"
+    pub signal_type: String, // "knowledge_gap" | "declining_interest" | "unexplored" | "stale_entity"
     pub strength: f64,
     pub reasoning: String,
 }
@@ -112,7 +112,11 @@ pub fn score_goal_priorities(candidates: Vec<GoalCandidate>) -> Vec<GoalPriority
         .collect();
 
     // Sort by priority descending
-    priorities.sort_by(|a, b| b.priority.partial_cmp(&a.priority).unwrap_or(std::cmp::Ordering::Equal));
+    priorities.sort_by(|a, b| {
+        b.priority
+            .partial_cmp(&a.priority)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     priorities
 }
 
@@ -144,7 +148,11 @@ pub fn apply_goal_decay(goals: Vec<ActiveGoal>) -> Vec<Vec<f64>> {
             };
 
             let new_priority = (g.priority - decay_factor * source_factor).max(0.0);
-            let should_abandon = if new_priority < ABANDON_THRESHOLD { 1.0 } else { 0.0 };
+            let should_abandon = if new_priority < ABANDON_THRESHOLD {
+                1.0
+            } else {
+                0.0
+            };
 
             vec![g.id as f64, new_priority, should_abandon]
         })
@@ -191,26 +199,32 @@ pub fn compute_curiosity_signals(
     let avg_connections = if entities.is_empty() {
         0.0
     } else {
-        entities.iter().map(|e| e.connection_count as f64).sum::<f64>() / entities.len() as f64
+        entities
+            .iter()
+            .map(|e| e.connection_count as f64)
+            .sum::<f64>()
+            / entities.len() as f64
     };
 
     for entity in &entities {
         let name_lower = entity.name.to_lowercase();
 
         // Knowledge gap: entity related to interests but poorly connected
-        if interests.iter().any(|i| name_lower.contains(i) || i.contains(&name_lower)) {
-            if (entity.connection_count as f64) < avg_connections * CURIOSITY_GAP_THRESHOLD {
-                signals.push(CuriositySignal {
-                    topic: entity.name.clone(),
-                    signal_type: "knowledge_gap".to_string(),
-                    strength: (1.0 - entity.connection_count as f64 / avg_connections.max(1.0))
-                        .clamp(0.0, 1.0),
-                    reasoning: format!(
-                        "'{}' is related to user interests but has only {} connections (avg: {:.0})",
-                        entity.name, entity.connection_count, avg_connections
-                    ),
-                });
-            }
+        if interests
+            .iter()
+            .any(|i| name_lower.contains(i) || i.contains(&name_lower))
+            && (entity.connection_count as f64) < avg_connections * CURIOSITY_GAP_THRESHOLD
+        {
+            signals.push(CuriositySignal {
+                topic: entity.name.clone(),
+                signal_type: "knowledge_gap".to_string(),
+                strength: (1.0 - entity.connection_count as f64 / avg_connections.max(1.0))
+                    .clamp(0.0, 1.0),
+                reasoning: format!(
+                    "'{}' is related to user interests but has only {} connections (avg: {:.0})",
+                    entity.name, entity.connection_count, avg_connections
+                ),
+            });
         }
 
         // Stale entity: mentioned in interests but not recently discussed
@@ -230,23 +244,28 @@ pub fn compute_curiosity_signals(
         }
 
         // Unexplored: entity type suggests exploration value
-        if entity.entity_type == "project" || entity.entity_type == "tool" {
-            if entity.connection_count < 3 && entity.last_mentioned_days_ago < 7.0 {
-                signals.push(CuriositySignal {
-                    topic: entity.name.clone(),
-                    signal_type: "unexplored".to_string(),
-                    strength: 0.5,
-                    reasoning: format!(
-                        "'{}' ({}) was recently mentioned but barely explored",
-                        entity.name, entity.entity_type
-                    ),
-                });
-            }
+        if (entity.entity_type == "project" || entity.entity_type == "tool")
+            && entity.connection_count < 3
+            && entity.last_mentioned_days_ago < 7.0
+        {
+            signals.push(CuriositySignal {
+                topic: entity.name.clone(),
+                signal_type: "unexplored".to_string(),
+                strength: 0.5,
+                reasoning: format!(
+                    "'{}' ({}) was recently mentioned but barely explored",
+                    entity.name, entity.entity_type
+                ),
+            });
         }
     }
 
     // Sort by strength descending, cap at 10
-    signals.sort_by(|a, b| b.strength.partial_cmp(&a.strength).unwrap_or(std::cmp::Ordering::Equal));
+    signals.sort_by(|a, b| {
+        b.strength
+            .partial_cmp(&a.strength)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     signals.truncate(10);
     signals
 }

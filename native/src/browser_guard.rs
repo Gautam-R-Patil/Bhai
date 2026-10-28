@@ -46,20 +46,20 @@ const HCAPTCHA_PATTERNS: &[&str] = &[
     "hcaptcha.com/captcha",
     "h-captcha",
     "hcaptcha-widget-id",
-    "class=\"h-captcha",   // specific class name, not generic data-sitekey
+    "class=\"h-captcha", // specific class name, not generic data-sitekey
     "data-hcaptcha",
 ];
 
 const RECAPTCHA_V3_PATTERNS: &[&str] = &[
     "recaptcha/api.js?render=",
-    "recaptcha/api.js?hl=",       // parameterised v3 includes
+    "recaptcha/api.js?hl=", // parameterised v3 includes
     "recaptchaenterprise/api.js",
     "grecaptcha.execute",
     "grecaptcha.ready",
     "recaptcha/api2/bframe",
     "recaptcha/api2/anchor",
-    "recaptcha__en.js",           // gstatic bundled v3 script
-    "recaptcha/releases/",        // gstatic release builds
+    "recaptcha__en.js",    // gstatic bundled v3 script
+    "recaptcha/releases/", // gstatic release builds
     "grecaptcha.enterprise",
 ];
 
@@ -89,11 +89,11 @@ pub fn classify_captcha(html: String) -> CaptchaClassification {
 
     // Check patterns in priority order (most distinctive first)
     let checks: &[(&[&str], &str, f64)] = &[
-        (TURNSTILE_PATTERNS,   "turnstile",     0.95),
-        (HCAPTCHA_PATTERNS,    "hcaptcha",      0.90),
-        (RECAPTCHA_V3_PATTERNS,"recaptcha-v3",  0.85),
-        (RECAPTCHA_V2_PATTERNS,"recaptcha-v2",  0.80),
-        (FUNCAPTCHA_PATTERNS,  "funcaptcha",    0.85),
+        (TURNSTILE_PATTERNS, "turnstile", 0.95),
+        (HCAPTCHA_PATTERNS, "hcaptcha", 0.90),
+        (RECAPTCHA_V3_PATTERNS, "recaptcha-v3", 0.85),
+        (RECAPTCHA_V2_PATTERNS, "recaptcha-v2", 0.80),
+        (FUNCAPTCHA_PATTERNS, "funcaptcha", 0.85),
     ];
 
     let mut best_kind = "none".to_string();
@@ -147,35 +147,49 @@ pub struct PopupRiskScore {
 }
 
 const COOKIE_SIGNALS: &[&str] = &[
-    "onetrust", "cookiebot", "quantcast", "cookieconsent",
-    "cookie-consent", "cookie_consent", "gdpr", "ccpa",
-    "didomi", "trustarc", "usercentrics",
-    "data-cc",              // cookieconsent v3
-    "cookielaw.org",        // cookielaw CDN
+    "onetrust",
+    "cookiebot",
+    "quantcast",
+    "cookieconsent",
+    "cookie-consent",
+    "cookie_consent",
+    "gdpr",
+    "ccpa",
+    "didomi",
+    "trustarc",
+    "usercentrics",
+    "data-cc",       // cookieconsent v3
+    "cookielaw.org", // cookielaw CDN
     "consent.cookiefirst",
     "cookie-banner",
     "cookie-notice",
     "cookiehub",
-    "iubenda",              // iubenda consent
+    "iubenda", // iubenda consent
     "termly.io",
     "cookiepro",
 ];
 
 const MODAL_SIGNALS: &[&str] = &[
-    "exit-intent", "exit_intent",
-    "newsletter-popup", "newsletter_popup",
-    "email-capture", "email_capture",
-    "subscribe-modal", "subscribe_modal",
-    "lead-capture", "lead_capture",
-    "popup-overlay", "popup_overlay",
+    "exit-intent",
+    "exit_intent",
+    "newsletter-popup",
+    "newsletter_popup",
+    "email-capture",
+    "email_capture",
+    "subscribe-modal",
+    "subscribe_modal",
+    "lead-capture",
+    "lead_capture",
+    "popup-overlay",
+    "popup_overlay",
     "modal-backdrop",
     "intercom-lightweight-app",
     "hubspot-messages",
     "drift-widget",
     "olark",
-    "klaviyo",              // Klaviyo email capture popups
-    "attentive_overlay",    // Attentive SMS capture
-    "privy",                // Privy popups
+    "klaviyo",           // Klaviyo email capture popups
+    "attentive_overlay", // Attentive SMS capture
+    "privy",             // Privy popups
 ];
 
 /// Score the popup risk of a page from its HTML source.
@@ -202,7 +216,7 @@ pub fn score_popup_risk(html: String) -> PopupRiskScore {
     }
 
     let cookie_prob = (cookie_hits as f64 * 0.35).min(0.95);
-    let modal_prob  = (modal_hits  as f64 * 0.30).min(0.90);
+    let modal_prob = (modal_hits as f64 * 0.30).min(0.90);
 
     PopupRiskScore {
         cookie_banner_prob: cookie_prob,
@@ -258,7 +272,7 @@ pub fn compress_elements_for_llm(
     max_elements: Option<u32>,
 ) -> String {
     let max_text = max_text_len.unwrap_or(40) as usize;
-    let max_els  = max_elements.unwrap_or(80) as usize;
+    let max_els = max_elements.unwrap_or(80) as usize;
 
     if elements.is_empty() {
         return "No interactive elements.".to_string();
@@ -275,45 +289,72 @@ pub fn compress_elements_for_llm(
     // For each pair, keep the element with richer text (more descriptive for LLM).
 
     // Classify elements as interactive (has rich semantic role)
-    const INTERACTIVE_TAGS: &[&str] = &["button","a","input","select","textarea","summary","details"];
-    const INTERACTIVE_ROLES: &[&str] = &["button","link","tab","menuitem","checkbox","radio","switch",
-        "option","combobox","listbox","treeitem","slider","spinbutton","textbox","searchbox"];
+    const INTERACTIVE_TAGS: &[&str] = &[
+        "button", "a", "input", "select", "textarea", "summary", "details",
+    ];
+    const INTERACTIVE_ROLES: &[&str] = &[
+        "button",
+        "link",
+        "tab",
+        "menuitem",
+        "checkbox",
+        "radio",
+        "switch",
+        "option",
+        "combobox",
+        "listbox",
+        "treeitem",
+        "slider",
+        "spinbutton",
+        "textbox",
+        "searchbox",
+    ];
 
     let is_interactive = |el: &ElementForCompression| -> bool {
-        INTERACTIVE_TAGS.contains(&el.tag.as_str()) ||
-        INTERACTIVE_ROLES.iter().any(|r| el.tag == *r)
+        INTERACTIVE_TAGS.contains(&el.tag.as_str())
+            || INTERACTIVE_ROLES.iter().any(|r| el.tag == *r)
     };
 
     let mut containment_removed: Vec<bool> = vec![false; elements.len()];
 
     if elements.iter().any(|e| e.width > 0.0 && e.height > 0.0) {
         for i in 0..elements.len() {
-            if containment_removed[i] { continue; }
+            if containment_removed[i] {
+                continue;
+            }
             let a = &elements[i];
-            if a.width <= 0.0 || a.height <= 0.0 { continue; }
+            if a.width <= 0.0 || a.height <= 0.0 {
+                continue;
+            }
             let a_left = a.x - a.width / 2.0;
-            let a_top  = a.y - a.height / 2.0;
+            let a_top = a.y - a.height / 2.0;
             let a_right = a.x + a.width / 2.0;
-            let a_bot   = a.y + a.height / 2.0;
-            let a_area  = a.width * a.height;
+            let a_bot = a.y + a.height / 2.0;
+            let a_area = a.width * a.height;
             let a_interactive = is_interactive(a);
 
             for j in (i + 1)..elements.len() {
-                if containment_removed[j] { continue; }
+                if containment_removed[j] {
+                    continue;
+                }
                 let b = &elements[j];
-                if b.width <= 0.0 || b.height <= 0.0 { continue; }
+                if b.width <= 0.0 || b.height <= 0.0 {
+                    continue;
+                }
                 let b_left = b.x - b.width / 2.0;
-                let b_top  = b.y - b.height / 2.0;
+                let b_top = b.y - b.height / 2.0;
                 let b_right = b.x + b.width / 2.0;
-                let b_bot   = b.y + b.height / 2.0;
-                let b_area  = b.width * b.height;
+                let b_bot = b.y + b.height / 2.0;
+                let b_area = b.width * b.height;
                 let b_interactive = is_interactive(b);
 
                 // Intersection area
                 let ix = (a_right.min(b_right) - a_left.max(b_left)).max(0.0);
-                let iy = (a_bot.min(b_bot)     - a_top.max(b_top)).max(0.0);
+                let iy = (a_bot.min(b_bot) - a_top.max(b_top)).max(0.0);
                 let inter = ix * iy;
-                if inter <= 0.0 { continue; }
+                if inter <= 0.0 {
+                    continue;
+                }
 
                 let overlap_a = inter / a_area;
                 let overlap_b = inter / b_area;
@@ -333,17 +374,32 @@ pub fn compress_elements_for_llm(
                 } else {
                     // Tier A: one is non-interactive → 95% threshold
                     // Exempt non-interactive elements that have their own semantic value
-                    let non_int = if !a_interactive { Some(i) } else if !b_interactive { Some(j) } else { None };
+                    let non_int = if !a_interactive {
+                        Some(i)
+                    } else if !b_interactive {
+                        Some(j)
+                    } else {
+                        None
+                    };
                     if let Some(ni) = non_int {
                         let ne = &elements[ni];
                         // Exempt form inputs, aria-bearing, and labelled elements
-                        let is_form = ["input","select","textarea","label"].contains(&ne.tag.as_str());
-                        let has_aria = ne.text.contains("aria") || ne.text.contains("label=") || ne.text.contains('[');
+                        let is_form =
+                            ["input", "select", "textarea", "label"].contains(&ne.tag.as_str());
+                        let has_aria = ne.text.contains("aria")
+                            || ne.text.contains("label=")
+                            || ne.text.contains('[');
                         if !is_form && !has_aria {
-                            let contained = if ni == i { overlap_a >= 0.95 } else { overlap_b >= 0.95 };
+                            let contained = if ni == i {
+                                overlap_a >= 0.95
+                            } else {
+                                overlap_b >= 0.95
+                            };
                             if contained {
                                 containment_removed[ni] = true;
-                                if ni == i { break; }
+                                if ni == i {
+                                    break;
+                                }
                             }
                         }
                     }
@@ -352,7 +408,8 @@ pub fn compress_elements_for_llm(
         }
     }
 
-    let after_containment: Vec<&ElementForCompression> = elements.iter()
+    let after_containment: Vec<&ElementForCompression> = elements
+        .iter()
         .enumerate()
         .filter(|(i, _)| !containment_removed[*i])
         .map(|(_, e)| e)
@@ -364,10 +421,16 @@ pub fn compress_elements_for_llm(
 
     for el in &after_containment {
         let text_lo = el.text.trim().to_lowercase();
-        let text_key = if text_lo.len() > max_text { &text_lo[..max_text] } else { &text_lo };
+        let text_key = if text_lo.len() > max_text {
+            &text_lo[..max_text]
+        } else {
+            &text_lo
+        };
         let is_dup = seen_spatial.iter().any(|(t, tx, sx, sy)| {
-            *t == el.tag && tx.as_str() == text_key
-                && (sx - el.x).abs() < 30.0 && (sy - el.y).abs() < 30.0
+            *t == el.tag
+                && tx.as_str() == text_key
+                && (sx - el.x).abs() < 30.0
+                && (sy - el.y).abs() < 30.0
         });
         if !is_dup {
             seen_spatial.push((el.tag.clone(), text_key.to_string(), el.x, el.y));
@@ -384,24 +447,45 @@ pub fn compress_elements_for_llm(
     }
     let mut groups: Vec<Group> = Vec::new();
     for el in &deduped {
-        let text_trunc = if el.text.len() > max_text { &el.text[..max_text] } else { &el.text };
+        let text_trunc = if el.text.len() > max_text {
+            &el.text[..max_text]
+        } else {
+            &el.text
+        };
         if let Some(last) = groups.last_mut() {
-            let last_trunc = if last.el.text.len() > max_text { &last.el.text[..max_text] } else { &last.el.text };
+            let last_trunc = if last.el.text.len() > max_text {
+                &last.el.text[..max_text]
+            } else {
+                &last.el.text
+            };
             if last.el.tag == el.tag && last_trunc == text_trunc && last.count < 5 {
                 last.last_label = el.label;
                 last.count += 1;
                 continue;
             }
         }
-        groups.push(Group { first_label: el.label, last_label: el.label, count: 1, el });
+        groups.push(Group {
+            first_label: el.label,
+            last_label: el.label,
+            count: 1,
+            el,
+        });
     }
 
     // ── Step 4: format using OpenCLI [N]<tag>text convention ────────────────
     // Saves ~15% tokens vs [N] tag "text" by removing quotes and old format.
     let mut lines = Vec::new();
     for g in groups.iter().take(max_els) {
-        let raw_text = if g.el.text.len() > max_text { &g.el.text[..max_text] } else { &g.el.text };
-        let text = raw_text.trim().replace('\n', " ").replace('\r', "").replace("  ", " ");
+        let raw_text = if g.el.text.len() > max_text {
+            &g.el.text[..max_text]
+        } else {
+            &g.el.text
+        };
+        let text = raw_text
+            .trim()
+            .replace('\n', " ")
+            .replace('\r', "")
+            .replace("  ", " ");
 
         let line = if let Some(ref et) = g.el.editor_type {
             format!("[{}]<code-editor:{}>", g.first_label, et)
@@ -409,9 +493,15 @@ pub fn compress_elements_for_llm(
             format!("[{}]<ocr>{}", g.first_label, text)
         } else if g.count > 1 {
             if text.is_empty() {
-                format!("[{}..{}×{}]<{}>", g.first_label, g.last_label, g.count, g.el.tag)
+                format!(
+                    "[{}..{}×{}]<{}>",
+                    g.first_label, g.last_label, g.count, g.el.tag
+                )
             } else {
-                format!("[{}..{}×{}]<{}>{}", g.first_label, g.last_label, g.count, g.el.tag, text)
+                format!(
+                    "[{}..{}×{}]<{}>{}",
+                    g.first_label, g.last_label, g.count, g.el.tag, text
+                )
             }
         } else if text.is_empty() {
             format!("[{}]<{}>", g.first_label, g.el.tag)
@@ -422,7 +512,10 @@ pub fn compress_elements_for_llm(
     }
 
     if groups.len() > max_els {
-        lines.push(format!("... +{} more (use browser_scroll to see more)", groups.len() - max_els));
+        lines.push(format!(
+            "... +{} more (use browser_scroll to see more)",
+            groups.len() - max_els
+        ));
     }
 
     lines.join("\n")
@@ -451,11 +544,16 @@ pub fn djb2_element_hash(descriptor: String) -> u32 {
 /// More efficient than N individual calls for large element lists.
 #[napi]
 pub fn djb2_batch_hash(descriptors: Vec<String>) -> Vec<u32> {
-    descriptors.iter().map(|d| {
-        let mut h: u32 = 5381;
-        for b in d.bytes() { h = h.wrapping_mul(33).wrapping_add(b as u32); }
-        h
-    }).collect()
+    descriptors
+        .iter()
+        .map(|d| {
+            let mut h: u32 = 5381;
+            for b in d.bytes() {
+                h = h.wrapping_mul(33).wrapping_add(b as u32);
+            }
+            h
+        })
+        .collect()
 }
 
 /// Generate the JS string for element hashing in-page (injected via evaluate).
@@ -483,16 +581,17 @@ pub fn get_element_hash_js() -> String {
 #[napi]
 pub fn get_stealth_init_script(session_seed: u32) -> String {
     // Session-scoped obfuscated variable names — change every session
-    let v_guard   = format!("_{:x}g", (session_seed ^ 0xA5F3) & 0xFFFF);
+    let v_guard = format!("_{:x}g", (session_seed ^ 0xA5F3) & 0xFFFF);
     let v_plugins = format!("_{:x}p", (session_seed ^ 0x3C21) & 0xFFFF);
-    let v_perm    = format!("_{:x}q", (session_seed ^ 0x7E9B) & 0xFFFF);
-    let v_wm      = format!("_{:x}w", (session_seed ^ 0x1D4E) & 0xFFFF);  // WeakMap for toString disguise
-    let v_orig_ts = format!("_{:x}t", (session_seed ^ 0xF2A1) & 0xFFFF);  // original toString
-    let v_disguis = format!("_{:x}d", (session_seed ^ 0xC3B8) & 0xFFFF);  // disguise function
-    let v_chrome  = format!("_{:x}c", (session_seed ^ 0x8E76) & 0xFFFF);  // chrome stub
-    let v_debug_re= format!("_{:x}r", (session_seed ^ 0x6F4D) & 0xFFFF);  // debugger regex
+    let v_perm = format!("_{:x}q", (session_seed ^ 0x7E9B) & 0xFFFF);
+    let v_wm = format!("_{:x}w", (session_seed ^ 0x1D4E) & 0xFFFF); // WeakMap for toString disguise
+    let v_orig_ts = format!("_{:x}t", (session_seed ^ 0xF2A1) & 0xFFFF); // original toString
+    let v_disguis = format!("_{:x}d", (session_seed ^ 0xC3B8) & 0xFFFF); // disguise function
+    let v_chrome = format!("_{:x}c", (session_seed ^ 0x8E76) & 0xFFFF); // chrome stub
+    let v_debug_re = format!("_{:x}r", (session_seed ^ 0x6F4D) & 0xFFFF); // debugger regex
 
-    format!(r#"(function() {{
+    format!(
+        r#"(function() {{
   // ── Guard: run once per page load ──────────────────────────────────────────
   // Use EventTarget.prototype as anchor — unlikely to be scanned by anti-bot.
   // Non-enumerable so Object.keys won't expose it.
@@ -662,9 +761,14 @@ pub fn get_stealth_init_script(session_seed: u32) -> String {
     }});
   }}
 }})();"#,
-        v_guard=v_guard, v_plugins=v_plugins, v_perm=v_perm,
-        v_wm=v_wm, v_orig_ts=v_orig_ts, v_disguis=v_disguis,
-        v_chrome=v_chrome, v_debug_re=v_debug_re
+        v_guard = v_guard,
+        v_plugins = v_plugins,
+        v_perm = v_perm,
+        v_wm = v_wm,
+        v_orig_ts = v_orig_ts,
+        v_disguis = v_disguis,
+        v_chrome = v_chrome,
+        v_debug_re = v_debug_re
     )
 }
 
@@ -705,11 +809,17 @@ pub fn get_stealth_user_agent(platform: String, session_seed: u32) -> String {
     } else {
         // Detect at compile time
         #[cfg(target_os = "macos")]
-        { &*CHROME_UAS_MAC }
+        {
+            &*CHROME_UAS_MAC
+        }
         #[cfg(target_os = "windows")]
-        { &*CHROME_UAS_WIN }
+        {
+            &*CHROME_UAS_WIN
+        }
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-        { &*CHROME_UAS_LINUX }
+        {
+            &*CHROME_UAS_LINUX
+        }
     };
     let idx = (session_seed as usize) % list.len();
     list[idx].to_string()
@@ -731,10 +841,10 @@ pub fn human_typing_delay_ms(char_code: u32, base_wpm: u32) -> u32 {
     let delay = base_ms as i32 + (base_ms as i32 * jitter_pct / 100);
     // Extra delay for: space (small pause), punctuation/numbers (longer)
     let extra = match char_code {
-        32 => 40,             // space — short phrase boundary
-        13 | 10 => 80,        // Enter — sentence boundary
+        32 => 40,                // space — short phrase boundary
+        13 | 10 => 80,           // Enter — sentence boundary
         46 | 44 | 33 | 63 => 60, // . , ! ? — end of sentence
-        48..=57 => 25,        // digits — slightly slower
+        48..=57 => 25,           // digits — slightly slower
         _ => 0,
     };
     (delay.max(20) as u32) + extra
@@ -748,9 +858,13 @@ pub fn human_click_dwell_ms(element_area: f64, seed: u32) -> u32 {
     // Base dwell: 150-350ms
     let base = 150u32 + (seed % 200);
     // Small elements get extra dwell (user aims more carefully)
-    let extra = if element_area < 400.0 { 80 }
-                else if element_area < 1600.0 { 40 }
-                else { 0 };
+    let extra = if element_area < 400.0 {
+        80
+    } else if element_area < 1600.0 {
+        40
+    } else {
+        0
+    };
     base + extra
 }
 
@@ -759,16 +873,24 @@ pub fn human_click_dwell_ms(element_area: f64, seed: u32) -> u32 {
 /// Real humans: fast movement → slow down near target (Fitts's law).
 #[napi]
 pub fn human_mouse_params(
-    start_x: f64, start_y: f64,
-    end_x: f64,   end_y: f64,
+    start_x: f64,
+    start_y: f64,
+    end_x: f64,
+    end_y: f64,
     seed: u32,
-) -> Vec<f64> { // [steps, pre_click_pause_ms]
+) -> Vec<f64> {
+    // [steps, pre_click_pause_ms]
     let dist = ((end_x - start_x).powi(2) + (end_y - start_y).powi(2)).sqrt();
     // Fitts's law: more steps for longer distance, fewer for short hops
-    let steps = if dist < 50.0 { 3u32 }
-                else if dist < 200.0 { 6 + seed % 4 }
-                else if dist < 500.0 { 10 + seed % 6 }
-                else { 14 + seed % 8 };
+    let steps = if dist < 50.0 {
+        3u32
+    } else if dist < 200.0 {
+        6 + seed % 4
+    } else if dist < 500.0 {
+        10 + seed % 6
+    } else {
+        14 + seed % 8
+    };
     let pause = 120u32 + (seed % 80);
     vec![steps as f64, pause as f64]
 }

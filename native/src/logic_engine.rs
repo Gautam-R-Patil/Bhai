@@ -15,7 +15,7 @@ use std::collections::{HashMap, HashSet};
 pub struct Proposition {
     pub id: String,
     pub text: String,
-    pub truth_value: Option<bool>,  // None = unknown
+    pub truth_value: Option<bool>, // None = unknown
     pub confidence: f64,
 }
 
@@ -30,7 +30,7 @@ pub struct LogicClause {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ConsistencyResult {
     pub is_consistent: bool,
-    pub contradictions: Vec<String>,  // Pairs of contradicting proposition IDs
+    pub contradictions: Vec<String>, // Pairs of contradicting proposition IDs
     pub unsatisfied_clauses: Vec<u32>,
 }
 
@@ -38,8 +38,8 @@ pub struct ConsistencyResult {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct VerificationResult {
     pub is_valid: bool,
-    pub score: f64,            // 0-1 logical soundness
-    pub issues: Vec<String>,   // Specific logical issues found
+    pub score: f64,          // 0-1 logical soundness
+    pub issues: Vec<String>, // Specific logical issues found
 }
 
 // ── SAT Solver (DPLL) ──────────────────────────────
@@ -61,7 +61,9 @@ pub fn check_satisfiability(clauses: Vec<LogicClause>, num_variables: u32) -> Co
         }
     } else {
         // Find which clauses are unsatisfied
-        let unsatisfied: Vec<u32> = cnf.iter().enumerate()
+        let unsatisfied: Vec<u32> = cnf
+            .iter()
+            .enumerate()
             .filter(|(_, clause)| !clause_satisfied(clause, &assignment))
             .map(|(i, _)| i as u32)
             .collect();
@@ -86,7 +88,8 @@ fn dpll(clauses: &[Vec<i32>], assignment: &mut HashMap<u32, bool>, n: u32) -> bo
 
     // Unit propagation
     for clause in clauses {
-        let unassigned: Vec<i32> = clause.iter()
+        let unassigned: Vec<i32> = clause
+            .iter()
             .filter(|&&lit| !assignment.contains_key(&(lit.unsigned_abs())))
             .copied()
             .collect();
@@ -104,10 +107,14 @@ fn dpll(clauses: &[Vec<i32>], assignment: &mut HashMap<u32, bool>, n: u32) -> bo
         Some(v) => {
             // Try true
             assignment.insert(v, true);
-            if dpll(clauses, assignment, n) { return true; }
+            if dpll(clauses, assignment, n) {
+                return true;
+            }
             // Try false
             assignment.insert(v, false);
-            if dpll(clauses, assignment, n) { return true; }
+            if dpll(clauses, assignment, n) {
+                return true;
+            }
             assignment.remove(&v);
             false
         }
@@ -118,14 +125,14 @@ fn dpll(clauses: &[Vec<i32>], assignment: &mut HashMap<u32, bool>, n: u32) -> bo
 fn clause_satisfied(clause: &[i32], assignment: &HashMap<u32, bool>) -> bool {
     clause.iter().any(|&lit| {
         let var = lit.unsigned_abs();
-        assignment.get(&var).map_or(false, |&val| (lit > 0) == val)
+        assignment.get(&var).is_some_and(|&val| (lit > 0) == val)
     })
 }
 
 fn clause_falsified(clause: &[i32], assignment: &HashMap<u32, bool>) -> bool {
     clause.iter().all(|&lit| {
         let var = lit.unsigned_abs();
-        assignment.get(&var).map_or(false, |&val| (lit > 0) != val)
+        assignment.get(&var).is_some_and(|&val| (lit > 0) != val)
     })
 }
 
@@ -161,11 +168,13 @@ pub fn check_proposition_consistency(propositions: Vec<Proposition>) -> Consiste
 
 fn topics_match(a: &str, b: &str) -> bool {
     // Simple word overlap check for topic matching
-    let words_a: HashSet<&str> = a.split_whitespace()
+    let words_a: HashSet<&str> = a
+        .split_whitespace()
         .filter(|w| w.len() > 3)
         .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()))
         .collect();
-    let words_b: HashSet<&str> = b.split_whitespace()
+    let words_b: HashSet<&str> = b
+        .split_whitespace()
         .filter(|w| w.len() > 3)
         .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()))
         .collect();
@@ -173,7 +182,9 @@ fn topics_match(a: &str, b: &str) -> bool {
     let intersection = words_a.intersection(&words_b).count();
     let union = words_a.union(&words_b).count();
 
-    if union == 0 { return false; }
+    if union == 0 {
+        return false;
+    }
     (intersection as f64 / union as f64) > 0.5
 }
 
@@ -203,14 +214,18 @@ pub fn verify_reasoning_chain(
         if steps[i].confidence > steps[i - 1].confidence + 0.3 {
             issues.push(format!(
                 "Step {} confidence jump: {:.2} → {:.2}",
-                i + 1, steps[i - 1].confidence, steps[i].confidence
+                i + 1,
+                steps[i - 1].confidence,
+                steps[i].confidence
             ));
             score -= 0.1;
         }
     }
 
     // Check conclusion confidence vs step confidence
-    let avg_step_conf = if steps.is_empty() { 0.0 } else {
+    let avg_step_conf = if steps.is_empty() {
+        0.0
+    } else {
         steps.iter().map(|s| s.confidence).sum::<f64>() / steps.len() as f64
     };
     if conclusion_confidence > avg_step_conf + 0.2 {

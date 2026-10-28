@@ -54,7 +54,10 @@ impl Drop for AppContainerSid {
 unsafe impl Send for AppContainerSid {}
 
 fn to_wide(s: &str) -> Vec<u16> {
-    OsString::from(s).encode_wide().chain(std::iter::once(0)).collect()
+    OsString::from(s)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
 }
 
 /// Idempotently get or create the AppContainer profile for `slug`. Returns
@@ -83,7 +86,7 @@ pub fn ensure_profile(slug: &str) -> io::Result<AppContainerSid> {
         return Ok(AppContainerSid { sid });
     }
 
-    let already_exists = hr == hresult_from_win32(ERROR_ALREADY_EXISTS as u32);
+    let already_exists = hr == hresult_from_win32(ERROR_ALREADY_EXISTS);
     if !already_exists {
         return Err(io::Error::from_raw_os_error(hr));
     }
@@ -125,7 +128,10 @@ mod tests {
     fn ensure_profile_returns_a_sid() {
         let sid = ensure_profile("test_slug_1").expect("ensure profile");
         let s = sid_to_string(&sid).expect("sid to string");
-        assert!(s.starts_with("S-1-15-"), "expected AppContainer SID prefix, got {s}");
+        assert!(
+            s.starts_with("S-1-15-"),
+            "expected AppContainer SID prefix, got {s}"
+        );
     }
 
     #[test]

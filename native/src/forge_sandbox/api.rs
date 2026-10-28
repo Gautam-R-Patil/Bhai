@@ -8,7 +8,7 @@
 use crate::forge_sandbox::common::parse_capabilities;
 use crate::forge_sandbox::pool::{Pool, SpawnError};
 use crate::forge_sandbox::strikes::StrikeBoard;
-use crate::forge_sandbox::{Capabilities, make_sandbox};
+use crate::forge_sandbox::{make_sandbox, Capabilities};
 use napi_derive::napi;
 use once_cell::sync::OnceCell;
 use std::path::PathBuf;
@@ -84,12 +84,24 @@ pub async fn forge_invoke_tool(
 
     let caps: Capabilities = match parse_capabilities(&capabilities_json) {
         Ok(c) => c,
-        Err(e) => return Ok(err_result("spawn_failed", format!("capabilities parse: {e}"), None)),
+        Err(e) => {
+            return Ok(err_result(
+                "spawn_failed",
+                format!("capabilities parse: {e}"),
+                None,
+            ))
+        }
     };
 
     let input: serde_json::Value = match serde_json::from_str(&input_json) {
         Ok(v) => v,
-        Err(e) => return Ok(err_result("ipc_corruption", format!("input parse: {e}"), None)),
+        Err(e) => {
+            return Ok(err_result(
+                "ipc_corruption",
+                format!("input parse: {e}"),
+                None,
+            ))
+        }
     };
 
     let handler_dir = PathBuf::from(handler_dir);
@@ -146,13 +158,31 @@ pub async fn forge_invoke_tool(
         Ok(resp) => {
             let ok = resp.get("ok").and_then(|o| o.as_bool()).unwrap_or(false);
             if ok {
-                let result_val = resp.get("result").cloned().unwrap_or(serde_json::Value::Null);
+                let result_val = resp
+                    .get("result")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
                 ok_result(result_val)
             } else {
-                let error = resp.get("error").cloned().unwrap_or(serde_json::Value::Null);
-                let kind = error.get("kind").and_then(|k| k.as_str()).unwrap_or("handler_error").to_string();
-                let message = error.get("message").and_then(|m| m.as_str()).unwrap_or("").to_string();
-                let code = error.get("code").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                let error = resp
+                    .get("error")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                let kind = error
+                    .get("kind")
+                    .and_then(|k| k.as_str())
+                    .unwrap_or("handler_error")
+                    .to_string();
+                let message = error
+                    .get("message")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let code = error
+                    .get("code")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 if kind == "cap_denied" || matches!(code.as_str(), "EACCES" | "EPERM") {
                     let _ = strikes().record(&slug, strike_window());
                 }

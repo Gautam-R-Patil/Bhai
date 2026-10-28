@@ -22,16 +22,16 @@ const MIN_VISITS_FOR_EXPANSION: u32 = 2;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MCTSNode {
     pub id: u32,
-    pub parent_id: i32,          // -1 for root
-    pub action: String,           // The action/step this node represents
-    pub state_summary: String,    // Brief state description after this action
+    pub parent_id: i32,        // -1 for root
+    pub action: String,        // The action/step this node represents
+    pub state_summary: String, // Brief state description after this action
     pub depth: u32,
     pub visit_count: u32,
-    pub total_reward: f64,        // Sum of all backpropagated rewards
-    pub prior_score: f64,         // Initial quality estimate (from PRM or LLM)
+    pub total_reward: f64, // Sum of all backpropagated rewards
+    pub prior_score: f64,  // Initial quality estimate (from PRM or LLM)
     pub children_ids: Vec<u32>,
-    pub is_terminal: bool,        // Leaf node (task complete or failed)
-    pub is_expanded: bool,        // Whether children have been generated
+    pub is_terminal: bool, // Leaf node (task complete or failed)
+    pub is_expanded: bool, // Whether children have been generated
 }
 
 #[napi(object)]
@@ -39,7 +39,7 @@ pub struct MCTSNode {
 pub struct MCTSTree {
     pub nodes: Vec<MCTSNode>,
     pub next_id: u32,
-    pub best_path: Vec<u32>,      // IDs of nodes in the current best path
+    pub best_path: Vec<u32>, // IDs of nodes in the current best path
     pub total_simulations: u32,
 }
 
@@ -47,7 +47,7 @@ pub struct MCTSTree {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SelectionResult {
     pub node_id: u32,
-    pub path: Vec<u32>,           // Path from root to selected node
+    pub path: Vec<u32>, // Path from root to selected node
     pub needs_expansion: bool,
     pub ucb_score: f64,
 }
@@ -118,12 +118,7 @@ pub fn select_node(tree: MCTSTree, exploration_constant: Option<f64>) -> Selecti
     let mut current_id = 0u32; // Start at root
     let mut path = vec![0u32];
 
-    loop {
-        let node = match tree.nodes.iter().find(|n| n.id == current_id) {
-            Some(n) => n,
-            None => break,
-        };
-
+    while let Some(node) = tree.nodes.iter().find(|n| n.id == current_id) {
         // If node is terminal or not yet expanded, select it
         if node.is_terminal || !node.is_expanded || node.children_ids.is_empty() {
             return SelectionResult {
@@ -194,29 +189,40 @@ pub fn expand_node(
     prior_scores: Vec<f64>,
 ) -> ExpandResult {
     if tree.nodes.len() >= MAX_TREE_NODES {
-        return ExpandResult { new_ids: vec![], tree };
+        return ExpandResult {
+            new_ids: vec![],
+            tree,
+        };
     }
 
-    let parent_depth = tree.nodes.iter()
+    let parent_depth = tree
+        .nodes
+        .iter()
         .find(|n| n.id == parent_id)
         .map(|n| n.depth)
         .unwrap_or(0);
 
     if parent_depth >= MAX_TREE_DEPTH {
-        return ExpandResult { new_ids: vec![], tree };
+        return ExpandResult {
+            new_ids: vec![],
+            tree,
+        };
     }
 
-    let n = actions.len().min(state_summaries.len()).min(prior_scores.len());
+    let n = actions
+        .len()
+        .min(state_summaries.len())
+        .min(prior_scores.len());
     let mut new_ids = Vec::with_capacity(n);
 
-    for i in 0..n {
+    for (i, action) in actions.iter().enumerate().take(n) {
         let child_id = tree.next_id;
         tree.next_id += 1;
 
         let child = MCTSNode {
             id: child_id,
             parent_id: parent_id as i32,
-            action: actions[i].clone(),
+            action: action.clone(),
             state_summary: state_summaries.get(i).cloned().unwrap_or_default(),
             depth: parent_depth + 1,
             visit_count: 0,
@@ -265,9 +271,16 @@ pub fn backpropagate(mut tree: MCTSTree, leaf_id: u32, reward: f64) -> BackpropR
 
     // Recompute best path
     let best_path = compute_best_path(&tree.nodes);
-    let best_reward = best_path.last()
+    let best_reward = best_path
+        .last()
         .and_then(|&id| tree.nodes.iter().find(|n| n.id == id))
-        .map(|n| if n.visit_count > 0 { n.total_reward / n.visit_count as f64 } else { 0.0 })
+        .map(|n| {
+            if n.visit_count > 0 {
+                n.total_reward / n.visit_count as f64
+            } else {
+                0.0
+            }
+        })
         .unwrap_or(0.0);
 
     let old_best = tree.best_path.clone();
@@ -286,12 +299,7 @@ fn compute_best_path(nodes: &[MCTSNode]) -> Vec<u32> {
     let mut path = vec![0u32]; // Start at root
     let mut current_id = 0u32;
 
-    loop {
-        let node = match nodes.iter().find(|n| n.id == current_id) {
-            Some(n) => n,
-            None => break,
-        };
-
+    while let Some(node) = nodes.iter().find(|n| n.id == current_id) {
         if node.children_ids.is_empty() {
             break;
         }
@@ -400,7 +408,11 @@ pub struct MCTSStats {
 #[napi]
 pub fn get_mcts_stats(tree: MCTSTree) -> MCTSStats {
     let max_depth = tree.nodes.iter().map(|n| n.depth).max().unwrap_or(0);
-    let non_leaf_count = tree.nodes.iter().filter(|n| !n.children_ids.is_empty()).count();
+    let non_leaf_count = tree
+        .nodes
+        .iter()
+        .filter(|n| !n.children_ids.is_empty())
+        .count();
     let total_children: usize = tree.nodes.iter().map(|n| n.children_ids.len()).sum();
     let avg_branching = if non_leaf_count > 0 {
         total_children as f64 / non_leaf_count as f64
@@ -408,7 +420,9 @@ pub fn get_mcts_stats(tree: MCTSTree) -> MCTSStats {
         0.0
     };
 
-    let best_path_rewards: Vec<f64> = tree.best_path.iter()
+    let best_path_rewards: Vec<f64> = tree
+        .best_path
+        .iter()
         .filter_map(|&id| tree.nodes.iter().find(|n| n.id == id))
         .filter(|n| n.visit_count > 0)
         .map(|n| n.total_reward / n.visit_count as f64)
@@ -433,7 +447,8 @@ pub fn get_mcts_stats(tree: MCTSTree) -> MCTSStats {
 /// Returns the actions along the best path (excluding root).
 #[napi]
 pub fn extract_best_plan(tree: MCTSTree) -> Vec<String> {
-    tree.best_path.iter()
+    tree.best_path
+        .iter()
         .skip(1) // Skip root
         .filter_map(|&id| tree.nodes.iter().find(|n| n.id == id))
         .map(|n| n.action.clone())

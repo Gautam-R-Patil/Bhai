@@ -38,9 +38,15 @@ pub fn source_gate_check(source: String, min_gap_sec: u32) -> GateResult {
     let min = (min_gap_sec as f64) * 1000.0;
     if gap >= min {
         st.insert(source, now);
-        GateResult { may_run: true, next_eligible_ms: now + min }
+        GateResult {
+            may_run: true,
+            next_eligible_ms: now + min,
+        }
     } else {
-        GateResult { may_run: false, next_eligible_ms: last + min }
+        GateResult {
+            may_run: false,
+            next_eligible_ms: last + min,
+        }
     }
 }
 

@@ -155,6 +155,9 @@ mod tests {
         }
         let caps = caps_with(vec![], vec![]);
         let err = build_ruleset(&caps, true).expect_err("strict + unsupported kernel must fail");
-        assert!(matches!(err, LandlockBuildError::NotSupported | LandlockBuildError::StrictFallback));
+        assert!(matches!(
+            err,
+            LandlockBuildError::NotSupported | LandlockBuildError::StrictFallback
+        ));
     }
 }

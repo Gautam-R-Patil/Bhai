@@ -25,7 +25,9 @@ fn cosine(a: &[f64], b: &[f64]) -> f64 {
         na += a[i] * a[i];
         nb += b[i] * b[i];
     }
-    if na == 0.0 || nb == 0.0 { return 0.0; }
+    if na == 0.0 || nb == 0.0 {
+        return 0.0;
+    }
     dot / (na.sqrt() * nb.sqrt())
 }
 
@@ -45,12 +47,24 @@ pub fn news_score_headlines(
         .enumerate()
         .zip(headline_embeddings.iter())
         .map(|((i, title), emb)| {
-            let score = if empty_interest { 0.0 } else { cosine(&interest_embedding, emb) };
-            ScoredHeadline { title, score, index: i as u32 }
+            let score = if empty_interest {
+                0.0
+            } else {
+                cosine(&interest_embedding, emb)
+            };
+            ScoredHeadline {
+                title,
+                score,
+                index: i as u32,
+            }
         })
         .collect();
 
-    scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    scored.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     scored.truncate(10);
     scored
 }

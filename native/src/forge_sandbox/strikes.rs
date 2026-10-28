@@ -19,7 +19,9 @@ pub struct StrikeRecord {
 
 impl StrikeRecord {
     pub fn new() -> Self {
-        Self { timestamps: VecDeque::new() }
+        Self {
+            timestamps: VecDeque::new(),
+        }
     }
 
     /// Append a strike at the current instant. Caller should follow this with
@@ -77,7 +79,9 @@ pub struct StrikeBoard {
 
 impl StrikeBoard {
     pub fn new() -> Self {
-        Self { strikes: Arc::new(DashMap::new()) }
+        Self {
+            strikes: Arc::new(DashMap::new()),
+        }
     }
 
     /// Record one strike against `slug`. Returns the current count within the

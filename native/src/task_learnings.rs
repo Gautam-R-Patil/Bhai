@@ -145,9 +145,9 @@ pub fn task_learnings_upsert(
 
     // Keep store bounded
     if store.learnings.len() > MAX_STORE_SIZE {
-        store.learnings.sort_by(|a, b| {
-            b.last_seen.cmp(&a.last_seen)
-        });
+        store
+            .learnings
+            .sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
         store.learnings.truncate(MAX_STORE_SIZE);
     }
 
@@ -322,9 +322,9 @@ pub fn task_learnings_record_click(
 
         // Cap at MAX_CLICK_STRATEGIES
         if entry.click_strategies.len() > MAX_CLICK_STRATEGIES {
-            entry.click_strategies.sort_by(|a, b| {
-                b.last_success_at.cmp(&a.last_success_at)
-            });
+            entry
+                .click_strategies
+                .sort_by(|a, b| b.last_success_at.cmp(&a.last_success_at));
             entry.click_strategies.truncate(MAX_CLICK_STRATEGIES);
         }
     }
@@ -362,11 +362,7 @@ pub fn task_learnings_click_context(app_name: String) -> String {
         };
         lines.push(format!(
             "  \"{}\" -> offset({}, {}) -- took {} attempt(s), {}",
-            s.element_label,
-            s.success_offset_x,
-            s.success_offset_y,
-            s.attempts_taken,
-            time_label
+            s.element_label, s.success_offset_x, s.success_offset_y, s.attempts_taken, time_label
         ));
     }
 

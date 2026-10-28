@@ -27,20 +27,20 @@ const TEMPORAL_DISCOUNT: f64 = 0.95;
 pub struct StepReward {
     pub step_index: u32,
     pub step_description: String,
-    pub correctness_score: f64,    // Backward: is this step logically correct? (0-1)
-    pub progress_score: f64,       // Forward: does this step advance toward the goal? (0-1)
-    pub composite_score: f64,      // BiRM combined score
-    pub is_accepted: bool,         // Above threshold?
+    pub correctness_score: f64, // Backward: is this step logically correct? (0-1)
+    pub progress_score: f64,    // Forward: does this step advance toward the goal? (0-1)
+    pub composite_score: f64,   // BiRM combined score
+    pub is_accepted: bool,      // Above threshold?
 }
 
 #[napi(object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TrajectoryScore {
     pub step_scores: Vec<f64>,
-    pub trajectory_reward: f64,     // Aggregated reward for the entire trajectory
-    pub min_step_score: f64,        // Weakest link
-    pub bottleneck_step: u32,       // Index of the weakest step
-    pub is_trajectory_valid: bool,  // All steps above threshold?
+    pub trajectory_reward: f64, // Aggregated reward for the entire trajectory
+    pub min_step_score: f64,    // Weakest link
+    pub bottleneck_step: u32,   // Index of the weakest step
+    pub is_trajectory_valid: bool, // All steps above threshold?
     pub early_termination_step: i32, // -1 if no early termination needed
 }
 
@@ -136,7 +136,11 @@ pub fn score_trajectory(
     TrajectoryScore {
         step_scores,
         trajectory_reward,
-        min_step_score: if min_score == f64::INFINITY { 0.0 } else { min_score },
+        min_step_score: if min_score == f64::INFINITY {
+            0.0
+        } else {
+            min_score
+        },
         bottleneck_step: bottleneck,
         is_trajectory_valid: all_valid,
         early_termination_step: early_term,
@@ -212,7 +216,10 @@ pub fn step_verdict(
         should_continue: true,
         should_backtrack: false,
         should_escalate: false,
-        reasoning: format!("Step score {:.2} — marginal, continuing cautiously", step_score),
+        reasoning: format!(
+            "Step score {:.2} — marginal, continuing cautiously",
+            step_score
+        ),
         confidence: step_score,
     }
 }
@@ -228,7 +235,11 @@ pub fn aggregate_rewards(scores: Vec<f64>, mode: String) -> f64 {
     }
 
     match mode.as_str() {
-        "min" => scores.iter().cloned().fold(f64::INFINITY, f64::min).max(0.0),
+        "min" => scores
+            .iter()
+            .cloned()
+            .fold(f64::INFINITY, f64::min)
+            .max(0.0),
         "product" => scores.iter().product::<f64>().max(0.0),
         "weighted_mean" => {
             let n = scores.len();
@@ -239,7 +250,11 @@ pub fn aggregate_rewards(scores: Vec<f64>, mode: String) -> f64 {
                 sum += s * w;
                 weight_total += w;
             }
-            if weight_total > 0.0 { sum / weight_total } else { 0.0 }
+            if weight_total > 0.0 {
+                sum / weight_total
+            } else {
+                0.0
+            }
         }
         _ => {
             // "mean" (default)

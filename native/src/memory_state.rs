@@ -90,9 +90,8 @@ pub fn get_self_state_snippet(state: SelfState) -> String {
         parts.push(format!("- Engagement mode: {}", state.engagement_mode));
     }
     if state.confidence_in_user_model > 0.6 {
-        parts.push(
-            "- User model confidence: high -- personalize responses confidently".to_string(),
-        );
+        parts
+            .push("- User model confidence: high -- personalize responses confidently".to_string());
     }
     if state.recent_emotional_tone != "neutral" {
         parts.push(format!(
@@ -101,9 +100,7 @@ pub fn get_self_state_snippet(state: SelfState) -> String {
         ));
     }
     if state.relationship_depth > 0.5 {
-        parts.push(
-            "- Relationship depth: established -- use relaxed, confident tone".to_string(),
-        );
+        parts.push("- Relationship depth: established -- use relaxed, confident tone".to_string());
     }
 
     if parts.is_empty() {
@@ -183,14 +180,13 @@ pub struct EmotionalResult {
 /// Compute decay for emotional memories.
 /// Returns list of (id, action, new_intensity) where action = "delete" or "update".
 #[napi]
-pub fn compute_emotion_decay(
-    memories: Vec<EmotionalMemory>,
-) -> Vec<EmotionDecayAction> {
+pub fn compute_emotion_decay(memories: Vec<EmotionalMemory>) -> Vec<EmotionDecayAction> {
     let now = now_ms_f64();
     let mut actions: Vec<EmotionDecayAction> = Vec::new();
 
     for em in &memories {
-        let days_inactive = ((now - em.timestamp_ms) / (1000.0 * 60.0 * 60.0 * 24.0)).min(MAX_DECAY_DAYS);
+        let days_inactive =
+            ((now - em.timestamp_ms) / (1000.0 * 60.0 * 60.0 * 24.0)).min(MAX_DECAY_DAYS);
         let decay_factor = (-EMOTION_DECAY_LAMBDA * days_inactive).exp();
         let new_intensity = em.intensity.min(decay_factor);
 
@@ -257,7 +253,10 @@ pub fn get_emotional_context_snippet(
     if parts.is_empty() {
         return String::new();
     }
-    format!("EMOTIONAL CONTEXT (recent emotional signals):\n{}", parts.join("\n"))
+    format!(
+        "EMOTIONAL CONTEXT (recent emotional signals):\n{}",
+        parts.join("\n")
+    )
 }
 
 // ══════════════════════════════════════════════════
@@ -831,7 +830,10 @@ pub fn get_relationship_snippet(state: RelationshipState) -> String {
 }
 
 /// Check if relationship is deep enough for proactive suggestions.
+// The trust branch is subsumed by the depth check; kept verbatim to mirror
+// canTriggerInitiative in src/memory/relationship.ts.
 #[napi]
+#[allow(clippy::overly_complex_bool_expr)]
 pub fn can_trigger_initiative(trust_score: f64, depth_score: f64) -> bool {
     depth_score > 0.6 || (trust_score > 0.7 && depth_score > 0.6)
 }
@@ -861,8 +863,12 @@ fn now_ms_f64() -> f64 {
 // helper walks back to the nearest char boundary so user-supplied content
 // containing emoji/CJK never crashes the process.
 fn char_safe_truncate(s: &str, max_len: usize) -> &str {
-    if s.len() <= max_len { return s; }
+    if s.len() <= max_len {
+        return s;
+    }
     let mut end = max_len;
-    while end > 0 && !s.is_char_boundary(end) { end -= 1; }
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
     &s[..end]
 }

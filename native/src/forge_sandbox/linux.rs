@@ -36,31 +36,24 @@ impl LinuxSandbox {
 }
 
 impl Sandbox for LinuxSandbox {
-    fn spawn(
-        &self,
-        slug: &str,
-        handler_dir: &Path,
-        caps: &Capabilities,
-    ) -> io::Result<Child> {
+    fn spawn(&self, slug: &str, handler_dir: &Path, caps: &Capabilities) -> io::Result<Child> {
         // ── Pre-flight: build all filters in PARENT before fork ──
 
-        let bpf = build_filter(caps)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("seccomp: {e:?}")))?;
+        let bpf = build_filter(caps).map_err(|e| io::Error::other(format!("seccomp: {e:?}")))?;
 
         let landlock_optional =
             std::env::var("ATLAS_FORGE_LANDLOCK_OPTIONAL").as_deref() == Ok("true");
         let mut landlock_ruleset = if landlock_available() {
             Some(
                 build_ruleset(caps, self.strict)
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("landlock: {e}")))?,
+                    .map_err(|e| io::Error::other(format!("landlock: {e}")))?,
             )
         } else if !landlock_optional {
             // SECURE DEFAULT: refuse to spawn without Landlock unless the
             // operator has explicitly opted out via ATLAS_FORGE_LANDLOCK_OPTIONAL=true.
             // seccomp-only mode has no path-level filesystem isolation —
             // a synthesized handler can read /etc/passwd, ~/.ssh/, etc.
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(io::Error::other(
                 "Landlock unavailable on this kernel (<5.13). Refusing to spawn without fs isolation. \
                  Upgrade kernel or set ATLAS_FORGE_LANDLOCK_OPTIONAL=true to allow seccomp-only mode (UNSAFE).",
             ));
@@ -120,12 +113,12 @@ impl Sandbox for LinuxSandbox {
             // the ruleset; pre_exec runs once per spawned child, so take() it.
             if let Some(rs) = landlock_ruleset.take() {
                 rs.restrict_self()
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("landlock: {e:?}")))?;
+                    .map_err(|e| io::Error::other(format!("landlock: {e:?}")))?;
             }
 
             // 4. seccomp filter load.
             seccompiler::apply_filter(&bpf)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("seccomp: {e:?}")))?;
+                .map_err(|e| io::Error::other(format!("seccomp: {e:?}")))?;
 
             Ok(())
         };

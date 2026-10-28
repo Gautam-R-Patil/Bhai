@@ -243,15 +243,14 @@ pub fn traits_compute_contradiction(current_confidence: f64, is_explicit: bool) 
 /// Compute decay actions for all traits.
 /// Returns list of actions (delete/update) with new confidence values.
 #[napi]
-pub fn traits_compute_decay(
-    traits: Vec<BehavioralTrait>,
-) -> Vec<TraitDecayAction> {
+pub fn traits_compute_decay(traits: Vec<BehavioralTrait>) -> Vec<TraitDecayAction> {
     let now_ms = now_ms_f64();
     let mut actions: Vec<TraitDecayAction> = Vec::new();
 
     for t in &traits {
         let last_seen_ms = parse_ts_ms(&t.last_seen_ts);
-        let days_inactive = ((now_ms - last_seen_ms) / (1000.0 * 60.0 * 60.0 * 24.0)).min(MAX_DECAY_DAYS);
+        let days_inactive =
+            ((now_ms - last_seen_ms) / (1000.0 * 60.0 * 60.0 * 24.0)).min(MAX_DECAY_DAYS);
 
         if days_inactive > 0.0 {
             let decay_factor = (-LAMBDA * days_inactive).exp();
@@ -298,9 +297,7 @@ pub fn traits_get_injection(
     {
         let cache = PRED_CACHE.lock();
         if let Some(ref pc) = *cache {
-            if !pc.snippet.is_empty()
-                && (now_ms_f64() - pc.timestamp) < PREDICTIVE_CACHE_TTL_MS
-            {
+            if !pc.snippet.is_empty() && (now_ms_f64() - pc.timestamp) < PREDICTIVE_CACHE_TTL_MS {
                 let cache_sim = compute_query_similarity(&query_tokens, &pc.query_tokens);
                 if cache_sim > 0.6 {
                     return pc.snippet.clone();
@@ -345,7 +342,11 @@ pub fn traits_get_injection(
         })
         .collect();
 
-    scored.sort_by(|a, b| b.priority.partial_cmp(&a.priority).unwrap_or(std::cmp::Ordering::Equal));
+    scored.sort_by(|a, b| {
+        b.priority
+            .partial_cmp(&a.priority)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     // Select within token budget
     let mut selected: Vec<&ScoredTrait> = Vec::new();
@@ -423,13 +424,15 @@ fn tokenize_for_relevance(text: &str) -> HashSet<String> {
     text.to_lowercase()
         .split(|c: char| !c.is_alphanumeric() && c != '_')
         .filter(|w| w.len() > 2 && !STOPWORDS.contains(w))
-        .map(|w| basic_stem(w))
+        .map(basic_stem)
         .collect()
 }
 
 fn basic_stem(word: &str) -> String {
     let mut w = word.to_string();
-    for suffix in &["ing", "tion", "ness", "ment", "able", "ful", "ly", "ed", "er", "es", "s"] {
+    for suffix in &[
+        "ing", "tion", "ness", "ment", "able", "ful", "ly", "ed", "er", "es", "s",
+    ] {
         if w.len() > suffix.len() + 2 && w.ends_with(suffix) {
             w = w[..w.len() - suffix.len()].to_string();
             break;
@@ -462,8 +465,7 @@ fn compute_relevance(query_tokens: &HashSet<String>, trait_val: &BehavioralTrait
         .iter()
         .filter(|t| trait_tokens.contains(*t))
         .count();
-    let similarity =
-        overlap as f64 / (query_tokens.len().min(trait_tokens.len()).max(1)) as f64;
+    let similarity = overlap as f64 / (query_tokens.len().min(trait_tokens.len()).max(1)) as f64;
 
     0.3 + 0.7 * similarity
 }
