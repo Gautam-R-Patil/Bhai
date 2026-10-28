@@ -11,7 +11,9 @@
 // that exact shape is how Node's ESM import finds binding.js's named exports.
 try {
     require("./binding.js");
-} catch {
+} catch (e) {
+    // CI on macOS ships the binary, so a load failure there is a real break.
+    if (process.env.ATLAS_REQUIRE_NATIVE === "true") throw e;
     const id = require.resolve("./binding.js");
     require.cache[id] = { id, filename: id, loaded: true, exports: {} };
 }

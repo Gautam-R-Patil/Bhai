@@ -46,6 +46,9 @@ jobs:
       # Site Skill tests drive a real headless Chromium.
       - run: npx playwright install --with-deps chromium
       - run: npm run test:hermetic
+        env:
+          # macOS has a committed binary: fail loudly if it stops loading.
+          ATLAS_REQUIRE_NATIVE: ${{ matrix.os == 'macos-latest' && 'true' || 'false' }}
 
   # The codebase predates Biome formatting, so `biome ci .` fails on most files.
   # Only the files a pull request touches are checked, which formats the repo
