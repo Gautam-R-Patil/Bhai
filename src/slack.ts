@@ -7,7 +7,7 @@
 // Handles @mentions and DMs, threads long conversations,
 // formats with Block Kit, and processes file uploads.
 
-import { App, type SayFn } from "@slack/bolt";
+import type { App, SayFn } from "@slack/bolt";
 import type { LLMClient } from "./llm.js";
 import { runAgent, type MediaAttachment, type ChannelContext } from "./agent.js";
 import { classifyQuery } from "./memory/classifier.js";
@@ -78,6 +78,8 @@ export async function initSlack(llm: LLMClient): Promise<void> {
     const isAllowed = (userId: string | undefined | null) =>
         !!userId && allowedUsers.has(userId);
 
+    // Lazy: @slack/bolt costs ~200-300ms to import; only pay it when Slack is configured.
+    const { App } = await import("@slack/bolt");
     slackApp = new App({
         token: botToken,
         appToken: appToken,

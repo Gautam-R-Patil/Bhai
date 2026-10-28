@@ -7,17 +7,7 @@ import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, basename as pathBasename } from "node:path";
 import type { Boom } from "@hapi/boom";
-import makeWASocket, {
-    type BaileysEventMap,
-    Browsers,
-    DisconnectReason,
-    downloadMediaMessage,
-    getContentType,
-    makeCacheableSignalKeyStore,
-    useMultiFileAuthState,
-    type WAMessage,
-    type WASocket,
-} from "@whiskeysockets/baileys";
+import type { BaileysEventMap, WAMessage, WASocket } from "@whiskeysockets/baileys";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import pino from "pino";
 import qrcode from "qrcode-terminal";
@@ -95,6 +85,9 @@ const RATE_LIMIT = {
 // ── State ────────────────────────────────────
 
 let socket: WASocket | null = null;
+// Baileys costs ~200-300ms to import; loaded in connectWhatsApp(), so it is set
+// before any inbound message (the only path that reads it) can arrive.
+let baileys: typeof import("@whiskeysockets/baileys");
 let allowedJids: Set<string> = new Set();
 let reconnectAttempts = 0;
 let currentQR: string | null = null;
@@ -383,7 +376,7 @@ function extractMessageText(message: WAMessage): string | null {
     const msg = message.message;
     if (!msg) return null;
 
-    const contentType = getContentType(msg);
+    const contentType = baileys.getContentType(msg);
     if (!contentType) return null;
 
     // Extended text message (with URL previews, replies, etc.)
@@ -517,7 +510,7 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
     const msg = message.message;
     if (!msg) return { media: [], enrichedText: null };
 
-    const contentType = getContentType(msg);
+    const contentType = baileys.getContentType(msg);
     const media: MediaAttachment[] = [];
     let enrichedText: string | null = null;
 
@@ -546,7 +539,7 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
 
     try {
         if (contentType === "imageMessage" && msg.imageMessage) {
-            const buffer = (await downloadMediaMessage(message, "buffer", {})) as Buffer;
+            const buffer = (await baileys.downloadMediaMessage(message, "buffer", {})) as Buffer;
             const mimeType = msg.imageMessage.mimetype || "image/jpeg";
             const base64 = buffer.toString("base64");
 
@@ -563,7 +556,7 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
         }
 
         if (contentType === "videoMessage" && msg.videoMessage) {
-            const buffer = (await downloadMediaMessage(message, "buffer", {})) as Buffer;
+            const buffer = (await baileys.downloadMediaMessage(message, "buffer", {})) as Buffer;
             const mimeType = msg.videoMessage.mimetype || "video/mp4";
             const base64 = buffer.toString("base64");
 
@@ -578,7 +571,7 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
         }
 
         if (contentType === "audioMessage" && msg.audioMessage) {
-            const buffer = (await downloadMediaMessage(message, "buffer", {})) as Buffer;
+            const buffer = (await baileys.downloadMediaMessage(message, "buffer", {})) as Buffer;
             const mediaDir = join(tmpdir(), "atlas_media");
             await fs.mkdir(mediaDir, { recursive: true });
             const isVoiceNote = msg.audioMessage.ptt === true;
@@ -608,7 +601,7 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
 
         // Sticker messages
         if (contentType === "stickerMessage" && msg.stickerMessage) {
-            const buffer = (await downloadMediaMessage(message, "buffer", {})) as Buffer;
+            const buffer = (await baileys.downloadMediaMessage(message, "buffer", {})) as Buffer;
             const mediaDir = join(tmpdir(), "atlas_media");
             await fs.mkdir(mediaDir, { recursive: true });
             const isAnimated = msg.stickerMessage.isAnimated;
@@ -663,7 +656,7 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
             const docMsg = msg.documentMessage;
             const fileName = docMsg.fileName || "document";
             const mimeType = docMsg.mimetype || "application/octet-stream";
-            const buffer = (await downloadMediaMessage(message, "buffer", {})) as Buffer;
+            const buffer = (await baileys.downloadMediaMessage(message, "buffer", {})) as Buffer;
 
             const mediaDir = join(tmpdir(), "atlas_media");
             await fs.mkdir(mediaDir, { recursive: true });
@@ -1999,7 +1992,7 @@ async function handleIncomingMessage(message: WAMessage, llm: LLMClient): Promis
     // Also check for media-only messages (image without caption, voice note, etc.)
     const msg = message.message;
     if (!msg) return;
-    const contentType = getContentType(msg);
+    const contentType = baileys.getContentType(msg);
     if (!contentType) return;
 
     // OTP check — if an OTP is active and the text matches, verify
@@ -2128,6 +2121,8 @@ export async function initWhatsApp(llm: LLMClient): Promise<void> {
 }
 
 async function connectWhatsApp(llm: LLMClient): Promise<void> {
+    baileys ??= await import("@whiskeysockets/baileys");
+    const { default: makeWASocket, useMultiFileAuthState, makeCacheableSignalKeyStore, Browsers, DisconnectReason } = baileys;
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
 
     // Suppress Baileys verbose logging in production

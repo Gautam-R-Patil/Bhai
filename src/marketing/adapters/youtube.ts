@@ -4,7 +4,6 @@
 
 import { createReadStream, existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { google } from "googleapis";
 
 const BASE_DATA_DIR = process.env.ATLAS_DATA_DIR ?? join(process.cwd(), "data");
 const TOKEN_DIR = join(BASE_DATA_DIR, "google-tokens");
@@ -30,6 +29,7 @@ export async function postYouTube(
   const { client_id, client_secret } = creds.installed ?? creds.web ?? {};
   if (!client_id || !client_secret) throw new Error("Invalid Google credentials file");
 
+  const { google } = await import("googleapis"); // lazy: ~0.6-1s import, only needed to post
   const oauth2 = new google.auth.OAuth2(client_id, client_secret);
   const tokenFiles = existsSync(TOKEN_DIR)
     ? readdirSync(TOKEN_DIR).filter((f) => f.endsWith(".json"))

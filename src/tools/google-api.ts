@@ -12,11 +12,18 @@ import { createServer, type Server } from "node:http";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { OAuth2Client } from "google-auth-library";
-import { type calendar_v3, google } from "googleapis";
+import type { calendar_v3 } from "googleapis";
 import { getTimezone } from "../location/index.js";
 import type { ToolDefinition } from "./get-current-time.js";
 
 const execFileAsync = promisify(execFile);
+
+// googleapis costs ~0.6-1s to import; load it on the first Google call, not at boot.
+let googleMod: typeof import("googleapis").google | undefined;
+async function loadGoogle(): Promise<typeof import("googleapis").google> {
+    googleMod ??= (await import("googleapis")).google;
+    return googleMod;
+}
 
 // ═══════════════════════════════════════════════
 // OAuth2 Account Manager
@@ -419,7 +426,7 @@ export async function completeGoogleAuth(code: string): Promise<{ success: boole
         // Fall back to userinfo API if id_token didn't have email
         if (email === "unknown") {
             try {
-                const oauth2 = google.oauth2({ version: "v2", auth: client });
+                const oauth2 = (await loadGoogle()).oauth2({ version: "v2", auth: client });
                 const userInfo = await oauth2.userinfo.get();
                 email = userInfo.data.email || "unknown";
                 console.log(`🔐 Email from userinfo API: ${email}`);
@@ -539,7 +546,7 @@ export const googleCalendarTool: ToolDefinition = {
 
                 for (const acc of accountsToQuery) {
                     try {
-                        const calendar = google.calendar({ version: "v3", auth: acc.client });
+                        const calendar = (await loadGoogle()).calendar({ version: "v3", auth: acc.client });
                         const res = await calendar.events.list({
                             calendarId: "primary",
                             timeMin,
@@ -590,7 +597,7 @@ export const googleCalendarTool: ToolDefinition = {
                 const acc = targetAccount ? accounts.get(targetAccount) : accounts.values().next().value;
                 if (!acc) return JSON.stringify({ error: "No account available for creating events." });
 
-                const calendar = google.calendar({ version: "v3", auth: acc.client });
+                const calendar = (await loadGoogle()).calendar({ version: "v3", auth: acc.client });
 
                 const startTime = input.start_time as string;
                 const endTime = input.end_time as string;
@@ -647,7 +654,7 @@ export async function listCalendarEventsRaw(params: { timeMin: string; timeMax: 
     const allEvents: any[] = [];
     for (const acc of accountsToQuery) {
         try {
-            const calendar = google.calendar({ version: "v3", auth: acc.client });
+            const calendar = (await loadGoogle()).calendar({ version: "v3", auth: acc.client });
             const res = await calendar.events.list({
                 calendarId: "primary",
                 timeMin: params.timeMin,
@@ -737,7 +744,7 @@ export const gmailTool: ToolDefinition = {
 
                 for (const acc of accountsToQuery) {
                     try {
-                        const gmail = google.gmail({ version: "v1", auth: acc.client });
+                        const gmail = (await loadGoogle()).gmail({ version: "v1", auth: acc.client });
                         const res = await gmail.users.messages.list({
                             userId: "me",
                             q: "is:unread",
@@ -789,7 +796,7 @@ export const gmailTool: ToolDefinition = {
                 // Try each account to find the message
                 for (const acc of accountsToQuery) {
                     try {
-                        const gmail = google.gmail({ version: "v1", auth: acc.client });
+                        const gmail = (await loadGoogle()).gmail({ version: "v1", auth: acc.client });
                         const detail = await gmail.users.messages.get({
                             userId: "me",
                             id: messageId,
@@ -844,7 +851,7 @@ export const gmailTool: ToolDefinition = {
 
                 for (const acc of accountsToQuery) {
                     try {
-                        const gmail = google.gmail({ version: "v1", auth: acc.client });
+                        const gmail = (await loadGoogle()).gmail({ version: "v1", auth: acc.client });
                         const res = await gmail.users.messages.list({
                             userId: "me",
                             q: query,
@@ -901,7 +908,7 @@ export const gmailTool: ToolDefinition = {
                 const acc = targetAccount ? accounts.get(targetAccount) : accounts.values().next().value;
                 if (!acc) return JSON.stringify({ error: "No account available for sending." });
 
-                const gmail = google.gmail({ version: "v1", auth: acc.client });
+                const gmail = (await loadGoogle()).gmail({ version: "v1", auth: acc.client });
                 const raw = Buffer.from(
                     [
                         `From: ${acc.email}`,
@@ -929,7 +936,7 @@ export const gmailTool: ToolDefinition = {
                 // Find the account that has this message
                 for (const acc of accountsToQuery) {
                     try {
-                        const gmail = google.gmail({ version: "v1", auth: acc.client });
+                        const gmail = (await loadGoogle()).gmail({ version: "v1", auth: acc.client });
                         const original = await gmail.users.messages.get({
                             userId: "me",
                             id: messageId,
@@ -1003,7 +1010,7 @@ export async function listGoogleTasksRaw(params: { showCompleted?: boolean; dueM
     const allTasks: any[] = [];
     for (const acc of accountsToQuery) {
         try {
-            const tasks = google.tasks({ version: "v1", auth: acc.client });
+            const tasks = (await loadGoogle()).tasks({ version: "v1", auth: acc.client });
             const res = await tasks.tasks.list({
                 tasklist: "@default",
                 showCompleted: params.showCompleted ?? false,
@@ -1043,7 +1050,7 @@ export async function listStaleEmailsRaw(): Promise<
     const all: any[] = [];
     for (const acc of accountsToQuery) {
         try {
-            const gmail = google.gmail({ version: "v1", auth: acc.client });
+            const gmail = (await loadGoogle()).gmail({ version: "v1", auth: acc.client });
             const listRes = await gmail.users.messages.list({
                 userId: "me",
                 q: "(is:unread OR is:important) older_than:3d -from:me",
@@ -1084,7 +1091,7 @@ export async function getEngagedSenders(): Promise<string[]> {
     const senders = new Set<string>();
     for (const acc of accountsToQuery) {
         try {
-            const gmail = google.gmail({ version: "v1", auth: acc.client });
+            const gmail = (await loadGoogle()).gmail({ version: "v1", auth: acc.client });
             const listRes = await gmail.users.messages.list({
                 userId: "me",
                 q: "from:me newer_than:30d",
