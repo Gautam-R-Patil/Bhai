@@ -188,7 +188,7 @@ describe("checkout safety", () => {
     }, 120_000);
 });
 
-// ── Pomerado-derived guarantees ─────────────────────────────────────────────
+// ── Checkout safety, fences and questions ───────────────────────────────────
 // Skills with a manifest (skill.json next to skill.cjs).
 const withManifest = (body: string, manifest: object) => {
     const d = mkdtempSync(path.join(tmpdir(), "site-skill-"));
@@ -216,7 +216,7 @@ const cartSkill = `exports.step = (phase, { snapshot: s }) => {
     return { fail: { reason: "x" } };
 };`;
 
-describe("commit safety (write-ahead, Pomerado)", () => {
+describe("commit safety (write-ahead)", () => {
     it("a submit that timed out is marked sent before the click and never sent again (100 runs)", async () => {
         const skillPath = withManifest(cartSkill, manifest);
         process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000"; // 100 × ₹249 is past the real daily cap
@@ -247,6 +247,22 @@ describe("commit safety (write-ahead, Pomerado)", () => {
         const d = pageDriver();
         const r = await runSiteTask({ skillPath: sneaky, phase: "search", driver: d });
         expect([r.status, r.reason, d.calls.length]).toEqual(["aborted", "unconsented_submit", 0]);
+    });
+
+    it("every other action carries the manifest's commits, and a driver refusal aborts at once (not retried, not a skill error)", async () => {
+        const other = { op: "click", target: { sel: "form button" } }; // a different key for the same button
+        const sneaky = withManifest(`exports.step = () => ({ actions: [${JSON.stringify(other)}] });`, manifest);
+        const seen: unknown[] = [];
+        const d = {
+            snapshot: async () => ({ url: "https://shop.test/cart", title: "", text: "", elements: [] }),
+            act: async (_a: SiteAction, o?: unknown) => {
+                seen.push(o);
+                throw new Error("unconsented_submit: {\"sel\":\"#checkout\"}");
+            },
+        };
+        const r = await runSiteTask({ skillPath: sneaky, phase: "select", input: { id: "p1" }, driver: d });
+        expect([r.status, r.reason, r.writeStatus]).toEqual(["aborted", "unconsented_submit", "not_attempted"]);
+        expect(seen).toEqual([{ commits: [SUBMIT] }]);
     });
 
     it("consent is bound to the skill version and the page", async () => {

@@ -9,7 +9,7 @@ import { loadConfig } from "./config.js";
 import { createLLMClient } from "./llm.js";
 import { createTelegramBot, sendProactiveMessage } from "./telegram.js";
 import { initWhatsApp, closeWhatsApp, sendWhatsAppProactiveMessage } from "./whatsapp.js";
-import { getToolNames, setSwarmLLM, setDeepResearchLLM, setLongTaskLLM, setDeepResearchNotifier, initDeepResearch, rotateAuditLog, loadDynamicTools, setCodeActionLLM, setCodeActionExecutor, setComputerUseLLM, executeTool, registerChannelSender, setPresentationLLM, setIngestLLM, setBrandAuditLLM, setScriptWriterLLM, setCampaignPlannerLLM, setOutreachLLM, setProductHuntLLM, setSmartClickLLM } from "./tools/index.js";
+import { getToolNames, setSwarmLLM, setDeepResearchLLM, setLongTaskLLM, setDeepResearchNotifier, initDeepResearch, rotateAuditLog, loadDynamicTools, setCodeActionLLM, setCodeActionExecutor, setComputerUseLLM, executeTool, registerChannelSender, setPresentationLLM, setIngestLLM, setBrandAuditLLM, setScriptWriterLLM, setCampaignPlannerLLM, setOutreachLLM, setProductHuntLLM, setSmartClickLLM, setSiteMintLLM } from "./tools/index.js";
 import { initMemoryDB, embedExistingMemories, setMemoryLLM } from "./memory/sqlite.js";
 import { initKnowledgeGraph } from "./memory/knowledge-graph.js";
 import { initSupabase } from "./memory/supabase.js";
@@ -87,6 +87,7 @@ setCodeActionLLM(llm);     // Inject into code-as-action agent tool
 setCodeActionExecutor(executeTool);  // Inject tool executor for code_execute sandbox
 setComputerUseLLM(llm);    // Inject into computer use agent tool
 setSmartClickLLM(llm);     // Inject into os_smart_click cloud-grounding cascade tier
+setSiteMintLLM(llm);       // Inject into the Site Skill Minter (site_skill_mint)
 setMemoryLLM(llm);         // Inject into memory for smart write decisions
 setPresentationLLM(llm);   // Inject into presentation generator
 setIngestLLM(llm);         // Inject into PDF → JSON ingestion (vision-LLM fallback)

@@ -49,6 +49,17 @@ export default defineSchema({
   })
     .index("by_key", ["key"]),
 
+  // ── Email-link sign-in handoff (otpless.ts): browser tab → Bhai window ──
+  auth_handoffs: defineTable({
+    nonce: v.string(),               // 64-hex id the sign-in window put in its URL
+    token: v.optional(v.string()),   // OTPless token, set once by the browser tab
+    code: v.optional(v.string()),    // 6-digit code the browser tab shows; the window must send it
+    attempts: v.number(),            // wrong codes so far
+    expiresAt: v.number(),           // Unix ms; slides while the window polls
+  })
+    .index("by_nonce", ["nonce"])
+    .index("by_expiresAt", ["expiresAt"]),
+
   // ══════════════════════════════════════════════════════════════════════════
   // Bhai STORE - Marketplace for Skills, MCP Servers, and Tools
   // ══════════════════════════════════════════════════════════════════════════

@@ -13,6 +13,7 @@
             }
         }
     ],
+    "confirmPattern": "Order placed #\\d+",
     "questions": [
         {
             "id": "otp",

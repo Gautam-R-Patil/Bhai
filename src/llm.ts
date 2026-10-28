@@ -58,6 +58,12 @@ export interface LLMClient {
          * faster and cheaper; use only for calls that just transform text.
          */
         lean?: boolean;
+        /**
+         * Deadline per model attempt, in ms, instead of the transport's default
+         * (ATLAS_LLM_ATTEMPT_TIMEOUT_MS, 25s). For long generations, e.g. a
+         * thinking model writing a few KB of code.
+         */
+        timeoutMs?: number;
     }): Promise<ChatCompletion>;
     config: Config;
 }
@@ -153,7 +159,10 @@ export function createLLMClient(config: Config): LLMClient {
 
     return {
         config,
-        async chat({ messages, tools, systemPrompt, serverPromptSlug, thinkingLevel, modelOverride, skillSlugs, responseFormat, lean }) {
+        async chat({ messages, tools, systemPrompt, serverPromptSlug, thinkingLevel, modelOverride, skillSlugs, responseFormat, lean, timeoutMs }) {
+            // A fresh deadline per fetch (each fallback hop gets its own), or none
+            // so encryptedFetch applies its default.
+            const deadline = () => (timeoutMs && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined);
             // ── Network health guard: fail fast if internet is down ──
             try {
                 const { isOffline, reportNetworkError } = await import("./network-health.js");
@@ -312,6 +321,7 @@ export function createLLMClient(config: Config): LLMClient {
                             "Authorization": `Bearer ${sessionToken}`,
                         },
                         body: JSON.stringify(modelBody),
+                        signal: deadline(),
                     });
 
                     // Handle auth expiry — re-authenticate and retry once
@@ -327,6 +337,7 @@ export function createLLMClient(config: Config): LLMClient {
                                 "Authorization": `Bearer ${sessionToken}`,
                             },
                             body: JSON.stringify(modelBody),
+                            signal: deadline(),
                         });
                         if (!retryResponse.ok) {
                             const errData = await retryResponse.json().catch(() => ({}));
@@ -468,6 +479,7 @@ export function createLLMClient(config: Config): LLMClient {
                                 "Authorization": `Bearer ${sessionToken}`,
                             },
                             body: JSON.stringify(modelBody),
+                            signal: deadline(),
                         });
                         if (response.ok) {
                             const responseData = await response.json() as ChatCompletion;

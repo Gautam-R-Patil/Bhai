@@ -164,6 +164,7 @@ async function buildResponse(
 // Credit cost table + lookup live in ./credit-cost.ts so the tier
 // mapping is unit-testable without a Convex harness.
 import { getCreditCost } from "./credit_cost.js";
+import { AUTH_LOGIN_HTML, isHandoffNonce, isHandoffToken } from "./otpless.js";
 
 // ── Waitlist helpers (per-IP rate limit + CORS + hCaptcha verify) ─────────
 // Isolated subsystem — no coupling to session/credit machinery. Lives next
@@ -738,76 +739,9 @@ http.route({
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// GET /auth-login — OTPless sign-in page loaded by the desktop auth window.
-// The OTPless SDK rejects file:// origins, so the page is served over HTTPS
-// from this deployment. The token goes back to the app via window.atlasAuth.
+// GET /auth-login — OTPless sign-in page loaded by the desktop auth window
+// (page source and the email-link handoff live in otpless.ts).
 // ══════════════════════════════════════════════════════════════════════════
-
-const OTPLESS_APP_ID = "F1WCDC7B2QKKDI2UTGVD";
-
-const AUTH_LOGIN_HTML = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Bhai — Sign In</title>
-<style>
-  :root { color-scheme: light dark; --bg: #f6f4f1; --card: #fff; --text: #1d1b19; --muted: #6b6560; --err: #b3261e; }
-  @media (prefers-color-scheme: dark) { :root { --bg: #141312; --card: #1f1d1b; --text: #f2efeb; --muted: #a29b94; --err: #f2b8b5; } }
-  body { margin: 0; min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 24px; box-sizing: border-box;
-         background: var(--bg); color: var(--text); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-  .card { box-sizing: border-box; width: 100%; max-width: 400px; background: var(--card); border-radius: 16px; padding: 32px; box-shadow: 0 10px 30px rgba(0,0,0,.08); }
-  h1 { font-size: 22px; margin: 0; text-align: center; }
-  p { color: var(--muted); text-align: center; margin: 6px 0 20px; }
-  .hidden { display: none; }
-  #error { color: var(--err); text-align: center; margin-top: 12px; }
-  .logo { display: flex; justify-content: center; margin-bottom: 14px; }
-</style>
-</head>
-<body>
-<div class="card">
-  <div class="logo"><svg xmlns="http://www.w3.org/2000/svg" width="56" height="56" aria-hidden="true" viewBox="0 0 472 472">
-  <rect width="472" height="472" rx="108" fill="#E87B2D"/>
-  <g fill="#1E1A15">
-    <rect x="74" y="147" width="324" height="16" rx="5"/>
-    <path d="M74 157H222C222 212 194 246 155 246H141C102 246 74 212 74 157Z"/>
-    <path d="M250 157H398C398 212 370 246 331 246H317C278 246 250 212 250 157Z"/>
-  </g>
-  <g fill="none" stroke-linecap="round">
-    <path d="M110 186L148 172M288 186L326 172" stroke="#9E9E9E" stroke-width="12"/>
-    <path d="M199 326C240 336 295 332 324 288" stroke="#1E1A15" stroke-width="20"/>
-  </g>
-</svg></div>
-  <h1>Sign in to Bhai</h1>
-  <p>Continue with phone, email, or a social account</p>
-  <div id="otpless-login-page"></div>
-  <p id="status" class="hidden"></p>
-  <div id="error" role="alert"></div>
-</div>
-
-<script>
-  const widget = document.getElementById("otpless-login-page");
-  const status = document.getElementById("status");
-  const error = document.getElementById("error");
-  function show(msg) { widget.classList.add("hidden"); status.textContent = msg; status.classList.remove("hidden"); error.textContent = ""; }
-  function fail(msg) { widget.classList.remove("hidden"); status.classList.add("hidden"); error.textContent = msg; }
-  // Called by the OTPless SDK on successful sign-in.
-  async function otpless(user) {
-    const token = user && user.token;
-    if (!token) return fail("Sign-in returned no token.");
-    show("Verifying…");
-    try {
-      const res = await window.atlasAuth.submitToken(token);
-      if (res && res.success) show("Signed in. Returning to Bhai…");
-      else fail((res && res.error) || "Sign-in failed. Please try again.");
-    } catch (err) {
-      fail((err && err.message) || "Sign-in failed.");
-    }
-  }
-</script>
-<script id="otpless-sdk" onerror="fail('Couldn\\'t load the sign-in service. Check your internet connection, then close this window and try again.')" src="https://otpless.com/v4/auth.js" data-appid="${OTPLESS_APP_ID}"></script>
-</body>
-</html>`;
 
 http.route({
   path: "/auth-login",
@@ -817,6 +751,52 @@ http.route({
       status: 200,
       headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
     });
+  }),
+});
+
+// POST /api/otpless/handoff — same-origin calls from /auth-login only (no
+// CORS headers, so other sites can't read a claimed token).
+//   start    { h }         Bhai window registers its nonce
+//   complete { h, token }  browser tab opened from the email link parks the token, gets a code to show
+//   claim    { h, code? }  Bhai window polls, then sends the code the user typed; returns the token once
+http.route({
+  path: "/api/otpless/handoff",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const json = (status: number, body: unknown) =>
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+      });
+    let body: any;
+    try { body = await request.json(); } catch { return json(400, { error: "Invalid JSON" }); }
+    const { op, h, token, code } = body || {};
+    if (!isHandoffNonce(h)) return json(400, { error: "Invalid sign-in request" });
+
+    if (op === "start") {
+      // Only `start` inserts rows, so it's the one that needs a flood gate.
+      const ip = extractClientIp(request);
+      const rl = await ctx.runMutation(internal.sessions.checkRequestRateLimit, {
+        key: `otpless_handoff|${ip}`,
+        windowMs: 60_000,
+        maxRequests: 10,
+      });
+      if (rl.limited) return json(429, { error: "Rate limit exceeded" });
+      await ctx.runMutation(internal.otpless.startHandoff, { nonce: h });
+      return json(200, { ok: true });
+    }
+    if (op === "complete") {
+      if (!isHandoffToken(token)) return json(400, { error: "Invalid token" });
+      const parked = await ctx.runMutation(internal.otpless.completeHandoff, { nonce: h, token });
+      return parked
+        ? json(200, parked)
+        : json(410, { error: "The Bhai sign-in window was closed, or this link was already used. Open sign-in in Bhai again and request a new link." });
+    }
+    if (op === "claim") {
+      if (code !== undefined && !(typeof code === "string" && /^\d{6}$/.test(code))) return json(400, { error: "Enter the 6-digit code" });
+      return json(200, await ctx.runMutation(internal.otpless.claimHandoff, { nonce: h, code }));
+    }
+    return json(400, { error: "Unknown op" });
   }),
 });
 
