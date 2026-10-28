@@ -35,7 +35,7 @@ pub fn build_filter(_caps: &Capabilities) -> Result<BpfProgram, seccompiler::Err
         target_arch(),
     )?;
 
-    filter.try_into()
+    Ok(filter.try_into()?)
 }
 
 fn target_arch() -> TargetArch {

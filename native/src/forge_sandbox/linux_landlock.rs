@@ -3,7 +3,7 @@
 //
 // Landlock is best-effort: kernels <5.13 don't have it at all, and even on
 // newer kernels the ABI version (1-4 as of 5.19) controls which access
-// rights are available. `Compatibility::BestEffort` is the default — it
+// rights are available. `CompatLevel::BestEffort` is the default — it
 // silently downgrades richer rights to weaker ones. For the strict
 // supervisor mode (`ATLAS_FORGE_STRICT=true`) we promote BestEffort to
 // HardRequirement and propagate failures up so install refuses.
@@ -13,8 +13,8 @@
 use std::path::{Path, PathBuf};
 
 use landlock::{
-    Access, AccessFs, Compatibility, PathBeneath, PathFd, Ruleset, RulesetAttr,
-    RulesetCreated, RulesetCreatedAttr, RulesetError, RulesetStatus, ABI,
+    AccessFs, CompatLevel, Compatible, PathBeneath, PathFd, PathFdError, Ruleset, RulesetAttr,
+    RulesetCreated, RulesetCreatedAttr, RulesetError,
 };
 
 use crate::forge_sandbox::Capabilities;
@@ -29,6 +29,8 @@ pub enum LandlockBuildError {
     Ruleset(#[from] RulesetError),
     #[error("io error reading path: {0}")]
     Io(#[from] std::io::Error),
+    #[error("landlock path fd error: {0}")]
+    PathFd(#[from] PathFdError),
 }
 
 /// Build a Landlock ruleset enforcing fs_read/fs_write capability paths.
@@ -38,11 +40,15 @@ pub fn build_ruleset(
     caps: &Capabilities,
     strict: bool,
 ) -> Result<RulesetCreated, LandlockBuildError> {
-    let _abi = ABI::V4;
+    // landlock 0.4 only reports enforcement status after restrict_self(),
+    // so probe the kernel up front instead of inspecting the created ruleset.
+    if !landlock_available() {
+        return Err(LandlockBuildError::NotSupported);
+    }
     let compat = if strict {
-        Compatibility::HardRequirement
+        CompatLevel::HardRequirement
     } else {
-        Compatibility::BestEffort
+        CompatLevel::BestEffort
     };
 
     let read_rights = AccessFs::ReadFile | AccessFs::ReadDir;
@@ -60,22 +66,15 @@ pub fn build_ruleset(
 
     let handled = read_rights | write_rights;
 
-    let ruleset = Ruleset::default()
+    // handle_access() can only fail with a CompatError, and only under
+    // HardRequirement: the kernel's ABI lacks some requested right, i.e. the
+    // ruleset would be partially enforced.
+    let mut ruleset = Ruleset::default()
         .set_compatibility(compat)
-        .handle_access(handled)?
+        .handle_access(handled)
+        .map_err(|_| LandlockBuildError::StrictFallback)?
         .create()?;
 
-    match ruleset.as_ref().get_status() {
-        RulesetStatus::NotEnforced => {
-            return Err(LandlockBuildError::NotSupported);
-        }
-        RulesetStatus::PartiallyEnforced if strict => {
-            return Err(LandlockBuildError::StrictFallback);
-        }
-        _ => {}
-    }
-
-    let mut ruleset = ruleset;
     for path in &caps.fs_read {
         let canonical = canonicalize_or_skip(Path::new(path))?;
         let fd = PathFd::new(&canonical)?;
@@ -96,12 +95,13 @@ fn canonicalize_or_skip(path: &Path) -> Result<PathBuf, std::io::Error> {
 
 /// Probe whether Landlock is available on the running kernel.
 pub fn landlock_available() -> bool {
+    // HardRequirement makes handle_access() fail when the kernel has no
+    // Landlock ABI at all; create() fails if the syscall itself is blocked.
     Ruleset::default()
-        .set_compatibility(Compatibility::HardRequirement)
+        .set_compatibility(CompatLevel::HardRequirement)
         .handle_access(AccessFs::ReadFile)
         .and_then(|rs| rs.create())
-        .map(|rs| !matches!(rs.as_ref().get_status(), RulesetStatus::NotEnforced))
-        .unwrap_or(false)
+        .is_ok()
 }
 
 #[cfg(test)]

@@ -49,7 +49,7 @@ impl Sandbox for LinuxSandbox {
 
         let landlock_optional =
             std::env::var("ATLAS_FORGE_LANDLOCK_OPTIONAL").as_deref() == Ok("true");
-        let landlock_ruleset = if landlock_available() {
+        let mut landlock_ruleset = if landlock_available() {
             Some(
                 build_ruleset(caps, self.strict)
                     .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("landlock: {e}")))?,
@@ -116,10 +116,10 @@ impl Sandbox for LinuxSandbox {
                 return Err(io::Error::last_os_error());
             }
 
-            // 3. Landlock restrict_self (if we built a ruleset).
-            if let Some(ref rs) = landlock_ruleset {
-                rs.as_ref()
-                    .restrict_self()
+            // 3. Landlock restrict_self (if we built a ruleset). It consumes
+            // the ruleset; pre_exec runs once per spawned child, so take() it.
+            if let Some(rs) = landlock_ruleset.take() {
+                rs.restrict_self()
                     .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("landlock: {e:?}")))?;
             }
 
@@ -152,7 +152,7 @@ mod tests {
     use super::*;
     use nix::sched::CloneFlags;
     use std::fs;
-    use std::io::{BufRead, BufReader};
+    use tokio::io::{AsyncBufReadExt, BufReader};
 
     #[test]
     fn clone_newnet_flag_value_is_correct() {
@@ -203,7 +203,7 @@ process.exit(0);
         let stdout = child.stdout.take().expect("stdout");
         let mut reader = BufReader::new(stdout);
         let mut line = String::new();
-        let _ = reader.read_line(&mut line);
+        let _ = reader.read_line(&mut line).await;
         assert!(
             line.contains("cap_denied") || line.contains("EACCES") || line.contains("EPERM"),
             "expected cap_denied/EACCES/EPERM, got: {line}"
