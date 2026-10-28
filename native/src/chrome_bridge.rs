@@ -339,6 +339,10 @@ fn is_allowed_command(cmd: &str) -> bool {
             | "select_option"
             | "wait_for"
             | "ping"
+            // Raw CDP for native typing / file inputs, and the site-scoped
+            // cookie read used to carry a login into Playwright.
+            | "cdp"
+            | "get_cookies"
     )
 }
 

@@ -76,8 +76,6 @@ const OPERATION_TIMEOUTS: Record<string, number> = {
     get_tabs: 2000,
     get_cookies: 5000,
 };
-// ponytail: bypasses the native allowlist until get_cookies is added there.
-const TS_ONLY_COMMANDS = new Set(["get_cookies"]);
 const HEARTBEAT_INTERVAL_MS = 15000;
 
 let httpServer: http.Server | null = null;
@@ -681,9 +679,8 @@ export async function sendBridgeCommand(
     const id = crypto.randomUUID();
     const command: ChromeBridgeCommand = { id, type, payload };
 
-    // Validate command via native module if available. TS_ONLY_COMMANDS are newer
-    // than the native allowlist (native/src/chrome_bridge.rs is_allowed_command).
-    if (native && !TS_ONLY_COMMANDS.has(type)) {
+    // Validate command via native module if available.
+    if (native) {
         try {
             native.validateBridgeCommand(JSON.stringify(command));
         } catch (err) {
