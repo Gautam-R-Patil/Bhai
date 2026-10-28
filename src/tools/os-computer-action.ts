@@ -15,7 +15,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { cursorClick, cursorDrag, cursorMove, cursorScroll, withCursorTyping } from "../screen/agent-cursor.js";
 import { type ComputerAction, parseComputerAction, resolveCoord } from "../screen/computer-action.js";
-import { getScreenDimensions } from "../screen/screen-dimensions.js";
+import { captureRegion, getScreenDimensions, monitorRect, type ScreenDimensions } from "../screen/screen-dimensions.js";
 import type { ToolDefinition } from "./get-current-time.js";
 import { takeScreenshot } from "./platform-bridge.js";
 
@@ -156,14 +156,15 @@ async function executeZoom(
     };
 }
 
-async function executeStructuredAction(act: ComputerAction): Promise<Record<string, unknown>> {
+/** Run one parsed action. `dims` (the focused monitor) skips a re-probe when the caller already has it. */
+export async function executeStructuredAction(act: ComputerAction, dims?: ScreenDimensions): Promise<Record<string, unknown>> {
     switch (act.action) {
         case "click":
         case "double_click":
         case "triple_click":
         case "right_click":
         case "mouse_move": {
-            const coord = await resolveCoord(act.coord, act);
+            const coord = await resolveCoord(act.coord, act, dims);
             await dispatchMouse(
                 act.action,
                 coord.x,
@@ -176,14 +177,14 @@ async function executeStructuredAction(act: ComputerAction): Promise<Record<stri
         case "drag": {
             const points: Array<{ x: number; y: number }> = [];
             for (const p of act.path) {
-                const r = await resolveCoord(p, act);
+                const r = await resolveCoord(p, act, dims);
                 points.push({ x: r.x, y: r.y });
             }
             await dispatchDrag(points);
             return { action: "drag", points };
         }
         case "scroll": {
-            const coord = await resolveCoord(act.coord, act);
+            const coord = await resolveCoord(act.coord, act, dims);
             await dispatchScroll(coord.x, coord.y, act.scrollDx || 0, act.scrollDy);
             return { action: "scroll", x: coord.x, y: coord.y, scrollDx: act.scrollDx || 0, scrollDy: act.scrollDy };
         }
@@ -200,11 +201,20 @@ async function executeStructuredAction(act: ComputerAction): Promise<Record<stri
             await new Promise((r) => setTimeout(r, Math.max(0, Math.min(60_000, act.durationMs))));
             return { action: "wait", durationMs: act.durationMs };
         case "screenshot": {
-            const dims = await getScreenDimensions({ focusedWindow: true });
+            // The focused window's monitor — the same one percent/image coords resolve against.
+            const d = dims ?? (await getScreenDimensions({ focusedWindow: true, force: true }));
+            const rect = monitorRect(d);
+            const raw = (rect && (await captureRegion(rect))) || (await takeScreenshot());
+            const { downscaleForVision } = await import("../screen/ui-tars.js");
+            const img = await downscaleForVision(raw, { jpeg: true });
             return {
                 action: "screenshot",
-                note: "Use os_screenshot for the actual capture; this only acknowledges the intent.",
-                monitor: dims.monitorId,
+                screenshot_base64: img.buf.toString("base64"),
+                mime_type: img.mime,
+                imageWidth: img.width,
+                imageHeight: img.height,
+                monitor: d.monitorId,
+                note: `Click with coordSystem "image" + imageWidth ${img.width}, or coordSystem "percent".`,
             };
         }
         case "zoom":
@@ -221,7 +231,7 @@ async function dispatchMouse(
     x: number,
     y: number,
     button?: "left" | "right" | "middle",
-    _modifiers?: ReadonlyArray<string>,
+    modifiers?: ReadonlyArray<string>,
 ): Promise<void> {
     if (action === "mouse_move") await cursorMove(x, y);
     else {
@@ -229,19 +239,13 @@ async function dispatchMouse(
         await cursorClick(x, y, action === "right_click" ? "right" : button || "left", count);
     }
     if (process.platform === "darwin") {
-        const macAction =
-            action === "right_click"
-                ? "right_click"
-                : action === "mouse_move"
-                  ? "move"
-                  : action === "double_click"
-                    ? "double_click"
-                    : "click";
-        const jxa = buildMacMouseJxa(macAction, x, y, button);
+        const jxa = buildMacMouseJxa(action, x, y, button, modifiers);
         await execFileAsync("osascript", ["-l", "JavaScript", "-e", jxa], { timeout: 5000 });
         return;
     }
     if (process.platform === "win32") {
+        // A shift-click sent as a plain click would report a success it didn't have.
+        if (modifiers?.length) throw new Error("click modifiers are not supported on Windows; use a key action instead");
         const ps = buildWinMousePs(action, x, y, button);
         await execFileAsync(
             "powershell",
@@ -251,43 +255,56 @@ async function dispatchMouse(
         return;
     }
     if (process.platform === "linux") {
-        await dispatchLinuxMouse(action, x, y, button);
+        await dispatchLinuxMouse(action, x, y, button, modifiers);
         return;
     }
     throw new Error(`Unsupported platform: ${process.platform}`);
 }
 
-function buildMacMouseJxa(action: string, x: number, y: number, _button?: string): string {
-    const common = `ObjC.import('CoreGraphics');var pt=$.CGPointMake(${x},${y});`;
-    if (action === "move") {
-        return `${common}$.CGEventPost($.kCGHIDEventTap,$.CGEventCreateMouseEvent(null,$.kCGEventMouseMoved,pt,$.kCGMouseButtonLeft));"moved"`;
-    }
-    if (action === "right_click") {
-        return `${common}$.CGEventPost($.kCGHIDEventTap,$.CGEventCreateMouseEvent(null,$.kCGEventMouseMoved,pt,$.kCGMouseButtonRight));delay(0.05);$.CGEventPost($.kCGHIDEventTap,$.CGEventCreateMouseEvent(null,$.kCGEventRightMouseDown,pt,$.kCGMouseButtonRight));delay(0.05);$.CGEventPost($.kCGHIDEventTap,$.CGEventCreateMouseEvent(null,$.kCGEventRightMouseUp,pt,$.kCGMouseButtonRight));"right_clicked"`;
-    }
-    if (action === "double_click") {
-        return `${common}$.CGEventPost($.kCGHIDEventTap,$.CGEventCreateMouseEvent(null,$.kCGEventMouseMoved,pt,$.kCGMouseButtonLeft));delay(0.05);var d1=$.CGEventCreateMouseEvent(null,$.kCGEventLeftMouseDown,pt,$.kCGMouseButtonLeft);$.CGEventSetIntegerValueField(d1,$.kCGMouseEventClickState,1);$.CGEventPost($.kCGHIDEventTap,d1);delay(0.02);var u1=$.CGEventCreateMouseEvent(null,$.kCGEventLeftMouseUp,pt,$.kCGMouseButtonLeft);$.CGEventSetIntegerValueField(u1,$.kCGMouseEventClickState,1);$.CGEventPost($.kCGHIDEventTap,u1);delay(0.05);var d2=$.CGEventCreateMouseEvent(null,$.kCGEventLeftMouseDown,pt,$.kCGMouseButtonLeft);$.CGEventSetIntegerValueField(d2,$.kCGMouseEventClickState,2);$.CGEventPost($.kCGHIDEventTap,d2);delay(0.02);var u2=$.CGEventCreateMouseEvent(null,$.kCGEventLeftMouseUp,pt,$.kCGMouseButtonLeft);$.CGEventSetIntegerValueField(u2,$.kCGMouseEventClickState,2);$.CGEventPost($.kCGHIDEventTap,u2);"double_clicked"`;
-    }
-    if (action === "triple_click") {
-        // 3 down/up pairs with kCGMouseEventClickState 1, 2, 3.
-        return `${common}$.CGEventPost($.kCGHIDEventTap,$.CGEventCreateMouseEvent(null,$.kCGEventMouseMoved,pt,$.kCGMouseButtonLeft));delay(0.05);var d1=$.CGEventCreateMouseEvent(null,$.kCGEventLeftMouseDown,pt,$.kCGMouseButtonLeft);$.CGEventSetIntegerValueField(d1,$.kCGMouseEventClickState,1);$.CGEventPost($.kCGHIDEventTap,d1);delay(0.02);var u1=$.CGEventCreateMouseEvent(null,$.kCGEventLeftMouseUp,pt,$.kCGMouseButtonLeft);$.CGEventSetIntegerValueField(u1,$.kCGMouseEventClickState,1);$.CGEventPost($.kCGHIDEventTap,u1);delay(0.05);var d2=$.CGEventCreateMouseEvent(null,$.kCGEventLeftMouseDown,pt,$.kCGMouseButtonLeft);$.CGEventSetIntegerValueField(d2,$.kCGMouseEventClickState,2);$.CGEventPost($.kCGHIDEventTap,d2);delay(0.02);var u2=$.CGEventCreateMouseEvent(null,$.kCGEventLeftMouseUp,pt,$.kCGMouseButtonLeft);$.CGEventSetIntegerValueField(u2,$.kCGMouseEventClickState,2);$.CGEventPost($.kCGHIDEventTap,u2);delay(0.05);var d3=$.CGEventCreateMouseEvent(null,$.kCGEventLeftMouseDown,pt,$.kCGMouseButtonLeft);$.CGEventSetIntegerValueField(d3,$.kCGMouseEventClickState,3);$.CGEventPost($.kCGHIDEventTap,d3);delay(0.02);var u3=$.CGEventCreateMouseEvent(null,$.kCGEventLeftMouseUp,pt,$.kCGMouseButtonLeft);$.CGEventSetIntegerValueField(u3,$.kCGMouseEventClickState,3);$.CGEventPost($.kCGHIDEventTap,u3);"triple_clicked"`;
-    }
-    // default left click
-    return `${common}$.CGEventPost($.kCGHIDEventTap,$.CGEventCreateMouseEvent(null,$.kCGEventMouseMoved,pt,$.kCGMouseButtonLeft));delay(0.05);$.CGEventPost($.kCGHIDEventTap,$.CGEventCreateMouseEvent(null,$.kCGEventLeftMouseDown,pt,$.kCGMouseButtonLeft));delay(0.05);$.CGEventPost($.kCGHIDEventTap,$.CGEventCreateMouseEvent(null,$.kCGEventLeftMouseUp,pt,$.kCGMouseButtonLeft));"clicked"`;
+type MouseAction = "click" | "double_click" | "triple_click" | "right_click" | "mouse_move";
+
+function clickCount(action: MouseAction): number {
+    return action === "double_click" ? 2 : action === "triple_click" ? 3 : action === "mouse_move" ? 0 : 1;
 }
 
-function buildWinMousePs(action: string, x: number, y: number, _button?: string): string {
-    // Triple-click added; coords are pre-rounded ints (no injection risk).
-    const events =
-        action === "mouse_move"
-            ? ""
-            : action === "right_click"
-              ? "[WinMouse]::mouse_event(0x0008, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 50; [WinMouse]::mouse_event(0x0010, 0, 0, 0, [UIntPtr]::Zero)"
-              : action === "double_click"
-                ? "[WinMouse]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero); [WinMouse]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 50; [WinMouse]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero); [WinMouse]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)"
-                : action === "triple_click"
-                  ? "[WinMouse]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero); [WinMouse]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 50; [WinMouse]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero); [WinMouse]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 50; [WinMouse]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero); [WinMouse]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)"
-                  : "[WinMouse]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero); [WinMouse]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)";
+// CGEventFlags masks (numeric: the JXA bridge has no names for them).
+const MAC_MODIFIER_FLAGS: Record<string, number> = {
+    shift: 0x20000,
+    control: 0x40000,
+    ctrl: 0x40000,
+    option: 0x80000,
+    alt: 0x80000,
+    command: 0x100000,
+    cmd: 0x100000,
+    meta: 0x100000,
+};
+
+/** JXA for a move / click with any button, click count and held modifiers (posted on the down/up events). */
+export function buildMacMouseJxa(
+    action: MouseAction,
+    x: number,
+    y: number,
+    button: "left" | "right" | "middle" = "left",
+    modifiers?: ReadonlyArray<string>,
+): string {
+    const flags = (modifiers ?? []).reduce((f, m) => f | (MAC_MODIFIER_FLAGS[m] ?? 0), 0);
+    // post(type, button, clickState, withFlags). kCGEventMouseMoved = 5.
+    let js = `ObjC.import('CoreGraphics');var pt=$.CGPointMake(${x},${y});function post(t,b,n,f){var e=$.CGEventCreateMouseEvent(null,t,pt,b);if(n)$.CGEventSetIntegerValueField(e,$.kCGMouseEventClickState,n);if(f)$.CGEventSetFlags(e,${flags});$.CGEventPost($.kCGHIDEventTap,e);}post(5,0,0,0);`;
+    const b = action === "right_click" ? "right" : button;
+    // [down, up, CGMouseButton]: left 1/2/0, right 3/4/1, other (middle) 25/26/2.
+    const [down, up, code] = b === "right" ? [3, 4, 1] : b === "middle" ? [25, 26, 2] : [1, 2, 0];
+    for (let n = 1; n <= clickCount(action); n++) {
+        js += `delay(0.05);post(${down},${code},${n},1);delay(0.02);post(${up},${code},${n},1);`;
+    }
+    return `${js}"${action}"`;
+}
+
+function buildWinMousePs(action: MouseAction, x: number, y: number, button?: "left" | "right" | "middle"): string {
+    // Coords are pre-rounded ints (no injection risk). mouse_event flags: down/up per button.
+    const b = action === "right_click" ? "right" : button;
+    const [down, up] = b === "right" ? ["0x0008", "0x0010"] : b === "middle" ? ["0x0020", "0x0040"] : ["0x0002", "0x0004"];
+    const one = `[WinMouse]::mouse_event(${down}, 0, 0, 0, [UIntPtr]::Zero); [WinMouse]::mouse_event(${up}, 0, 0, 0, [UIntPtr]::Zero)`;
+    const events = Array.from({ length: clickCount(action) }, () => one).join("; Start-Sleep -Milliseconds 50; ");
     return `
 Add-Type -TypeDefinition @"
 using System;
@@ -307,38 +324,36 @@ async function dispatchLinuxMouse(
     action: "click" | "double_click" | "triple_click" | "right_click" | "mouse_move",
     x: number,
     y: number,
-    _button?: string,
+    button?: "left" | "right" | "middle",
+    modifiers?: ReadonlyArray<string>,
 ): Promise<void> {
+    const b = action === "right_click" ? "right" : button;
+    const repeats = clickCount(action);
     if (isWayland()) {
+        if (modifiers?.length) throw new Error("click modifiers are not supported under Wayland (ydotool)");
         await ensureYdotoold();
         await execFileAsync("ydotool", ["mousemove", "--absolute", "-x", String(x), "-y", String(y)], {
             timeout: 3000,
         });
-        if (action === "mouse_move") return;
         // ydotool button codes: 0xC0=left, 0xC1=right, 0xC2=middle (USB HID codes)
-        const btn = action === "right_click" ? "0xC1" : "0xC0";
-        const repeats = action === "double_click" ? 2 : action === "triple_click" ? 3 : 1;
+        const btn = b === "right" ? "0xC1" : b === "middle" ? "0xC2" : "0xC0";
         for (let i = 0; i < repeats; i++) {
             await execFileAsync("ydotool", ["click", btn], { timeout: 3000 });
             if (i < repeats - 1) await new Promise((r) => setTimeout(r, 50));
         }
         return;
     }
-    const tool = "xdotool";
-    if (action === "mouse_move") {
-        await execFileAsync(tool, ["mousemove", String(x), String(y)], { timeout: 3000 });
-        return;
-    }
-    await execFileAsync(tool, ["mousemove", String(x), String(y)], { timeout: 3000 });
-    if (action === "right_click") {
-        await execFileAsync(tool, ["click", "3"], { timeout: 3000 });
-    } else if (action === "double_click") {
-        await execFileAsync(tool, ["click", "--repeat", "2", "--delay", "50", "1"], { timeout: 3000 });
-    } else if (action === "triple_click") {
-        await execFileAsync(tool, ["click", "--repeat", "3", "--delay", "50", "1"], { timeout: 3000 });
-    } else {
-        await execFileAsync(tool, ["click", "1"], { timeout: 3000 });
-    }
+    await execFileAsync("xdotool", ["mousemove", String(x), String(y)], { timeout: 3000 });
+    if (!repeats) return;
+    const mods = (modifiers ?? []).map((m) => xdotoolKeySpec(m)).join("+");
+    const btn = b === "right" ? "3" : b === "middle" ? "2" : "1";
+    // One chained xdotool call: hold modifiers, click, release.
+    const args = [
+        ...(mods ? ["keydown", mods] : []),
+        "click", "--repeat", String(repeats), "--delay", "50", btn,
+        ...(mods ? ["keyup", mods] : []),
+    ];
+    await execFileAsync("xdotool", args, { timeout: 3000 });
 }
 
 async function dispatchDrag(points: Array<{ x: number; y: number }>): Promise<void> {
@@ -693,72 +708,180 @@ Start-Sleep -Milliseconds 50
     });
 }
 
+// macOS virtual key codes. Unknown names are an error, never a guess: a
+// Return fallback once turned "esc" into confirming the dialog it meant to
+// close, and typing the literal word "home" is no better.
+export const MAC_KEY_CODES: Record<string, number> = {
+    return: 36,
+    enter: 36,
+    tab: 48,
+    escape: 53,
+    esc: 53,
+    delete: 51,
+    backspace: 51,
+    "forward delete": 117,
+    forwarddelete: 117,
+    space: 49,
+    up: 126,
+    down: 125,
+    left: 123,
+    right: 124,
+    "up arrow": 126,
+    "down arrow": 125,
+    "left arrow": 123,
+    "right arrow": 124,
+    home: 115,
+    end: 119,
+    pageup: 116,
+    "page up": 116,
+    pagedown: 121,
+    "page down": 121,
+    f1: 122,
+    f2: 120,
+    f3: 99,
+    f4: 118,
+    f5: 96,
+    f6: 97,
+    f7: 98,
+    f8: 100,
+    f9: 101,
+    f10: 109,
+    f11: 103,
+    f12: 111,
+};
+
+const MAC_MOD_DOWN: Record<string, string> = {
+    command: "command down",
+    cmd: "command down",
+    meta: "command down",
+    shift: "shift down",
+    option: "option down",
+    alt: "option down",
+    control: "control down",
+    ctrl: "control down",
+    "⌘": "command down",
+    "⇧": "shift down",
+    "⌥": "option down",
+    "⌃": "control down",
+};
+
+/** Split "cmd+shift+s" into modifiers + key; "cmd++" and "+" press the plus key. */
+export function splitCombo(combo: string): { mods: string[]; key: string } {
+    const lower = combo.toLowerCase().trim();
+    if (lower === "+") return { mods: [], key: "+" };
+    const plusKey = lower.endsWith("++");
+    const parts = (plusKey ? lower.slice(0, -2) : lower)
+        .split("+")
+        .map((p) => p.trim())
+        .filter(Boolean);
+    const key = plusKey ? "+" : (parts.pop() ?? "");
+    return { mods: parts, key };
+}
+
+/** The AppleScript line for a key or combo ("enter", "cmd+shift+s", "home", "f5"). Throws on an unknown name. */
+export function macKeyScript(combo: string): string {
+    const { mods, key } = splitCombo(combo);
+    const bad = mods.find((m) => !MAC_MOD_DOWN[m]);
+    if (bad) throw new Error(`Unknown modifier "${bad}". Use command, shift, option or control.`);
+    const using = mods.length ? ` using {${mods.map((m) => MAC_MOD_DOWN[m]).join(", ")}}` : "";
+    if (Object.hasOwn(MAC_KEY_CODES, key)) return `tell application "System Events" to key code ${MAC_KEY_CODES[key]}${using}`;
+    if ([...key].length === 1) return `tell application "System Events" to keystroke "${escapeApplescript(key)}"${using}`;
+    throw new Error(`Unknown key "${key}". Use one of: ${Object.keys(MAC_KEY_CODES).join(", ")}, or a single character.`);
+}
+
+// X11 keysyms for the names agents use (xdotool needs "Return", not "enter").
+const XDO_KEYS: Record<string, string> = {
+    return: "Return",
+    enter: "Return",
+    tab: "Tab",
+    escape: "Escape",
+    esc: "Escape",
+    backspace: "BackSpace",
+    delete: "Delete",
+    "forward delete": "Delete",
+    forwarddelete: "Delete",
+    space: "space",
+    up: "Up",
+    down: "Down",
+    left: "Left",
+    right: "Right",
+    home: "Home",
+    end: "End",
+    pageup: "Prior",
+    "page up": "Prior",
+    pagedown: "Next",
+    "page down": "Next",
+    insert: "Insert",
+    ctrl: "ctrl",
+    control: "ctrl",
+    shift: "shift",
+    alt: "alt",
+    option: "alt",
+    super: "super",
+    win: "super",
+    cmd: "super",
+    command: "super",
+    meta: "super",
+    "+": "plus",
+};
+
+/** One key name → xdotool keysym. Throws on a name xdotool would silently ignore. */
+export function xdotoolKeySpec(name: string): string {
+    const k = name.toLowerCase().trim();
+    if (Object.hasOwn(XDO_KEYS, k)) return XDO_KEYS[k];
+    const f = /^f([1-9]|1[0-2])$/.exec(k);
+    if (f) return `F${f[1]}`;
+    if (/^[a-z0-9]$/.test(k)) return k;
+    throw new Error(`Unknown key "${name}". Use a letter/digit, F1-F12, or one of: ${Object.keys(XDO_KEYS).join(", ")}.`);
+}
+
+/** "ctrl+enter" → "ctrl+Return". */
+export function xdotoolCombo(combo: string): string {
+    const { mods, key } = splitCombo(combo);
+    return [...mods, key].map(xdotoolKeySpec).join("+");
+}
+
+// Linux evdev key codes, for ydotool ≥1.0 ("<code>:1" press, "<code>:0" release).
+const EVDEV: Record<string, number> = {
+    esc: 1, escape: 1, backspace: 14, tab: 15, return: 28, enter: 28, ctrl: 29, control: 29, shift: 42,
+    alt: 56, option: 56, space: 57, super: 125, win: 125, cmd: 125, command: 125, meta: 125, home: 102,
+    up: 103, pageup: 104, left: 105, right: 106, end: 107, down: 108, pagedown: 109, insert: 110, delete: 111,
+    f11: 87, f12: 88,
+};
+for (const [row, start] of [["1234567890", 2], ["qwertyuiop", 16], ["asdfghjkl", 30], ["zxcvbnm", 44]] as const) {
+    [...row].forEach((c, i) => {
+        EVDEV[c] = start + i;
+    });
+}
+for (let i = 1; i <= 10; i++) EVDEV[`f${i}`] = 58 + i;
+
+function evdevCode(name: string): number {
+    const k = name.toLowerCase().trim();
+    if (!Object.hasOwn(EVDEV, k)) throw new Error(`Unknown key "${name}" for ydotool.`);
+    return EVDEV[k];
+}
+
+/** ydotool `key` args for a combo: press modifiers + key, release in reverse. */
+export function ydotoolKeyArgs(combo: string): string[] {
+    const { mods, key } = splitCombo(combo);
+    const codes = [...mods, key].map(evdevCode);
+    return [...codes.map((c) => `${c}:1`), ...codes.reverse().map((c) => `${c}:0`)];
+}
+
 async function dispatchKey(text: string): Promise<void> {
     if (process.platform === "darwin") {
-        const lower = text.toLowerCase();
-        const keyCodes: Record<string, number> = {
-            return: 36,
-            enter: 36,
-            tab: 48,
-            escape: 53,
-            esc: 53,
-            delete: 51,
-            backspace: 51,
-            space: 49,
-            up: 126,
-            down: 125,
-            left: 123,
-            right: 124,
-        };
-        if (lower.includes("+")) {
-            const parts = lower.split("+").map((p) => p.trim());
-            const target = parts.pop() || "";
-            const mods: string[] = [];
-            for (const m of parts) {
-                if (m === "command" || m === "cmd") mods.push("command down");
-                else if (m === "shift") mods.push("shift down");
-                else if (m === "option" || m === "alt") mods.push("option down");
-                else if (m === "control" || m === "ctrl") mods.push("control down");
-            }
-            const modStr = mods.length ? ` using {${mods.join(", ")}}` : "";
-            if (target in keyCodes) {
-                await execFileAsync(
-                    "osascript",
-                    ["-e", `tell application "System Events" to key code ${keyCodes[target]}${modStr}`],
-                    { timeout: 5000 },
-                );
-            } else {
-                await execFileAsync(
-                    "osascript",
-                    ["-e", `tell application "System Events" to keystroke "${escapeApplescript(target)}"${modStr}`],
-                    { timeout: 5000 },
-                );
-            }
-            return;
-        }
-        if (lower in keyCodes) {
-            await execFileAsync(
-                "osascript",
-                ["-e", `tell application "System Events" to key code ${keyCodes[lower]}`],
-                { timeout: 5000 },
-            );
-        } else {
-            await execFileAsync(
-                "osascript",
-                ["-e", `tell application "System Events" to keystroke "${escapeApplescript(text)}"`],
-                { timeout: 5000 },
-            );
-        }
+        await execFileAsync("osascript", ["-e", macKeyScript(text)], { timeout: 5000 });
         return;
     }
     if (process.platform === "linux") {
-        // Add `--` to prevent flag injection (e.g. text starting with "-").
+        // Mapped names only: an unknown name is an error, not a silent no-op.
         if (isWayland()) {
+            const args = ydotoolKeyArgs(text);
             await ensureYdotoold();
-            await execFileAsync("ydotool", ["key", "--", text], { timeout: 5000 });
+            await execFileAsync("ydotool", ["key", ...args], { timeout: 5000 });
             return;
         }
-        await execFileAsync("xdotool", ["key", "--", text], { timeout: 5000 });
+        await execFileAsync("xdotool", ["key", "--", xdotoolCombo(text)], { timeout: 5000 });
         return;
     }
     if (process.platform === "win32") {
@@ -849,18 +972,7 @@ const MAC_KEYCODES: Record<string, number> = {
     alt: 58,
     command: 55,
     cmd: 55,
-    return: 36,
-    enter: 36,
-    space: 49,
-    tab: 48,
-    escape: 53,
-    esc: 53,
-    delete: 51,
-    backspace: 51,
-    up: 126,
-    down: 125,
-    left: 123,
-    right: 124,
+    ...MAC_KEY_CODES,
 };
 function macKeyCode(token: string): number | undefined {
     return MAC_KEYCODES[token];
@@ -912,12 +1024,20 @@ async function dispatchHoldKey(text: string, durationMs: number): Promise<void> 
         return;
     }
     if (process.platform === "linux") {
-        const tool = isWayland() ? "ydotool" : "xdotool";
-        if (tool === "ydotool") await ensureYdotoold();
+        const hold = Math.max(0, Math.min(60_000, durationMs));
+        if (isWayland()) {
+            const code = evdevCode(text);
+            await ensureYdotoold();
+            await execFileAsync("ydotool", ["key", `${code}:1`], { timeout: 3000 });
+            await new Promise((r) => setTimeout(r, hold));
+            await execFileAsync("ydotool", ["key", `${code}:0`], { timeout: 3000 });
+            return;
+        }
+        const key = xdotoolKeySpec(text);
         // Add `--` to prevent flag injection.
-        await execFileAsync(tool, ["keydown", "--", text], { timeout: 3000 });
-        await new Promise((r) => setTimeout(r, Math.max(0, Math.min(60_000, durationMs))));
-        await execFileAsync(tool, ["keyup", "--", text], { timeout: 3000 });
+        await execFileAsync("xdotool", ["keydown", "--", key], { timeout: 3000 });
+        await new Promise((r) => setTimeout(r, hold));
+        await execFileAsync("xdotool", ["keyup", "--", key], { timeout: 3000 });
         return;
     }
     if (process.platform === "win32") {

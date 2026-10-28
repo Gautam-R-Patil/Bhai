@@ -1060,6 +1060,22 @@ end tell`);
                 case "activate": {
                     if (!app) return JSON.stringify({ error: "Provide 'app' name to activate." });
                     await execFileAsync("open", ["-a", app], { timeout: 5000 });
+                    // `open -a` returns before the app is in front: keystrokes sent
+                    // now would land in the previous app. Wait until it really is.
+                    if (process.platform === "darwin") {
+                        const { getFrontmostApp, waitForFrontmost } = await import("../screen/frontmost.js");
+                        const front = await waitForFrontmost(app, 5000);
+                        if (!front) {
+                            const now = await getFrontmostApp();
+                            return JSON.stringify({
+                                success: false,
+                                action: "activate",
+                                app,
+                                error: `${app} did not come to the front within 5s${now ? ` (frontmost is still ${now.name})` : ""}.`,
+                            });
+                        }
+                        return JSON.stringify({ success: true, action: "activate", app, frontmost: front.name, pid: front.pid });
+                    }
                     return JSON.stringify({ success: true, action: "activate", app });
                 }
 

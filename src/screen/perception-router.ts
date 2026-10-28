@@ -27,17 +27,31 @@ import {
     type AxFlatElement,
     clearAxFailureCache,
     dumpAccessibilityTree,
-    findElementByLabel,
+    dumpDock,
     flattenInteractive,
+    isAxPermissionError,
+    type LabelMatch,
+    matchElementByLabel,
 } from "./ax-dump.js";
 import { type CapabilityReport, detectCapabilities } from "./capability-detector.js";
-import { detectElements, findElementByCaption, omniParserCaptionsPresent, omniParserWeightsPresent } from "./omniparser.js";
+import {
+    detectElements,
+    findElementByCaption,
+    omniParserCaptionsPresent,
+    omniParserWeightsPresent,
+} from "./omniparser.js";
 import { type ScreenDimensions, scaleImageToScreen } from "./screen-dimensions.js";
 import { cloudGroundClick } from "./cloud-grounding.js";
 import type { LLMClient } from "../llm.js";
 
 export type CascadeTier =
-    | "memory" | "ax_exact" | "ax_fuzzy" | "omniparser" | "ui_tars" | "cloud_grounding" | "cloud_vlm_required";
+    | "memory"
+    | "ax_exact"
+    | "ax_fuzzy"
+    | "omniparser"
+    | "ui_tars"
+    | "cloud_grounding"
+    | "cloud_vlm_required";
 
 export interface ClickTarget {
     x: number;
@@ -55,11 +69,40 @@ export interface ClickTarget {
     matchedElementId?: number;
     /** Label of the matched element (when known). */
     matchedLabel?: string;
+    /**
+     * AX-tier hits: enough to AXPress / scroll-to-visible the element instead of
+     * clicking pixels. `offscreen` = its center is outside its window, so the
+     * coordinates alone can't be clicked.
+     */
+    ax?: { pid: number; path: number[]; role: string; bbox: AxFlatElement["bbox"]; offscreen?: boolean };
+}
+
+/** Why the cascade found nothing — so a permission problem doesn't look like a bad label. */
+export interface CascadeMiss {
+    reason: "ambiguous" | "disabled" | "ax_permission_missing" | "ax_unavailable" | "not_found";
+    app?: string;
+    axElementCount?: number;
+    axError?: string;
+    /** Best-scoring AX labels that still fell short. */
+    nearest?: Array<{ label: string; role: string; score: number; at: { x: number; y: number } }>;
+    /** Equally good matches the instruction can't tell apart. */
+    ambiguous?: Array<{ label: string; role: string; at: { x: number; y: number } }>;
+    /** Per-tier failure ("timeout_30000ms", "cloud_grounding_disabled", "unparseable", "no_screenshot", ...). */
+    tierErrors: Partial<Record<CascadeTier, string>>;
+    triedTiers: CascadeTier[];
+    totalMs: number;
 }
 
 export interface CascadeOptions {
     /** Optional screenshot path/base64 — required for omniparser + ui_tars tiers. */
     screenshotPath?: string;
+    /**
+     * Lazy alternative to screenshotPath/screenDims: called once, only when the
+     * cascade reaches a vision tier (AX hits never pay for a capture).
+     */
+    screenshot?: () => Promise<{ path: string; dims?: ScreenDimensions } | null>;
+    /** Called with the reasons when the cascade returns null. */
+    onMiss?: (miss: CascadeMiss) => void;
     /** Force-skip these tiers (useful for testing). */
     skipTiers?: CascadeTier[];
     /** Confidence threshold overrides per-tier. */
@@ -111,6 +154,13 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
 
     const profile = opts.forceProfile || (await detectCapabilities()).profile;
 
+    const miss: CascadeMiss = { reason: "not_found", tierErrors: {}, triedTiers: tried, totalMs: 0 };
+    const missed = (): null => {
+        miss.totalMs = Date.now() - cascadeStart;
+        opts.onMiss?.(miss);
+        return null;
+    };
+
     // Tier 1: memory recall (placeholder until Phase 5 implements click memory).
     if (!skip.has("memory")) {
         tried.push("memory");
@@ -124,37 +174,82 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
 
     // Tier 2+3: AX exact then fuzzy. Runs the match against a flattened AX dump.
     // Returns a finalized ClickTarget on hit, else null. Pushes tier-tried +
-    // elapsed as a side effect so telemetry reflects every attempt.
-    const matchAx = (els: AxFlatElement[], appName?: string): ClickTarget | null => {
+    // elapsed as a side effect so telemetry reflects every attempt; a tie or a
+    // disabled-only match is noted on `miss` (and ends the cascade: vision would
+    // just pick one of the tied elements blindly).
+    const matchAx = (dump: AxDump): ClickTarget | null => {
+        const els = flattenInteractive(dump);
+        miss.app = dump.app;
+        miss.axElementCount = els.length;
+        const toTarget = (m: LabelMatch, tier: "ax_exact" | "ax_fuzzy", confidence: number): ClickTarget | null => {
+            if (m.ambiguous) miss.reason = "ambiguous";
+            else if (m.disabled && miss.reason === "not_found") miss.reason = "disabled";
+            miss.nearest = m.nearest.map((c) => ({
+                label: c.el.label || c.el.value,
+                role: c.el.role,
+                score: Math.round(c.score * 100) / 100,
+                at: c.el.center,
+            }));
+            miss.ambiguous = m.ambiguous?.map((el) => ({ label: el.label || el.value, role: el.role, at: el.center }));
+            const el = m.el;
+            if (!el) return null;
+            return finalize(
+                {
+                    x: el.center.x,
+                    y: el.center.y,
+                    confidence,
+                    source: tier,
+                    matchedElementId: el.id,
+                    matchedLabel: el.label,
+                    ax: { pid: dump.pid, path: el.path, role: el.role, bbox: el.bbox, offscreen: el.offscreen },
+                },
+                tier,
+                { tried, elapsed, cascadeStart },
+            );
+        };
         if (!skip.has("ax_exact")) {
             tried.push("ax_exact");
             const t = Date.now();
-            const exact = findElementByLabel(els, instruction, thresholds.ax_exact, appName);
+            const hit = toTarget(
+                matchElementByLabel(els, instruction, thresholds.ax_exact, dump.app),
+                "ax_exact",
+                thresholds.ax_exact,
+            );
             elapsed.ax_exact = Date.now() - t;
-            if (exact) {
-                return finalize(
-                    { x: exact.center.x, y: exact.center.y, confidence: thresholds.ax_exact, source: "ax_exact", matchedElementId: exact.id, matchedLabel: exact.label },
-                    "ax_exact", { tried, elapsed, cascadeStart },
-                );
-            }
+            if (hit || miss.reason === "ambiguous") return hit;
         }
         if (!skip.has("ax_fuzzy")) {
             tried.push("ax_fuzzy");
             const t = Date.now();
-            const fuzzy = findElementByLabel(els, instruction, thresholds.ax_fuzzy, appName);
+            const hit = toTarget(
+                matchElementByLabel(els, instruction, thresholds.ax_fuzzy, dump.app),
+                "ax_fuzzy",
+                0.85,
+            );
             elapsed.ax_fuzzy = Date.now() - t;
-            if (fuzzy) {
-                return finalize(
-                    { x: fuzzy.center.x, y: fuzzy.center.y, confidence: 0.85, source: "ax_fuzzy", matchedElementId: fuzzy.id, matchedLabel: fuzzy.label },
-                    "ax_fuzzy", { tried, elapsed, cascadeStart },
-                );
-            }
+            if (hit) return hit;
         }
         return null;
     };
 
+    // The Dock (and its app icons) isn't the frontmost app, so the normal dump
+    // never sees it: search it when the front app has no match, or first when
+    // the instruction names the Dock.
+    const tryDock = async (): Promise<ClickTarget | null> => {
+        const dock = await dumpDock();
+        if (!dock) return null;
+        const keep = { ...miss };
+        const hit = matchAx(dock);
+        if (!hit) Object.assign(miss, keep); // report the front app's near-misses, not the Dock's
+        return hit;
+    };
+
     let axDump = opts.axDumpHint;
     if (!skip.has("ax_exact") || !skip.has("ax_fuzzy")) {
+        if (/\bdock\b/i.test(instruction)) {
+            const hit = await tryDock();
+            if (hit) return hit;
+        }
         if (!axDump) {
             try {
                 axDump = await dumpAccessibilityTree({ depth: 20 });
@@ -162,11 +257,15 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
                 /* no AX — skip both tiers */
             }
         }
-        // A partial dump (a read timed out) is missing elements: matching it could pick a
-        // look-alike label read before the cut, so it counts as an AX miss.
-        if (axDump && !axDump.error && !axDump.partial) {
-            const hit = matchAx(flattenInteractive(axDump), axDump.app);
+        if (axDump?.error) {
+            miss.axError = axDump.error;
+            miss.reason = isAxPermissionError(axDump.error) ? "ax_permission_missing" : "ax_unavailable";
+        } else if (axDump && !axDump.partial) {
+            // A partial dump (a read timed out) is missing elements: matching it could pick a
+            // look-alike label read before the cut, so it counts as an AX miss.
+            const hit = matchAx(axDump);
             if (hit) return hit;
+            if (miss.reason === "ambiguous") return missed();
 
             // Cold-window retry: a freshly-activated window's AX tree is often
             // incomplete on first dump (still settling), so a real element
@@ -180,19 +279,38 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
                 try {
                     const redump = await dumpAccessibilityTree({ depth: 20 });
                     if (redump && !redump.error && !redump.partial) {
-                        const retryHit = matchAx(flattenInteractive(redump), redump.app);
+                        const retryHit = matchAx(redump);
                         if (retryHit) return retryHit;
+                        if ((miss.reason as CascadeMiss["reason"]) === "ambiguous") return missed();
                     }
                 } catch {
                     /* re-dump failed — fall through to vision tiers */
                 }
             }
+            if (!/\bdock\b/i.test(instruction)) {
+                const hit = await tryDock();
+                if (hit) return hit;
+            }
         }
     }
 
-    // Tiers 4 + 5 require a screenshot path AND ML deps.
-    if (!opts.screenshotPath) {
-        return null;
+    // Tiers 4 + 5 require a screenshot (captured lazily, only now).
+    let screenshotPath = opts.screenshotPath;
+    let screenDims = opts.screenDims;
+    if (!screenshotPath && opts.screenshot) {
+        try {
+            const shot = await opts.screenshot();
+            if (shot) {
+                screenshotPath = shot.path;
+                screenDims = shot.dims ?? screenDims;
+            }
+        } catch {
+            /* no screenshot — vision tiers can't run */
+        }
+    }
+    if (!screenshotPath) {
+        miss.tierErrors.cloud_grounding = "no_screenshot";
+        return missed();
     }
 
     // Tier 4: OmniParser (Standard tier and up). Short-circuit when the
@@ -210,12 +328,13 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
         tried.push("omniparser");
         const omStart = Date.now();
         try {
-            const result = await detectElements(opts.screenshotPath, { captions: true, maxElements: 100 });
+            const result = await detectElements(screenshotPath, { captions: true, maxElements: 100 });
             elapsed.omniparser = Date.now() - omStart;
+            if (result.error) miss.tierErrors.omniparser = String(result.error);
             if (!result.error && result.elements.length > 0) {
                 const match = findElementByCaption(result.elements, instruction);
                 if (match) {
-                    const screen = toScreenCoords(match.center.x, match.center.y, result.imageWidth, opts.screenDims);
+                    const screen = toScreenCoords(match.center.x, match.center.y, result.imageWidth, screenDims);
                     return finalize(
                         {
                             x: screen.x,
@@ -230,8 +349,9 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
                     );
                 }
             }
-        } catch {
+        } catch (err) {
             elapsed.omniparser = Date.now() - omStart;
+            miss.tierErrors.omniparser = (err as Error).message.slice(0, 120);
         }
     }
 
@@ -240,18 +360,28 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
     // for a lower hit rate than this one cloud call.) Skipped
     // when no LLM client was provided. This replaces the old behavior where a
     // missed click bounced to the expensive agentic model to re-ground.
-    if (!skip.has("cloud_grounding") && opts.llm && process.env.ATLAS_NO_CLOUD_GROUNDING !== "true") {
+    if (skip.has("cloud_grounding")) {
+        miss.tierErrors.cloud_grounding = "skipped";
+    } else if (process.env.ATLAS_NO_CLOUD_GROUNDING === "true") {
+        miss.tierErrors.cloud_grounding = "cloud_grounding_disabled";
+    } else if (!opts.llm) {
+        miss.tierErrors.cloud_grounding = "no_llm_client";
+    } else {
         tried.push("cloud_grounding");
         const cgStart = Date.now();
         try {
-            const grounded = await cloudGroundClick(opts.screenshotPath, instruction, {
+            const grounded = await cloudGroundClick(screenshotPath, instruction, {
                 llm: opts.llm,
                 model: opts.groundingModel,
                 timeoutMs: opts.groundingTimeoutMs,
             });
             elapsed.cloud_grounding = Date.now() - cgStart;
+            if (grounded.error) miss.tierErrors.cloud_grounding = grounded.error;
+            else if (grounded.confidence < thresholds.cloud_grounding) {
+                miss.tierErrors.cloud_grounding = `low_confidence:${grounded.confidence}`;
+            }
             if (!grounded.error && grounded.confidence >= thresholds.cloud_grounding) {
-                const screen = toScreenCoords(grounded.x, grounded.y, grounded.imageWidth, opts.screenDims);
+                const screen = toScreenCoords(grounded.x, grounded.y, grounded.imageWidth, screenDims);
                 return finalize(
                     {
                         x: screen.x,
@@ -264,14 +394,15 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
                     { tried, elapsed, cascadeStart },
                 );
             }
-        } catch {
+        } catch (err) {
             elapsed.cloud_grounding = Date.now() - cgStart;
+            miss.tierErrors.cloud_grounding = (err as Error).message.slice(0, 120);
         }
     }
 
     // No tier yielded sufficient confidence — caller falls through to cloud VLM.
     // Do NOT add cloud_vlm_required to triedTiers (router never actually ran it).
-    return null;
+    return missed();
 }
 
 /**
@@ -323,8 +454,12 @@ function toScreenCoords(
 /**
  * Helper for callers to format a router result for inclusion in tool output.
  */
-export function formatCascadeResult(result: ClickTarget | null): string {
-    if (!result) return "cascade: no tier reached threshold → fall through to cloud VLM";
+export function formatCascadeResult(result: ClickTarget | null, miss?: CascadeMiss): string {
+    if (!result) {
+        if (!miss) return "cascade: no tier reached threshold → fall through to cloud VLM";
+        const errs = Object.entries(miss.tierErrors).map(([t, e]) => `${t}:${e}`);
+        return `cascade: no tier reached threshold (${miss.reason}${miss.axError ? `: ${miss.axError}` : ""}) tried=[${miss.triedTiers.join(",")}]${errs.length ? ` errors=[${errs.join(", ")}]` : ""}`;
+    }
     const parts = [
         `source=${result.source}`,
         `confidence=${result.confidence.toFixed(2)}`,
