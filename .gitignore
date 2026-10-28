@@ -93,6 +93,8 @@ desktop/hostinger-upload/
 !src/tools/web-search-rank.test.ts
 !src/tools/site-task-consent.test.ts
 !src/tools/site-task-restore.test.ts
+!src/tools/site-task-human-check.test.ts
+!src/tools/browser/human-handoff.test.ts
 !src/tools/browser/page-callbacks.test.ts
 !src/tools/browser/bridge-ready.test.ts
 !src/tools/browser/popup-guard.test.ts

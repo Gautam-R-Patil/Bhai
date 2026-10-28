@@ -34,7 +34,7 @@ triggers:
 |---|---|
 | **Design tools (Figma, Canva, Miro)** | `browser_scan(visual:true)` → click by (x,y) coordinates |
 | Video player control (YouTube, Vimeo, HTML5) | `browser_video_control` |
-| CAPTCHA blocking the page | `browser_handle_captcha` (call first, then proceed) |
+| CAPTCHA / "I'm not a robot" blocking the page | `browser_wait_for_human` (the owner ticks it; then proceed) |
 | Cookie/consent banner blocking | Auto-handled — popup guard fires on every page load |
 | Hover-hidden controls (nav dropdowns, video bars) | `browser_hover` with `wait_for` + `rescan:true` |
 | Scan page + reveal hidden controls in one call | `browser_scan` with `hover_at` |
@@ -180,14 +180,14 @@ After key actions, verify they worked:
 
 ## CAPTCHA Handling
 
-If a page shows a CAPTCHA (Turnstile, reCAPTCHA, hCaptcha):
-1. **Always call `browser_handle_captcha` first** — it tries passive stealth bypass (often auto-passes Cloudflare Turnstile in 20s), then uses 2captcha if `CAPTCHA_API_KEY` is set
-2. After `browser_handle_captcha` returns `handled: true`, proceed with the original task
-3. If `handled: false`, the CAPTCHA could not be solved automatically — inform the user
+If a page shows a human-verification check ("I'm not a robot", reCAPTCHA, hCaptcha, Cloudflare Turnstile):
+1. Never tick or solve it yourself. Call `browser_wait_for_human`: it brings the tab up, asks the owner for a quick tap, and waits (~5 min) until the check is gone
+2. On `status: "cleared"`, carry on with the original task from where you stopped
+3. On `status: "timeout"`, tell the owner the page is still waiting for them and stop
 
 ```
-browser_handle_captcha()
-→ { captcha_present: true, captcha_type: "turnstile", method: "passive_stealth", success: true }
+browser_wait_for_human()
+→ { success: true, status: "cleared", captcha_type: "recaptcha-v2", site: "example.com" }
 → now navigate/click as normal
 ```
 

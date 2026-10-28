@@ -251,6 +251,7 @@ const BROWSER_TOOLS = new Set([
     "browser_parallel_tabs",
     "browser_parallel_actions",
     "browser_multi_action",
+    "browser_wait_for_human",
 ]);
 
 const OS_TASK_HINT = `[OS TASK — desktop control]
@@ -730,7 +731,9 @@ async function executeAndProcessToolCall(
 
     // Typing tools get real values for any [OTP_1]-style handles the model used;
     // fnArgs (logs, history, gates) keeps the handles.
-    const execArgs = REVEAL_TOOLS.has(fnName) && channelContext?.isOwner === true ? revealArgs(fnArgs) : fnArgs;
+    let execArgs = REVEAL_TOOLS.has(fnName) && channelContext?.isOwner === true ? revealArgs(fnArgs) : fnArgs;
+    // A long wait on the owner ends when they press Stop.
+    if (fnName === "browser_wait_for_human" && signal) execArgs = { ...execArgs, _signal: signal };
     let rawResult = await executeTool(fnName, execArgs);
 
     // ── Self-heal: if tool failed with a dependency error, auto-fix and retry ──

@@ -58,6 +58,7 @@ import {
     browserType,
     browserUploadFile,
     browserVideoControl,
+    browserWaitForHuman,
     browserWait,
     openCliTools,
 } from "./browser/index.js";
@@ -514,6 +515,7 @@ registry.set(browserSetMode.schema.function.name, browserSetMode);
 registry.set(browserChromeStatus.schema.function.name, browserChromeStatus);
 registry.set(browserVideoControl.schema.function.name, browserVideoControl);
 registry.set(browserHandleCaptcha.schema.function.name, browserHandleCaptcha);
+registry.set(browserWaitForHuman.schema.function.name, browserWaitForHuman);
 // OpenCLI batch tools
 for (const tool of openCliTools) registry.set(tool.schema.function.name, tool);
 
@@ -671,6 +673,7 @@ const TOOL_TIMEOUTS: Record<string, number> = {
     browser_screenshot: 15_000,
     // Covers the solver tiers plus the human hand-off wait (ATLAS_CAPTCHA_HANDOFF_MS, 5 min).
     browser_handle_captcha: 330_000,
+    browser_wait_for_human: 330_000, // the owner's ~5 min to tick a CAPTCHA box
     // Shell/system tools - variable execution time
     shell: 60_000, // Shell commands can take a while
     run_code: 30_000,

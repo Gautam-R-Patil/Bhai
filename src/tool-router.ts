@@ -233,6 +233,7 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "browser_click",
             "browser_video_control",
             "browser_handle_captcha",
+            "browser_wait_for_human",
             "browser_batch_fetch",
             "browser_auto_scroll",
             "browser_network_requests",
