@@ -13,10 +13,6 @@ jobs:
   test:
     name: Node ${{ matrix.node }} / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    # ponytail: on Linux, tests need the native module (whose Linux build is
-    # broken) and model-router tests assert stale model ids; on Windows, path
-    # handling fails in ~20 files. Non-blocking until those are fixed.
-    continue-on-error: ${{ matrix.os != 'macos-latest' }}
     strategy:
       fail-fast: false
       matrix:
