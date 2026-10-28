@@ -1513,12 +1513,13 @@ export async function selectTools(opts: {
     // Skip the tool schemas entirely (they were most of a greeting's 20K-token
     // prompt). request_tools stays, so a wrong call can still fetch what it needs;
     // memory tools stay only if the classifier asked for them ("remember …").
-    // With no usable classifier answer, banter ("… roast me") still takes the
-    // lane: the embedding fallback reads its tech words as 9 tool categories.
+    // Banter ("… roast me") the classifier answered with no categories also takes
+    // the lane. With no classifier answer at all (timeout), routing stays normal:
+    // a guessed chat lane would turn real requests into chat.
     const chatResult =
         llmResult?.tier === "chat" && llmResult.confidence >= 0.6
             ? llmResult
-            : (!llmResult || llmResult.categories.length === 0) && isConversationalBanter(opts.message)
+            : llmResult && llmResult.categories.length === 0 && isConversationalBanter(opts.message)
               ? { intent: "banter", categories: [], confidence: 0.6 }
               : null;
     if (chatResult && !opts.requestedCategories && activeRequestedCategories.categories.length === 0) {

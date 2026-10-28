@@ -113,11 +113,11 @@ describe("selectTools with the classifier timing out", () => {
         setToolRouterLLM(stalledLLM);
     });
 
-    it("routes the real roast turn to the chat lane", async () => {
-        const sel = await selectTools({ message: ROAST, iteration: 1 });
-        expect(sel.categories).toEqual(["chat_only"]);
-        expect(sel.tools.map((t) => t.function.name)).toEqual(["request_tools"]);
-        expect(sel.classification?.tier).toBe("chat");
+    it("never guesses the chat lane with no classifier answer, even for banter", async () => {
+        for (const m of BANTER) {
+            const sel = await selectTools({ message: m, iteration: 1 });
+            expect(sel.categories).not.toContain("chat_only");
+        }
     });
 
     // Every action, plain and wrapped in banter, keeps its tools on a timeout,
@@ -181,6 +181,26 @@ describe("selectTools with the classifier saying chat", () => {
         "haha you're the worst assistant ever, roast yourself",
     ])("takes the chat lane: %s", async (m) => {
         const sel = await selectTools({ message: m, iteration: 1 });
+        expect(sel.categories).toEqual(["chat_only"]);
+        expect(sel.tools.map((t) => t.function.name)).toEqual(["request_tools"]);
+    });
+});
+
+describe("selectTools when the classifier answers with no categories", () => {
+    // Answered, but unsure of the tier: banter still takes the chat lane.
+    const noCatsLLM = {
+        chat: async () => ({
+            choices: [{ message: { content: JSON.stringify({ intent: "banter", categories: [], tools: [], confidence: 0.5, tier: "simple" }) } }],
+        }),
+    } as never;
+    beforeAll(async () => {
+        await initToolRouter();
+        setToolRouterLLM(noCatsLLM);
+    });
+
+    it("routes a roast turn to the chat lane", async () => {
+        // A message the timeout tests above didn't route (the selection cache would answer).
+        const sel = await selectTools({ message: "lmao roast me, 40 tabs open and the code still won't build", iteration: 1 });
         expect(sel.categories).toEqual(["chat_only"]);
         expect(sel.tools.map((t) => t.function.name)).toEqual(["request_tools"]);
     });
