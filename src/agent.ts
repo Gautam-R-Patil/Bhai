@@ -106,6 +106,7 @@ import {
 } from "./model-router.js";
 import { detectTaskType } from "./prompts/dynamic-assembler.js";
 import { buildDynamicContextReminder } from "./prompts/dynamic-context.js";
+import { lateNightNote, noteOwnerReply } from "./late-night-nudge.js";
 import { noteOwnerMessage } from "./security/consent.js";
 import { CODE_TOOLS, protect, REVEAL_TOOLS, reveal, revealArgs } from "./security/pii-vault.js";
 import { isToolAllowed, NON_OWNER_TOOLS } from "./security/tool-access.js";
@@ -1097,6 +1098,7 @@ export async function runAgent(
         ) {
             res.text = reveal(res.text);
         }
+        if (callerIsOwner && !channelContext?.autonomous && typeof res?.text === "string") noteOwnerReply(res.text);
         return res;
     };
     if (!isForked) {
@@ -2617,6 +2619,12 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             const { getToneReminder } = await import("./setup/personality-sync.js");
             const tone = getToneReminder();
             if (tone) iterationMessages.push({ role: "system", content: tone });
+        }
+        // identity.md allows one late-hour remark per night; the model can't
+        // remember it made one, so say so (owner only).
+        if (channelContext?.isOwner === true) {
+            const lateNote = lateNightNote();
+            if (lateNote) iterationMessages.push({ role: "system", content: lateNote });
         }
 
         // ── Orchestrator Planning: Sonnet 4.6 generates execution plan for interactive tasks ──

@@ -113,9 +113,10 @@ const MODULES: PromptModule[] = [
     {
         name: "evening_wind_down",
         condition: (ctx) => (ctx.hour ?? 12) >= 22 || (ctx.hour ?? 12) < 5, // 0 is midnight
-        // No "suggest rest" here: injected every turn it nagged on every reply;
-        // identity.md already says it once per night.
-        content: "It's late. Keep responses brief.",
+        // No "suggest rest" and no "it's late" here: injected every turn, either
+        // one nagged on every reply. identity.md allows one remark per night and
+        // late-night-nudge.ts mutes the rest.
+        content: "Keep responses brief.",
         priority: 6,
         tokenEstimate: 20,
     },

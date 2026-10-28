@@ -12,9 +12,9 @@ describe("emotion detector", () => {
 });
 
 describe("dynamic context tone", () => {
-    it("midnight counts as late, and late replies don't nag about rest", () => {
-        expect(buildDynamicContextReminder("hey", { hour: 0 })).toContain("It's late");
-        expect(buildDynamicContextReminder("hey", { hour: 23 })).not.toMatch(/\brest\b/);
+    it("midnight counts as late, and late replies don't nag about rest or the hour", () => {
+        expect(buildDynamicContextReminder("hey", { hour: 0 })).toContain("Keep responses brief");
+        expect(buildDynamicContextReminder("hey", { hour: 23 })).not.toMatch(/\brest\b|late/i);
     });
 
     it("pressure gets a short fix-first steer, not sympathy", () => {

@@ -93,6 +93,7 @@ desktop/hostinger-upload/
 !src/tools/document-ingest-limits.test.ts
 !src/tools/web-search-rank.test.ts
 !src/tools/site-task-consent.test.ts
+!src/late-night-nudge.test.ts
 !src/tools/site-task-restore.test.ts
 !src/tools/site-skill-mint.test.ts
 !src/tools/site-task-repair.test.ts
