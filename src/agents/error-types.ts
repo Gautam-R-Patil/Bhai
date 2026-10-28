@@ -97,19 +97,17 @@ const RATE_LIMIT_PATTERNS = [
     /overloaded/i,
 ];
 
-const TIMEOUT_PATTERNS = [
-    /timed? ?out/i,
-    /timeout/i,
-    /exceeded.*time/i,
-    /deadline/i,
-    /ESOCKETTIMEDOUT/i,
-];
+const TIMEOUT_PATTERNS = [/timed? ?out/i, /timeout/i, /exceeded.*time/i, /deadline/i, /ESOCKETTIMEDOUT/i];
 
 const PARSE_PATTERNS = [
     /JSON\.parse/i,
     /unexpected end of json/i,
     /invalid json/i,
     /not valid JSON/i,
+    // Sub-agent exits without a final answer: a rephrased attempt can finish.
+    /stuck in a loop/i,
+    /hit max iterations/i,
+    /empty LLM response/i,
 ];
 
 const TOOL_MISSING_PATTERNS = [
@@ -122,7 +120,7 @@ const TOOL_MISSING_PATTERNS = [
 
 const DEPENDENCY_MISSING_PATTERNS = [
     /command not found/i,
-    /not recognized as.*command/i,  // Windows
+    /not recognized as.*command/i, // Windows
     /ENOENT.*spawn/i,
     /spawn.*ENOENT/i,
     /brew install/i,
@@ -146,37 +144,37 @@ const DEPENDENCY_MISSING_PATTERNS = [
 // pull `{file, line, column}` out of the message when the pattern matches.
 
 const TYPE_ERROR_PATTERNS = [
-    /error TS\d+:/,                         // TypeScript: error TS2345: ...
-    /\bType '[^']*' is not assignable to/,  // TS type mismatch phrasing
-    /\bmypy\b.*error:/,                     // Python mypy
-    /\bpyright\b.*error:/,                  // Pyright
-    /error\[E\d+\]: mismatched types/,      // Rust rustc
+    /error TS\d+:/, // TypeScript: error TS2345: ...
+    /\bType '[^']*' is not assignable to/, // TS type mismatch phrasing
+    /\bmypy\b.*error:/, // Python mypy
+    /\bpyright\b.*error:/, // Pyright
+    /error\[E\d+\]: mismatched types/, // Rust rustc
 ];
 
 const SYNTAX_ERROR_PATTERNS = [
-    /SyntaxError:/,                         // JS / Python
+    /SyntaxError:/, // JS / Python
     /Parse error:/i,
     /expected.*got/i,
     /unterminated string literal/i,
-    /unexpected indent/,                    // Python
+    /unexpected indent/, // Python
 ];
 
 const TEST_FAILURE_PATTERNS = [
-    /\d+ failing/i,                         // mocha
-    /Tests:\s+\d+ failed/i,                 // jest
-    /FAIL\s+.*\.test\.[a-z]+/,              // jest/vitest file header
-    /✗|×|❌/,                                // bullet-style failure (narrow fallback)
-    /\bAssertionError\b/,                   // python unittest / pytest
-    /expected.*to (?:equal|be|contain)/i,   // chai/jest-style
-    /test result: FAILED/,                  // cargo test
+    /\d+ failing/i, // mocha
+    /Tests:\s+\d+ failed/i, // jest
+    /FAIL\s+.*\.test\.[a-z]+/, // jest/vitest file header
+    /✗|×|❌/, // bullet-style failure (narrow fallback)
+    /\bAssertionError\b/, // python unittest / pytest
+    /expected.*to (?:equal|be|contain)/i, // chai/jest-style
+    /test result: FAILED/, // cargo test
 ];
 
 const LINT_ERROR_PATTERNS = [
     /eslint.*error/i,
     /\berror\s+.*\s+no-unused-vars/i,
     /biome.*(?:error|lint)/i,
-    /clippy::.*\s+error/i,                  // rust clippy
-    /ruff.*:\s*[EW]\d+/,                    // python ruff
+    /clippy::.*\s+error/i, // rust clippy
+    /ruff.*:\s*[EW]\d+/, // python ruff
 ];
 
 const BUILD_ERROR_PATTERNS = [
@@ -194,9 +192,9 @@ const BUILD_ERROR_PATTERNS = [
 const IMPORT_ERROR_PATTERNS = [
     /Cannot find module/,
     /Module not found/,
-    /ImportError:/,                         // Python
-    /unresolved import/i,                   // Rust
-    /cannot find name/i,                    // TS
+    /ImportError:/, // Python
+    /unresolved import/i, // Rust
+    /cannot find name/i, // TS
 ];
 
 const RUNTIME_ERROR_PATTERNS = [
@@ -204,8 +202,8 @@ const RUNTIME_ERROR_PATTERNS = [
     /TypeError:.*is not a function/,
     /RangeError:/,
     /NullPointerException/,
-    /Traceback \(most recent call last\)/,  // Python
-    /thread '.*' panicked at/,              // Rust panic
+    /Traceback \(most recent call last\)/, // Python
+    /thread '.*' panicked at/, // Rust panic
     /\bPanic: /,
     /Uncaught Exception:/i,
 ];
@@ -215,13 +213,13 @@ const RUNTIME_ERROR_PATTERNS = [
 
 const LOCATION_PATTERNS: RegExp[] = [
     // tsc: path(line,col): error ...
-    /([\w./\-]+)\((\d+),(\d+)\):/g,
+    /([\w./-]+)\((\d+),(\d+)\):/g,
     // jest/vitest: at <fn> (path:line:col) — more specific than bare path:line:col
-    /at\s+[^\s]*\s+\(([\w./\-]+):(\d+):(\d+)\)/g,
+    /at\s+[^\s]*\s+\(([\w./-]+):(\d+):(\d+)\)/g,
     // eslint / rust / python: path:line:col
-    /([\w./\-]+):(\d+):(\d+)/g,
+    /([\w./-]+):(\d+):(\d+)/g,
     // just path:line (no column)
-    /([\w./\-]+):(\d+)\b/g,
+    /([\w./-]+):(\d+)\b/g,
 ];
 
 // Paths under these prefixes are framework / dependency / build-output
@@ -274,11 +272,7 @@ const USER_CAUSED_PATTERNS = [
 /**
  * Classify an error message into a typed error with recovery metadata.
  */
-export function classifyError(
-    message: string,
-    tool?: string,
-    durationMs?: number,
-): ClassifiedError {
+export function classifyError(message: string, tool?: string, durationMs?: number): ClassifiedError {
     const context: Record<string, string> = {};
     if (tool) context.tool = tool;
     if (durationMs !== undefined) context.durationMs = String(durationMs);

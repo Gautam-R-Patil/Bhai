@@ -2,8 +2,8 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import OpenAI from "openai";
 import fs from "node:fs";
+import OpenAI from "openai";
 
 // ── Whisper Transcription (when API key available) ──
 
@@ -28,64 +28,17 @@ function getWhisperClient(): OpenAI | null {
     return null;
 }
 
-// ── OpenRouter Transcription (no separate API key needed) ──
-// Uses the existing Convex proxy + Gemini Flash to transcribe audio
-// Same pipeline as all other LLM calls — no new keys required.
-
-async function transcribeViaOpenRouter(base64Audio: string, mimeType: string): Promise<string> {
-    // Dynamic import to avoid circular deps at boot
-    const { getSessionToken } = await import("../session.js");
-    const { getConvexSiteUrl } = await import("../config/keys.js");
-    const { encryptedFetch } = await import("../crypto-transport.js");
-
-    const sessionToken = await getSessionToken();
-    const convexUrl = getConvexSiteUrl();
-    if (!sessionToken || !convexUrl) {
-        throw new Error("Not authenticated — cannot transcribe via OpenRouter");
-    }
-
-    const format = mimeType.includes("wav") ? "wav" : mimeType.includes("mpeg") ? "mp3" : "ogg";
-    const response = await encryptedFetch(`${convexUrl}/api/llm/chat`, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${sessionToken}`,
-        },
-        body: JSON.stringify({
-            model: "google/gemini-2.5-flash",
-            messages: [
-                {
-                    role: "system",
-                    content: "You are a precise audio transcription assistant. Transcribe the spoken words from the audio EXACTLY as said. Output ONLY the transcription text — no commentary, no analysis, no formatting, no timestamps. If you cannot hear any speech, output an empty string.",
-                },
-                {
-                    role: "user",
-                    content: [
-                        {
-                            type: "input_audio" as "text",
-                            input_audio: { data: base64Audio, format },
-                        } as any,
-                    ],
-                },
-            ],
-            max_tokens: 1024,
-        }),
-    });
-
-    if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(`OpenRouter transcription failed: ${response.status} — ${(errData as any).error || "Unknown"}`);
-    }
-
-    const data = await response.json() as any;
-    return (data.choices?.[0]?.message?.content || "").trim();
-}
+// No Whisper key: there is no other STT backend. The Convex LLM proxy drops
+// audio parts (convex/claude.ts), and local ASR (models/local-asr.ts) is a stub,
+// so sending audio there yielded empty or hallucinated transcripts. Fail clearly.
+export const STT_NOT_CONFIGURED =
+    "Voice transcription isn't set up (no OPENAI_API_KEY or GROQ_API_KEY), so I can't read voice messages yet.";
 
 // ── Public API ───────────────────────────────────
 
 /**
  * Transcribe audio from a file path.
- * Tries Whisper first (if OPENAI_API_KEY/GROQ_API_KEY set), falls back to OpenRouter.
+ * Uses Whisper (OPENAI_API_KEY/GROQ_API_KEY); throws STT_NOT_CONFIGURED without one.
  */
 export async function transcribeAudio(audioPath: string): Promise<string> {
     const client = getWhisperClient();
@@ -100,22 +53,14 @@ export async function transcribeAudio(audioPath: string): Promise<string> {
         return response as unknown as string;
     }
 
-    // Fallback: OpenRouter via Convex proxy
-    const audioBuffer = fs.readFileSync(audioPath);
-    const base64 = audioBuffer.toString("base64");
-    const ext = audioPath.split(".").pop()?.toLowerCase() ?? "ogg";
-    const mimeType = ext === "wav" ? "audio/wav" : ext === "mp3" ? "audio/mpeg" : "audio/ogg";
-    return transcribeViaOpenRouter(base64, mimeType);
+    throw new Error(STT_NOT_CONFIGURED);
 }
 
 /**
  * Transcribe audio from a Buffer.
- * Tries Whisper first (if OPENAI_API_KEY/GROQ_API_KEY set), falls back to OpenRouter.
+ * Uses Whisper (OPENAI_API_KEY/GROQ_API_KEY); throws STT_NOT_CONFIGURED without one.
  */
-export async function transcribeBuffer(
-    buffer: Buffer,
-    filename = "audio.ogg"
-): Promise<string> {
+export async function transcribeBuffer(buffer: Buffer, filename = "audio.ogg"): Promise<string> {
     // Derive MIME type from filename extension
     const ext = filename.split(".").pop()?.toLowerCase() ?? "ogg";
     const mimeType = ext === "wav" ? "audio/wav" : ext === "mp3" ? "audio/mpeg" : "audio/ogg";
@@ -133,7 +78,5 @@ export async function transcribeBuffer(
         return response as unknown as string;
     }
 
-    // Fallback: OpenRouter via Convex proxy
-    const base64 = buffer.toString("base64");
-    return transcribeViaOpenRouter(base64, mimeType);
+    throw new Error(STT_NOT_CONFIGURED);
 }

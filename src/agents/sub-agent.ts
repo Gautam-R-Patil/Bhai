@@ -8,6 +8,7 @@
 // Uses smart context windowing to limit token usage in long-running tasks.
 
 import path from "node:path";
+import { isUntrustedToolResult, wrapUntrustedToolResult } from "../context-scrubber.js";
 import type { ChatCompletionMessageParam, ChatCompletionTool, LLMClient } from "../llm.js";
 import { selectForSubAgent } from "../model-router.js";
 import { executeTool, getToolSchemasByNames } from "../tools/index.js";
@@ -73,6 +74,16 @@ const SUMMARIZE_THRESHOLD = 30; // Summarize when history exceeds this
 const STUCK_WINDOW_SIZE = 5; // Track last N tool calls
 const STUCK_WARNING_THRESHOLD = 3; // Inject warning after N consecutive identical calls
 const STUCK_CRITICAL_THRESHOLD = 5; // Force-exit after N consecutive identical calls
+
+/**
+ * Fence attacker-influenceable tool output the same way the main agent does
+ * (agent.ts executeToolCall), so web/tool text reads as data, not instructions.
+ * Honors ATLAS_NO_UNTRUSTED_WRAP=true.
+ */
+function fenceToolResult(fnName: string, result: string): string {
+    if (process.env.ATLAS_NO_UNTRUSTED_WRAP === "true" || !isUntrustedToolResult(fnName)) return result;
+    return wrapUntrustedToolResult(fnName, result);
+}
 
 /** Fast hash for tool call deduplication (FNV-1a inspired). */
 function hashToolCall(toolName: string, args: string): string {
@@ -446,12 +457,16 @@ export async function runSubAgent(
     let errorCount = 0; // Track errors for model escalation (#13)
     let estimatedCost = 0; // Accumulated estimated cost (#16)
     const toolCallHistory: string[] = []; // Track tool calls for loop detection (#11)
+    // Why the loop stopped without a final answer. Every such exit is a failure,
+    // so swarm/mesh recovery (retry → rephrase → reroute → skip) gets to run.
+    let failure = "";
 
     try {
         while (iterations < maxIter) {
             // Check timeout
             if (Date.now() - startTime > timeout) {
                 console.warn(`  ⏰ Sub-agent ${task.id} timed out after ${timeout}ms`);
+                failure = `Sub-agent timed out after ${timeout}ms`;
                 break;
             }
 
@@ -501,7 +516,10 @@ export async function runSubAgent(
             });
 
             const choice = response.choices?.[0];
-            if (!choice) break;
+            if (!choice) {
+                failure = "Sub-agent got an empty LLM response";
+                break;
+            }
 
             const toolCalls = choice.message?.tool_calls;
             const content = choice.message?.content || "";
@@ -571,7 +589,7 @@ export async function runSubAgent(
                         fullHistory.push({
                             role: "tool",
                             tool_call_id: tc.id,
-                            content: smartTruncate(fnName, delegateResult),
+                            content: fenceToolResult(fnName, smartTruncate(fnName, delegateResult)),
                         } as ChatCompletionMessageParam);
                     } catch (delegateErr) {
                         errorCount++;
@@ -621,7 +639,7 @@ export async function runSubAgent(
                 fullHistory.push({
                     role: "tool",
                     tool_call_id: tc.id,
-                    content: smartTruncate(fnName, result), // Smart truncation (#3)
+                    content: fenceToolResult(fnName, smartTruncate(fnName, result)), // Smart truncation (#3)
                 } as ChatCompletionMessageParam);
             }
 
@@ -643,6 +661,7 @@ export async function runSubAgent(
                 console.warn(
                     `  🔄 Sub-agent ${task.id} stuck (critical) — forcing exit after ${totalToolCalls} repeated tool calls`,
                 );
+                failure = `Sub-agent stuck in a loop repeating the same tool call (${totalToolCalls} tool calls)`;
                 break;
             } else if (stuckLevel === "warning") {
                 console.warn(`  🔄 Sub-agent ${task.id} may be stuck — injecting warning`);
@@ -654,18 +673,19 @@ export async function runSubAgent(
             }
         }
 
-        // If we exhausted iterations, take the last content as output
+        // No final answer: keep the last assistant text as partial output.
         const lastAssistant = [...fullHistory].reverse().find((m) => m.role === "assistant");
         const lastContent = typeof lastAssistant?.content === "string" ? lastAssistant.content : "";
 
         return {
             id: task.id,
             role: task.role,
-            success: true,
-            output: lastContent || `(completed ${totalToolCalls} tool calls)`,
+            success: false,
+            output: lastContent || `(partial: ${totalToolCalls} tool calls, no final answer)`,
             toolCalls: totalToolCalls,
             durationMs: Date.now() - startTime,
             estimatedCost,
+            error: failure || `Sub-agent hit max iterations (${maxIter}) without finishing`,
         };
     } catch (err) {
         return {

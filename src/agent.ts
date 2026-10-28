@@ -5,8 +5,8 @@
 import { checkAccountStatus, getKnownCreditBalance, getSessionCreditStats } from "./account-guard.js";
 import {
     injectSystemReminder,
-    sanitizeUntrustedContent,
     SYSTEM_REMINDER_EXPLANATION,
+    sanitizeUntrustedContent,
 } from "./agent/system-reminders.js";
 import {
     recordFailure as cbRecordFailure,
@@ -18,6 +18,7 @@ import {
     tryHalfOpen,
 } from "./agents/circuit-breaker.js";
 import { classifyComplexity } from "./agents/complexity-classifier.js";
+import { runWithEvalTraceId } from "./agents/evaluator.js";
 import { listActiveLongTasks } from "./agents/long-task.js";
 import {
     applyIntervention,
@@ -29,8 +30,7 @@ import {
     setCalibrationContext,
     updateSignals,
 } from "./agents/metacognition.js";
-import { judgeFixToIntervention, progressJudgeEnabled, runProgressJudge } from "./agents/progress-judge.js";
-import { canonicalArgsHash, createGuardrailState, recordToolCall as recordGuardrailCall } from "./agents/tool-call-guardrail.js";
+import { logOrchestratorRouting } from "./agents/orchestrator-routing-log.js";
 import {
     enterPlanMode,
     filterToolsForAwaitingApproval,
@@ -42,11 +42,13 @@ import {
     isToolAllowedInCurrentMode,
     planModeReminderBody,
 } from "./agents/plan-mode.js";
+import { judgeFixToIntervention, progressJudgeEnabled, runProgressJudge } from "./agents/progress-judge.js";
+import {
+    canonicalArgsHash,
+    createGuardrailState,
+    recordToolCall as recordGuardrailCall,
+} from "./agents/tool-call-guardrail.js";
 import { offloadIfLarge } from "./agents/tool-output-offload.js";
-import { CODE_TOOLS, protect, REVEAL_TOOLS, reveal, revealArgs } from "./security/pii-vault.js";
-import { isToolAllowed, NON_OWNER_TOOLS } from "./security/tool-access.js";
-import { noteOwnerMessage } from "./security/consent.js";
-import { logOrchestratorRouting } from "./agents/orchestrator-routing-log.js";
 import {
     buildVerifyReminder,
     isMutator,
@@ -55,6 +57,14 @@ import {
     recordToolCall as recordToolCallForVerifyGate,
     shouldForceVerify,
 } from "./agents/verify-before-done.js";
+import { getDimensionValue } from "./harness/registry.js";
+import {
+    finalizeTrace,
+    recordContextSources,
+    recordMemoryHit,
+    recordToolsSelected,
+    startTrace,
+} from "./harness/trace-store.js";
 import type { ChatCompletionMessageParam, LLMClient, ThinkingLevel } from "./llm.js";
 import { MODEL_DISPLAY, MODELS } from "./llm.js";
 import { getLocationSnippet, getTimezone } from "./location/index.js";
@@ -83,8 +93,8 @@ import { getWMSnippet, reflect as wmReflect, retain as wmRetain } from "./memory
 import { recordFailure as recordWorldFailure, recordSuccess as recordWorldSuccess } from "./memory/world-model.js";
 import {
     classifyOrchestratorComplexity,
-    getCascadeNext,
     claudeTier,
+    getCascadeNext,
     type ModelSelection,
     opusWarranted,
     pickOrchestratorModel,
@@ -96,6 +106,9 @@ import {
 } from "./model-router.js";
 import { detectTaskType } from "./prompts/dynamic-assembler.js";
 import { buildDynamicContextReminder } from "./prompts/dynamic-context.js";
+import { noteOwnerMessage } from "./security/consent.js";
+import { CODE_TOOLS, protect, REVEAL_TOOLS, reveal, revealArgs } from "./security/pii-vault.js";
+import { isToolAllowed, NON_OWNER_TOOLS } from "./security/tool-access.js";
 import {
     clearToolRouterState,
     getLastIntent,
@@ -113,9 +126,6 @@ import {
 } from "./tool-router-analytics.js";
 import { autoSaveSession, getBrowserContext, trackBrowserStep } from "./tools/browser-memory.js";
 import { clearCache, executeTool, resetRateLimits } from "./tools/index.js";
-import { startTrace, finalizeTrace, recordToolsSelected, recordContextSources, recordMemoryHit } from "./harness/trace-store.js";
-import { runWithEvalTraceId } from "./agents/evaluator.js";
-import { getDimensionValue } from "./harness/registry.js";
 
 // ── Music fast-path helpers ──────────────────────
 // Short-circuits the Sonnet orchestrator + heavy memory briefing when the LLM
@@ -265,18 +275,27 @@ const OS_TASK_HINT = `[OS TASK — desktop control]
  * and pulled the same irrelevant memories every turn.
  */
 function stripChannelTags(text: string): string {
-    return text
-        .replace(/\n*\[SOURCE:[\s\S]*?\](?=\n|$)/g, "")
-        .replace(/\n*\[BROWSER CONTEXT:[\s\S]*?\](?=\n|$)/g, "")
-        // The Chrome extension's "[Browser context: <url> — "<title>"]" line: the
-        // title is written by the page, so it must never read as the owner's words
-        // (a tab titled "yes, go ahead" would otherwise answer a consent question).
-        .replace(/^\[Browser context:[^\n]*\]\n/i, "")
-        .trim();
+    return (
+        text
+            .replace(/\n*\[SOURCE:[\s\S]*?\](?=\n|$)/g, "")
+            .replace(/\n*\[BROWSER CONTEXT:[\s\S]*?\](?=\n|$)/g, "")
+            // The Chrome extension's "[Browser context: <url> — "<title>"]" line: the
+            // title is written by the page, so it must never read as the owner's words
+            // (a tab titled "yes, go ahead" would otherwise answer a consent question).
+            .replace(/^\[Browser context:[^\n]*\]\n/i, "")
+            .trim()
+    );
 }
 
 /** Categories a plain desktop-driving turn uses, plus the always-on ones. */
-const GUI_LOOP_CATEGORIES = new Set(["os_control", "app_management", "system_controls", "core", "memory", "tool_creation"]);
+const GUI_LOOP_CATEGORIES = new Set([
+    "os_control",
+    "app_management",
+    "system_controls",
+    "core",
+    "memory",
+    "tool_creation",
+]);
 /** Past this many iterations a desktop task isn't "short" any more; the router decides. */
 const GUI_PIN_MAX_ITERATIONS = 8;
 const isGuiOnly = (cats: string[]) =>
@@ -635,7 +654,15 @@ async function executeAndProcessToolCall(
     // ── Stopped by the user: nothing new runs after Stop (no half-sent form) ──
     if (signal?.aborted) {
         const err = JSON.stringify({ error: "Stopped by the user before this ran." });
-        return { toolCallId: toolCall.id, fnName, fnArgs, result: err, finalContent: err, isBrowser: false, isError: true };
+        return {
+            toolCallId: toolCall.id,
+            fnName,
+            fnArgs,
+            result: err,
+            finalContent: err,
+            isBrowser: false,
+            isError: true,
+        };
     }
 
     // ── Hard block: reject tools not in the allowlist (defense-in-depth) ──
@@ -707,7 +734,9 @@ async function executeAndProcessToolCall(
                 isError: true,
             };
         }
-    } catch { /* preflight module failure is non-fatal — fall through */ }
+    } catch {
+        /* preflight module failure is non-fatal — fall through */
+    }
 
     // Plan-mode runtime gate. The schema filter strips mutation tools BEFORE
     // the LLM sees them, but a determined model (or a stale tool-call from a
@@ -876,7 +905,14 @@ async function executeToolCallsBatch(
     const deferredResults: ToolCallResult[] = [];
     for (const tc of deferrableCalls) {
         // Track the promise to prevent unhandled rejections
-        const promise = executeAndProcessToolCall(tc, ctx.onToolRequest, ctx.userMessage, ctx.toolAllowlist, ctx.channelContext, ctx.signal)
+        const promise = executeAndProcessToolCall(
+            tc,
+            ctx.onToolRequest,
+            ctx.userMessage,
+            ctx.toolAllowlist,
+            ctx.channelContext,
+            ctx.signal,
+        )
             .then((r) => {
                 const preview = r.result ? r.result.substring(0, 200) : "(empty)";
                 console.log(`  ✅ Deferred tool ${r.fnName} completed: ${preview}`);
@@ -893,7 +929,14 @@ async function executeToolCallsBatch(
     const TOOL_BATCH_TIMEOUT_MS = 120_000;
     const done = new Map<string, ToolCallResult>();
     const run = async (tc: (typeof toolCalls)[number]) => {
-        const r = await executeAndProcessToolCall(tc, ctx.onToolRequest, ctx.userMessage, ctx.toolAllowlist, ctx.channelContext, ctx.signal);
+        const r = await executeAndProcessToolCall(
+            tc,
+            ctx.onToolRequest,
+            ctx.userMessage,
+            ctx.toolAllowlist,
+            ctx.channelContext,
+            ctx.signal,
+        );
         done.set(tc.id, r);
         return r;
     };
@@ -940,7 +983,9 @@ async function executeToolCallsBatch(
                               fnName: tc.function.name,
                               fnArgs: {} as Record<string, unknown>,
                               result: JSON.stringify({ error: `${(err as Error).message}; this step did not finish` }),
-                              finalContent: JSON.stringify({ error: `${(err as Error).message}; this step did not finish` }),
+                              finalContent: JSON.stringify({
+                                  error: `${(err as Error).message}; this step did not finish`,
+                              }),
                               isBrowser: false,
                               isError: true,
                           },
@@ -960,7 +1005,14 @@ async function executeToolCallsBatch(
         const milestone = getMilestoneMessage(tc.function.name, fnArgs);
         if (milestone) await ctx.sendProgress(milestone);
 
-        const r = await executeAndProcessToolCall(tc, ctx.onToolRequest, undefined, ctx.toolAllowlist, ctx.channelContext, ctx.signal);
+        const r = await executeAndProcessToolCall(
+            tc,
+            ctx.onToolRequest,
+            undefined,
+            ctx.toolAllowlist,
+            ctx.channelContext,
+            ctx.signal,
+        );
         browserResults.push(r);
 
         // Track browser step immediately
@@ -1026,9 +1078,7 @@ export async function runAgent(
     // privileges when they interleave LLM awaits. Absent channelContext
     // defaults to non-owner (harness/research/voice paths).
     const callerIsOwner = channelContext?.isOwner === true;
-    const runWithCaller = async (
-        fn: () => Promise<AgentResponse>,
-    ): Promise<AgentResponse> => {
+    const runWithCaller = async (fn: () => Promise<AgentResponse>): Promise<AgentResponse> => {
         // Lazy ESM import to avoid circular dep at module-load time.
         // (Was `require()` previously — `require` is undefined in ESM-
         // compiled output and crashed every overlay/Telegram message
@@ -1039,25 +1089,55 @@ export async function runAgent(
         // about their own values, so show them. Everyone else keeps the handle.
         // Only in a private chat: in a group or public channel the real values
         // would reach everyone (and a page can ask the model to echo [CARD_1]).
-        if (callerIsOwner && channelContext?.isPrivate === true && !channelContext.autonomous && typeof res?.text === "string") {
+        if (
+            callerIsOwner &&
+            channelContext?.isPrivate === true &&
+            !channelContext.autonomous &&
+            typeof res?.text === "string"
+        ) {
             res.text = reveal(res.text);
         }
         return res;
     };
     if (!isForked) {
-        const _earlyTraceId = startTrace(channelContext?.channel || "default",
-            userMessage.replace(/\n*\[SOURCE:.*\]$/s, "").trim(), 0);
+        const _earlyTraceId = startTrace(
+            channelContext?.channel || "default",
+            userMessage.replace(/\n*\[SOURCE:.*\]$/s, "").trim(),
+            0,
+        );
         return runWithCaller(() =>
-            runWithEvalTraceId(_earlyTraceId, () => _runAgentBody(
-                llm, userMessage, onProgress, media, signal, historyFork, modelHint, toolAllowlist, channelContext, _earlyTraceId
-            )),
+            runWithEvalTraceId(_earlyTraceId, () =>
+                _runAgentBody(
+                    llm,
+                    userMessage,
+                    onProgress,
+                    media,
+                    signal,
+                    historyFork,
+                    modelHint,
+                    toolAllowlist,
+                    channelContext,
+                    _earlyTraceId,
+                ),
+            ),
         ).catch((err: unknown) => {
             if (_earlyTraceId) finalizeTrace(_earlyTraceId, false);
             throw err;
         });
     }
     return runWithCaller(() =>
-        _runAgentBody(llm, userMessage, onProgress, media, signal, historyFork, modelHint, toolAllowlist, channelContext, null),
+        _runAgentBody(
+            llm,
+            userMessage,
+            onProgress,
+            media,
+            signal,
+            historyFork,
+            modelHint,
+            toolAllowlist,
+            channelContext,
+            null,
+        ),
     );
 }
 
@@ -1125,10 +1205,10 @@ async function _runAgentBody(
     // own "say yes to confirm" — so it must never count as the owner's words,
     // and goal detection shouldn't read it either. Anchored on `"]\n\n`, which
     // telegram.ts always emits, so a `]` inside the quote can't end it early.
-    const userIntentText = rawUserMessage.replace(/^\[Replying to [^\n]*?message: "[\s\S]*?"\]\n\n/, "").trim() || rawUserMessage;
+    const userIntentText =
+        rawUserMessage.replace(/^\[Replying to [^\n]*?message: "[\s\S]*?"\]\n\n/, "").trim() || rawUserMessage;
     // Only a message the owner actually sent can answer a consent question.
     if (channelContext?.isOwner && !channelContext.autonomous) noteOwnerMessage(userIntentText);
-
 
     // ── Goal detection: check if user mentioned a goal ──
     try {
@@ -1164,17 +1244,18 @@ async function _runAgentBody(
             content.push({ type: "text", text: safeUserMessage });
         }
         for (const m of media) {
-            if (m.type === "audio") {
-                // Audio: use input_audio content part
-                content.push({
-                    type: "input_audio",
-                    input_audio: { data: m.base64, format: m.mimeType.split("/")[1] || "ogg" },
-                });
-            } else {
-                // Image/Video: use image_url with data URI
+            if (m.type === "image") {
                 content.push({
                     type: "image_url",
                     image_url: { url: `data:${m.mimeType};base64,${m.base64}` },
+                });
+            } else {
+                // The Claude proxy takes images only: a video sent as an image
+                // errors, and audio is silently dropped (so song-ID made things
+                // up). Say so, so the model answers honestly instead.
+                content.push({
+                    type: "text",
+                    text: `[The user attached a ${m.type} (${m.mimeType}), but I can't watch or listen to ${m.type} files directly. Use only any transcript or caption above; otherwise tell the user you couldn't play it.]`,
                 });
             }
         }
@@ -1388,7 +1469,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             const shouldNudge = metaCheck.loopDetected || metaCheck.struggleDetected;
             if (shouldNudge) guiTrouble = true; // a looping desktop task goes back to the router's pick
             // One-shot when interventions are off; cooldown-gated repeat otherwise.
-            const fire = shouldNudge && (interventionsOff ? !metaNudged : (!metaNudged || cooldownPassed));
+            const fire = shouldNudge && (interventionsOff ? !metaNudged : !metaNudged || cooldownPassed);
             if (fire) {
                 metaNudged = true;
                 lastMetaNudgeIter = iterations;
@@ -1559,9 +1640,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
         // modelOverride path — consumed once, then cleared so it forces ONE iteration.
         const forcedPick = circuitBreaker.state === "half-open" || !!interventionState.forcedModel;
         let model =
-            circuitBreaker.state === "half-open"
-                ? MODELS.SONNET
-                : (interventionState.forcedModel ?? selection.modelId);
+            circuitBreaker.state === "half-open" ? MODELS.SONNET : (interventionState.forcedModel ?? selection.modelId);
         if (interventionState.forcedModel) {
             console.log(`  🧠 Metacog escalate → ${interventionState.forcedModel}`);
             interventionState.forcedModel = null;
@@ -1918,18 +1997,14 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                     try {
                         const embedMod = await import("./memory/embeddings.js");
                         if (embedMod.isReady()) {
-                            embeddingPromise = embedMod
-                                .embedText(enrichedQuery, "query")
-                                .catch(() => null);
+                            embeddingPromise = embedMod.embedText(enrichedQuery, "query").catch(() => null);
                         }
                     } catch {
                         /* recall() will fall back to computing embedding internally */
                     }
 
                     const [queriedMems, pastConvos, learningsCtx] = await Promise.all([
-                        recall(enrichedQuery, recallK, llm, queryMode, undefined, embeddingPromise).catch(
-                            () => [],
-                        ),
+                        recall(enrichedQuery, recallK, llm, queryMode, undefined, embeddingPromise).catch(() => []),
                         Promise.resolve().then(() => {
                             try {
                                 return recallConversation(rawUserMessage, convRecallK);
@@ -1950,7 +2025,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                     const uniqueMems = queriedMems.filter((q: any) => !coreMems.some((c: any) => c.id === q.id));
                     // Record memory hits for harness traces
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    const topScore = queriedMems.length > 0 ? (queriedMems[0] as any).score ?? 0 : 0;
+                    const topScore = queriedMems.length > 0 ? ((queriedMems[0] as any).score ?? 0) : 0;
                     if (_harnessTraceId) recordMemoryHit(_harnessTraceId, uniqueMems.length, topScore);
                     if (uniqueMems && uniqueMems.length > 0) {
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -2092,9 +2167,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             // suppress the model's reflexive interrogation. Looks at the last
             // 3 user messages — if all are ≤ 5 words, signal casual mode.
             try {
-                const userMsgs = messages
-                    .filter((m) => m.role === "user")
-                    .slice(-3);
+                const userMsgs = messages.filter((m) => m.role === "user").slice(-3);
                 if (userMsgs.length >= 2) {
                     const wordCounts = userMsgs.map((m) => {
                         const content = typeof m.content === "string" ? m.content : "";
@@ -2103,7 +2176,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                     const allShort = wordCounts.every((c) => c > 0 && c <= 5);
                     if (allShort) {
                         parts.push(
-                            "[chat is casual — drop interrogation patterns. NO 'what're you working on?' / 'what's on your mind?' / 'what's next?' style follow-ups. End with a statement or short reaction. Only ask a question if you genuinely need information to act.]"
+                            "[chat is casual — drop interrogation patterns. NO 'what're you working on?' / 'what's on your mind?' / 'what's next?' style follow-ups. End with a statement or short reaction. Only ask a question if you genuinely need information to act.]",
                         );
                     }
                 }
@@ -2198,7 +2271,10 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                     if (cp.messageCount > 0) contactLines.push(`Past messages: ${cp.messageCount}`);
                     if (cp.memories?.length) {
                         contactLines.push(
-                            `Saved notes:\n${cp.memories.slice(-5).map((m: any) => `- ${m.content}`).join("\n")}`,
+                            `Saved notes:\n${cp.memories
+                                .slice(-5)
+                                .map((m: any) => `- ${m.content}`)
+                                .join("\n")}`,
                         );
                     }
                     if (contactLines.length > 0) {
@@ -2210,7 +2286,11 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             if (parts.length > 0) {
                 // Record context sources for harness traces
                 if (iterations === 1) {
-                    if (_harnessTraceId) recordContextSources(_harnessTraceId, parts.map(p => p.split("\n")[0].substring(0, 60)));
+                    if (_harnessTraceId)
+                        recordContextSources(
+                            _harnessTraceId,
+                            parts.map((p) => p.split("\n")[0].substring(0, 60)),
+                        );
                     // Telemetry: log the shape of iteration-1 memory injection
                     // so we can see which subsystems are pulling weight vs
                     // returning empty. Enabled by default (low log volume,
@@ -2222,7 +2302,9 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                             return `${header}=${p.length}c`;
                         });
                         const totalChars = parts.reduce((s, p) => s + p.length, 0);
-                        console.log(`[MEMORY-INJECT] iter=1 sources=${parts.length} total=${totalChars}c → ${shapes.join(" | ")}`);
+                        console.log(
+                            `[MEMORY-INJECT] iter=1 sources=${parts.length} total=${totalChars}c → ${shapes.join(" | ")}`,
+                        );
                     }
                 }
 
@@ -2257,7 +2339,12 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 // via a cheap Haiku call. Falls back to raw injection on failure.
                 // Small injections go in raw: cheaper than a briefing call, which
                 // also sits on the critical path (see BRIEFING_MIN_CHARS).
-                if (USE_MEMORY_BRIEFING && queryMode !== "llm_only" && !musicFastPathPhase1 && totalChars > BRIEFING_MIN_CHARS) {
+                if (
+                    USE_MEMORY_BRIEFING &&
+                    queryMode !== "llm_only" &&
+                    !musicFastPathPhase1 &&
+                    totalChars > BRIEFING_MIN_CHARS
+                ) {
                     try {
                         const rawMemories: Record<string, string> = {};
                         for (const part of cappedParts) {
@@ -2378,7 +2465,10 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
         const turnTier = toolSelection.classification?.tier;
         if (iterations === 1 && turnTier && !forcedPick) {
             const before = model;
-            if ((turnTier === "chat" || turnTier === "simple") && !opusWarranted(rawUserMessage, errorCount, modelHint)) {
+            if (
+                (turnTier === "chat" || turnTier === "simple") &&
+                !opusWarranted(rawUserMessage, errorCount, modelHint)
+            ) {
                 if (claudeTier(model) !== "haiku") model = MODELS.HAIKU;
                 // Pure chat needs no reasoning. A tool task keeps a little: with
                 // thinking off, Haiku tends to answer from stale context instead
@@ -2388,14 +2478,21 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 model = MODELS.SONNET;
                 if (iterThinking === "off") iterThinking = "low";
             }
-            console.log(`  🧭 Task tier: ${turnTier} → ${claudeTier(model)}${model !== before ? ` (was ${claudeTier(before)})` : ""}, thinking ${iterThinking}`);
+            console.log(
+                `  🧭 Task tier: ${turnTier} → ${claudeTier(model)}${model !== before ? ` (was ${claudeTier(before)})` : ""}, thinking ${iterThinking}`,
+            );
         }
 
         // Unhinged (an 18+ owner opt-in) needs a model that holds a persona:
         // Haiku under a long prompt of calm defaults answers in the normal voice.
         // Pure chat goes to Grok (server-side, falls back to Sonnet); a quick
         // tool turn stays on Claude. Owner turns only; 1 credit instead of 0.25.
-        if (iterations === 1 && !forcedPick && claudeTier(model) === "haiku" && (!channelContext || channelContext.isOwner)) {
+        if (
+            iterations === 1 &&
+            !forcedPick &&
+            claudeTier(model) === "haiku" &&
+            (!channelContext || channelContext.isOwner)
+        ) {
             const { getActivePreset } = await import("./setup/personality-sync.js");
             if (getActivePreset() === "unhinged") {
                 model = turnTier === "simple" ? MODELS.SONNET : MODELS.GROK;
@@ -2424,7 +2521,8 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
 
         // ── Harness trace: record selected tools ──
         if (iterations === 1 && _harnessTraceId) {
-            if (_harnessTraceId) recordToolsSelected(_harnessTraceId, tools.map(t => t.function?.name ?? String(t)).filter(Boolean));
+            if (_harnessTraceId)
+                recordToolsSelected(_harnessTraceId, tools.map((t) => t.function?.name ?? String(t)).filter(Boolean));
         }
 
         // Phase-2 full fast-path gate (requires classifier output — threaded
@@ -2508,9 +2606,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
         // via ATLAS_ALWAYS_ORCHESTRATE=true to restore the old always-on path.
         const classifierConf = toolSelection.classification?.confidence ?? 0;
         const unambiguousSingleStep =
-            process.env.ATLAS_ALWAYS_ORCHESTRATE !== "true" &&
-            actionCategoryCount <= 1 &&
-            classifierConf >= 0.85;
+            process.env.ATLAS_ALWAYS_ORCHESTRATE !== "true" && actionCategoryCount <= 1 && classifierConf >= 0.85;
 
         // ── Simple GUI/messaging fast-path gate ──
         // "open WhatsApp and send a message" classifies as cats=[os_control,
@@ -2716,7 +2812,9 @@ PLAN:`,
                 const defanged = defangPlanInjection(rawPlanText);
                 const planText = defanged.text;
                 if (defanged.scrubbed) {
-                    console.warn(`  ⚠️ Orchestrator plan scrubbed (${defanged.patternsHit} identity-affirming pattern(s) neutralized)`);
+                    console.warn(
+                        `  ⚠️ Orchestrator plan scrubbed (${defanged.patternsHit} identity-affirming pattern(s) neutralized)`,
+                    );
                 }
 
                 if (planText.length > 20) {
@@ -2807,6 +2905,14 @@ PLAN:`,
             cbRecordFailure(circuitBreaker);
             console.error(`[AGENT] LLM call threw: ${(llmErr as Error).message} — attempting recovery`);
             lastLlmError = (llmErr as Error).message ?? "";
+            // Out of credits: no other model or retry can help, say so once.
+            if ((llmErr as { status?: number }).status === 402) {
+                if (_harnessTraceId) finalizeTrace(_harnessTraceId, false);
+                return {
+                    text: "You're out of AI credits, so I can't do this right now. Top up in Settings → Account and ask me again.",
+                    toolCalls: totalToolCalls,
+                };
+            }
             // Try one more model before giving up this iteration
             // Step to a different Claude model, never up to Opus on an error.
             const fallbackModel = claudeTier(model) === "sonnet" ? MODELS.HAIKU : MODELS.SONNET;
@@ -2839,7 +2945,9 @@ PLAN:`,
                     const currentRunResponses = messages
                         .filter(
                             (m, idx) =>
-                                m.role === "assistant" && typeof (m as { content?: string }).content === "string" && idx > turnStart,
+                                m.role === "assistant" &&
+                                typeof (m as { content?: string }).content === "string" &&
+                                idx > turnStart,
                         )
                         .map((m) => (m as { content: string }).content)
                         .filter(Boolean);
@@ -2869,9 +2977,7 @@ PLAN:`,
         if (!response?.choices?.length) {
             console.warn(`[AGENT] LLM returned empty/undefined response from ${model} — attempting recovery`);
             // Retry on a different Claude model (Sonnet, then Haiku), never Opus.
-            const retryModels = [MODELS.SONNET, MODELS.HAIKU].filter(
-                (m) => claudeTier(m) !== claudeTier(model),
-            );
+            const retryModels = [MODELS.SONNET, MODELS.HAIKU].filter((m) => claudeTier(m) !== claudeTier(model));
             // Deduplicate while preserving order
             const seen = new Set<string>();
             const uniqueRetryModels: string[] = [];
@@ -3337,7 +3443,7 @@ PLAN:`,
                     // — that's context-overflow / model exhaustion, not a transient
                     // glitch. Prune the conversation history before retrying so we
                     // don't burn another 57K-token call to get 3 tokens back.
-                    const promptTokens = (finalResponse.usage?.prompt_tokens ?? 0);
+                    const promptTokens = finalResponse.usage?.prompt_tokens ?? 0;
                     if (
                         text === "(empty response)" &&
                         lastToolCalls &&
@@ -3353,7 +3459,7 @@ PLAN:`,
                         // the retry hits the same context-overflow path.
                         if (promptTokens > 40_000 && messages.length > 12) {
                             const keepFirst = 2; // system + initial user
-                            const keepLast = 8;   // recent tool results + user message
+                            const keepLast = 8; // recent tool results + user message
                             const dropped = messages.length - keepFirst - keepLast;
                             if (dropped > 0) {
                                 messages.splice(keepFirst, dropped);
@@ -3363,7 +3469,8 @@ PLAN:`,
                         messages.push({ role: "assistant", content: "" });
                         messages.push({
                             role: "user",
-                            content: "You produced an empty response. Please provide a concise meaningful reply to the user based on what you've already done.",
+                            content:
+                                "You produced an empty response. Please provide a concise meaningful reply to the user based on what you've already done.",
                         });
                         lastToolCalls = undefined;
                         continue;
@@ -3640,8 +3747,12 @@ PLAN:`,
         // and never grinds this loop, so this only catches interactive spirals.
         // Disable entirely with ATLAS_NO_PROGRESS_LIMIT=0.
         const LOOP_EXEMPT_TOOLS = new Set([
-            "shell_check_process", "shell_wait_process", "shell_exec_background",
-            "check_long_task", "check_deep_research", "shell_kill_process",
+            "shell_check_process",
+            "shell_wait_process",
+            "shell_exec_background",
+            "check_long_task",
+            "check_deep_research",
+            "shell_kill_process",
         ]);
         const batchHasExemptTool = batchResults.some((r) => LOOP_EXEMPT_TOOLS.has(r.fnName));
         if (NO_PROGRESS_LIMIT > 0 && batchResults.length > 0 && !batchHasExemptTool) {

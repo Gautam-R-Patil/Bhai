@@ -2,19 +2,19 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import type { Config } from "./config.js";
 import type {
+    ChatCompletion,
     ChatCompletionMessageParam,
     ChatCompletionTool,
-    ChatCompletion,
 } from "openai/resources/chat/completions.js";
-import { getSessionToken, handleAuthError } from "./session.js";
 import { getConvexSiteUrl } from "./config/keys.js";
+import type { Config } from "./config.js";
 import { encryptedFetch } from "./crypto-transport.js";
+import { getSessionToken, handleAuthError } from "./session.js";
 
 // ── Types ─────────────────────────────────────
 
-export type { ChatCompletionMessageParam, ChatCompletionTool, ChatCompletion };
+export type { ChatCompletion, ChatCompletionMessageParam, ChatCompletionTool };
 
 export type ThinkingLevel = "off" | "low" | "medium" | "high" | "max";
 
@@ -24,10 +24,7 @@ export type ThinkingLevel = "off" | "low" | "medium" | "high" | "max";
 // server-side history cache breakpoint (convex/http.ts ~:666), and a
 // to-the-second timestamp busted the Anthropic prefix cache on every call.
 // The live clock widget renders exact time to the user regardless.
-export function buildDynamicContextBlock(
-    languageContext = "",
-    now: Date = new Date(),
-): string {
+export function buildDynamicContextBlock(languageContext = "", now: Date = new Date()): string {
     const hourBucket = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours());
     const timeContext = `[SYSTEM CLOCK: Current date/time is approximately ${hourBucket.toLocaleString("en-US", { dateStyle: "full", timeStyle: "short" } as Intl.DateTimeFormatOptions)} ${Intl.DateTimeFormat().resolvedOptions().timeZone}]`;
     const widgetContext = `[UI WIDGETS]\nIf the user asks for the current time, DO NOT output the time in plain text. Instead, output EXACTLY this hidden tag so the UI renders a beautiful real-time animated clock widget:\n<!--WIDGET: {"type": "clock"}-->\nIf they ask for the date, you can use the clock widget too, or just say the date.`;
@@ -117,12 +114,12 @@ export const MODEL_DISPLAY: Record<string, string> = {
     [MODELS.GLM_46]: "GLM 4.6",
 };
 
-import { IS_MAC, IS_WIN } from "./tools/platform.js";
-import { createDefaultPipeline, type ChatParams } from "./llm-middleware.js";
-import { sanitizeToolSchemas, type ToolSchemaShape } from "./tools/schema-sanitizer.js";
 import { sanitizeContextEchoes } from "./context-scrubber.js";
-import { protect, protectMessages } from "./security/pii-vault.js";
+import { type ChatParams, createDefaultPipeline } from "./llm-middleware.js";
 import { tryParseOssToolCalls } from "./llm-parser-fallback.js";
+import { protect, protectMessages } from "./security/pii-vault.js";
+import { IS_MAC, IS_WIN } from "./tools/platform.js";
+import { sanitizeToolSchemas, type ToolSchemaShape } from "./tools/schema-sanitizer.js";
 
 // Platform identifier sent to server for platform-specific prompt assembly
 const PLATFORM = IS_MAC ? "mac" : IS_WIN ? "win" : "linux";
@@ -156,6 +153,20 @@ async function getModelFallback(model: string, exclude?: string[]): Promise<stri
     }
 }
 
+// Per-attempt deadline. Thinking turns legitimately run long (max allows ~65K
+// tokens), so a flat 25s aborted them and silently failed over to a cheaper
+// model. An explicit ATLAS_LLM_ATTEMPT_TIMEOUT_MS still wins.
+const ATTEMPT_TIMEOUT_BY_EFFORT: Partial<Record<ThinkingLevel, number>> = {
+    medium: 60_000,
+    high: 120_000,
+    max: 180_000,
+};
+export function attemptTimeoutMs(effort?: ThinkingLevel): number {
+    const env = Number(process.env.ATLAS_LLM_ATTEMPT_TIMEOUT_MS);
+    if (env > 0) return env;
+    return (effort && ATTEMPT_TIMEOUT_BY_EFFORT[effort]) || 25_000;
+}
+
 // ── Create Client ─────────────────────────────
 
 export function createLLMClient(config: Config): LLMClient {
@@ -163,12 +174,23 @@ export function createLLMClient(config: Config): LLMClient {
 
     return {
         config,
-        async chat({ messages, tools, systemPrompt, serverPromptSlug, thinkingLevel, modelOverride, skillSlugs, responseFormat, lean, timeoutMs, signal }) {
-            // A fresh deadline per fetch (each fallback hop gets its own), or none
-            // so encryptedFetch applies its default; joined with the caller's
-            // signal, which then also needs a deadline of its own.
+        async chat({
+            messages,
+            tools,
+            systemPrompt,
+            serverPromptSlug,
+            thinkingLevel,
+            modelOverride,
+            skillSlugs,
+            responseFormat,
+            lean,
+            timeoutMs,
+            signal,
+        }) {
+            // A fresh deadline per fetch (each fallback hop gets its own), sized
+            // by thinking effort; joined with the caller's signal if any.
             const deadline = () => {
-                const ms = timeoutMs && timeoutMs > 0 ? timeoutMs : signal ? Number(process.env.ATLAS_LLM_ATTEMPT_TIMEOUT_MS) || 25_000 : 0;
+                const ms = timeoutMs && timeoutMs > 0 ? timeoutMs : attemptTimeoutMs(lean ? "off" : thinkingLevel);
                 const t = ms ? AbortSignal.timeout(ms) : undefined;
                 return t && signal ? AbortSignal.any([t, signal]) : t;
             };
@@ -211,7 +233,8 @@ export function createLLMClient(config: Config): LLMClient {
             // The middleware pipeline wraps the core LLM call
             return llmMiddleware(middlewareParams, async (params) => {
                 // Resolve language instruction from middleware (if detected)
-                const languageContext = (params as unknown as Record<string, unknown>)._languageInstruction as string || "";
+                const languageContext =
+                    ((params as unknown as Record<string, unknown>)._languageInstruction as string) || "";
 
                 // Dynamic context (non-sensitive, stays client-side).
                 // Server will prepend the system prompt from its DB before this.
@@ -226,7 +249,11 @@ export function createLLMClient(config: Config): LLMClient {
 
                 // Scale max_tokens based on thinking level
                 const maxTokensByThinking: Record<string, number> = {
-                    off: 4096, low: 8192, medium: 16384, high: 32768, max: 65536,
+                    off: 4096,
+                    low: 8192,
+                    medium: 16384,
+                    high: 32768,
+                    max: 65536,
                 };
                 const maxTokens = maxTokensByThinking[effort] || 4096;
 
@@ -238,9 +265,7 @@ export function createLLMClient(config: Config): LLMClient {
                     messages: allMessages,
                     tools:
                         params.tools && params.tools.length > 0
-                            ? (sanitizeToolSchemas(
-                                  params.tools as unknown as ToolSchemaShape[],
-                              ) as typeof params.tools)
+                            ? (sanitizeToolSchemas(params.tools as unknown as ToolSchemaShape[]) as typeof params.tools)
                             : undefined,
                     platform: PLATFORM,
                     skillSlugs: params.skillSlugs || [],
@@ -261,254 +286,286 @@ export function createLLMClient(config: Config): LLMClient {
                 // research, synthesis) keep the old default: lowest effort with
                 // thinking on. Only an explicit "off" or a lean helper call
                 // turns thinking off.
-                requestBody.reasoning = { effort: isThinking ? effort : lean || thinkingLevel === "off" ? "none" : "low" };
+                requestBody.reasoning = {
+                    effort: isThinking ? effort : lean || thinkingLevel === "off" ? "none" : "low",
+                };
 
-            // Exclude already-tried models so each hop surfaces a new provider.
-            // Window-aware mode (opt-in): estimate the request's token size once
-            // and skip fallback candidates whose context window can't hold it,
-            // closing the silent 1M→200K hop on large-context turns. Zero LLM cost.
-            const windowAware = process.env.ATLAS_WINDOW_AWARE_PRUNE === "true";
-            let estTokens = 0;
-            if (windowAware) {
-                try {
-                    const { estimateMessagesTokens } = await import("./memory/context-pruning.js");
-                    estTokens = estimateMessagesTokens(allMessages);
-                } catch { estTokens = 0; }
-            }
-            // Every id runs on one of three Claude models, so failing over to an
-            // alias of the same model just repeats the failed call. Only hop to
-            // a different model, and at most once.
-            const { claudeTier } = await import("./model-router.js");
-            const modelsToTry: string[] = [model];
-            const tried: string[] = [model];
-            for (let i = 0; i < 4 && modelsToTry.length < 2; i++) {
-                const seed = tried[tried.length - 1];
-                const next = await getModelFallback(seed, tried);
-                if (!next || tried.includes(next)) break;
-                tried.push(next);
-                if (modelsToTry.some((m) => claudeTier(m) === claudeTier(next))) continue;
-                if (windowAware && estTokens > 0) {
+                // Exclude already-tried models so each hop surfaces a new provider.
+                // Window-aware mode (opt-in): estimate the request's token size once
+                // and skip fallback candidates whose context window can't hold it,
+                // closing the silent 1M→200K hop on large-context turns. Zero LLM cost.
+                const windowAware = process.env.ATLAS_WINDOW_AWARE_PRUNE === "true";
+                let estTokens = 0;
+                if (windowAware) {
                     try {
-                        const { getContextWindow } = await import("./model-router.js");
-                        // Skip a candidate that can't hold the request (+headroom).
-                        if (getContextWindow(next) < estTokens * 1.1) {
-                            modelsToTry.push(next); // still record as tried so we don't re-pick it
-                            continue;
-                        }
-                    } catch { /* fail-open: keep the candidate */ }
+                        const { estimateMessagesTokens } = await import("./memory/context-pruning.js");
+                        estTokens = estimateMessagesTokens(allMessages);
+                    } catch {
+                        estTokens = 0;
+                    }
                 }
-                modelsToTry.push(next);
-            }
-            let lastError: Error | null = null;
-
-            for (const currentModel of modelsToTry) {
-                // Skip circuit-broken models instantly
-                if (await isModelCircuitOpen(currentModel)) {
-                    const display = MODEL_DISPLAY[currentModel] || currentModel;
-                    console.warn(`  ⚡ Skipping ${display} (circuit breaker open)`);
-                    continue;
-                }
-
-                const isFallback = currentModel !== model;
-                if (isFallback) {
-                    console.warn(`  🔄 Falling back to ${MODEL_DISPLAY[currentModel] || currentModel}...`);
-                }
-
-                // Rebuild body for this model (fallbacks drop provider constraints)
-                const modelBody = { ...requestBody, model: currentModel };
-
-                try {
-                    let sessionToken = await getSessionToken();
-                    if (!sessionToken) {
-                        throw new Error("Not authenticated — no session token available");
-                    }
-
-                    const callStart = Date.now();
-                    const response = await encryptedFetch(proxyUrl, {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "application/json",
-                            "Authorization": `Bearer ${sessionToken}`,
-                        },
-                        body: JSON.stringify(modelBody),
-                        signal: deadline(),
-                    });
-
-                    // Handle auth expiry — re-authenticate and retry once
-                    if (response.status === 401) {
-                        sessionToken = await handleAuthError();
-                        if (!sessionToken) {
-                            throw new Error("Authentication failed — could not refresh session");
-                        }
-                        const retryResponse = await encryptedFetch(proxyUrl, {
-                            method: "POST",
-                            headers: {
-                                "Content-Type": "application/json",
-                                "Authorization": `Bearer ${sessionToken}`,
-                            },
-                            body: JSON.stringify(modelBody),
-                            signal: deadline(),
-                        });
-                        if (!retryResponse.ok) {
-                            const errData = await retryResponse.json().catch(() => ({}));
-                            const raw = (errData as any).error;
-                            const rawStr = typeof raw === "string" ? raw : raw ? JSON.stringify(raw) : `HTTP ${retryResponse.status}`;
-                            const { sanitizeSecrets } = await import("./security/secrets-sanitizer.js");
-                            throw Object.assign(
-                                new Error(sanitizeSecrets(rawStr).sanitized.slice(0, 500)),
-                                { status: retryResponse.status }
-                            );
-                        }
-                        return await retryResponse.json() as ChatCompletion;
-                    }
-
-                    // Credit exhaustion — don't retry, throw immediately
-                    if (response.status === 402) {
-                        throw new Error("You've run out of AI credits. Top up to continue.");
-                    }
-
-                    if (!response.ok) {
-                        const errData = await response.json().catch(() => ({}));
-                        const errMsg = (errData as any).error?.message || (errData as any).error || `HTTP ${response.status}`;
-                        const rawStr = typeof errMsg === "string" ? errMsg : JSON.stringify(errMsg);
-                        const { sanitizeSecrets } = await import("./security/secrets-sanitizer.js");
-                        const safe = sanitizeSecrets(rawStr).sanitized;
-                        const errStr = safe.slice(0, 200);
-                        console.error(`  ❌ ${MODEL_DISPLAY[currentModel] || currentModel} failed (${response.status}): ${errStr}`);
-                        throw Object.assign(
-                            new Error(safe.slice(0, 500)),
-                            { status: response.status }
-                        );
-                    }
-
-                    const responseData = await response.json() as ChatCompletion;
-                    const callLatency = Date.now() - callStart;
-
-                    // Log thinking if present
-                    const choice = responseData.choices?.[0];
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    const reasoning = (choice as any)?.message?.reasoning_content
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        || (choice as any)?.message?.reasoning;
-                    if (reasoning && typeof reasoning === "string") {
-                        const preview = reasoning.substring(0, 150).replace(/\n/g, " ");
-                        console.log(`  💭 Thinking: ${preview}...`);
-                    }
-
-                    // Track success for adaptive routing
-                    try {
-                        const { updateModelStats } = await import("./model-router.js");
-                        const inputEst = responseData.usage?.prompt_tokens || 500;
-                        const outputEst = responseData.usage?.completion_tokens || 300;
-                        updateModelStats(currentModel, callLatency, true, inputEst, outputEst);
-                    } catch { /* router not loaded yet */ }
-
-                    // Report network success to health monitor
-                    try {
-                        const { reportNetworkSuccess } = await import("./network-health.js");
-                        reportNetworkSuccess();
-                    } catch { /* */ }
-
-                    if (isFallback) {
-                        console.log(`  ✅ Fallback to ${MODEL_DISPLAY[currentModel] || currentModel} succeeded`);
-                    }
-
-                    // OSS tool-call parser fallback: when the server returns
-                    // content with embedded <tool_call>… / <|python_tag|> / other
-                    // native markup but tool_calls is empty, parse and fill it in.
-                    tryParseOssToolCalls(responseData);
-
-                    // Strip any leaked <memory-context> fence echoes from the
-                    // final assistant content before it reaches channels.
-                    const msg = responseData.choices?.[0]?.message as
-                        | { content?: string | null }
-                        | undefined;
-                    if (msg && typeof msg.content === "string" && msg.content) {
-                        msg.content = sanitizeContextEchoes(msg.content);
-                    }
-
-                    // Response caching is now handled by the cache middleware in the pipeline
-
-                    return responseData;
-                } catch (err) {
-                    if (signal?.aborted) throw err; // cancelled: no other model, no network report
-                    lastError = err as Error;
-                    const status = (err as { status?: number }).status;
-
-                    // Track failure for adaptive routing
-                    try {
-                        const { updateModelStats } = await import("./model-router.js");
-                        updateModelStats(currentModel, 0, false, 0, 0, status);
-                    } catch { /* router not loaded yet */ }
-
-                    // Non-retryable client errors (auth, forbidden) — throw, don't try other models
-                    const nonRetryable = [401, 402, 403];
-                    if (status && nonRetryable.includes(status)) {
-                        throw err;
-                    }
-
-                    // Report network errors to health monitor so it can detect offline state
-                    const errMsg = (err as Error).message || "";
-                    const isNetworkError = errMsg.includes("fetch failed") || errMsg.includes("ENOTFOUND") ||
-                        errMsg.includes("ETIMEDOUT") || errMsg.includes("ECONNREFUSED") ||
-                        errMsg.includes("ENETUNREACH") || errMsg.includes("EHOSTUNREACH") ||
-                        errMsg.includes("aborted") || errMsg.includes("network");
-                    if (isNetworkError) {
+                // Every id runs on one of three Claude models, so failing over to an
+                // alias of the same model just repeats the failed call. Only hop to
+                // a different model, and at most once.
+                const { claudeTier } = await import("./model-router.js");
+                const modelsToTry: string[] = [model];
+                const tried: string[] = [model];
+                for (let i = 0; i < 4 && modelsToTry.length < 2; i++) {
+                    const seed = tried[tried.length - 1];
+                    const next = await getModelFallback(seed, tried);
+                    if (!next || tried.includes(next)) break;
+                    tried.push(next);
+                    if (modelsToTry.some((m) => claudeTier(m) === claudeTier(next))) continue;
+                    if (windowAware && estTokens > 0) {
                         try {
-                            const { reportNetworkError } = await import("./network-health.js");
-                            const netStatus = await reportNetworkError();
-                            if (netStatus === "offline") {
-                                // Internet is down — no point trying more models
-                                console.warn(`  ❌ Internet appears to be down — aborting model fallback chain`);
-                                break;
+                            const { getContextWindow } = await import("./model-router.js");
+                            // Skip a candidate that can't hold the request (+headroom).
+                            if (getContextWindow(next) < estTokens * 1.1) {
+                                modelsToTry.push(next); // still record as tried so we don't re-pick it
+                                continue;
                             }
-                        } catch { /* health monitor not loaded */ }
+                        } catch {
+                            /* fail-open: keep the candidate */
+                        }
+                    }
+                    modelsToTry.push(next);
+                }
+                let lastError: Error | null = null;
+
+                for (const currentModel of modelsToTry) {
+                    // Skip circuit-broken models instantly
+                    if (await isModelCircuitOpen(currentModel)) {
+                        const display = MODEL_DISPLAY[currentModel] || currentModel;
+                        console.warn(`  ⚡ Skipping ${display} (circuit breaker open)`);
+                        continue;
                     }
 
-                    // For everything else (400, 408, 429, 500, network) → immediately try next model
-                    console.warn(`  ⚠️ ${MODEL_DISPLAY[currentModel] || currentModel} failed — trying next model...`);
-                }
-            }
+                    const isFallback = currentModel !== model;
+                    if (isFallback) {
+                        console.warn(`  🔄 Falling back to ${MODEL_DISPLAY[currentModel] || currentModel}...`);
+                    }
 
-            // ── Last-resort retry: if all models are circuit-broken, force-retry the primary model ──
-            // This prevents the system from going completely dead for 5 minutes when all breakers trip simultaneously
-            // (common during brief network outages that resolve quickly)
-            if (modelsToTry.length > 0) {
-                const primaryModel = modelsToTry[0];
-                console.warn(`  ⚠️ All models circuit-broken — force-retrying ${MODEL_DISPLAY[primaryModel] || primaryModel} as last resort...`);
-                try {
-                    const modelBody = {
-                        ...requestBody,
-                        model: primaryModel,
-                    };
-                    let sessionToken = await getSessionToken();
-                    if (sessionToken) {
+                    // Rebuild body for this model (fallbacks drop provider constraints)
+                    const modelBody = { ...requestBody, model: currentModel };
+
+                    try {
+                        let sessionToken = await getSessionToken();
+                        if (!sessionToken) {
+                            throw new Error("Not authenticated — no session token available");
+                        }
+
+                        const callStart = Date.now();
                         const response = await encryptedFetch(proxyUrl, {
                             method: "POST",
                             headers: {
                                 "Content-Type": "application/json",
-                                "Authorization": `Bearer ${sessionToken}`,
+                                Authorization: `Bearer ${sessionToken}`,
                             },
                             body: JSON.stringify(modelBody),
                             signal: deadline(),
                         });
-                        if (response.ok) {
-                            const responseData = await response.json() as ChatCompletion;
-                            // Success! Reset circuit breaker for this model
-                            try {
-                                const { updateModelStats } = await import("./model-router.js");
-                                updateModelStats(primaryModel, 0, true, 0, 0);
-                            } catch { /* */ }
-                            console.log(`  ✅ Last-resort retry succeeded — ${MODEL_DISPLAY[primaryModel] || primaryModel} is back`);
-                            return responseData;
-                        }
-                    }
-                } catch {
-                    // Truly dead — fall through to throw
-                }
-            }
 
-            throw lastError || new Error("All models failed");
+                        // Handle auth expiry — re-authenticate and retry once
+                        if (response.status === 401) {
+                            sessionToken = await handleAuthError();
+                            if (!sessionToken) {
+                                throw new Error("Authentication failed — could not refresh session");
+                            }
+                            const retryResponse = await encryptedFetch(proxyUrl, {
+                                method: "POST",
+                                headers: {
+                                    "Content-Type": "application/json",
+                                    Authorization: `Bearer ${sessionToken}`,
+                                },
+                                body: JSON.stringify(modelBody),
+                                signal: deadline(),
+                            });
+                            if (!retryResponse.ok) {
+                                const errData = await retryResponse.json().catch(() => ({}));
+                                const raw = (errData as any).error;
+                                const rawStr =
+                                    typeof raw === "string"
+                                        ? raw
+                                        : raw
+                                          ? JSON.stringify(raw)
+                                          : `HTTP ${retryResponse.status}`;
+                                const { sanitizeSecrets } = await import("./security/secrets-sanitizer.js");
+                                throw Object.assign(new Error(sanitizeSecrets(rawStr).sanitized.slice(0, 500)), {
+                                    status: retryResponse.status,
+                                });
+                            }
+                            return (await retryResponse.json()) as ChatCompletion;
+                        }
+
+                        // Credit exhaustion — don't retry, throw immediately
+                        if (response.status === 402) {
+                            throw Object.assign(new Error("You've run out of AI credits. Top up to continue."), {
+                                status: 402,
+                            });
+                        }
+
+                        if (!response.ok) {
+                            const errData = await response.json().catch(() => ({}));
+                            const errMsg =
+                                (errData as any).error?.message || (errData as any).error || `HTTP ${response.status}`;
+                            const rawStr = typeof errMsg === "string" ? errMsg : JSON.stringify(errMsg);
+                            const { sanitizeSecrets } = await import("./security/secrets-sanitizer.js");
+                            const safe = sanitizeSecrets(rawStr).sanitized;
+                            const errStr = safe.slice(0, 200);
+                            console.error(
+                                `  ❌ ${MODEL_DISPLAY[currentModel] || currentModel} failed (${response.status}): ${errStr}`,
+                            );
+                            throw Object.assign(new Error(safe.slice(0, 500)), { status: response.status });
+                        }
+
+                        const responseData = (await response.json()) as ChatCompletion;
+                        const callLatency = Date.now() - callStart;
+
+                        // Log thinking if present
+                        const choice = responseData.choices?.[0];
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        const reasoning =
+                            (choice as any)?.message?.reasoning_content ||
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                            (choice as any)?.message?.reasoning;
+                        if (reasoning && typeof reasoning === "string") {
+                            const preview = reasoning.substring(0, 150).replace(/\n/g, " ");
+                            console.log(`  💭 Thinking: ${preview}...`);
+                        }
+
+                        // Track success for adaptive routing
+                        try {
+                            const { updateModelStats } = await import("./model-router.js");
+                            const inputEst = responseData.usage?.prompt_tokens || 500;
+                            const outputEst = responseData.usage?.completion_tokens || 300;
+                            updateModelStats(currentModel, callLatency, true, inputEst, outputEst);
+                        } catch {
+                            /* router not loaded yet */
+                        }
+
+                        // Report network success to health monitor
+                        try {
+                            const { reportNetworkSuccess } = await import("./network-health.js");
+                            reportNetworkSuccess();
+                        } catch {
+                            /* */
+                        }
+
+                        if (isFallback) {
+                            console.log(`  ✅ Fallback to ${MODEL_DISPLAY[currentModel] || currentModel} succeeded`);
+                        }
+
+                        // OSS tool-call parser fallback: when the server returns
+                        // content with embedded <tool_call>… / <|python_tag|> / other
+                        // native markup but tool_calls is empty, parse and fill it in.
+                        tryParseOssToolCalls(responseData);
+
+                        // Strip any leaked <memory-context> fence echoes from the
+                        // final assistant content before it reaches channels.
+                        const msg = responseData.choices?.[0]?.message as { content?: string | null } | undefined;
+                        if (msg && typeof msg.content === "string" && msg.content) {
+                            msg.content = sanitizeContextEchoes(msg.content);
+                        }
+
+                        // Response caching is now handled by the cache middleware in the pipeline
+
+                        return responseData;
+                    } catch (err) {
+                        if (signal?.aborted) throw err; // cancelled: no other model, no network report
+                        lastError = err as Error;
+                        const status = (err as { status?: number }).status;
+
+                        // Track failure for adaptive routing
+                        try {
+                            const { updateModelStats } = await import("./model-router.js");
+                            updateModelStats(currentModel, 0, false, 0, 0, status);
+                        } catch {
+                            /* router not loaded yet */
+                        }
+
+                        // Non-retryable client errors (auth, forbidden) — throw, don't try other models
+                        const nonRetryable = [401, 402, 403];
+                        if (status && nonRetryable.includes(status)) {
+                            throw err;
+                        }
+
+                        // Report network errors to health monitor so it can detect offline state
+                        const errMsg = (err as Error).message || "";
+                        const isNetworkError =
+                            errMsg.includes("fetch failed") ||
+                            errMsg.includes("ENOTFOUND") ||
+                            errMsg.includes("ETIMEDOUT") ||
+                            errMsg.includes("ECONNREFUSED") ||
+                            errMsg.includes("ENETUNREACH") ||
+                            errMsg.includes("EHOSTUNREACH") ||
+                            errMsg.includes("aborted") ||
+                            errMsg.includes("network");
+                        if (isNetworkError) {
+                            try {
+                                const { reportNetworkError } = await import("./network-health.js");
+                                const netStatus = await reportNetworkError();
+                                if (netStatus === "offline") {
+                                    // Internet is down — no point trying more models
+                                    console.warn(`  ❌ Internet appears to be down — aborting model fallback chain`);
+                                    break;
+                                }
+                            } catch {
+                                /* health monitor not loaded */
+                            }
+                        }
+
+                        // For everything else (400, 408, 429, 500, network) → immediately try next model
+                        console.warn(
+                            `  ⚠️ ${MODEL_DISPLAY[currentModel] || currentModel} failed — trying next model...`,
+                        );
+                    }
+                }
+
+                // ── Last-resort retry: if all models are circuit-broken, force-retry the primary model ──
+                // This prevents the system from going completely dead for 5 minutes when all breakers trip simultaneously
+                // (common during brief network outages that resolve quickly)
+                if (modelsToTry.length > 0) {
+                    const primaryModel = modelsToTry[0];
+                    console.warn(
+                        `  ⚠️ All models circuit-broken — force-retrying ${MODEL_DISPLAY[primaryModel] || primaryModel} as last resort...`,
+                    );
+                    try {
+                        const modelBody = {
+                            ...requestBody,
+                            model: primaryModel,
+                        };
+                        const sessionToken = await getSessionToken();
+                        if (sessionToken) {
+                            const response = await encryptedFetch(proxyUrl, {
+                                method: "POST",
+                                headers: {
+                                    "Content-Type": "application/json",
+                                    Authorization: `Bearer ${sessionToken}`,
+                                },
+                                body: JSON.stringify(modelBody),
+                                signal: deadline(),
+                            });
+                            if (response.ok) {
+                                const responseData = (await response.json()) as ChatCompletion;
+                                // Success! Reset circuit breaker for this model
+                                try {
+                                    const { updateModelStats } = await import("./model-router.js");
+                                    updateModelStats(primaryModel, 0, true, 0, 0);
+                                } catch {
+                                    /* */
+                                }
+                                console.log(
+                                    `  ✅ Last-resort retry succeeded — ${MODEL_DISPLAY[primaryModel] || primaryModel} is back`,
+                                );
+                                return responseData;
+                            }
+                        }
+                    } catch {
+                        // Truly dead — fall through to throw
+                    }
+                }
+
+                throw lastError || new Error("All models failed");
             }); // end llmMiddleware wrapper
         },
     };

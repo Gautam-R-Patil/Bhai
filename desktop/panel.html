@@ -179,7 +179,7 @@
 
                         <div id="statusOffline">
                             <div class="status-title" id="statusOfflineTitle">Bhai is napping</div>
-                            <div class="status-subtitle">
+                            <div class="status-subtitle" id="statusOfflineSub">
                                 Start Bhai to use chat, channels and automations.
                             </div>
                         </div>
@@ -1861,6 +1861,14 @@
             else if (wasRunning && !isRunning && !userStopping) setMood('oops', 2400); // stopped on its own (crash)
             else if (!moodHold) setMood();
             if (!isRunning) userStopping = false;
+
+            // Crash states from main.js: restarting on its own, or gave up (Start retries).
+            const sub = document.getElementById('statusOfflineSub');
+            sub.textContent = status === 'crashed' ? 'Bhai crashed. Restarting automatically…'
+                : status === 'failed' ? 'Bhai kept crashing, so it stopped restarting. Check Logs, then press Start to try again.'
+                : 'Start Bhai to use chat, channels and automations.';
+            sub.style.color = status === 'crashed' || status === 'failed' ? 'var(--accent-danger)' : '';
+            if (status === 'failed') showToast('❌ Bhai crashed repeatedly and stopped. Press Start to try again.', true);
 
             document.getElementById('statusOnline').style.display = isRunning ? 'block' : 'none';
             document.getElementById('statusOffline').style.display = isRunning ? 'none' : 'block';

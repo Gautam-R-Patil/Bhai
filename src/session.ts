@@ -3,10 +3,10 @@
 // Authenticates with Convex HTTP actions using session tokens instead of deploy keys.
 // Token is held in memory only — never written to disk.
 
-import { getConvexSiteUrl } from "./config/keys.js";
 import { hostname } from "node:os";
-import { generateKeyPair, deriveSharedKey, clearCryptoState } from "./crypto-transport.js";
-import { KDF_VERSION_LATEST, isSupportedKdfVersion } from "./crypto-kdf.js";
+import { getConvexSiteUrl } from "./config/keys.js";
+import { isSupportedKdfVersion, KDF_VERSION_LATEST } from "./crypto-kdf.js";
+import { clearCryptoState, deriveSharedKey, generateKeyPair } from "./crypto-transport.js";
 
 // ── State ─────────────────────────────────────
 let _sessionToken: string | null = null;
@@ -15,6 +15,9 @@ let _refreshTimer: NodeJS.Timeout | null = null;
 
 // Refresh 1 hour before expiry to avoid clock skew issues
 const REFRESH_BUFFER_MS = 60 * 60 * 1000;
+// A captive portal or dead link otherwise hangs boot forever; the timeout
+// throws, and initSession()'s caller already retries on failure.
+const SESSION_FETCH_TIMEOUT_MS = 15_000;
 
 // ── Public API ─────────────────────────────────
 
@@ -91,9 +94,10 @@ export async function revokeCurrentSession(): Promise<void> {
         await fetch(`${convexUrl}/api/auth/revoke`, {
             method: "POST",
             headers: {
-                "Authorization": `Bearer ${_sessionToken}`,
+                Authorization: `Bearer ${_sessionToken}`,
                 "Content-Type": "application/json",
             },
+            signal: AbortSignal.timeout(SESSION_FETCH_TIMEOUT_MS),
         });
     } catch {
         // Best-effort revocation
@@ -147,6 +151,7 @@ async function createSession(otplessUserId: string): Promise<void> {
             // crypto-kdf.ts for the version ↔ algorithm mapping.
             kdfVersion: KDF_VERSION_LATEST,
         }),
+        signal: AbortSignal.timeout(SESSION_FETCH_TIMEOUT_MS),
     });
 
     if (!response.ok) {
@@ -179,9 +184,7 @@ async function createSession(otplessUserId: string): Promise<void> {
             );
         }
         deriveSharedKey(data.serverPublicKey, data.kdfVersion);
-        console.log(
-            `[Session] E2E encryption established (ECDH + AES-256-GCM, KDF v${data.kdfVersion})`,
-        );
+        console.log(`[Session] E2E encryption established (ECDH + AES-256-GCM, KDF v${data.kdfVersion})`);
     }
 }
 
@@ -192,16 +195,17 @@ async function refreshSession(): Promise<void> {
     const response = await fetch(`${convexUrl}/api/auth/refresh`, {
         method: "POST",
         headers: {
-            "Authorization": `Bearer ${_sessionToken}`,
+            Authorization: `Bearer ${_sessionToken}`,
             "Content-Type": "application/json",
         },
+        signal: AbortSignal.timeout(SESSION_FETCH_TIMEOUT_MS),
     });
 
     if (!response.ok) {
         throw new Error(`Session refresh failed: ${response.status}`);
     }
 
-    const data = await response.json() as { expiresAt: number };
+    const data = (await response.json()) as { expiresAt: number };
     _sessionExpiry = data.expiresAt;
 }
 

@@ -1406,6 +1406,8 @@ async function startBot() {
         if (botProcess !== child) return;
         sendLog(`Process exited with code ${code}`);
         botProcess = null;
+        // "crashed" (restarting) / "failed" (gave up) let the panel show it.
+        let exitStatus = "stopped";
         // A crash (not a Stop or app quit) restarts the bot with backoff:
         // 1, 2, 4, 8, 16s, at most 5 restarts in 10 minutes.
         // Exit 78 means "not allowed to run" (signed out / no credits): retrying won't help.
@@ -1416,11 +1418,13 @@ async function startBot() {
             if (botCrashTimes.length <= 5) {
                 const delay = 1000 * 2 ** (botCrashTimes.length - 1);
                 sendLog(`Bot crashed; restarting in ${delay / 1000}s`);
+                exitStatus = "crashed";
                 setTimeout(() => {
                     if (!isAlive(botProcess) && !isQuitting) startBot().catch(() => {});
                 }, delay);
             } else {
                 sendLog("Bot crashed 5 times in 10 minutes; not restarting. Use Start to try again.");
+                exitStatus = "failed";
             }
         }
         hideBuddy();
@@ -1429,7 +1433,7 @@ async function startBot() {
         try { fs.unlinkSync(tempEnvPath); } catch { /* */ }
         // Notify renderer
         if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send("bot-status", "stopped");
+            mainWindow.webContents.send("bot-status", exitStatus);
         }
         updateTrayMenu();
     });

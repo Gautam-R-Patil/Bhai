@@ -5,30 +5,25 @@
 // ── Live Voice Session — Main Orchestrator ───────
 
 import { EventEmitter } from "node:events";
+import { isUntrustedToolResult, wrapUntrustedToolResult } from "../../context-scrubber.js";
 import type { LLMClient } from "../../llm.js";
-import type {
-    LiveVoiceConfig,
-    LiveVoiceEvent,
-    LiveVoiceEventType,
-    LiveToolCall,
-    LiveSessionConfig,
-} from "./types.js";
-import { DEFAULT_LIVE_CONFIG } from "./types.js";
-import { LiveVoiceBackend } from "./backends/base.js";
-import { GeminiLiveBackend } from "./backends/gemini-live.js";
-import { OpenAIRealtimeBackend } from "./backends/openai-realtime.js";
-import { HybridPipelineBackend } from "./backends/hybrid-pipeline.js";
-import { MicCapture } from "./audio/mic-capture.js";
-import { AudioPlayer } from "./audio/audio-player.js";
-import { getVoiceToolDeclarations, getVoiceToolSchemas, executeVoiceToolCalls } from "./tool-bridge.js";
 import { MODELS } from "../../llm.js";
-import { buildVoiceSystemPrompt } from "./prompt-builder.js";
-import { getLightMemoryRefresh, detectMemoryVerb } from "./memory-bridge.js";
-import { startScreenShare, stopScreenShare } from "./screen-share.js";
-import { TranscriptSpeaker } from "./transcript-speaker.js";
-import { getAck, startAckBankWarmup, isAckBankReady } from "./ack-bank.js";
 import { nativeVadAnyFrame16Khz } from "../../native/index.js";
 import { noteOwnerMessage } from "../../security/consent.js";
+import { getAck, isAckBankReady, startAckBankWarmup } from "./ack-bank.js";
+import { AudioPlayer } from "./audio/audio-player.js";
+import { MicCapture } from "./audio/mic-capture.js";
+import type { LiveVoiceBackend } from "./backends/base.js";
+import { GeminiLiveBackend } from "./backends/gemini-live.js";
+import { HybridPipelineBackend } from "./backends/hybrid-pipeline.js";
+import { OpenAIRealtimeBackend } from "./backends/openai-realtime.js";
+import { detectMemoryVerb, getLightMemoryRefresh } from "./memory-bridge.js";
+import { buildVoiceSystemPrompt } from "./prompt-builder.js";
+import { startScreenShare, stopScreenShare } from "./screen-share.js";
+import { executeVoiceToolCalls, getVoiceToolDeclarations, getVoiceToolSchemas } from "./tool-bridge.js";
+import { TranscriptSpeaker } from "./transcript-speaker.js";
+import type { LiveSessionConfig, LiveToolCall, LiveVoiceConfig, LiveVoiceEvent, LiveVoiceEventType } from "./types.js";
+import { DEFAULT_LIVE_CONFIG } from "./types.js";
 
 // ── Session State ────────────────────────────────
 
@@ -111,9 +106,9 @@ export function normalizeForEcho(s: string): string {
  * regardless of order.
  */
 export function tokenOverlap(candidate: string, reference: string): number {
-    const cTokens = candidate.split(/\s+/).filter(t => t.length >= 2);
+    const cTokens = candidate.split(/\s+/).filter((t) => t.length >= 2);
     if (cTokens.length === 0) return 0;
-    const refSet = new Set(reference.split(/\s+/).filter(t => t.length >= 2));
+    const refSet = new Set(reference.split(/\s+/).filter((t) => t.length >= 2));
     if (refSet.size === 0) return 0;
     let hits = 0;
     for (const t of cTokens) if (refSet.has(t)) hits++;
@@ -138,22 +133,95 @@ const ECHO_OVERLAP_THRESHOLD = Number(process.env.ATLAS_ECHO_OVERLAP) || 0.6;
 // chunk, the object is almost always coming ("find [a power bank]").
 const MID_SENTENCE_TAILS: ReadonlySet<string> = new Set([
     // Articles + determiners
-    "a", "an", "the", "some", "any", "my", "your", "our", "their",
+    "a",
+    "an",
+    "the",
+    "some",
+    "any",
+    "my",
+    "your",
+    "our",
+    "their",
     // Prepositions (strong signal of "next phrase coming")
-    "of", "in", "on", "at", "by", "for", "to", "with", "from", "into", "onto", "about", "over", "under", "through", "between", "against",
+    "of",
+    "in",
+    "on",
+    "at",
+    "by",
+    "for",
+    "to",
+    "with",
+    "from",
+    "into",
+    "onto",
+    "about",
+    "over",
+    "under",
+    "through",
+    "between",
+    "against",
     // Conjunctions
-    "and", "or", "but", "nor", "yet", "because", "although", "while", "unless",
+    "and",
+    "or",
+    "but",
+    "nor",
+    "yet",
+    "because",
+    "although",
+    "while",
+    "unless",
     // Auxiliaries / modals (always need a main verb following)
-    "is", "are", "was", "were", "be", "been", "being", "am", "do", "does", "did",
-    "have", "has", "had", "can", "could", "should", "would", "will", "may", "might", "must", "shall",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "am",
+    "do",
+    "does",
+    "did",
+    "have",
+    "has",
+    "had",
+    "can",
+    "could",
+    "should",
+    "would",
+    "will",
+    "may",
+    "might",
+    "must",
+    "shall",
     // Transitive verbs that usually take an object ("find X", "check Y")
-    "find", "get", "make", "take", "give", "send", "show", "tell", "ask", "bring", "buy", "put", "call",
-    "open", "close", "check", "want", "need",
+    "find",
+    "get",
+    "make",
+    "take",
+    "give",
+    "send",
+    "show",
+    "tell",
+    "ask",
+    "bring",
+    "buy",
+    "put",
+    "call",
+    "open",
+    "close",
+    "check",
+    "want",
+    "need",
 ]);
 
 /** Is the pending transcript likely unfinished (ends in a function word)? */
 export function looksLikeMidSentence(text: string): boolean {
-    const trimmed = text.trim().toLowerCase().replace(/[^\p{L}\p{M}\p{N}\s]/gu, " ").trim();
+    const trimmed = text
+        .trim()
+        .toLowerCase()
+        .replace(/[^\p{L}\p{M}\p{N}\s]/gu, " ")
+        .trim();
     if (!trimmed) return false;
     const words = trimmed.split(/\s+/);
     const lastWord = words[words.length - 1];
@@ -165,6 +233,12 @@ export function looksLikeMidSentence(text: string): boolean {
 // balloon the next llm.chat input from ~30K to ~400K tokens and make every
 // subsequent turn 5-6s slower.
 const MAX_TOOL_RESULT_CHARS = Number(process.env.ATLAS_VOICE_TOOL_RESULT_MAX) || 2000;
+/** Same untrusted-content fence the main agent puts on tool output (agent.ts). */
+function fenceToolResult(name: string, result: string): string {
+    if (process.env.ATLAS_NO_UNTRUSTED_WRAP === "true" || !isUntrustedToolResult(name)) return result;
+    return wrapUntrustedToolResult(name, result);
+}
+
 function truncateToolResult(result: unknown): string {
     const s = typeof result === "string" ? result : JSON.stringify(result ?? {});
     if (s.length <= MAX_TOOL_RESULT_CHARS) return s;
@@ -328,9 +402,13 @@ export class LiveVoiceSession extends EventEmitter {
             (async () => {
                 for (let i = 0; i < 60; i++) {
                     if (this.state !== "active") return;
-                    try { startAckBankWarmup(); } catch { /* */ }
+                    try {
+                        startAckBankWarmup();
+                    } catch {
+                        /* */
+                    }
                     if (isAckBankReady()) return;
-                    await new Promise(r => setTimeout(r, 1000));
+                    await new Promise((r) => setTimeout(r, 1000));
                 }
             })();
 
@@ -349,13 +427,14 @@ export class LiveVoiceSession extends EventEmitter {
                         (b64, mime) => this.backend?.sendVideo(b64, mime),
                         () => this.micMuted || this.state !== "active",
                     );
-                    console.log("👁  [LIVE-SESSION] Screen sharing ACTIVE — your screen is being streamed to the live-voice model while the mic is unmuted. Mute the mic to pause.");
+                    console.log(
+                        "👁  [LIVE-SESSION] Screen sharing ACTIVE — your screen is being streamed to the live-voice model while the mic is unmuted. Mute the mic to pause.",
+                    );
                     this.emitEvent("screen_share_started");
                 } catch (err) {
                     console.warn("[LIVE-SESSION] Screen share failed to start:", (err as Error).message);
                 }
             }
-
         } catch (err) {
             this.state = "idle";
             const message = err instanceof Error ? err.message : String(err);
@@ -424,13 +503,18 @@ export class LiveVoiceSession extends EventEmitter {
         this.hybridHistory = [];
         this.hybridTurn++;
         this.pendingUserText = "";
-        if (this.pendingUserTimer) { clearTimeout(this.pendingUserTimer); this.pendingUserTimer = null; }
+        if (this.pendingUserTimer) {
+            clearTimeout(this.pendingUserTimer);
+            this.pendingUserTimer = null;
+        }
 
         // Reset session-scoped caches in downstream tools.
         try {
             const spotify = await import("../../tools/spotify.js");
             spotify.resetSpotifySession?.();
-        } catch { /* optional */ }
+        } catch {
+            /* optional */
+        }
 
         this.emitEvent("session_ended");
         console.log(`[LIVE-SESSION] Session ended (${(duration / 1000).toFixed(0)}s, ${turns} turns)`);
@@ -513,7 +597,7 @@ export class LiveVoiceSession extends EventEmitter {
             // well enough at room volume; if barge-in feels flaky we can
             // tune BARGE_IN_RMS_THRESHOLD.
             if (this.speaker.isSpeaking()) {
-                if (!this.hybridMode) return;               // native: hard gate
+                if (!this.hybridMode) return; // native: hard gate
                 if (!this.passesBargeInGate(pcm)) return;
             }
             this.backend.sendAudio(pcm);
@@ -590,14 +674,18 @@ export class LiveVoiceSession extends EventEmitter {
                 const shortEchoLikely = rawChunk.trim().length < LiveVoiceSession.BARGE_IN_MIN_CHARS;
                 const alreadyBargeIn = this.pendingUserText.length > 0;
                 if (shortEchoLikely && !alreadyBargeIn) {
-                    console.log(`[HYBRID] dropped short chunk during playback (echo-likely): "${rawChunk.slice(0, 40)}"`);
+                    console.log(
+                        `[HYBRID] dropped short chunk during playback (echo-likely): "${rawChunk.slice(0, 40)}"`,
+                    );
                     return;
                 }
                 // Only cancel speaker on the FIRST chunk of a barge-in. Gemini
                 // emits raw chunks every ~100 ms; re-entering cancel() per
                 // chunk floods logs with redundant SIGTERM + stack traces.
                 if (!alreadyBargeIn) {
-                    console.log(`[HYBRID] BARGE-IN during playback — cancelling speaker, accepting: "${rawChunk.slice(0, 40)}"`);
+                    console.log(
+                        `[HYBRID] BARGE-IN during playback — cancelling speaker, accepting: "${rawChunk.slice(0, 40)}"`,
+                    );
                     this.speaker.cancel();
                 }
             }
@@ -609,22 +697,26 @@ export class LiveVoiceSession extends EventEmitter {
             // "opening WhatsApp now", Gemini transcribes both as two user
             // chunks, and we fire a turn asking Bhai "Yeah, opening WhatsApp
             // now." which the LLM responds to as if the user said it.
-            if (
-                this.lastSpokenNormalized &&
-                Date.now() - this.lastSpokenAt < LiveVoiceSession.ECHO_WINDOW_MS
-            ) {
+            if (this.lastSpokenNormalized && Date.now() - this.lastSpokenAt < LiveVoiceSession.ECHO_WINDOW_MS) {
                 const pendingNorm = normalizeForEcho(this.pendingUserText);
                 if (pendingNorm.length >= 4) {
                     const overlap = tokenOverlap(pendingNorm, this.lastSpokenNormalized);
                     if (overlap >= ECHO_OVERLAP_THRESHOLD) {
-                        console.log(`[HYBRID] ECHO detected (overlap=${overlap.toFixed(2)}) — dropping "${this.pendingUserText.slice(0, 60)}"`);
+                        console.log(
+                            `[HYBRID] ECHO detected (overlap=${overlap.toFixed(2)}) — dropping "${this.pendingUserText.slice(0, 60)}"`,
+                        );
                         this.pendingUserText = "";
-                        if (this.pendingUserTimer) { clearTimeout(this.pendingUserTimer); this.pendingUserTimer = null; }
+                        if (this.pendingUserTimer) {
+                            clearTimeout(this.pendingUserTimer);
+                            this.pendingUserTimer = null;
+                        }
                         return;
                     }
                 }
             }
-            console.log(`[HYBRID] raw chunk accepted: "${rawChunk.slice(0, 40)}" pendingLen=${this.pendingUserText.length}`);
+            console.log(
+                `[HYBRID] raw chunk accepted: "${rawChunk.slice(0, 40)}" pendingLen=${this.pendingUserText.length}`,
+            );
             if (this.pendingUserTimer) clearTimeout(this.pendingUserTimer);
             // Smart end-of-speech window. If the pending text ends in a
             // function word ("find", "for", "the", ...), the user almost
@@ -652,24 +744,32 @@ export class LiveVoiceSession extends EventEmitter {
                 try {
                     const memMatch = detectMemoryVerb(finalText);
                     if (memMatch) {
-                        import("../../memory/sqlite.js").then(async ({ remember }) => {
-                            try {
-                                // Importance 5 (not 7): casual "remember milk"
-                                // shouldn't compete with real identity facts
-                                // in core-memory rails (importance>=7 is the
-                                // core-memory promotion threshold).
-                                const id = await remember(memMatch.content, "voice", "voice-capture", 5, "user");
-                                if (id === null) {
-                                    console.log("[HYBRID] memory-verb content rejected by value gate");
-                                } else {
-                                    console.log(`[HYBRID] memory-verb saved id=${id} content="${memMatch.content.slice(0, 60)}"`);
+                        import("../../memory/sqlite.js")
+                            .then(async ({ remember }) => {
+                                try {
+                                    // Importance 5 (not 7): casual "remember milk"
+                                    // shouldn't compete with real identity facts
+                                    // in core-memory rails (importance>=7 is the
+                                    // core-memory promotion threshold).
+                                    const id = await remember(memMatch.content, "voice", "voice-capture", 5, "user");
+                                    if (id === null) {
+                                        console.log("[HYBRID] memory-verb content rejected by value gate");
+                                    } else {
+                                        console.log(
+                                            `[HYBRID] memory-verb saved id=${id} content="${memMatch.content.slice(0, 60)}"`,
+                                        );
+                                    }
+                                } catch (err) {
+                                    console.warn("[HYBRID] memory-verb save failed:", (err as Error).message);
                                 }
-                            } catch (err) {
-                                console.warn("[HYBRID] memory-verb save failed:", (err as Error).message);
-                            }
-                        }).catch(() => { /* optional */ });
+                            })
+                            .catch(() => {
+                                /* optional */
+                            });
                     }
-                } catch { /* detector should never throw, belt+braces */ }
+                } catch {
+                    /* detector should never throw, belt+braces */
+                }
                 this.runHybridTurn(finalText).catch((err) => {
                     console.error("[LIVE-SESSION] Hybrid turn errored:", err);
                     this.emitEvent("error", err);
@@ -734,7 +834,7 @@ export class LiveVoiceSession extends EventEmitter {
     private async attemptReconnect(): Promise<void> {
         // Rate limit: drop old timestamps, bail if >=3 attempts in last 30s.
         const now = Date.now();
-        this.reconnectTimes = this.reconnectTimes.filter(t => now - t < 30_000);
+        this.reconnectTimes = this.reconnectTimes.filter((t) => now - t < 30_000);
         if (this.reconnectTimes.length >= 3) {
             console.warn("[LIVE-SESSION] Reconnect budget exhausted (3 tries in 30s) — stopping session");
             if (this.inflightToolIds.size > 0) {
@@ -756,7 +856,9 @@ export class LiveVoiceSession extends EventEmitter {
             this.backend = null;
             if (oldBackend) {
                 oldBackend.removeAllListeners();
-                await oldBackend.disconnect().catch(() => { /* already dead */ });
+                await oldBackend.disconnect().catch(() => {
+                    /* already dead */
+                });
             }
 
             // Cancel any in-flight tool calls — Gemini Live state does NOT
@@ -790,7 +892,10 @@ export class LiveVoiceSession extends EventEmitter {
                 // the caller's .catch route us through stop().
                 const half = this.backend;
                 this.backend = null;
-                if (half) await half.disconnect().catch(() => { /* */ });
+                if (half)
+                    await half.disconnect().catch(() => {
+                        /* */
+                    });
                 this.emitEvent("error", err instanceof Error ? err : new Error(String(err)));
                 throw err;
             }
@@ -822,13 +927,19 @@ export class LiveVoiceSession extends EventEmitter {
         executeVoiceToolCalls(calls)
             .then((results) => {
                 if (epoch !== this.backendEpoch) {
-                    console.warn("[LIVE-SESSION] Reconnect happened during tool execution — dropping stale tool response");
+                    console.warn(
+                        "[LIVE-SESSION] Reconnect happened during tool execution — dropping stale tool response",
+                    );
                     return;
                 }
                 // Send results back to the model so it can generate a voice response
                 if (this.backend?.isConnected()) {
                     console.log(`[LIVE-SESSION] Sending ${results.length} tool result(s) back to model`);
-                    this.backend.sendToolResponse(results);
+                    this.backend.sendToolResponse(
+                        results.map((r) =>
+                            typeof r.result === "string" ? { ...r, result: fenceToolResult(r.name, r.result) } : r,
+                        ),
+                    );
                 } else {
                     console.warn("[LIVE-SESSION] Backend disconnected — cannot send tool results");
                 }
@@ -857,7 +968,9 @@ export class LiveVoiceSession extends EventEmitter {
     private async runHybridTurn(userText: string): Promise<void> {
         if (!userText.trim()) return;
         const turnId = ++this.hybridTurn;
-        console.log(`[HYBRID] runHybridTurn START turnId=${turnId} userText="${userText.slice(0, 80)}" speakerBusy=${this.speaker.isSpeaking()}`);
+        console.log(
+            `[HYBRID] runHybridTurn START turnId=${turnId} userText="${userText.slice(0, 80)}" speakerBusy=${this.speaker.isSpeaking()}`,
+        );
 
         // Cancel any in-flight Kokoro audio from the previous turn.
         console.log(`[HYBRID] about to cancel prior speaker (turnId=${turnId})`);
@@ -871,7 +984,8 @@ export class LiveVoiceSession extends EventEmitter {
             // `content` and `tool_calls` in one message — use it so the user
             // hears "sure, opening that..." while the tool runs, instead of
             // silence for 1-2s until the tool-result re-call produces text.
-            const ackHint = "\n\nVOICE MODE RULE: When you call a tool, ALWAYS also emit a short acknowledgment sentence in the same message (e.g. \"Sure, opening that now.\", \"Got it, checking...\", \"One sec.\"). Never call a tool silently — the user needs audible feedback that you heard them.";
+            const ackHint =
+                '\n\nVOICE MODE RULE: When you call a tool, ALWAYS also emit a short acknowledgment sentence in the same message (e.g. "Sure, opening that now.", "Got it, checking...", "One sec."). Never call a tool silently — the user needs audible feedback that you heard them.';
             this.hybridHistory.push({ role: "system", content: basePrompt + ackHint });
         }
 
@@ -931,7 +1045,11 @@ export class LiveVoiceSession extends EventEmitter {
                 // Translate OpenAI tool_calls → LiveToolCall shape for executeVoiceToolCalls.
                 const liveCalls = toolCalls.map((tc: any) => {
                     let args: Record<string, unknown> = {};
-                    try { args = JSON.parse(tc.function?.arguments || "{}"); } catch { /* */ }
+                    try {
+                        args = JSON.parse(tc.function?.arguments || "{}");
+                    } catch {
+                        /* */
+                    }
                     return { id: tc.id, name: tc.function?.name ?? "", args } satisfies LiveToolCall;
                 });
 
@@ -964,7 +1082,7 @@ export class LiveVoiceSession extends EventEmitter {
                     this.hybridHistory.push({
                         role: "tool",
                         tool_call_id: r.id,
-                        content: truncateToolResult(r.result),
+                        content: fenceToolResult(r.name, truncateToolResult(r.result)),
                     });
                     const wasCancelled = !this.inflightToolIds.has(r.id);
                     this.inflightToolIds.delete(r.id);
@@ -978,7 +1096,9 @@ export class LiveVoiceSession extends EventEmitter {
 
             // No tool calls — this is the final spoken reply.
             if (text.trim()) {
-                console.log(`[HYBRID] final reply turnId=${turnId} step=${step} textLen=${text.length} text="${text.slice(0, 100)}"`);
+                console.log(
+                    `[HYBRID] final reply turnId=${turnId} step=${step} textLen=${text.length} text="${text.slice(0, 100)}"`,
+                );
                 this.hybridHistory.push({ role: "assistant", content: text });
                 this.trimHybridHistory();
                 this.emitEvent("response_transcript", text);

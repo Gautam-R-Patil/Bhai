@@ -1,6 +1,6 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 // chat({ timeoutMs }) bounds each model attempt with its own deadline; without
-// it the transport's default (ATLAS_LLM_ATTEMPT_TIMEOUT_MS) applies. Offline:
+// it the deadline follows thinking effort (attemptTimeoutMs). Offline:
 // the transport, session, router, health monitor and middleware are stubbed.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -28,7 +28,7 @@ vi.mock("./llm-middleware.js", () => ({
     createDefaultPipeline: () => (p: unknown, next: (p: unknown) => unknown) => next(p),
 }));
 
-const { createLLMClient } = await import("./llm.js");
+const { createLLMClient, attemptTimeoutMs } = await import("./llm.js");
 const llm = createLLMClient({} as never);
 const hang = (opts: { signal?: AbortSignal }) =>
     new Promise<Response>((_, reject) => opts.signal?.addEventListener("abort", () => reject(opts.signal?.reason)));
@@ -84,9 +84,36 @@ describe("chat timeoutMs", () => {
         expect(fetches[0].signal?.aborted).toBe(false);
     });
 
-    it("without timeoutMs no signal is passed, so the transport applies its default", async () => {
+    it("without timeoutMs every attempt still gets an effort-sized deadline", async () => {
         respond = ok;
         await llm.chat({ messages: [{ role: "user", content: "x" }] });
-        expect(fetches.map((f) => f.signal)).toEqual([undefined]);
+        expect(fetches[0].signal).toBeInstanceOf(AbortSignal);
+    });
+
+    it("thinking effort scales the per-attempt deadline; the env var overrides it", () => {
+        const prev = process.env.ATLAS_LLM_ATTEMPT_TIMEOUT_MS;
+        delete process.env.ATLAS_LLM_ATTEMPT_TIMEOUT_MS;
+        try {
+            expect(attemptTimeoutMs(undefined)).toBe(25_000);
+            expect(attemptTimeoutMs("low")).toBe(25_000);
+            expect(attemptTimeoutMs("medium")).toBe(60_000);
+            expect(attemptTimeoutMs("high")).toBe(120_000);
+            expect(attemptTimeoutMs("max")).toBe(180_000);
+            process.env.ATLAS_LLM_ATTEMPT_TIMEOUT_MS = "5000";
+            expect(attemptTimeoutMs("max")).toBe(5000);
+        } finally {
+            if (prev === undefined) delete process.env.ATLAS_LLM_ATTEMPT_TIMEOUT_MS;
+            else process.env.ATLAS_LLM_ATTEMPT_TIMEOUT_MS = prev;
+        }
+    });
+});
+
+describe("out of credits", () => {
+    it("a 402 throws once with status 402: no other model, no last-resort retry", async () => {
+        respond = async () => new Response("{}", { status: 402 });
+        const err = await llm.chat({ messages: [{ role: "user", content: "x" }] }).catch((e) => e);
+        expect(err.status).toBe(402);
+        expect(err.message).toMatch(/run out of AI credits/);
+        expect(fetches.length).toBe(1);
     });
 });
