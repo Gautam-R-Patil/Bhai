@@ -9,6 +9,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveScript } from "../../config/paths.js";
+import { agentCursor } from "../../tools/browser/agent-cursor.js";
 import type { ExpectSpec, SiteAction } from "./host.js";
 import { type ActResult, type CommitVerdict, onSite, type PageDriver, type Snapshot } from "./runtime.js";
 
@@ -618,6 +619,7 @@ export function pageDriver(initial: any, timeout = 5000, reopen?: () => Promise<
         {
             if (a.op === "click" || a.op === "pick") {
                 const loc = a.op === "pick" ? await pickTarget(page, a, shown, timeout) : await locate(a);
+                await agentCursor(page, loc, "click"); // Bhai's cursor glides there first (owner can watch)
                 if (!commits) await loc.click({ timeout });
                 else if (typeof loc.elementHandle !== "function") {
                     await guardByLabel(loc, a, commits);
@@ -637,7 +639,11 @@ export function pageDriver(initial: any, timeout = 5000, reopen?: () => Promise<
                     }
                 }
             }
-            else if (a.op === "type") await (await locate(a)).fill(a.value ?? "", { timeout });
+            else if (a.op === "type") {
+                const loc = await locate(a);
+                await agentCursor(page, loc, "type");
+                await loc.fill(a.value ?? "", { timeout });
+            }
             else if (a.op === "typeCode") {
                 const r = await page.evaluate(TYPE_CODE_JS(a.target?.sel ?? "", a.value ?? ""));
                 if (r === "single") await (await locate(a)).fill(a.value ?? "", { timeout });

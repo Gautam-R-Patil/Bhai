@@ -6,11 +6,11 @@
 // Click, type, scroll, hover, drag, keyboard
 
 import type { ToolDefinition } from "../get-current-time.js";
+import { agentCursor } from "./agent-cursor.js";
 import { CAPTCHA_HINT, quickCaptchaCheck } from "./captcha.js";
 import {
     ATLAS_HUD_JS,
     buildElementsText,
-    CLICK_INDICATOR_JS,
     getActivePage,
     getActivePageIndex,
     getBrowser,
@@ -154,6 +154,7 @@ export const browserClickAt: ToolDefinition = {
                     try {
                         // Hybrid Action: Try to use the native DOM handle first for maximum stability
                         await handle.scrollIntoViewIfNeeded();
+                        await agentCursor(page, handle, input.double_click ? "double" : "click");
 
                         if (input.double_click) {
                             await handle.dblclick({ timeout: 2000 });
@@ -161,7 +162,6 @@ export const browserClickAt: ToolDefinition = {
                             await handle.click({ timeout: 2000 });
                         }
                         executionMethod = "element_handle";
-                        await page.evaluate(CLICK_INDICATOR_JS, { x, y, type: "click" });
                     } catch (handleErr) {
                         const errMsg = (handleErr as Error).message;
                         if (errMsg.includes("intercepts pointer events") || errMsg.includes("overlay")) {
@@ -174,10 +174,8 @@ export const browserClickAt: ToolDefinition = {
                                     await handle.click({ timeout: 2000 });
                                 }
                                 executionMethod = "element_handle_recovered";
-                                await page.evaluate(CLICK_INDICATOR_JS, { x, y, type: "click" });
                             } catch {
                                 executionMethod = "coordinates_fallback";
-                                await page.evaluate(CLICK_INDICATOR_JS, { x, y, type: "click" });
                                 await page.waitForTimeout(150);
                                 await (input.double_click ? page.mouse.dblclick(x, y) : page.mouse.click(x, y));
                             }
@@ -188,15 +186,13 @@ export const browserClickAt: ToolDefinition = {
                             });
                         } else {
                             executionMethod = "coordinates_fallback";
-                            await page.evaluate(CLICK_INDICATOR_JS, { x, y, type: "click" });
                             await page.waitForTimeout(150);
                             await (input.double_click ? page.mouse.dblclick(x, y) : page.mouse.click(x, y));
                         }
                     }
                 } else {
                     // Pure coordinate fallback
-                    await page.evaluate(CLICK_INDICATOR_JS, { x, y, type: "click" });
-                    await page.waitForTimeout(150);
+                    await agentCursor(page, { x, y }, input.double_click ? "double" : "click");
                     if (input.double_click) {
                         await page.mouse.dblclick(x, y);
                     } else {
@@ -347,7 +343,7 @@ export const browserClick: ToolDefinition = {
                 if (box) {
                     const cx = box.x + box.width / 2;
                     const cy = box.y + box.height / 2;
-                    await page.evaluate(CLICK_INDICATOR_JS, { x: cx, y: cy, type: "click" });
+                    await agentCursor(page, { x: cx, y: cy }, "click");
                     await page.mouse.click(cx, cy);
                 } else {
                     return JSON.stringify({
@@ -360,7 +356,7 @@ export const browserClick: ToolDefinition = {
                 if (box) {
                     const cx = box.x + box.width / 2;
                     const cy = box.y + box.height / 2;
-                    await page.evaluate(CLICK_INDICATOR_JS, { x: cx, y: cy, type: "click" });
+                    await agentCursor(page, { x: cx, y: cy }, "click");
                     await page.mouse.click(cx, cy);
                 } else {
                     return JSON.stringify({
@@ -416,7 +412,7 @@ export const browserRightClick: ToolDefinition = {
             const x = input.x as number;
             const y = input.y as number;
 
-            await page.evaluate(CLICK_INDICATOR_JS, { x, y, type: "right" });
+            await agentCursor(page, { x, y }, "right");
             await page.waitForTimeout(200);
             await page.mouse.click(x, y, { button: "right" });
             await page.waitForTimeout(200);
@@ -456,7 +452,7 @@ export const browserHoldClick: ToolDefinition = {
             const y = input.y as number;
             const duration = (input.duration_ms as number) || 1000;
 
-            await page.evaluate(CLICK_INDICATOR_JS, { x, y, type: "hold" });
+            await agentCursor(page, { x, y }, "hold");
             await page.mouse.move(x, y);
             await page.mouse.down();
             await page.waitForTimeout(duration);
@@ -526,11 +522,10 @@ export const browserDrag: ToolDefinition = {
                 modifiers.push("Meta");
             }
 
-            await page.evaluate(CLICK_INDICATOR_JS, { x: fx, y: fy, type: "hold" });
+            await agentCursor(page, { x: fx, y: fy }, "hold");
             await page.mouse.move(fx, fy);
             await page.mouse.down();
-            await page.mouse.move(tx, ty, { steps });
-            await page.evaluate(CLICK_INDICATOR_JS, { x: tx, y: ty, type: "click" });
+            await Promise.all([page.mouse.move(tx, ty, { steps }), agentCursor(page, { x: tx, y: ty }, "hover")]);
             await page.mouse.up();
 
             if (input.meta) await page.keyboard.up("Meta");
@@ -602,6 +597,7 @@ export const browserScroll: ToolDefinition = {
                     break;
             }
 
+            await agentCursor(page, { x, y }, "scroll");
             if (input.zoom) {
                 await page.mouse.move(x, y);
                 await page.keyboard.down("Control");
@@ -684,6 +680,7 @@ export const browserType: ToolDefinition = {
             if (input.label !== undefined) {
                 const el = lastElementMap.find((e) => e.label === (input.label as number));
                 if (el) {
+                    await agentCursor(page, el.handle ?? el, "click");
                     if (el.handle) {
                         try {
                             await el.handle.focus();
@@ -694,7 +691,6 @@ export const browserType: ToolDefinition = {
                     } else {
                         await page.mouse.click(el.x, el.y);
                     }
-                    await page.evaluate(CLICK_INDICATOR_JS, { x: el.x, y: el.y, type: "click" });
                     await page.waitForTimeout(300);
                 } else {
                     return JSON.stringify({
@@ -702,7 +698,7 @@ export const browserType: ToolDefinition = {
                     });
                 }
             } else if (input.x !== undefined && input.y !== undefined) {
-                await page.evaluate(CLICK_INDICATOR_JS, { x: input.x as number, y: input.y as number, type: "click" });
+                await agentCursor(page, { x: input.x as number, y: input.y as number }, "click");
                 await page.mouse.click(input.x as number, input.y as number);
                 await page.waitForTimeout(300);
             }
@@ -716,6 +712,7 @@ export const browserType: ToolDefinition = {
 
             // Type text — use Rust-computed human-like per-character delays
             if (input.text) {
+                await agentCursor(page, null, "type");
                 if (input.clear_first !== false) {
                     await page.keyboard.press("ControlOrMeta+a"); // cross-platform
                     await page.waitForTimeout(50);
@@ -893,6 +890,7 @@ export const browserHover: ToolDefinition = {
             } catch {
                 /* use input steps */
             }
+            await agentCursor(page, { x: effectiveX, y: effectiveY }, "hover");
             if (prePause > 0) await page.waitForTimeout(Math.min(prePause, 200));
             await page.mouse.move(effectiveX, effectiveY, { steps: moveSteps });
             await page.waitForTimeout(duration);

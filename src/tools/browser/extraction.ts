@@ -23,6 +23,7 @@ import {
     replayActions,
     shouldReplayActions,
 } from "./action-cache.js";
+import { agentCursor } from "./agent-cursor.js";
 import {
     buildElementsText,
     getAccessibilityTree,
@@ -300,6 +301,7 @@ export const browserSelect: ToolDefinition = {
     async handler(input) {
         try {
             const page = await getActivePage();
+            await agentCursor(page, page.locator(input.selector as string).first(), "click");
             if (input.label) await page.selectOption(input.selector as string, { label: input.label as string });
             else if (input.value) await page.selectOption(input.selector as string, input.value as string);
             const waitTime = input.wait_after_ms !== undefined ? (input.wait_after_ms as number) : 500;

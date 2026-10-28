@@ -105,6 +105,7 @@ desktop/hostinger-upload/
 !src/tools/browser/bridge-ready.test.ts
 !src/tools/browser/popup-guard.test.ts
 !src/tools/browser/switch-tab-chrome.test.ts
+!src/tools/browser/agent-cursor.test.ts
 !src/memory/self-evolving-safety.test.ts
 !src/memory/task-learnings-relevance.test.ts
 !src/tool-router.chat-lane.test.ts

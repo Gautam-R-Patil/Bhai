@@ -7,9 +7,9 @@
 
 import { getResourceLimits } from "../../utils/system-resources.js";
 import type { ToolDefinition } from "../get-current-time.js";
+import { agentCursor } from "./agent-cursor.js";
 import {
     buildElementsText,
-    CLICK_INDICATOR_JS,
     getActivePage,
     getBrowser,
     getInteractiveElements,
@@ -612,7 +612,7 @@ export const browserMultiAction: ToolDefinition = {
                         }
 
                         if (cx !== undefined && cy !== undefined) {
-                            await page.evaluate(CLICK_INDICATOR_JS, { x: cx, y: cy, type: "click" });
+                            await agentCursor(page, { x: cx, y: cy }, "click");
                             await page.mouse.click(cx, cy);
                             invalidateCache(); // Potential DOM change
                             return { success: true };
@@ -622,6 +622,7 @@ export const browserMultiAction: ToolDefinition = {
                     case "type": {
                         if (act.selector) {
                             const el = page.locator(act.selector as string).first();
+                            await agentCursor(page, el, "click");
                             try {
                                 await el.focus();
                                 await el.click();
@@ -632,18 +633,19 @@ export const browserMultiAction: ToolDefinition = {
                             if (box) {
                                 const cx = box.x + box.width / 2;
                                 const cy = box.y + box.height / 2;
-                                await page.evaluate(CLICK_INDICATOR_JS, { x: cx, y: cy, type: "click" });
                                 await page.mouse.click(cx, cy);
                                 await page.waitForTimeout(200);
                             }
                         } else if (act.label !== undefined) {
                             const el = lastElementMap.find((e) => e.label === (act.label as number));
                             if (el) {
+                                await agentCursor(page, el, "click");
                                 await page.mouse.click(el.x, el.y);
                                 await page.waitForTimeout(200);
                             }
                         }
                         if (act.text) {
+                            await agentCursor(page, null, "type");
                             await page.keyboard.press("ControlOrMeta+a"); // cross-platform (Ctrl on Win/Linux, Cmd on Mac)
                             await page.waitForTimeout(80);
                             await page.keyboard.type(act.text as string, { delay: 25 });
@@ -678,6 +680,7 @@ export const browserMultiAction: ToolDefinition = {
                                 break;
                         }
                         // mouse.wheel uses native CDP — no eval/compiled-lambda issues
+                        await agentCursor(page, null, "scroll");
                         await page.mouse.wheel(deltaX, deltaY);
                         invalidateCache();
                         setLastElementMap([]); // clear stale positions after scroll
@@ -701,6 +704,7 @@ export const browserMultiAction: ToolDefinition = {
                     }
                     case "select": {
                         if (act.selector && (act.label || act.value)) {
+                            await agentCursor(page, page.locator(act.selector as string).first(), "click");
                             if (act.label)
                                 await page.selectOption(act.selector as string, { label: act.label as string });
                             else if (act.value) await page.selectOption(act.selector as string, act.value as string);
@@ -711,16 +715,19 @@ export const browserMultiAction: ToolDefinition = {
                     case "hover": {
                         const hoverSteps = (act.steps as number) || 8;
                         if (act.x !== undefined && act.y !== undefined) {
+                            await agentCursor(page, { x: act.x as number, y: act.y as number }, "hover");
                             await page.mouse.move(act.x as number, act.y as number, { steps: hoverSteps });
                             return { success: true };
                         } else if (act.label !== undefined) {
                             const el = lastElementMap.find((e) => e.label === (act.label as number));
                             if (el) {
+                                await agentCursor(page, el, "hover");
                                 await page.mouse.move(el.x, el.y, { steps: hoverSteps });
                                 return { success: true };
                             }
                         } else if (act.selector) {
                             const loc = page.locator(act.selector as string).first();
+                            await agentCursor(page, loc, "hover");
                             await loc.hover({ force: true }).catch(() => {});
                             return { success: true };
                         }
