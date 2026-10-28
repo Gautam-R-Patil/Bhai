@@ -63,8 +63,7 @@ chrome-extension.zip
 .claude/
 .agents/
 
-# Internal tooling / CI
-.github/
+# Internal tooling
 docs/superpowers/
 desktop/test/
 desktop/tests/

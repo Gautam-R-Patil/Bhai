@@ -1,0 +1,46 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directories:
+      - /
+      - /desktop
+      - /native
+      - /portals/admin-panel
+      - /portals/developer-portal
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "@types/node"
+        update-types:
+          - "version-update:semver-major"
+      - dependency-name: typescript
+        update-types:
+          - "version-update:semver-major"
+      - dependency-name: vitest
+        update-types:
+          - "version-update:semver-major"
+      # Electron majors change the runtime the desktop app ships; move them on purpose.
+      - dependency-name: electron
+        update-types:
+          - "version-update:semver-major"
+    groups:
+      development-dependencies:
+        dependency-type: development
+  - package-ecosystem: cargo
+    directory: /native
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - rust
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"

@@ -1,0 +1,3 @@
+# Normalize line endings so Windows CI and checkouts see the same bytes as
+# macOS and Linux; binary files are detected and left alone by `text=auto`.
+* text=auto eol=lf
