@@ -68,6 +68,54 @@ describe("findClickTarget — tier gating + fallthrough", () => {
         });
         expect(r).toBeNull();
     }, 10_000);
+
+    it("respects forceProfile=lite (skips ML tiers even with screenshot)", { timeout: 5_000 }, async () => {
+            const r = await findClickTarget("nonsense_query_xyz_no_such_label", {
+                screenshotPath: "/tmp/does_not_exist.png",
+                forceProfile: "lite",
+                skipTiers: ["memory", "ax_exact", "ax_fuzzy"],
+            });
+            expect(r).toBeNull();
+        });
+
+    it("returns null on impossible query when only AX tiers run", { timeout: 10_000 }, async () => {
+            // Use a controlled AX dump (not the live screen) so the test is
+            // deterministic — a real dump could fuzzy-match a live window title.
+            const mkNode = (role: string, label: string, x: number) => ({
+                role, label, value: null, x, y: 10, w: 50, h: 20,
+                focusable: true, enabled: true, children: [],
+            });
+            const axDumpHint = {
+                app: "TestApp", pid: 0, trusted: true, depth: 20, elapsedMs: 0,
+                source: "swift" as const,
+                root: {
+                    role: "AXWindow", label: "Test Window", value: null,
+                    x: 0, y: 0, w: 200, h: 100, focusable: false, enabled: true,
+                    children: [mkNode("AXButton", "Save", 10), mkNode("AXButton", "Cancel", 70)],
+                },
+            };
+            const r = await findClickTarget("definitely_no_such_label_xyz123_impossible", {
+                skipTiers: ["memory", "ui_tars", "omniparser", "cloud_grounding"],
+                axDumpHint,
+            });
+            expect(r).toBeNull();
+        });
+
+    it("treats a partial AX dump (a read timed out) as an AX miss", async () => {
+        const save = {
+            role: "AXButton", label: "Save", value: null, x: 10, y: 10, w: 50, h: 20,
+            focusable: true, enabled: true, children: [],
+        };
+        const hint = (partial?: boolean) => ({
+            app: "TestApp", pid: 0, trusted: true, depth: 20, elapsedMs: 0, source: "swift" as const,
+            ...(partial ? { partial } : {}),
+            root: { role: "AXWindow", label: "W", value: null, x: 0, y: 0, w: 200, h: 100, focusable: false, enabled: true, children: [save] },
+        });
+        const skipTiers = ["memory", "ui_tars", "omniparser", "cloud_grounding"] as const;
+        // Control: the same tree, complete, hits on AX.
+        expect((await findClickTarget("Save", { skipTiers: [...skipTiers], axDumpHint: hint() }))?.source).toBe("ax_exact");
+        expect(await findClickTarget("Save", { skipTiers: [...skipTiers], axDumpHint: hint(true) })).toBeNull();
+    });
 });
 
 describe("cloud_grounding tier", () => {

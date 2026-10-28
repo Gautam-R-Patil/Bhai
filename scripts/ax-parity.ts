@@ -3,8 +3,8 @@
 // See LICENSE.md for details.
 //
 // Parity + timing for scripts/dump_ax_bin: per-attribute walk (default) vs the
-// batched walk (ATLAS_AX_BATCH=true). Compares flattenInteractive() of both modes
-// by role, label, value and rect (rule: compareRuns in src/screen/ax-batch-parity.ts)
+// batched walk (ATLAS_AX_BATCH=true). Compares every node and field of both modes
+// (rule: compareRuns in src/screen/ax-batch-parity.ts)
 // and prints the median wall time of 5 interleaved runs each.
 //
 //   npx tsx scripts/ax-parity.ts            # Finder, Chrome, System Settings, Terminal (if running)
@@ -57,10 +57,12 @@ function hangTest(): boolean {
     try {
         for (const batch of [false, true]) {
             const r = runDump(BIN, pid, batch, { ATLAS_AX_MSG_TIMEOUT_MS: String(timeoutMs) });
-            const pass = r.raw.partial === true && r.ms <= timeoutMs + 300;
+            // Two timeouts in a row end the walk (one slow call does not).
+            const budget = 2 * timeoutMs + 400;
+            const pass = r.raw.partial === true && r.ms <= budget;
             ok &&= pass;
             console.log(
-                `hang (${batch ? "batch " : "legacy"})  pid=${pid} ${r.ms.toFixed(0)}ms partial=${r.raw.partial ?? false}  budget=${timeoutMs + 300}ms  ${pass ? "PASS" : "FAIL"}`,
+                `hang (${batch ? "batch " : "legacy"})  pid=${pid} ${r.ms.toFixed(0)}ms partial=${r.raw.partial ?? false}  budget=${budget}ms  ${pass ? "PASS" : "FAIL"}`,
             );
         }
     } finally {

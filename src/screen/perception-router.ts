@@ -162,7 +162,9 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
                 /* no AX — skip both tiers */
             }
         }
-        if (axDump && !axDump.error) {
+        // A partial dump (a read timed out) is missing elements: matching it could pick a
+        // look-alike label read before the cut, so it counts as an AX miss.
+        if (axDump && !axDump.error && !axDump.partial) {
             const hit = matchAx(flattenInteractive(axDump), axDump.app);
             if (hit) return hit;
 
@@ -177,7 +179,7 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
                 clearAxFailureCache();
                 try {
                     const redump = await dumpAccessibilityTree({ depth: 20 });
-                    if (redump && !redump.error) {
+                    if (redump && !redump.error && !redump.partial) {
                         const retryHit = matchAx(flattenInteractive(redump), redump.app);
                         if (retryHit) return retryHit;
                     }

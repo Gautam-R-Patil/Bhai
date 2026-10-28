@@ -35,6 +35,8 @@ export interface AxDump {
     root: AxNode;
     trusted: boolean;
     depth: number;
+    /** macOS helper: an AX read timed out (ATLAS_AX_MSG_TIMEOUT_MS), so elements are missing. */
+    partial?: boolean;
     // Added by the wrapper, not present in raw helper output:
     elapsedMs: number;
     source: "swift" | "powershell" | "pyatspi" | "unavailable";

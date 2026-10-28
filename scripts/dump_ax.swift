@@ -17,14 +17,14 @@
 //       "children": [ ... ]
 //     }
 //   }
-//   An optional top-level "partial": true means the target app stopped answering
-//   (an AX call hit the messaging timeout) and the tree was cut short.
+//   An optional top-level "partial": true means an AX read hit the messaging timeout,
+//   so some of the tree is missing (only with ATLAS_AX_MSG_TIMEOUT_MS set).
 //
-// Environment switches:
+// Environment switches (both opt-in; unset = the old per-attribute walk, system timeout):
 //   ATLAS_AX_BATCH=true            one AXUIElementCopyMultipleAttributeValues per node
-//                                  instead of one IPC per attribute (opt-in)
-//   ATLAS_AX_MSG_TIMEOUT_MS=N      per-call AX messaging timeout (default 1000, clamped 100-5000)
-//   ATLAS_NO_AX_MSG_TIMEOUT=true   keep the system default timeout (~6s)
+//                                  instead of one IPC per attribute
+//   ATLAS_AX_MSG_TIMEOUT_MS=N      per-call AX messaging timeout (clamped 100-5000). Two
+//                                  timeouts in a row count as a hung app and end the walk.
 //
 // On error: prints "error|<reason>" to stdout, exits 1.
 //   Reasons: not_trusted, no_frontmost, pid_not_found, ax_query_failed
@@ -84,20 +84,34 @@ if pid == 0 {
 
 let env = ProcessInfo.processInfo.environment
 let useBatch = env["ATLAS_AX_BATCH"] == "true"
-let msgTimeoutOn = env["ATLAS_NO_AX_MSG_TIMEOUT"] != "true"
-let msgTimeoutMs = max(100, min(5000, Int(env["ATLAS_AX_MSG_TIMEOUT_MS"] ?? "") ?? 1000))
-// A kAXErrorCannotComplete that comes back fast is an app quirk, not a hang: only a
-// call that ran for at least half the timeout counts. The system default is ~6s.
-let hangNs = UInt64(msgTimeoutOn ? msgTimeoutMs : 6000) * 500_000
+/// nil = timeout off: the system default (~6s) applies and no hang tracking runs,
+/// exactly the walk this helper had before the timeout existed.
+let msgTimeoutMs: Int? = Int(env["ATLAS_AX_MSG_TIMEOUT_MS"] ?? "").flatMap { $0 > 0 ? max(100, min(5000, $0)) : nil }
+// A kAXErrorCannotComplete that comes back fast is an app quirk, not a timeout: only a
+// call that ran for at least half the timeout counts.
+let hangNs: UInt64? = msgTimeoutMs.map { UInt64($0) * 500_000 }
 
-/// Set once an AX call times out. Every later call is skipped, so a hung app costs
-/// one timeout instead of one per attribute per node.
+/// Consecutive timed-out calls. One is a slow call (the app is busy, the walk goes on);
+/// two in a row is a hung app, so every later call is skipped (`hung`) and the dump
+/// costs two timeouts instead of one per attribute per node.
+var strikes = 0
 var hung = false
+/// Some read was lost to the timeout, so the tree is incomplete: output "partial".
+var lostRead = false
 
 func now() -> UInt64 { DispatchTime.now().uptimeNanoseconds }
 
-func noteError(_ err: AXError, since t0: UInt64) {
-    if err == .cannotComplete && now() - t0 >= hangNs { hung = true }
+/// Records every AX call's outcome. `read: false` for the AXManualAccessibility set,
+/// which can strike but loses no data.
+func note(_ err: AXError, since t0: UInt64, read: Bool = true) {
+    guard let hangNs = hangNs else { return }
+    if err == .cannotComplete && now() - t0 >= hangNs {
+        strikes += 1
+        if read { lostRead = true }
+        if strikes >= 2 { hung = true }
+    } else {
+        strikes = 0
+    }
 }
 
 func axCopy(_ el: AXUIElement, _ attr: String) -> CFTypeRef? {
@@ -105,8 +119,8 @@ func axCopy(_ el: AXUIElement, _ attr: String) -> CFTypeRef? {
     var v: CFTypeRef?
     let t0 = now()
     let err = AXUIElementCopyAttributeValue(el, attr as CFString, &v)
-    if err != .success { noteError(err, since: t0); return nil }
-    return v
+    note(err, since: t0)
+    return err == .success ? v : nil
 }
 
 // Converters shared by both walks, so a value means the same thing however it was read.
@@ -164,13 +178,13 @@ func sliceValue(_ s: String?, _ max: Int = 200) -> String? {
     return String(s.prefix(max))
 }
 
-/// Builds a node from attribute readers. Label and value readers are lazy so the
-/// per-attribute walk asks only for what it uses, as it always has.
-func buildNode(
-    role: String?, subrole: String?,
-    title: () -> String?, desc: () -> String?, help: () -> String?, value: () -> CFTypeRef?,
-    pos: CGPoint, size: CGSize, focused: Bool, enabled: Bool, children: [AXNode]
-) -> AXNode {
+/// Label and value, read in the order the per-attribute walk always used. Label
+/// readers are lazy so it asks only for what it uses. Both walks read AXValue here,
+/// per node, and never for a secure field: a password is not even requested.
+func labelAndValue(
+    _ el: AXUIElement, subrole: String?,
+    title: () -> String?, desc: () -> String?, help: () -> String?
+) -> (String?, String?) {
     // Try multiple label fields in priority order; AXValue can be a string or a number.
     let label = ne(title()) ?? ne(desc()) ?? subrole.flatMap { subroleNames[$0] } ?? ne(help())
 
@@ -179,7 +193,7 @@ func buildNode(
 
     var valueStr: String? = nil
     if !bboxOnly && !isSecure {
-        let v = value()
+        let v = axCopy(el, kAXValueAttribute)
         if let s = cfString(v) {
             valueStr = s
         } else if let n = cfNumber(v) {
@@ -188,19 +202,17 @@ func buildNode(
     } else if isSecure {
         valueStr = "[secure]"
     }
+    return (sliceValue(label), sliceValue(valueStr))
+}
 
-    return AXNode(
-        role: role,
-        subrole: subrole,
-        label: sliceValue(label),
-        value: sliceValue(valueStr),
-        x: Int(pos.x),
-        y: Int(pos.y),
-        w: Int(size.width),
-        h: Int(size.height),
-        focusable: focused,
-        enabled: enabled,
-        children: children
+func makeNode(
+    role: String?, subrole: String?, labelValue: (String?, String?),
+    pos: CGPoint, size: CGSize, focused: Bool, enabled: Bool, children: [AXNode]
+) -> AXNode {
+    AXNode(
+        role: role, subrole: subrole, label: labelValue.0, value: labelValue.1,
+        x: Int(pos.x), y: Int(pos.y), w: Int(size.width), h: Int(size.height),
+        focusable: focused, enabled: enabled, children: children
     )
 }
 
@@ -214,68 +226,73 @@ func walkKids(_ list: [AXUIElement], depth: Int, _ walker: (AXUIElement, Int) ->
     return kids
 }
 
-/// One IPC round-trip per attribute. The default; kept for parity and rollback.
+/// One IPC round-trip per attribute. The default; same read order as before batching
+/// (rect, role, label, value, children, then focused/enabled).
 func walkLegacy(_ el: AXUIElement, depth: Int) -> AXNode {
     let pos = cfPoint(axCopy(el, kAXPositionAttribute))
     let sz = cfSize(axCopy(el, kAXSizeAttribute))
     let role = cfString(axCopy(el, kAXRoleAttribute))
     let subrole = cfString(axCopy(el, kAXSubroleAttribute))
-    let kids = depth < maxDepth
-        ? walkKids(cfChildren(axCopy(el, kAXChildrenAttribute)), depth: depth, walkLegacy) : []
-    return buildNode(
-        role: role, subrole: subrole,
+    let lv = labelAndValue(
+        el, subrole: subrole,
         title: { cfString(axCopy(el, kAXTitleAttribute)) },
         desc: { cfString(axCopy(el, kAXDescriptionAttribute)) },
-        help: { cfString(axCopy(el, kAXHelpAttribute)) },
-        value: { axCopy(el, kAXValueAttribute) },
-        pos: pos, size: sz,
+        help: { cfString(axCopy(el, kAXHelpAttribute)) })
+    let kids = depth < maxDepth
+        ? walkKids(cfChildren(axCopy(el, kAXChildrenAttribute)), depth: depth, walkLegacy) : []
+    return makeNode(
+        role: role, subrole: subrole, labelValue: lv, pos: pos, size: sz,
         focused: cfBool(axCopy(el, kAXFocusedAttribute)),
         enabled: cfBool(axCopy(el, kAXEnabledAttribute)),
         children: kids
     )
 }
 
-// Slot order of the batched read. Value is last so --bbox-only can leave it off.
-// The value of an AXSecureTextField is read here and dropped by buildNode; it never
-// leaves this process, the same as the per-attribute walk's guarantee on output.
+// Slot order of the batched read. AXValue is not here: labelAndValue reads it per
+// node, after the subrole is known, so a secure field's value is never requested.
 let batchAttrs: [String] = [
     kAXRoleAttribute, kAXSubroleAttribute, kAXTitleAttribute, kAXDescriptionAttribute,
     kAXHelpAttribute, kAXPositionAttribute, kAXSizeAttribute, kAXFocusedAttribute,
-    kAXEnabledAttribute, kAXChildrenAttribute, kAXValueAttribute,
+    kAXEnabledAttribute, kAXChildrenAttribute,
 ]
-let batchAttrsCF = (bboxOnly ? Array(batchAttrs.dropLast()) : batchAttrs) as CFArray
+let batchAttrsCF = batchAttrs as CFArray
 
 /// One AXUIElementCopyMultipleAttributeValues per node. A slot that failed comes back
-/// as an AXValue of type .axError; it and any missing slot become nil, which the
-/// converters turn into the same defaults the per-attribute reads give.
+/// as an AXValue of type .axError and becomes nil, which the converters turn into the
+/// same defaults a failed per-attribute read gives; a cannotComplete slot is re-read on
+/// its own (below), never timed against the whole batch. When the whole call fails (a toolkit
+/// without the multi-attribute message, a quick error, one slow reply) the node is
+/// re-read one attribute at a time, unless the app is now considered hung.
 func axCopyBatch(_ el: AXUIElement) -> [CFTypeRef?] {
-    var slots = [CFTypeRef?](repeating: nil, count: batchAttrs.count)
-    if hung { return slots }
+    if hung { return [CFTypeRef?](repeating: nil, count: batchAttrs.count) }
     var values: CFArray?
     let t0 = now()
     let err = AXUIElementCopyMultipleAttributeValues(
         el, batchAttrsCF, AXCopyMultipleAttributeOptions(rawValue: 0), &values)
-    if err != .success { noteError(err, since: t0); return slots }
-    guard let arr = values as [AnyObject]? else { return slots }
-    for (idx, v) in arr.prefix(slots.count).enumerated() {
-        if CFGetTypeID(v) == AXValueGetTypeID(), AXValueGetType(v as! AXValue) == .axError {
+    note(err, since: t0)
+    if err == .success, let arr = values as [AnyObject]?, arr.count == batchAttrs.count {
+        return arr.enumerated().map { idx, v in
+            guard CFGetTypeID(v) == AXValueGetTypeID(), AXValueGetType(v as! AXValue) == .axError else { return v }
             var slotErr = AXError.success
             AXValueGetValue(v as! AXValue, .axError, &slotErr)
-            noteError(slotErr, since: t0)
-            continue
+            // A slot can time out inside a reply that succeeded (AppKit answers each
+            // attribute in turn). The slot can't be timed on its own, so re-read just
+            // that attribute: it is timed, and a lost read is flagged, like the default walk.
+            return slotErr == .cannotComplete ? axCopy(el, batchAttrs[idx]) : nil
         }
-        slots[idx] = v
     }
-    return slots
+    return batchAttrs.map { axCopy(el, $0) }
 }
 
 func walkBatched(_ el: AXUIElement, depth: Int) -> AXNode {
     let s = axCopyBatch(el)
+    let subrole = cfString(s[1])
+    let lv = labelAndValue(
+        el, subrole: subrole,
+        title: { cfString(s[2]) }, desc: { cfString(s[3]) }, help: { cfString(s[4]) })
     let kids = depth < maxDepth ? walkKids(cfChildren(s[9]), depth: depth, walkBatched) : []
-    return buildNode(
-        role: cfString(s[0]), subrole: cfString(s[1]),
-        title: { cfString(s[2]) }, desc: { cfString(s[3]) }, help: { cfString(s[4]) },
-        value: { s[10] },
+    return makeNode(
+        role: cfString(s[0]), subrole: subrole, labelValue: lv,
         pos: cfPoint(s[5]), size: cfSize(s[6]),
         focused: cfBool(s[7]), enabled: cfBool(s[8]),
         children: kids
@@ -285,18 +302,19 @@ func walkBatched(_ el: AXUIElement, depth: Int) -> AXNode {
 // ── Dump ──────────────────────────────────────────
 
 let app = AXUIElementCreateApplication(pid)
-if msgTimeoutOn {
+if let ms = msgTimeoutMs {
     // The system-wide element sets this process's global timeout, which covers every
     // element we reach; the app element is set as well in case a per-element value wins.
-    let t = Float(msgTimeoutMs) / 1000
+    let t = Float(ms) / 1000
     AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), t)
     AXUIElementSetMessagingTimeout(app, t)
 }
 // Electron apps (Slack, VS Code, Discord…) only build their tree for assistive
 // tech that asks; other apps ignore the attribute. A cold tree fills in shortly
-// after, which the caller's one-shot re-dump picks up.
+// after, which the caller's one-shot re-dump picks up. A slow set is one strike, not a
+// hang on its own: the walk still runs.
 let manualT0 = now()
-noteError(AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue), since: manualT0)
+note(AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue), since: manualT0, read: false)
 let root = useBatch ? walkBatched(app, depth: 0) : walkLegacy(app, depth: 0)
 
 struct Output: Encodable {
@@ -305,10 +323,10 @@ struct Output: Encodable {
     let root: AXNode
     let trusted: Bool
     let depth: Int
-    let partial: Bool?  // omitted unless the app hung mid-walk
+    let partial: Bool?  // omitted unless a read timed out
 }
 
-let out = Output(app: appName, pid: pid, root: root, trusted: true, depth: maxDepth, partial: hung ? true : nil)
+let out = Output(app: appName, pid: pid, root: root, trusted: true, depth: maxDepth, partial: lostRead || hung ? true : nil)
 let encoder = JSONEncoder()
 encoder.outputFormatting = [.withoutEscapingSlashes]
 

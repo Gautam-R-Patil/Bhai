@@ -125,6 +125,10 @@ export const osInspect: ToolDefinition = {
                 hint =
                     "Empty tree — if targeting an Electron/Chromium app (VS Code, Slack, browsers), relaunch with --force-renderer-accessibility for AT-SPI to populate.";
             }
+            if (dump.partial) {
+                hint =
+                    "Incomplete list: the app stopped answering mid-read, so some elements are missing. Retry os_inspect, or take a screenshot instead.";
+            }
 
             return JSON.stringify({
                 success: true,
