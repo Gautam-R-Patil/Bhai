@@ -1,35 +1,35 @@
 {
-  "name": "atlas-admin-panel",
-  "version": "1.0.0",
-  "private": true,
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint",
-    "test": "vitest run",
-    "postinstall": "node -e \"const fs=require('fs');try{fs.chmodSync('.env.local',0o600);console.log('[postinstall] chmod 600 .env.local');}catch(e){if(e.code!=='ENOENT')console.warn('[postinstall] chmod failed:',e.message);}\""
-  },
-  "dependencies": {
-    "bcryptjs": "^2.4.3",
-    "convex": "^1.17.4",
-    "date-fns": "^4.1.0",
-    "jose": "^5.9.6",
-    "lucide-react": "^0.468.0",
-    "next": "^16.4.3",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "recharts": "^2.15.0"
-  },
-  "devDependencies": {
-    "@types/bcryptjs": "^2.4.6",
-    "@types/node": "^22.20.5",
-    "@types/react": "^18",
-    "@types/react-dom": "^18",
-    "autoprefixer": "^10.4.20",
-    "postcss": "^8.4.49",
-    "tailwindcss": "^3.4.16",
-    "typescript": "^5",
-    "vitest": "^5.0.5"
-  }
+    "name": "atlas-admin-panel",
+    "version": "1.0.0",
+    "private": true,
+    "scripts": {
+        "dev": "next dev",
+        "build": "next build",
+        "start": "next start",
+        "lint": "next lint",
+        "test": "vitest run",
+        "postinstall": "node -e \"const fs=require('fs');try{fs.chmodSync('.env.local',0o600);console.log('[postinstall] chmod 600 .env.local');}catch(e){if(e.code!=='ENOENT')console.warn('[postinstall] chmod failed:',e.message);}\""
+    },
+    "dependencies": {
+        "bcryptjs": "^2.4.3",
+        "convex": "^1.48.0",
+        "date-fns": "^4.1.0",
+        "jose": "^5.9.6",
+        "lucide-react": "^0.468.0",
+        "next": "^16.4.3",
+        "react": "^18.3.1",
+        "react-dom": "^18.3.1",
+        "recharts": "^2.15.0"
+    },
+    "devDependencies": {
+        "@types/bcryptjs": "^2.4.6",
+        "@types/node": "^22.20.5",
+        "@types/react": "^18",
+        "@types/react-dom": "^18",
+        "autoprefixer": "^10.4.20",
+        "postcss": "^8.4.49",
+        "tailwindcss": "^3.4.16",
+        "typescript": "^5",
+        "vitest": "^5.0.5"
+    }
 }
