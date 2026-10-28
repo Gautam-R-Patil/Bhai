@@ -35,6 +35,7 @@ function matches(el: El, sel: string): boolean {
 
 function fakePage(els: El[]) {
     const wrap = (el: El) => ({
+        tagName: el.tag.toUpperCase(),
         getAttribute: (n: string) => el.attrs[n] ?? null,
         get value() {
             return el.value ?? "";
@@ -108,5 +109,19 @@ describe("quickCaptchaCheck", () => {
         const ts: El = { tag: "div", attrs: { class: "cf-turnstile" } };
         expect(await quickCaptchaCheck(fakePage([ts, token("cf-turnstile-response", "0.x", "input")]))).toBeNull();
         expect(await quickCaptchaCheck(fakePage([ts, token("cf-turnstile-response", "", "input")]))).toBe("turnstile");
+    });
+});
+
+describe("v3 bound to a button (Google's documented v3 pattern)", () => {
+    const page = fakePage([
+        { tag: "script", attrs: { src: "https://www.google.com/recaptcha/api.js?render=SITEKEY" } },
+        { tag: "iframe", attrs: { src: "https://www.google.com/recaptcha/api2/anchor?k=SITEKEY&size=invisible" } },
+        { tag: "button", attrs: { class: "g-recaptcha", "data-sitekey": "SITEKEY", "data-action": "submit" } },
+        { tag: "textarea", attrs: { class: "g-recaptcha-response", name: "g-recaptcha-response" }, value: "" },
+    ]);
+
+    it("is invisible v3, so nobody is asked to tick a box that doesn't exist", async () => {
+        expect((await detectCaptcha(page as never))?.type).toBe("recaptcha-v3");
+        expect(await quickCaptchaCheck(page as never)).toBeNull();
     });
 });

@@ -144,7 +144,13 @@ export async function detectCaptcha(
                 const src = f.getAttribute("src") ?? "";
                 return src.includes("/anchor") && !src.includes("size=invisible");
             });
-            if (box || (rcWidget && rcWidget.getAttribute("data-size") !== "invisible")) return rcV2;
+            if (box) return rcV2;
+            // Before any frame renders, a visible widget div means a box is coming.
+            // Once frames exist they decide (all size=invisible = no box), and a
+            // <button class="g-recaptcha"> is v3 / invisible v2 bound to a button.
+            const widgetBox =
+                !!rcWidget && rcWidget.tagName !== "BUTTON" && rcWidget.getAttribute("data-size") !== "invisible";
+            if (widgetBox && rcFrames.length === 0) return rcV2;
             // reCAPTCHA v3 (invisible — detected by script tag; render=explicit is a v2 loader)
             const scripts = Array.from(document.scripts).map((s) => s.src);
             const rcV3 = scripts.find((s) => s.includes("recaptcha/api.js?render=") && !s.includes("render=explicit"));
