@@ -1194,6 +1194,7 @@ async function _runAgentBody(
     let requestedCategories: string[] | undefined;
     // The turn's tool set, reused on later iterations (see the selectTools await).
     let turnToolSelection: Awaited<ReturnType<typeof selectTools>> | undefined;
+    let unhingedTurn = false;
     let turnToolReqKey = "";
 
     // Strip [SOURCE: ...] tags for classification/routing — the overlay appends
@@ -2483,21 +2484,15 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             );
         }
 
-        // Unhinged (an 18+ owner opt-in) needs a model that holds a persona:
-        // Haiku under a long prompt of calm defaults answers in the normal voice.
-        // Pure chat goes to Grok (server-side, falls back to Sonnet); a quick
-        // tool turn stays on Claude. Owner turns only; 1 credit instead of 0.25.
-        if (
-            iterations === 1 &&
-            !forcedPick &&
-            claudeTier(model) === "haiku" &&
-            (!channelContext || channelContext.isOwner)
-        ) {
+        // Unhinged (an 18+ owner opt-in) runs the whole turn on Grok with its own
+        // prompt (server-side; falls back to Sonnet). Claude under the default
+        // personality answered tame, and a tool step handed to it lost the voice
+        // ("play your top song pick" → it asked instead of picking). Complex
+        // multi-step work stays on Claude, and two errors hand the turn back.
+        // Owner turns only; 1 credit a call.
+        if (iterations === 1 && (!channelContext || channelContext.isOwner) && turnTier !== "complex") {
             const { getActivePreset } = await import("./setup/personality-sync.js");
-            if (getActivePreset() === "unhinged") {
-                model = turnTier === "simple" ? MODELS.SONNET : MODELS.GROK;
-                console.log(`  🧭 Unhinged tone → ${model === MODELS.GROK ? "grok" : "sonnet"}`);
-            }
+            unhingedTurn = getActivePreset() === "unhinged";
         }
 
         // ── Simple desktop tasks stay on Haiku ──
@@ -2517,6 +2512,12 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
         } else if (guiPinned() && claudeTier(model) !== "haiku") {
             console.log(`  🖱️ Desktop task stays on Haiku (router picked ${claudeTier(model)})`);
             model = MODELS.HAIKU;
+        }
+
+        // Unhinged keeps the whole turn on Grok (after the desktop Haiku pin above).
+        if (unhingedTurn && !forcedPick && errorCount < 2) {
+            if (model !== MODELS.GROK) console.log("  🧭 Unhinged tone → grok");
+            model = MODELS.GROK;
         }
 
         // ── Harness trace: record selected tools ──

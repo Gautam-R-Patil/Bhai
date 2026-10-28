@@ -612,12 +612,16 @@ http.route({
           : "";
         let serverPrompt: string | null = null;
         if (slug) {
-          const [rules, base] = await Promise.all([
+          // Unhinged runs real tool turns too, so it also gets the platform rules.
+          const platformSlug = slug !== "unhinged" ? null : body.platform === "mac" ? "rules-mac" : body.platform === "win" ? "rules-windows" : null;
+          const [rules, base, platformRules] = await Promise.all([
             ctx.runQuery(internal.systemContent.getPromptBySlug, { slug: "rules" }),
             ctx.runQuery(internal.systemContent.getPromptBySlug, { slug }),
+            platformSlug ? ctx.runQuery(internal.systemContent.getPromptBySlug, { slug: platformSlug }) : null,
           ]);
           if (base && typeof base.content === "string") {
-            serverPrompt = rules && typeof rules.content === "string" ? `${rules.content}\n\n${base.content}` : base.content;
+            const parts = [rules?.content, platformRules?.content, base.content].filter((c): c is string => typeof c === "string");
+            serverPrompt = parts.join("\n\n");
           }
         }
         if (!serverPrompt) serverPrompt = await ctx.runQuery(
