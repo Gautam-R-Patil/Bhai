@@ -158,6 +158,7 @@ const CONVEX_SITE_URL = process.env.CONVEX_SITE_URL || `https://${_CONVEX_DEPLOY
 const CONVEX_API_URL = process.env.CONVEX_URL || `https://${_CONVEX_DEPLOY_NAME}.convex.cloud`;
 
 const { parseOtplessVerifyResponse, isLegacyUserId } = require("./auth-helpers");
+const { createAgentCursor, parseCursorLine } = require("./agent-cursor");
 
 // ── Desktop Session Token Management ─────────────
 // Authenticates the Electron main process with the Convex backend via
@@ -1243,6 +1244,11 @@ async function startBot() {
         NODE_ENV: "production",
         // V8 code cache for the 23MB bundle: a warm start skips re-compiling it.
         NODE_COMPILE_CACHE: path.join(app.getPath("userData"), "v8-cache"),
+        // The app draws Bhai's ghost cursor (agent-cursor.js); off with ATLAS_NO_AGENT_CURSOR=true.
+        // Not on Linux: setOpacity/content protection do nothing there, so Bhai's
+        // own screenshots would see the overlay (and it can render opaque without
+        // a compositor).
+        ...(CURSOR_SUPPORTED ? { ATLAS_AGENT_CURSOR_IPC: "1" } : {}),
     };
 
     // Pass Convex URL + OTPless identity to bot process for credit enforcement
@@ -1281,6 +1287,7 @@ async function startBot() {
         sendLog(`❌ Failed to spawn process: ${spawnErr.message}`);
         return { status: "error", error: spawnErr.message };
     }
+    child.stdin.on("error", () => { /* bot gone: cursor acks are best-effort */ });
 
     let stdoutTail = "";
     botProcess.stdout.on("data", (data) => {
@@ -1290,6 +1297,11 @@ async function startBot() {
         stdoutTail = lines.pop();
         const rest = [];
         for (const line of lines) {
+            const cursorEvt = parseCursorLine(line);
+            if (cursorEvt) {
+                try { agentCursor?.handle(cursorEvt, (id) => ackCursor(child, id)); } catch { /* cosmetic */ }
+                continue;
+            }
             const m = line.match(/^##BHAI_BUDDY##(\{.*\})\s*$/);
             if (!m) { rest.push(line); continue; }
             try { handleBuddyStatus(JSON.parse(m[1])); } catch { /* malformed line */ }
@@ -1404,6 +1416,7 @@ async function startBot() {
 
     child.on("exit", (code, signal) => {
         if (botProcess !== child) return;
+        agentCursor?.reset();
         sendLog(`Process exited with code ${code}`);
         botProcess = null;
         // "crashed" (restarting) / "failed" (gave up) let the panel show it.
@@ -1753,6 +1766,31 @@ function showBuddy(mood, text, hideAfterMs, force = false) {
     // Done/oops pop away on their own; anything else hides if Bhai goes quiet.
     if (hideAfterMs) buddyHideTimer = setTimeout(hideBuddy, hideAfterMs);
     else buddyWatchdog = setTimeout(hideBuddy, 90_000);
+}
+
+// ── Bhai's ghost cursor ──────────────────────────
+// Bot → "##BHAI_CURSOR##{json}" lines from the computer-use tools; acks go back
+// on its stdin. The (hidden) windows are made once at app ready and follow
+// display changes, so nothing is created in the middle of a click.
+const CURSOR_SUPPORTED = process.platform !== "linux";
+let agentCursor = null;
+function initAgentCursor() {
+    if (!CURSOR_SUPPORTED || agentCursor) return;
+    try {
+        agentCursor = createAgentCursor({
+            BrowserWindow,
+            screen,
+            harden: hardenBrowserWindow,
+            htmlPath: path.join(__dirname, "agent-cursor.html"),
+        });
+        agentCursor.init();
+    } catch (err) {
+        console.error("[AgentCursor] init failed:", err.message);
+        agentCursor = null;
+    }
+}
+function ackCursor(child, id) {
+    try { child.stdin.write(`##BHAI_CURSOR_ACK##${id}\n`); } catch { /* bot gone */ }
 }
 
 // Bot → "##BHAI_BUDDY##{type,text}" lines (see src/overlay/overlay-chat.ts).
@@ -6218,6 +6256,8 @@ app.whenReady().then(async () => {
     });
     // Run v1 → v2 migration before anything reads SETUP_FLAG or prefs.json.
     await runV2Migration();
+    // Ghost-cursor windows exist (hidden) before any bot can drive the screen.
+    initAgentCursor();
 
     // Configure the auto-updater feed URL once at startup. Some launch paths
     // (native menu shortcuts, scheduled checks) call autoUpdater directly

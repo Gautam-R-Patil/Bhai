@@ -12,6 +12,7 @@ import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { withCursorHidden } from "../screen/agent-cursor.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -119,7 +120,11 @@ export async function runPowerShellInline(command: string, timeout = 10000): Pro
  * macOS: uses screencapture
  * Windows: uses PowerShell + System.Drawing
  */
-export async function captureScreenshot(outputPath: string): Promise<void> {
+export function captureScreenshot(outputPath: string): Promise<void> {
+    return withCursorHidden(() => captureScreen(outputPath));
+}
+
+async function captureScreen(outputPath: string): Promise<void> {
     if (IS_MAC) {
         await execFileAsync("screencapture", ["-x", outputPath], { timeout: 10000 });
     } else if (IS_WIN) {

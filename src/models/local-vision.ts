@@ -18,6 +18,7 @@ import { promisify } from "node:util";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { withCursorHidden } from "../screen/agent-cursor.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -104,7 +105,7 @@ export async function analyzeScreen(
 
     try {
         // Take a downsized screenshot (faster processing)
-        await execFileAsync("screencapture", ["-x", "-t", "png", tmpPath]);
+        await withCursorHidden(() => execFileAsync("screencapture", ["-x", "-t", "png", tmpPath]));
 
         // Downscale for faster VLM processing
         try {
@@ -129,7 +130,7 @@ export async function detectScreenChange(): Promise<ScreenChangeDetection> {
     const tmpPath = path.join(tmpdir(), "atlas-vision-change.png");
 
     try {
-        await execFileAsync("screencapture", ["-x", "-t", "png", tmpPath]);
+        await withCursorHidden(() => execFileAsync("screencapture", ["-x", "-t", "png", tmpPath]));
 
         // Simple file hash for change detection
         const stat = fs.statSync(tmpPath);

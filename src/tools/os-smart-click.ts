@@ -22,6 +22,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+import { withCursorHidden } from "../screen/agent-cursor.js";
 import { dumpAccessibilityTree } from "../screen/ax-dump.js";
 import { recallClickSite, recordClickMiss, recordClickSuccess } from "../screen/click-memory.js";
 import { applyCalibration, recordCalibrationSample } from "../screen/drift-calibration.js";
@@ -110,7 +111,9 @@ async function captureWindowRegion(fw: { x: number; y: number; w: number; h: num
     const out = join(tmpdir(), `atlas_smartclick_${randomBytes(6).toString("hex")}.png`);
     try {
         if (process.platform === "darwin") {
-            await execFileAsync("screencapture", ["-x", `-R${fw.x},${fw.y},${fw.w},${fw.h}`, out], { timeout: 8000 });
+            await withCursorHidden(() =>
+                execFileAsync("screencapture", ["-x", `-R${fw.x},${fw.y},${fw.w},${fw.h}`, out], { timeout: 8000 }),
+            );
             return out;
         }
         if (process.platform === "win32") {
@@ -121,7 +124,7 @@ async function captureWindowRegion(fw: { x: number; y: number; w: number; h: num
                 `$g.CopyFromScreen(${fw.x}, ${fw.y}, 0, 0, $b.Size);` +
                 `$b.Save('${out.replace(/\\/g, "\\\\")}', [System.Drawing.Imaging.ImageFormat]::Png);` +
                 `$g.Dispose(); $b.Dispose()`;
-            await execFileAsync("powershell", ["-NoProfile", "-Command", ps], { timeout: 8000 });
+            await withCursorHidden(() => execFileAsync("powershell", ["-NoProfile", "-Command", ps], { timeout: 8000 }));
             return out;
         }
         return null; // Linux region capture: fall back to full-screen

@@ -17,6 +17,7 @@
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { ChatCompletionMessageParam, LLMClient } from "../llm.js";
+import { cursorClick, cursorMove, withCursorHidden, withCursorTyping } from "../screen/agent-cursor.js";
 import { getScreenDimensions, percentageToScreen } from "../screen/screen-dimensions.js";
 
 // ── Types ─────────────────────────────────────
@@ -291,6 +292,8 @@ export async function executeDesktopAction(action: DesktopAction): Promise<boole
             case "move": {
                 const resolved = await resolveCoordinates(action);
                 if (resolved) {
+                    if (action.type === "move") await cursorMove(resolved.x, resolved.y);
+                    else await cursorClick(resolved.x, resolved.y);
                     const haveCliclick = await commandExists("cliclick");
                     if (action.type === "move") {
                         if (haveCliclick) await exec("cliclick", [`m:${resolved.x},${resolved.y}`]);
@@ -313,7 +316,7 @@ export async function executeDesktopAction(action: DesktopAction): Promise<boole
 
             case "type":
                 if (action.text) {
-                    await pasteText(action.text);
+                    await withCursorTyping(() => pasteText(action.text as string));
                 }
                 return true;
 
@@ -340,7 +343,7 @@ export async function executeDesktopAction(action: DesktopAction): Promise<boole
                 return true;
 
             case "screenshot":
-                await exec("screencapture", ["-x", path.join(tmpdir(), "atlas-screen.png")]);
+                await withCursorHidden(() => exec("screencapture", ["-x", path.join(tmpdir(), "atlas-screen.png")]));
                 return true;
 
             case "wait":
@@ -664,7 +667,7 @@ async function captureScreenForDiff(): Promise<Buffer | null> {
         // doesn't leave a world-readable PNG of the user's desktop in /tmp.
         const handle = await open(tmp, "w", 0o600);
         await handle.close();
-        await exec("screencapture", ["-x", tmp], { timeout: 5000 });
+        await withCursorHidden(() => exec("screencapture", ["-x", tmp as string], { timeout: 5000 }));
         const buf = await readFile(tmp);
         unlink(tmp).catch(() => {});
         return buf;

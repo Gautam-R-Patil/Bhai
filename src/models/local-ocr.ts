@@ -16,6 +16,7 @@ import { promisify } from "node:util";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { withCursorHidden } from "../screen/agent-cursor.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -80,11 +81,11 @@ export async function ocrScreen(region?: { x: number; y: number; w: number; h: n
 
     try {
         if (region) {
-            await execFileAsync("screencapture", [
+            await withCursorHidden(() => execFileAsync("screencapture", [
                 "-x", "-R", `${region.x},${region.y},${region.w},${region.h}`, tmpPath,
-            ]);
+            ]));
         } else {
-            await execFileAsync("screencapture", ["-x", tmpPath]);
+            await withCursorHidden(() => execFileAsync("screencapture", ["-x", tmpPath]));
         }
 
         return await runOCR(tmpPath);

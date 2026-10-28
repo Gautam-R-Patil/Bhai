@@ -49,6 +49,7 @@ import {
     recordToolCall as recordGuardrailCall,
 } from "./agents/tool-call-guardrail.js";
 import { offloadIfLarge } from "./agents/tool-output-offload.js";
+import { trackCursorTurn } from "./screen/agent-cursor.js";
 import {
     buildVerifyReminder,
     isMutator,
@@ -1087,7 +1088,8 @@ export async function runAgent(
         // compiled output and crashed every overlay/Telegram message
         // through this path.)
         const mod = await import("./tools/cron-tool.js");
-        const res = await mod.runWithCallerContext({ isOwner: callerIsOwner }, fn);
+        // Outermost turn ending = Bhai lets go of the screen (glow fades).
+        const res = await mod.runWithCallerContext({ isOwner: callerIsOwner }, () => trackCursorTurn(fn));
         // The model only ever sees handles ([OTP_1], [CARD_2]); the owner asked
         // about their own values, so show them. Everyone else keeps the handle.
         // Only in a private chat: in a group or public channel the real values

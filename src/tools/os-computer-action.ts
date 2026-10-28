@@ -13,6 +13,7 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { cursorClick, cursorDrag, cursorMove, cursorScroll, withCursorTyping } from "../screen/agent-cursor.js";
 import { type ComputerAction, parseComputerAction, resolveCoord } from "../screen/computer-action.js";
 import { getScreenDimensions } from "../screen/screen-dimensions.js";
 import type { ToolDefinition } from "./get-current-time.js";
@@ -187,7 +188,7 @@ async function executeStructuredAction(act: ComputerAction): Promise<Record<stri
             return { action: "scroll", x: coord.x, y: coord.y, scrollDx: act.scrollDx || 0, scrollDy: act.scrollDy };
         }
         case "type":
-            await dispatchType(act.text);
+            await withCursorTyping(() => dispatchType(act.text));
             return { action: "type", typed: act.text };
         case "key":
             await dispatchKey(act.text);
@@ -222,6 +223,11 @@ async function dispatchMouse(
     button?: "left" | "right" | "middle",
     _modifiers?: ReadonlyArray<string>,
 ): Promise<void> {
+    if (action === "mouse_move") await cursorMove(x, y);
+    else {
+        const count = action === "double_click" ? 2 : action === "triple_click" ? 3 : 1;
+        await cursorClick(x, y, action === "right_click" ? "right" : button || "left", count);
+    }
     if (process.platform === "darwin") {
         const macAction =
             action === "right_click"
@@ -337,6 +343,7 @@ async function dispatchLinuxMouse(
 
 async function dispatchDrag(points: Array<{ x: number; y: number }>): Promise<void> {
     if (points.length < 2) return;
+    await cursorDrag(points);
     if (process.platform === "darwin") {
         const ops: string[] = [
             `ObjC.import('CoreGraphics');var pt0=$.CGPointMake(${points[0].x},${points[0].y});$.CGEventPost($.kCGHIDEventTap,$.CGEventCreateMouseEvent(null,$.kCGEventMouseMoved,pt0,$.kCGMouseButtonLeft));delay(0.05);$.CGEventPost($.kCGHIDEventTap,$.CGEventCreateMouseEvent(null,$.kCGEventLeftMouseDown,pt0,$.kCGMouseButtonLeft));`,
@@ -399,6 +406,7 @@ Start-Sleep -Milliseconds 50
 }
 
 async function dispatchScroll(x: number, y: number, dx: number, dy: number): Promise<void> {
+    await cursorScroll(x, y, dx, dy);
     if (process.platform === "darwin") {
         // CGEventCreateScrollWheelEvent: positive Y = scroll UP. Our API convention is
         // positive Y = scroll DOWN (matches DOM wheel events). So we NEGATE.

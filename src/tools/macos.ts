@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { getScriptsDir } from "../config/paths.js";
 import { hideOverlayForAgent, showOverlayForAgent } from "../overlay/overlay-chat.js";
+import { cursorClick, cursorMove, withCursorHidden, withCursorTyping } from "../screen/agent-cursor.js";
 import { gridScreenshot } from "../screen/grid-overlay.js";
 import { getScreenDimensions, percentageToScreen, scaleImageToScreen } from "../screen/screen-dimensions.js";
 import type { ToolDefinition } from "./get-current-time.js";
@@ -201,7 +202,9 @@ export const osScreenshot: ToolDefinition = {
 
             // Capture screenshot (Retina: captures at 2x pixel density). JPEG is ~2x
             // faster to capture than PNG and is what we send anyway.
-            await execFileAsync("screencapture", ["-x", "-t", "jpg", tmpJpg], { timeout: 10000 });
+            await withCursorHidden(() =>
+                execFileAsync("screencapture", ["-x", "-t", "jpg", tmpJpg], { timeout: 10000 }),
+            );
 
             // Show overlay again
             showOverlayForAgent();
@@ -459,6 +462,9 @@ $.CGEventPost($.kCGHIDEventTap, up);
 
         const tmpFile = join(tmpdir(), `atlas_click_${Date.now()}.js`);
         try {
+            if (action === "move") await cursorMove(x, y);
+            else
+                await cursorClick(x, y, action === "right_click" ? "right" : "left", action === "double_click" ? 2 : 1);
             await fs.writeFile(tmpFile, eventScript, "utf-8");
             const { stdout } = await execFileAsync("osascript", ["-l", "JavaScript", tmpFile], { timeout: 5000 });
             await fs.unlink(tmpFile).catch(() => {});
@@ -478,7 +484,7 @@ $.CGEventPost($.kCGHIDEventTap, up);
                     const beforeBuf = _lastScreenshotBuffer;
                     await new Promise((r) => setTimeout(r, 500));
                     const tmpDiffPng = join(tmpdir(), `atlas_diff_${Date.now()}.png`);
-                    await execFileAsync("screencapture", ["-x", tmpDiffPng], { timeout: 8000 });
+                    await withCursorHidden(() => execFileAsync("screencapture", ["-x", tmpDiffPng], { timeout: 8000 }));
                     const afterBuf = await fs.readFile(tmpDiffPng);
                     await fs.unlink(tmpDiffPng).catch(() => {});
                     const diff = computeScreenDiff(beforeBuf, afterBuf);
@@ -573,7 +579,7 @@ export const osType: ToolDefinition = {
         } else if (input.text) {
             const text = input.text as string;
             try {
-                const method = await typeTextMac(text);
+                const method = await withCursorTyping(() => typeTextMac(text));
                 await new Promise((r) => setTimeout(r, delayMs));
                 return JSON.stringify({ success: true, typed: text, method });
             } catch (err) {
@@ -820,6 +826,7 @@ $.CGEventPost($.kCGHIDEventTap, up);
 
     const tmpFile = join(tmpdir(), `atlas_click_${Date.now()}.js`);
     try {
+        await cursorClick(x, y);
         await fs.writeFile(tmpFile, eventScript, "utf-8");
         await execFileAsync("osascript", ["-l", "JavaScript", tmpFile], { timeout: 5000 });
         await fs.unlink(tmpFile).catch(() => {});
@@ -1129,7 +1136,7 @@ export const osOcrClick: ToolDefinition = {
             const tmpPng = join(tmpdir(), `atlas_ocr_cap_${Date.now()}.png`);
             let capBuffer: Buffer | undefined;
             try {
-                await execFileAsync("screencapture", ["-x", tmpPng], { timeout: 8000 });
+                await withCursorHidden(() => execFileAsync("screencapture", ["-x", tmpPng], { timeout: 8000 }));
                 capBuffer = await fs.readFile(tmpPng);
             } catch (err) {
                 attemptLog.push({
@@ -1324,7 +1331,7 @@ export const osOcrClick: ToolDefinition = {
             if (verifyAppears || verifyGone) {
                 const tmpVerify = join(tmpdir(), `atlas_verify_${Date.now()}.png`);
                 try {
-                    await execFileAsync("screencapture", ["-x", tmpVerify], { timeout: 8000 });
+                    await withCursorHidden(() => execFileAsync("screencapture", ["-x", tmpVerify], { timeout: 8000 }));
                     const verifyBuf = await fs.readFile(tmpVerify);
                     const verifyOcr = await runOcr(tmpVerify, "fast", verifyBuf);
                     await fs.unlink(tmpVerify).catch(() => {});
@@ -1485,7 +1492,7 @@ export const osVisualVerify: ToolDefinition = {
         const tmpPng = join(tmpdir(), `atlas_verify_${Date.now()}.png`);
         let verifyBuffer: Buffer | undefined;
         try {
-            await execFileAsync("screencapture", ["-x", tmpPng], { timeout: 8000 });
+            await withCursorHidden(() => execFileAsync("screencapture", ["-x", tmpPng], { timeout: 8000 }));
             verifyBuffer = await fs.readFile(tmpPng);
         } catch (err) {
             return JSON.stringify({ success: false, error: "Screenshot failed during verification." });
@@ -1751,7 +1758,7 @@ export const sendScreenshot: ToolDefinition = {
 
         try {
             // Step 1: Capture screenshot
-            await execFileAsync("screencapture", ["-x", tmpPng], { timeout: 10000 });
+            await withCursorHidden(() => execFileAsync("screencapture", ["-x", tmpPng], { timeout: 10000 }));
 
             // Step 2: Verify the file was created
             if (!existsSync(tmpPng)) {
@@ -1928,7 +1935,7 @@ export const osScan: ToolDefinition = {
             // 2. Hide overlay, capture screenshot
             hideOverlayForAgent();
             await new Promise((r) => setTimeout(r, 100));
-            await execFileAsync("screencapture", ["-x", tmpPng], { timeout: 10000 });
+            await withCursorHidden(() => execFileAsync("screencapture", ["-x", tmpPng], { timeout: 10000 }));
             showOverlayForAgent();
 
             // 3. Resize to 1280px width
@@ -2281,6 +2288,7 @@ $.CGEventPost($.kCGHIDEventTap, up);`
 "done"`;
 
             const tmpFile = join(tmpdir(), `atlas_click_elem_${Date.now()}.js`);
+            await cursorClick(el.x, el.y, clickType === "right" ? "right" : "left", clickType === "double" ? 2 : 1);
             await fs.writeFile(tmpFile, jxa, "utf-8");
             await execFileAsync("osascript", ["-l", "JavaScript", tmpFile], { timeout: 5000 });
             await fs.unlink(tmpFile).catch(() => {});
@@ -2298,7 +2306,7 @@ $.CGEventPost($.kCGHIDEventTap, up);`
                     const beforeBuf = _lastScreenshotBuffer;
                     await new Promise((r) => setTimeout(r, 500));
                     const tmpDiffPng = join(tmpdir(), `atlas_diff_elem_${Date.now()}.png`);
-                    await execFileAsync("screencapture", ["-x", tmpDiffPng], { timeout: 8000 });
+                    await withCursorHidden(() => execFileAsync("screencapture", ["-x", tmpDiffPng], { timeout: 8000 }));
                     const afterBuf = await fs.readFile(tmpDiffPng);
                     await fs.unlink(tmpDiffPng).catch(() => {});
                     const diff = computeScreenDiff(beforeBuf, afterBuf);
@@ -2413,6 +2421,7 @@ export const osMultiAction: ToolDefinition = {
                         });
                         const sx = scaled.x;
                         const sy = scaled.y;
+                        await cursorClick(sx, sy);
                         const jxa = `ObjC.import('CoreGraphics');var pt=$.CGPointMake(${sx},${sy});var m=$.CGEventCreateMouseEvent(null,$.kCGEventMouseMoved,pt,0);$.CGEventPost($.kCGHIDEventTap,m);delay(0.05);var d=$.CGEventCreateMouseEvent(null,$.kCGEventLeftMouseDown,pt,0);$.CGEventPost($.kCGHIDEventTap,d);delay(0.05);var u=$.CGEventCreateMouseEvent(null,$.kCGEventLeftMouseUp,pt,0);$.CGEventPost($.kCGHIDEventTap,u);`;
                         await execFileAsync("osascript", ["-l", "JavaScript", "-e", jxa], { timeout: 5000 });
                         results.push({
@@ -2441,6 +2450,7 @@ export const osMultiAction: ToolDefinition = {
                             if (stopOnError) return JSON.stringify({ results, stopped_early: true });
                             break;
                         }
+                        await cursorClick(element.x, element.y);
                         const jxa = `ObjC.import('CoreGraphics');var pt=$.CGPointMake(${element.x},${element.y});var m=$.CGEventCreateMouseEvent(null,$.kCGEventMouseMoved,pt,0);$.CGEventPost($.kCGHIDEventTap,m);delay(0.05);var d=$.CGEventCreateMouseEvent(null,$.kCGEventLeftMouseDown,pt,0);$.CGEventPost($.kCGHIDEventTap,d);delay(0.05);var u=$.CGEventCreateMouseEvent(null,$.kCGEventLeftMouseUp,pt,0);$.CGEventPost($.kCGHIDEventTap,u);`;
                         await execFileAsync("osascript", ["-l", "JavaScript", "-e", jxa], { timeout: 5000 });
                         results.push({
@@ -2451,7 +2461,7 @@ export const osMultiAction: ToolDefinition = {
                         break;
                     }
                     case "type": {
-                        await typeTextMac(act.text || "");
+                        await withCursorTyping(() => typeTextMac(act.text || ""));
                         results.push({ action: "type", ok: true, detail: { text: act.text } });
                         break;
                     }
@@ -2535,7 +2545,7 @@ export const osMultiAction: ToolDefinition = {
                     case "screenshot": {
                         // Quick screenshot capture, store buffer
                         const tmp = join(tmpdir(), `atlas-multi-${Date.now()}.png`);
-                        await execFileAsync("screencapture", ["-x", tmp], { timeout: 8000 });
+                        await withCursorHidden(() => execFileAsync("screencapture", ["-x", tmp], { timeout: 8000 }));
                         const buf = await fs.readFile(tmp);
                         _lastScreenshotBuffer = buf;
                         await fs.unlink(tmp).catch(() => {});
@@ -2545,7 +2555,7 @@ export const osMultiAction: ToolDefinition = {
                     case "verify": {
                         // Quick OCR verification
                         const tmp = join(tmpdir(), `atlas-verify-${Date.now()}.png`);
-                        await execFileAsync("screencapture", ["-x", tmp], { timeout: 8000 });
+                        await withCursorHidden(() => execFileAsync("screencapture", ["-x", tmp], { timeout: 8000 }));
                         const ocrResult = await runOcr(tmp, "fast");
                         await fs.unlink(tmp).catch(() => {});
                         const found =

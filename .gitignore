@@ -179,6 +179,7 @@ desktop/hostinger-upload/
 !src/screen/__tests__/click-memory.test.ts
 !src/screen/__tests__/drift-calibration.test.ts
 !src/screen/__tests__/outcome-classifier.test.ts
+!src/screen/__tests__/agent-cursor.test.ts
 !src/utils/win-shell.test.ts
 !src/utils/platform-capabilities.test.ts
 !src/commands/index.test.ts
