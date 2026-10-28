@@ -1763,41 +1763,34 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 }
             }
 
-            // ── Coding turn? ──
-            // The codebase index + repo map below are synchronous disk/CPU work
-            // that can hold the event loop for 10s+. Started while routing was in
-            // flight, they starved its timeout (a 5s budget took 15s on "… my code
-            // doesn't build. roast me"). Let routing finish first, and skip all
-            // coding context when it picked the chat lane.
-            const codingTurn =
-                detectTaskType(rawUserMessage) === "coding" &&
-                !(await toolSelectionPromise.then(
-                    (s) => s.categories.includes("chat_only"),
-                    () => false,
-                ));
-
-            // ── Project memory (ATLAS.md walk-up) ──
-            // Only for coding-classified queries to avoid injecting
-            // project conventions into chat/research flows.
-            try {
-                if (codingTurn) {
+            // ── Coding context ──
+            // The codebase index + repo map are synchronous disk/CPU work that can
+            // hold the event loop for 10s+. Started while routing was in flight they
+            // starved its timeout (a 5s budget took 15s on "… my code doesn't build.
+            // roast me"), so they start once routing settles and are skipped on a
+            // chat-lane turn. Memory retrieval below does not wait for either; the
+            // parts are spliced back in at this position before the context cap.
+            const buildCodingContext = async (): Promise<string[]> => {
+                const parts: string[] = [];
+                // ── Project memory (ATLAS.md walk-up) ──
+                // Only for coding-classified queries to avoid injecting
+                // project conventions into chat/research flows.
+                try {
                     const projectMemory = getProjectMemorySnippet();
                     if (projectMemory) parts.push(projectMemory);
+                } catch {
+                    /* project memory not available */
                 }
-            } catch {
-                /* project memory not available */
-            }
 
-            // ── Repo map (structural symbol summary) ──
-            // Token-budgeted structural overview for coding queries so the agent
-            // knows "what's where" without reading every file. Kept tight at 1500
-            // tokens to avoid crowding the rest of the context injection.
-            // ── repo_map + codebase index architecture injection (parallel) ──
-            // For coding tasks, run the repo_map walk and the codebase-index
-            // + architecture extraction concurrently. They hit disjoint caches
-            // so parallelism roughly halves first-iteration cold latency
-            // compared to the previous serial flow.
-            if (codingTurn) {
+                // ── Repo map (structural symbol summary) ──
+                // Token-budgeted structural overview for coding queries so the agent
+                // knows "what's where" without reading every file. Kept tight at 1500
+                // tokens to avoid crowding the rest of the context injection.
+                // ── repo_map + codebase index architecture injection (parallel) ──
+                // For coding tasks, run the repo_map walk and the codebase-index
+                // + architecture extraction concurrently. They hit disjoint caches
+                // so parallelism roughly halves first-iteration cold latency
+                // compared to the previous serial flow.
                 const cwd = process.cwd();
                 const repoMapTask = (async () => {
                     if (process.env.ATLAS_NO_REPO_MAP === "true") return null;
@@ -1848,45 +1841,24 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 const safeArch = await guardContext("architecture", arch);
                 if (safeRepoMap) parts.push(safeRepoMap);
                 if (safeArch) parts.push(safeArch);
-            }
 
-            // ── Platform capabilities (injected once per session) ──
-            // Tells the LLM which shell, screenshot engine, clipboard engine, OCR
-            // tool, and automation helpers are actually available at runtime so it
-            // avoids calling tools that will fail on this platform.
-            if (process.env.ATLAS_NO_CAPABILITY_INJECTION !== "true") {
+                // ── Past coding-strategy recall (Phase 4E read side) ──
+                // For coding tasks, surface the code-category task-learnings ahead
+                // of the general recall so previously-validated patterns aren't
+                // crowded out by browser/os/app entries when the top-3 is shared.
                 try {
-                    const { getPlatformCapabilities, formatCapabilitiesForContext } = await import(
-                        "./utils/platform-capabilities.js"
-                    );
-                    const caps = await getPlatformCapabilities();
-                    const capsText = formatCapabilitiesForContext(caps);
-                    parts.push(`<platform_capabilities>\n${capsText}\n</platform_capabilities>`);
-                } catch {
-                    /* non-fatal */
-                }
-            }
-
-            // ── Past coding-strategy recall (Phase 4E read side) ──
-            // For coding tasks, surface the code-category task-learnings ahead
-            // of the general recall so previously-validated patterns aren't
-            // crowded out by browser/os/app entries when the top-3 is shared.
-            try {
-                if (codingTurn) {
                     const codingLearnings = getTaskLearningsContext(rawUserMessage, "code");
                     if (codingLearnings) parts.push(codingLearnings);
+                } catch {
+                    /* task-learnings not initialized */
                 }
-            } catch {
-                /* task-learnings not initialized */
-            }
 
-            // ── Coding complexity classification ──
-            // Inject a short reminder telling the agent which flow to
-            // follow: trivial skips design-docs, standard implements
-            // directly with Pro tier, complex triggers the full PRD →
-            // approval → walkthrough ceremony.
-            try {
-                if (codingTurn) {
+                // ── Coding complexity classification ──
+                // Inject a short reminder telling the agent which flow to
+                // follow: trivial skips design-docs, standard implements
+                // directly with Pro tier, complex triggers the full PRD →
+                // approval → walkthrough ceremony.
+                try {
                     const { classifyCodingComplexity } = await import("./model-router.js");
                     const c = classifyCodingComplexity(userMessage);
                     if (c === "complex") {
@@ -1915,9 +1887,38 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                                 "</coding_complexity>",
                         );
                     }
+                } catch {
+                    /* classifier unavailable — don't block the agent */
                 }
-            } catch {
-                /* classifier unavailable — don't block the agent */
+                return parts;
+            };
+            const codingInsertAt = parts.length;
+            const codingPartsPromise: Promise<string[]> =
+                detectTaskType(rawUserMessage) !== "coding"
+                    ? Promise.resolve([])
+                    : toolSelectionPromise
+                          .then(
+                              (s) => !s.categories.includes("chat_only"),
+                              () => true,
+                          )
+                          .then((coding) => (coding ? buildCodingContext() : []))
+                          .catch(() => []);
+
+            // ── Platform capabilities (injected once per session) ──
+            // Tells the LLM which shell, screenshot engine, clipboard engine, OCR
+            // tool, and automation helpers are actually available at runtime so it
+            // avoids calling tools that will fail on this platform.
+            if (process.env.ATLAS_NO_CAPABILITY_INJECTION !== "true") {
+                try {
+                    const { getPlatformCapabilities, formatCapabilitiesForContext } = await import(
+                        "./utils/platform-capabilities.js"
+                    );
+                    const caps = await getPlatformCapabilities();
+                    const capsText = formatCapabilitiesForContext(caps);
+                    parts.push(`<platform_capabilities>\n${capsText}\n</platform_capabilities>`);
+                } catch {
+                    /* non-fatal */
+                }
             }
 
             // ── 3. Behavioral traits (token-budgeted, relevance-scored) ──
@@ -2269,6 +2270,8 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
 - Save info as you learn it: identity_update for name/role/company, trait_update for preferences.
 - After this chat, you'll remember everything. Never re-introduce or re-ask.`);
             }
+
+            parts.splice(codingInsertAt, 0, ...(await codingPartsPromise));
 
             // Contact agents: drain ALL owner memory that was just collected and
             // replace with only the contact's own profile. The LLM must not have

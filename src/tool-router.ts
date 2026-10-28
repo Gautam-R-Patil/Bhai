@@ -529,18 +529,28 @@ function beforeDeadline<T>(work: Promise<T>, deadline: number): Promise<T> {
     ]).finally(() => clearTimeout(timer));
 }
 
-// Banter: the user wants a reaction (roast, joke, opinion), not an action —
-// even when it mentions code, tabs or builds. A request to act (an action verb
-// opening a clause, or a path/URL to work on) disqualifies it.
-const BANTER_RE =
-    /\b(roast|jokes?|make me laugh|cheer me up|what do you think|your (?:honest )?(?:opinion|take)|thoughts on|be honest|rate (?:me|my)|lol|lmao|rofl|haha\w*)\b/i;
+// Embedding budget after a classifier timeout. The classifier can use the whole
+// routing deadline, and a warm MiniLM embedding takes ~15-50ms, so the fallback
+// gets its own small floor rather than the 0ms left over (which meant
+// structural-only scoring and blind MCP picks).
+const FALLBACK_EMBED_MS = 1000;
+
+// Banter with no classifier answer. Only takes the chat lane when it is certain
+// there is no request: target-less banter ("roast me", "lol") and nothing that
+// could be an ask — no question, no "can you/help me/I need", no action verb
+// with an object (a negated verb or one before "and/or/but" doesn't count:
+// "my code doesn't build", "tabs open and …"), no path/URL/file. Anything else
+// falls back to normal routing; the classifier still sends banter to chat.
+const BANTER_RE = /\b(roast me|jokes?|make me laugh|cheer me up|lol|lmao|rofl|haha\w*)\b/i;
+const ASK_RE =
+    /\?|\b(what|whats|how|why|when|where|who|which|whose|can|could|would|will|should|please|pls|plz|help|need|want|lemme|let me know|u|ur)\b/i;
 const ACTION_RE =
-    /(?:^|[.!?;,:]\s*|\b(?:and|then|also|so|now|please|pls|can you|could you|would you|will you|can u)\s+)(?:close|open|fix|debug|run|build|compile|install|uninstall|delete|remove|kill|quit|restart|start|stop|search|find|look up|google|check|show|list|read|send|email|text|message|reply|call|play|pause|create|edit|update|upgrade|download|upload|deploy|commit|push|pull|set|schedule|remind|book|order|buy|organi[sz]e|clean|save|take|screenshot|summari[sz]e|translate|go to|navigate|click|type|scroll|draft|turn|mute|unmute)\b/i;
-const PATH_RE =
-    /(?:^|\s)(?:~|\.{1,2})?\/[\w.-]|https?:\/\/|\b[\w-]+\.(?:tsx?|jsx?|mjs|py|rs|go|java|json|md|txt|html|css|ya?ml)\b/i;
+    /(?<!(?:\bnot|\bnever|\bno|n't)\s+(?:\w+\s+)?)\b(?:close|open|fix|debug|run|build|compile|install|uninstall|delete|remove|kill|quit|restart|start|stop|search|find|look up|google|check|show|list|read|send|email|text|message|reply|call|play|pause|resume|skip|create|edit|update|upgrade|download|upload|deploy|commit|push|pull|set|schedule|remind|book|order|buy|pay|cancel|organi[sz]e|clean|save|take|screenshot|summari[sz]e|translate|go to|navigate|click|type|scroll|draft|turn|mute|unmute|move|copy|rename|share|forward|write|add|get|give|fetch|launch|visit|browse|join|track|ping|dm|lock|unlock|shut|reboot|print|convert|generate|draw|tell(?! me (?:a|another|some) jokes?))\b(?!\s+(?:and|or|but)\b)/i;
+const PATH_RE = /(?:^|\s)(?:~|\.{1,2})?\/[\w.-]|https?:\/\/|\b[\w-]+\.[a-z][a-z0-9]{1,4}\b/i;
 
 export function isConversationalBanter(message: string): boolean {
-    return BANTER_RE.test(message) && !ACTION_RE.test(message) && !PATH_RE.test(message);
+    const m = message.replace(/’/g, "'");
+    return BANTER_RE.test(m) && !ASK_RE.test(m) && !ACTION_RE.test(m) && !PATH_RE.test(m);
 }
 
 async function classifyWithLLM(
@@ -1446,6 +1456,9 @@ export async function selectTools(opts: {
 }): Promise<ToolRouterSelection> {
     const startTime = Date.now();
     const deadline = startTime + LLM_CLASSIFIER_TIMEOUT_MS;
+    // Message embeddings (fallback scoring + MCP) share one deadline, set on first use.
+    let embedBy: number | undefined;
+    const embedDeadline = () => (embedBy ??= Math.max(deadline, Date.now() + FALLBACK_EMBED_MS));
     currentIteration++;
 
     // ── Check selection cache first ──
@@ -1552,7 +1565,7 @@ export async function selectTools(opts: {
         lastClassification = null;
         // Fallback: hybrid structural + semantic + keyword boosts
         const expandedMessage = expandQuery(opts.message);
-        const ranked = await classifyToolNeeds(expandedMessage, opts.recentToolCalls, opts.iteration, deadline);
+        const ranked = await classifyToolNeeds(expandedMessage, opts.recentToolCalls, opts.iteration, embedDeadline());
 
         // Apply keyword hard-boosts to ranked scores
         for (const { pattern, category, minScore } of KEYWORD_BOOSTS) {
@@ -1743,7 +1756,7 @@ export async function selectTools(opts: {
         if (embeddingsReady && selectedSchemas.length < getMaxToolsTotal()) {
             try {
                 const { cosineSimilarity } = await import("./memory/embeddings.js");
-                const messageEmb = await beforeDeadline(getCachedMessageEmbedding(opts.message), deadline);
+                const messageEmb = await beforeDeadline(getCachedMessageEmbedding(opts.message), embedDeadline());
                 const mcpScored: { schema: ChatCompletionTool; score: number }[] = [];
 
                 for (const mcpTool of mcpSchemas) {
@@ -1765,12 +1778,8 @@ export async function selectTools(opts: {
                         selectedSchemas.push(schema);
                 }
             } catch {
-                // If embedding fails, include top 5 MCP tools
-                for (const mcpTool of mcpSchemas.slice(0, 5)) {
-                    if (selectedSchemas.length < getMaxToolsTotal()) {
-                        selectedSchemas.push(mcpTool);
-                    }
-                }
+                // No embedding to score with: add none rather than the first five
+                // blind. request_tools can still fetch an MCP tool by description.
             }
         } else if (!embeddingsReady) {
             for (const mcpTool of mcpSchemas.slice(0, 5)) {
