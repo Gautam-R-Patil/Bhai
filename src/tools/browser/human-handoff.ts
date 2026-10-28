@@ -8,7 +8,7 @@
 
 import type { ToolDefinition } from "../get-current-time.js";
 import { getCurrentMode } from "./browser-backend.js";
-import { type CaptchaInfo, type CaptchaType, detectCaptcha } from "./captcha.js";
+import { CAPTCHA_SOLVED_JS, type CaptchaInfo, type CaptchaType, captchaSolved, detectCaptcha } from "./captcha.js";
 import { getActiveExtensionTab, isExtensionConnected, sendBridgeCommand } from "./chrome-bridge.js";
 import { ATLAS_HUD_JS, getActivePage, touchBrowserActivity } from "./core.js";
 
@@ -16,10 +16,24 @@ export type HandoffOutcome = "cleared" | "timeout" | "cancelled";
 
 // Where the page is and whether the widget already holds a response token
 // (a ticked reCAPTCHA/hCaptcha box stays on the page; its token field fills).
-const PAGE_STATE_JS = `(() => ({
-  href: location.href,
-  solved: [...document.querySelectorAll('textarea[name="g-recaptcha-response"],textarea[name="h-captcha-response"],input[name="cf-turnstile-response"]')].some((e) => !!e.value),
-}))()`;
+const PAGE_STATE_JS = `(() => ({ href: location.href, solved: ${CAPTCHA_SOLVED_JS} }))()`;
+
+/**
+ * Chrome bridge: a page that runs its scripts in one tab by id, not in
+ * whichever tab is active, so the owner switching tabs mid-wait is never read
+ * as "cleared". Older extensions ignore tabId and use the active tab.
+ */
+function pinnedTab(tabId: number, url: () => string) {
+    return {
+        url,
+        evaluate: (fn: ((...a: unknown[]) => unknown) | string, ...args: unknown[]) =>
+            sendBridgeCommand(
+                "execute_js",
+                { code: typeof fn === "function" ? `(${fn})(${args.map((a) => JSON.stringify(a)).join(", ")})` : fn, tabId },
+                15000,
+            ),
+    };
+}
 
 async function pageState(page: any): Promise<{ href: string; solved: boolean } | null> {
     const s = await page.evaluate(PAGE_STATE_JS).catch(() => null);
@@ -40,7 +54,7 @@ function nap(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 /**
- * Poll until the check is gone: the detector finds none, the widget holds a
+ * Poll until the check is gone: the detector finds none (or only invisible v3), the widget holds a
  * response token, or the page moved to another URL. Detector errors (the page
  * mid-navigation right after the owner clicks) count as "not yet".
  */
@@ -62,7 +76,7 @@ export async function waitForHuman(
         await nap(Math.min(intervalMs, Math.max(0, deadline - Date.now())), signal);
         if (signal?.aborted) return "cancelled";
         const info = await detect(page).catch(() => null);
-        if (info?.type === "none") return "cleared";
+        if (info?.type === "none" || info?.type === "recaptcha-v3") return "cleared"; // v3 left alone is invisible
         const s = await pageState(page);
         if (s?.solved || (s && startUrl && s.href !== startUrl)) return "cleared";
     }
@@ -93,8 +107,8 @@ async function tellOwner(ask: string): Promise<string | null> {
         const { getActiveChannel, getChannelSender } = await import("../channel-send.js");
         channel = getActiveChannel();
         const send = channel ? getChannelSender(channel) : undefined;
-        if (send) await send(`🙋 ${ask}`);
-        else channel = null;
+        // A sender returns false when it had nowhere to send (e.g. no Discord channel set).
+        if (!send || (await send(`🙋 ${ask}`)) === false) channel = null;
     } catch {
         channel = null;
     }
@@ -105,6 +119,7 @@ async function tellOwner(ask: string): Promise<string | null> {
 }
 
 const DEFAULT_TIMEOUT_S = 300;
+const MIN_TIMEOUT_S = 15; // a model-supplied 1s would give the owner no time at all
 const MAX_TIMEOUT_S = 300; // TOOL_TIMEOUTS.browser_wait_for_human leaves headroom over this
 
 export const browserWaitForHuman: ToolDefinition = {
@@ -119,7 +134,7 @@ export const browserWaitForHuman: ToolDefinition = {
                 properties: {
                     timeout_s: {
                         type: "number",
-                        description: "How long to wait for the owner, in seconds (default 300, max 300).",
+                        description: "How long to wait for the owner, in seconds (default 300, min 15, max 300).",
                     },
                 },
                 required: [],
@@ -129,35 +144,39 @@ export const browserWaitForHuman: ToolDefinition = {
     async handler(input) {
         try {
             const page = await getActivePage();
-            const info = await detectCaptcha(page).catch(() => null);
-            if (!info || info.type === "none") {
+            const mode = getCurrentMode();
+            // Chrome bridge: pin the tab the check is on; every later read goes to that tab.
+            const tab = mode === "chrome" ? await getActiveExtensionTab().catch(() => null) : null;
+            const probe = tab?.id ? pinnedTab(tab.id, () => page.url()) : page;
+            const info = await detectCaptcha(probe as any).catch(() => null);
+            // Nothing for the owner to do: no check, invisible v3, or the box is already ticked.
+            if (!info || info.type === "none" || info.type === "recaptcha-v3" || (await captchaSolved(probe))) {
                 return JSON.stringify({
                     success: true,
                     status: "cleared",
-                    captcha_present: false,
-                    message: "No human check on this page. Continue the task.",
+                    captcha_present: !!info && info.type !== "none",
+                    ...(info && info.type !== "none" ? { captcha_type: info.type } : {}),
+                    message: "No human check is waiting on the owner here (none, invisible, or already done). Continue the task.",
                 });
             }
-            if (info.type === "recaptcha-v3") {
-                // Invisible: nothing for the owner to tick.
+            const envMs = process.env.ATLAS_CAPTCHA_HANDOFF_MS;
+            if (envMs && !(Number(envMs) > 0)) {
                 return JSON.stringify({
-                    success: true,
-                    status: "cleared",
+                    error: "Handing human checks to the owner is turned off (ATLAS_CAPTCHA_HANDOFF_MS=0).",
+                    status: "disabled",
+                    requires_user: true,
                     captcha_type: info.type,
-                    message: "Invisible reCAPTCHA v3: there is no box to tick. Continue the task.",
+                    message: "Tell the owner this page needs a human-verification check they must do themselves, and stop here.",
                 });
             }
 
             // The live URL (the Chrome proxy's url() is cached); unknown → no "moved on" check.
-            const startUrl = (await pageState(page))?.href;
+            const startUrl = (await pageState(probe))?.href;
             const site = siteOf(startUrl ?? page.url());
-            const mode = getCurrentMode();
             try {
-                if (mode === "chrome") {
-                    // The bridge drives the active tab; raise it and its window.
-                    const tab = await getActiveExtensionTab();
-                    if (tab?.id) await sendBridgeCommand("switch_tab", { tabId: tab.id, focus: true });
-                } else {
+                if (tab?.id) {
+                    await sendBridgeCommand("switch_tab", { tabId: tab.id, focus: true }); // raise the tab and its window
+                } else if (mode !== "chrome") {
                     await page.bringToFront?.();
                 }
             } catch {
@@ -167,19 +186,17 @@ export const browserWaitForHuman: ToolDefinition = {
             const ask = askFor(info.type, site, mode);
             const banner = (label: string, done: boolean) =>
                 Promise.resolve(
-                    page.evaluate(`(${ATLAS_HUD_JS})(${JSON.stringify({ label, done, maxWidth: 460 })})`),
+                    probe.evaluate(`(${ATLAS_HUD_JS})(${JSON.stringify({ label, done, maxWidth: 460 })})`),
                 ).catch(() => {});
             await banner("⏸ Bhai is waiting for you to complete this check", false);
             const channel = await tellOwner(ask);
 
-            const raw = Number(
-                input.timeout_s ?? (Number(process.env.ATLAS_CAPTCHA_HANDOFF_MS) / 1000 || DEFAULT_TIMEOUT_S),
-            );
-            const timeoutMs = Math.min(raw > 0 ? raw : DEFAULT_TIMEOUT_S, MAX_TIMEOUT_S) * 1000;
+            const raw = Number(input.timeout_s ?? (Number(envMs) / 1000 || DEFAULT_TIMEOUT_S));
+            const timeoutMs = Math.min(Math.max(raw > 0 ? raw : DEFAULT_TIMEOUT_S, MIN_TIMEOUT_S), MAX_TIMEOUT_S) * 1000;
             console.log(
                 `  🙋 Human check (${info.type}) on ${site}: waiting up to ${Math.round(timeoutMs / 1000)}s for the owner`,
             );
-            const status = await waitForHuman(page, {
+            const status = await waitForHuman(probe, {
                 timeoutMs,
                 startUrl,
                 signal: input._signal as AbortSignal | undefined,

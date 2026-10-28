@@ -3,6 +3,7 @@
 // See LICENSE.md for details.
 
 import { checkConsent } from "../security/consent.js";
+import { AsyncLocalStorage } from "node:async_hooks";
 import fs from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -733,6 +734,15 @@ function stableJson(v: unknown): string {
     return JSON.stringify(v);
 }
 
+// The turn's Stop signal, visible to every tool call made under it, including
+// the calls sub-agents and swarms make (they carry no signal of their own).
+const turnSignal = new AsyncLocalStorage<AbortSignal | undefined>();
+export function withTurnSignal<T>(signal: AbortSignal | undefined, fn: () => Promise<T>): Promise<T> {
+    return turnSignal.run(signal, fn);
+}
+// Tools that wait on the owner and must end when Stop is pressed (they read input._signal).
+const STOPPABLE_TOOLS = new Set(["browser_wait_for_human"]);
+
 export async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
     const startTime = Date.now();
     const timeout = getToolTimeout(name);
@@ -841,6 +851,9 @@ export async function executeTool(name: string, input: Record<string, unknown>):
     } catch (err) {
         console.warn(`[TOOL] PreToolUse hook chain errored for ${name}: ${(err as Error).message}`);
     }
+    // Set after the hooks, so an input they rewrite (a JSON copy) keeps the signal.
+    const stop = (input._signal as AbortSignal | undefined) ?? turnSignal.getStore();
+    if (STOPPABLE_TOOLS.has(name) && stop) effectiveInput = { ...effectiveInput, _signal: stop };
 
     try {
         // Execute with timeout protection

@@ -112,7 +112,7 @@ import {
     recordToolSuccess,
 } from "./tool-router-analytics.js";
 import { autoSaveSession, getBrowserContext, trackBrowserStep } from "./tools/browser-memory.js";
-import { clearCache, executeTool, resetRateLimits } from "./tools/index.js";
+import { clearCache, executeTool, resetRateLimits, withTurnSignal } from "./tools/index.js";
 import { startTrace, finalizeTrace, recordToolsSelected, recordContextSources, recordMemoryHit } from "./harness/trace-store.js";
 import { runWithEvalTraceId } from "./agents/evaluator.js";
 import { getDimensionValue } from "./harness/registry.js";
@@ -731,10 +731,9 @@ async function executeAndProcessToolCall(
 
     // Typing tools get real values for any [OTP_1]-style handles the model used;
     // fnArgs (logs, history, gates) keeps the handles.
-    let execArgs = REVEAL_TOOLS.has(fnName) && channelContext?.isOwner === true ? revealArgs(fnArgs) : fnArgs;
-    // A long wait on the owner ends when they press Stop.
-    if (fnName === "browser_wait_for_human" && signal) execArgs = { ...execArgs, _signal: signal };
-    let rawResult = await executeTool(fnName, execArgs);
+    const execArgs = REVEAL_TOOLS.has(fnName) && channelContext?.isOwner === true ? revealArgs(fnArgs) : fnArgs;
+    // Stop reaches long waits on the owner, also inside sub-agents/swarms this call starts.
+    let rawResult = await withTurnSignal(signal, () => executeTool(fnName, execArgs));
 
     // ── Self-heal: if tool failed with a dependency error, auto-fix and retry ──
     let isError = false;
@@ -750,7 +749,7 @@ async function executeAndProcessToolCall(
             const heal = await attemptSelfHeal(rawResult);
             if (heal.fixed) {
                 console.log(`  🔧 Self-healed (${heal.action}) — retrying ${fnName}`);
-                rawResult = await executeTool(fnName, execArgs);
+                rawResult = await withTurnSignal(signal, () => executeTool(fnName, execArgs));
                 isError = false;
                 try {
                     const p = JSON.parse(rawResult);
