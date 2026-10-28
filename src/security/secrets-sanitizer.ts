@@ -61,6 +61,13 @@ interface Pattern {
      * The Rust mirror reproduces this via a dedicated group-rebuild pass.
      */
     replace?: (full: string, ...groups: string[]) => string;
+    /**
+     * Optional: every match ends at or before the last match of this regex, so
+     * the pass runs on that prefix only. Keeps PRIVATE_KEY_PEM linear: a BEGIN
+     * with no END after it made the lazy body scan to the end of the text, once
+     * per BEGIN. Output is unchanged (the Rust regex crate is linear already).
+     */
+    endsBy?: RegExp;
 }
 
 const PATTERNS: Pattern[] = [
@@ -192,7 +199,13 @@ const PATTERNS: Pattern[] = [
         // Generic scheme://user:PASSWORD@host (http/https/ftp/etc.). The
         // `(?!\[REDACTED:)` after the colon stops this from re-matching a
         // DB password DB_URI_PASSWORD already turned into a marker.
-        regex: /\b([a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:)(?!\[REDACTED:)([^@\s/]+)(@)/g,
+        // Scheme bounded to 31 chars (same bound in secrets_sanitizer.rs): an
+        // unbounded one rescanned "a-a-a-…" from every word boundary (2s at 40KB).
+        // It sits in a lookbehind so the scan starts only at "://"; the scheme
+        // stays outside the match, which leaves the output unchanged (the
+        // replacement kept it verbatim, and a match always ends at "@", which
+        // the lookbehind can't cross).
+        regex: /(?<=\b[a-z][a-z0-9+.-]{0,30})(:\/\/[^\s:@/]+:)(?!\[REDACTED:)([^@\s/]+)(@)/g,
         replace: (_full, pre, _pw, at) => `${pre}[REDACTED:URL_USERINFO]${at}`,
     },
 
@@ -217,6 +230,7 @@ const PATTERNS: Pattern[] = [
         // keys don't merge. We also accept the common variants
         // (plain, RSA, EC, DSA, OPENSSH, PGP).
         regex: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----[\s\S]+?-----END (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----/g,
+        endsBy: /-----END (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----/g,
     },
 
     // ── Env-var-style secret assignments ───────────────────────
@@ -263,9 +277,17 @@ export function _sanitizeSecretsTs(input: string): SanitizeResult {
     const counts: Record<string, number> = {};
     let total = 0;
 
-    for (const { name, regex, replace } of PATTERNS) {
+    for (const { name, regex, replace, endsBy } of PATTERNS) {
         // `replace` with a function lets us count matches in one pass.
         let hits = 0;
+        let tail = "";
+        if (endsBy) {
+            let end = -1;
+            for (const m of current.matchAll(endsBy)) end = m.index + m[0].length;
+            if (end < 0) continue;
+            tail = current.slice(end);
+            current = current.slice(0, end);
+        }
         if (replace) {
             // Group-preserving pattern (DB_URI_PASSWORD / URL_USERINFO):
             // rebuild the match from its capture groups so only the
@@ -284,6 +306,7 @@ export function _sanitizeSecretsTs(input: string): SanitizeResult {
                 return marker;
             });
         }
+        current += tail;
         if (hits > 0) {
             counts[name] = hits;
             total += hits;
@@ -333,11 +356,18 @@ export function sanitizeSecrets(input: string): SanitizeResult {
 // Exported for parity-testing only.
 export function _containsSecretsTs(input: string): boolean {
     if (!input) return false;
-    for (const { regex } of PATTERNS) {
+    for (const { regex, endsBy } of PATTERNS) {
+        let text = input;
+        if (endsBy) {
+            let end = -1;
+            for (const m of input.matchAll(endsBy)) end = m.index + m[0].length;
+            if (end < 0) continue;
+            text = input.slice(0, end);
+        }
         // Reset lastIndex — regexes with the `g` flag carry state
         // across .test() calls, so stateless use needs this reset.
         regex.lastIndex = 0;
-        if (regex.test(input)) return true;
+        if (regex.test(text)) return true;
     }
     return false;
 }
