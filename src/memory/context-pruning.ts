@@ -188,9 +188,11 @@ export async function pruneContext(messages: ChatCompletionMessageParam[], llm: 
     let recentMessages = messages.slice(safeSplit);
 
     // ── Auto-flush key facts from messages about to be pruned ──
-    // One Haiku extraction call over the full window; runs on the pruning
-    // bg path so the ~200-500ms latency doesn't stall the agent turn.
-    await flushToMemory(oldMessages, llm);
+    // One Haiku extraction call over the full window; fire-and-forget so its
+    // latency doesn't stall the summary (and the turn waiting on it).
+    flushToMemory(oldMessages, llm).catch((err) =>
+        console.warn("[AUTO_FLUSH] failed (non-fatal):", (err as Error).message),
+    );
 
     // Compress old tool outputs in the recent messages array
     recentMessages = compressToolHistory(recentMessages);

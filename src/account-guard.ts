@@ -14,6 +14,9 @@ let lastCheckTime = 0;
 let consecutiveErrors = 0;
 const STALE_CACHE_MS = 60_000; // Trust cache for up to 60s during network issues
 const MAX_ERRORS_BEFORE_BLOCK = 5;
+/** The server enforces credits on every LLM call, so a fresh "allowed" needn't be re-fetched each turn. */
+const FRESH_ALLOWED_MS = 30_000;
+let lastAllowedTime = 0;
 
 // Session credit tracking (local bookkeeping only — server is authoritative)
 let sessionCreditsUsed = 0;
@@ -83,6 +86,10 @@ export async function checkAccountStatus(): Promise<{ allowed: boolean; reason?:
         return { allowed: false, reason: "Not signed in. Please log in through the Bhai app." };
     }
 
+    if (lastKnownCredits !== null && lastKnownCredits > 0 && now - lastAllowedTime < FRESH_ALLOWED_MS) {
+        return { allowed: true };
+    }
+
     try {
         const sessionToken = await getSessionToken();
         if (!sessionToken) {
@@ -123,6 +130,7 @@ export async function checkAccountStatus(): Promise<{ allowed: boolean; reason?:
         }
 
         console.log(`[AccountGuard] Account OK (status: ${data.status}, credits: ${data.ai_credits})`);
+        lastAllowedTime = now;
         return { allowed: true };
 
     } catch (err: unknown) {
