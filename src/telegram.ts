@@ -5,7 +5,7 @@
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, basename as nodeBasename } from "node:path";
-import { Bot, InlineKeyboard } from "grammy";
+import { Bot, GrammyError, InlineKeyboard } from "grammy";
 import {
     type ChannelContext,
     clearConversation,
@@ -30,11 +30,16 @@ import {
     getThinkingPhrase,
     getVoiceStagePhrase,
     getWaitPhrase,
-    smartChunkMessage,
 } from "./alive-ux.js";
+import {
+    chunkMarkdownForTelegram,
+    isStopCommand,
+    markdownToPlainText,
+    markdownToTelegramHtml,
+} from "./channel-text.js";
 import { getThinkingLevel, handleCommand, initCommands } from "./commands/index.js";
 import { getConvexSiteUrl } from "./config/keys.js";
-import { getDataDir } from "./config/paths.js";
+import { getDataDir, getDownloadsDir } from "./config/paths.js";
 import type { Config } from "./config.js";
 import { encryptedFetch } from "./crypto-transport.js";
 import type { LLMClient } from "./llm.js";
@@ -79,66 +84,52 @@ function sanitizeReply(text: string): string {
         .trim();
 }
 
-function markdownToTelegramHtml(text: string): string {
-    let html = text;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-    // Escape HTML special chars (but preserve our conversions)
-    html = html.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
-    // Code blocks: ```lang\ncode\n``` → <pre>code</pre>
-    html = html.replace(/```\w*\n?([\s\S]*?)```/g, "<pre>$1</pre>");
-
-    // Inline code: `code` → <code>code</code>
-    html = html.replace(/`([^`\n]+)`/g, "<code>$1</code>");
-
-    // Bold: **text** → <b>text</b>
-    html = html.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
-
-    // Italic: *text* → <i>text</i> (but not inside bold)
-    html = html.replace(/(?<!\w)\*([^*\n]+?)\*(?!\w)/g, "<i>$1</i>");
-
-    // Strikethrough: ~~text~~ → <s>text</s>
-    html = html.replace(/~~(.+?)~~/g, "<s>$1</s>");
-
-    // Underline: __text__ → <u>text</u>
-    html = html.replace(/__(.+?)__/g, "<u>$1</u>");
-
-    // Headings: # text → <b>text</b> (Telegram has no heading tags)
-    html = html.replace(/^#{1,6}\s+(.+)$/gm, "<b>$1</b>");
-
-    // Horizontal rules: --- or *** or ___ → ———
-    html = html.replace(/^[\s]*([-*_]){3,}[\s]*$/gm, "———");
-
-    // Links: [text](url) → <a href="url">text</a>
-    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
-
-    // Numbered lists: 1. item → 1. item (preserve as-is, Telegram renders them okay)
-    // But ensure consistent formatting
-    html = html.replace(/^(\d+)\.\s+/gm, "$1. ");
-
-    // Bullet points: * item or - item → • item
-    html = html.replace(/^[\s]*[*-]\s+/gm, "• ");
-
-    // Simple table support: convert markdown tables to readable plain text format
-    // Match table rows like | cell | cell | cell |
-    const tableMatch = html.match(/^\|.+\|$/gm);
-    if (tableMatch && tableMatch.length >= 2) {
-        // This is a table, convert to readable format
-        html = html.replace(/^\|(.+)\|$/gm, (_, content) => {
-            // Skip separator rows (|---|---|)
-            if (/^[\s\-:|]+$/.test(content)) return "";
-            // Convert cells to tab-separated
-            return content
-                .split("|")
-                .map((c: string) => c.trim())
-                .filter(Boolean)
-                .join("  │  ");
-        });
-        // Remove empty lines from separator removal
-        html = html.replace(/\n{2,}/g, "\n");
+/** Run a Telegram API call, waiting out 429s (`retry_after`) a few times before giving up. */
+async function withTelegramRetry<T>(fn: () => Promise<T>, maxAttempts = 4): Promise<T> {
+    for (let attempt = 1; ; attempt++) {
+        try {
+            return await fn();
+        } catch (err) {
+            const retryAfter =
+                err instanceof GrammyError && err.error_code === 429 ? err.parameters.retry_after : undefined;
+            if (retryAfter === undefined || attempt >= maxAttempts) throw err;
+            console.warn(`  ⏳ Telegram rate limit — retrying in ${retryAfter}s`);
+            await sleep(retryAfter * 1000 + 250);
+        }
     }
+}
 
-    return html;
+type TelegramReply = (text: string, opts?: Record<string, unknown>) => Promise<{ message_id?: number } | undefined>;
+
+/**
+ * Send Markdown as one or more HTML messages (each ≤4096 after conversion), with
+ * 429 retry and a plain-text fallback per chunk. Returns the last message sent.
+ */
+async function sendTelegramMarkdown(
+    reply: TelegramReply,
+    md: string,
+    opts: Record<string, unknown> = {},
+    onSent?: (messageId: number) => void,
+): Promise<{ messageId?: number; md: string }> {
+    let last: { messageId?: number; md: string } = { md: "" };
+    for (const chunk of chunkMarkdownForTelegram(sanitizeReply(md))) {
+        let sent: { message_id?: number } | undefined;
+        try {
+            sent = await withTelegramRetry(() => reply(chunk.html, { parse_mode: "HTML", ...opts }));
+        } catch {
+            try {
+                sent = await withTelegramRetry(() => reply(markdownToPlainText(chunk.md), opts));
+            } catch (err) {
+                console.warn("[TELEGRAM] Failed to send chunk:", (err as Error).message);
+                continue;
+            }
+        }
+        if (sent?.message_id) onSent?.(sent.message_id);
+        last = { messageId: sent?.message_id, md: chunk.md };
+    }
+    return last;
 }
 
 // ── Inline Keyboards ─────────────────────────
@@ -478,29 +469,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
         }
 
         // ── Stop/Cancel command — instant, no debounce ──
-        const lower = userMessage.toLowerCase().trim();
-        const STOP_SIGNALS = [
-            "stop",
-            "cancel",
-            "/stop",
-            "/cancel",
-            "don't continue",
-            "dont continue",
-            "never mind",
-            "nevermind",
-            "leave it",
-            "abort",
-            "quit it",
-            "stop it",
-            "yes stop",
-            "no stop",
-            "please stop",
-        ];
-        const isStopSignal =
-            STOP_SIGNALS.some((s) => lower === s || lower.startsWith(s + " ") || lower.endsWith(" " + s)) ||
-            (lower.split(" ").length <= 4 && ["stop", "cancel", "abort", "quit"].some((w) => lower.includes(w)));
-
-        if (isStopSignal) {
+        if (isStopCommand(userMessage)) {
             // Clear any buffered messages too
             const buf = messageBuffer.get(bufKey);
             if (buf) {
@@ -1105,69 +1074,61 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 const totalLength = bubbles.reduce((s, b) => s + b.length, 0);
                 const useStreaming = totalLength > 300 && bubbles.length > 1;
 
-                if (useStreaming) {
-                    // Send first bubble immediately
-                    const replyOpts = shouldFork ? { reply_parameters: { message_id: triggerMessageId } } : {};
-                    let currentText = bubbles[0];
-                    let sentMsgId: number | undefined;
-                    try {
-                        const sent = await ctx.reply(markdownToTelegramHtml(sanitizeReply(currentText)), {
-                            parse_mode: "HTML",
-                            ...replyOpts,
-                        });
-                        sentMsgId = sent?.message_id;
-                        if (sentMsgId) botMessageToTask.set(sentMsgId, taskId);
-                    } catch {
-                        const sent = await ctx.reply(currentText.replace(/\*\*(.+?)\*\*/g, "$1"), replyOpts);
-                        sentMsgId = sent?.message_id;
-                    }
+                const replyOpts = shouldFork ? { reply_parameters: { message_id: triggerMessageId } } : {};
+                const reply: TelegramReply = (text, opts) => ctx.reply(text, opts);
+                const track = (id: number) => botMessageToTask.set(id, taskId);
 
-                    // Append remaining bubbles via edit-in-place
+                if (useStreaming) {
+                    // Send first bubble immediately, then append the rest by editing it in place
+                    let { messageId: sentMsgId, md: currentText } = await sendTelegramMarkdown(
+                        reply,
+                        bubbles[0],
+                        replyOpts,
+                        track,
+                    );
+                    let lastEditAt = Date.now();
+
                     for (let i = 1; i < bubbles.length; i++) {
                         const delay = Math.min(600, Math.max(200, bubbles[i].length * 1.5));
-                        await new Promise((r) => setTimeout(r, delay));
-                        currentText += "\n\n" + bubbles[i];
+                        await sleep(delay);
+                        const candidate = `${currentText}\n\n${bubbles[i]}`;
+                        const candidateChunks = chunkMarkdownForTelegram(sanitizeReply(candidate));
 
-                        // Check if we'll exceed Telegram's 4096 char limit
-                        const htmlText = markdownToTelegramHtml(sanitizeReply(currentText));
-                        if (htmlText.length > 4000 || !sentMsgId) {
-                            // Start a new message for remaining content
+                        let edited = false;
+                        const editId = sentMsgId;
+                        if (editId && candidateChunks.length === 1) {
+                            // Telegram throttles rapid edits of one message — keep them ≥1s apart
+                            const wait = lastEditAt + 1000 - Date.now();
+                            if (wait > 0) await sleep(wait);
                             try {
-                                await ctx.replyWithChatAction("typing");
-                                const remaining = bubbles.slice(i).join("\n\n");
-                                const remainChunks = splitMessage(remaining, 4096);
-                                for (const chunk of remainChunks) {
-                                    try {
-                                        const sent = await ctx.reply(markdownToTelegramHtml(sanitizeReply(chunk)), {
-                                            parse_mode: "HTML",
-                                        });
-                                        if (sent?.message_id) botMessageToTask.set(sent.message_id, taskId);
-                                    } catch {
-                                        await ctx.reply(chunk);
-                                    }
-                                }
-                            } catch {
-                                /* ignore */
+                                await withTelegramRetry(() =>
+                                    ctx.api.editMessageText(ctx.chat.id, editId, candidateChunks[0].html, {
+                                        parse_mode: "HTML",
+                                    }),
+                                );
+                                edited = true;
+                            } catch (err) {
+                                edited =
+                                    err instanceof GrammyError && err.description.includes("message is not modified");
+                                if (!edited)
+                                    console.warn(
+                                        "[TELEGRAM] Streaming edit failed, sending as new message:",
+                                        (err as Error).message,
+                                    );
                             }
-                            break;
+                            lastEditAt = Date.now();
                         }
 
-                        // Edit the existing message to show appended content
-                        try {
-                            await ctx.api.editMessageText(ctx.chat.id, sentMsgId!, htmlText, { parse_mode: "HTML" });
-                        } catch {
-                            // Edit failed — fall back to sending new message
-                            try {
-                                const sent = await ctx.reply(markdownToTelegramHtml(sanitizeReply(bubbles[i])), {
-                                    parse_mode: "HTML",
-                                });
-                                if (sent?.message_id) {
-                                    sentMsgId = sent.message_id;
-                                    botMessageToTask.set(sentMsgId!, taskId);
-                                }
-                                currentText = bubbles[i]; // Reset for future edits
-                            } catch {
-                                /* ignore */
+                        if (edited) {
+                            currentText = candidate;
+                        } else {
+                            // Too long for one message, or the edit failed: never drop the text — send it fresh
+                            await ctx.replyWithChatAction("typing").catch(() => {});
+                            const last = await sendTelegramMarkdown(reply, bubbles[i], {}, track);
+                            if (last.messageId) {
+                                sentMsgId = last.messageId;
+                                currentText = last.md;
+                                lastEditAt = Date.now();
                             }
                         }
                     }
@@ -1178,28 +1139,9 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                         if (i > 0) {
                             await ctx.replyWithChatAction("typing");
                             const delay = Math.min(600, Math.max(300, bubble.length * 2));
-                            await new Promise((r) => setTimeout(r, delay));
+                            await sleep(delay);
                         }
-                        const chunks = splitMessage(bubble, 4096);
-                        for (const chunk of chunks) {
-                            const replyOpts = shouldFork ? { reply_parameters: { message_id: triggerMessageId } } : {};
-                            try {
-                                const sent = await ctx.reply(markdownToTelegramHtml(sanitizeReply(chunk)), {
-                                    parse_mode: "HTML",
-                                    ...replyOpts,
-                                });
-                                if (sent?.message_id) botMessageToTask.set(sent.message_id, taskId);
-                            } catch {
-                                const plain = chunk
-                                    .replace(/\*\*(.+?)\*\*/g, "$1")
-                                    .replace(/\*(.+?)\*/g, "$1")
-                                    .replace(/__(.+?)__/g, "$1")
-                                    .replace(/`([^`]+)`/g, "$1")
-                                    .replace(/```[\s\S]*?```/g, (m: string) => m.replace(/```\w*\n?/g, "").trim());
-                                const sent = await ctx.reply(plain, replyOpts);
-                                if (sent?.message_id) botMessageToTask.set(sent.message_id, taskId);
-                            }
-                        }
+                        await sendTelegramMarkdown(reply, bubble, replyOpts, track);
                     }
                 }
             } catch (err) {
@@ -1256,6 +1198,46 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 mime.startsWith("image/") ? "image" : "video",
                 messageBuffer as never,
             );
+            return;
+        }
+
+        // Other documents (PDF, CSV, txt…): save to the workspace, let the agent read it with its file tools
+        const doc = ctx.message.document;
+        const MAX_DOC_BYTES = 20 * 1024 * 1024; // Bot API getFile limit
+        if ((doc.file_size ?? 0) > MAX_DOC_BYTES) {
+            await ctx.reply(
+                `That file is too big for me to download (${Math.round((doc.file_size ?? 0) / 1024 / 1024)} MB). Telegram limits bots to 20 MB.`,
+            );
+            return;
+        }
+        try {
+            await ctx.replyWithChatAction("typing");
+            const file = await bot.api.getFile(doc.file_id);
+            const res = await fetch(`https://api.telegram.org/file/bot${config.telegramBotToken}/${file.file_path}`, {
+                signal: AbortSignal.timeout(60_000),
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const buffer = Buffer.from(await res.arrayBuffer());
+            if (buffer.length > MAX_DOC_BYTES) throw new Error(`Document body too large: ${buffer.length} bytes`);
+
+            const { randomUUID } = await import("node:crypto");
+            const safeName =
+                nodeBasename(doc.file_name || "document")
+                    .replace(/[^\w.\- ]/g, "_")
+                    .slice(-120) || "document";
+            const savedPath = join(getDownloadsDir(), `${randomUUID().slice(0, 8)}_${safeName}`);
+            await fs.writeFile(savedPath, buffer, { mode: 0o600 });
+            console.log(
+                `\n📄 ${ctx.from.first_name || "User"} sent a document: ${safeName} (${Math.round(buffer.length / 1024)}KB)`,
+            );
+
+            const caption = sanitizeIncomingChannelText(ctx.message.caption || `User sent a document: ${safeName}`);
+            const safeMime = mime.replace(/[^\w.+/-]/g, "") || "unknown type";
+            const agentMessage = `<channel_message_content>\n${caption}\n</channel_message_content>\n\n[ATLAS-INTERNAL — not from user: Document "${safeName}" (${safeMime}) saved at ${savedPath}. Use file tools to read it if needed.]`;
+            processBuffered(ctx.chat.id, ctx.message.message_id, agentMessage, ctx);
+        } catch (err) {
+            console.error("❌ Document download failed:", (err as Error).message);
+            await ctx.reply("I couldn't download that file. Mind sending it again?");
         }
     });
 
@@ -1661,20 +1643,7 @@ async function handleMediaMessage(
                 const delay = Math.min(600, Math.max(300, bubble.length * 2));
                 await new Promise((r) => setTimeout(r, delay));
             }
-            const chunks = splitMessage(bubble, 4096);
-            for (const chunk of chunks) {
-                try {
-                    await ctx.reply(markdownToTelegramHtml(sanitizeReply(chunk)), { parse_mode: "HTML" });
-                } catch {
-                    const plain = chunk
-                        .replace(/\*\*(.+?)\*\*/g, "$1")
-                        .replace(/\*(.+?)\*/g, "$1")
-                        .replace(/__(.+?)__/g, "$1")
-                        .replace(/`([^`]+)`/g, "$1")
-                        .replace(/```[\s\S]*?```/g, (m: string) => m.replace(/```\w*\n?/g, "").trim());
-                    await ctx.reply(plain);
-                }
-            }
+            await sendTelegramMarkdown((text, opts) => ctx.reply(text, opts), bubble);
         }
     } catch (err) {
         console.error("❌ Media processing error:", err);
@@ -1828,20 +1797,7 @@ You can't listen to audio, so don't guess what's in it (no song names, no sounds
                 const delay = Math.min(600, Math.max(300, bubble.length * 2));
                 await new Promise((r) => setTimeout(r, delay));
             }
-            const chunks = splitMessage(bubble, 4096);
-            for (const chunk of chunks) {
-                try {
-                    await ctx.reply(markdownToTelegramHtml(sanitizeReply(chunk)), { parse_mode: "HTML" });
-                } catch {
-                    const plain = chunk
-                        .replace(/\*\*(.+?)\*\*/g, "$1")
-                        .replace(/\*(.+?)\*/g, "$1")
-                        .replace(/__(.+?)__/g, "$1")
-                        .replace(/`([^`]+)`/g, "$1")
-                        .replace(/```[\s\S]*?```/g, (m: string) => m.replace(/```\w*\n?/g, "").trim());
-                    await ctx.reply(plain);
-                }
-            }
+            await sendTelegramMarkdown((text, opts) => ctx.reply(text, opts), bubble);
         }
     } catch (err) {
         console.error("❌ Audio processing error:", err);
@@ -1971,11 +1927,6 @@ function splitIntoBubbles(text: string): string[] {
     }
 
     return merged.length > 0 ? merged : [trimmed];
-}
-
-function splitMessage(text: string, maxLength: number): string[] {
-    // Use alive-ux smart chunking that preserves code blocks
-    return smartChunkMessage(text, maxLength);
 }
 
 /**
@@ -2171,16 +2122,14 @@ export async function sendProactiveMessage(
         while (log.length > 20) log.shift();
     }
 
-    const chunks = splitMessage(message, 4096);
+    const chunks = chunkMarkdownForTelegram(sanitizeReply(message));
 
     for (const userId of config.allowedUserIds) {
         for (const chunk of chunks) {
             let sent = false;
             for (let attempt = 1; attempt <= 3 && !sent; attempt++) {
                 try {
-                    await bot.api.sendMessage(userId, markdownToTelegramHtml(sanitizeReply(chunk)), {
-                        parse_mode: "HTML",
-                    });
+                    await withTelegramRetry(() => bot.api.sendMessage(userId, chunk.html, { parse_mode: "HTML" }));
                     sent = true;
                 } catch (err) {
                     const errMsg = (err as Error)?.message || String(err);
@@ -2199,7 +2148,7 @@ export async function sendProactiveMessage(
                     // Fallback to plain text if HTML parsing fails (non-transient)
                     if (!isTransient) {
                         try {
-                            await bot.api.sendMessage(userId, chunk);
+                            await bot.api.sendMessage(userId, markdownToPlainText(chunk.md));
                             sent = true;
                         } catch {
                             /* ignore fallback error */
