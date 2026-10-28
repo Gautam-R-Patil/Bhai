@@ -92,6 +92,8 @@ desktop/hostinger-upload/
 !src/tools/web-search-rank.test.ts
 !src/tools/site-task-consent.test.ts
 !src/tools/site-task-restore.test.ts
+!src/tools/site-skill-mint.test.ts
+!src/tools/site-task-repair.test.ts
 !src/tools/browser/page-callbacks.test.ts
 !src/tools/browser/bridge-ready.test.ts
 !src/tools/browser/popup-guard.test.ts
@@ -108,8 +110,11 @@ desktop/hostinger-upload/
 !src/tools/__tests__/os-smart-click.test.ts
 !src/skills/site/__tests__/
 !src/skills/site/__tests__/**
+!src/skills/site/__tests__/site-primitives.test.ts
+!src/skills/site/__tests__/spa-primitives.e2e.test.ts
 !src/skills/site/mint/__tests__/
 !src/skills/site/mint/__tests__/**
+!src/skills/site/mint/__tests__/self-heal.test.ts
 !src/memory/embedding-cache.test.ts
 !src/memory/resolve-embedding.test.ts
 !src/memory/reflection-cache.test.ts

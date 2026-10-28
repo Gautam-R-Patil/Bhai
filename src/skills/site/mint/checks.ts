@@ -8,13 +8,17 @@
 //                object with search, select and after_confirm)
 //   3 SAST       forge's regex critic plus AST bans for minted code: require,
 //                process, globalThis, Function, eval, timers, network, dynamic
-//                import, .constructor / __proto__, loops with no exit test
+//                import, .constructor / __proto__ and the other ways to reach
+//                another object's prototype or a caller (getPrototypeOf, with,
+//                this, arguments, stack-trace hooks), a computed key that is
+//                not a literal (except the required phases[...] dispatch),
+//                async code, loops with no exit test
 //   4 literals   no value from the session (the search text, the chosen item,
 //                what else was typed, the order id, the amount) and no PII
 //   5 selectors  no generated/hashed class, no data-atlas-id; :nth-child warns
 //   6 questions  every needsUser.question is a string literal skill.json declares
 //   7 commits    listed when the session committed; their selectors appear only
-//                inside a confirm.submit object
+//                inside a confirm.submit object; neither is a pick
 //   8 domains    host-computed; a minter value that differs is reported, and
 //                paymentDomains only from a fixed allowlist
 //
@@ -127,8 +131,35 @@ const BANNED_NAMES = new Set([
     "XMLHttpRequest",
     "WebSocket",
     "Buffer",
+    "Reflect",
+    "Proxy",
+    "WebAssembly",
+    "SharedArrayBuffer",
+    "Atomics",
+    "arguments",
 ]);
-const BANNED_PROPS = new Set(["constructor", "__proto__", "prototype", "__defineGetter__", "__lookupGetter__"]);
+// Keys that lead from an object to its prototype, its constructor (another
+// realm's Function), its caller, or the frames on the stack.
+const BANNED_PROPS = new Set([
+    "constructor",
+    "__proto__",
+    "prototype",
+    "__defineGetter__",
+    "__defineSetter__",
+    "__lookupGetter__",
+    "__lookupSetter__",
+    "getPrototypeOf",
+    "setPrototypeOf",
+    "getOwnPropertyDescriptor",
+    "getOwnPropertyDescriptors",
+    "caller",
+    "callee",
+    "prepareStackTrace",
+    "captureStackTrace",
+    "getFunction",
+    "getThis",
+]);
+const literalKey = (n: N) => n?.type === "Literal" && (typeof n.value === "string" || typeof n.value === "number");
 
 // A class token that mixes letters and digits in its last segment (.css-1x2y3z,
 // .sc-abc123, Foo__bar_3kXq, .a1b2c3): generated per build, gone next deploy.
@@ -177,6 +208,11 @@ export async function checkSkill(opts: {
         return { manifest, findings };
     }
 
+    // The top-level `const phases = {…}` (the one binding of phases allowed).
+    const phasesDecl = ast.body
+        .filter((s: N) => s.type === "VariableDeclaration")
+        .flatMap((s: N) => s.declarations)
+        .find((d: N) => d.id.type === "Identifier" && d.id.name === "phases");
     let hasStep = false;
     const phaseKeys = new Set<string>();
     const needsUser: N[] = [];
@@ -190,30 +226,56 @@ export async function checkSkill(opts: {
             const obj = l.object.type === "Identifier" ? l.object.name : l.object.property?.name;
             if (obj === "exports" && (l.property.name ?? l.property.value) === "step") hasStep = true;
         }
-        if (n.type === "VariableDeclarator" && n.id.name === "phases" && n.init?.type === "ObjectExpression")
+        if (n === phasesDecl && n.init?.type === "ObjectExpression")
             for (const p of n.init.properties) if (keyName(p)) phaseKeys.add(keyName(p) as string);
 
         // 3 bans
-        if (n.type === "Identifier" && BANNED_NAMES.has(n.name)) {
+        const at = `(line ${lineOf(src, n.start)})`;
+        if (n.type === "Identifier") {
             const asKey =
                 (parent?.type === "MemberExpression" && key === "property" && !parent.computed) ||
                 (parent?.type === "Property" && key === "key" && !parent.computed && !parent.shorthand);
-            if (!asKey) err("banned", `${n.name} is not allowed (line ${lineOf(src, n.start)})`);
+            if (!asKey && (BANNED_NAMES.has(n.name) || BANNED_PROPS.has(n.name)))
+                err("banned", `${n.name} is not allowed ${at}`);
+            // phases is the top-level phases object, used only as phases.x or phases[...].
+            const phasesUse =
+                asKey ||
+                (parent?.type === "MemberExpression" && key === "object") ||
+                (parent?.type === "VariableDeclarator" && key === "id" && parent === phasesDecl);
+            if (n.name === "phases" && !phasesUse)
+                err("banned", `phases may only be the top-level phases object, read as phases.x or phases[...] ${at}`);
         }
         if (n.type === "MemberExpression") {
-            const p = n.computed ? (n.property.type === "Literal" ? n.property.value : undefined) : n.property.name;
-            if (BANNED_PROPS.has(p)) err("banned", `.${p} is not allowed (line ${lineOf(src, n.start)})`);
+            const p = n.computed ? (literalKey(n.property) ? n.property.value : undefined) : n.property.name;
+            if (BANNED_PROPS.has(p)) err("banned", `.${p} is not allowed ${at}`);
+            const dispatch = n.object.type === "Identifier" && n.object.name === "phases";
+            if (n.computed && !literalKey(n.property) && !dispatch)
+                err("banned", `a computed key must be a string or number literal (x["a"], x[0]) ${at}`);
         }
+        if (n.type === "Property") {
+            if (BANNED_PROPS.has(keyName(n) as string)) err("banned", `${keyName(n)} is not allowed ${at}`);
+            if (n.computed && !literalKey(n.key) && parent?.type === "ObjectPattern")
+                err("banned", `a computed key must be a string or number literal ${at}`);
+        }
+        if (n.type === "ThisExpression") err("banned", `this is not allowed ${at}`);
+        if (n.type === "WithStatement") err("banned", `with is not allowed ${at}`);
+        if (n.async || n.type === "AwaitExpression")
+            err("banned", `async code is not allowed: step() returns its result ${at}`);
         if (n.type === "ImportExpression" || n.type === "MetaProperty")
-            err("banned", `dynamic import is not allowed (line ${lineOf(src, n.start)})`);
+            err("banned", `dynamic import is not allowed ${at}`);
         if (
             (n.type === "WhileStatement" || n.type === "DoWhileStatement" || n.type === "ForStatement") &&
             (!n.test || (n.test.type === "Literal" && n.test.value))
         )
-            err("banned", `a loop with no exit test is not allowed (line ${lineOf(src, n.start)})`);
+            err("banned", `a loop with no exit test is not allowed ${at}`);
 
         if (keyName(n) === "needsUser") needsUser.push(n.value);
-        if (keyName(n) === "submit") submits.push([n.value.start, n.value.end]);
+        if (keyName(n) === "submit") {
+            submits.push([n.value.start, n.value.end]);
+            const op = n.value.type === "ObjectExpression" ? n.value.properties.find((p: N) => keyName(p) === "op") : undefined;
+            if (op?.value?.type === "Literal" && op.value.value === "pick")
+                err("commits", `confirm.submit must click the commit, not pick one (line ${lineOf(src, n.start)})`);
+        }
         const text = stringOf(n);
         if (text !== undefined) strings.push({ text, start: n.start, node: n, parent, key });
         if (n.type === "Literal" && n.regex)
@@ -317,7 +379,10 @@ export async function checkSkill(opts: {
     if (manifest) {
         if (commit && !manifest.commits.length)
             err("commits", "the session placed an order: skill_json.commits must list the confirm.submit action");
+        else if (submits.length && !manifest.commits.length)
+            err("commits", "skill_cjs has a confirm.submit: skill_json.commits must list that action");
         for (const c of manifest.commits) {
+            if (c.op === "pick") err("commits", "a commit must be a click or a press, not a pick");
             const key = c.target?.sel ?? c.target?.text;
             if (!key) continue;
             const uses = strings.filter((s) => s.text === key);

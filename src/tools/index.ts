@@ -868,8 +868,11 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         recordToolUsage(name, success, durationMs);
 
         // A site being recorded for the Skill Minter: capture what this browser step did.
+        // A step the owner said yes to (the consent gate above) is marked as the commit;
+        // without one the recorder finds the commit itself (recorder.ts commitEvent).
         if (name.startsWith("browser_") && tracing()) {
-            await getActivePage().then((p) => drainTrace(p), () => null).catch(() => null);
+            const consented = confirmCheck.needsConfirmation;
+            await getActivePage().then((p) => drainTrace(p, { consented }), () => null).catch(() => null);
         }
 
         // PostToolUse hooks — side effects only. Fire-and-forget; don't await

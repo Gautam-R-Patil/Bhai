@@ -11,6 +11,11 @@
 //                                       stamped HTML)
 //   stopTrace(page)                     closes the trace
 //
+// A trace also closes by itself: when a new one starts on the same browser,
+// when a browser step comes after TRACE_IDLE_MS with none (that step is not
+// recorded), or after MAX_TRACE_PAGES pages. Trace folders older than 14
+// days are deleted (sweepTraces, at boot and on every startTrace).
+//
 // On disk, data/site-mint/traces/<id>/:
 //   meta.json      {id, domain, startedAt}
 //   trace.jsonl    one line per captured page: {k, url, title, events} where
@@ -29,10 +34,19 @@
 // site's own storage.
 
 import { randomBytes } from "node:crypto";
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+    appendFileSync,
+    existsSync,
+    mkdirSync,
+    readdirSync,
+    readFileSync,
+    rmSync,
+    statSync,
+    writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { getDataDir } from "../../../config/paths.js";
-import { IS_CODE_FIELD_JS, MONEY_WORDS, SNAPSHOT_JS } from "../page-driver.js";
+import { CAPTURE_JS, IS_CODE_FIELD_JS, MONEY_WORDS, SNAPSHOT_JS } from "../page-driver.js";
 import type { Snapshot } from "../runtime.js";
 
 /** What identifies an element across captures; `path` is the fallback identity. */
@@ -148,41 +162,19 @@ export const RECORDER_JS = `(() => {
   }, true);
 })()`;
 
-// In the page: the DOM as the user saw it. Works on a deep clone, so the live
-// page is never touched. Visibility is judged per element the way Playwright's
-// visible filter does (checkVisibility, visibility, a non-empty box), so the
-// offline replay counts exactly the elements the live driver would.
-const CAPTURE_JS = `(() => {
-  const isCode = ${IS_CODE_FIELD_JS};
-  const clone = document.documentElement.cloneNode(true);
-  const live = document.body ? [...document.body.querySelectorAll("*")] : [];
-  const cbody = clone.querySelector("body");
-  const copy = cbody ? [...cbody.querySelectorAll("*")] : [];
-  const seen = (el) => { const s = getComputedStyle(el); if (s.display === "contents") return true;
-    if (el.checkVisibility && !el.checkVisibility()) return false; if (s.visibility !== "visible") return false;
-    const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
-  live.forEach((el, i) => { const c = copy[i]; if (!c || c.tagName !== el.tagName) return;
-    if (!seen(el)) c.setAttribute("data-bhai-hidden", "");
-    if (el.tagName === "INPUT") {
-      if (el.type === "password" || isCode(el)) c.removeAttribute("value"); // secrets stay out
-      else if (el.type === "checkbox" || el.type === "radio") el.checked ? c.setAttribute("checked", "") : c.removeAttribute("checked");
-      else c.setAttribute("value", el.value);
-    } else if (el.tagName === "TEXTAREA") c.textContent = el.value;
-    else if (el.tagName === "OPTION") el.selected ? c.setAttribute("selected", "") : c.removeAttribute("selected");
-  });
-  for (const s of clone.querySelectorAll("script")) {
-    const json = /^application\\/(ld\\+)?json$/i.test(s.type || "");
-    if (!json || s.textContent.length > 200000) s.textContent = "";
-    s.removeAttribute("src");
-  }
-  return clone.outerHTML.slice(0, 2000000);
-})()`;
+/** A trace with no browser step for this long is over (the task ended or was abandoned). */
+export const TRACE_IDLE_MS = 30 * 60_000;
+/** A task is 20–40 steps; a trace this long is not one task any more. */
+export const MAX_TRACE_PAGES = 200;
+/** Traces hold typed values (raw, on this machine only): kept this long, then deleted. */
+export const TRACE_RETENTION_MS = 14 * 24 * 60 * 60_000;
 
 interface ActiveTrace {
     id: string;
     dir: string;
     domain: string;
     next: number;
+    lastAt: number; // the last drain (or the start)
     pending?: TracePage;
     events: WeakMap<object, TraceEvent[]>; // per page, since its last drain
 }
@@ -206,6 +198,24 @@ export const onDomain = (url: string, domain: string) => {
 };
 
 export const tracesDir = () => path.join(getDataDir(), "site-mint", "traces");
+
+/** Deletes trace folders not written to for TRACE_RETENTION_MS (never one still recording). */
+export function sweepTraces(root = tracesDir(), now = Date.now()): number {
+    if (!existsSync(root)) return 0;
+    const live = new Set([...active.values()].map((t) => t.dir));
+    let removed = 0;
+    for (const id of readdirSync(root)) {
+        const dir = path.join(root, id);
+        try {
+            const log = path.join(dir, "trace.jsonl");
+            const at = statSync(existsSync(log) ? log : dir).mtimeMs;
+            if (live.has(dir) || now - at < TRACE_RETENTION_MS) continue;
+            rmSync(dir, { recursive: true, force: true });
+            removed++;
+        } catch {}
+    }
+    return removed;
+}
 
 /** The domain traced on `target`'s context (a Page or BrowserContext); with no target, any traced domain. */
 // biome-ignore lint/suspicious/noExplicitAny: Playwright Page or BrowserContext
@@ -244,11 +254,15 @@ export async function startTrace(
     opts: { root?: string } = {},
 ): Promise<{ id: string; dir: string }> {
     const context = contextOf(target);
+    const prev = active.get(context);
+    if (prev)
+        await closeTrace(context, prev, contextOf(target) === target ? [] : (await takeEvents(prev, target)).events);
+    sweepTraces(opts.root ?? tracesDir());
     const id = `t_${randomBytes(6).toString("hex")}`;
     const dir = path.join(opts.root ?? tracesDir(), id);
     mkdirSync(path.join(dir, "pages"), { recursive: true });
     writeFileSync(path.join(dir, "meta.json"), JSON.stringify({ id, domain, startedAt: new Date().toISOString() }));
-    active.set(context, { id, dir, domain, next: 0, events: new WeakMap() });
+    active.set(context, { id, dir, domain, next: 0, lastAt: Date.now(), events: new WeakMap() });
     if (!armed.has(context)) {
         armed.add(context);
         // null asks which domain is traced (null: none); anything else is an event.
@@ -313,10 +327,21 @@ function finishPending(t: ActiveTrace, events: TraceEvent[], consented: boolean)
  */
 // biome-ignore lint/suspicious/noExplicitAny: Playwright Page
 export async function drainTrace(page: any, opts: { consented?: boolean } = {}): Promise<number | null> {
-    const t = active.get(contextOf(page));
+    const context = contextOf(page);
+    const t = active.get(context);
     if (!t) return null;
     const { url, events } = await takeEvents(t, page);
+    // Back after a long pause: the task is over, and this step is not part of it.
+    if (Date.now() - t.lastAt > TRACE_IDLE_MS) {
+        await closeTrace(context, t, []);
+        return null;
+    }
+    t.lastAt = Date.now();
     finishPending(t, events, !!opts.consented);
+    if (t.next >= MAX_TRACE_PAGES) {
+        await closeTrace(context, t, []);
+        return null;
+    }
     const k = t.next++;
     if (!onDomain(url, t.domain)) {
         const u = urlOf(url);
@@ -347,11 +372,16 @@ export async function stopTrace(page: any): Promise<string | null> {
     const context = contextOf(page);
     const t = active.get(context);
     if (!t) return null;
-    finishPending(t, (await takeEvents(t, page)).events, false);
-    active.delete(context);
-    for (const p of context.pages?.() ?? [page])
-        await p.evaluate("window.__bhaiRec && window.__bhaiRec()").catch(() => {});
+    await closeTrace(context, t, (await takeEvents(t, page)).events);
     return t.dir;
+}
+
+// The last page gets `events`; every open page stops recording.
+// biome-ignore lint/suspicious/noExplicitAny: Playwright BrowserContext
+async function closeTrace(context: any, t: ActiveTrace, events: TraceEvent[]): Promise<void> {
+    finishPending(t, events, false);
+    if (active.get(context) === t) active.delete(context);
+    for (const p of context.pages?.() ?? []) await p.evaluate("window.__bhaiRec && window.__bhaiRec()").catch(() => {});
 }
 
 export function loadTrace(dir: string): LoadedTrace {
@@ -382,12 +412,24 @@ function submitLike(e: TraceEvent): boolean {
     return !d.href || (!!u && d.href === u.pathname + u.search); // href="#" or javascript:
 }
 
+// The site's own confirmation that an order or booking went through, read off
+// a page's title and the top of its text: "Order placed", "Booking
+// confirmed", "Order ID: NS-48213", "Thank you for your order".
+export const ORDER_CONFIRMED =
+    /\b(?:order|booking)\s+(?:has\s+been\s+|is\s+|was\s+)?(?:placed|confirmed|successful)\b|\b(?:order|booking)\s*(?:id|no\.?|number|#)\s*[:#]?\s*[A-Z0-9][A-Z0-9-]{2,}|\bthank you for (?:your )?(?:order|purchase|booking)\b/i;
+
+type CommitAt = { k: number; i: number; event: TraceEvent };
+
 /**
- * The commit: the click (or Enter) the owner consented to, else the last click
- * on a submit-like control labelled like a payment ("Place order", "Pay now").
+ * The commit: the click (or Enter) the owner consented to; else the last click
+ * on a submit-like control labelled like a payment ("Place order", "Pay now");
+ * else, when the session reached the site's order confirmation, the last
+ * submit-like click (or Enter) before it, skipping pages where a one-time code
+ * was typed (their Verify comes after the order was placed), so a checkout
+ * labelled "Confirm order" or "Buy now" is still known to place orders.
  */
-export function commitEvent(trace: { pages: TracePage[] }): { k: number; i: number; event: TraceEvent } | null {
-    let fallback: { k: number; i: number; event: TraceEvent } | null = null;
+export function commitEvent(trace: { pages: Array<TracePage & { snapshot?: Snapshot }> }): CommitAt | null {
+    let fallback: CommitAt | null = null;
     for (const p of trace.pages) {
         for (const [i, e] of p.events.entries()) {
             if (e.consented && (e.op === "click" || e.op === "press")) return { k: p.k, i, event: e };
@@ -396,5 +438,21 @@ export function commitEvent(trace: { pages: TracePage[] }): { k: number; i: numb
                 fallback = { k: p.k, i, event: e };
         }
     }
-    return fallback;
+    if (fallback) return fallback;
+    const done = trace.pages.findIndex(
+        (p) => !p.offsite && ORDER_CONFIRMED.test(`${p.title}\n${(p.snapshot?.text ?? "").slice(0, 600)}`),
+    );
+    for (let j = done - 1; j >= 0; j--) {
+        const p = trace.pages[j];
+        if (p.events.some((e) => e.op === "typeCode")) continue;
+        for (let i = p.events.length - 1; i >= 0; i--) {
+            const e = p.events[i];
+            if (
+                (e.op === "click" && (submitLike(e) || e.target.tag === "a")) ||
+                (e.op === "press" && e.key === "Enter")
+            )
+                return { k: p.k, i, event: e };
+        }
+    }
+    return null;
 }

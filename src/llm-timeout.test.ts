@@ -19,8 +19,14 @@ vi.mock("./model-router.js", () => ({
     isCircuitOpen: () => false,
     updateModelStats: () => {},
 }));
-vi.mock("./network-health.js", () => ({ isOffline: () => false, reportNetworkError: async () => "online", reportNetworkSuccess: () => {} }));
-vi.mock("./llm-middleware.js", () => ({ createDefaultPipeline: () => (p: unknown, next: (p: unknown) => unknown) => next(p) }));
+vi.mock("./network-health.js", () => ({
+    isOffline: () => false,
+    reportNetworkError: async () => "online",
+    reportNetworkSuccess: () => {},
+}));
+vi.mock("./llm-middleware.js", () => ({
+    createDefaultPipeline: () => (p: unknown, next: (p: unknown) => unknown) => next(p),
+}));
 
 const { createLLMClient } = await import("./llm.js");
 const llm = createLLMClient({} as never);
@@ -37,7 +43,9 @@ describe("chat timeoutMs", () => {
     it("a hung model is abandoned at timeoutMs, each attempt with a fresh deadline", async () => {
         respond = hang;
         const t0 = Date.now();
-        await expect(llm.chat({ messages: [{ role: "user", content: "x" }], timeoutMs: 100 })).rejects.toThrow(/abort|timeout/i);
+        await expect(llm.chat({ messages: [{ role: "user", content: "x" }], timeoutMs: 100 })).rejects.toThrow(
+            /abort|timeout/i,
+        );
         expect(Date.now() - t0).toBeLessThan(2000); // two attempts (primary + last resort), ~100 ms each
         expect(fetches.length).toBe(2);
         expect(fetches.every((f) => f.signal instanceof AbortSignal && f.signal.aborted)).toBe(true);
@@ -52,6 +60,28 @@ describe("chat timeoutMs", () => {
         };
         const r = await llm.chat({ messages: [{ role: "user", content: "x" }], timeoutMs: 120_000 });
         expect(r.choices[0].message.content).toBe("hi");
+    });
+
+    it("a caller's signal aborts the attempt in flight, and no other model is tried", async () => {
+        respond = hang;
+        const ctrl = new AbortController();
+        setTimeout(() => ctrl.abort(), 50);
+        const t0 = Date.now();
+        await expect(
+            llm.chat({ messages: [{ role: "user", content: "x" }], timeoutMs: 120_000, signal: ctrl.signal }),
+        ).rejects.toThrow(/abort/i);
+        expect(Date.now() - t0).toBeLessThan(1000);
+        expect(fetches.length).toBe(1);
+        // An already-cancelled call never reaches the network.
+        await expect(llm.chat({ messages: [{ role: "user", content: "x" }], signal: ctrl.signal })).rejects.toThrow();
+        expect(fetches.length).toBe(1);
+    });
+
+    it("a signal alone still gets the default deadline per attempt", async () => {
+        respond = ok;
+        await llm.chat({ messages: [{ role: "user", content: "x" }], signal: new AbortController().signal });
+        expect(fetches[0].signal).toBeInstanceOf(AbortSignal);
+        expect(fetches[0].signal?.aborted).toBe(false);
     });
 
     it("without timeoutMs no signal is passed, so the transport applies its default", async () => {

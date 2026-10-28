@@ -4,8 +4,24 @@
 // which mirrors the same subset). The snapshot is a string expression, not a
 // function, so the packaged app's obfuscator can't rewrite it.
 
-import type { SiteAction } from "./host.js";
-import type { PageDriver, Snapshot } from "./runtime.js";
+import { randomBytes } from "node:crypto";
+import { createRequire } from "node:module";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { resolveScript } from "../../config/paths.js";
+import type { ExpectSpec, SiteAction } from "./host.js";
+import { type ActResult, type CommitVerdict, onSite, type PageDriver, type Snapshot } from "./runtime.js";
+
+/** The helpers a skill gets as step()'s lib; pick ranks its choices with the same rank(). */
+export const lib = createRequire(import.meta.url)(
+    resolveScript("site-skill-lib.cjs") ??
+        path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../scripts/site-skill-lib.cjs"),
+) as {
+    fold(t: unknown): string;
+    price(t: unknown): number | undefined;
+    rank<T>(choices: T[], wanted: unknown): { best: T | null; ambiguous: T[] };
+};
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // In the page: an input that takes a one-time code. The autocomplete hint, a
 // row of one-character boxes, or a name / id / label / placeholder that says
@@ -43,6 +59,36 @@ export const SNAPSHOT_JS = `(() => {
   return { url: location.href, title: document.title, text: (document.body ? document.body.innerText : "").slice(0, 4000), elements: els };
 })()`;
 
+// In the page: the DOM as the user saw it (a recorded trace page, a repair capture). Works on a deep clone, so the live
+// page is never touched. Visibility is judged per element the way Playwright's
+// visible filter does (checkVisibility, visibility, a non-empty box), so the
+// offline replay counts exactly the elements the live driver would.
+export const CAPTURE_JS = `(() => {
+  const isCode = ${IS_CODE_FIELD_JS};
+  const clone = document.documentElement.cloneNode(true);
+  const live = document.body ? [...document.body.querySelectorAll("*")] : [];
+  const cbody = clone.querySelector("body");
+  const copy = cbody ? [...cbody.querySelectorAll("*")] : [];
+  const seen = (el) => { const s = getComputedStyle(el); if (s.display === "contents") return true;
+    if (el.checkVisibility && !el.checkVisibility()) return false; if (s.visibility !== "visible") return false;
+    const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  live.forEach((el, i) => { const c = copy[i]; if (!c || c.tagName !== el.tagName) return;
+    if (!seen(el)) c.setAttribute("data-bhai-hidden", "");
+    if (el.tagName === "INPUT") {
+      if (el.type === "password" || isCode(el)) c.removeAttribute("value"); // secrets stay out
+      else if (el.type === "checkbox" || el.type === "radio") el.checked ? c.setAttribute("checked", "") : c.removeAttribute("checked");
+      else c.setAttribute("value", el.value);
+    } else if (el.tagName === "TEXTAREA") c.textContent = el.value;
+    else if (el.tagName === "OPTION") el.selected ? c.setAttribute("selected", "") : c.removeAttribute("selected");
+  });
+  for (const s of clone.querySelectorAll("script")) {
+    const json = /^application\\/(ld\\+)?json$/i.test(s.type || "");
+    if (!json || s.textContent.length > 200000) s.textContent = "";
+    s.removeAttribute("src");
+  }
+  return clone.outerHTML.slice(0, 2000000);
+})()`;
+
 // A one-time code into the field the skill names. When that field opens a row
 // of one-character boxes, each box takes one character; otherwise the whole
 // code goes into the field. A row whose length differs from the code's gets
@@ -72,6 +118,199 @@ const TYPE_CODE_JS = (sel: string, code: string) => `(() => {
 // refused even when the manifest forgot to list it.
 export const MONEY_WORDS = /\b(place (your )?order|pay( now)?|proceed to pay|book now|make payment)\b/i;
 const norm = (s?: string | null) => (s ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+
+// ── pick ──────────────────────────────────────
+// In the page: the labels of the visible elements `sel` matches (a recorded
+// page's data-bhai-hidden counts as hidden). With `stamp`, the one at that
+// index is marked for a locator, if its label is still the one ranked (a
+// typeahead may have re-rendered in between).
+const PICK_JS = (sel: string, stamp?: { i: number; label: string; token: string }) => `(() => {
+  const visible = (el) => { if (el.closest("[data-bhai-hidden]")) return false; const r = el.getBoundingClientRect();
+    const s = getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none"; };
+  let els;
+  try { els = [...document.querySelectorAll(${JSON.stringify(sel)})].filter(visible); } catch { return null; }
+  const label = (el) => (el.innerText || el.value || el.getAttribute("aria-label") || "").replace(/\\s+/g, " ").trim().slice(0, 200);
+  const stamp = ${JSON.stringify(stamp ?? null)};
+  if (!stamp) return els.slice(0, 50).map(label);
+  const el = els[stamp.i];
+  if (!el || label(el) !== stamp.label) return false;
+  el.setAttribute("data-bhai-pick", stamp.token);
+  return true;
+})()`;
+
+/**
+ * The one choice, among the visible matches of `a.target.sel`, whose label fits
+ * `a.value` (lib.rank: the same text, then the same words, then every word; a
+ * tie is never broken). Waits up to `timeout` for the list (a typeahead renders
+ * after typing). No list → not_found; none fits, or several fit equally →
+ * `refused:` with what the page offers (the tied ones, else every choice).
+ * `visible` as in locateTarget (offline replay passes its own).
+ */
+// biome-ignore lint/suspicious/noExplicitAny: Playwright Page or ChromePageProxy
+export async function pickTarget(page: any, a: SiteAction, visible: (loc: any) => any = shown, timeout = 5000) {
+    const sel = a.target?.sel ?? "";
+    const until = Date.now() + timeout;
+    let labels: string[] | null;
+    for (;;) {
+        labels = (await page.evaluate(PICK_JS(sel))) as string[] | null;
+        if (!labels || labels.length || Date.now() > until) break;
+        await sleep(100);
+    }
+    if (!labels?.length) throw new Error(`not_found: ${JSON.stringify(a.target)}`);
+    const choices = labels.map((label, i) => ({ label, i }));
+    const { best, ambiguous } = lib.rank(choices, a.value);
+    if (!best) throw new Error(`refused: ${JSON.stringify((ambiguous.length ? ambiguous : choices).map((c) => c.label))}`);
+    const token = randomBytes(6).toString("hex");
+    if (!(await page.evaluate(PICK_JS(sel, { ...best, token })))) throw new Error("pick: the list changed while choosing");
+    return locateTarget(page, { sel: `[data-bhai-pick="${token}"]` }, visible);
+}
+
+// ── expect: the outcome race ──────────────────
+// In the page. Armed before the action: marks what already shows (so a stale
+// copy never wins) and the live regions' text, and returns the URL and the
+// `gone` targets showing. Checked after: the first outcome, in the skill's
+// order, that holds now — an element that wasn't showing at arm time, a target
+// that was seen (at arm time or since) and is gone, a new URL that matches, a
+// live region that is new or changed and matches — plus a count of DOM
+// changes (progress: added/removed nodes and text, not attributes; a node that
+// keeps changing, a countdown or a carousel, stops counting after 3). A
+// navigation starts a fresh count ("fresh"); `seen` carries the gone targets
+// seen across it.
+// ponytail: text-only targets match within one text node; give sel for text
+// split across tags.
+export const EXPECT_JS = (spec: ExpectSpec, arm: boolean, pre: { url: string; seen: string[] }) => `(() => {
+  const spec = ${JSON.stringify(spec)}, arm = ${arm}, pre = ${JSON.stringify(pre)};
+  const visible = (el) => { if (el.closest("[data-bhai-hidden]")) return false; const r = el.getBoundingClientRect();
+    const s = getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none"; };
+  const norm = (t) => (t || "").replace(/\\s+/g, " ").trim().toLowerCase();
+  const find = (t) => {
+    let els = [];
+    if (t.sel) { try { els = [...document.querySelectorAll(t.sel)]; } catch { return []; } }
+    if (t.text) {
+      const want = norm(t.text);
+      if (t.sel) els = els.filter((el) => norm(el.innerText).includes(want));
+      else { const w = document.createTreeWalker(document.body || document, NodeFilter.SHOW_TEXT);
+        for (let n; (n = w.nextNode()); ) if (n.parentElement && norm(n.nodeValue).includes(want)) els.push(n.parentElement); }
+    }
+    return els.filter(visible);
+  };
+  const REGIONS = '[aria-live]:not([aria-live="off"]),[role=alert],[role=status]';
+  const gones = Object.entries(spec).filter(([, o]) => o.gone);
+  let st = window.__bhaiExpect, fresh = false;
+  if (arm || !st) {
+    if (st) st.obs.disconnect();
+    st = window.__bhaiExpect = { mut: 0, hits: new Set(), counts: new WeakMap() };
+    st.obs = new MutationObserver((list) => {
+      for (const r of list) {
+        if (r.type === "attributes") continue;
+        const n = (st.counts.get(r.target) || 0) + 1;
+        st.counts.set(r.target, n);
+        if (n <= 3) st.mut++;
+        const el = r.target.nodeType === 1 ? r.target : r.target.parentElement;
+        const region = el && el.closest(REGIONS);
+        if (region) region.__bhaiTouched = true;
+      }
+      for (const [name, o] of gones) if (!st.hits.has(name) && find(o.gone).length) st.hits.add(name);
+    });
+    st.obs.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+    fresh = !arm;
+  }
+  if (arm) {
+    for (const o of Object.values(spec)) if (o.sel || o.text) for (const el of find(o)) el.__bhaiSeen = true;
+    for (const el of document.querySelectorAll(REGIONS)) { el.__bhaiSaid = visible(el) ? el.innerText : undefined; el.__bhaiTouched = false; }
+    return { url: location.href, seen: gones.filter(([, o]) => find(o.gone).length).map(([n]) => n) };
+  }
+  const seen = gones.filter(([n, o]) => pre.seen.includes(n) || st.hits.has(n) || find(o.gone).length).map(([n]) => n);
+  const said = (re) => [...document.querySelectorAll(REGIONS)].some((el) => visible(el)
+    && (el.__bhaiSaid === undefined || el.__bhaiSaid !== el.innerText || el.__bhaiTouched) && re.test(el.innerText));
+  for (const [name, o] of Object.entries(spec)) {
+    if (o.gone ? seen.includes(name) && !find(o.gone).length
+      : o.url !== undefined ? location.href !== pre.url && new RegExp(o.url, "i").test(location.href)
+      : o.announced !== undefined ? said(new RegExp(o.announced, "i"))
+      : find(o).some((el) => !el.__bhaiSeen)) return { won: name, mut: st.mut, fresh, seen };
+  }
+  return { won: null, mut: st.mut, fresh, seen };
+})()`;
+// No outcome after this long without progress (no DOM change, no request to
+// the skill's sites in flight — for its first REQUEST_PROGRESS_MS only: a
+// long-poll or an event stream is not progress), or after the cap whatever
+// happens, is a failed step the skill sees.
+const REQUEST_PROGRESS_MS = 5000;
+const expectIdleMs = () => Number(process.env.ATLAS_SITE_EXPECT_IDLE_MS ?? 8000);
+const expectCapMs = () => Number(process.env.ATLAS_SITE_EXPECT_CAP_MS ?? 30_000);
+
+// ── The submit's verdict ──────────────────────
+const UNCLEAR: CommitVerdict = { verdict: "unclear" };
+const FAILED = /^(error|errored|fail|failed|failure|declined|rejected|denied|invalid|cancell?ed|unavailable)$/i;
+const SUCCEEDED = /^(ok|success|succeeded|successful|confirmed|placed|created|accepted|paid|booked|complete|completed)$/i;
+const ORDER_ID = /^(order_?id|order_?no|order_?number|booking_?id|booking_?ref(erence)?|pnr|confirmation_?(id|no|number|code))$/i;
+// A key that holds an order (order, orderDetails, booking, reservation, …).
+const ORDERISH = /order|booking|reservation|pnr|confirmation/i;
+// "already placed" is not a refusal: an order exists.
+const EXISTS = /duplicate|already (been )?(placed|exists|submitted|booked|paid)/i;
+// A value that says something: not empty, and not a "no error" code (0, "0", {}).
+const filled = (v: unknown): boolean =>
+    v !== undefined &&
+    v !== null &&
+    v !== false &&
+    v !== "" &&
+    v !== 0 &&
+    v !== "0" &&
+    !(Array.isArray(v) && !v.length) &&
+    !(typeof v === "object" && !Array.isArray(v) && !Object.values(v as object).some(filled));
+const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+const message = (v: unknown): string =>
+    typeof v === "string" ? v : Array.isArray(v) ? message(v[0]) : v && typeof v === "object" ? message((v as Record<string, unknown>).message ?? (v as Record<string, unknown>).error) : "";
+
+/**
+ * What the site answered to the submit's write request (POST/PUT/… of the
+ * page, a fetch or an XHR), from the status and a JSON body only:
+ *   not_done  it says the order failed: ok/success false, a failed status, or
+ *             errors (not a "no error" 0 / {}), with no sign of an order (no
+ *             order id, no order/booking field with anything in it) — on a 2xx
+ *             or a 4xx;
+ *   done      a 2xx that says it worked (ok/success true, a done status, an
+ *             order id) with no error;
+ *   unclear   everything else: a 5xx (it may have run halfway), a redirect
+ *             (the next page tells), HTML, both signs, or "already placed".
+ * Only not_done changes anything (the runtime may revert the "sent" mark once),
+ * so every doubt reads unclear.
+ */
+export function judgeCommit(status: number, contentType: string, body: string): CommitVerdict {
+    if (!(status >= 200 && status < 300) && !(status >= 400 && status < 500)) return UNCLEAR;
+    let j: unknown;
+    if (/json/i.test(contentType) || /^\s*\{/.test(body)) {
+        try {
+            j = JSON.parse(body);
+        } catch {}
+    }
+    if (!j || typeof j !== "object" || Array.isArray(j)) return UNCLEAR;
+    const o = j as Record<string, unknown>;
+    const levels = [o, ...(["data", "result"] as const).map((k) => o[k]).filter(isObj)];
+    let failed = false;
+    let worked = false;
+    let order = false; // any sign an order exists, even beside an error
+    for (const l of levels) {
+        const state = [l.status, l.state, l.result].find((v) => typeof v === "string") as string | undefined;
+        failed ||= l.ok === false || l.success === false || FAILED.test(state ?? "") || filled(l.error) || filled(l.errors);
+        worked ||= l.ok === true || l.success === true || SUCCEEDED.test(state ?? "") || Object.keys(l).some((k) => ORDER_ID.test(k) && filled(l[k]));
+        order ||= Object.entries(l).some(([k, v]) => ORDERISH.test(k) && filled(v));
+    }
+    const detail = message(o.message ?? o.error ?? o.errors ?? levels.map((l) => l.message ?? l.error).find(Boolean)).slice(0, 100) || undefined;
+    if (failed && !worked && !order && !EXISTS.test(JSON.stringify(o))) return { verdict: "not_done", detail };
+    if (worked && !failed && status < 300) return { verdict: "done" };
+    return UNCLEAR;
+}
+
+// How long the submit's writes must be quiet before its verdict is read.
+const WRITE_QUIET_MS = 1000;
+/** Several write requests: not_done only when every one said so, done when one did and none failed. */
+const combine = (vs: CommitVerdict[]): CommitVerdict =>
+    vs.length && vs.every((v) => v.verdict === "not_done")
+        ? vs[0]
+        : vs.some((v) => v.verdict === "done") && !vs.some((v) => v.verdict === "not_done")
+          ? { verdict: "done" }
+          : UNCLEAR;
 
 type Control = { labels: string[]; submitLike: boolean };
 // In the page: the controls an action on `el` (default: the focused element)
@@ -247,7 +486,8 @@ export function pageDriver(initial: any, timeout = 5000, reopen?: () => Promise<
             if (!snap.url.startsWith("chrome-error://")) lastUrl = snap.url;
             return snap;
         },
-        async act(a: SiteAction, opts?: { submit?: boolean; commits?: SiteAction[] }): Promise<void> {
+        html: () => page.evaluate(CAPTURE_JS) as Promise<string>,
+        async act(a: SiteAction, opts?: { submit?: boolean; commits?: SiteAction[]; domains?: string[] }): Promise<ActResult> {
             if (page.isClosed?.()) await revive();
             lastWasSubmit = !!opts?.submit;
             const p = page;
@@ -255,9 +495,15 @@ export function pageDriver(initial: any, timeout = 5000, reopen?: () => Promise<
                 p.__bhaiConfirmLeft = 1;
                 p.__bhaiSubmitWindow = true;
             }
+            const writes = opts?.submit ? watchWrites(p, opts.domains) : null;
             try {
-                await doAct(a, opts?.submit ? null : (opts?.commits ?? []));
+                const run = () => doAct(a, opts?.submit ? null : (opts?.commits ?? []));
+                let outcome: string | undefined;
+                if (a.expect) outcome = await race(p, a.expect, run, opts?.domains);
+                else await run();
+                return { outcome, verdict: await writes?.verdict() };
             } finally {
+                writes?.stop();
                 if (opts?.submit) {
                     p.__bhaiConfirmLeft = 0;
                     p.__bhaiSubmitWindow = false;
@@ -266,11 +512,112 @@ export function pageDriver(initial: any, timeout = 5000, reopen?: () => Promise<
         },
     };
     return driver;
+
+    /**
+     * Runs the action, then waits for the first outcome of `spec` to hold. The
+     * wait ends at the outcome (no fixed sleep); without one it fails after
+     * expectIdleMs with no progress (DOM changes, requests to `domains` in
+     * flight) or at the cap, as `no_outcome`, which the skill sees as lastError.
+     */
+    // biome-ignore lint/suspicious/noExplicitAny: Playwright Page or ChromePageProxy
+    async function race(p: any, spec: ExpectSpec, run: () => Promise<void>, domains?: string[]): Promise<string> {
+        // When each request in flight started (the Chrome bridge proxy has no request events: DOM progress only).
+        const inflight = new Map<unknown, number>();
+        const net = typeof p.on === "function" && typeof p.off === "function";
+        const up = (req: { url(): string }) => onSite(req.url(), domains) && inflight.set(req, Date.now());
+        const down = (req: unknown) => inflight.delete(req);
+        if (net) {
+            p.on("request", up);
+            p.on("requestfinished", down);
+            p.on("requestfailed", down);
+        }
+        try {
+            const pre = await p.evaluate(EXPECT_JS(spec, true, { url: "", seen: [] }));
+            const seen = new Set<string>(pre.seen); // gone targets seen, across navigations
+            await run();
+            const start = Date.now();
+            let quiet = start;
+            let mut = -1;
+            for (;;) {
+                // Throws mid-navigation: that is progress.
+                const r = await p.evaluate(EXPECT_JS(spec, false, { url: pre.url, seen: [...seen] })).catch(() => null);
+                if (r?.won) return r.won as string;
+                for (const n of r?.seen ?? []) seen.add(n);
+                const now = Date.now();
+                const busy = [...inflight.values()].some((t) => now - t < REQUEST_PROGRESS_MS);
+                if (!r || r.fresh || r.mut !== mut || busy) quiet = now;
+                if (r) mut = r.mut;
+                if (now - quiet >= expectIdleMs() || now - start >= expectCapMs()) {
+                    throw new Error(`no_outcome: none of ${Object.keys(spec).join(", ")} after ${now - start}ms`);
+                }
+                await sleep(100);
+            }
+        } finally {
+            if (net) {
+                p.off("request", up);
+                p.off("requestfinished", down);
+                p.off("requestfailed", down);
+            }
+        }
+    }
+
+    /**
+     * The submit's write requests to the skill's sites and what the site
+     * answered to them (judgeCommit). A checkout may send a validation, CSRF
+     * or tracking call before the order itself, so after the action it listens
+     * on until WRITE_QUIET_MS pass with no new write and every answer is in —
+     * or until one answer isn't a "no", after which the verdict can't be
+     * not_done any more.
+     */
+    // biome-ignore lint/suspicious/noExplicitAny: Playwright Page
+    function watchWrites(p: any, domains?: string[]) {
+        if (typeof p.on !== "function" || typeof p.off !== "function") return null;
+        const answers: Array<{ v?: CommitVerdict }> = [];
+        let last = Date.now();
+        // biome-ignore lint/suspicious/noExplicitAny: Playwright Request / Response
+        const onRequest = (req: any) => {
+            if (/^(GET|HEAD|OPTIONS)$/i.test(req.method()) || !["document", "fetch", "xhr"].includes(req.resourceType())) return;
+            if (!onSite(req.url(), domains)) return; // analytics, a payment SDK: not the site's answer
+            last = Date.now();
+            const a: { v?: CommitVerdict } = {};
+            answers.push(a);
+            req.response()
+                .then(
+                    async (res: any) => {
+                        if (!res) return UNCLEAR;
+                        const type: string = res.headers()["content-type"] ?? "";
+                        const body = /json|text\/plain/i.test(type) || !type ? await res.text().catch(() => "") : "";
+                        return judgeCommit(res.status(), type, body);
+                    },
+                    () => UNCLEAR,
+                )
+                .then((v: CommitVerdict) => (a.v = v));
+        };
+        p.on("request", onRequest);
+        const stop = () => p.off("request", onRequest);
+        return {
+            stop,
+            async verdict(): Promise<CommitVerdict> {
+                const from = Date.now();
+                for (;;) {
+                    const got = answers.flatMap((a) => (a.v ? [a.v] : []));
+                    if (got.some((v) => v.verdict !== "not_done")) break;
+                    const now = Date.now();
+                    if (got.length === answers.length && now - Math.max(last, from) >= WRITE_QUIET_MS) break;
+                    if (now - from >= 10_000) break;
+                    await sleep(50);
+                }
+                stop();
+                if (!answers.length || answers.some((a) => !a.v)) return UNCLEAR;
+                return combine(answers.map((a) => a.v as CommitVerdict));
+            },
+        };
+    }
     /** `commits` null = this is the consented submit, so no guard. */
     async function doAct(a: SiteAction, commits: SiteAction[] | null): Promise<void> {
         {
-            if (a.op === "click") {
-                const loc = await locate(a);
+            if (a.op === "click" || a.op === "pick") {
+                const loc = a.op === "pick" ? await pickTarget(page, a, shown, timeout) : await locate(a);
                 if (!commits) await loc.click({ timeout });
                 else if (typeof loc.elementHandle !== "function") {
                     await guardByLabel(loc, a, commits);

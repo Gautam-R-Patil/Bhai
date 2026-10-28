@@ -262,7 +262,7 @@ describe("commit safety (write-ahead)", () => {
         };
         const r = await runSiteTask({ skillPath: sneaky, phase: "select", input: { id: "p1" }, driver: d });
         expect([r.status, r.reason, r.writeStatus]).toEqual(["aborted", "unconsented_submit", "not_attempted"]);
-        expect(seen).toEqual([{ commits: [SUBMIT] }]);
+        expect(seen).toEqual([{ commits: [SUBMIT], domains: manifest.domains }]);
     });
 
     it("consent is bound to the skill version and the page", async () => {

@@ -21,6 +21,10 @@
 //   after_confirm  questions are declared and answered where the session typed
 //               the answer; done quotes the site's order id (confirmPattern)
 //
+// An action with an expect must end on one of its outcomes in the page the
+// session saw next (else expect_unmatched), and the one that holds first, in
+// the skill's order, reaches the next step as lastOutcome, as at run time.
+//
 // Plus generalization probes: search with a different value for each input,
 // from the first page and every page search acted on, must type or navigate
 // with that value and never with the session's; a different option must click
@@ -29,22 +33,17 @@
 // repeated: any other action on the commit element (or, for an Enter commit,
 // that Enter), or on a money-word control, fails as commit_outside_confirm.
 // Pages off the traced domain are skipped. Phases the trace never reached are
-// "unverified", not failures.
+// "unverified", not failures. A session that starts mid-task (the owner
+// finishing by hand after a skill stopped in select) replays from that phase.
 
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { resolveScript } from "../../../config/paths.js";
-import { type SiteAction, SkillHost, type StepResult } from "../host.js";
-import { locateTarget, MONEY_WORDS } from "../page-driver.js";
+import { type ExpectSpec, type SiteAction, SkillHost, type StepResult } from "../host.js";
+import { EXPECT_JS, lib, locateTarget, MONEY_WORDS, pickTarget } from "../page-driver.js";
 import { commitEvent, type Descriptor, type LoadedTrace, loadTrace, type TraceEvent } from "./recorder.js";
 
-export const lib = createRequire(import.meta.url)(
-    resolveScript("site-skill-lib.cjs") ??
-        path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../scripts/site-skill-lib.cjs"),
-) as { fold(t: unknown): string; price(t: unknown): number | undefined };
+export { lib };
 
 export type PhaseName = "search" | "select" | "confirm" | "after_confirm";
 export type Verdict = "pass" | "fail" | "unverified";
@@ -145,13 +144,20 @@ function eventSelectors(d: Descriptor): string[] {
  * Replays the skill at `skillPath` (its skill.json beside it) against a trace
  * folder (or a loaded trace). `input` is the search input the owner gave, and
  * `answer` the code typed at a question, both as they really were (the trace
- * keeps them locally). Pass a running Chromium as `browser` to reuse it.
+ * keeps them locally). Pass a running Chromium as `browser` to reuse it, and
+ * `signal` to stop it between skill steps (it then throws "cancelled").
  */
 export async function replaySkill(
     skillPath: string,
     trace: string | LoadedTrace,
     // biome-ignore lint/suspicious/noExplicitAny: Playwright Browser
-    opts: { input: Record<string, unknown>; answer?: string; browser?: any },
+    opts: {
+        input: Record<string, unknown>;
+        answer?: string;
+        browser?: any;
+        signal?: AbortSignal;
+        phase?: "search" | "select"; // where the session starts; `input` is that phase's input
+    },
 ): Promise<ReplayReport> {
     const started = Date.now();
     const t = typeof trace === "string" ? loadTrace(trace) : trace;
@@ -187,6 +193,7 @@ export async function replaySkill(
     const visible = stampedVisible(page);
     const host = new SkillHost(skillPath);
     const call = (phase: string, ctx: Record<string, unknown>): Promise<StepResult> => {
+        if (opts.signal?.aborted) throw new Error("cancelled"); // stops between steps
         calls++;
         return host.call(phase, ctx);
     };
@@ -245,7 +252,7 @@ export async function replaySkill(
         i++;
     };
 
-    let label: PhaseName = "search";
+    let label: PhaseName = opts.phase ?? "search";
     const fail = (verdict: string, expected?: unknown, got?: unknown) => {
         phases[label] = "fail";
         failures.push({ phase: label, k: pages[k]?.k ?? k, verdict, expected: brief(expected), got: brief(got) });
@@ -281,15 +288,34 @@ export async function replaySkill(
     const valueOk = (a: SiteAction, e: TraceEvent) =>
         e.value === "{{answer}}" ? a.value === opts.answer : e.value !== null && a.value === e.value;
     const opOk = (a: SiteAction, e: TraceEvent) =>
-        a.op === "click"
+        a.op === "click" || a.op === "pick"
             ? e.op === "click"
             : a.op === "type" || a.op === "typeCode"
               ? (e.op === "fill" || e.op === "typeCode") && valueOk(a, e)
               : a.op === "press" && e.op === "press" && e.key === (a.value ?? "Enter");
 
+    // The outcome of `spec` that holds first on page `after` (the session's next
+    // page after acting on page `before`), checked with the live driver's own
+    // in-page test; a URL outcome needs the URL to have changed.
+    const outcomeOf = async (spec: ExpectSpec, before: number, after: number): Promise<string | null> => {
+        await show(after);
+        for (const [name, o] of Object.entries(spec)) {
+            if ("url" in o) {
+                if (pages[after].url !== pages[before].url && new RegExp(o.url, "i").test(pages[after].url)) return name;
+                continue;
+            }
+            const r = await page.evaluate(EXPECT_JS({ [name]: o }, false, { url: "", seen: [name] })).catch(() => null);
+            if (r?.won) return name;
+        }
+        return null;
+    };
+    // The pages the last matched action was done on and led to.
+    let acted: { before: number; after: number } | null = null;
+
     /** One action: matched (true), allowed but unverified (false), or a failure (null). */
     const matchAction = async (a: SiteAction): Promise<boolean | null> => {
         settle();
+        acted = null;
         const next = nextPos();
         if (a.op === "navigate") {
             if (!siteHosts.has(hostOf(a.value ?? ""))) return fail("off_site", [...siteHosts].join(","), a.value);
@@ -298,6 +324,7 @@ export async function replaySkill(
             const j = pages.findIndex((p, jj) => jj > k && jj <= stop && sameDestination(p.url, a.value ?? ""));
             if (j < 0 || i < pages[k].events.length)
                 return fail("mismatch", next?.e.target ?? "the session did not go there", a);
+            acted = { before: k, after: j };
             k = j;
             i = 0;
             return true;
@@ -307,6 +334,7 @@ export async function replaySkill(
                 return fail("commit_outside_confirm", "only confirm.submit may press the commit", a);
             if (!next || !opOk(a, next.e)) return fail("mismatch", next?.e ?? "nothing", a);
             consume(next.j);
+            acted = { before: next.j, after: next.j + 1 };
             return true;
         }
         // Checked on the page of the next event (the same state as k when the
@@ -316,7 +344,8 @@ export async function replaySkill(
         // biome-ignore lint/suspicious/noExplicitAny: Playwright Locator
         let loc: any;
         try {
-            loc = await locateTarget(page, a.target, visible);
+            // pick: the choice its value ranks first among the recorded page's list.
+            loc = a.op === "pick" ? await pickTarget(page, a, visible, 0) : await locateTarget(page, a.target, visible);
         } catch (err) {
             if (a.op === "waitFor" && j !== k) {
                 await show(k); // waiting, on the page the skill sees, for something already there
@@ -331,6 +360,7 @@ export async function replaySkill(
         }
         if (a.op === "waitFor") {
             if (j === k) return false;
+            acted = { before: k, after: j };
             k = j; // what it waited for is on the next state the session saw
             i = 0;
             return true;
@@ -346,6 +376,7 @@ export async function replaySkill(
             if (e === commit?.event)
                 return fail("commit_outside_confirm", "only confirm.submit may press the commit", a);
             consume(j);
+            acted = { before: j, after: j + 1 };
             return true;
         }
         // The right element done wrong, or one the session used later on this page: out of step.
@@ -357,8 +388,24 @@ export async function replaySkill(
         return false;
     };
 
+    // The action's outcome, as the runtime would see it: undefined when it has no
+    // expect or the session has no next page to check; null after a failure.
+    let lastOutcome: string | undefined;
+    const expectOk = async (a: SiteAction, at: { before: number; after: number } | null): Promise<boolean> => {
+        lastOutcome = undefined;
+        if (!a.expect || !at || at.after >= pages.length) return true;
+        const won = await outcomeOf(a.expect, at.before, at.after);
+        if (!won) {
+            k = at.before;
+            fail("expect_unmatched", `one of ${Object.keys(a.expect).join(", ")} on the next page`, pages[at.after].url);
+            return false;
+        }
+        lastOutcome = won;
+        return true;
+    };
+
     try {
-        let phase = "search";
+        let phase: string = label;
         let input: unknown = opts.input;
         let answer: string | undefined;
         let state: Record<string, unknown> = {};
@@ -371,12 +418,17 @@ export async function replaySkill(
             const S = pages[k].snapshot;
             const callK = k;
             const atEnd = !nextPos();
-            const r = await call(phase, { snapshot: S, input, answer, state });
+            const r = await call(phase, { snapshot: S, input, answer, state, lastOutcome });
             answer = undefined;
             if (r.state) state = r.state;
 
             if (r.fail) {
                 fail("skill_failed", "a result", r.fail.reason);
+                break;
+            }
+            if (r.refused) {
+                // The session got through with this very input: refusing it is wrong.
+                fail("skill_refused", "a result", r.refused);
                 break;
             }
 
@@ -406,7 +458,7 @@ export async function replaySkill(
                             state: {},
                         });
                         for (const a of pr.actions ?? []) {
-                            if (a.op === "type" || a.op === "typeCode") used.push(a.value ?? "");
+                            if (a.op === "type" || a.op === "typeCode" || a.op === "pick") used.push(a.value ?? "");
                             else if (a.op === "navigate") used.push(...urlValues(a.value ?? ""));
                         }
                         if (!usedOrigAt && used.includes(orig)) usedOrigAt = pk;
@@ -514,6 +566,8 @@ export async function replaySkill(
                     fail("recheck_differs", r.confirm, again);
                     break;
                 }
+                // Its outcome, in the page the commit led to, reaches after_confirm.
+                if (!(await expectOk(r.confirm.submit, { before: next.j, after: next.j + 1 }))) break;
                 phases.confirm = "pass";
                 consume(next.j); // the commit happened once, in the session; it is never replayed
                 label = "after_confirm";
@@ -565,7 +619,7 @@ export async function replaySkill(
             let stopped = false;
             for (const a of r.actions) {
                 const m = await matchAction(a);
-                if (m === null) {
+                if (m === null || !(await expectOk(a, m ? acted : null))) {
                     stopped = true;
                     break;
                 }

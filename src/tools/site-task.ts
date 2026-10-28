@@ -9,6 +9,7 @@
 import { pageDriver } from "../skills/site/page-driver.js";
 import { findSiteSkill } from "../skills/site/registry.js";
 import { drainTrace, startTrace, tracing } from "../skills/site/mint/recorder.js";
+import { pendingRepair, repairBlocked } from "../skills/site/drift.js";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { getDataDir } from "../config/paths.js";
@@ -37,10 +38,12 @@ let busy = false;
 /**
  * Records the agent's browser session on this site (locally, for the Skill
  * Minter), unless that's off or the backend can't (the Chrome extension has no
- * init scripts). True when a recording is running.
+ * init scripts). True when a recording is running. `fresh` starts a new one
+ * even when this site is already recorded (a repair needs a session that
+ * starts after the skill failed).
  */
 // biome-ignore lint/suspicious/noExplicitAny: Playwright Page
-async function recordSession(page: any): Promise<boolean> {
+async function recordSession(page: any, fresh = false): Promise<boolean> {
     if (process.env.ATLAS_NO_SITE_MINT === "true" || process.env.ATLAS_NO_SITE_TRACE === "true") return false;
     if (typeof page?.context !== "function") return false;
     let domain = "";
@@ -48,7 +51,7 @@ async function recordSession(page: any): Promise<boolean> {
         domain = new URL(page.url()).hostname.replace(/^www\./, "");
     } catch {}
     if (!domain) return false;
-    if (tracing(page) === domain) return true;
+    if (tracing(page) === domain && !fresh) return true;
     try {
         await startTrace(page.context(), domain);
         await drainTrace(page);
@@ -57,6 +60,9 @@ async function recordSession(page: any): Promise<boolean> {
         return false;
     }
 }
+
+const REPAIR_NEXT =
+    "The site changed and the learned skill no longer fits it (nothing was ordered). Tell the user. Only if they want, finish the task with the browser tools (this session is recorded on this machine); when it's done, call site_skill_mint with action repair: Bhai fixes the skill in the background from it.";
 
 const NEXT: Record<SiteTaskResult["status"], string> = {
     options: "Show the user these options and ask which one. Then call site_task with action select and option_id.",
@@ -67,6 +73,8 @@ const NEXT: Record<SiteTaskResult["status"], string> = {
     // write_status may_have_applied: the order may exist. Never place it again.
     failed: "Tell the user what went wrong; you can continue with the browser tools if they want.",
     aborted: "A safety limit stopped this task; tell the user and continue manually only if they ask.",
+    refused:
+        "The site doesn't offer that as asked (no match, sold out, or two that fit equally). Show the user `available` and ask which one; then start again with action search and their choice.",
 };
 
 export const siteTask: ToolDefinition = {
@@ -107,14 +115,22 @@ async function run(input: Record<string, unknown>): Promise<string> {
         const page = await getActivePage();
         const driver = pageDriver(page, 5000, () => getActivePage()); // a closed tab is reopened
         const view = async (r: SiteTaskResult) => {
-            current = r.status === "done" || r.status === "failed" || r.status === "aborted" ? null : r.task;
+            current = ["done", "failed", "aborted", "refused"].includes(r.status) ? null : r.task;
             const { task, ...rest } = r;
-            const next =
-                r.writeStatus === "may_have_applied" && r.status !== "done"
+            // The site changed under a learned skill: the owner's task is finished by
+            // hand while recording, and that session repairs the skill.
+            const repair = r.repairQueued && (await recordSession(page, true));
+            const next = repair
+                ? REPAIR_NEXT
+                : r.needsUser?.kind === "payment"
+                    ? "The order is on the site's payment page. Ask the user to finish paying there themselves (never enter card or UPI details); when they say it's done, call site_task with action resume. Do NOT order again."
+                    : r.writeStatus === "may_have_applied" && r.status !== "done" && r.status !== "needs_user"
                     ? "The order may already have been placed (the submit didn't confirm). Do NOT order again: tell the user, and check the site's orders page with the browser tools."
                     : r.reason === "total_changed"
                       ? "The total changed since the user agreed. Show the new total (if any) and ask again before confirming."
-                      : NEXT[r.status];
+                      : r.reason?.startsWith("commit_rejected")
+                        ? "The site turned the order down (nothing was placed). Tell the user what it said and ask whether to try once more; only after a new yes, call site_task with action confirm again."
+                        : NEXT[r.status];
             // Showing the total is the "ask": record it, so the owner's next yes
             // grants the confirm call (else the gate would need a second yes).
             if (r.status === "confirm" && r.confirm) {
@@ -128,13 +144,22 @@ async function run(input: Record<string, unknown>): Promise<string> {
         if (action === "search") {
             const skillPath = findSiteSkill(page.url());
             if (!skillPath) {
-                const learn = await recordSession(page);
+                // A learned skill that stopped fitting the site (drifted) waits for a repair, not a new mint.
+                let host = "";
+                try {
+                    host = new URL(page.url()).hostname.replace(/^www\./, "");
+                } catch {}
+                const pending = host ? pendingRepair(host) : null;
+                const fix = pending && !repairBlocked(pending.capture.skill, pending.capture.skillDir);
+                const learn = await recordSession(page, !!fix);
                 return JSON.stringify({
                     error: `No site skill for ${page.url()}. Use the browser tools instead.`,
-                    ...(learn && {
-                        next_step:
-                            "Do it with the browser tools; this session is recorded on this machine. When it's done, offer to learn this site so next time takes ~3 steps (site_skill_mint start, only if the user agrees: it costs a few credits).",
-                    }),
+                    ...(learn &&
+                        (fix || !pending) && {
+                            next_step: fix
+                                ? REPAIR_NEXT
+                                : "Do it with the browser tools; this session is recorded on this machine. When it's done, offer to learn this site so next time takes ~3 steps (site_skill_mint start, only if the user agrees: it costs a few credits).",
+                        }),
                 });
             }
             if (current?.commit?.state === "sent") {

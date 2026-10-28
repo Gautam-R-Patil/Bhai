@@ -20,14 +20,43 @@ const Target = z
     .strict()
     .refine((t) => t.sel || t.text, "target needs sel or text");
 
-export const ActionSchema = z
+const isRegex = (s: string) => {
+    try {
+        new RegExp(s, "i");
+        return true;
+    } catch {
+        return false;
+    }
+};
+// What an action is waiting to bring about, by a name the skill picks: an
+// element appears (one that wasn't there before the action), one goes away,
+// the URL matches (a regex) or a live region announces it (a regex). The first
+// to hold wins and reaches the next step as ctx.lastOutcome.
+const Outcome = z.union([
+    Target,
+    z.object({ gone: Target }).strict(),
+    z.object({ url: z.string().max(300).refine(isRegex, "url must be a regex") }).strict(),
+    z.object({ announced: z.string().max(300).refine(isRegex, "announced must be a regex") }).strict(),
+]);
+export type ExpectSpec = Record<string, z.infer<typeof Outcome>>;
+
+const ActionBase = z
     .object({
-        op: z.enum(["click", "type", "typeCode", "press", "waitFor", "navigate"]),
+        // pick: of the visible elements target.sel matches, click the one whose
+        // label fits value (lib.rank); none or a tie → the step is refused.
+        op: z.enum(["click", "type", "typeCode", "press", "waitFor", "navigate", "pick"]),
         target: Target.optional(),
         value: z.string().max(2000).optional(),
         times: z.number().int().min(1).max(10).optional(),
+        field: z.string().max(40).optional(), // pick: the input the choice is for, named when refused
+        expect: z
+            .record(z.string().regex(/^[a-z][a-z0-9_]{0,29}$/), Outcome)
+            .refine((o) => Object.keys(o).length >= 1 && Object.keys(o).length <= 8, "1 to 8 outcomes")
+            .optional(),
     })
     .strict();
+const pickOk = (a: z.infer<typeof ActionBase>) => a.op !== "pick" || (!!a.target?.sel && !!a.value);
+export const ActionSchema = ActionBase.refine(pickOk, "pick needs target.sel and value");
 
 export const StepResultSchema = z
     .object({
@@ -36,16 +65,35 @@ export const StepResultSchema = z
             .array(z.object({ id: z.string().max(100), label: z.string().max(300), price: z.number().optional() }).strict())
             .max(50)
             .optional(),
-        // The submit runs exactly once: no `times` (one yes, one order).
+        // The submit runs exactly once: no `times` (one yes, one order). It is
+        // the declared commit itself, never a choice ranked at run time (pick).
         confirm: z
-            .object({ summary: z.string().max(500), amount: z.number().nonnegative(), submit: ActionSchema.omit({ times: true }) })
+            .object({
+                summary: z.string().max(500),
+                amount: z.number().nonnegative(),
+                submit: ActionBase.omit({ times: true }).refine((a) => a.op !== "pick", "the submit can't be a pick"),
+            })
             .strict()
             .optional(),
         // An id from the skill's manifest (skill.json "questions"): the owner sees
         // the manifest's fixed prompt, never text the page or skill made up.
         needsUser: z.object({ question: z.string().max(40), retry: z.boolean().optional() }).strict().optional(),
         done: z.object({ summary: z.string().max(500) }).strict().optional(),
-        fail: z.object({ reason: z.string().max(200) }).strict().optional(),
+        // The site can't take this input (no such place, sold out, two that fit
+        // equally): the owner picks again from what the page offers.
+        refused: z
+            .object({ field: z.string().max(40), available: z.array(z.string().max(200)).max(50) })
+            .strict()
+            .optional(),
+        // kind says who can fix it (runtime.ts retryOf): the owner's input, the
+        // owner on the page, a site that's down, or a skill the site outgrew.
+        fail: z
+            .object({
+                reason: z.string().max(200),
+                kind: z.enum(["input_rejected", "needs_owner", "site_error", "unexpected_page"]).optional(),
+            })
+            .strict()
+            .optional(),
         state: z
             .record(z.string(), z.unknown())
             .refine((s) => JSON.stringify(s).length <= 20_000, "state too large")

@@ -64,6 +64,8 @@ export interface LLMClient {
          * thinking model writing a few KB of code.
          */
         timeoutMs?: number;
+        /** The caller's cancel: aborts the attempt in flight and tries no other model. */
+        signal?: AbortSignal;
     }): Promise<ChatCompletion>;
     config: Config;
 }
@@ -159,10 +161,16 @@ export function createLLMClient(config: Config): LLMClient {
 
     return {
         config,
-        async chat({ messages, tools, systemPrompt, serverPromptSlug, thinkingLevel, modelOverride, skillSlugs, responseFormat, lean, timeoutMs }) {
+        async chat({ messages, tools, systemPrompt, serverPromptSlug, thinkingLevel, modelOverride, skillSlugs, responseFormat, lean, timeoutMs, signal }) {
             // A fresh deadline per fetch (each fallback hop gets its own), or none
-            // so encryptedFetch applies its default.
-            const deadline = () => (timeoutMs && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined);
+            // so encryptedFetch applies its default; joined with the caller's
+            // signal, which then also needs a deadline of its own.
+            const deadline = () => {
+                const ms = timeoutMs && timeoutMs > 0 ? timeoutMs : signal ? Number(process.env.ATLAS_LLM_ATTEMPT_TIMEOUT_MS) || 25_000 : 0;
+                const t = ms ? AbortSignal.timeout(ms) : undefined;
+                return t && signal ? AbortSignal.any([t, signal]) : t;
+            };
+            signal?.throwIfAborted();
             // ── Network health guard: fail fast if internet is down ──
             try {
                 const { isOffline, reportNetworkError } = await import("./network-health.js");
@@ -421,6 +429,7 @@ export function createLLMClient(config: Config): LLMClient {
 
                     return responseData;
                 } catch (err) {
+                    if (signal?.aborted) throw err; // cancelled: no other model, no network report
                     lastError = err as Error;
                     const status = (err as { status?: number }).status;
 
