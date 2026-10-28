@@ -591,12 +591,8 @@ async function boot() {
     registerChannelSender("whatsapp", async (message, filePath) => {
         await sendWhatsAppProactiveMessage(message, filePath);
     });
-    registerChannelSender("discord", async (message, filePath) => {
-        await sendDiscordProactiveMessage(message, filePath);
-    });
-    registerChannelSender("slack", async (message) => {
-        await sendSlackProactiveMessage(message);
-    });
+    registerChannelSender("discord", (message, filePath) => sendDiscordProactiveMessage(message, filePath));
+    registerChannelSender("slack", (message) => sendSlackProactiveMessage(message));
     registerChannelSender("matrix", async (message) => {
         await sendMatrixProactiveMessage(message);
     });
@@ -607,7 +603,7 @@ async function boot() {
     // Wire deep research proactive notifier (background research sends progress here)
     setDeepResearchNotifier(async (msg: string) => {
         // Primary channel gets the message first
-        const sendPrimary: Record<string, () => Promise<void>> = {
+        const sendPrimary: Record<string, () => Promise<unknown>> = {
             whatsapp: () => sendWhatsAppProactiveMessage(msg),
             discord: () => sendDiscordProactiveMessage(msg),
             slack: () => sendSlackProactiveMessage(msg),
@@ -1042,7 +1038,7 @@ async function boot() {
         const message = `🔔 **Task Triggered**\n\n${action}`;
 
         // Primary channel gets the message first
-        const sendPrimary: Record<string, () => Promise<void>> = {
+        const sendPrimary: Record<string, () => Promise<unknown>> = {
             whatsapp: () => sendWhatsAppProactiveMessage(message),
             discord: () => sendDiscordProactiveMessage(message),
             slack: () => sendSlackProactiveMessage(message),

@@ -133,18 +133,26 @@ export async function detectCaptcha(
             if (hcFrame || hcWidget) {
                 return { type: "hcaptcha", siteKey: (hcWidget as HTMLElement)?.dataset?.sitekey ?? null };
             }
-            // reCAPTCHA v3 (invisible — detected by script tag)
+            // reCAPTCHA v2 checkbox first: a page can load v3 everywhere and
+            // still show an "I'm not a robot" box (v3's own anchor frame is size=invisible).
+            const rcFrames = Array.from(
+                document.querySelectorAll('iframe[src*="google.com/recaptcha"],iframe[src*="recaptcha.net"]'),
+            );
+            const rcWidget = document.querySelector(".g-recaptcha");
+            const rcV2 = { type: "recaptcha-v2", siteKey: (rcWidget as HTMLElement)?.dataset?.sitekey ?? null };
+            const box = rcFrames.some((f) => {
+                const src = f.getAttribute("src") ?? "";
+                return src.includes("/anchor") && !src.includes("size=invisible");
+            });
+            if (box || (rcWidget && rcWidget.getAttribute("data-size") !== "invisible")) return rcV2;
+            // reCAPTCHA v3 (invisible — detected by script tag; render=explicit is a v2 loader)
             const scripts = Array.from(document.scripts).map((s) => s.src);
-            const rcV3 = scripts.find((s) => s.includes("recaptcha/api.js?render="));
+            const rcV3 = scripts.find((s) => s.includes("recaptcha/api.js?render=") && !s.includes("render=explicit"));
             if (rcV3) {
                 return { type: "recaptcha-v3", siteKey: rcV3.match(/render=([^&]+)/)?.[1] ?? null };
             }
-            // reCAPTCHA v2
-            const rcFrame = document.querySelector('iframe[src*="google.com/recaptcha"],iframe[src*="recaptcha.net"]');
-            const rcWidget = document.querySelector(".g-recaptcha");
-            if (rcFrame || rcWidget) {
-                return { type: "recaptcha-v2", siteKey: (rcWidget as HTMLElement)?.dataset?.sitekey ?? null };
-            }
+            // Any other reCAPTCHA widget (invisible v2, a challenge frame)
+            if (rcFrames.length || rcWidget) return rcV2;
             return { type: "none", siteKey: null };
         },
         /* javascript-obfuscator:enable */ undefined,
@@ -157,12 +165,26 @@ export async function detectCaptcha(
     return info;
 }
 
-/** Cheap post-action check: CAPTCHA type on the page, or null if none/undetectable. Never throws. */
+// A ticked widget stays on the page; its response token field fills.
+export const CAPTCHA_SOLVED_JS = `[...document.querySelectorAll('textarea[name="g-recaptcha-response"],textarea[name="h-captcha-response"],input[name="cf-turnstile-response"]')].some((e) => !!e.value)`;
+
+/** True when a widget on the page already holds a response token (the owner ticked it). */
+export async function captchaSolved(page: unknown): Promise<boolean> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (await Promise.resolve((page as any).evaluate(CAPTCHA_SOLVED_JS)).catch(() => false)) === true;
+}
+
+/**
+ * Cheap check for a human check the owner still has to do: its type, or null
+ * if none, invisible v3 (nothing to tick), already ticked, or undetectable.
+ * Never throws.
+ */
 export async function quickCaptchaCheck(page: unknown): Promise<CaptchaType | null> {
     try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const info = await detectCaptcha(page as any);
-        return info.type === "none" ? null : info.type;
+        if (info.type === "none" || info.type === "recaptcha-v3") return null;
+        return (await captchaSolved(page)) ? null : info.type;
     } catch {
         return null;
     }

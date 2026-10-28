@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mode = { value: "playwright" as "playwright" | "chrome" };
 const getActivePage = vi.fn();
-const sendBridgeCommand = vi.fn(async () => ({ success: true }));
+const sendBridgeCommand = vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ success: true }));
 const transcribeBuffer = vi.fn();
 const showNotification = vi.fn(async () => {});
 const solverEntry = vi.fn(() => {
@@ -46,7 +46,7 @@ function fakePage(polls: number) {
     );
     return {
         url: () => "https://shop.test/login",
-        evaluate: vi.fn(async (code: unknown) =>
+        evaluate: vi.fn(async (code: unknown): Promise<unknown> =>
             String(code).includes("location.href") ? { href: "https://shop.test/login", solved: false } : undefined,
         ),
         bringToFront: vi.fn(async () => {}),
@@ -154,6 +154,81 @@ describe("browser_wait_for_human", () => {
         expect(out).toMatchObject({ success: true, captcha_present: false });
         expect(sent).toEqual([]);
     });
+
+    it("returns cleared without asking when the box is already ticked", async () => {
+        const page = fakePage(1_000_000);
+        page.evaluate.mockImplementation(async (code: unknown) =>
+            String(code).includes("location.href") ? { href: "https://shop.test/login", solved: true } : true,
+        );
+        getActivePage.mockResolvedValue(page);
+        const out = JSON.parse(await browserWaitForHuman.handler({}));
+        expect(out).toMatchObject({ success: true, status: "cleared" });
+        expect(sent).toEqual([]);
+        expect(showNotification).not.toHaveBeenCalled();
+    });
+
+    it("Chrome-bridge: keeps watching the check's own tab when the owner switches tabs", async () => {
+        mode.value = "chrome";
+        let active = 7; // the owner moves to tab 9 (WhatsApp Web) to read the ask
+        const tabs: Record<number, { type: string; href: string }> = {
+            7: { type: "recaptcha-v2", href: "https://shop.test/login" },
+            9: { type: "none", href: "https://web.whatsapp.com/" },
+        };
+        sendBridgeCommand.mockImplementation((async (cmd: unknown, p: { code?: string; tabId?: number }) => {
+            if (cmd !== "execute_js") return { success: true };
+            const tab = tabs[p.tabId ?? active];
+            if (p.code === "DETECT") return { type: tab.type, siteKey: null };
+            if (String(p.code).includes("location.href")) return { href: tab.href, solved: false };
+            return undefined;
+        }) as never);
+        detect.mockReset();
+        detect.mockImplementation(async (pg: { evaluate(c: string): Promise<never> }) => pg.evaluate("DETECT"));
+        // The Chrome proxy runs everything on whatever tab is active.
+        const proxy = { url: () => "https://shop.test/login", evaluate: (code: string) => sendBridgeCommand("execute_js", { code }) };
+        getActivePage.mockResolvedValue(proxy);
+        registerChannelSender("test", async (m) => {
+            sent.push(m);
+            active = 9;
+        });
+        const ctl = new AbortController();
+        setTimeout(() => ctl.abort(), 2500);
+        const out = JSON.parse(await browserWaitForHuman.handler({ timeout_s: 30, _signal: ctl.signal }));
+        registerChannelSender("test", async (m) => {
+            sent.push(m);
+        });
+        sendBridgeCommand.mockImplementation(async () => ({ success: true }));
+        expect(sent).toHaveLength(1);
+        expect(out.status).toBe("cancelled"); // not "cleared": tab 7 still shows the box
+    }, 15_000);
+
+    it("waits at least 15s even if asked for less", async () => {
+        const page = fakePage(1_000_000);
+        getActivePage.mockResolvedValue(page);
+        const ctl = new AbortController();
+        setTimeout(() => ctl.abort(), 2500);
+        const out = JSON.parse(await browserWaitForHuman.handler({ timeout_s: 1, _signal: ctl.signal }));
+        expect(out.status).toBe("cancelled");
+    }, 15_000);
+
+    it("ATLAS_CAPTCHA_HANDOFF_MS=0 turns the handoff off", async () => {
+        process.env.ATLAS_CAPTCHA_HANDOFF_MS = "0";
+        try {
+            getActivePage.mockResolvedValue(fakePage(1_000_000));
+            const out = JSON.parse(await browserWaitForHuman.handler({}));
+            expect(out).toMatchObject({ status: "disabled", requires_user: true });
+            expect(sent).toEqual([]);
+        } finally {
+            delete process.env.ATLAS_CAPTCHA_HANDOFF_MS;
+        }
+    });
+
+    it("asked_on says desktop notification when the channel didn't send", async () => {
+        registerChannelSender("quiet", async () => false); // e.g. Discord with no notifications channel set
+        setActiveChannel("quiet");
+        getActivePage.mockResolvedValue(fakePage(0));
+        const out = JSON.parse(await browserWaitForHuman.handler({ timeout_s: 30 }));
+        expect(out).toMatchObject({ status: "cleared", asked_on: "desktop notification" });
+    }, 15_000);
 
     it("ends with an error when the turn is stopped", async () => {
         const page = fakePage(1_000_000);
