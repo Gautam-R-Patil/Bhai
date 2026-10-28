@@ -102,6 +102,7 @@ desktop/hostinger-upload/
 !src/tools/browser/switch-tab-chrome.test.ts
 !src/memory/self-evolving-safety.test.ts
 !src/memory/task-learnings-relevance.test.ts
+!src/tool-router.chat-lane.test.ts
 !src/memory/traits-correction.test.ts
 !src/overlay/inline-scripts.test.ts
 !src/research/fetcher-links.test.ts

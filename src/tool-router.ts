@@ -517,10 +517,37 @@ const INTENT_CACHE_TTL_MS = 120_000; // 2 minutes
 // ATLAS_TOOL_ROUTER_TIMEOUT_MS.
 const LLM_CLASSIFIER_TIMEOUT_MS = Number(process.env.ATLAS_TOOL_ROUTER_TIMEOUT_MS) || 5000;
 
+// The whole routing step shares one deadline: classifier, then the fallback's
+// message embedding gets whatever is left (none → structural scores only).
+function beforeDeadline<T>(work: Promise<T>, deadline: number): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    return Promise.race([
+        work,
+        new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error("timeout")), Math.max(0, deadline - Date.now()));
+        }),
+    ]).finally(() => clearTimeout(timer));
+}
+
+// Banter: the user wants a reaction (roast, joke, opinion), not an action —
+// even when it mentions code, tabs or builds. A request to act (an action verb
+// opening a clause, or a path/URL to work on) disqualifies it.
+const BANTER_RE =
+    /\b(roast|jokes?|make me laugh|cheer me up|what do you think|your (?:honest )?(?:opinion|take)|thoughts on|be honest|rate (?:me|my)|lol|lmao|rofl|haha\w*)\b/i;
+const ACTION_RE =
+    /(?:^|[.!?;,:]\s*|\b(?:and|then|also|so|now|please|pls|can you|could you|would you|will you|can u)\s+)(?:close|open|fix|debug|run|build|compile|install|uninstall|delete|remove|kill|quit|restart|start|stop|search|find|look up|google|check|show|list|read|send|email|text|message|reply|call|play|pause|create|edit|update|upgrade|download|upload|deploy|commit|push|pull|set|schedule|remind|book|order|buy|organi[sz]e|clean|save|take|screenshot|summari[sz]e|translate|go to|navigate|click|type|scroll|draft|turn|mute|unmute)\b/i;
+const PATH_RE =
+    /(?:^|\s)(?:~|\.{1,2})?\/[\w.-]|https?:\/\/|\b[\w-]+\.(?:tsx?|jsx?|mjs|py|rs|go|java|json|md|txt|html|css|ya?ml)\b/i;
+
+export function isConversationalBanter(message: string): boolean {
+    return BANTER_RE.test(message) && !ACTION_RE.test(message) && !PATH_RE.test(message);
+}
+
 async function classifyWithLLM(
     message: string,
     recentTools?: string[],
     conversationContext?: string,
+    deadline = Date.now() + LLM_CLASSIFIER_TIMEOUT_MS,
 ): Promise<IntentClassification | null> {
     if (!routerLLM) return null;
 
@@ -569,17 +596,15 @@ Rules:
 Respond with JSON only: {"intent":"short_label","categories":["cat1"],"specific_tools":["tool1"],"confidence":0.9,"tier":"simple","multi_step":false}`;
 
     try {
-        const response = await Promise.race([
+        const response = await beforeDeadline(
             routerLLM.chat({
                 messages: [{ role: "user", content: message }],
                 systemPrompt,
                 modelOverride: MODELS.GPT41_NANO,
                 lean: true,
             }),
-            new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error("timeout")), LLM_CLASSIFIER_TIMEOUT_MS),
-            ),
-        ]);
+            deadline,
+        );
 
         const text = response?.choices?.[0]?.message?.content || "";
         // Extract JSON from response (handle markdown code blocks, nested braces)
@@ -1129,6 +1154,7 @@ async function classifyToolNeeds(
     message: string,
     recentToolCalls?: string[],
     _iteration?: number,
+    deadline = Number.POSITIVE_INFINITY,
 ): Promise<{ category: string; score: number; confidence: number }[]> {
     // ── HYBRID: Always run structural first (instant, catches keywords) ──
     const structural = structuralClassify(message);
@@ -1138,7 +1164,7 @@ async function classifyToolNeeds(
     if (embeddingsReady) {
         try {
             const { cosineSimilarity } = await import("./memory/embeddings.js");
-            const messageEmbedding = await getCachedMessageEmbedding(message);
+            const messageEmbedding = await beforeDeadline(getCachedMessageEmbedding(message), deadline);
 
             for (const [name, embedding] of categoryEmbeddings.entries()) {
                 // Clamp to [0, 1] — `cosineSimilarity` is a fast dot product
@@ -1419,6 +1445,7 @@ export async function selectTools(opts: {
     conversationContext?: string;
 }): Promise<ToolRouterSelection> {
     const startTime = Date.now();
+    const deadline = startTime + LLM_CLASSIFIER_TIMEOUT_MS;
     currentIteration++;
 
     // ── Check selection cache first ──
@@ -1459,7 +1486,7 @@ export async function selectTools(opts: {
     let classifierUsed = "fallback";
 
     // Try LLM classifier first (primary path)
-    const llmResult = await classifyWithLLM(opts.message, opts.recentToolCalls, opts.conversationContext);
+    const llmResult = await classifyWithLLM(opts.message, opts.recentToolCalls, opts.conversationContext, deadline);
 
     // Expire stale request_tools categories before the chat-lane check uses them.
     if (
@@ -1473,24 +1500,29 @@ export async function selectTools(opts: {
     // Skip the tool schemas entirely (they were most of a greeting's 20K-token
     // prompt). request_tools stays, so a wrong call can still fetch what it needs;
     // memory tools stay only if the classifier asked for them ("remember …").
-    if (
-        llmResult?.tier === "chat" &&
-        llmResult.confidence >= 0.6 &&
-        !opts.requestedCategories &&
-        activeRequestedCategories.categories.length === 0
-    ) {
-        const chatCats = llmResult.categories.filter((c) => c === "memory");
+    // With no usable classifier answer, banter ("… roast me") still takes the
+    // lane: the embedding fallback reads its tech words as 9 tool categories.
+    const chatResult =
+        llmResult?.tier === "chat" && llmResult.confidence >= 0.6
+            ? llmResult
+            : (!llmResult || llmResult.categories.length === 0) && isConversationalBanter(opts.message)
+              ? { intent: "banter", categories: [], confidence: 0.6 }
+              : null;
+    if (chatResult && !opts.requestedCategories && activeRequestedCategories.categories.length === 0) {
+        const chatCats = chatResult.categories.filter((c) => c === "memory");
         const chatSchemas = chatCats.length
             ? allSchemas.filter((t) => CATEGORIES.memory.tools.includes(t.function.name))
             : [];
-        lastClassifiedIntent = llmResult.intent;
+        lastClassifiedIntent = chatResult.intent;
         lastClassification = {
-            intent: llmResult.intent,
+            intent: chatResult.intent,
             specific_tools: [],
-            confidence: llmResult.confidence,
+            confidence: chatResult.confidence,
             categories: chatCats,
         };
-        console.log(`🎯 Tool Router: ${chatSchemas.length} tools [chat lane] (${Date.now() - startTime}ms)`);
+        console.log(
+            `🎯 Tool Router: ${chatSchemas.length} tools [chat lane${chatResult === llmResult ? "" : ", banter"}] (${Date.now() - startTime}ms)`,
+        );
         return {
             tools: [...chatSchemas, REQUEST_TOOLS_SCHEMA],
             categories: ["chat_only", ...chatCats],
@@ -1520,7 +1552,7 @@ export async function selectTools(opts: {
         lastClassification = null;
         // Fallback: hybrid structural + semantic + keyword boosts
         const expandedMessage = expandQuery(opts.message);
-        const ranked = await classifyToolNeeds(expandedMessage, opts.recentToolCalls, opts.iteration);
+        const ranked = await classifyToolNeeds(expandedMessage, opts.recentToolCalls, opts.iteration, deadline);
 
         // Apply keyword hard-boosts to ranked scores
         for (const { pattern, category, minScore } of KEYWORD_BOOSTS) {
@@ -1711,7 +1743,7 @@ export async function selectTools(opts: {
         if (embeddingsReady && selectedSchemas.length < getMaxToolsTotal()) {
             try {
                 const { cosineSimilarity } = await import("./memory/embeddings.js");
-                const messageEmb = await getCachedMessageEmbedding(opts.message);
+                const messageEmb = await beforeDeadline(getCachedMessageEmbedding(opts.message), deadline);
                 const mcpScored: { schema: ChatCompletionTool; score: number }[] = [];
 
                 for (const mcpTool of mcpSchemas) {

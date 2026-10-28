@@ -1763,11 +1763,24 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 }
             }
 
+            // ── Coding turn? ──
+            // The codebase index + repo map below are synchronous disk/CPU work
+            // that can hold the event loop for 10s+. Started while routing was in
+            // flight, they starved its timeout (a 5s budget took 15s on "… my code
+            // doesn't build. roast me"). Let routing finish first, and skip all
+            // coding context when it picked the chat lane.
+            const codingTurn =
+                detectTaskType(rawUserMessage) === "coding" &&
+                !(await toolSelectionPromise.then(
+                    (s) => s.categories.includes("chat_only"),
+                    () => false,
+                ));
+
             // ── Project memory (ATLAS.md walk-up) ──
             // Only for coding-classified queries to avoid injecting
             // project conventions into chat/research flows.
             try {
-                if (detectTaskType(rawUserMessage) === "coding") {
+                if (codingTurn) {
                     const projectMemory = getProjectMemorySnippet();
                     if (projectMemory) parts.push(projectMemory);
                 }
@@ -1784,7 +1797,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             // + architecture extraction concurrently. They hit disjoint caches
             // so parallelism roughly halves first-iteration cold latency
             // compared to the previous serial flow.
-            if (detectTaskType(rawUserMessage) === "coding") {
+            if (codingTurn) {
                 const cwd = process.cwd();
                 const repoMapTask = (async () => {
                     if (process.env.ATLAS_NO_REPO_MAP === "true") return null;
@@ -1859,7 +1872,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             // of the general recall so previously-validated patterns aren't
             // crowded out by browser/os/app entries when the top-3 is shared.
             try {
-                if (detectTaskType(rawUserMessage) === "coding") {
+                if (codingTurn) {
                     const codingLearnings = getTaskLearningsContext(rawUserMessage, "code");
                     if (codingLearnings) parts.push(codingLearnings);
                 }
@@ -1873,7 +1886,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             // directly with Pro tier, complex triggers the full PRD →
             // approval → walkthrough ceremony.
             try {
-                if (detectTaskType(rawUserMessage) === "coding") {
+                if (codingTurn) {
                     const { classifyCodingComplexity } = await import("./model-router.js");
                     const c = classifyCodingComplexity(userMessage);
                     if (c === "complex") {
