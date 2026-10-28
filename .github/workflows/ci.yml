@@ -93,6 +93,12 @@ jobs:
         working-directory: native
       - run: npm run build
         working-directory: native
+      # Parity against the binary just built (the committed one is darwin-arm64
+      # only, so elsewhere the parity tests would otherwise skip).
+      - run: npm ci
+      - run: npx vitest run src/security/pii-protect.parity.test.ts src/security/secrets-sanitizer.parity.test.ts
+        env:
+          ATLAS_REQUIRE_NATIVE: "true"
 
   rust-quality:
     name: Rust quality

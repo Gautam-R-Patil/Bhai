@@ -132,9 +132,9 @@ const STANDARD_PATTERNS_TAIL: &[(&str, &str)] = &[
 // pattern; the `(?!\[REDACTED:)` of the TS URL_USERINFO is emulated by the
 // post-match `value_is_already_redacted` skip in `apply_url_userinfo`.
 const DB_URI_PASSWORD_PATTERN: &str = r"\b((?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|rediss|amqp|amqps)://[^\s:@/]+:)([^@\s/]+)(@)";
-// Scheme bounded to 31 chars to match the TS pattern, where the bound stops a
-// quadratic rescan in V8 (this crate is linear either way; parity needs it).
-const URL_USERINFO_PATTERN: &str = r"\b([a-z][a-z0-9+.-]{0,30}://[^\s:@/]+:)([^@\s/]+)(@)";
+// Unbounded scheme: this crate is linear (the TS checks the scheme with a
+// lookbehind after "://" to stay linear in V8; same matches).
+const URL_USERINFO_PATTERN: &str = r"\b([a-z][a-z0-9+.-]*://[^\s:@/]+:)([^@\s/]+)(@)";
 
 const ENV_VAR_PATTERN: &str = r#"\b[A-Z0-9_]*(?:SECRET|PASSWORD|PASSPHRASE|API[_-]?KEY|PRIVATE[_-]?KEY|ACCESS[_-]?KEY|TOKEN|CLIENT[_-]?SECRET|DATABASE[_-]?URL|CONNECTION[_-]?STRING|DSN)\s*=\s*(?P<value>"[^"\n]{8,}"|'[^'\n]{8,}'|[^\s"'\n]{8,})"#;
 

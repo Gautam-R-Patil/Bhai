@@ -2,7 +2,7 @@
 //
 // Adversarial inputs for the protect() pipeline: each one made a credential,
 // PII or secrets pattern rescan to the end of the text from every offset
-// (quadratic) before the bounds in credential-mask.ts / secrets-sanitizer.ts.
+// (quadratic) before the fixes in credential-mask.ts / secrets-sanitizer.ts.
 // Shared by the ReDoS test, the native parity test and scripts/bench-native.ts.
 
 const rep = (s: string, n: number) => s.repeat(Math.ceil(n / s.length)).slice(0, n);

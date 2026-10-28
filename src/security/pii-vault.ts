@@ -34,15 +34,18 @@ const valueByHandle = new Map<string, string>(); // handle → value
 let generation = 0;
 
 // One regex over every form of every known value, longest first, rebuilt when
-// the vault changes. Handle text ([OTP_12]) is its first alternative so a
-// short value ("12") is never masked inside a handle.
+// the vault changes. Handle text ([OTP_12]) is its first alternative so a short
+// value ("12") is never masked inside an issued handle; handle-shaped text that
+// was never issued ("[OTP_9041]") has its inside masked, so it can't carry the
+// value 9041 past the vault. Short forms (<8 chars) only match as whole tokens,
+// inside the regex: a glued short form must not consume its span, or a longer
+// known value starting inside it ("x9041" + "4111…") is never tried.
 const HANDLE_TEXT = String.raw`\[(?:CARD|AADHAAR|UPI|OTP|COOKIE)_\d+\]`;
 const handleByForm = new Map<string, string>();
 let formsRe: RegExp | null = null;
 let formsGen = -1;
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const WORDISH_BEFORE = /[\p{L}\p{N}]$/u;
-const WORDISH_AFTER = /^[\p{L}\p{N}]/u;
+const byLength = (a: string, b: string) => b.length - a.length;
 
 function knownFormsRe(): RegExp | null {
     if (formsGen === generation) return formsRe;
@@ -51,8 +54,14 @@ function knownFormsRe(): RegExp | null {
     // The first value stored keeps a form two values share (as the per-value loop did).
     for (const [value, handle] of handleOf)
         for (const [form] of formsOf(value)) if (!handleByForm.has(form)) handleByForm.set(form, handle);
-    const alts = [...handleByForm.keys()].sort((a, b) => b.length - a.length).map(escapeRe);
-    formsRe = alts.length ? new RegExp(`${HANDLE_TEXT}|${alts.join("|")}`, "gu") : null;
+    const forms = [...handleByForm.keys()];
+    const long = forms.filter((f) => f.length >= SHORT_FORM).sort(byLength).map(escapeRe);
+    const short = forms.filter((f) => f.length < SHORT_FORM).sort(byLength).map(escapeRe);
+    // Every long form is longer than every short one, so longs-then-shorts stays longest first.
+    // ponytail: one generic handle pattern, not the 500 issued handles (3x slower to compile).
+    const alts = [HANDLE_TEXT, ...long];
+    if (short.length) alts.push(String.raw`(?<![\p{L}\p{N}])(?:${short.join("|")})(?![\p{L}\p{N}])`);
+    formsRe = forms.length ? new RegExp(alts.join("|"), "gu") : null;
     return formsRe;
 }
 
@@ -66,14 +75,11 @@ function knownFormsRe(): RegExp | null {
 function maskKnownValues(text: string): string {
     const re = knownFormsRe();
     if (!re) return text;
-    return text.replace(re, (m: string, at: number) => {
+    return text.replace(re, (m: string) => {
         const handle = handleByForm.get(m);
-        if (!handle) return m; // handle text
-        if (m.length >= SHORT_FORM) return handle;
-        const glued =
-            WORDISH_BEFORE.test(text.slice(Math.max(0, at - 2), at)) ||
-            WORDISH_AFTER.test(text.slice(at + m.length, at + m.length + 2));
-        return glued ? m : handle;
+        if (handle) return handle;
+        // Handle text: an issued one stays; a made-up one is masked inside (no "[" in there, so one level).
+        return valueByHandle.has(m) ? m : `[${maskKnownValues(m.slice(1, -1))}]`;
     });
 }
 

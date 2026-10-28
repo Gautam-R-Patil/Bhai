@@ -48,17 +48,19 @@ const COOKIE_VALUE = /(["']?\bcookie["']?\s*[:=]\s*)(["'`])([^"'`\r\n]{1,1000})\
 // are left alone: "token=visible-9" is usually a label, not a credential.
 const CREDENTIAL_WORDS =
     "pass(?:word|wd|phrase)|api[_-]?key|apikey|access[_-]?key|account[_-]?key|accountkey|storage[_-]?key|private[_-]?key|signing[_-]?key|encryption[_-]?key|master[_-]?key|secret[_-]?key|client[_-]?secret|app[_-]?secret|auth[_-]?token|access[_-]?token|refresh[_-]?token|session[_-]?token|totp[_-]?(?:seed|secret)|otp[_-]?secret|credentials?";
-// ReDoS bounds: an unbounded name prefix made every word boundary in a long
-// kebab run ("a-a-a-…") rescan to the end of the run (quadratic: 1.5s at 20KB).
-// 64 chars of prefix / 8 id_token segments cover every real key name.
+// The match starts at the credential word, not at the name's start: any run of
+// [A-Za-z0-9_-] may precede the word ("my_service_api_key"), so leaving the
+// prefix out masks the same values (the key is written back verbatim), and an
+// unbounded prefix in the regex made every word boundary in "a-a-a-…" rescan the
+// run (quadratic: 1.5s at 20KB). No length bound, so no name is too long.
 const CREDENTIAL_KEY =
-    `(?:[A-Za-z0-9_-]{0,64}?(?:${CREDENTIAL_WORDS})` +
+    `(?:${CREDENTIAL_WORDS}` +
     // id_token only on its own ("valid_token" is not "val" + "id_token").
-    "|(?:[A-Za-z0-9]+[_-]){0,8}id[_-]?token)s?";
+    "|(?<![A-Za-z0-9])id[_-]?token)s?";
 /** ASSIGNMENT can only match where one of these words is; skip the sweep otherwise. */
 const CREDENTIAL_WORD = new RegExp(`${CREDENTIAL_WORDS}|id[_-]?token`, "i");
 const ASSIGNMENT = new RegExp(
-    `(["']?\\b${CREDENTIAL_KEY}\\b["']?)(\\s*(?::|=|=>)\\s*)("[^"\\r\\n]{0,500}"|'[^'\\r\\n]{0,500}'|\`[^\`\\r\\n]{0,500}\`|[^\\s,;}\\]"'\`]{1,500})`,
+    `(["']?${CREDENTIAL_KEY}\\b["']?)(\\s*(?::|=|=>)\\s*)("[^"\\r\\n]{0,500}"|'[^'\\r\\n]{0,500}'|\`[^\`\\r\\n]{0,500}\`|[^\\s,;}\\]"'\`]{1,500})`,
     "gi",
 );
 const PROVIDER_KEY =
@@ -108,7 +110,8 @@ const assignedSecret = (sep: string, value: string) => {
 
 // ATLAS_NATIVE_PROTECT=true: the linear-time Rust port (native/src/pii_protect.rs),
 // byte-identical (pii-protect.parity.test.ts). Opt-in until its bench clears the
-// bar; any native error falls back to the TS below.
+// bar. An error napi throws falls back to the TS below; a Rust panic aborts the
+// process (panic = "abort"), so the port must not panic.
 const NATIVE_PROTECT = process.env.ATLAS_NATIVE_PROTECT === "true";
 
 export function maskCredentials(text: string): string {
@@ -157,7 +160,6 @@ export function _maskCredentialsTs(text: string): string {
         if (bareLead) return secretShaped(bare) ? `${bareLead}${MASK}` : m;
         return /=/.test(inner) || secretShaped(inner) ? `${lead}${q}${MASK}${q}` : m;
     });
-    // ponytail: still ~64 tries per word boundary (~90ms on 200KB of "a-a-…" that also holds a key word); a linear-time automaton (native) is the upgrade.
     if (CREDENTIAL_WORD.test(out))
         out = out.replace(ASSIGNMENT, (m, key, sep, value) =>
             assignedSecret(sep, value) ? `${key}${sep}${/^["'`]/.test(value) ? value[0] + MASK + value[0] : MASK}` : m,

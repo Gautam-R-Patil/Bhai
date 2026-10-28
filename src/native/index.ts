@@ -67,7 +67,6 @@ export interface NativePiiSpan {
     kind: string;
     start: number;
     end: number;
-    value: string;
 }
 
 export interface NativeSanitizeResult {

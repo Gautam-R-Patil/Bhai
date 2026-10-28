@@ -3117,7 +3117,6 @@ export interface PiiSpan {
   /** UTF-16 code-unit offsets, as `PiiMatch.start` / `end`. */
   start: number
   end: number
-  value: string
 }
 /** `findPii` (pii-redactor.ts), same spans in the same order. */
 export declare function nativeFindPii(text: string): Array<PiiSpan>

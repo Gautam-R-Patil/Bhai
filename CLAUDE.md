@@ -306,7 +306,7 @@ Default ON unless marked opt-IN. Set `"true"` to disable. `grep -rnE "process\.e
 
 Original "more Rust = more speed" plan didn't hold. Captured so contributors don't re-run failed experiments.
 
-**Rust wins (ship):** Multi-pattern regex sweeps over KB-scale inputs — sanitizer fires 23 patterns over 1KB-200KB; Rust sequential `regex::find_iter` + `Cow<&str>` wins 1.9×-3.4× (re-measured Oct 2026 against the ReDoS-fixed TS; 3.9×-7.9× before it). Linear time is a separate win: V8 regexes backtrack, and `maskCredentials` was quadratic (9s at 40KB) until bounded (`src/security/__tests__/redos.test.ts`). Pattern ordering is load-bearing for parity (sequential, NOT alternation); lookahead emulated with post-match prefix check.
+**Rust wins (ship):** Multi-pattern regex sweeps over KB-scale inputs — sanitizer fires 23 patterns over 1KB-200KB; Rust sequential `regex::find_iter` + `Cow<&str>` wins 1.9×-3.4× (re-measured Oct 2026 against the ReDoS-fixed TS; 3.9×-7.9× before it). Linear time is a separate win: V8 regexes backtrack, and `maskCredentials` was quadratic (9s at 40KB) until the regexes stopped rescanning runs (no length bounds, which would cost real credentials; `src/security/__tests__/redos.test.ts`). Pattern ordering is load-bearing for parity (sequential, NOT alternation); lookahead emulated with post-match prefix check.
 
 **Rust loses (don't port):**
 - **Hardware-accelerated Node.** `node:crypto` SHA-256 uses OpenSSL + SHA-NI; Rust `sha2` is software-only, 2-4× SLOWER. Codebase-merkle reverted.

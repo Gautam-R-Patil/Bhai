@@ -90,7 +90,8 @@ const OTP_RE =
 const JS_COOKIE_RE = /\bdocument\.cookie\s*=\s*["'`]([^"'`\r\n]+)/gi;
 
 // ATLAS_NATIVE_PROTECT=true: the linear-time Rust port (native/src/pii_protect.rs),
-// same spans (pii-protect.parity.test.ts); any native error falls back to TS.
+// same spans (pii-protect.parity.test.ts). An error napi throws falls back to TS;
+// a Rust panic aborts the process (panic = "abort"), so the port must not panic.
 const NATIVE_PROTECT = process.env.ATLAS_NATIVE_PROTECT === "true";
 
 export function findPii(text: string): PiiMatch[] {

@@ -61,7 +61,7 @@ lazy_static! {
     // COOKIE_VALUE without its `\2`: the closing quote is checked after the match.
     static ref COOKIE_VALUE: Regex = re(r#"(?i)(["']?\bcookie["']?\s*[:=]\s*)(["'`])([^"'`\r\n]{1,1000})|(\bcookie=)([^\s"'`,;&]{6,})"#);
     static ref ASSIGNMENT: Regex = re(&format!(
-        r#"(?i)(["']?\b(?:[A-Za-z0-9_\-]{{0,64}}?(?:{CREDENTIAL_WORDS})|(?:[A-Za-z0-9]+[_\-]){{0,8}}id[_\-]?token)s?\b["']?)(\s*(?::|=|=>)\s*)("[^"\r\n]{{0,500}}"|'[^'\r\n]{{0,500}}'|`[^`\r\n]{{0,500}}`|[^\s,;}}\]"'`]{{1,500}})"#
+        r#"(?i)(["']?(?:{CREDENTIAL_WORDS}|id[_\-]?token)s?\b["']?)(\s*(?::|=|=>)\s*)("[^"\r\n]{{0,500}}"|'[^'\r\n]{{0,500}}'|`[^`\r\n]{{0,500}}`|[^\s,;}}\]"'`]{{1,500}})"#
     ));
     static ref PROVIDER_KEY: Regex = re(r"\b(?:sk-(?:proj-|ant-(?:api\d{2}-)?|svcacct-|admin-)?[A-Za-z0-9_\-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abposr]-[A-Za-z0-9\-]{10,}|(?:AKIA|ASIA)[A-Z0-9]{16}|AIza[0-9A-Za-z_\-]{30,}|glpat-[A-Za-z0-9_\-]{16,}|hf_[A-Za-z0-9]{20,}|npm_[A-Za-z0-9]{30,}|SG\.[A-Za-z0-9_\-]{16,}\.[A-Za-z0-9_\-]{16,}|(?:sk|rk)_live_[A-Za-z0-9]{16,}|shp(?:at|ss|ca)_[A-Za-z0-9]{16,})\b");
     static ref SK_PREFIX: Regex = re(r"^sk-(?:proj-|ant-(?:api\d{2}-)?|svcacct-|admin-)?");
@@ -594,12 +594,22 @@ pub fn mask_credentials_units(units: &[u16]) -> Vec<u16> {
         });
     }
     {
-        t = replace_all(t, &ASSIGNMENT, |src, caps, o| {
+        t = replace_checked(t, &ASSIGNMENT, |src, caps, o| {
             let (k0, k1) = span(caps, 1).expect("key");
+            // `(?<![A-Za-z0-9])id[_-]?token`: "valid_token" is not "val" + "id_token".
+            // No credential word starts with "id", and a key that starts with a
+            // quote has the quote before its "id", so only k0 needs the check.
+            if k0 > 0 && starts_ci(&src.h[k0..k1], "id") && src.h[k0 - 1].is_ascii_alphanumeric() {
+                return Step::Retry;
+            }
             let (s0, s1) = span(caps, 2).expect("sep");
             let (v0, v1) = span(caps, 3).expect("value");
+            let end = caps.get(0).expect("group 0").end();
             if !assigned_secret(&src.h[s0..s1], &src.h[v0..v1]) {
-                return false;
+                return Step::Take {
+                    end,
+                    replaced: false,
+                };
             }
             o.push_range(src, k0, k1);
             o.push_range(src, s0, s1);
@@ -610,7 +620,10 @@ pub fn mask_credentials_units(units: &[u16]) -> Vec<u16> {
             } else {
                 o.push_ascii(MASK);
             }
-            true
+            Step::Take {
+                end,
+                replaced: true,
+            }
         });
     }
     {
@@ -1021,7 +1034,6 @@ pub struct PiiSpan {
     /// UTF-16 code-unit offsets, as `PiiMatch.start` / `end`.
     pub start: u32,
     pub end: u32,
-    pub value: String,
 }
 
 /// `findPii` (pii-redactor.ts), same spans in the same order.
@@ -1030,12 +1042,7 @@ pub fn native_find_pii(text: JsString) -> napi::Result<Vec<PiiSpan>> {
     let units = units_of(text)?;
     Ok(find_pii_units(&units)
         .into_iter()
-        .map(|(kind, start, end)| PiiSpan {
-            kind,
-            start,
-            end,
-            value: String::from_utf16_lossy(&units[start as usize..end as usize]),
-        })
+        .map(|(kind, start, end)| PiiSpan { kind, start, end })
         .collect())
 }
 

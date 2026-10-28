@@ -165,6 +165,12 @@ function firstDiff(t: string) {
     return { input: at(t), ts: at(a), native: at(b) };
 }
 
+// CI's native job sets ATLAS_REQUIRE_NATIVE=true after building the binary, so a
+// load failure there fails instead of skipping.
+it.runIf(process.env.ATLAS_REQUIRE_NATIVE === "true")("the native binary is loaded (ATLAS_REQUIRE_NATIVE)", () => {
+    expect(HAS_NATIVE).toBe(true);
+});
+
 describe.skipIf(!HAS_NATIVE)("pii_protect.rs parity", () => {
     it(`maskCredentials is byte-identical on ${CORPUS.length} inputs`, () => {
         const diverged = CORPUS.filter((t) => nativeMaskCredentials(t) !== _maskCredentialsTs(t));

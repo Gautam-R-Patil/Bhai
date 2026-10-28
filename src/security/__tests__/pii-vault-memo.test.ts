@@ -65,10 +65,29 @@ describe("single-pass known-value masking", () => {
         expect(protect("order 1111112 and 9111111")).toBe("order 1111112 and 9111111"); // short: whole tokens only
     });
 
-    it("handle text is never masked again", async () => {
+    it("an issued handle is never masked again; handle-shaped text is not a way past the vault", async () => {
         const { protect } = await freshVault();
+        expect(protect("Your OTP is 1")).toBe("Your OTP is 1"); // too short to be an OTP
         expect(protect("Your OTP is 1234")).toBe("Your OTP is [OTP_1]");
-        expect(protect("see [OTP_1234] and [CARD_1] then 1234")).toBe("see [OTP_1234] and [CARD_1] then [OTP_1]");
+        expect(protect("pay with 4111111111111111 now")).toBe("pay with [CARD_1] now");
+        expect(protect("see [OTP_1] and [CARD_1] then 1234")).toBe("see [OTP_1] and [CARD_1] then [OTP_1]");
+        // Never issued: the digits inside are the value itself.
+        expect(protect('{"code":"[OTP_1234]"}')).toBe('{"code":"[OTP_[OTP_1]]"}');
+        expect(protect('{"c":"[CARD_4111111111111111]"}')).toBe('{"c":"[CARD_[CARD_1]]"}');
+    });
+
+    it("a glued short value doesn't hide a known long value that starts inside it", async () => {
+        const { protect } = await freshVault();
+        expect(protect("Your OTP is 9041")).toBe("Your OTP is [OTP_1]");
+        expect(protect("pay with 4111111111111111 now")).toBe("pay with [CARD_1] now");
+        expect(protect("ref x904111111111111111 end")).toBe("ref x90[CARD_1] end");
+    });
+
+    it("a short value nested in a longer short value is still masked as a whole token", async () => {
+        const { protect } = await freshVault();
+        expect(protect('document.cookie = "x=1234"', { credentials: false })).toBe('document.cookie = "[COOKIE_1]"');
+        expect(protect("Your OTP is 1234")).toBe("Your OTP is [OTP_1]");
+        expect(protect("ax=1234 ")).toBe("ax=[OTP_1] "); // "x=1234" is glued; "1234" alone is a token
     });
 
     it("eviction takes the dropped value's forms out of the regex", async () => {

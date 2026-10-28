@@ -200,13 +200,14 @@ const PATTERNS: Pattern[] = [
         // Generic scheme://user:PASSWORD@host (http/https/ftp/etc.). The
         // `(?!\[REDACTED:)` after the colon stops this from re-matching a
         // DB password DB_URI_PASSWORD already turned into a marker.
-        // Scheme bounded to 31 chars (same bound in secrets_sanitizer.rs): an
-        // unbounded one rescanned "a-a-a-…" from every word boundary (2s at 40KB).
-        // It sits in a lookbehind so the scan starts only at "://"; the scheme
-        // stays outside the match, which leaves the output unchanged (the
-        // replacement kept it verbatim, and a match always ends at "@", which
-        // the lookbehind can't cross).
-        regex: /(?<=\b[a-z][a-z0-9+.-]{0,30})(:\/\/[^\s:@/]+:)(?!\[REDACTED:)([^@\s/]+)(@)/g,
+        // The scheme is checked by a lookbehind after the literal "://", so
+        // the scan only stops at "://" and looks back to the previous ":" at
+        // most (linear; an unbounded scheme at the front rescanned "a-a-a-…"
+        // from every word boundary: 2s at 40KB). No length bound on the
+        // scheme. It stays outside the match, which leaves the output
+        // unchanged: the replacement kept it verbatim, and a match always ends
+        // at "@", which a scheme can't contain.
+        regex: /(:\/\/(?<=\b[a-z][a-z0-9+.-]*:\/\/)[^\s:@/]+:)(?!\[REDACTED:)([^@\s/]+)(@)/g,
         replace: (_full, pre, _pw, at) => `${pre}[REDACTED:URL_USERINFO]${at}`,
     },
 
@@ -260,6 +261,17 @@ const PATTERNS: Pattern[] = [
     },
 ];
 
+/** End of the last match of `re`, overlapping ones included ("-----END …-----END …-----" shares its dashes); -1 if none. */
+function lastEnd(text: string, re: RegExp): number {
+    let end = -1;
+    re.lastIndex = 0;
+    for (let m = re.exec(text); m; m = re.exec(text)) {
+        end = m.index + m[0].length;
+        re.lastIndex = m.index + 1;
+    }
+    return end;
+}
+
 /**
  * TS implementation of the sanitizer. The exported `sanitizeSecrets` routes
  * to native by default and falls back here when native is unavailable,
@@ -283,8 +295,7 @@ export function _sanitizeSecretsTs(input: string): SanitizeResult {
         let hits = 0;
         let tail = "";
         if (endsBy) {
-            let end = -1;
-            for (const m of current.matchAll(endsBy)) end = m.index + m[0].length;
+            const end = lastEnd(current, endsBy);
             if (end < 0) continue;
             tail = current.slice(end);
             current = current.slice(0, end);
@@ -360,8 +371,7 @@ export function _containsSecretsTs(input: string): boolean {
     for (const { regex, endsBy } of PATTERNS) {
         let text = input;
         if (endsBy) {
-            let end = -1;
-            for (const m of input.matchAll(endsBy)) end = m.index + m[0].length;
+            const end = lastEnd(input, endsBy);
             if (end < 0) continue;
             text = input.slice(0, end);
         }
