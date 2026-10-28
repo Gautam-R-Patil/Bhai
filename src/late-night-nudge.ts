@@ -70,8 +70,15 @@ function isNightClock(hourStr: string | undefined, suffix: string | undefined): 
     return h >= 9 || h <= 3; // o'clock
 }
 
+// Unmistakable "go to sleep" remarks count whatever else the sentence mentions
+// ("close the laptop and go to sleep"): a missed remark means more nagging, a
+// false hit only mutes unprompted time talk for the night.
+const SLEEP_TALK_RE =
+    /\b(?:go(?:ing)? (?:to )?(?:sleep|bed)|get some (?:sleep|shut-?eye)|past (?:your )?bedtime|past midnight|call it a night|time to crash|run(?:ning)? on empty|up (?:this|so) late|\d{1,2} baj (?:gaye|rahe)|so ja(?:o)?)\b/i;
+
 /** True when `reply` remarks on the user being up late (not a time answer, device or opening hours). */
 export function isLateHourRemark(reply: string, userText = ""): boolean {
+    if (SLEEP_TALK_RE.test(reply) && !/\b(?:kids?|baby|dog|cat|mac|computer|laptop|server|device|phone|display|screen|spotify|music|timer|app|tv)\s+(?:is |will |should |needs? to |can |also )?go(?:es|ing)? (?:to )?(?:sleep|bed)/i.test(reply)) return true;
     const clockAllowed = !TIME_QUESTION_RE.test(userText) && !SCHEDULE_RE.test(reply);
     for (const sentence of reply.split(/(?<=[.!?…])\s+|\n+/)) {
         const s = sentence.trim();

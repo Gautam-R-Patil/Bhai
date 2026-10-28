@@ -2621,8 +2621,9 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             if (tone) iterationMessages.push({ role: "system", content: tone });
         }
         // identity.md allows one late-hour remark per night; the model can't
-        // remember it made one, so say so (owner only, once per turn).
-        if (iterations === 1 && channelContext?.isOwner === true) {
+        // remember it made one, so say so (owner only; every step, since the
+        // reply is usually written after the tool steps).
+        if (channelContext?.isOwner === true) {
             const lateNote = lateNightNote();
             if (lateNote) iterationMessages.push({ role: "system", content: lateNote });
         }
