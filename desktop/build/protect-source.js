@@ -641,10 +641,12 @@ exports.default = async function afterPack(context) {
         const nodeFileName = path.basename(nativeNodeFile);
         fs.copyFileSync(nativeNodeFile, path.join(destNativeDir, nodeFileName));
 
-        // Copy the index.js loader
-        const indexJs = path.join(nativeDir, "index.js");
-        if (fs.existsSync(indexJs)) {
-            fs.copyFileSync(indexJs, path.join(destNativeDir, "index.js"));
+        // Copy the loader: index.js (fail-open front) + binding.js (napi-generated)
+        for (const loader of ["index.js", "binding.js"]) {
+            const src = path.join(nativeDir, loader);
+            if (fs.existsSync(src)) {
+                fs.copyFileSync(src, path.join(destNativeDir, loader));
+            }
         }
 
         // index.d.ts is intentionally NOT copied — TypeScript declarations are

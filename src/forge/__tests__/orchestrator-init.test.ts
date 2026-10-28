@@ -55,18 +55,15 @@ describe("orchestrator boot", () => {
     });
 
     it("initForge fails open: SQLite error logs but does not throw", async () => {
-        // Force an open failure by making the data dir read-only
-        const dataDir = join(process.env.ATLAS_HOME!, "data");
-        mkdirSync(dataDir, { recursive: true });
-        const fs = await import("node:fs");
-        fs.chmodSync(dataDir, 0o555);
+        // Force an open failure by putting a file where the data dir should be.
+        // (A read-only chmod doesn't stop writes on Windows, or for root.)
+        mkdirSync(process.env.ATLAS_HOME!, { recursive: true });
+        writeFileSync(join(process.env.ATLAS_HOME!, "data"), "");
 
         const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
         await initForge({ embedFn: async () => new Float32Array(384) });
         expect(isForgeReady()).toBe(false);
         expect(consoleErrorSpy).toHaveBeenCalled();
         consoleErrorSpy.mockRestore();
-
-        fs.chmodSync(dataDir, 0o755);
     });
 });

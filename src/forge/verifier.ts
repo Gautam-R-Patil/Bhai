@@ -1,7 +1,7 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 
 import { mkdir, writeFile } from "node:fs/promises";
-import { join, resolve as resolvePath } from "node:path";
+import { join, resolve as resolvePath, sep } from "node:path";
 import { isPathHardDenied, parseCapabilities, validateCapabilities } from "./capabilities.js";
 import { type CriticFinding, runCompileCheck, runSastCritic } from "./critics.js";
 import { buildDiagnosePrompt } from "./prompt-builder.js";
@@ -356,7 +356,7 @@ async function writeFailureReport(
     const fileName = `${ts}_${opts.slug}.json`;
     const baseResolved = resolvePath(opts.failedReportDir);
     const fullPath = resolvePath(opts.failedReportDir, fileName);
-    if (!fullPath.startsWith(baseResolved + "/") && fullPath !== baseResolved) {
+    if (!fullPath.startsWith(baseResolved + sep) && fullPath !== baseResolved) {
         throw new Error(`refusing to write failure report — path escapes failedReportDir: ${fullPath}`);
     }
     await mkdir(opts.failedReportDir, { recursive: true });

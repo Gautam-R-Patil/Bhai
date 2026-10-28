@@ -25,7 +25,9 @@ function mkMorningIntent(kind: string, idSuffix: string): ProactiveIntent {
     };
 }
 
-describe("Observer morning fan-in (stub)", () => {
+// The Observer is a front for the Rust scheduler, with no JS fallback (boot skips it
+// when native is missing). Runs only where the native binary is built.
+describe.skipIf(typeof native.schedulerEnqueue !== "function")("Observer morning fan-in (stub)", () => {
     let observer: Observer;
     beforeEach(() => {
         observer = new Observer({ llm: null, configPath: "/tmp/nx.json" });

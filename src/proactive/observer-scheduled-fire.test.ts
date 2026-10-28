@@ -25,7 +25,9 @@ function mkIntent(overrides: Partial<ProactiveIntent> = {}): ProactiveIntent {
     };
 }
 
-describe("Observer scheduled-fire routing", () => {
+// The Observer is a front for the Rust scheduler, with no JS fallback (boot skips it
+// when native is missing). Runs only where the native binary is built.
+describe.skipIf(typeof native.schedulerEnqueue !== "function")("Observer scheduled-fire routing", () => {
     let observer: Observer;
 
     beforeEach(() => {

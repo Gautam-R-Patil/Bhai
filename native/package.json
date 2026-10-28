@@ -20,8 +20,8 @@
     }
   },
   "scripts": {
-    "build": "napi build --platform --release",
-    "build:debug": "napi build --platform",
+    "build": "napi build --platform --release --js binding.js",
+    "build:debug": "napi build --platform --js binding.js",
     "test": "cargo test"
   },
   "devDependencies": {
@@ -32,6 +32,7 @@
   },
   "files": [
     "index.js",
+    "binding.js",
     "index.d.ts",
     "*.node"
   ]

@@ -3,7 +3,7 @@
 // See LICENSE.md for details.
 
 import { describe, it, expect } from "vitest";
-import { selectModel, selectForToolSynthesis, MODEL_REGISTRY } from "../../model-router.js";
+import { selectModel, selectForToolSynthesis, MODEL_REGISTRY, isNativeRouterLoaded } from "../../model-router.js";
 
 describe("tool_synthesis task type", () => {
     it("selectModel accepts taskType='tool_synthesis'", () => {
@@ -11,7 +11,9 @@ describe("tool_synthesis task type", () => {
         expect(r.modelId).toBeTruthy();
     });
 
-    it("synthesis routes to Pro tier (tier <= 2)", () => {
+    // Tiers come from the native registry; without the binary MODEL_REGISTRY is
+    // empty and every task gets the Haiku fallback, so there is no tier to check.
+    it.skipIf(!isNativeRouterLoaded())("synthesis routes to Pro tier (tier <= 2)", () => {
         const r = selectModel({ taskType: "tool_synthesis" });
         const info = MODEL_REGISTRY[r.modelId];
         expect(info).toBeDefined();

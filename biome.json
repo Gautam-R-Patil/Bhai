@@ -11,6 +11,7 @@
             "!!**/dist",
             "!!**/.next",
             "!!**/native/target",
+            "!!**/native/binding.js",
             "!!**/desktop/node_modules",
             "!!**/desktop/dist",
             "!!**/overlay-app/node_modules",

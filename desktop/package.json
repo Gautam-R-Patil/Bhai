@@ -125,6 +125,7 @@
                 "to": "bot/native",
                 "filter": [
                     "index.js",
+                    "binding.js",
                     "*.node",
                     "package.json"
                 ]
