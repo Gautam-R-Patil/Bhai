@@ -11,7 +11,7 @@
     "postinstall": "node -e \"const fs=require('fs');try{fs.chmodSync('.env.local',0o600);console.log('[postinstall] chmod 600 .env.local');}catch(e){if(e.code!=='ENOENT')console.warn('[postinstall] chmod failed:',e.message);}\""
   },
   "dependencies": {
-    "next": "^14.2.35",
+    "next": "^16.4.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "convex": "^1.17.4",
