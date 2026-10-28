@@ -69,6 +69,7 @@ const JWT = /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g
 const PEM = /-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z]+ )?PRIVATE KEY-----/g;
 const PEM_END = /-----END (?:[A-Z]+ )?PRIVATE KEY-----/g;
 // Scheme bounded to 31 chars: an unbounded one rescanned "x.x.x.…" from every boundary.
+// Fails safe: a URL not parked gets the credential rules, so a longer scheme only masks more.
 const URL_SPAN = /\b[a-z][a-z0-9+.-]{0,30}:\/\/[^\s"'<>]+/gi;
 
 /**

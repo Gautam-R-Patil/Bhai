@@ -50,6 +50,7 @@ fn re(pattern: &str) -> Regex {
 const CREDENTIAL_WORDS: &str = r"pass(?:word|wd|phrase)|api[_-]?key|apikey|access[_-]?key|account[_-]?key|accountkey|storage[_-]?key|private[_-]?key|signing[_-]?key|encryption[_-]?key|master[_-]?key|secret[_-]?key|client[_-]?secret|app[_-]?secret|auth[_-]?token|access[_-]?token|refresh[_-]?token|session[_-]?token|totp[_-]?(?:seed|secret)|otp[_-]?secret|credentials?";
 
 lazy_static! {
+    // Scheme bounded to 31 chars as in credential-mask.ts (parity); fails safe: an unparked URL is masked more.
     static ref URL_SPAN: Regex = re(r#"(?i)\b[a-z][a-z0-9+.\-]{0,30}://[^\s"'<>]+"#);
     static ref URL_SLOT: Regex = re(r"\x00U(\d+)\x00");
     static ref PEM: Regex = re(r"(?s)-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----.*?-----END (?:[A-Z]+ )?PRIVATE KEY-----");

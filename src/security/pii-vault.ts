@@ -33,14 +33,13 @@ const valueByHandle = new Map<string, string>(); // handle → value
 /** Bumped on every vault add and evict: what protect() returns for a text only changes with it. */
 let generation = 0;
 
-// One regex over every form of every known value, longest first, rebuilt when
-// the vault changes. Handle text ([OTP_12]) is its first alternative so a short
-// value ("12") is never masked inside an issued handle; handle-shaped text that
-// was never issued ("[OTP_9041]") has its inside masked, so it can't carry the
-// value 9041 past the vault. Short forms (<8 chars) only match as whole tokens,
-// inside the regex: a glued short form must not consume its span, or a longer
-// known value starting inside it ("x9041" + "4111…") is never tried.
-const HANDLE_TEXT = String.raw`\[(?:CARD|AADHAAR|UPI|OTP|COOKIE)_\d+\]`;
+// One regex over every form of every known value, rebuilt when the vault
+// changes. It is a lookahead, so it reports every position a form starts at
+// (the longest form there) — overlapping ones too: a single left-to-right pass
+// let a value that starts earlier ("904111" before "4111 1111 1111 1111")
+// consume the start of a stored card and leak the rest. Short forms (<8 chars)
+// only count as whole tokens, inside the regex.
+const HANDLE_RE = /\[(?:CARD|AADHAAR|UPI|OTP|COOKIE)_\d+\]/g;
 const handleByForm = new Map<string, string>();
 let formsRe: RegExp | null = null;
 let formsGen = -1;
@@ -58,11 +57,57 @@ function knownFormsRe(): RegExp | null {
     const long = forms.filter((f) => f.length >= SHORT_FORM).sort(byLength).map(escapeRe);
     const short = forms.filter((f) => f.length < SHORT_FORM).sort(byLength).map(escapeRe);
     // Every long form is longer than every short one, so longs-then-shorts stays longest first.
-    // ponytail: one generic handle pattern, not the 500 issued handles (3x slower to compile).
-    const alts = [HANDLE_TEXT, ...long];
-    if (short.length) alts.push(String.raw`(?<![\p{L}\p{N}])(?:${short.join("|")})(?![\p{L}\p{N}])`);
-    formsRe = forms.length ? new RegExp(alts.join("|"), "gu") : null;
+    if (short.length) long.push(String.raw`(?<![\p{L}\p{N}])(?:${short.join("|")})(?![\p{L}\p{N}])`);
+    formsRe = forms.length ? new RegExp(`(?=(${long.join("|")}))`, "gu") : null;
     return formsRe;
+}
+
+type Span = [start: number, end: number, replacement: string];
+
+/**
+ * The spans one pass replaces, sorted and disjoint. Every occurrence of every
+ * form is covered: overlapping occurrences merge into one span, written as the
+ * handles of the occurrences that cover it ("[OTP_1][CARD_1]"). An issued
+ * handle ([OTP_12]) stays as written, and a form lying wholly inside handles
+ * ("12") is not a value; handle-shaped text never issued ("[OTP_9041]") is
+ * plain text, so the 9041 in it is masked. Exported for the property test.
+ */
+export function knownValueSpans(text: string): Span[] {
+    const re = knownFormsRe();
+    if (!re) return [];
+    const handles: Span[] = [];
+    for (const m of text.matchAll(HANDLE_RE))
+        if (valueByHandle.has(m[0])) handles.push([m.index, m.index + m[0].length, m[0]]);
+    const occ: Span[] = [];
+    let h = 0;
+    for (const m of text.matchAll(re)) {
+        const s = m.index;
+        const e = s + m[1].length;
+        while (h < handles.length && handles[h][1] <= s) h++;
+        let at = s; // walk the handles from s: does any char of [s, e) lie outside them?
+        for (let k = h; k < handles.length && handles[k][0] <= at && at < e; k++) at = handles[k][1];
+        if (at < e) occ.push([s, e, handleByForm.get(m[1]) as string]);
+    }
+    if (!occ.length) return [];
+    occ.push(...handles);
+    occ.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+    // Greedy interval cover of each overlapping run: from its start, take the
+    // occurrence reaching furthest, until nothing overlaps the covered end.
+    const out: Span[] = [];
+    for (let i = 0; i < occ.length; ) {
+        const [start, first, rep] = occ[i++];
+        let end = first;
+        let r = rep;
+        for (;;) {
+            let best = -1;
+            for (; i < occ.length && occ[i][0] < end; i++) if (occ[i][1] > end && (best < 0 || occ[i][1] > occ[best][1])) best = i;
+            if (best < 0) break;
+            end = occ[best][1];
+            r += occ[best][2];
+        }
+        out.push([start, end, r]);
+    }
+    return out;
 }
 
 /**
@@ -70,17 +115,22 @@ function knownFormsRe(): RegExp | null {
  * "482913") where the patterns no longer see an OTP: hide every known value, in
  * every form a page, URL, form body, JSON or base64 can show it (value-forms.ts).
  * Short forms (<8 chars) only as whole tokens: "1000" must not eat the middle
- * of "10000" or "port 31000".
+ * of "10000" or "port 31000". Repeated until nothing changes: masking a card can
+ * leave a short value glued to it ("1234" in "12344111…") standing alone.
+ * Exported for the property test.
  */
-function maskKnownValues(text: string): string {
-    const re = knownFormsRe();
-    if (!re) return text;
-    return text.replace(re, (m: string) => {
-        const handle = handleByForm.get(m);
-        if (handle) return handle;
-        // Handle text: an issued one stays; a made-up one is masked inside (no "[" in there, so one level).
-        return valueByHandle.has(m) ? m : `[${maskKnownValues(m.slice(1, -1))}]`;
-    });
+export function maskKnownValues(text: string): string {
+    for (let prev = ""; prev !== text; ) {
+        prev = text;
+        let out = "";
+        let pos = 0;
+        for (const [s, e, rep] of knownValueSpans(text)) {
+            out += text.slice(pos, s) + rep;
+            pos = e;
+        }
+        if (pos) text = out + text.slice(pos);
+    }
+    return text;
 }
 
 // protect() is a pure function of (text, credentials, vault generation), and an
@@ -167,8 +217,6 @@ export function protect(text: string, opts: { credentials?: boolean } = {}): str
     if (MEMO && generation === gen) remember(text, slot, out);
     return out;
 }
-
-const HANDLE_RE = /\[(?:CARD|AADHAAR|UPI|OTP|COOKIE)_\d+\]/g;
 
 export function reveal(text: string): string {
     return text.replace(HANDLE_RE, (h) => valueByHandle.get(h) ?? h);
