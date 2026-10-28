@@ -194,6 +194,7 @@ desktop/hostinger-upload/
 !src/security/__tests__/
 !src/security/__tests__/redos.test.ts
 !src/security/__tests__/pii-vault-memo.test.ts
+!src/security/pii-protect.parity.test.ts
 !src/voice/live/pcm-vad.test.ts
 !src/agents/defang-plan-injection.test.ts
 !src/tools/identity-update.test.ts

@@ -17,6 +17,8 @@
 // URLs are left as written: navigation needs them whole, and the secrets
 // sanitizer handles credentials inside URLs.
 
+import { nativeMaskCredentials } from "../native/index.js";
+
 const MASK = "[redacted]";
 
 /** A value that looks like a secret: long enough, not a word, path, call or flag. */
@@ -104,7 +106,26 @@ const assignedSecret = (sep: string, value: string) => {
     return true;
 };
 
+// ATLAS_NATIVE_PROTECT=true: the linear-time Rust port (native/src/pii_protect.rs),
+// byte-identical (pii-protect.parity.test.ts). Opt-in until its bench clears the
+// bar; any native error falls back to the TS below.
+const NATIVE_PROTECT = process.env.ATLAS_NATIVE_PROTECT === "true";
+
 export function maskCredentials(text: string): string {
+    if (!text || text.length < 6) return text;
+    if (NATIVE_PROTECT) {
+        try {
+            const out = nativeMaskCredentials(text);
+            if (out !== null) return out;
+        } catch {
+            // fall through to TS
+        }
+    }
+    return _maskCredentialsTs(text);
+}
+
+/** The TS implementation; exported for the parity test. */
+export function _maskCredentialsTs(text: string): string {
     if (!text || text.length < 6) return text;
     // Park URLs so no rule touches them, then put them back.
     const urls: string[] = [];

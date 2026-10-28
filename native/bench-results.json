@@ -1,39 +1,199 @@
 {
-  "recordedAt": "2026-05-12T16:35:10.903Z",
-  "nodeVersion": "v24.10.0",
+  "recordedAt": "2026-10-28T19:50:25.869Z",
+  "nodeVersion": "v26.8.2",
   "platform": "darwin-arm64",
   "results": [
     {
       "module": "spreading",
       "case": "5-node line",
-      "tsMs": 3.5766670000000005,
-      "nativeMs": 20.865707999999998,
-      "speedup": 0.17141364194303882,
+      "tsMs": 14.158999999999992,
+      "nativeMs": 141.28108400000008,
+      "speedup": 0.10021865347522378,
       "iterations": 5000
     },
     {
       "module": "spreading",
       "case": "50-node dense",
-      "tsMs": 25.960542000000004,
-      "nativeMs": 479.34995899999996,
-      "speedup": 0.054157805821362356,
+      "tsMs": 450.91091700000004,
+      "nativeMs": 1514.0633329999998,
+      "speedup": 0.29781509608752943,
       "iterations": 5000
     },
     {
       "module": "spreading",
       "case": "150-node dense",
-      "tsMs": 11.424334000000044,
-      "nativeMs": 1179.950375,
-      "speedup": 0.009682046162322756,
+      "tsMs": 46.890249999999924,
+      "nativeMs": 3615.1609580000004,
+      "speedup": 0.01297044600358287,
       "iterations": 5000
     },
     {
       "module": "spreading",
       "case": "500-node dense (caps at 150 activated)",
-      "tsMs": 11.363292000000001,
-      "nativeMs": 3816.1928750000006,
-      "speedup": 0.0029776513850862424,
+      "tsMs": 48.904749999999694,
+      "nativeMs": 6721.644208,
+      "speedup": 0.007275712383257953,
       "iterations": 5000
+    },
+    {
+      "module": "sanitizer",
+      "case": "50B  / 0 secrets (below FFI crossover)",
+      "tsMs": 15.175708000000668,
+      "nativeMs": 9.326666000000841,
+      "speedup": 1.627131066985705,
+      "iterations": 5000
+    },
+    {
+      "module": "sanitizer",
+      "case": "150B / 0 secrets (at FFI crossover)",
+      "tsMs": 21.137542000000394,
+      "nativeMs": 12.766333000001396,
+      "speedup": 1.6557254146510265,
+      "iterations": 5000
+    },
+    {
+      "module": "sanitizer",
+      "case": "1KB  / 0 secrets",
+      "tsMs": 59.29149999999936,
+      "nativeMs": 24.148000000001048,
+      "speedup": 2.4553379161834017,
+      "iterations": 5000
+    },
+    {
+      "module": "sanitizer",
+      "case": "1KB  / 1 secret",
+      "tsMs": 61.56633300000067,
+      "nativeMs": 28.760791999999128,
+      "speedup": 2.1406341313550246,
+      "iterations": 5000
+    },
+    {
+      "module": "sanitizer",
+      "case": "10KB / 0 secrets",
+      "tsMs": 444.8337080000001,
+      "nativeMs": 138.23500000000058,
+      "speedup": 3.217952819474071,
+      "iterations": 5000
+    },
+    {
+      "module": "sanitizer",
+      "case": "10KB / 5 secrets",
+      "tsMs": 426.13004100000035,
+      "nativeMs": 171.18933300000026,
+      "speedup": 2.489232439500186,
+      "iterations": 5000
+    },
+    {
+      "module": "sanitizer",
+      "case": "100KB / 10 secrets",
+      "tsMs": 412.11641600000075,
+      "nativeMs": 138.6339590000007,
+      "speedup": 2.9726945617992393,
+      "iterations": 500
+    },
+    {
+      "module": "sanitizer",
+      "case": "200KB / 20 secrets",
+      "tsMs": 905.7223750000012,
+      "nativeMs": 273.23512499999924,
+      "speedup": 3.3148094521156595,
+      "iterations": 500
+    },
+    {
+      "module": "mask_credentials",
+      "case": "1KB tool result",
+      "tsMs": 176.83274999999776,
+      "nativeMs": 68.41241699999955,
+      "speedup": 2.5848048900245537,
+      "iterations": 5000
+    },
+    {
+      "module": "mask_credentials",
+      "case": "10KB tool result",
+      "tsMs": 308.2549999999974,
+      "nativeMs": 114.63958399999683,
+      "speedup": 2.6889054307804003,
+      "iterations": 1000
+    },
+    {
+      "module": "mask_credentials",
+      "case": "200KB tool result",
+      "tsMs": 263.7378329999992,
+      "nativeMs": 83.6560419999987,
+      "speedup": 3.1526453642165295,
+      "iterations": 50
+    },
+    {
+      "module": "mask_credentials",
+      "case": "adversarial 40KB (a-a-… + password=)",
+      "tsMs": 545.5822500000031,
+      "nativeMs": 6.50249999999869,
+      "speedup": 83.90346020762983,
+      "iterations": 50
+    },
+    {
+      "module": "mask_credentials",
+      "case": "adversarial 40KB (x.x.… + ://)",
+      "tsMs": 238.51941699999952,
+      "nativeMs": 6.11108299999978,
+      "speedup": 39.03062959544292,
+      "iterations": 50
+    },
+    {
+      "module": "mask_credentials",
+      "case": "adversarial 200KB (a-a-… + password=)",
+      "tsMs": 663.2321669999983,
+      "nativeMs": 6.232499999998254,
+      "speedup": 106.4151090253003,
+      "iterations": 10
+    },
+    {
+      "module": "find_pii",
+      "case": "1KB tool result",
+      "tsMs": 134.43066700000054,
+      "nativeMs": 33.20745800000077,
+      "speedup": 4.048207092515104,
+      "iterations": 5000
+    },
+    {
+      "module": "find_pii",
+      "case": "10KB tool result",
+      "tsMs": 246.65758399999686,
+      "nativeMs": 81.43133300000045,
+      "speedup": 3.0290254980843248,
+      "iterations": 1000
+    },
+    {
+      "module": "find_pii",
+      "case": "200KB tool result",
+      "tsMs": 207.8700409999983,
+      "nativeMs": 56.35066699999879,
+      "speedup": 3.6888656703922025,
+      "iterations": 50
+    },
+    {
+      "module": "find_pii",
+      "case": "adversarial 40KB (a-a-… + password=)",
+      "tsMs": 24.856667000000016,
+      "nativeMs": 6.584875000000466,
+      "speedup": 3.7748122781371336,
+      "iterations": 50
+    },
+    {
+      "module": "find_pii",
+      "case": "adversarial 40KB (x.x.… + ://)",
+      "tsMs": 22.04949999999735,
+      "nativeMs": 7.508915999998862,
+      "speedup": 2.9364424905007183,
+      "iterations": 50
+    },
+    {
+      "module": "find_pii",
+      "case": "adversarial 200KB (a-a-… + password=)",
+      "tsMs": 20.391208000000915,
+      "nativeMs": 6.480124999998225,
+      "speedup": 3.146730657202832,
+      "iterations": 10
     }
   ]
 }

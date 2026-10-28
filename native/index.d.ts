@@ -3110,6 +3110,17 @@ export declare function sanitizeSecrets(input: string): SanitizeResultNapi
  * per the TS semantics. Short-circuits on the first non-redacted match.
  */
 export declare function containsSecrets(input: string): boolean
+/** `maskCredentials` (credential-mask.ts), byte-identical, linear time. */
+export declare function nativeMaskCredentials(text: string): string
+export interface PiiSpan {
+  kind: string
+  /** UTF-16 code-unit offsets, as `PiiMatch.start` / `end`. */
+  start: number
+  end: number
+  value: string
+}
+/** `findPii` (pii-redactor.ts), same spans in the same order. */
+export declare function nativeFindPii(text: string): Array<PiiSpan>
 /**
  * Flatten an AX dump's interactive elements. Input/output are JSON-encoded strings.
  *

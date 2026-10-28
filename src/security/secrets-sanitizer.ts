@@ -43,9 +43,10 @@ export interface SanitizeResult {
 
 // Native sanitizer is DEFAULT ON. Set ATLAS_NO_NATIVE_SANITIZER=true to force
 // the TS fallback (e.g. for debugging or on a platform without the binary).
-// Bench (scripts/bench-native.ts) shows native at 1.44x–2.00x of TS on inputs
-// from 50B to 100KB after the sequential per-pattern Cow<&str> rewrite —
-// zero allocation on no-match passes, one allocation per pattern that fires.
+// Bench (scripts/bench-native.ts, re-measured Oct 2026) shows native at
+// 1.9x–3.4x of TS on inputs from 1KB to 200KB (1.6x at 50B) with the
+// sequential per-pattern Cow<&str> rewrite — zero allocation on no-match
+// passes, one allocation per pattern that fires.
 const NATIVE_DISABLED = process.env.ATLAS_NO_NATIVE_SANITIZER === "true";
 
 interface Pattern {
@@ -321,7 +322,7 @@ export function _sanitizeSecretsTs(input: string): SanitizeResult {
  * typed marker like `[REDACTED:ANTHROPIC_API_KEY]`.
  *
  * Routes through the native Rust impl by default — bench shows native at
- * 1.44x–2.00x of TS across input sizes from 50B to 100KB. Force the TS
+ * 1.9x–3.4x of TS across input sizes from 1KB to 200KB. Force the TS
  * fallback with `ATLAS_NO_NATIVE_SANITIZER=true` (debugging / missing binary).
  * Native and TS paths are byte-identical (parity battery in
  * `secrets-sanitizer.parity.test.ts`); falls back to TS on any native error.

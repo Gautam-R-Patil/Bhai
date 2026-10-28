@@ -50,6 +50,7 @@ mod prompt_evaluator;
 mod query_classifier;
 mod reflection_core;
 mod research_engine;
+mod pii_protect;
 mod secrets_sanitizer;
 mod security;
 mod session_memory;

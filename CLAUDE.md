@@ -270,7 +270,9 @@ Default ON unless marked opt-IN. Set `"true"` to disable. `grep -rnE "process\.e
 
 **Native ports (opt-IN unless noted):**
 - `ATLAS_NATIVE_SPREADING` — opt-IN; SAN BFS (`native/spreading.rs`). Enable only for >1000-node fan-out (FFI dominates ≤150 nodes).
-- `ATLAS_NO_NATIVE_SANITIZER` — disables native `sanitizeSecrets`/`containsSecrets`. Default native ON (1.44x-2.00x vs TS).
+- `ATLAS_NO_NATIVE_SANITIZER` — disables native `sanitizeSecrets`/`containsSecrets`. Default native ON (re-measured Oct 2026: 1.9x-3.4x vs TS at 1KB-200KB after the TS ReDoS fix; 3.9x-7.9x against the pre-fix TS).
+- `ATLAS_NATIVE_PROTECT` — opt-IN; linear-time `maskCredentials`/`findPii` (`pii_protect.rs`), byte-identical (`pii-protect.parity.test.ts`). Flip to `ATLAS_NO_NATIVE_PROTECT` once it is ≥3x the TS at 10KB and 200KB (Oct 2026, loaded machine: mask 2.6x-3.2x, findPii 2.5x-4x; adversarial 200KB 0.6ms vs 66ms).
+- `ATLAS_NO_PROTECT_CACHE=true` — disables the `protect()` memo in `pii-vault.ts` (keyed by text + credential flag + vault generation; ~4M chars). Default ON; a pure memo.
 - `ATLAS_NATIVE_VAD` — opt-IN; live-voice barge-in via libfvad (`pcm_vad.rs`), hybrid-mode only. Needs `vad` cargo feature (`npx napi build --features vad --release`); else RMS fallback. `ATLAS_VAD_MODE` 0-3 (default 2).
 - `ATLAS_NATIVE_AX` — opt-IN; AX flatten/find (`ax_walker.rs`). Enable only for large AX trees (JSON round-trip dominates <200 nodes).
 
@@ -304,7 +306,7 @@ Default ON unless marked opt-IN. Set `"true"` to disable. `grep -rnE "process\.e
 
 Original "more Rust = more speed" plan didn't hold. Captured so contributors don't re-run failed experiments.
 
-**Rust wins (ship):** Multi-pattern regex sweeps over KB-scale inputs — sanitizer fires 23 patterns over 1KB-100KB+; Rust sequential `regex::find_iter` + `Cow<&str>` wins 1.44×-2.00×. Pattern ordering is load-bearing for parity (sequential, NOT alternation); lookahead emulated with post-match prefix check.
+**Rust wins (ship):** Multi-pattern regex sweeps over KB-scale inputs — sanitizer fires 23 patterns over 1KB-200KB; Rust sequential `regex::find_iter` + `Cow<&str>` wins 1.9×-3.4× (re-measured Oct 2026 against the ReDoS-fixed TS; 3.9×-7.9× before it). Linear time is a separate win: V8 regexes backtrack, and `maskCredentials` was quadratic (9s at 40KB) until bounded (`src/security/__tests__/redos.test.ts`). Pattern ordering is load-bearing for parity (sequential, NOT alternation); lookahead emulated with post-match prefix check.
 
 **Rust loses (don't port):**
 - **Hardware-accelerated Node.** `node:crypto` SHA-256 uses OpenSSL + SHA-NI; Rust `sha2` is software-only, 2-4× SLOWER. Codebase-merkle reverted.
