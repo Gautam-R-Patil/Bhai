@@ -69,6 +69,8 @@ async function seedPrompts() {
     { slug: "proactive-composer", file: "proactive-composer.md" },
     { slug: "monitor-rule-parser", file: "monitor-rule-parser.md" },
     { slug: "orchestrator-base", file: "orchestrator-base.md" },
+    { slug: "site-skill-mint", file: "site-skill-mint.md" },
+    { slug: "site-skill-review", file: "site-skill-review.md" },
   ];
 
   console.log("\n📝 Seeding system prompts...\n");

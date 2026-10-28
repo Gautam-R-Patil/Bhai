@@ -12,10 +12,12 @@
 // Guarantees (each has a test in __tests__/runtime.test.ts):
 //   • at most MAX_STEPS skill calls + actions per task, across resumes;
 //   • the 3rd identical action (same op/target/value) aborts before it runs;
-//   • the submit only runs through confirm, with a consent token minted for
+//   • the submit only runs through confirm (the driver also refuses a click,
+//     or an Enter/Space, that reaches a commit, a twin of it or a money-word
+//     submit through another route), with a consent token minted for
 //     exactly this confirm (task, skill version, page, summary, amount, submit),
 //     after the total is re-read unchanged, within the spend cap;
-//   • write-ahead commit mark (ideas from Pomerado, MIT): the checkpoint says
+//   • write-ahead commit mark: the checkpoint says
 //     "sent" before the click, so a submit that timed out is never sent again —
 //     the result says it may have gone through, and the next step is to check;
 //   • the task never leaves the skill's sites (navigate or redirect → off_site);
@@ -42,13 +44,19 @@ export interface Snapshot {
 
 export interface PageDriver {
     snapshot(): Promise<Snapshot>;
-    /** `submit`: the consented commit — the driver may accept one native confirm. */
-    act(action: SiteAction, opts?: { submit?: boolean }): Promise<void>;
+    /**
+     * `submit`: the consented commit — the driver may accept one native confirm.
+     * Otherwise `commits` (the manifest's): the driver refuses, with an
+     * `unconsented_submit` error and before acting, any click (or Enter/Space)
+     * that lands on one of them, a control with the same label, or a money-word
+     * submit, whatever selector the skill used.
+     */
+    act(action: SiteAction, opts?: { submit?: boolean; commits?: SiteAction[] }): Promise<void>;
 }
 
 export type Phase = "search" | "select" | "confirm" | "after_confirm" | "resume";
 export type Status = "options" | "confirm" | "needs_user" | "done" | "failed" | "aborted";
-/** What happened to the order: Pomerado's write_status, in our words. */
+/** What happened to the order. */
 export type WriteStatus = "not_attempted" | "may_have_applied" | "applied";
 
 interface Manifest {
@@ -246,11 +254,12 @@ export async function runSiteTask(opts: {
             for (let attempt = 0; ; attempt++) {
                 try {
                     const n = viaConfirm ? 1 : (a.times ?? 1); // the submit runs once, always
-                    for (let i = 0; i < n; i++) await opts.driver.act(a, viaConfirm ? { submit: true } : undefined);
+                    for (let i = 0; i < n; i++) await opts.driver.act(a, viaConfirm ? { submit: true } : { commits: manifest.commits });
                     task.lastError = undefined;
                     break;
                 } catch (e) {
                     const msg = String((e as Error).message ?? e);
+                    if (msg.startsWith("unconsented_submit")) return end("aborted", { reason: "unconsented_submit" });
                     if (!viaConfirm && attempt < 5 && TRANSIENT.test(msg)) {
                         await new Promise((r) => setTimeout(r, 500 * 2 ** attempt));
                         continue;

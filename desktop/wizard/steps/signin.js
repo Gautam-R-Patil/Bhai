@@ -45,6 +45,29 @@
         const cta = document.createElement("button");
         cta.type = "button";
         cta.className = "btn btn-primary signin-cta";
+        // The terms clickwrap sits on this screen: sign-in unlocks once accepted.
+        const R = window.WizardRouter;
+        const termsApi = window.WizardSteps && window.WizardSteps.terms;
+        const needTerms = !!(R && R.needsTerms && termsApi && R.needsTerms((ctx && ctx.state) || {}));
+        if (needTerms) {
+            cta.disabled = true;
+            // One heading at a time: the terms first, then the sign-in pitch.
+            [eyebrow, title, sub].forEach(function (n) { n.hidden = true; });
+            const termsHost = document.createElement("div");
+            termsHost.className = "signin-terms";
+            section.appendChild(termsHost);
+            termsApi.render(termsHost, {
+                state: ctx && ctx.state,
+                refreshState: ctx && ctx.refreshState,
+                // Accepting doesn't leave the screen: it unlocks sign-in.
+                onAdvance: function () {
+                    termsHost.remove();
+                    [eyebrow, title, sub].forEach(function (n) { n.hidden = false; });
+                    cta.disabled = false;
+                    cta.focus();
+                },
+            });
+        }
         cta.innerHTML = 'Continue to login <span class="chev">' + svgArrow() + '</span>';
         // Shown while the sign-in window is open, so the user knows where to look.
         const waiting = document.createElement("p");

@@ -3,27 +3,22 @@ import { describe, it, expect } from "vitest";
 
 const routerMod = await import("../wizard/router.js");
 const router = routerMod.default || routerMod;
-const { getSteps, needsAwakening } = router;
+const { getSteps, CURRENT_ACCEPTANCE_VERSION } = router;
 
-describe("needsAwakening", () => {
-    it("returns true for first install", () => {
-        expect(needsAwakening({})).toBe(true);
-    });
-    it("returns false for reconfigure", () => {
-        expect(needsAwakening({ isReconfigure: true })).toBe(false);
-    });
-    it("returns false for signed-in returning user", () => {
-        expect(needsAwakening({ account: { signedIn: true } })).toBe(false);
-    });
-});
+const accepted = { accepted: true, version: CURRENT_ACCEPTANCE_VERSION };
 
-describe("getSteps prepends awakening", () => {
-    it("awakening is first on a fresh-install state", () => {
-        const { steps } = getSteps({});
-        expect(steps[0]).toBe("awakening");
+describe("first run is three screens: sign in (terms inline) → connect Chrome → Ready Hub", () => {
+    it("a fresh install signs in, then connects Chrome", () => {
+        expect(getSteps({ platform: "darwin" }).steps).toEqual(["signin", "connect"]);
+        expect(getSteps({ platform: "win32" }).steps).toEqual(["signin", "connect"]);
     });
-    it("awakening is absent on reconfigure", () => {
-        const { steps } = getSteps({ isReconfigure: true });
-        expect(steps.includes("awakening")).toBe(false);
+    it("signed in with current terms: straight to connect", () => {
+        expect(getSteps({ account: { signedIn: true }, legal: accepted }).steps).toEqual(["connect"]);
+    });
+    it("terms changed since acceptance: sign-in screen again (it carries the terms)", () => {
+        expect(getSteps({ account: { signedIn: true }, legal: { accepted: true, version: "1.0.0" } }).steps).toEqual(["signin", "connect"]);
+    });
+    it("never more than three screens counting the Ready Hub", () => {
+        for (const s of [{}, { isReconfigure: true }, { account: { signedIn: true } }]) expect(getSteps(s).steps.length + 1).toBeLessThanOrEqual(3);
     });
 });

@@ -10,7 +10,7 @@ const ITEMS = [
 ];
 const page = (body: string) => `<!doctype html><html><head><title>Shop</title></head><body>${body}</body></html>`;
 
-type ShopOpts = { otp?: boolean; bump?: number; renameIds?: boolean; confirmPopup?: boolean };
+type ShopOpts = { otp?: boolean; bump?: number; renameIds?: boolean; confirmPopup?: boolean; mobileDup?: boolean; note?: boolean };
 /** Launch Chromium with this so shop.test resolves to the local test server. */
 export const SHOP_RESOLVER_ARG = "--host-resolver-rules=MAP shop.test 127.0.0.1";
 
@@ -48,7 +48,9 @@ export async function startShop(
                 ? ""
                 : `<div id="cookie-modal" style="position:fixed;inset:0;background:#0008"><p>We use cookies</p>
                    <button id="accept" onclick="document.cookie='ok=1';document.getElementById('cookie-modal').remove()">Accept</button></div>`;
-            return send(`${modal}<form action="/results"><input id="q" name="q"><button id="search">Search</button></form>`);
+            // A responsive site's hidden mobile copy of the search button (same id).
+            const mobile = opts.mobileDup ? `<nav style="display:none"><button id="search">Search</button></nav>` : "";
+            return send(`${modal}${mobile}<form action="/results"><input id="q" name="q"><button id="search">Search</button></form>`);
         }
         if (u.pathname === "/results") {
             const q = (u.searchParams.get("q") ?? "").toLowerCase();
@@ -60,7 +62,7 @@ export async function startShop(
             if (!item) return send("Not found", 404);
             const price = item.price + (opts.bump ?? 0); // a fee that appears late
             const btn = opts.renameIds ? "place-order-v2" : "checkout"; // a site redesign
-            return send(`<p>${item.name} ₹${price}</p><form method="post" action="/order"><input type="hidden" name="id" value="${item.id}">
+            return send(`<p>${item.name} ₹${price}</p><form method="post" action="/order"><input type="hidden" name="id" value="${item.id}">${opts.note ? `<input id="note" name="note">` : ""}
               <label><input type="checkbox" id="captcha" name="captcha"> I'm not a robot</label><button id="${btn}"${opts.confirmPopup ? ` onclick="return confirm('Place order for ₹${price}?')"` : ""}>Place order</button></form>`);
         }
         if (u.pathname === "/order" && req.method === "POST") {

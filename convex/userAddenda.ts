@@ -19,6 +19,8 @@ const RESERVED_SLUGS = new Set([
   "proactive-composer",
   "monitor-rule-parser",
   "orchestrator-base",
+  "site-skill-mint",
+  "site-skill-review",
 ]);
 
 // User-controlled slugs the bot can only WRITE to via specific user-driven

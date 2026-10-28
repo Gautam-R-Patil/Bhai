@@ -10,8 +10,8 @@
 
     function renderIndicator(host, allSteps, activeSteps, currentIdx, onDotClick) {
         clearChildren(host);
-        // Awakening doesn't show in the indicator strip — too cinematic for dots.
-        for (let i = 1; i < activeSteps.length; i++) {
+        // Awakening (if a flow still has it) doesn't show in the indicator strip.
+        for (let i = activeSteps[0] === "awakening" ? 1 : 0; i < activeSteps.length; i++) {
             const id = activeSteps[i];
             const cls = "indicator-dot"
                 + (i === currentIdx ? " active" : i < currentIdx ? " done" : "");

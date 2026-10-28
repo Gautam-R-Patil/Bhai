@@ -1154,6 +1154,7 @@ async function checkForUpdates() {
 const isAlive = (c) => !!c && c.exitCode === null && c.signalCode === null;
 let stopPromise = null; // resolves when the bot being stopped has really exited
 let botCrashTimes = []; // recent crash times, for restart backoff
+let installInFlight = null; // the running setup install, shared by every caller
 let overlayLoadFailed = false; // the overlay tried to load before the bot was listening
 
 function getBotStatus() {
@@ -2196,6 +2197,15 @@ function registerIPC() {
         });
         _desktopSessionToken = session.token;
         _desktopSessionExpiry = session.expiresAt || (Date.now() + 86400000);
+        // Seed the profile name from sign-in (the Profile screen is gone): the bot
+        // writes it into the identity memory on boot (src/setup/wizard-seed.ts).
+        if (name) {
+            try {
+                const profilePath = path.join(app.getPath("userData"), ".user-profile.json");
+                const seeded = path.join(app.getPath("userData"), ".user-profile.seeded.json");
+                if (!fs.existsSync(profilePath) && !fs.existsSync(seeded)) fs.writeFileSync(profilePath, JSON.stringify({ name }, null, 2));
+            } catch { /* best-effort */ }
+        }
         if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send("account-status-change", { signedIn: true });
             mainWindow.focus();
@@ -3872,11 +3882,23 @@ function registerIPC() {
         return {};
     }
 
-    ipcMain.handle("setup:install", async (_, options) => {
+    ipcMain.handle("setup:install", (_, options) => {
+        // Single flight: the Connect screen starts it in the background and a
+        // second call (or Launch) joins the same run instead of racing it.
+        installInFlight ??= runInstall(options).finally(() => {
+            installInFlight = null;
+        });
+        return installInFlight;
+    });
+
+    async function runInstall(options) {
         const ctx = buildInstallCtx(mainWindow, options);
         try {
             const { runDetection, buildPhaseList, runPhases } = requireInstaller();
             const state = await runDetection(buildDetectionDeps());
+            // The packaged app runs the bot on its own Node: never download a
+            // system Node (its installer asks for an admin password).
+            if (app.isPackaged) state.installed = { ...(state.installed || {}), node: true };
             const phases = buildPhaseList(state);
             const res = await runPhases(phases, ctx);
             if (res.status === "complete") {
@@ -3894,6 +3916,37 @@ function registerIPC() {
             ctx.sendProgress(-1, "Error: " + err.message);
             return { success: false, error: err.message };
         }
+    }
+
+    // Is the bot up, and is the Chrome extension connected to it? (Connect screen)
+    ipcMain.handle("extension:status", async () => {
+        try {
+            const r = await fetch("http://127.0.0.1:18800/health", { signal: AbortSignal.timeout(1500) });
+            const j = await r.json();
+            return { running: true, connected: j && j.connected === true };
+        } catch {
+            return { running: false, connected: false };
+        }
+    });
+
+    // Help the user add the extension: Chrome's extensions page, or the folder to "Load unpacked".
+    ipcMain.handle("extension:open", async (_, what) => {
+        const dir = app.isPackaged ? path.join(process.resourcesPath, "chrome-extension") : path.join(__dirname, "..", "chrome-extension");
+        // Chrome's "Load unpacked" picker can't browse into Bhai.app: hand over the
+        // path so the user can paste it (⌘⇧G) instead.
+        if (what === "copy-path") {
+            require("electron").clipboard.writeText(dir);
+            return { success: true, path: dir };
+        }
+        if (what === "folder") {
+            shell.showItemInFolder(path.join(dir, "manifest.json"));
+            return { success: true };
+        }
+        const { spawn } = require("child_process");
+        if (process.platform === "darwin") spawn("open", ["-a", "Google Chrome", "chrome://extensions"], { detached: true, stdio: "ignore" }).unref();
+        else if (process.platform === "win32") spawn("cmd", ["/c", "start", "chrome", "chrome://extensions"], { detached: true, stdio: "ignore" }).unref();
+        else spawn("google-chrome", ["chrome://extensions"], { detached: true, stdio: "ignore" }).unref();
+        return { success: true };
     });
 
     // Setup: retry a single install phase by id. Used by install-log's Retry button
@@ -3983,6 +4036,9 @@ function registerIPC() {
 
     // Setup: finish and launch dashboard
     ipcMain.handle("setup:finish", async () => {
+        // A background install may still be running (Connect was skipped): its
+        // first-install data step must finish before the bot starts.
+        if (installInFlight) await installInFlight.catch(() => {});
         if (process.platform === "darwin" && mainWindow && !mainWindow.isDestroyed()) {
             // The wizard window is frameless; the dashboard gets native chrome.
             const wizard = mainWindow;

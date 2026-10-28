@@ -7,20 +7,10 @@
 // completes setup/installation first, then signs in and grants permissions right
 // before the Ready Hub. install has no dependency on either. (There is no
 // vision-tier step: every install gets the same light desktop-control setup.)
-const ALL_STEPS = ["awakening", "welcome", "terms", "profile", "persona", "personalize", "install", "signin", "permissions"];
-
-function envFlag(name) {
-    try { if (typeof process !== "undefined" && process.env && process.env[name] === "true") return true; }
-    catch (_) { /* renderer — no process */ }
-    return false;
-}
-
-function needsAwakening(s) {
-    if (envFlag("ATLAS_NO_AWAKENING")) return false;
-    if (s && s.isReconfigure) return false;
-    if (s && s.account && s.account.signedIn) return false;
-    return true;
-}
+// First run is three screens: sign in (terms inline) → connect Chrome (setup
+// installs in the background meanwhile) → the Ready Hub (permissions live there).
+// Name, persona, hotkey, theme and voice have defaults and live in Settings.
+const ALL_STEPS = ["signin", "connect"];
 
 // Bump when the legal documents (Terms / Privacy / Acceptable Use / Disclaimer /
 // Refund) materially change. Users whose stored acceptance.version is older
@@ -31,19 +21,6 @@ function needsAwakening(s) {
 //         separate age/authority consent, and document URLs recorded in the
 //         audit record. 1.0.0 accepters re-confirm against the new surface.
 const CURRENT_ACCEPTANCE_VERSION = "2.0.0";
-
-function needsInstall(s) {
-    const i = s.installed || {};
-    if (!i.node || !i.playwright || !i.embeddingModel) return true;
-    if (s.workspace && s.workspace.path && !s.workspace.exists) return true;
-    return !s.setupFinalized;
-}
-
-function needsPersonalize(s) {
-    if (s.hotkey && (s.hotkey.conflicts || []).length) return true;
-    const p = s.personalize;
-    return !p || !p.hotkey || !p.theme || !(p.voice && p.voice.backend) || !p.wakeWord;
-}
 
 function needsTerms(s) {
     const legal = s && s.legal;
@@ -58,27 +35,15 @@ function getSteps(state) {
     const out = [];
     const signedIn = s.account && s.account.signedIn;
 
-    // First-install flow: show every step in order so users see the whole
-    // cinematic, even when some state is already satisfied. Reconfigure
-    // also shows every step (so chips can deep-link cleanly). The only
-    // dynamic gate is awakening (returning users / signed-in skip the
-    // cinematic; controlled by needsAwakening).
-    if (needsAwakening(s)) out.push("awakening");
-    if (needsTerms(s) || s.isReconfigure) out.push("terms");
-    out.push("profile");
-    out.push("persona");       // ← W2: persona specialization step
-    out.push("personalize");
-    if (s.isReconfigure || needsInstall(s)) out.push("install");
-    // Post-install: sign in (required to finish — no skip) then grant permissions.
-    // Permissions are macOS-only; Windows grants at OS level so the step is omitted.
-    if (!signedIn || s.isReconfigure) out.push("signin");
-    if (s.platform !== "win32") out.push("permissions");
+    // Sign-in carries the terms clickwrap, so it shows when either is missing.
+    if (!signedIn || needsTerms(s)) out.push("signin");
+    out.push("connect");
     return { steps: out, header };
 }
 
 function next(i, s) { return (i + 1 < s.length ? i + 1 : -1); }
 function prev(i) { return (i - 1 >= 0 ? i - 1 : -1); }
 
-const api = { getSteps, next, prev, ALL_STEPS, CURRENT_ACCEPTANCE_VERSION, needsTerms, needsAwakening };
+const api = { getSteps, next, prev, ALL_STEPS, CURRENT_ACCEPTANCE_VERSION, needsTerms };
 if (typeof module !== "undefined" && module.exports) module.exports = api;
 if (typeof window !== "undefined") window.WizardRouter = api;

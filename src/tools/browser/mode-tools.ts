@@ -142,7 +142,7 @@ export const browserChromeStatus: ToolDefinition = {
             }
         } else {
             result.help =
-                "The Chrome extension is not connected. The user needs to: 1) Install the Bhai Browser Bridge extension from chrome-extension/ folder, 2) Enter the auth token from the Bhai console into the extension popup, 3) Click Connect.";
+                "The Chrome extension is not connected. Tell the user: open chrome://extensions, turn on Developer mode, click \"Load unpacked\", press Cmd+Shift+G and paste /Applications/Bhai.app/Contents/Resources/chrome-extension (Windows: the chrome-extension folder in Bhai's install folder). It connects by itself, no token needed. Meanwhile use the built-in browser.";
         }
 
         if (input.show_token) {

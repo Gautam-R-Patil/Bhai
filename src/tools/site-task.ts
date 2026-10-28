@@ -8,6 +8,7 @@
 
 import { pageDriver } from "../skills/site/page-driver.js";
 import { findSiteSkill } from "../skills/site/registry.js";
+import { drainTrace, startTrace, tracing } from "../skills/site/mint/recorder.js";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { getDataDir } from "../config/paths.js";
@@ -32,6 +33,30 @@ function restoreParked(): SiteTask | null {
     return task && ["options", "confirm", "needs_user"].includes(task.status ?? "") ? task : null;
 }
 let busy = false;
+
+/**
+ * Records the agent's browser session on this site (locally, for the Skill
+ * Minter), unless that's off or the backend can't (the Chrome extension has no
+ * init scripts). True when a recording is running.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: Playwright Page
+async function recordSession(page: any): Promise<boolean> {
+    if (process.env.ATLAS_NO_SITE_MINT === "true" || process.env.ATLAS_NO_SITE_TRACE === "true") return false;
+    if (typeof page?.context !== "function") return false;
+    let domain = "";
+    try {
+        domain = new URL(page.url()).hostname.replace(/^www\./, "");
+    } catch {}
+    if (!domain) return false;
+    if (tracing(page) === domain) return true;
+    try {
+        await startTrace(page.context(), domain);
+        await drainTrace(page);
+        return true;
+    } catch {
+        return false;
+    }
+}
 
 const NEXT: Record<SiteTaskResult["status"], string> = {
     options: "Show the user these options and ask which one. Then call site_task with action select and option_id.",
@@ -102,7 +127,16 @@ async function run(input: Record<string, unknown>): Promise<string> {
         const dir = checkpointDir();
         if (action === "search") {
             const skillPath = findSiteSkill(page.url());
-            if (!skillPath) return JSON.stringify({ error: `No site skill for ${page.url()}. Use the browser tools instead.` });
+            if (!skillPath) {
+                const learn = await recordSession(page);
+                return JSON.stringify({
+                    error: `No site skill for ${page.url()}. Use the browser tools instead.`,
+                    ...(learn && {
+                        next_step:
+                            "Do it with the browser tools; this session is recorded on this machine. When it's done, offer to learn this site so next time takes ~3 steps (site_skill_mint start, only if the user agrees: it costs a few credits).",
+                    }),
+                });
+            }
             if (current?.commit?.state === "sent") {
                 return JSON.stringify({ error: "The last order may already have been placed. Check the site's orders page before starting another one." });
             }

@@ -187,6 +187,10 @@ export async function getBrowser(): Promise<BrowserContext> {
     // In Chrome extension mode, there's no Playwright context to return.
     // Tools that call getBrowser() for context.pages() will get null back.
     // The getActivePage() and getInteractiveElements() functions handle chrome mode directly.
+    // Resolve the backend first: in a fresh session the mode isn't set yet, and
+    // a tool calling getBrowser() first used to launch headless Chromium even
+    // with the user's Chrome connected (tab list showed one blank tab).
+    if (getCurrentMode() === "none") await getActiveBackend();
     if (getCurrentMode() === "chrome") {
         // Return a minimal stub that won't crash callers checking pages()
         return { pages: () => [], newPage: async () => await getActivePage() } as unknown as BrowserContext;

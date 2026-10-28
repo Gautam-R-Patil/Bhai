@@ -520,7 +520,13 @@ function run(argv) {
     pb.setStringForType($(''), $('org.nspasteboard.ConcealedType'));
     pb.setStringForType($(''), $('org.nspasteboard.TransientType'));
     se.keystroke('v', { using: 'command down' });
-    delay(0.3);
+    // Restore only after the app has taken the paste: a window still opening
+    // (Cmd+N just before) read the pasteboard late and got the user's own
+    // clipboard. An accessibility round-trip to the frontmost app returns only
+    // once its main thread is free, which it isn't until the queued paste ran.
+    delay(0.15);
+    try { const front = se.processes.whose({ frontmost: true })[0]; front.windows.length; front.windows[0].name(); } catch (e) {}
+    delay(0.35);
     pb.clearContents;
     if (saved.length) {
         pb.writeObjects($(saved.map((entry) => {

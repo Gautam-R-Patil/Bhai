@@ -50,6 +50,8 @@ contextBridge.exposeInMainWorld("atlas", {
     chooseWorkspace: () => ipcRenderer.invoke("setup:choose-workspace"),
     createWorkspace: (path) => ipcRenderer.invoke("setup:create-workspace", path),
     startInstall: (options) => ipcRenderer.invoke("setup:install", options),
+    extensionStatus: () => ipcRenderer.invoke("extension:status"),
+    extensionOpen: (what) => ipcRenderer.invoke("extension:open", what),
     googleOAuth: () => ipcRenderer.invoke("setup:google-oauth"),
     isSetupComplete: () => ipcRenderer.invoke("setup:is-complete"),
     setupDetect: () => ipcRenderer.invoke("setup:detect"),

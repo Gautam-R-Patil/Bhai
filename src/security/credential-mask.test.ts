@@ -1,25 +1,85 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
-// Pomerado's credential-masking corpus (MIT, vendored): real credentials are
-// masked by structure, and prose, identifiers and URLs come through byte for byte.
+// Bhai's credential masking: real credentials are masked by structure, and
+// prose, identifiers, code and URLs come through byte for byte.
 import { describe, expect, it } from "vitest";
-import { credentials, prose, urls } from "./vendor/pomerado-credential-corpus.js";
-import { redactDiagnosticText } from "./vendor/pomerado-credential-mask.js";
+import { maskCredentials } from "./credential-mask.js";
 
-describe("credential masking (Pomerado corpus)", () => {
-    it("masks every diagnostic-surface credential and leaves prose and URLs alone", () => {
-        const leaks = credentials.filter(([text, secret, s]) => s.includes("diagnostic") && redactDiagnosticText(text, Number.POSITIVE_INFINITY).includes(secret));
-        const changed = [...prose, ...urls].filter((t) => redactDiagnosticText(t, Number.POSITIVE_INFINITY) !== t);
-        expect(leaks.map(([t]) => t)).toEqual([]);
-        expect(changed).toEqual([]);
+// [text, the secret that must not survive]
+const CREDENTIALS: Array<[string, string]> = [
+    ["Authorization: Bearer FAKEtok3nAbc123xyz rejected", "FAKEtok3nAbc123xyz"],
+    ["authorization=Bearer fake-tok-4471 rejected", "fake-tok-4471"],
+    ["Authorization: Basic ZmFrZXVzZXI6ZmFrZXBhc3M= rejected", "ZmFrZXVzZXI6ZmFrZXBhc3M="],
+    ["Basic dTpw rejected", "dTpw"],
+    ["Authorization: 8f2fake9c1d3e7a44 rejected", "8f2fake9c1d3e7a44"],
+    ['{"Authorization":"Bearer FAKEjson77token11"}', "FAKEjson77token11"],
+    ["Authorization: AWS4-HMAC-SHA256 Credential=FAKEID/20261028/ap-south-1/s3/aws4_request, SignedHeaders=host, Signature=ab12fakesig9876", "ab12fakesig9876"],
+    ['Authorization: Digest username="ravi", response = "0f1fakedigest23456789ab"', "0f1fakedigest23456789ab"],
+    ["upstream said bearer FAKE1free2text3tok rejected", "FAKE1free2text3tok"],
+    ["Cookie: sessionid=FAKEsess4455aa; theme=dark", "FAKEsess4455aa"],
+    ['Cookie: sid="FAKEquoted99cookie"; lang=en', "FAKEquoted99cookie"],
+    ["Set-Cookie: a=1; Expires=Wed, 21 Oct 2026 07:28:00 GMT, session=FAKEsess0456def; Path=/", "FAKEsess0456def"],
+    ["Cookie: FAKEopaque0cookie123456", "FAKEopaque0cookie123456"],
+    ['{"cookie":"__Host-auth=sealed-fake-31"}', "sealed-fake-31"],
+    ["headers: { cookie: 'sid=fake-inspect-42' }", "fake-inspect-42"],
+    ["password=hunter", "hunter"],
+    ['{"password":"required"}', "required"],
+    ["PGPASSWORD=pg-fake-v22 psql", "pg-fake-v22"],
+    ["client_secret: cs-fake-123", "cs-fake-123"],
+    ["userAccessToken=fake-uat-77 set", "fake-uat-77"],
+    ["totp_seed: JBSWY3DPEHPK3PXP", "JBSWY3DPEHPK3PXP"],
+    ["AZURE_STORAGE_ACCOUNT_KEY=FAKEzz0123456789abcdefABCDEF+/xyz==", "FAKEzz0123456789abcdefABCDEF+/xyz=="],
+    ["api_key = 'FAKEkey_9f8e7d6c5b4a'", "FAKEkey_9f8e7d6c5b4a"],
+    ["export OPENAI_API_KEY=sk-proj-FAKEabc123def456ghi789", "sk-proj-FAKEabc123def456ghi789"],
+    ["token ghp_FAKEaaaaBBBBccccDDDDeeee1234 in the log", "ghp_FAKEaaaaBBBBccccDDDDeeee1234"],
+    ["slack xoxb-1234-FAKE-tokenvalue here", "xoxb-1234-FAKE-tokenvalue"],
+    ["aws AKIAFAKEFAKEFAKE1234 key", "AKIAFAKEFAKEFAKE1234"],
+    ["jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmYWtlIn0.FAKEsignature123", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmYWtlIn0.FAKEsignature123"],
+    ["-----BEGIN PRIVATE KEY-----\nFAKEMIIBVQIBADAN\n-----END PRIVATE KEY-----", "FAKEMIIBVQIBADAN"],
+];
+
+// Must come through unchanged.
+const KEEP = [
+    "Please fill in the Basic information section before continuing.",
+    "He was the Bearer of bad news.",
+    "Password: Required.",
+    "password: required",
+    "The new password is incorrect.",
+    "authorization: missing",
+    "cookie: invalid format",
+    "form body cookie=accepted&next=/checkout rejected",
+    "api_key: missing",
+    "accountKey: ACME-123",
+    "token=visible-fake-9 secret=shown-fake-8",
+    '{"token":"visible-4821","secret":"shown-77","pass":"3/5","pin":"required"}',
+    "valid_token: abc123def",
+    "hasPassword: true",
+    "token_type: bearer",
+    "PWD=/Users/ravi/projects",
+    "sk-hynix-ddr5-memory-kit-2026 is in stock",
+    "step sk-onboarding-step-2026 done",
+    "const apiKey = getKey(config);",
+    "  password: hashPassword(input.password),",
+    "const token = process.env.GITHUB_TOKEN;",
+    "https://user:pw-fake@example.com/path?token=abc123def456",
+    "connect postgres://app@db:5432/app?sslmode=require&password=db-query-fake",
+    "Order 4111-2222 shipped to Basic Lane, Pune",
+];
+
+describe("credential masking", () => {
+    it("masks every credential form", () => {
+        const leaks = CREDENTIALS.filter(([t, secret]) => maskCredentials(t).includes(secret)).map(([t]) => t);
+        expect(leaks).toEqual([]);
+    });
+    it("leaves prose, identifiers, code and URLs byte for byte", () => {
+        expect(KEEP.filter((t) => maskCredentials(t) !== t)).toEqual([]);
+        expect(maskCredentials("Cookie: a=1, then retry")).toBe("Cookie: [redacted], then retry");
     });
 });
 
 describe("credentials never reach the model or the logs", () => {
-    it("protect() (LLM payloads, logs, chat history) masks what Bhai's sanitizer used to miss", async () => {
+    it("protect() (LLM payloads, logs, chat history) masks them", async () => {
         const { protect } = await import("./pii-vault.js");
-        const leaks = credentials.filter(([text, secret, s]) => s.includes("diagnostic") && protect(text).includes(secret));
-        expect(leaks.map(([t]) => t)).toEqual([]);
-        for (const t of [...prose, ...urls]) expect(protect(t)).toBe(t);
+        expect(CREDENTIALS.filter(([t, secret]) => protect(t).includes(secret)).map(([t]) => t)).toEqual([]);
     });
 });
 

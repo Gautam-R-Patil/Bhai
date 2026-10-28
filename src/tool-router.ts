@@ -202,6 +202,8 @@ const CATEGORIES: Record<string, CategoryDef> = {
         tools: [
             "browser_navigate",
             "site_task",
+            "site_skill_mint",
+            "approve_site_skill",
             "browser_click_at",
             "browser_type",
             "browser_scan",

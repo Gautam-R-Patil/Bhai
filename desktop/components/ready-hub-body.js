@@ -155,6 +155,12 @@
             if (atlas && typeof atlas.openAuthWindow === "function") atlas.openAuthWindow();
             return;
         }
+        if (route === "wizard:permissions") {
+            // The permissions grid is on this page now.
+            const grid = document.querySelector(".hub-permissions");
+            if (grid) grid.scrollIntoView({ behavior: "smooth", block: "center" });
+            return;
+        }
         if (route.indexOf("wizard:") === 0) { window.location.href = "wizard.html"; return; }
         if (route.indexOf("settings:") === 0) {
             // Open the panel with a hash the panel tab router can consume.
@@ -294,6 +300,20 @@
             && !(typeof process !== "undefined" && process.env && process.env.ATLAS_NO_MAGIC_MOMENT === "true")) {
             const mmHost = body.querySelector("#hub-magic-moment");
             if (mmHost) mmHandle = window.MagicMoment.mount(mmHost, enriched);
+        }
+
+        // Permissions live here now (no separate setup screen): macOS grants for
+        // screen recording, accessibility, microphone and location, live-polled.
+        let permGrid = null;
+        const C = window.SetupComponents || {};
+        if (C.PermissionsGrid && initial.platform === "darwin") {
+            const host = document.createElement("div");
+            host.className = "hub-permissions";
+            const tiles = body.querySelector("#hub-tiles");
+            if (tiles && tiles.parentNode) tiles.parentNode.insertBefore(host, tiles.nextSibling);
+            else body.appendChild(host);
+            permGrid = new C.PermissionsGrid({ platform: initial.platform, skipped: (initial.permissions && initial.permissions.skipped) || {} });
+            Promise.resolve(permGrid.mount(host)).catch(function () { /* best-effort */ });
         }
 
         const errEl = body.querySelector("#hub-actions-err");

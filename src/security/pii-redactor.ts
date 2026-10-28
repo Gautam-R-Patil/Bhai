@@ -82,7 +82,7 @@ const OTP_RE =
     /\b(?:otp|one[- ]time (?:password|code|pin)|verification code|security code|passcode|login code|auth(?:entication)? code|2fa code)\b[^0-9\n]{0,24}?(?<!\d)(\d{4,8})(?!\d)|(?<!\d)(\d{4,8})(?!\d)[^0-9\n]{0,16}?\b(?:is your|is the)\s+(?:otp|one[- ]time (?:password|code)|verification code|login code|security code|passcode)\b/gi;
 // Cookies: header lines, and session-like name=value pairs.
 // Cookies and other credentials are masked by structure in pii-vault.protect()
-// (Pomerado's credential policy); the loose patterns that lived here also hit
+// (credential-mask.ts); the loose patterns that lived here also hit
 // prose such as "cookie: invalid format".
 // The one form the policy doesn't cover: a script setting a cookie.
 const JS_COOKIE_RE = /\bdocument\.cookie\s*=\s*["'`]([^"'`\r\n]+)/gi;

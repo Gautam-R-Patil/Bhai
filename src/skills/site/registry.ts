@@ -1,10 +1,15 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 //
 // Finds the Site Skill for a URL. Skills live in folders with a skill.json
-// manifest ({ name, domains, version }) next to skill.cjs: user/store skills in
+// manifest ({ name, domains, version, status? }) next to skill.cjs: user/store skills in
 // ~/.atlas/store/site-skills, built-ins in <bot>/site-skills. The dirs are read
 // on every lookup, so an added or edited skill is used by the next task without
 // a restart (the runtime also forks a fresh process per call).
+//
+// Only live skills are found: a manifest whose `status` is set to anything but
+// "active" (awaiting_approval, drifted, archived) is skipped, as is one with no
+// domains (the runtime's same-site fence would be off) and any "_" folder
+// (e.g. _staging). A missing status means active, so built-ins need none.
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -26,10 +31,12 @@ export function findSiteSkill(url: string, dirs = defaultSkillDirs()): string | 
     for (const dir of dirs) {
         if (!existsSync(dir)) continue;
         for (const name of readdirSync(dir)) {
+            if (name.startsWith("_")) continue;
             const skill = path.join(dir, name, "skill.cjs");
             try {
-                const meta = JSON.parse(readFileSync(path.join(dir, name, "skill.json"), "utf8")) as { domains?: string[] };
-                if (existsSync(skill) && meta.domains?.some((d) => host === d || host.endsWith(`.${d}`))) return skill;
+                const meta = JSON.parse(readFileSync(path.join(dir, name, "skill.json"), "utf8")) as { domains?: unknown; status?: unknown };
+                if ((meta.status ?? "active") !== "active" || !Array.isArray(meta.domains) || !meta.domains.length) continue;
+                if (existsSync(skill) && meta.domains.some((d) => typeof d === "string" && d && (host === d || host.endsWith(`.${d}`)))) return skill;
             } catch {
                 /* no or bad manifest: not a skill */
             }

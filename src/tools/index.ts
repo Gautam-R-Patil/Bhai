@@ -174,7 +174,10 @@ import { osGround, osVisualize } from "./os-grounding.js";
 import { osClickId, osInspect } from "./os-inspect.js";
 import { osSmartClick, setSmartClickLLM } from "./os-smart-click.js";
 import { siteTask } from "./site-task.js";
-export { setSmartClickLLM };
+import { approveSiteSkillTool, setSiteMintLLM, siteSkillMintTool } from "./site-skill-mint.js";
+import { getActivePage } from "./browser/core.js";
+import { drainTrace, tracing } from "../skills/site/mint/recorder.js";
+export { setSmartClickLLM, setSiteMintLLM };
 import { IS_LINUX, IS_MAC, IS_WIN } from "./platform.js";
 import { platformInfoTool } from "./platform-info.js";
 import { createPresentation, exportPresentation, listPresentations, modifyPresentation } from "./presentation/index.js";
@@ -332,6 +335,8 @@ registry.set(osGround.schema.function.name, osGround);
 // automatically based on capability + AX availability + memory recall.
 registry.set(osSmartClick.schema.function.name, osSmartClick);
 registry.set(siteTask.schema.function.name, siteTask);
+registry.set(siteSkillMintTool.schema.function.name, siteSkillMintTool);
+registry.set(approveSiteSkillTool.schema.function.name, approveSiteSkillTool);
 
 // ── Platform-specific OS tools ────────────────
 if (IS_MAC) {
@@ -663,6 +668,7 @@ const TOOL_TIMEOUTS: Record<string, number> = {
     browser_click: 15_000,
     browser_type: 30_000, // long text + submit + page-ready can take a while
     site_task: 180_000, // up to 40 steps; a cut-off checkout would keep running unseen
+    site_skill_mint: 600_000, // start returns at once; a safety net
     // AX dump + activation + capture + grounding (+ one Sonnet re-ground). The
     // handler stops itself at 40s so it never clicks after we report a timeout.
     os_smart_click: 45_000,
@@ -860,6 +866,11 @@ export async function executeTool(name: string, input: Record<string, unknown>):
 
         auditLog({ tool: name, args: effectiveInput, success, cached: false, durationMs });
         recordToolUsage(name, success, durationMs);
+
+        // A site being recorded for the Skill Minter: capture what this browser step did.
+        if (name.startsWith("browser_") && tracing()) {
+            await getActivePage().then((p) => drainTrace(p), () => null).catch(() => null);
+        }
 
         // PostToolUse hooks — side effects only. Fire-and-forget; don't await
         // anything that could delay the agent's next iteration.

@@ -25,7 +25,7 @@ const BANNED_USER_QUOTE_WORDS = new Set([
 
 const MIN_USER_QUOTE_LENGTH = 10;
 
-function isQuoteAcceptable(quote: string): { ok: true } | { ok: false; reason: string } {
+export function isQuoteAcceptable(quote: string): { ok: true } | { ok: false; reason: string } {
     const trimmed = quote.trim();
     if (trimmed.length < MIN_USER_QUOTE_LENGTH) {
         return { ok: false, reason: `user_quote must be ≥${MIN_USER_QUOTE_LENGTH} characters` };
