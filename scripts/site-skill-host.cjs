@@ -79,14 +79,19 @@ const BOOT = `(function (hostUrl, hostQs, libFactory) {
     if (typeof step !== "function") return null;
     // Sync: returns the JSON. Async: returns null and settles through
     // settle(error, json) (strings only); the host never touches the promise.
+    // Every outcome settles: a result JSON can't hold (BigInt, a cycle) or a
+    // thrown value String() can't convert (Object.create(null)) is an error,
+    // never an unhandled rejection that would kill this process.
+    const why = (e) => {
+      try { return String((e && e.message) || e); } catch { return "step failed"; }
+    };
     return (phase, ctxJson, settle) => {
       const r = step(String(phase), parse(ctxJson), lib);
       if (r === null || (typeof r !== "object" && typeof r !== "function") || typeof r.then !== "function")
         return stringify(r === undefined ? null : r);
-      Promise.resolve(r).then(
-        (v) => settle(null, stringify(v === undefined ? null : v)),
-        (e) => settle(String((e && e.message) || e), null),
-      );
+      Promise.resolve(r)
+        .then((v) => stringify(v === undefined ? null : v))
+        .then((json) => settle(null, json), (e) => settle(why(e), null));
       return null;
     };
   };
@@ -175,11 +180,10 @@ process.on("message", async (m) => {
         const result = await skill.step(m.phase, m.ctx, lib);
         process.send({ id: m.id, ok: true, result });
     } catch (e) {
-        process.send({
-            id: m.id,
-            ok: false,
-            kind: "handler_error",
-            error: String((e && e.message) || e).slice(0, 300),
-        });
+        let error = "step failed";
+        try {
+            error = String((e && e.message) || e).slice(0, 300);
+        } catch {} // a thrown Object.create(null) has no string form
+        process.send({ id: m.id, ok: false, kind: "handler_error", error });
     }
 });
