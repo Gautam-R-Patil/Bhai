@@ -24,6 +24,7 @@ import { getTemporalCache } from "./temporal-cache.js";
 // ── Brain-Inspired Module Imports ─────────────
 import { buildIndexFromDB, getHNSWIndex } from "./vector-index.js";
 import { buildTrigramQuery, containsCjk, sanitizeFts5Query } from "./fts5-query.js";
+import { CONVERSATIONS_FTS_SYNC_SQL, MEMORIES_FTS_SYNC_SQL } from "./fts-triggers.js";
 import { hardAllow, hardReject, llmGate, threatReject } from "./value-gate.js";
 import { logGateDecision } from "./gate-audit.js";
 
@@ -546,27 +547,8 @@ export async function initMemoryDB(): Promise<CompatDatabase> {
         END
       `);
 
-        db.run(`
-        CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
-          INSERT INTO memories_fts(memories_fts, rowid, content, category, tags)
-          VALUES ('delete', old.id, old.content, old.category, old.tags);
-          INSERT INTO memories_fts_trigram(memories_fts_trigram, rowid, content, category, tags)
-          VALUES ('delete', old.id, old.content, old.category, old.tags);
-        END
-      `);
-
-        db.run(`
-        CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
-          INSERT INTO memories_fts(memories_fts, rowid, content, category, tags)
-          VALUES ('delete', old.id, old.content, old.category, old.tags);
-          INSERT OR REPLACE INTO memories_fts(rowid, content, category, tags)
-          VALUES (new.id, new.content, new.category, new.tags);
-          INSERT INTO memories_fts_trigram(memories_fts_trigram, rowid, content, category, tags)
-          VALUES ('delete', old.id, old.content, old.category, old.tags);
-          INSERT OR REPLACE INTO memories_fts_trigram(rowid, content, category, tags)
-          VALUES (new.id, new.content, new.category, new.tags);
-        END
-      `);
+        // Delete/update sync — see fts-triggers.ts (replaces broken older bodies).
+        if (rawDb) rawDb.exec(MEMORIES_FTS_SYNC_SQL);
 
         // Backfill both FTS5 tables from existing memories (idempotent).
         backfillFTS5();
@@ -854,13 +836,7 @@ export function initConversationSearchSchema(raw: BetterSqlite3.Database): void 
       INSERT OR REPLACE INTO conversations_fts_trigram(rowid, content, role, session_id)
       VALUES (new.id, new.content, new.role, new.session_id);
     END`);
-    raw.exec(`
-    CREATE TRIGGER IF NOT EXISTS conv_msg_ad AFTER DELETE ON conversation_messages BEGIN
-      INSERT INTO conversations_fts(conversations_fts, rowid, content, role, session_id)
-      VALUES('delete', old.id, old.content, old.role, old.session_id);
-      INSERT INTO conversations_fts_trigram(conversations_fts_trigram, rowid, content, role, session_id)
-      VALUES('delete', old.id, old.content, old.role, old.session_id);
-    END`);
+    raw.exec(CONVERSATIONS_FTS_SYNC_SQL); // see fts-triggers.ts
 }
 
 /**
