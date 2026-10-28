@@ -65,6 +65,14 @@ export class ChromePageProxy {
         return this._url;
     }
 
+    /** The active tab's URL right now (url() is a cache: clicks, redirects and tab switches don't update it). */
+    async liveUrl(): Promise<string> {
+        const tab = await getActiveExtensionTab();
+        this._url = tab?.url ?? "";
+        if (tab?.title) this._title = tab.title;
+        return this._url;
+    }
+
     async title(): Promise<string> {
         if (this._title) return this._title;
         const tab = await getActiveExtensionTab();
@@ -181,8 +189,16 @@ export class ChromePageProxy {
         up: async (key: string) => {
             await sendBridgeCommand("keyboard", { key, action: "up" });
         },
-        type: async (text: string) => {
-            await sendBridgeCommand("type_text", { text });
+        // vaultRules: the text holds a saved secret; the extension types it only
+        // if the page's origin matches, checked in the page in the same step.
+        type: async (text: string, opts?: { vaultRules?: unknown[] }) => {
+            const r = (await sendBridgeCommand(
+                "type_text",
+                opts?.vaultRules ? { text, vaultRules: opts.vaultRules, secret: true } : { text },
+            )) as { success?: boolean; error?: string; guarded?: boolean } | null;
+            if (r && r.success === false) throw new Error(r.error || "type_text failed");
+            if (opts?.vaultRules && !r?.guarded)
+                console.warn("  🔐 [vault] the Chrome extension is out of date: no in-page origin check (update it)");
         },
     };
 

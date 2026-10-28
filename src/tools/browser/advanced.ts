@@ -20,6 +20,7 @@ import {
     waitForPageReady,
 } from "./core.js";
 import { signBrowserAction, validateJsCode } from "./native-browser.js";
+import { vaultTaintError } from "./vault-typing.js";
 
 // ═══════════════════════════════════════════════
 // TOOL: Parallel Tab Execution
@@ -394,6 +395,8 @@ export const browserParallelActions: ToolDefinition = {
 
                         case "evaluate": {
                             const code = action.code as string;
+                            const tainted = await vaultTaintError(page);
+                            if (tainted) return { id, success: false, error: tainted };
                             let safeCode: string;
                             try {
                                 safeCode = validateJsCode(code);
@@ -796,6 +799,8 @@ export const browserMultiAction: ToolDefinition = {
                     // IP protection: code is validated by Rust ip_guard before execution
                     case "js_eval": {
                         if (!act.code) return { success: false, error: 'js_eval requires "code"' };
+                        const tainted = await vaultTaintError(page);
+                        if (tainted) return { success: false, error: tainted };
                         // Validate through native IP guard (blocks exfiltration, Bhai var access, eval)
                         let safeCode: string;
                         try {

@@ -526,7 +526,7 @@ Start-Sleep -Milliseconds ${delayMs}
             const result = await runPowerShell(psScript, 10000);
             return JSON.stringify({
                 success: true,
-                typed: input.text || input.key || input.combo,
+                ...(input.text ? { typed_chars: String(input.text).length } : { pressed: input.key || input.combo }),
                 stdout: (result || "").substring(0, 500),
             });
         } catch (err) {

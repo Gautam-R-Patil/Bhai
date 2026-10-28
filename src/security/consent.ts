@@ -67,9 +67,12 @@ export type ConsentResult = "granted" | "needs_consent";
  * `key` identifies the exact action (tool + arguments). Returns "granted" only
  * for a confirmed repeat of an action the owner was asked about and said yes to.
  */
-export function checkConsent(key: string, confirmed: boolean): ConsentResult {
+export function checkConsent(key: string, confirmed: boolean, opts: { nextTurnOnly?: boolean } = {}): ConsentResult {
     const askedAt = pending.get(key);
-    const ownerSpokeSince = askedAt !== undefined && ownerTurn > askedAt;
+    // nextTurnOnly: the yes must be the owner's very next message after the ask,
+    // not a later "ok" that answered something else.
+    const ownerSpokeSince =
+        askedAt !== undefined && (opts.nextTurnOnly ? ownerTurn === askedAt + 1 : ownerTurn > askedAt);
     const saidYes = AFFIRMATIVE.test(lastOwnerMessage) && !NEGATIVE.test(lastOwnerMessage);
     if (confirmed && ownerSpokeSince && saidYes) {
         pending.delete(key);

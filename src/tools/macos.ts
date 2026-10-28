@@ -581,7 +581,7 @@ export const osType: ToolDefinition = {
             try {
                 const method = await withCursorTyping(() => typeTextMac(text));
                 await new Promise((r) => setTimeout(r, delayMs));
-                return JSON.stringify({ success: true, typed: text, method });
+                return JSON.stringify({ success: true, typed_chars: text.length, method }); // not echoed: it may be a secret
             } catch (err) {
                 return JSON.stringify({ success: false, error: `Typing failed: ${(err as Error).message}` });
             }
@@ -596,7 +596,7 @@ export const osType: ToolDefinition = {
             await fs.unlink(tmpFile).catch(() => {});
             return JSON.stringify({
                 success: true,
-                typed: input.text || input.key || input.combo,
+                ...(input.text ? { typed_chars: String(input.text).length } : { pressed: input.key || input.combo }),
                 stdout: (stdout || "").substring(0, 500),
                 stderr: (stderr || "").substring(0, 500),
             });

@@ -44,7 +44,7 @@ export const vaultAuthorizePayment: ToolDefinition = {
         function: {
             name: "vault_authorize_payment",
             description:
-                "Before paying with a saved card or UPI ID: call this on the payment page with what is being bought and the total. The owner must approve the item and amount; for a card they type the CVV in a Bhai prompt. Then, for 5 minutes and on this site only, the card/UPI tokens from vault_list can be typed with browser_type.",
+                "Before paying with a saved card or UPI ID: call this on the payment page with what is being bought and the total. The owner must approve the item and amount; for a card they type the CVV in a Bhai prompt. Then, for 5 minutes and on this site only, each card/UPI token from vault_list can be typed once with browser_type.",
             parameters: {
                 type: "object",
                 properties: {
@@ -60,7 +60,10 @@ export const vaultAuthorizePayment: ToolDefinition = {
         if (!vaultEnabled()) return OFF;
         let url = "";
         try {
-            url = (await (await import("./browser/core.js")).getActivePage()).url(); // lazy: core → … → tools/index cycle
+            // The live tab (the Chrome proxy's url() is a cache). Lazy: core → … → tools/index cycle.
+            const { getActivePage } = await import("./browser/core.js");
+            const { liveUrl } = await import("./browser/vault-typing.js");
+            url = await liveUrl(await getActivePage());
         } catch {
             /* no browser: authorizePayment refuses */
         }
@@ -76,7 +79,8 @@ export const vaultAuthorizePayment: ToolDefinition = {
             site: r.site,
             expires_in_seconds: 300,
             tokens: r.tokens,
-            next_step: "Type each token into its field with browser_type on this site. The CVV token works once.",
+            next_step:
+                "Type each token into its field with browser_type on this site. Each token works once for this payment.",
         });
     },
 };

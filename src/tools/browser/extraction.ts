@@ -34,6 +34,7 @@ import {
     waitForPageReady,
 } from "./core.js";
 import { signBrowserAction, validateJsCode } from "./native-browser.js";
+import { vaultTaintError } from "./vault-typing.js";
 
 // ═══════════════════════════════════════════════
 // TOOL: Analyze page (smart element detection)
@@ -157,6 +158,8 @@ export const browserRunJs: ToolDefinition = {
     async handler(input) {
         try {
             const page = await getActivePage();
+            const tainted = await vaultTaintError(page);
+            if (tainted) return JSON.stringify({ error: tainted });
             // IP guard: validate code before execution (blocks exfiltration & Bhai internals access)
             let safeCode: string;
             try {

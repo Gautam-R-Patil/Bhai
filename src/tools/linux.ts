@@ -539,7 +539,7 @@ export const linuxOsType: ToolDefinition = {
 
                 return JSON.stringify({
                     success: true,
-                    typed: text,
+                    typed_chars: text.length, // not echoed: it may be a secret
                     method: tool,
                 });
             }

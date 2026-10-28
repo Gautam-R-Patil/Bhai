@@ -13,20 +13,29 @@
 //     they run. Every value is registered with pii-vault, so a page, log line or
 //     tool result that shows it gets the token back instead (protect()).
 //   • Login / API-key tokens are domain-locked in the browser: they resolve only
-//     on an https page on one of the entry's domains (or a subdomain). In a
-//     desktop app (os_type …) there is no origin, so the owner has to OK it
-//     (consent.ts) and the use is logged.
+//     on an https page on one of the entry's domains (or a subdomain; never a
+//     public suffix like co.uk or github.io). The typing tool checks the origin
+//     again where the keys land, right before it types (vaultTargetError: the
+//     live tab, the focused frame), so a click that navigates, a redirect or a
+//     tab switch can't redirect the secret. In a desktop app (os_type …) there is
+//     no origin, so the owner has to OK that exact call (consent.ts).
 //   • Card / UPI tokens resolve only inside a payment authorization the owner
 //     approved for an item and amount (vault_authorize_payment, consent gate +
-//     the Site Skill spend cap), on the page it was made on, for 5 minutes. The
-//     CVV is asked for then through a desktop prompt, typed once, never stored.
+//     the Site Skill spend cap), in the browser, on the page it was made on, for
+//     5 minutes, each field once. The CVV is asked for then through a desktop
+//     prompt and never stored.
+//   • A document a secret was typed into is tainted: page JavaScript tools are
+//     refused there until it navigates (the value could be read back in a form
+//     masking can't recognize).
 //
 // ATLAS_NO_VAULT=true turns resolution and the vault tools off.
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createInterface } from "node:readline";
+import psl from "psl";
 import { recordSpend, spendAllowed } from "../skills/site/runtime.js";
 import { checkConsent } from "./consent.js";
-import { setSecrets } from "./pii-vault.js";
+import { maskKnownValues, setSecrets } from "./pii-vault.js";
 
 export type VaultEntry =
     | { id: string; label: string; kind: "login"; domains: string[]; username: string; password: string }
@@ -52,7 +61,9 @@ const normDomain = (d: unknown) =>
         .replace(/^[a-z]+:\/\//, "")
         .replace(/[/:?#].*$/, "")
         .replace(/^www\./, "");
-const domainsOf = (v: unknown) => (Array.isArray(v) ? v.map(normDomain).filter((d) => d.includes(".")) : []);
+/** A public suffix (com, co.uk, github.io, vercel.app) is anyone's site: dropped. */
+const isSite = (d: string) => d.includes(".") && psl.get(d) !== null;
+const domainsOf = (v: unknown) => (Array.isArray(v) ? v.map(normDomain).filter(isSite) : []);
 
 /** Replaces the in-memory vault. Unknown kinds and any `cvv` field are dropped: a CVV is never kept. */
 export function loadVault(list: unknown): void {
@@ -94,21 +105,29 @@ export function loadVault(list: unknown): void {
     }
     entries = next;
     auths.clear(); // an edited card must be authorized again
+    tainted.clear();
     syncMasks();
 }
 
-/** Every secret value → its token, for pii-vault's masking (plus a pending CVV). */
+/** Fields a page may show cut short (a scan shows the first 30 chars of a value). */
+const PARTIAL_FIELDS = new Set(["password", "apikey", "number"]);
+const PARTIAL_MIN = 8;
+
+/** Every secret value → its token, for pii-vault's masking (plus a CVV while its authorization lasts). */
 function syncMasks(): void {
     const m = new Map<string, string>();
+    const partial = new Map<string, string>();
     const add = (value: string, id: string, field: string) => {
         // ponytail: values under 4 chars aren't masked (they'd eat ordinary words); a 3-digit CVV is the exception.
         if (value.length >= 4 || field === "cvv") m.set(value, tokenOf(id, field));
+        if (PARTIAL_FIELDS.has(field))
+            for (let n = PARTIAL_MIN; n < value.length; n++) partial.set(value.slice(0, n), tokenOf(id, field));
     };
     for (const e of entries.values()) {
         for (const [field, value] of fieldsOf(e)) if (field !== "holder" && field !== "expiry") add(value, e.id, field);
     }
     for (const [id, a] of auths) if (a.cvv) add(a.cvv, id, "cvv");
-    setSecrets(m);
+    setSecrets(m, partial);
 }
 
 function fieldsOf(e: VaultEntry): Array<[string, string]> {
@@ -174,7 +193,8 @@ export function listVault(query = ""): VaultListing[] {
 // ── Payments ──────────────────────────────────
 
 const AUTH_MS = 5 * 60_000;
-const auths = new Map<string, { exp: number; site: string; cvv?: string }>();
+// `used`: the fields typed under this authorization; each goes once, so one OK pays once.
+const auths = new Map<string, { exp: number; site: string; cvv?: string; used: Set<string> }>();
 
 const siteOf = (url: string) => {
     try {
@@ -218,7 +238,7 @@ export async function authorizePayment(
         cvv = c;
     }
     recordSpend(amount);
-    auths.set(entryId, { exp: Date.now() + AUTH_MS, site, cvv });
+    auths.set(entryId, { exp: Date.now() + AUTH_MS, site, cvv, used: new Set() });
     syncMasks();
     setTimeout(() => expire(entryId), AUTH_MS).unref?.();
     return { ok: true, site, tokens: listVault().find((r) => r.id === entryId)?.tokens ?? [] };
@@ -235,37 +255,103 @@ function expire(id: string): void {
 // ── Resolution (agent.ts, REVEAL_TOOLS only) ──
 
 /** Typing tools that act on the browser page; every other reveal tool types into a desktop app. */
-const BROWSER_TYPING = new Set(["browser_type", "browser_keyboard", "site_task"]);
+const BROWSER_TYPING = new Set(["browser_type", "browser_keyboard"]);
 
 export interface VaultContext {
     isOwner: boolean;
-    /** The active browser tab's URL; only called when a browser tool carries a token. */
+    /** The active browser tab's live URL; only called when a browser tool carries a token. */
     pageUrl: () => Promise<string>;
 }
+
+/**
+ * Where one resolved token may be typed. Login / API key: the focused frame's
+ * host is on `domains` (or a subdomain). Payment: the top page's host is the
+ * authorized site, and the field may sit in any https frame (a PSP's card iframe).
+ */
+export interface VaultRule {
+    token: string;
+    domains: string[];
+    payment: boolean;
+}
+
+/** A tool call carrying resolved vault values (agent.ts runs it inside runVaultCall). */
+export interface VaultCall {
+    tool: string;
+    rules: VaultRule[];
+}
+const calls = new AsyncLocalStorage<VaultCall>();
+export const runVaultCall = <T>(call: VaultCall, fn: () => Promise<T>): Promise<T> => calls.run(call, fn);
+/** The vault call in progress, if this code runs under one (typing tools, executeTool's hooks). */
+export const vaultCall = (): VaultCall | undefined => calls.getStore();
 
 const ANY_TOKEN = new RegExp(TOKEN_RE.source); // non-global: no lastIndex state shared with matchAll/replace
 export const hasVaultToken = (args: unknown) => ANY_TOKEN.test(JSON.stringify(args ?? ""));
 
 /**
+ * Null when every rule allows typing where the keys land now: `top` is the live
+ * top-level URL, `frame` the URL of the frame holding focus ("" = unknown, e.g.
+ * focus in a frame we can't see). Called by the typing tool right before it types.
+ */
+export function vaultTargetError(rules: VaultRule[], top: string, frame: string): string | null {
+    const topHost = siteOf(top);
+    const frameHost = siteOf(frame);
+    for (const r of rules) {
+        const host = r.payment ? topHost : frameHost;
+        const ok = r.payment ? !!frameHost && host === r.domains[0] : onDomains(host, r.domains);
+        if (!ok) {
+            const where =
+                frameHost && frameHost !== topHost
+                    ? `${topHost || top} (focus in a frame on ${frameHost})`
+                    : topHost || "a non-https page";
+            console.warn(`  🔐 [vault] refused ${r.token} at ${where}`);
+            return `${r.token}: the page changed before typing (now ${where}; allowed: ${r.domains.join(", ")}). Refused, nothing was typed. Check the page and try again.`;
+        }
+    }
+    return null;
+}
+
+// Documents (origin|timeOrigin) a secret was typed into: page JavaScript is refused there.
+// ponytail: grows by one per typed secret, cleared on vault reload; never large.
+const tainted = new Set<string>();
+export const noteSecretTyped = (doc: string): void => {
+    tainted.add(doc);
+};
+export const secretTypedIn = (doc: string): boolean => tainted.has(doc);
+
+/** A stable text for a consent key / question: tokens as written, values masked. */
+const describeArgs = (args: Record<string, unknown>) =>
+    maskKnownValues(
+        JSON.stringify(
+            Object.fromEntries(
+                Object.entries(args)
+                    .filter(([k]) => k !== "confirmed")
+                    .sort(),
+            ),
+        ),
+    );
+
+/**
  * Swaps every {{vault:id.field}} in `args` for its value, or refuses the whole
  * call with an error for the model. The result goes to the tool only; the
- * caller keeps the tokens for logs and history.
+ * caller keeps the tokens for logs and history. For a browser tool, `rules` is
+ * what the tool must re-check where the keys land (vaultTargetError).
  */
 export async function resolveVaultArgs<T>(
     tool: string,
     args: T,
     ctx: VaultContext,
-): Promise<{ args: T } | { error: string }> {
-    if (!hasVaultToken(args)) return { args };
+): Promise<{ args: T; rules: VaultRule[] } | { error: string }> {
+    if (!hasVaultToken(args)) return { args, rules: [] };
     if (!vaultEnabled()) return { error: "The vault is turned off (ATLAS_NO_VAULT), so saved secrets can't be typed." };
     if (!ctx.isOwner) return { error: "Saved secrets can only be used for the owner." };
-    if (tool === "browser_multi_action") {
+    if (tool === "browser_multi_action" || tool === "site_task") {
         return {
-            error: "Type saved secrets with browser_type, one field per call (a multi-step action could leave the site before it types).",
+            error: "Type saved secrets with browser_type, one field per call (a multi-step action or a Site Skill could leave the site, or keep the value, before it types).",
         };
     }
     const found = [...JSON.stringify(args).matchAll(TOKEN_RE)].map((m) => ({ id: m[1], field: m[2], token: m[0] }));
     const values = new Map<string, string>();
+    const rules: VaultRule[] = [];
     const inBrowser = BROWSER_TYPING.has(tool);
     const host = inBrowser ? siteOf(await ctx.pageUrl().catch(() => "")) : "";
     const desktopAsks: string[] = [];
@@ -283,17 +369,20 @@ export async function resolveVaultArgs<T>(
                     error: `${token}: paying with "${e.label}" needs the owner's OK for the item and amount first. Call vault_authorize_payment on the payment page.`,
                 };
             }
-            if (inBrowser && host !== a.site) {
+            if (!inBrowser)
+                return {
+                    error: `${token}: a saved card or UPI ID is only typed into the payment page in the browser, with browser_type.`,
+                };
+            if (host !== a.site) {
                 return {
                     error: `${token}: the payment was authorized on ${a.site}, but this page is ${host || "not an https page"}. Refused.`,
                 };
             }
-            if (field === "cvv") {
-                if (!a.cvv)
-                    return {
-                        error: `${token}: the CVV was already used. Authorize again if the owner wants to retry.`,
-                    };
-            }
+            if (a.used.has(field) || (field === "cvv" && !a.cvv))
+                return {
+                    error: `${token}: already typed once for this payment. If it has to be typed again, call vault_authorize_payment again (the owner approves it again).`,
+                };
+            rules.push({ token, domains: [a.site], payment: true });
         } else if (inBrowser) {
             if (!e.domains.length)
                 return {
@@ -307,27 +396,34 @@ export async function resolveVaultArgs<T>(
                     error: `${token}: "${e.label}" is saved for ${e.domains.join(", ")}, but this page is ${host || "not an https page"}. Refused: a page can't get a secret meant for another site.`,
                 };
             }
+            rules.push({ token, domains: e.domains, payment: false });
         } else desktopAsks.push(`${e.label} ${field}`);
         values.set(token, value);
     }
 
     if (desktopAsks.length) {
-        const { confirmed } = (args ?? {}) as { confirmed?: unknown };
-        const key = `vault_desktop:${tool}:${[...values.keys()].sort().join(",")}`;
-        if (checkConsent(key, confirmed === true) !== "granted") {
+        const a = (args ?? {}) as Record<string, unknown>;
+        // The whole call (tokens as written, every other argument) is what the owner OKs:
+        // a yes for one place doesn't type into another.
+        const call = describeArgs(a);
+        const target =
+            a.app || a.window
+                ? `into ${String(a.app ?? a.window)}`
+                : a.x !== undefined || a.coordinate !== undefined
+                  ? `at screen position ${JSON.stringify(a.coordinate ?? [a.x, a.y])}`
+                  : "into whatever app and field has focus at that moment";
+        if (checkConsent(`vault_desktop:${tool}:${call}`, a.confirmed === true, { nextTurnOnly: true }) !== "granted") {
             return {
-                error: `Typing ${desktopAsks.join(", ")} into a desktop app needs the owner's OK (no website to check it against). Ask them; only if they say yes, repeat the same call with confirmed: true.`,
+                error: `Typing ${desktopAsks.join(", ")} with ${tool} ${target} needs the owner's OK (no website to check it against; it may also show on screen). The exact call: ${tool} ${call}. Ask them; only if their very next message is a yes, repeat this same call with confirmed: true.`,
             };
         }
-        console.log(`  🔐 [vault] owner approved typing ${desktopAsks.join(", ")} via ${tool}`);
+        console.log(`  🔐 [vault] owner approved typing ${desktopAsks.join(", ")} via ${tool} ${target}`);
     }
 
-    // A CVV is typed once, then forgotten.
-    for (const { id, field } of found) {
-        const a = auths.get(id);
-        if (field === "cvv" && a) a.cvv = undefined;
-    }
-    if (found.some((f) => f.field === "cvv")) syncMasks();
+    // Each card / UPI field once per authorization. The CVV stays masked until
+    // the authorization ends, so the result of the call that typed it is still
+    // protected (agent.ts protects it right after the call).
+    for (const { id, field } of found) auths.get(id)?.used.add(field);
 
     const swap = (v: unknown): unknown => {
         if (typeof v === "string") return v.replace(TOKEN_RE, (t) => values.get(t) ?? t);
@@ -341,7 +437,7 @@ export async function resolveVaultArgs<T>(
         }
         return v;
     };
-    return { args: swap(args) as T };
+    return { args: swap(args) as T, rules };
 }
 
 function secretOf(e: VaultEntry, field: string): string | undefined {

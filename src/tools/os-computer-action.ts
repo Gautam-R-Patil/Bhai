@@ -189,7 +189,7 @@ async function executeStructuredAction(act: ComputerAction): Promise<Record<stri
         }
         case "type":
             await withCursorTyping(() => dispatchType(act.text));
-            return { action: "type", typed: act.text };
+            return { action: "type", typed_chars: act.text.length }; // not echoed: it may be a secret
         case "key":
             await dispatchKey(act.text);
             return { action: "key", pressed: act.text };

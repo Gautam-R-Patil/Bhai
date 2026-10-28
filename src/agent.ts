@@ -50,7 +50,7 @@ import {
 } from "./agents/tool-call-guardrail.js";
 import { offloadIfLarge } from "./agents/tool-output-offload.js";
 import { trackCursorTurn } from "./screen/agent-cursor.js";
-import { hasVaultToken, resolveVaultArgs } from "./security/vault.js";
+import { hasVaultToken, resolveVaultArgs, runVaultCall, type VaultCall } from "./security/vault.js";
 import {
     buildVerifyReminder,
     isMutator,
@@ -766,19 +766,31 @@ async function executeAndProcessToolCall(
     let execArgs = REVEAL_TOOLS.has(fnName) && channelContext?.isOwner === true ? revealArgs(fnArgs) : fnArgs;
     // Saved secrets ({{vault:id.password}}) too, under the vault's domain lock
     // and consent rules (security/vault.ts). Refused → the model gets the reason.
+    // The call then runs inside runVaultCall: the typing tool re-checks the
+    // origin where the keys land, and hooks only see tokens.
+    let vault: VaultCall | undefined;
     if (REVEAL_TOOLS.has(fnName) && hasVaultToken(fnArgs)) {
         const v = await resolveVaultArgs(fnName, execArgs, {
             isOwner: channelContext?.isOwner === true,
-            pageUrl: async () => (await import("./tools/browser/core.js")).getActivePage().then((p) => p.url()),
+            pageUrl: async () => {
+                const { getActivePage } = await import("./tools/browser/core.js");
+                const { liveUrl } = await import("./tools/browser/vault-typing.js");
+                return liveUrl(await getActivePage());
+            },
         });
         if ("error" in v) {
             const err = JSON.stringify({ error: v.error });
             return { toolCallId: toolCall.id, fnName, fnArgs, result: err, finalContent: err, isBrowser: false, isError: true };
         }
         execArgs = v.args;
+        vault = { tool: fnName, rules: v.rules };
     }
     // Stop reaches long waits on the owner, also inside sub-agents/swarms this call starts.
-    let rawResult = await withTurnSignal(signal, () => executeTool(fnName, execArgs));
+    const runTool = () => {
+        const run = () => withTurnSignal(signal, () => executeTool(fnName, execArgs));
+        return vault ? runVaultCall(vault, run) : run();
+    };
+    let rawResult = await runTool();
 
     // ── Self-heal: if tool failed with a dependency error, auto-fix and retry ──
     let isError = false;
@@ -794,7 +806,7 @@ async function executeAndProcessToolCall(
             const heal = await attemptSelfHeal(rawResult);
             if (heal.fixed) {
                 console.log(`  🔧 Self-healed (${heal.action}) — retrying ${fnName}`);
-                rawResult = await withTurnSignal(signal, () => executeTool(fnName, execArgs));
+                rawResult = await runTool();
                 isError = false;
                 try {
                     const p = JSON.parse(rawResult);
@@ -828,6 +840,10 @@ async function executeAndProcessToolCall(
     } catch {
         /* not json */
     }
+
+    // A call that typed a saved secret: mask its result now, while every value
+    // it typed (a CVV too) is still known, not only before the next LLM call.
+    if (vault) rawResult = protect(rawResult, { credentials: !CODE_TOOLS.has(fnName) });
 
     // Large-output offload: if the raw result is over the offload threshold,
     // save the full content to disk and replace it with a preview + file path.

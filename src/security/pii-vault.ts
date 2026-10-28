@@ -40,7 +40,13 @@ let generation = 0;
 // consume the start of a stored card and leak the rest. Short forms (<8 chars)
 // only count as whole tokens, inside the regex.
 const HANDLE_RE = /\[(?:CARD|AADHAAR|UPI|OTP|COOKIE)_\d+\]/g;
+// Issued handles and vault tokens: a form lying inside one is not a value (a
+// saved password "password" inside "{{vault:x.password}}" would otherwise be
+// masked again and again, forever).
+const MASK_RE = /\[(?:CARD|AADHAAR|UPI|OTP|COOKIE)_\d+\]|\{\{vault:[A-Za-z0-9_-]+\.[a-z]+\}\}/g;
 const handleByForm = new Map<string, string>();
+const anywhere = new Set<string>(); // forms masked even inside a word (saved secrets)
+const SECRET_ANYWHERE = 6;
 let formsRe: RegExp | null = null;
 let formsGen = -1;
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -52,14 +58,33 @@ function knownFormsRe(): RegExp | null {
     handleByForm.clear();
     // The first value stored keeps a form two values share (as the per-value loop did).
     // Saved secrets first: a form one shares with a handled value stays the vault token.
-    for (const [value, handle] of [...secrets, ...handleOf])
+    // A saved secret (6+ chars) and its partials count anywhere, not only as whole
+    // tokens: "x" + "pass12" must not carry a password past the mask.
+    anywhere.clear();
+    for (const [value, token] of secrets)
+        for (const [form] of formsOf(value)) {
+            if (!handleByForm.has(form)) handleByForm.set(form, token);
+            if (form.length >= SECRET_ANYWHERE) anywhere.add(form);
+        }
+    for (const [form, token] of partials) {
+        if (!handleByForm.has(form)) handleByForm.set(form, token);
+        anywhere.add(form);
+    }
+    for (const [value, handle] of handleOf)
         for (const [form] of formsOf(value)) if (!handleByForm.has(form)) handleByForm.set(form, handle);
     const forms = [...handleByForm.keys()];
-    const long = forms.filter((f) => f.length >= SHORT_FORM).sort(byLength).map(escapeRe);
-    const short = forms.filter((f) => f.length < SHORT_FORM).sort(byLength).map(escapeRe);
-    // Every long form is longer than every short one, so longs-then-shorts stays longest first.
-    if (short.length) long.push(String.raw`(?<![\p{L}\p{N}])(?:${short.join("|")})(?![\p{L}\p{N}])`);
-    formsRe = forms.length ? new RegExp(`(?=(${long.join("|")}))`, "gu") : null;
+    const isShort = (f: string) => f.length < SHORT_FORM && !anywhere.has(f);
+    const long = forms.filter((f) => !isShort(f)).sort(byLength);
+    const short = forms.filter(isShort).sort(byLength).map(escapeRe);
+    // Longest first. A saved secret can make a "long" form shorter than a short one;
+    // only then is each short form placed by its length (slower, rare).
+    const alts = long.map(escapeRe);
+    const shortGroup = (fs: string[]) => String.raw`(?<![\p{L}\p{N}])(?:${fs.join("|")})(?![\p{L}\p{N}])`;
+    if (short.length && long.length && long[long.length - 1].length < SHORT_FORM) {
+        const all = forms.sort(byLength).map((f) => (isShort(f) ? shortGroup([escapeRe(f)]) : escapeRe(f)));
+        alts.splice(0, alts.length, ...all);
+    } else if (short.length) alts.push(shortGroup(short));
+    formsRe = forms.length ? new RegExp(`(?=(${alts.join("|")}))`, "gu") : null;
     return formsRe;
 }
 
@@ -77,8 +102,8 @@ export function knownValueSpans(text: string): Span[] {
     const re = knownFormsRe();
     if (!re) return [];
     const handles: Span[] = [];
-    for (const m of text.matchAll(HANDLE_RE))
-        if (valueByHandle.has(m[0])) handles.push([m.index, m.index + m[0].length, m[0]]);
+    for (const m of text.matchAll(MASK_RE))
+        if (valueByHandle.has(m[0]) || secretTokens.has(m[0])) handles.push([m.index, m.index + m[0].length, m[0]]);
     const occ: Span[] = [];
     let h = 0;
     for (const m of text.matchAll(re)) {
@@ -166,11 +191,22 @@ function remember(text: string, slot: 0 | 1, out: string) {
 // values above but never evicted, and reveal() never turns them back: only
 // vault.ts resolves a token, under its own domain lock and consent rules.
 let secrets = new Map<string, string>();
+// Raw fragments of saved secrets (a page that shows the first 30 chars of a
+// typed key) → token, masked as-is wherever they appear.
+let partials = new Map<string, string>();
+// Every saved secret, normalized: reveal() never turns a handle back into one
+// ("4111-1111-1111-1111" as [CARD_1], an uppercased UPI ID as [UPI_1]).
+let secretNorms = new Set<string>();
+let secretTokens = new Set<string>();
+const normSecret = (v: string) => v.toLowerCase().replace(/[^\p{L}\p{N}@]/gu, "");
 
 /** Replace the set of saved secrets protect() hides (vault.ts calls it on every vault load). */
-export function setSecrets(next: Map<string, string>): void {
+export function setSecrets(next: Map<string, string>, nextPartials = new Map<string, string>()): void {
     for (const v of secrets.keys()) formsCache.delete(v);
     secrets = new Map(next);
+    partials = new Map(nextPartials);
+    secretNorms = new Set([...secrets.keys()].map(normSecret).filter(Boolean));
+    secretTokens = new Set(secrets.values());
     generation++;
 }
 
@@ -232,7 +268,12 @@ export function protect(text: string, opts: { credentials?: boolean } = {}): str
 }
 
 export function reveal(text: string): string {
-    return text.replace(HANDLE_RE, (h) => valueByHandle.get(h) ?? h);
+    return text.replace(HANDLE_RE, (h) => {
+        const v = valueByHandle.get(h);
+        // A saved card or UPI ID a page showed in another format stays a handle:
+        // only vault.ts hands those out, under its payment rules.
+        return v === undefined || secretNorms.has(normSecret(v)) ? h : v;
+    });
 }
 
 /** Tools that type into a page or app — the only place a handle becomes its value again. */

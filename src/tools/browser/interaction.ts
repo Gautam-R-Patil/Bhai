@@ -5,6 +5,7 @@
 // ── Browser Interaction Tools ─────────────────
 // Click, type, scroll, hover, drag, keyboard
 
+import { vaultCall } from "../../security/vault.js";
 import type { ToolDefinition } from "../get-current-time.js";
 import { agentCursor } from "./agent-cursor.js";
 import { CAPTCHA_HINT, quickCaptchaCheck } from "./captcha.js";
@@ -30,6 +31,7 @@ import {
     recordHoverFailure,
     recordHoverSuccess,
 } from "./native-browser.js";
+import { typeVaultText } from "./vault-typing.js";
 
 // ═══════════════════════════════════════════════
 // TOOL: Click at coordinates or label
@@ -706,15 +708,28 @@ export const browserType: ToolDefinition = {
                 await page.waitForTimeout(300);
             }
 
+            // A saved secret (vault.ts) is typed only after its origin check, here, after the click above.
+            const secret = !!vaultCall();
+            if (secret && !input.text)
+                return JSON.stringify({ error: "Type a saved secret as `text`, one field per call." });
+
             // Press special key
-            if (input.key) {
+            if (input.key && !secret) {
                 await page.keyboard.press(input.key as string);
                 await page.waitForTimeout(500);
                 return JSON.stringify({ success: true, pressed: input.key });
             }
 
             // Type text — use Rust-computed human-like per-character delays
-            if (input.text) {
+            if (input.text && secret) {
+                await agentCursor(page, null, "type");
+                if (input.clear_first !== false) {
+                    await page.keyboard.press("ControlOrMeta+a");
+                    await page.waitForTimeout(50);
+                }
+                const refused = await typeVaultText(page, input.text as string);
+                if (refused) return JSON.stringify({ error: refused });
+            } else if (input.text) {
                 await agentCursor(page, null, "type");
                 if (input.clear_first !== false) {
                     await page.keyboard.press("ControlOrMeta+a"); // cross-platform
@@ -769,9 +784,10 @@ export const browserType: ToolDefinition = {
             if (waitTime > 0) await page.waitForTimeout(waitTime);
             const newElementMap = await getInteractiveElements(page);
             setLastElementMap(newElementMap);
+            // The typed text is not echoed (it may hold a secret); its length is enough.
             return JSON.stringify({
                 success: true,
-                typed: input.text || input.key,
+                ...(input.text ? { typed_chars: String(input.text).length } : { pressed: input.key }),
                 url: page.url(),
                 interactive_elements_text: buildElementsText(),
             });
@@ -1011,6 +1027,14 @@ export const browserKeyboard: ToolDefinition = {
         try {
             const page = await getActivePage();
 
+            // A saved secret (vault.ts): text only, typed after its origin check.
+            if (vaultCall()) {
+                if (!input.text) return JSON.stringify({ error: "Type a saved secret as `text`, one field per call." });
+                const refused = await typeVaultText(page, input.text as string);
+                if (refused) return JSON.stringify({ error: refused });
+                return JSON.stringify({ success: true, typed_chars: (input.text as string).length });
+            }
+
             // Hold a key down
             if (input.hold) {
                 await page.keyboard.down(input.hold as string);
@@ -1026,7 +1050,7 @@ export const browserKeyboard: ToolDefinition = {
             // Type raw text
             if (input.text) {
                 await page.keyboard.type(input.text as string, { delay: 30 });
-                return JSON.stringify({ success: true, typed: (input.text as string).substring(0, 50) });
+                return JSON.stringify({ success: true, typed_chars: (input.text as string).length });
             }
 
             // Key combo - e.g. "Control+Shift+z"

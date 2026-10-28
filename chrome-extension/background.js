@@ -437,7 +437,7 @@ async function handleCommand(cmd) {
   setBadgeActive(true);
   const actionLabels = {
     click_at: `Clicking (${payload?.x|0},${payload?.y|0})`,
-    type_text: `Typing "${(payload?.text||'').substring(0,25)}"`,
+    type_text: payload?.secret ? 'Typing a saved secret' : `Typing "${(payload?.text||'').substring(0,25)}"`,
     scroll: `Scrolling ${payload?.direction||'down'} ${payload?.amount||''}px`,
     navigate: `→ ${(payload?.url||'').replace(/^https?:\/\/(www\.)?/,'')}`,
     scan_elements: 'Scanning page elements',
@@ -1051,7 +1051,7 @@ async function typeText(payload) {
   return withActiveTab(async (tabId) => {
     const results = await chrome.scripting.executeScript({
       target: { tabId },
-      func: (text, selector, editorTypeHint) => {
+      func: (text, selector, editorTypeHint, vaultRules) => {
       // ── Editor Detection ──
       function findEditorContext(el) {
         let node = el;
@@ -1165,6 +1165,30 @@ async function typeText(payload) {
 
       let target = selector ? document.querySelector(selector) : document.activeElement;
       if (!target) return { success: false, error: 'No target element' };
+
+      // A saved secret (Bhai's vault): typed only if THIS page, now, is a site
+      // the vault allows, and focus is not inside a frame. Checked here, in the
+      // same step that types, so a redirect or tab switch can't redirect it.
+      if (vaultRules) {
+        const host = location.protocol === 'https:' ? location.hostname.toLowerCase() : '';
+        const ok = !!host && vaultRules.every((r) => r.payment
+          ? host === r.domains[0]
+          : r.domains.some((d) => host === d || host.endsWith('.' + d)));
+        if (!ok || /^(IFRAME|FRAME)$/.test(target.tagName) || !('value' in target)) {
+          return { success: false, error: `vault_origin_mismatch: the page is ${host || 'not https'} now (or focus is not in a field); nothing was typed` };
+        }
+        if (target.focus) target.focus();
+        let replace = false;
+        try { replace = target.selectionStart === 0 && target.selectionEnd === target.value.length; } catch (e) { /* no selection API */ }
+        const proto = target.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+        if (setter) setter.call(target, replace ? text : target.value + text); else target.value = replace ? text : target.value + text;
+        target.dispatchEvent(new Event('input', { bubbles: true }));
+        target.dispatchEvent(new Event('change', { bubbles: true }));
+        // Drawn as dots, so a screenshot doesn't show it.
+        if (target.type !== 'password') target.style.setProperty('-webkit-text-security', 'disc');
+        return { success: true, guarded: true };
+      }
       if (target.focus) target.focus();
 
       // Check for code/rich editor context
@@ -1222,7 +1246,7 @@ async function typeText(payload) {
       }
       return { success: true };
     },
-    args: [payload.text, payload.selector || null, payload.editorType || null],
+    args: [payload.text, payload.selector || null, payload.editorType || null, payload.vaultRules || null],
     });
 
     return results[0]?.result || { success: true };

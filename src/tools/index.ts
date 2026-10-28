@@ -179,6 +179,8 @@ import { siteTask } from "./site-task.js";
 import { approveSiteSkillTool, setSiteMintLLM, siteSkillMintTool } from "./site-skill-mint.js";
 import { getActivePage } from "./browser/core.js";
 import { drainTrace, tracing } from "../skills/site/mint/recorder.js";
+import { maskKnownValues } from "../security/pii-vault.js";
+import { vaultCall } from "../security/vault.js";
 import { vaultAuthorizePayment, vaultList } from "./vault.js";
 export { setSmartClickLLM, setSiteMintLLM };
 import { IS_LINUX, IS_MAC, IS_WIN } from "./platform.js";
@@ -841,9 +843,14 @@ export async function executeTool(name: string, input: Record<string, unknown>):
 
     // PreToolUse hooks — can modify input or block the call outright.
     // Fail-open: any exception leaves input unchanged.
+    // A call typing a saved secret (security/vault.ts): hooks see tokens, not
+    // values, and can't rewrite it (its origin was checked for this input).
+    const vault = vaultCall();
+    const forHooks = (v: Record<string, unknown>) =>
+        vault ? (JSON.parse(maskKnownValues(JSON.stringify(v))) as Record<string, unknown>) : v;
     let effectiveInput = input;
     try {
-        const pre = await firePreToolUse(name, input);
+        const pre = await firePreToolUse(name, forHooks(input));
         if (pre.block) {
             const reason = pre.block_reason ?? "Blocked by PreToolUse hook.";
             auditLog({
@@ -856,9 +863,8 @@ export async function executeTool(name: string, input: Record<string, unknown>):
             });
             return JSON.stringify({ error: reason, blocked_by_hook: true });
         }
-        if (pre.modifiedInput) {
-            effectiveInput = pre.modifiedInput;
-        }
+        if (pre.modifiedInput && vault) console.warn(`[TOOL] PreToolUse hook rewrite ignored: ${name} types a saved secret`);
+        else if (pre.modifiedInput) effectiveInput = pre.modifiedInput;
     } catch (err) {
         console.warn(`[TOOL] PreToolUse hook chain errored for ${name}: ${(err as Error).message}`);
     }
@@ -900,7 +906,7 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         // PostToolUse hooks — side effects only. Fire-and-forget; don't await
         // anything that could delay the agent's next iteration.
         try {
-            void firePostToolUse(name, effectiveInput, result, success);
+            void firePostToolUse(name, forHooks(effectiveInput), vault ? maskKnownValues(result) : result, success);
         } catch (err) {
             console.warn(`[TOOL] PostToolUse hook chain errored for ${name}: ${(err as Error).message}`);
         }
@@ -913,7 +919,7 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         recordToolUsage(name, false, durationMs);
 
         try {
-            void firePostToolUse(name, effectiveInput, JSON.stringify({ error: message }), false);
+            void firePostToolUse(name, forHooks(effectiveInput), JSON.stringify({ error: message }), false);
         } catch {
             /* */
         }

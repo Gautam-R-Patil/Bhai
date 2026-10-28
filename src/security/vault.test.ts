@@ -81,7 +81,7 @@ describe("vault: tokens resolve only inside typing tools, under the domain lock"
     it("resolves on the entry's site (and its subdomains) and leaves the caller's args alone", async () => {
         const args = { text: "{{vault:zomato.password}}", label: 3 };
         const r = await resolveVaultArgs("browser_type", args, owner("https://www.zomato.com/login"));
-        expect(r).toEqual({ args: { text: PASSWORD, label: 3 } });
+        expect(r).toMatchObject({ args: { text: PASSWORD, label: 3 } });
         expect(args.text).toBe("{{vault:zomato.password}}");
         expect(
             await resolveVaultArgs(
@@ -89,7 +89,7 @@ describe("vault: tokens resolve only inside typing tools, under the domain lock"
                 { text: "{{vault:zomato.username}}" },
                 owner("https://accounts.zomato.com/x"),
             ),
-        ).toEqual({
+        ).toMatchObject({
             args: { text: USER },
         });
         expect(REVEAL_TOOLS.has("whatsapp_send")).toBe(false); // agent.ts resolves for REVEAL_TOOLS only
@@ -133,7 +133,7 @@ describe("vault: tokens resolve only inside typing tools, under the domain lock"
         const args = { text: "{{vault:zomato.password}}" };
         expect(await resolveVaultArgs("os_type", args, owner(""))).toHaveProperty("error");
         noteOwnerMessage("yes go ahead");
-        expect(await resolveVaultArgs("os_type", { ...args, confirmed: true }, owner(""))).toEqual({
+        expect(await resolveVaultArgs("os_type", { ...args, confirmed: true }, owner(""))).toMatchObject({
             args: { text: PASSWORD },
         });
     });
@@ -203,17 +203,19 @@ describe("vault: payments", () => {
                 { text: "{{vault:hdfc.number}}" },
                 owner("https://pay.example.com/x"),
             ),
-        ).toEqual({
+        ).toMatchObject({
             args: { text: CARD.replace(/ /g, "") },
         });
         expect(protect('{"cvv":"987"}')).toBe('{"cvv":"{{vault:hdfc.cvv}}"}');
         expect(
             await resolveVaultArgs("browser_type", { text: "{{vault:hdfc.cvv}}" }, owner("https://pay.example.com")),
-        ).toEqual({ args: { text: "987" } });
+        ).toMatchObject({ args: { text: "987" } });
         expect(
             await resolveVaultArgs("browser_type", { text: "{{vault:hdfc.cvv}}" }, owner("https://pay.example.com")),
         ).toHaveProperty("error");
-        expect(protect("cvv 987")).toBe("cvv 987"); // forgotten after its one use
+        // Still masked after its one use, until the authorization ends (the
+        // result of the call that typed it may show it).
+        expect(protect("cvv 987")).toBe("cvv {{vault:hdfc.cvv}}");
         // The CVV that came in with the entry was dropped on load.
         loadVault(ENTRIES);
         expect(JSON.stringify(listVault())).not.toContain("321");
