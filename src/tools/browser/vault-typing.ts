@@ -68,9 +68,10 @@ const docOf = async (page: AnyPage): Promise<string> =>
 
 /**
  * Types `text` (it holds resolved vault values) where focus is, if the vault
- * call's rules allow that origin now. Returns an error, or null once typed.
+ * call's rules allow that origin now (`clear`: the extension replaces the
+ * field). Returns an error, or null once typed.
  */
-export async function typeVaultText(page: AnyPage, text: string): Promise<string | null> {
+export async function typeVaultText(page: AnyPage, text: string, clear = false): Promise<string | null> {
     const rules = vaultCall()?.rules ?? [];
     if (!rules.length) return "A saved secret reached the browser without its site check. Refused, nothing was typed.";
     const t = await focusTarget(page);
@@ -78,7 +79,7 @@ export async function typeVaultText(page: AnyPage, text: string): Promise<string
     if (err) return err;
     if (isChromeProxy(page)) {
         // The extension checks the page's origin again, in the step that types.
-        await page.keyboard.type(text, { vaultRules: rules });
+        await page.keyboard.type(text, { vaultRules: rules, clear });
     } else {
         await page.keyboard.type(text); // in one go: no gap after the check
         await t.frame?.evaluate(HIDE_FOCUSED_JS).catch(() => {});

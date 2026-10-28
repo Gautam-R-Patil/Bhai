@@ -928,7 +928,8 @@ export const browserMultiAction: ToolDefinition = {
             // Only scan if requested and useful
             let newElementMap = lastElementMap;
             if (finalScan) {
-                await page.waitForTimeout(500);
+                await waitForPageReady(page, 1500);
+                invalidateCache(); // type/keyboard/select steps changed the page too
                 newElementMap = await getInteractiveElements(page);
                 setLastElementMap(newElementMap);
             }

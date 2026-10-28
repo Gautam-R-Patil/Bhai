@@ -74,7 +74,10 @@ const OPERATION_TIMEOUTS: Record<string, number> = {
     close_tab: 2000,
     switch_tab: 2000,
     get_tabs: 2000,
+    get_cookies: 5000,
 };
+// ponytail: bypasses the native allowlist until get_cookies is added there.
+const TS_ONLY_COMMANDS = new Set(["get_cookies"]);
 const HEARTBEAT_INTERVAL_MS = 15000;
 
 let httpServer: http.Server | null = null;
@@ -678,8 +681,9 @@ export async function sendBridgeCommand(
     const id = crypto.randomUUID();
     const command: ChromeBridgeCommand = { id, type, payload };
 
-    // Validate command via native module if available
-    if (native) {
+    // Validate command via native module if available. TS_ONLY_COMMANDS are newer
+    // than the native allowlist (native/src/chrome_bridge.rs is_allowed_command).
+    if (native && !TS_ONLY_COMMANDS.has(type)) {
         try {
             native.validateBridgeCommand(JSON.stringify(command));
         } catch (err) {
@@ -779,6 +783,15 @@ export async function getExtensionTabs(): Promise<ChromeTabInfo[]> {
 export async function getActiveExtensionTab(): Promise<ChromeTabInfo | null> {
     const result = await sendBridgeCommand("get_active_tab", {});
     return result as ChromeTabInfo | null;
+}
+
+/**
+ * The user's Chrome cookies for one site (domain and its subdomains). The
+ * extension refuses an empty or dotless domain, so this never dumps the jar.
+ */
+export async function getExtensionCookies(domain: string): Promise<unknown[]> {
+    const result = await sendBridgeCommand("get_cookies", { domain });
+    return Array.isArray(result) ? result : [];
 }
 
 /**

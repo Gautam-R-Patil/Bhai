@@ -11,6 +11,11 @@ because Chrome warns on unrecognized (`_`-prefixed) manifest keys.
   `Page.captureScreenshot`, `Accessibility.getFullAXTree`). Cannot drop without
   losing AX-tree extraction + CSP-safe JS injection.
 
+- **`cookies`** — `get_cookies {domain}` returns the cookies of ONE site (that
+  domain and its subdomains; a dotless/empty domain is refused). Bhai asks only
+  when its own Playwright browser hits a login/OTP wall on that site, so it can
+  continue in the user's existing session instead of asking them to sign in again.
+
 - **`host_permissions: <all_urls>`** — the agent operates on whatever tab the
   user is on; we cannot enumerate a finite host list at install time.
   `activeTab` is insufficient: it only grants access on user-gesture-initiated

@@ -8,10 +8,12 @@
 import type { ToolDefinition } from "../get-current-time.js";
 import { getCachedActions, markActionFailed, replayActions, shouldReplayActions } from "./action-cache.js";
 import { withAgentUIHidden } from "./agent-cursor.js";
+import { checkAuthWall } from "./auth-wall.js";
 import { getActiveBackend, getCurrentMode } from "./browser-backend.js";
 import { CAPTCHA_HINT, quickCaptchaCheck } from "./captcha.js";
 import {
     ATLAS_HUD_JS,
+    buildElementsText,
     getAccessibilityTree,
     getActivePage,
     getActivePageIndex,
@@ -24,6 +26,7 @@ import {
     setLastElementMap,
     waitForPageReady,
 } from "./core.js";
+import { takePageEvents } from "./popup-guard.js";
 import type { InteractiveElement } from "./types.js";
 
 // Statuses that mean the site refused us (bot wall / rate limit / outage) — report as failure.
@@ -100,9 +103,11 @@ export const browserNavigate: ToolDefinition = {
                 )
                 .catch(() => {});
             // Navigation timeouts are non-fatal (page is likely usable even if not fully
-            // loaded); any other goto error (DNS, connection refused, ...) is a failure.
+            // loaded) but reported as timed_out; any other goto error (DNS, connection
+            // refused, ...) is a failure.
             let navError: string | null = null;
             let status: number | null = null;
+            let timedOut = false;
             try {
                 // Playwright returns a Response; ChromePageProxy returns void (no status).
                 const resp = (await page.goto(input.url as string, { waitUntil: "domcontentloaded", timeout })) as {
@@ -110,8 +115,10 @@ export const browserNavigate: ToolDefinition = {
                 } | null;
                 status = resp?.status?.() ?? null;
             } catch (err) {
-                if ((err as Error).name !== "TimeoutError") navError = (err as Error).message.split("\n")[0];
+                if ((err as Error).name === "TimeoutError") timedOut = true;
+                else navError = (err as Error).message.split("\n")[0];
             }
+            invalidateCache();
 
             // Smart wait for the page to stabilize
             if (!navError) await waitForPageReady(page);
@@ -131,12 +138,19 @@ export const browserNavigate: ToolDefinition = {
                     url: page.url(),
                     ...(status !== null ? { status } : {}),
                     ...captchaFields,
+                    ...takePageEvents(),
                 });
             }
 
+            let waitForTimedOut = false;
             if (input.wait_for) {
-                await page.waitForSelector(input.wait_for as string, { timeout: 10000 }).catch(() => null);
+                await page.waitForSelector(input.wait_for as string, { timeout: 10000 }).catch(() => {
+                    waitForTimedOut = true;
+                });
             }
+
+            // Login/OTP wall: may import the user's Chrome session and reload — before the scan.
+            const authFields = captchaType ? {} : await checkAuthWall(page);
 
             const title = await page.title();
             const url = page.url();
@@ -148,29 +162,6 @@ export const browserNavigate: ToolDefinition = {
                 getInteractiveElements(page),
             ]);
             setLastElementMap(elementMap);
-
-            const serializedElements = elementMap.map((e) => ({
-                label: e.label,
-                x: e.x,
-                y: e.y,
-                tag: e.tag,
-                text: e.text,
-                editorType: e.editorType,
-                isOCRElement: e.isOCRElement,
-            }));
-
-            // Generate Condensed DOM Markdown
-            let interactive_elements_text = "No interactive elements detected.";
-            if (serializedElements.length > 0) {
-                interactive_elements_text = serializedElements
-                    .map((e) => {
-                        if ((e as any).editorType)
-                            return `[${e.label}] **CODE EDITOR** (${(e as any).editorType}) '${e.text}'`;
-                        if ((e as any).isOCRElement) return `[${e.label}] [OCR] '${e.text}'`;
-                        return `[${e.label}] ${e.tag} '${e.text}'`;
-                    })
-                    .join("\n");
-            }
 
             // Design-tool detection (Figma, Canva, Miro, etc.)
             // These are canvas-based apps where accessibility tree is nearly empty.
@@ -185,10 +176,15 @@ export const browserNavigate: ToolDefinition = {
                 title,
                 url,
                 open_tabs: tabCount,
-                interactive_elements_text,
-                tip: "Read interactive_elements_text to find the label ID, then use browser_click_at with the label to click.",
                 ...(status !== null ? { status } : {}),
+                ...(timedOut
+                    ? { timed_out: true, note: `Page did not finish loading within ${timeout}ms; it may be partial.` }
+                    : {}),
+                ...(waitForTimedOut ? { wait_for_timed_out: true } : {}),
                 ...captchaFields,
+                ...authFields,
+                ...takePageEvents(),
+                tip: "Read interactive_elements_text to find the label ID, then use browser_click_at with the label to click.",
             };
 
             // `canvas_app` means a GENUINE canvas surface (design tool) — it drives
@@ -229,6 +225,7 @@ export const browserNavigate: ToolDefinition = {
                 /* action cache lookup non-fatal */
             }
 
+            result.interactive_elements_text = buildElementsText(); // last: status/tip fields come first
             return JSON.stringify(result);
         } catch (err) {
             return JSON.stringify({ error: `Navigation failed: ${(err as Error).message}` });
@@ -312,30 +309,6 @@ export const browserScan: ToolDefinition = {
 
             setLastElementMap(elementMap);
 
-            // Strip the handles out of the metadata sent to the LLM (they don't serialize)
-            const serializedElements = elementMap.map((e) => ({
-                label: e.label,
-                x: e.x,
-                y: e.y,
-                tag: e.tag,
-                text: e.text,
-                editorType: e.editorType,
-                isOCRElement: e.isOCRElement,
-            }));
-
-            // Generate Condensed DOM Markdown
-            let interactive_elements_text = "No interactive elements detected.";
-            if (serializedElements.length > 0) {
-                interactive_elements_text = serializedElements
-                    .map((e) => {
-                        if ((e as any).editorType)
-                            return `[${e.label}] **CODE EDITOR** (${(e as any).editorType}) '${e.text}'`;
-                        if ((e as any).isOCRElement) return `[${e.label}] [OCR] '${e.text}'`;
-                        return `[${e.label}] ${e.tag} '${e.text}'`;
-                    })
-                    .join("\n");
-            }
-
             // Auto-detect design tools — force visual mode + coordinate-click guidance
             const DESIGN_DOMAINS =
                 /\b(figma\.com|canva\.com|miro\.com|lucid\.app|draw\.io|diagrams\.net|sketch\.com|framer\.com|webflow\.com|retool\.com|linear\.app)\b/;
@@ -348,7 +321,6 @@ export const browserScan: ToolDefinition = {
                 success: true,
                 title,
                 url,
-                interactive_elements_text,
                 viewport: { width: 1280, height: 800 },
                 tip: "Use interactive_elements_text to find the label ID, then click it using browser_click_at.",
             };
@@ -391,6 +363,7 @@ export const browserScan: ToolDefinition = {
                 }
             }
 
+            result.interactive_elements_text = buildElementsText(); // last: status/tip fields come first
             return JSON.stringify(result);
         } catch (err) {
             return JSON.stringify({ error: `DOM Scan failed: ${(err as Error).message}` });
@@ -420,6 +393,7 @@ export const browserBack: ToolDefinition = {
             const page = await getActivePage();
             await page.goBack({ waitUntil: "domcontentloaded" }).catch(() => null);
             await waitForPageReady(page);
+            invalidateCache();
 
             const title = await page.title();
             const url = page.url();
@@ -427,29 +401,7 @@ export const browserBack: ToolDefinition = {
             const elementMap = await getInteractiveElements(page);
             setLastElementMap(elementMap);
 
-            const serializedElements = elementMap.map((e) => ({
-                label: e.label,
-                x: e.x,
-                y: e.y,
-                tag: e.tag,
-                text: e.text,
-                editorType: e.editorType,
-                isOCRElement: e.isOCRElement,
-            }));
-
-            let interactive_elements_text = "No interactive elements detected.";
-            if (serializedElements.length > 0) {
-                interactive_elements_text = serializedElements
-                    .map((e) => {
-                        if ((e as any).editorType)
-                            return `[${e.label}] **CODE EDITOR** (${(e as any).editorType}) '${e.text}'`;
-                        if ((e as any).isOCRElement) return `[${e.label}] [OCR] '${e.text}'`;
-                        return `[${e.label}] ${e.tag} '${e.text}'`;
-                    })
-                    .join("\n");
-            }
-
-            return JSON.stringify({ success: true, title, url, interactive_elements_text });
+            return JSON.stringify({ success: true, title, url, interactive_elements_text: buildElementsText() });
         } catch (err) {
             return JSON.stringify({ error: `Back failed: ${(err as Error).message}` });
         }
@@ -463,16 +415,28 @@ export const browserBack: ToolDefinition = {
 async function switchTabInChrome(input: Record<string, unknown>): Promise<string> {
     const { getExtensionTabs, sendBridgeCommand } = await import("./chrome-bridge.js");
     const list = async () =>
-        (await getExtensionTabs()).map((t, index) => ({ index, title: t.title, url: t.url, active: t.active, id: t.id }));
+        (await getExtensionTabs()).map((t, index) => ({
+            index,
+            title: t.title,
+            url: t.url,
+            active: t.active,
+            id: t.id,
+        }));
     const view = (tabs: Awaited<ReturnType<typeof list>>) => tabs.map(({ id: _id, ...t }) => t);
     let tabs = await list();
     const at = (i: unknown) => (typeof i === "number" ? tabs[i] : undefined);
     if (typeof input.close_tab_index === "number" || input.close_active) {
-        const target = typeof input.close_tab_index === "number" ? at(input.close_tab_index) : tabs.find((t) => t.active);
+        const target =
+            typeof input.close_tab_index === "number" ? at(input.close_tab_index) : tabs.find((t) => t.active);
         if (!target) return JSON.stringify({ error: "No such tab.", tabs: view(tabs) });
         await sendBridgeCommand("close_tab", { tabId: target.id });
         tabs = await list();
-        return JSON.stringify({ success: true, action: "closed", closed: { title: target.title, url: target.url }, tabs: view(tabs) });
+        return JSON.stringify({
+            success: true,
+            action: "closed",
+            closed: { title: target.title, url: target.url },
+            tabs: view(tabs),
+        });
     }
     if (input.new_tab) {
         await sendBridgeCommand("navigate", { url: (input.url as string) || "about:blank", newTab: true });
@@ -483,7 +447,13 @@ async function switchTabInChrome(input: Record<string, unknown>): Promise<string
         const target = at(input.tab_index);
         if (!target) return JSON.stringify({ error: "No such tab.", tabs: view(tabs) });
         await sendBridgeCommand("switch_tab", { tabId: target.id });
-        return JSON.stringify({ success: true, action: "switched", title: target.title, url: target.url, active_tab: input.tab_index });
+        return JSON.stringify({
+            success: true,
+            action: "switched",
+            title: target.title,
+            url: target.url,
+            active_tab: input.tab_index,
+        });
     }
     return JSON.stringify({ success: true, tabs: view(tabs), open_tabs: tabs.length });
 }
@@ -508,7 +478,10 @@ export const browserSwitchTab: ToolDefinition = {
                         description: "If new_tab=true, optionally navigate to this URL immediately",
                     },
                     close_active: { type: "boolean", description: "Close the currently active tab" },
-                    close_tab_index: { type: "number", description: "Close the tab at this index (0-based, from the list)" },
+                    close_tab_index: {
+                        type: "number",
+                        description: "Close the tab at this index (0-based, from the list)",
+                    },
                 },
                 required: [],
             },
@@ -545,10 +518,13 @@ export const browserSwitchTab: ToolDefinition = {
             // Open new tab
             if (input.new_tab) {
                 const newPage = await context.newPage();
+                let navNote: string | null = null;
                 if (input.url) {
                     await newPage
                         .goto(input.url as string, { waitUntil: "domcontentloaded", timeout: 30000 })
-                        .catch(() => null);
+                        .catch((err: Error) => {
+                            navNote = err.name === "TimeoutError" ? "timed_out" : err.message.split("\n")[0];
+                        });
                     await waitForPageReady(newPage);
                 }
                 const newPages = context.pages();
@@ -566,28 +542,6 @@ export const browserSwitchTab: ToolDefinition = {
                 const elementMap = await getInteractiveElements(newPage);
                 setLastElementMap(elementMap);
 
-                const serializedElements = elementMap.map((e) => ({
-                    label: e.label,
-                    x: e.x,
-                    y: e.y,
-                    tag: e.tag,
-                    text: e.text,
-                    editorType: e.editorType,
-                    isOCRElement: e.isOCRElement,
-                }));
-
-                let interactive_elements_text = "No interactive elements detected.";
-                if (serializedElements.length > 0) {
-                    interactive_elements_text = serializedElements
-                        .map((e) => {
-                            if ((e as any).editorType)
-                                return `[${e.label}] **CODE EDITOR** (${(e as any).editorType}) '${e.text}'`;
-                            if ((e as any).isOCRElement) return `[${e.label}] [OCR] '${e.text}'`;
-                            return `[${e.label}] ${e.tag} '${e.text}'`;
-                        })
-                        .join("\n");
-                }
-
                 return JSON.stringify({
                     success: true,
                     action: "new_tab_opened",
@@ -595,7 +549,8 @@ export const browserSwitchTab: ToolDefinition = {
                     url,
                     active_tab: newTabIdx,
                     open_tabs: newPages.length,
-                    interactive_elements_text,
+                    ...(navNote === "timed_out" ? { timed_out: true } : navNote ? { navigation_error: navNote } : {}),
+                    interactive_elements_text: buildElementsText(),
                 });
             }
 
@@ -620,28 +575,6 @@ export const browserSwitchTab: ToolDefinition = {
                 const elementMap = await getInteractiveElements(pages[idx]);
                 setLastElementMap(elementMap);
 
-                const serializedElements = elementMap.map((e) => ({
-                    label: e.label,
-                    x: e.x,
-                    y: e.y,
-                    tag: e.tag,
-                    text: e.text,
-                    editorType: e.editorType,
-                    isOCRElement: e.isOCRElement,
-                }));
-
-                let interactive_elements_text = "No interactive elements detected.";
-                if (serializedElements.length > 0) {
-                    interactive_elements_text = serializedElements
-                        .map((e) => {
-                            if ((e as any).editorType)
-                                return `[${e.label}] **CODE EDITOR** (${(e as any).editorType}) '${e.text}'`;
-                            if ((e as any).isOCRElement) return `[${e.label}] [OCR] '${e.text}'`;
-                            return `[${e.label}] ${e.tag} '${e.text}'`;
-                        })
-                        .join("\n");
-                }
-
                 return JSON.stringify({
                     success: true,
                     action: "switched_tab",
@@ -649,7 +582,7 @@ export const browserSwitchTab: ToolDefinition = {
                     url,
                     active_tab: idx,
                     open_tabs: pages.length,
-                    interactive_elements_text,
+                    interactive_elements_text: buildElementsText(),
                 });
             }
 
