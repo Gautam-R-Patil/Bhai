@@ -21,6 +21,7 @@ const RESERVED_SLUGS = new Set([
   "orchestrator-base",
   "site-skill-mint",
   "site-skill-review",
+  "unhinged",
 ]);
 
 // User-controlled slugs the bot can only WRITE to via specific user-driven

@@ -71,6 +71,7 @@ async function seedPrompts() {
     { slug: "orchestrator-base", file: "orchestrator-base.md" },
     { slug: "site-skill-mint", file: "site-skill-mint.md" },
     { slug: "site-skill-review", file: "site-skill-review.md" },
+    { slug: "unhinged", file: "unhinged.md" },
   ];
 
   console.log("\n📝 Seeding system prompts...\n");

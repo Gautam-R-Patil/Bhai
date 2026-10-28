@@ -2799,6 +2799,9 @@ PLAN:`,
                 thinkingLevel: iterThinking,
                 modelOverride: model,
                 skillSlugs: iterSkillSlugs,
+                // Unhinged on Grok gets its own personality prompt (rules + prompts/unhinged.md)
+                // instead of the default one, whose calm, short style rules won out.
+                serverPromptSlug: model === MODELS.GROK ? "unhinged" : undefined,
             });
         } catch (llmErr) {
             cbRecordFailure(circuitBreaker);
