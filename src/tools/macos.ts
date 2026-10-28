@@ -11,6 +11,7 @@ import { getScriptsDir } from "../config/paths.js";
 import { hideOverlayForAgent, showOverlayForAgent } from "../overlay/overlay-chat.js";
 import { getScreenDimensions, percentageToScreen, scaleImageToScreen } from "../screen/screen-dimensions.js";
 import type { ToolDefinition } from "./get-current-time.js";
+import { typeTextMac } from "./os-computer-action.js";
 import { getTelegramContext } from "./send-file.js";
 
 const execFileAsync = promisify(execFile);
@@ -592,55 +593,13 @@ export const osType: ToolDefinition = {
             if (code === undefined) return JSON.stringify({ success: false, error: unknownKey(key) });
             script = `tell application "System Events"\n  key code ${code}\nend tell\ndelay ${delaySec}`;
         } else if (input.text) {
-            // Use clipboard method for reliability (handles Unicode, emoji, special chars)
-            const textToType = input.text as string;
-            const escapedForAS = textToType
-                .replace(/\\/g, "\\\\")
-                .replace(/"/g, '\\"')
-                .replace(/\n/g, "\\n")
-                .replace(/\r/g, "\\r")
-                .replace(/\t/g, "\\t");
-            script = `
--- Save current clipboard
-set oldClipboard to ""
-try
-    set oldClipboard to the clipboard as text
-end try
-
--- Set clipboard to target text
-set the clipboard to "${escapedForAS}"
-
--- Paste via Cmd+V
-tell application "System Events"
-    keystroke "v" using command down
-end tell
-
--- Small delay then restore clipboard
-delay 0.3
-try
-    set the clipboard to oldClipboard
-end try
-delay ${delaySec}`;
-
-            // Try clipboard method first, fall back to keystroke on failure
-            const tmpFileClip = join(tmpdir(), `atlas_type_clip_${Date.now()}.scpt`);
+            const text = input.text as string;
             try {
-                await fs.writeFile(tmpFileClip, script, "utf-8");
-                const { stdout, stderr } = await execFileAsync("osascript", [tmpFileClip], { timeout: 10000 });
-                await fs.unlink(tmpFileClip).catch(() => {});
-                return JSON.stringify({
-                    success: true,
-                    typed: textToType,
-                    method: "clipboard",
-                    stdout: (stdout || "").substring(0, 500),
-                    stderr: (stderr || "").substring(0, 500),
-                });
-            } catch (clipErr) {
-                await fs.unlink(tmpFileClip).catch(() => {});
-                // Fallback: use keystroke method
-                console.log(`  ⌨️  [OS-TYPE] Clipboard method failed, falling back to keystroke`);
-                const keystrokeEscaped = textToType.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-                script = `tell application "System Events"\n  keystroke "${keystrokeEscaped}"\nend tell\ndelay ${delaySec}`;
+                const method = await typeTextMac(text);
+                await new Promise((r) => setTimeout(r, delayMs));
+                return JSON.stringify({ success: true, typed: text, method });
+            } catch (err) {
+                return JSON.stringify({ success: false, error: `Typing failed: ${(err as Error).message}` });
             }
         } else {
             return JSON.stringify({ error: "Provide 'text', 'key', or 'combo'" });
@@ -2514,13 +2473,7 @@ export const osMultiAction: ToolDefinition = {
                         break;
                     }
                     case "type": {
-                        // Use clipboard method for reliability
-                        const escaped = (act.text || "")
-                            .replace(/\\/g, "\\\\")
-                            .replace(/"/g, '\\"')
-                            .replace(/\n/g, "\\n");
-                        const script = `set the clipboard to "${escaped}"\ntell application "System Events" to keystroke "v" using command down`;
-                        await execFileAsync("osascript", ["-e", script], { timeout: 5000 });
+                        await typeTextMac(act.text || "");
                         results.push({ action: "type", ok: true, detail: { text: act.text } });
                         break;
                     }

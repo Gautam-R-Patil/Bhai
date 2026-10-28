@@ -52,7 +52,8 @@ const MODULES: PromptModule[] = [
     {
         name: "tone_empathetic",
         condition: (ctx) => ctx.userEmotionalState === "stressed" || ctx.userEmotionalState === "frustrated",
-        content: "The user seems stressed. Be supportive, patient, and offer encouragement. Acknowledge their feelings.",
+        // identity.md: "Calm, then fix … get SHORTER". Sympathy paragraphs read as stalling.
+        content: "They're under pressure: be shorter and steadier, fix first, at most one line of acknowledgement.",
         priority: 9,
         tokenEstimate: 25,
     },
@@ -111,15 +112,17 @@ const MODULES: PromptModule[] = [
     },
     {
         name: "evening_wind_down",
-        condition: (ctx) => (ctx.hour || 12) >= 22 || (ctx.hour || 12) < 5,
-        content: "It's late. Keep responses brief. Consider suggesting the user rest if appropriate.",
+        condition: (ctx) => (ctx.hour ?? 12) >= 22 || (ctx.hour ?? 12) < 5, // 0 is midnight
+        // No "suggest rest" here: injected every turn it nagged on every reply;
+        // identity.md already says it once per night.
+        content: "It's late. Keep responses brief.",
         priority: 6,
         tokenEstimate: 20,
     },
     {
         name: "morning_energy",
-        condition: (ctx) => (ctx.hour || 12) >= 6 && (ctx.hour || 12) < 10,
-        content: "It's morning. Be upbeat and forward-looking. Surface priorities for the day if relevant.",
+        condition: (ctx) => (ctx.hour ?? 12) >= 6 && (ctx.hour ?? 12) < 10,
+        content: "It's morning. Be calm and forward-looking. Surface priorities for the day if relevant.",
         priority: 5,
         tokenEstimate: 20,
     },

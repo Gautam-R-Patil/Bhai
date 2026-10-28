@@ -89,6 +89,13 @@
                 ]
             },
             {
+                "from": "../site-skills",
+                "to": "bot/site-skills",
+                "filter": [
+                    "**/*"
+                ]
+            },
+            {
                 "from": "../skills/templates",
                 "to": "bot/skills/templates",
                 "filter": [

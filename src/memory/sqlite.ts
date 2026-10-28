@@ -1122,10 +1122,15 @@ function _rememberDirect(
 ): number {
     if (!db) throw new Error("Memory DB not initialized");
 
+    // Boosts are for what the user told us. Auto summaries (reflection, context
+    // pruning) were inflated 5–6 → 10 and took the always-injected core slots
+    // from facts the user stated.
+    const boostable = source === "user" && category !== "session_summary" && category !== "knowledge_crystal";
+
     // ── Emotional Salience Gating (Amygdala Effect) ──
     // Boost importance for memories stored during high-emotion sessions
     let adjustedImportance = importance;
-    try {
+    if (boostable) try {
         const { getCurrentEmotionalIntensity } = require("./emotional.js");
         const intensity = getCurrentEmotionalIntensity?.() ?? 0;
         if (intensity > 0.6) {
@@ -1144,11 +1149,14 @@ function _rememberDirect(
         const predicted = 5 / 10; // baseline prediction (default importance normalized to 0-1)
         const actual = adjustedImportance / 10; // current importance normalized to 0-1
         const rpe = computeRPE(predicted, actual);
-        adjustedImportance = Math.round(surpriseImportanceBoost(adjustedImportance, rpe));
+        if (boostable) adjustedImportance = Math.round(surpriseImportanceBoost(adjustedImportance, rpe));
         decayScore = surpriseDecayMultiplier(rpe);
     } catch {
         /* surprise gate not loaded */
     }
+
+    // At most one step above what was asked, so 8, 9 and 10 stay distinct.
+    adjustedImportance = Math.min(adjustedImportance, importance + 1, 10);
 
     db.run(
         "INSERT INTO memories (content, category, tags, importance, source, decay_score, scope) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -2340,6 +2348,7 @@ export function getCoreMemory(limit = 10): MemoryRecord[] {
         `SELECT id, content, category, tags, importance, created_at, access_count
      FROM memories
      WHERE decay_score > 0.2 AND consolidated_into IS NULL AND scope = 'global' AND ${recallableSql()}
+       AND category != 'session_summary' -- already injected as ACTIVE SESSION / PAST CONVERSATIONS
      ORDER BY importance DESC, access_count DESC, created_at DESC
      LIMIT ?`,
         [limit],

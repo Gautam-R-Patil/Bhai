@@ -32,7 +32,9 @@ interface MemoryStrength {
 
 /**
  * Compute synaptic strength for a memory.
- * strength = importance × log₂(1 + access_count) × recency_factor
+ * strength = importance × log₂(2 + access_count) × recency_factor
+ * (2, not 1: a memory nobody has recalled yet must not score 0 and be pruned
+ * as the weakest no matter how important it is.)
  */
 function strengthScore(
     importance: number,
@@ -40,7 +42,7 @@ function strengthScore(
     daysSinceAccess: number,
     emotionalWeight = 1.0,
 ): number {
-    const accessFactor = Math.log2(1 + accessCount);
+    const accessFactor = Math.log2(2 + accessCount);
     const recency = Math.exp(-0.01 * daysSinceAccess); // λ=0.01, 69-day half-life
     return importance * accessFactor * recency * emotionalWeight;
 }
@@ -86,6 +88,10 @@ export function synapticPrune(db: Database): { pruned: number; weakened: number;
     const pruneThreshold = median * 0.3;
     const weakenThreshold = median * 0.6;
 
+    // Deletes really happen now (the FTS triggers used to make every DELETE
+    // fail), so never let one pass remove more than a tenth of memory.
+    const maxPrune = Math.floor(memories.length * 0.1);
+
     beginTransaction();
     try {
         for (const m of memories) {
@@ -95,7 +101,13 @@ export function synapticPrune(db: Database): { pruned: number; weakened: number;
             const isNewMemory = m.days_since_access < 2; // Less than 48 hours
             const isUnaccessed = m.access_count === 0 && m.days_since_access < 7;
 
-            if (m.strength < pruneThreshold && m.importance < 3 && !isNewMemory && !isUnaccessed) {
+            if (
+                m.strength < pruneThreshold &&
+                m.importance < 3 &&
+                !isNewMemory &&
+                !isUnaccessed &&
+                stats.pruned < maxPrune
+            ) {
                 // PRUNE — too weak, remove (but not new/unaccessed memories)
                 db.run("DELETE FROM memories WHERE id = ?", [m.id]);
                 db.run("DELETE FROM memory_embeddings WHERE memory_id = ?", [m.id]);
@@ -106,7 +118,7 @@ export function synapticPrune(db: Database): { pruned: number; weakened: number;
                     /* */
                 }
                 stats.pruned++;
-            } else if (m.strength < weakenThreshold && !isNewMemory && !isUnaccessed) {
+            } else if (m.strength < weakenThreshold && m.importance < 8 && !isNewMemory && !isUnaccessed) {
                 // WEAKEN — reduce decay score by 20% (but not new/unaccessed memories)
                 const newDecay = Math.max(0.05, m.decay_score * 0.8);
                 db.run("UPDATE memories SET decay_score = ? WHERE id = ?", [newDecay, m.id]);
@@ -176,7 +188,9 @@ export function findDuplicates(db: Database, threshold = 0.9): Array<{ id1: numb
 }
 
 export function mergeDuplicates(db: Database): number {
-    const dupes = findDuplicates(db);
+    // 0.97, not 0.9: at 0.9 "prefers dark mode" and "prefers light mode" can
+    // match, and merging would delete the correction.
+    const dupes = findDuplicates(db, 0.97);
     let merged = 0;
 
     if (dupes.length === 0) return 0;
@@ -184,15 +198,20 @@ export function mergeDuplicates(db: Database): number {
     beginTransaction();
     try {
         for (const dupe of dupes) {
-            const m1 = db.exec("SELECT importance, access_count FROM memories WHERE id = ?", [dupe.id1]);
-            const m2 = db.exec("SELECT importance, access_count FROM memories WHERE id = ?", [dupe.id2]);
+            const q = "SELECT importance, access_count, COALESCE(pinned, 0), created_at FROM memories WHERE id = ?";
+            const m1 = db.exec(q, [dupe.id1]);
+            const m2 = db.exec(q, [dupe.id2]);
 
             if (m1.length === 0 || m2.length === 0) continue;
+            const [i1, a1, p1, c1] = m1[0].values[0] as [number, number, number, string];
+            const [i2, a2, p2, c2] = m2[0].values[0] as [number, number, number, string];
 
-            const score1 = (m1[0].values[0][0] as number) + (m1[0].values[0][1] as number);
-            const score2 = (m2[0].values[0][0] as number) + (m2[0].values[0][1] as number);
-
-            const deleteId = score1 >= score2 ? dupe.id2 : dupe.id1;
+            const score1 = i1 + a1;
+            const score2 = i2 + a2;
+            // Keep the stronger one; on a tie the newer one (it may be a correction).
+            const deleteId =
+                score1 !== score2 ? (score1 > score2 ? dupe.id2 : dupe.id1) : c1 >= c2 ? dupe.id2 : dupe.id1;
+            if ((deleteId === dupe.id1 ? p1 : p2) === 1) continue; // never delete a pinned memory
             db.run("DELETE FROM memories WHERE id = ?", [deleteId]);
             db.run("DELETE FROM memory_embeddings WHERE memory_id = ?", [deleteId]);
             try {

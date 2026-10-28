@@ -385,11 +385,6 @@
                                 <span class="pref-toggle-switch"></span>
                             </label>
                             <label class="pref-toggle">
-                                <span class="pref-toggle-label">Notify on new messages</span>
-                                <input type="checkbox" id="prefNotifyMessage" onchange="setPref('notifyOnMessage', this.checked)">
-                                <span class="pref-toggle-switch"></span>
-                            </label>
-                            <label class="pref-toggle">
                                 <span class="pref-toggle-label">Notify on task completion</span>
                                 <input type="checkbox" id="prefNotifyTask" onchange="setPref('notifyOnTask', this.checked)">
                                 <span class="pref-toggle-switch"></span>
@@ -767,9 +762,9 @@
                                     <p>Send this code from your WhatsApp to register as the owner. Only verified owners get full access to Bhai capabilities.</p>
                                     <div style="text-align:center;margin:20px 0;">
                                         <div style="font-size:32px;font-weight:700;letter-spacing:8px;color:var(--accent-primary,#007AFF);font-family:monospace;" id="waOTPCode">------</div>
-                                        <div style="font-size:12px;color:rgba(255,255,255,0.4);margin-top:8px;" id="waOTPTimer">Expires in 5:00</div>
+                                        <div style="font-size:12px;color:var(--text-muted);margin-top:8px;" id="waOTPTimer">Expires in 5:00</div>
                                     </div>
-                                    <p style="font-size:12px;color:rgba(255,255,255,0.5);">Open WhatsApp, go to the bot chat, and send this code as a message.</p>
+                                    <p style="font-size:12px;color:var(--text-muted);">Open WhatsApp, go to the bot chat, and send this code as a message.</p>
                                     <div class="wizard-nav">
                                         <button class="wizard-btn wizard-btn-secondary" onclick="regenerateWhatsAppOTP()">New Code</button>
                                         <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('whatsapp',4)">Skip (already verified)</button>
@@ -780,7 +775,7 @@
                                     <h4>Owner Numbers</h4>
                                     <p>These numbers have full access to all Bhai capabilities including system tools, file access, and shell commands.</p>
                                     <div id="waOwnerList" style="margin:12px 0;">
-                                        <div style="color:rgba(255,255,255,0.4);font-size:13px;padding:20px;text-align:center;">No owners verified yet. Complete step 3 first.</div>
+                                        <div style="color:var(--text-muted);font-size:13px;padding:20px;text-align:center;">No owners verified yet. Complete step 3 first.</div>
                                     </div>
                                     <div class="wizard-nav">
                                         <button class="wizard-btn wizard-btn-secondary" onclick="goToWizardStep('whatsapp',3)">+ Add Another Owner</button>
@@ -793,7 +788,7 @@
                                     <p>When people who aren't owners message the bot, it acts as this role. They get restricted access (no system tools).</p>
                                     <div class="input-group">
                                         <label class="input-label">Role Preset</label>
-                                        <select class="clean-input" id="waPersonaPreset" onchange="onPersonaPresetChange()" style="background:rgba(255,255,255,0.05);color:#fff;border:1px solid rgba(255,255,255,0.1);padding:8px 12px;border-radius:8px;">
+                                        <select class="clean-input" id="waPersonaPreset" onchange="onPersonaPresetChange()" style="background:var(--bg-control);color:var(--text-primary);border:1px solid var(--separator);padding:8px 12px;border-radius:8px;">
                                             <option value="pa">Personal Assistant</option>
                                             <option value="cs">Customer Support</option>
                                             <option value="info">Information Desk</option>
@@ -809,7 +804,7 @@
                                             <input type="checkbox" id="waAutoAllow">
                                             <span class="pref-toggle-switch"></span>
                                         </label>
-                                        <span style="font-size:13px;color:rgba(255,255,255,0.7);">Auto-allow new contacts (no owner approval needed)</span>
+                                        <span style="font-size:13px;color:var(--text-secondary);">Auto-allow new contacts (no owner approval needed)</span>
                                     </div>
                                     <div class="wizard-nav">
                                         <button class="wizard-btn wizard-btn-success" onclick="saveWhatsAppPersona()">Save Settings</button>
@@ -2076,8 +2071,9 @@
         async function savePrimaryChannel() {
             const value = document.getElementById('primaryChannelSelect').value;
             try {
-                await atlas.saveSettings({ PRIMARY_CHANNEL: value });
-                showToast('Primary channel set to ' + value);
+                const r = await atlas.saveSettings({ PRIMARY_CHANNEL: value });
+                if (r && r.success === false) throw new Error(r.error || 'save failed');
+                showToast('Primary channel set to ' + value + ' — Bhai uses it after its next restart');
             } catch (err) {
                 showToast('Failed to save primary channel');
             }
@@ -2590,14 +2586,14 @@
                 const owners = await atlas.waGetOwners();
                 const list = document.getElementById('waOwnerList');
                 if (!owners || owners.length === 0) {
-                    list.innerHTML = '<div style="color:rgba(255,255,255,0.4);font-size:13px;padding:20px;text-align:center;">No owners verified yet.</div>';
+                    list.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:20px;text-align:center;">No owners verified yet.</div>';
                     return;
                 }
                 list.innerHTML = owners.map(o => `
-                    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:rgba(255,255,255,0.05);border-radius:8px;margin:4px 0;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg-control);border:1px solid var(--separator);border-radius:8px;margin:4px 0;">
                         <div>
                             <span style="font-weight:600;font-size:13px;">${o.displayName || o.phoneNumber || o.jid}</span>
-                            <span style="font-size:11px;color:rgba(255,255,255,0.4);margin-left:8px;">${o.phoneNumber || ''}</span>
+                            <span style="font-size:11px;color:var(--text-muted);margin-left:8px;">${o.phoneNumber || ''}</span>
                         </div>
                         <button class="wizard-btn wizard-btn-secondary" style="padding:4px 10px;font-size:11px;" onclick="removeWhatsAppOwner('${o.jid}')">Remove</button>
                     </div>
@@ -2975,7 +2971,6 @@
 
                 document.getElementById('prefLaunchAtLogin').checked = prefs.launchAtLogin || false;
                 document.getElementById('prefNotifications').checked = prefs.notificationsEnabled !== false;
-                document.getElementById('prefNotifyMessage').checked = prefs.notifyOnMessage !== false;
                 document.getElementById('prefNotifyTask').checked = prefs.notifyOnTask !== false;
                 document.getElementById('prefNotifyUpdate').checked = prefs.notifyOnUpdate !== false;
 
@@ -3160,8 +3155,10 @@
         // ── Personality preset handlers ──
         async function loadPersonalityFromPrefs() {
             try {
-                const prefs = await (atlas.getPrefs ? atlas.getPrefs() : Promise.resolve({}));
-                const persona = (prefs && prefs.personalize && prefs.personalize.personality) || { preset: 'casual_playful', notes: '' };
+                // getPrefs() returns the whole store; the choice lives at prefs.personalize.
+                const store = await (atlas.getPrefs ? atlas.getPrefs() : Promise.resolve({}));
+                const pz = (store && store.prefs && store.prefs.personalize) || {};
+                const persona = pz.personality || { preset: 'casual_playful', notes: '' };
                 const r = document.querySelector(`input[name="personality-preset"][value="${persona.preset}"]`);
                 if (r) r.checked = true;
                 else {
@@ -3480,13 +3477,13 @@
                 const installCount = formatNumber(item.installCount || 0);
 
                 return `
-                    <div class="store-item surface-card" onclick="openStoreItem('${item.slug}')">
+                    <div class="store-item surface-card" data-slug="${escapeHtml(item.slug)}" onclick="openStoreItem(this.dataset.slug)">
                         <div class="store-item-icon">${icon}</div>
                         <div class="store-item-info">
                             <div class="store-item-name">${escapeHtml(item.name)}</div>
                             <div class="store-item-description">${escapeHtml(item.description)}</div>
                             <div class="store-item-meta">
-                                <span class="item-type-badge type-${item.type}">${item.type}</span>
+                                <span class="item-type-badge type-${escapeHtml(item.type)}">${escapeHtml(item.type)}</span>
                                 <span class="item-stats">
                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
@@ -3805,7 +3802,7 @@
 
             const filePath = pick.filePath;
             const fileName = filePath.split('/').pop().split('\\').pop();
-            status.innerHTML = `<div style="margin-bottom:8px;">Processing <strong>${fileName}</strong>...</div>`;
+            status.innerHTML = `<div style="margin-bottom:8px;">Processing <strong>${escapeHtml(fileName)}</strong>...</div>`;
             progress.style.display = 'block';
             document.getElementById('sideloadProgressFill').style.width = '30%';
             document.getElementById('sideloadProgressText').textContent = 'Parsing skill file...';
@@ -3815,14 +3812,22 @@
                 document.getElementById('sideloadProgressFill').style.width = '60%';
                 document.getElementById('sideloadProgressText').textContent = 'Installing...';
 
-                const result = await atlas.sideloadInstall(filePath);
+                let result = await atlas.sideloadInstall(filePath);
+                if (!result.success && result.requiresUnsignedConsent) {
+                    const ok = confirm(`"${fileName}" isn't signed by a publisher Bhai trusts. Skills change how Bhai behaves and can use its tools. Install it anyway?`);
+                    if (!ok) {
+                        closeSideloadModal();
+                        return;
+                    }
+                    result = await atlas.sideloadInstall(filePath, { acceptUnsigned: true });
+                }
 
                 document.getElementById('sideloadProgressFill').style.width = '100%';
 
                 if (!result.success) {
                     document.getElementById('sideloadProgressText').textContent = 'Failed';
                     document.getElementById('sideloadProgressFill').style.backgroundColor = 'var(--accent-danger)';
-                    status.innerHTML = `<div style="color: var(--accent-danger);">❌ ${result.error}</div>`;
+                    status.innerHTML = `<div style="color: var(--accent-danger);">❌ ${escapeHtml(result.error)}</div>`;
                     setTimeout(() => {
                         document.getElementById('sideloadProgressFill').style.backgroundColor = '';
                     }, 3000);
@@ -3839,7 +3844,7 @@
                 if (result.warnings && result.warnings.length > 0) {
                     warnings.style.display = 'block';
                     const list = document.getElementById('sideloadWarningList');
-                    list.innerHTML = result.warnings.map(w => `<li>${w}</li>`).join('');
+                    list.innerHTML = result.warnings.map(w => `<li>${escapeHtml(w)}</li>`).join('');
                 }
 
                 status.innerHTML = `
@@ -3847,8 +3852,8 @@
                         ✅ Successfully sideloaded!
                     </div>
                     <div style="font-size: 12px; color: var(--text-secondary);">
-                        ${result.name} has been installed as a ${result.type}.
-                        Categories: ${(result.categories || []).join(', ')}.<br>
+                        ${escapeHtml(result.name)} has been installed as a ${escapeHtml(result.type)}.
+                        Categories: ${escapeHtml((result.categories || []).join(', '))}.<br>
                         Restart Bhai for the skill to take effect.
                     </div>
                 `;
@@ -3861,7 +3866,7 @@
             } catch (err) {
                 document.getElementById('sideloadProgressText').textContent = 'Error';
                 document.getElementById('sideloadProgressFill').style.backgroundColor = 'var(--accent-danger)';
-                status.innerHTML = `<div style="color: var(--accent-danger);">❌ ${err.message}</div>`;
+                status.innerHTML = `<div style="color: var(--accent-danger);">❌ ${escapeHtml(err.message)}</div>`;
             }
         }
 
@@ -3877,10 +3882,11 @@
             return num.toString();
         }
 
+        // Also escapes quotes, so the result is safe inside attributes too.
         function escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text || '';
-            return div.innerHTML;
+            return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }
 
         // Simple markdown to HTML converter

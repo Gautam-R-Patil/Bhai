@@ -27,8 +27,8 @@ import { recallClickSite, recordClickMiss, recordClickSuccess } from "../screen/
 import { applyCalibration, recordCalibrationSample } from "../screen/drift-calibration.js";
 import { type classifyOutcome, classifyOutcomeFromImages } from "../screen/outcome-classifier.js";
 import { type CascadeTier, findClickTarget, formatCascadeResult } from "../screen/perception-router.js";
-import { getScreenDimensions, isFallbackDims } from "../screen/screen-dimensions.js";
-import type { LLMClient } from "../llm.js";
+import { getScreenDimensions, isFallbackDims, type ScreenDimensions } from "../screen/screen-dimensions.js";
+import { type LLMClient, MODELS } from "../llm.js";
 import type { ToolDefinition } from "./get-current-time.js";
 import { osComputerAction } from "./os-computer-action.js";
 import { takeScreenshot } from "./platform-bridge.js";
@@ -38,6 +38,19 @@ import { takeScreenshot } from "./platform-bridge.js";
 let _smartClickLLM: LLMClient | null = null;
 export function setSmartClickLLM(client: LLMClient): void {
     _smartClickLLM = client;
+}
+
+/** Click memory is relative to the focused window (else the monitor), so it survives the window moving. */
+function clickBasis(d: ScreenDimensions, at?: { x: number; y: number }): { x: number; y: number; w: number; h: number } {
+    const fw = d.focusedWindow;
+    const inWindow = fw && fw.w > 0 && fw.h > 0 && (!at || (at.x >= fw.x && at.x < fw.x + fw.w && at.y >= fw.y && at.y < fw.y + fw.h));
+    // A menu-bar item or a sheet outside the window is remembered against the monitor.
+    return inWindow ? { x: fw.x, y: fw.y, w: fw.w, h: fw.h } : { x: d.originX, y: d.originY, w: d.width, h: d.height };
+}
+
+function recordClick(site: { app: string; windowTitle: string; elementLabel: string }, x: number, y: number, d: ScreenDimensions): void {
+    const b = clickBasis(d, { x, y });
+    recordClickSuccess(site, x - b.x, y - b.y, b.w, b.h);
 }
 
 async function base64ToTempFile(base64: string, ext = "png"): Promise<string> {
@@ -165,6 +178,9 @@ export const osSmartClick: ToolDefinition = {
     },
 
     async handler(input) {
+        // Past this, never click: the tool layer gives up at 45s (index.ts) and a
+        // late click would land after the agent has moved on (double "Send").
+        const deadline = Date.now() + 40_000;
         const instruction = input.instruction as string;
         const action = (input.action as "click" | "double_click" | "right_click") || "click";
         const surface = input.surface_hint as "native" | "canvas" | "web" | undefined;
@@ -206,8 +222,23 @@ export const osSmartClick: ToolDefinition = {
             // tier-0 stub and the smart-click fast-path treat memory hits identically.
             const recall = recallClickSite(site);
             if (recall && recall.confidence >= 0.9) {
-                let x = Math.round(recall.xNorm * dims.width + dims.originX);
-                let y = Math.round(recall.yNorm * dims.height + dims.originY);
+                // The remembered spot belongs to this app's window: bring it to the
+                // front first or the click lands in whatever app is on top.
+                if (!appIsFrontmost && appName !== "unknown" && (await activateApp(appName))) {
+                    dims = await getScreenDimensions({ focusedWindow: true, force: true });
+                    dimsAreFallback = isFallbackDims(dims);
+                    appIsFrontmost = true;
+                }
+            }
+            // Rows are relative to the window, or to the monitor for points outside
+            // it (menu bar): use whichever size the row was saved with. A resized
+            // window matches neither, so it re-grounds instead.
+            const win = clickBasis(dims);
+            const mon = { x: dims.originX, y: dims.originY, w: dims.width, h: dims.height };
+            const box = [win, mon].find((b) => recall?.lastScreenWidth === b.w && recall?.lastScreenHeight === b.h);
+            if (recall && recall.confidence >= 0.9 && box) {
+                let x = Math.round(recall.xNorm * box.w + box.x);
+                let y = Math.round(recall.yNorm * box.h + box.y);
                 // Apply drift calibration if learned for this monitor.
                 ({ x, y } = applyCalibration(dims.monitorId, x, y));
                 const clickResult = await dispatchClick(action, x, y);
@@ -327,7 +358,7 @@ export const osSmartClick: ToolDefinition = {
 
             // Ground → click → (vision only) verify. Returns a structured result.
             // `extraSkip` lets the self-correction force descent past a failed tier.
-            const attempt = async (extraSkip: CascadeTier[]): Promise<{
+            const attempt = async (extraSkip: CascadeTier[], groundingModel?: string): Promise<{
                 ok: boolean; target: NonNullable<Awaited<ReturnType<typeof findClickTarget>>> | null;
                 calX: number; calY: number; verdict?: string; dispatchErr?: string;
             }> => {
@@ -337,8 +368,13 @@ export const osSmartClick: ToolDefinition = {
                     screenDims: cascadeDims,
                     axDumpHint,
                     llm: _smartClickLLM ?? undefined,
+                    groundingModel,
+                    groundingTimeoutMs: Math.max(3000, deadline - Date.now() - 5000),
                 });
                 if (!target) return { ok: false, target: null, calX: 0, calY: 0 };
+                if (Date.now() > deadline) {
+                    return { ok: false, target, calX: 0, calY: 0, dispatchErr: "timed_out_before_click (nothing was clicked)" };
+                }
 
                 const { x: calX, y: calY } = applyCalibration(dims.monitorId, target.x, target.y);
                 const isVision = VISION_TIERS.has(target.source);
@@ -352,7 +388,7 @@ export const osSmartClick: ToolDefinition = {
                 // Trusted (AX/memory) tier OR verification disabled → record + done.
                 if (!isVision || !verifyOn) {
                     if (!dimsAreFallback) {
-                        try { recordClickSuccess(site, calX - dims.originX, calY - dims.originY, dims.width, dims.height); } catch { /* non-fatal */ }
+                        try { recordClick(site, calX, calY, dims); } catch { /* non-fatal */ }
                     }
                     return { ok: true, target, calX, calY };
                 }
@@ -367,7 +403,7 @@ export const osSmartClick: ToolDefinition = {
                 );
                 if (verdict.outcome === "success" || verdict.outcome === "modal_pop") {
                     if (!dimsAreFallback) {
-                        try { recordClickSuccess(site, calX - dims.originX, calY - dims.originY, dims.width, dims.height); } catch { /* non-fatal */ }
+                        try { recordClick(site, calX, calY, dims); } catch { /* non-fatal */ }
                     }
                     return { ok: true, target, calX, calY, verdict: verdict.outcome };
                 }
@@ -386,11 +422,24 @@ export const osSmartClick: ToolDefinition = {
             if (!res.ok && res.target && selfCorrectOn && VISION_TIERS.has(res.target.source) && verifyOn && !res.dispatchErr) {
                 const order: CascadeTier[] = ["memory", "ax_exact", "ax_fuzzy", "omniparser", "ui_tars", "cloud_grounding"];
                 const failedIdx = order.indexOf(res.target.source);
-                const forceSkip = order.slice(0, failedIdx + 1); // skip the failed tier and everything above it
-                const prevXY = `${res.calX},${res.calY}`;
-                const retry = await attempt(forceSkip);
-                // Only accept the retry if it grounded to a DIFFERENT point.
-                if (retry.target && `${retry.calX},${retry.calY}` !== prevXY) res = retry;
+                // A Haiku grounding miss gets one Sonnet re-ground; any other
+                // vision miss descends past the failed tier.
+                // Only after a true no-op: a "wrong_target" click did something, and
+                // clicking again could repeat it (a second Send, a second keypress).
+                const regroundWithSonnet = res.target.source === "cloud_grounding" && res.verdict === "no_op";
+                const forceSkip = order.slice(0, regroundWithSonnet ? failedIdx : failedIdx + 1);
+                const first = { x: res.calX, y: res.calY };
+                // Re-ground on the screen as it is now, not the pre-click frame.
+                if (tempPath && screenshotPath === tempPath) {
+                    const fresh = await captureForVerify();
+                    if (fresh) await fs.writeFile(tempPath, fresh, { mode: 0o600 }).catch(() => {});
+                }
+                const retry =
+                    deadline - Date.now() > 8000 && (regroundWithSonnet || res.target.source !== "cloud_grounding")
+                        ? await attempt(forceSkip, regroundWithSonnet ? MODELS.SONNET : undefined)
+                        : { ok: false, target: null, calX: 0, calY: 0 };
+                // Only accept a retry that grounded somewhere clearly different (≥20px).
+                if (retry.target && Math.hypot(retry.calX - first.x, retry.calY - first.y) >= 20) res = retry;
             }
 
             if (res.dispatchErr) {

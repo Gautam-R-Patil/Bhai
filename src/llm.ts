@@ -111,6 +111,7 @@ import { IS_MAC, IS_WIN } from "./tools/platform.js";
 import { createDefaultPipeline, type ChatParams } from "./llm-middleware.js";
 import { sanitizeToolSchemas, type ToolSchemaShape } from "./tools/schema-sanitizer.js";
 import { sanitizeContextEchoes } from "./context-scrubber.js";
+import { protect, protectMessages } from "./security/pii-vault.js";
 import { tryParseOssToolCalls } from "./llm-parser-fallback.js";
 
 // Platform identifier sent to server for platform-specific prompt assembly
@@ -196,9 +197,13 @@ export function createLLMClient(config: Config): LLMClient {
                 // Dynamic context (non-sensitive, stays client-side).
                 // Server will prepend the system prompt from its DB before this.
                 // Lean helper calls skip it: a classifier doesn't need the clock.
-                const allMessages: ChatCompletionMessageParam[] = lean
-                    ? [...params.messages]
-                    : [{ role: "system", content: buildDynamicContextBlock(languageContext) }, ...params.messages];
+                // Cards, OTPs, UPI IDs, Aadhaar numbers and cookies leave as handles
+                // ([OTP_1]); typing tools turn them back into values (pii-vault.ts).
+                const allMessages: ChatCompletionMessageParam[] = protectMessages(
+                    lean
+                        ? [...params.messages]
+                        : [{ role: "system", content: buildDynamicContextBlock(languageContext) }, ...params.messages],
+                );
 
                 // Scale max_tokens based on thinking level
                 const maxTokensByThinking: Record<string, number> = {
@@ -220,7 +225,7 @@ export function createLLMClient(config: Config): LLMClient {
                             : undefined,
                     platform: PLATFORM,
                     skillSlugs: params.skillSlugs || [],
-                    systemPromptOverride: params.systemPrompt || undefined,
+                    systemPromptOverride: params.systemPrompt ? protect(params.systemPrompt) : undefined,
                     serverPromptSlug: serverPromptSlug || undefined,
                     // Grammar-constrained decoding for JSON-expecting calls.
                     // Mutually exclusive with tool use — the server drops it

@@ -100,11 +100,14 @@ export async function renderHtmlTemplateToPdf(
             await page.goto(fileUrl, { waitUntil: "networkidle", timeout: 30_000 });
             // If the template references a sibling asset like an image logo,
             // resolve it by setting base href via script.
-            await page.evaluate((base: string) => {
-                const b = document.createElement("base");
-                b.setAttribute("href", `file://${base}/`);
-                document.head.prepend(b);
-            }, baseDir);
+            await page.evaluate(
+                /* javascript-obfuscator:disable */ (base: string) => {
+                    const b = document.createElement("base");
+                    b.setAttribute("href", `file://${base}/`);
+                    document.head.prepend(b);
+                },
+                /* javascript-obfuscator:enable */ baseDir,
+            );
             await page.waitForTimeout(150);
 
             const format = opts.format ?? tpl.page?.format ?? "Letter";

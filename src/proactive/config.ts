@@ -31,6 +31,18 @@ const DEFAULTS: ProactiveConfig = {
     nightWindows: { default: { start: "22:30", end: "07:00" } },
 };
 
+/** True when `now` (local time) is inside a "HH:MM"–"HH:MM" window; windows may cross midnight. */
+export function inWindow(w: { start: string; end: string }, now = new Date()): boolean {
+    const min = (t: string) => {
+        const [h, m] = t.split(":").map(Number);
+        return h * 60 + (m || 0);
+    };
+    const cur = now.getHours() * 60 + now.getMinutes();
+    const s = min(w.start);
+    const e = min(w.end);
+    return s <= e ? cur >= s && cur < e : cur >= s || cur < e;
+}
+
 export function loadProactiveConfig(path: string): ProactiveConfig {
     if (!existsSync(path)) return structuredClone(DEFAULTS);
     try {

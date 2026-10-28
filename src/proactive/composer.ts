@@ -3,6 +3,7 @@
 // See LICENSE.md for details.
 
 import { fetchSystemPrompt } from "../config/system-prompts.js";
+import { getToneReminder } from "../setup/personality-sync.js";
 import type { LLMClient } from "../llm.js";
 import { extractJSON } from "../utils/json-extract.js";
 import { tryTemplate } from "./composer-templates.js";
@@ -224,7 +225,11 @@ export async function composeMorningBatch(
                   .join("\n")}`
             : "";
 
-    const prompt = `You're texting your close friend their morning briefing. Weave these signals into ONE natural message. Short, warm, specific. Lowercase casual tone. No "here's your daily briefing" preamble. No bullet lists unless signals exceed 4 items. Second-person ("you"); never third-person ("the user").
+    // The user's Settings tone wins over the casual default (Professional got
+    // "lowercase casual" briefings with emoji).
+    const tone = getToneReminder();
+    const style = tone ? `Short and specific. ${tone}` : "Short, warm, specific. Lowercase casual tone.";
+    const prompt = `You're texting your close friend their morning briefing. Weave these signals into ONE natural message. ${style} No "here's your daily briefing" preamble. No bullet lists unless signals exceed 4 items. Second-person ("you"); never third-person ("the user").
 
 Signals:
 ${sections.join("\n")}

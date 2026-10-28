@@ -142,3 +142,47 @@ describe("tokensForTrigram", () => {
         expect(tokensForTrigram("a 大 别 山字")).toEqual(["山字"]);
     });
 });
+
+// Real FTS5: a bare term with punctuation is a syntax error, which the memory
+// search swallows into "no results" — every "what's …?" question found nothing.
+import { createRequire } from "node:module";
+let SqliteDb:
+    | (new (
+          p: string,
+      ) => { exec(s: string): void; prepare(s: string): { all(...a: unknown[]): unknown[] } })
+    | undefined;
+try {
+    SqliteDb = createRequire(import.meta.url)("node:sqlite").DatabaseSync;
+} catch {
+    /* older Node */
+}
+describe.skipIf(!SqliteDb)("sanitizeFts5Query against real FTS5", () => {
+    it("everyday questions parse and find their memory", () => {
+        const db = new (SqliteDb as NonNullable<typeof SqliteDb>)(":memory:");
+        db.exec(
+            "CREATE VIRTUAL TABLE m USING fts5(content, tokenize='porter unicode61'); INSERT INTO m VALUES ('the code word is pineapple')",
+        );
+        for (const q of [
+            "what's the code word?",
+            "code word, please!",
+            "NOT sure: code word",
+            "code/word (again)",
+            "and/or code word",
+        ]) {
+            const terms = (sanitizeFts5Query(q).match(/"[^"]+"|\S+/g) || []).filter(
+                (w) => w.length > 2 && !["the", "and", "not"].includes(w.toLowerCase()),
+            );
+            expect(() => db.prepare("SELECT * FROM m WHERE m MATCH ?").all(terms.join(" OR "))).not.toThrow();
+            expect(db.prepare("SELECT * FROM m WHERE m MATCH ?").all(terms.join(" OR ")).length).toBe(1);
+        }
+    });
+
+    it("keeps Devanagari/Arabic words whole and quoted phrases next to '/' valid", () => {
+        expect(sanitizeFts5Query("नमस्ते दोस्त")).toContain("नमस्ते");
+        expect(sanitizeFts5Query("مرحبًا")).toContain("مرحبًا");
+        const db = new (SqliteDb as NonNullable<typeof SqliteDb>)(":memory:");
+        db.exec("CREATE VIRTUAL TABLE m USING fts5(content, tokenize='porter unicode61'); INSERT INTO m VALUES ('नमस्ते दोस्त, config settings')");
+        expect(db.prepare("SELECT * FROM m WHERE m MATCH ?").all(sanitizeFts5Query("नमस्ते")).length).toBe(1);
+        expect(() => db.prepare("SELECT * FROM m WHERE m MATCH ?").all(sanitizeFts5Query('"config"/settings'))).not.toThrow();
+    });
+});

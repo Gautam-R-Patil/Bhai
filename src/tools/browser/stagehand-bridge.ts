@@ -145,7 +145,10 @@ export async function extract(
     try {
         const title = await page.title();
         const url = await page.url();
-        const text = await page.evaluate(() => document.body?.innerText?.substring(0, 5000) || "");
+        const text = await page.evaluate(
+            /* javascript-obfuscator:disable */ () => document.body?.innerText?.substring(0, 5000) || "",
+            /* javascript-obfuscator:enable */ undefined,
+        );
 
         if (text.length > 100) {
             return `Page: ${title}\nURL: ${url}\n\n${text}`;
@@ -175,27 +178,33 @@ export async function observe(page: Page): Promise<{
     try {
         const [url, title] = await Promise.all([page.url(), page.title()]);
 
-        const elements = await page.evaluate(() => {
-            const els: Array<{ selector: string; text: string; type: string }> = [];
-            const interactive = document.querySelectorAll(
-                "a, button, input, select, textarea, [role='button'], [onclick], [tabindex]",
-            );
-            for (const el of Array.from(interactive).slice(0, 50)) {
-                const text =
-                    (el as HTMLElement).innerText?.substring(0, 100) || (el as HTMLInputElement).placeholder || "";
-                const tag = el.tagName.toLowerCase();
-                const id = el.id ? `#${el.id}` : "";
-                const cls = el.className ? `.${String(el.className).split(" ")[0]}` : "";
-                els.push({
-                    selector: `${tag}${id}${cls}`,
-                    text: text.trim(),
-                    type: (el as HTMLInputElement).type || tag,
-                });
-            }
-            return els;
-        });
+        const elements = await page.evaluate(
+            /* javascript-obfuscator:disable */ () => {
+                const els: Array<{ selector: string; text: string; type: string }> = [];
+                const interactive = document.querySelectorAll(
+                    "a, button, input, select, textarea, [role='button'], [onclick], [tabindex]",
+                );
+                for (const el of Array.from(interactive).slice(0, 50)) {
+                    const text =
+                        (el as HTMLElement).innerText?.substring(0, 100) || (el as HTMLInputElement).placeholder || "";
+                    const tag = el.tagName.toLowerCase();
+                    const id = el.id ? `#${el.id}` : "";
+                    const cls = el.className ? `.${String(el.className).split(" ")[0]}` : "";
+                    els.push({
+                        selector: `${tag}${id}${cls}`,
+                        text: text.trim(),
+                        type: (el as HTMLInputElement).type || tag,
+                    });
+                }
+                return els;
+            },
+            /* javascript-obfuscator:enable */ undefined,
+        );
 
-        const visibleText = await page.evaluate(() => document.body?.innerText?.substring(0, 3000) || "");
+        const visibleText = await page.evaluate(
+            /* javascript-obfuscator:disable */ () => document.body?.innerText?.substring(0, 3000) || "",
+            /* javascript-obfuscator:enable */ undefined,
+        );
 
         return { url, title, interactiveElements: elements, visibleText };
     } catch {

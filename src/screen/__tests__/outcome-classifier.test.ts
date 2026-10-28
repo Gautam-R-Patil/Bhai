@@ -34,6 +34,12 @@ describe("classifyOutcome (decoded greyscale pixels)", () => {
         expect(r.outcome).toBe("no_op");
     });
 
+    it("a keypad press (digit changes in a display away from the key) is not a miss", () => {
+        const after = paintBox(grey(128), 10, 5, 20, 20, 250); // one digit, 150px of 20000
+        const r = classifyOutcome(grey(128), after, 150, 80, W, H, { targetRadius: 20 });
+        expect(r.outcome).toBe("unknown");
+    });
+
     it("returns 'success' for a small change right at the target", () => {
         const after = paintBox(grey(128), 95, 45, 105, 55, 250); // 10x10 toggle
         const r = classifyOutcome(grey(128), after, 100, 50, W, H, { targetRadius: 20 });

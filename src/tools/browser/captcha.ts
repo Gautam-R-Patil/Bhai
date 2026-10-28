@@ -101,8 +101,9 @@ export async function detectCaptcha(
     if (nativeClassifyCaptcha) {
         try {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const html = (await (page as any).evaluate(() =>
-                document.documentElement.innerHTML.substring(0, 50000),
+            const html = (await (page as any).evaluate(
+                /* javascript-obfuscator:disable */ () => document.documentElement.innerHTML.substring(0, 50000),
+                /* javascript-obfuscator:enable */ undefined,
             )) as string;
             const result = nativeClassifyCaptcha(html);
             if (result.kind === "none" && result.confidence === 0) {
@@ -115,35 +116,39 @@ export async function detectCaptcha(
 
     // Full JS evaluate for type + siteKey extraction
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const info = (await (page as any).evaluate((): { type: string; siteKey: string | null } => {
-        // Cloudflare Turnstile
-        const tsFrame = document.querySelector('iframe[src*="challenges.cloudflare.com"]');
-        const tsWidget = document.querySelector('[class*="cf-turnstile"],[data-cf-turnstile]');
-        if (tsFrame || tsWidget) {
-            const src = tsFrame?.getAttribute("src") ?? "";
-            const key = src.match(/[?&]sitekey=([^&]+)/)?.[1] ?? (tsWidget as HTMLElement)?.dataset?.sitekey ?? null;
-            return { type: "turnstile", siteKey: key };
-        }
-        // hCaptcha
-        const hcFrame = document.querySelector('iframe[src*="hcaptcha.com"]');
-        const hcWidget = document.querySelector(".h-captcha,[data-hcaptcha-widget-id]");
-        if (hcFrame || hcWidget) {
-            return { type: "hcaptcha", siteKey: (hcWidget as HTMLElement)?.dataset?.sitekey ?? null };
-        }
-        // reCAPTCHA v3 (invisible — detected by script tag)
-        const scripts = Array.from(document.scripts).map((s) => s.src);
-        const rcV3 = scripts.find((s) => s.includes("recaptcha/api.js?render="));
-        if (rcV3) {
-            return { type: "recaptcha-v3", siteKey: rcV3.match(/render=([^&]+)/)?.[1] ?? null };
-        }
-        // reCAPTCHA v2
-        const rcFrame = document.querySelector('iframe[src*="google.com/recaptcha"],iframe[src*="recaptcha.net"]');
-        const rcWidget = document.querySelector(".g-recaptcha");
-        if (rcFrame || rcWidget) {
-            return { type: "recaptcha-v2", siteKey: (rcWidget as HTMLElement)?.dataset?.sitekey ?? null };
-        }
-        return { type: "none", siteKey: null };
-    })) as CaptchaInfo | null;
+    const info = (await (page as any).evaluate(
+        /* javascript-obfuscator:disable */ (): { type: string; siteKey: string | null } => {
+            // Cloudflare Turnstile
+            const tsFrame = document.querySelector('iframe[src*="challenges.cloudflare.com"]');
+            const tsWidget = document.querySelector('[class*="cf-turnstile"],[data-cf-turnstile]');
+            if (tsFrame || tsWidget) {
+                const src = tsFrame?.getAttribute("src") ?? "";
+                const key =
+                    src.match(/[?&]sitekey=([^&]+)/)?.[1] ?? (tsWidget as HTMLElement)?.dataset?.sitekey ?? null;
+                return { type: "turnstile", siteKey: key };
+            }
+            // hCaptcha
+            const hcFrame = document.querySelector('iframe[src*="hcaptcha.com"]');
+            const hcWidget = document.querySelector(".h-captcha,[data-hcaptcha-widget-id]");
+            if (hcFrame || hcWidget) {
+                return { type: "hcaptcha", siteKey: (hcWidget as HTMLElement)?.dataset?.sitekey ?? null };
+            }
+            // reCAPTCHA v3 (invisible — detected by script tag)
+            const scripts = Array.from(document.scripts).map((s) => s.src);
+            const rcV3 = scripts.find((s) => s.includes("recaptcha/api.js?render="));
+            if (rcV3) {
+                return { type: "recaptcha-v3", siteKey: rcV3.match(/render=([^&]+)/)?.[1] ?? null };
+            }
+            // reCAPTCHA v2
+            const rcFrame = document.querySelector('iframe[src*="google.com/recaptcha"],iframe[src*="recaptcha.net"]');
+            const rcWidget = document.querySelector(".g-recaptcha");
+            if (rcFrame || rcWidget) {
+                return { type: "recaptcha-v2", siteKey: (rcWidget as HTMLElement)?.dataset?.sitekey ?? null };
+            }
+            return { type: "none", siteKey: null };
+        },
+        /* javascript-obfuscator:enable */ undefined,
+    )) as CaptchaInfo | null;
     // Older extension builds return {error} instead of throwing — never read
     // a malformed result as "CAPTCHA present".
     if (!info || typeof info.type !== "string") {
@@ -236,7 +241,7 @@ async function solve2captcha(type: CaptchaType, siteKey: string, pageUrl: string
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function injectToken(page: any, type: CaptchaType, token: string): Promise<void> {
     await page.evaluate(
-        ({ t, tok }: { t: string; tok: string }) => {
+        /* javascript-obfuscator:disable */ ({ t, tok }: { t: string; tok: string }) => {
             if (t === "recaptcha-v2" || t === "recaptcha-v3") {
                 const el = document.querySelector("#g-recaptcha-response") as HTMLTextAreaElement;
                 if (el) {
@@ -268,7 +273,7 @@ async function injectToken(page: any, type: CaptchaType, token: string): Promise
                 if (el) el.value = tok;
             }
         },
-        { t: type, tok: token },
+        /* javascript-obfuscator:enable */ { t: type, tok: token },
     );
 }
 
@@ -279,14 +284,14 @@ async function waitForTurnstilePassive(page: any, timeoutMs = 25000): Promise<bo
     try {
         // With good stealth, Cloudflare Turnstile often auto-passes without any interaction
         await page.waitForFunction(
-            () => {
+            /* javascript-obfuscator:disable */ () => {
                 const frame = document.querySelector('iframe[src*="challenges.cloudflare.com"]');
                 if (!frame) return true; // no Turnstile present
                 const s = window.getComputedStyle(frame as Element);
                 // Frame becomes hidden when challenge passes
                 return s.display === "none" || s.visibility === "hidden" || s.opacity === "0";
             },
-            undefined, // Playwright signature is (fn, arg, options)
+            /* javascript-obfuscator:enable */ undefined, // Playwright signature is (fn, arg, options)
             { timeout: timeoutMs, polling: 1000 },
         );
         return true;
@@ -351,10 +356,13 @@ async function solveAudioCaptcha(page: any): Promise<string | null> {
         }
 
         // Extract the audio MP3 URL from the iframe
-        const audioUrl: string | null = await rcFrame.evaluate((): string | null => {
-            const src = (document.querySelector("#audio-source") as HTMLSourceElement)?.src;
-            return src || null;
-        });
+        const audioUrl: string | null = await rcFrame.evaluate(
+            /* javascript-obfuscator:disable */ (): string | null => {
+                const src = (document.querySelector("#audio-source") as HTMLSourceElement)?.src;
+                return src || null;
+            },
+            /* javascript-obfuscator:enable */ undefined,
+        );
         if (!audioUrl) {
             console.log("  🎧 Audio CAPTCHA: could not extract audio URL");
             return null;
@@ -362,16 +370,19 @@ async function solveAudioCaptcha(page: any): Promise<string | null> {
         console.log(`  🎧 Audio CAPTCHA: downloading audio...`);
 
         // Download the MP3 buffer from within the browser context (avoids CORS)
-        const audioBytes: number[] | null = await page.evaluate(async (url: string): Promise<number[] | null> => {
-            try {
-                const resp = await fetch(url);
-                if (!resp.ok) return null;
-                const ab = await resp.arrayBuffer();
-                return Array.from(new Uint8Array(ab));
-            } catch {
-                return null;
-            }
-        }, audioUrl);
+        const audioBytes: number[] | null = await page.evaluate(
+            /* javascript-obfuscator:disable */ async (url: string): Promise<number[] | null> => {
+                try {
+                    const resp = await fetch(url);
+                    if (!resp.ok) return null;
+                    const ab = await resp.arrayBuffer();
+                    return Array.from(new Uint8Array(ab));
+                } catch {
+                    return null;
+                }
+            },
+            /* javascript-obfuscator:enable */ audioUrl,
+        );
 
         if (!audioBytes || audioBytes.length === 0) {
             console.log("  🎧 Audio CAPTCHA: audio download failed");
@@ -414,10 +425,13 @@ async function solveAudioCaptcha(page: any): Promise<string | null> {
         await new Promise((r) => setTimeout(r, 1500));
 
         // Check success: reCAPTCHA sets #g-recaptcha-response token on success
-        const token: string | null = await page.evaluate((): string | null => {
-            const el = document.querySelector("#g-recaptcha-response") as HTMLTextAreaElement | null;
-            return el?.value || null;
-        });
+        const token: string | null = await page.evaluate(
+            /* javascript-obfuscator:disable */ (): string | null => {
+                const el = document.querySelector("#g-recaptcha-response") as HTMLTextAreaElement | null;
+                return el?.value || null;
+            },
+            /* javascript-obfuscator:enable */ undefined,
+        );
 
         if (token) {
             console.log("  🎧 Audio CAPTCHA: SOLVED via audio bypass ✓");

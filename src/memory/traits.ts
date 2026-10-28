@@ -119,14 +119,18 @@ export function reinforceTrait(
 ): BehavioralTrait | null {
     if (!_db) throw new Error("Traits DB not initialized");
 
-    // ── Per-session caps ──
-    if (sessionUpdateCount >= MAX_SESSION_UPDATES) {
+    const isExplicit = options.explicit ?? false;
+
+    // ── Per-session caps ── (they damp inferred drift; what the user says
+    // outright always lands). A skip returns null so callers don't report the
+    // OLD trait as a success.
+    if (!isExplicit && sessionUpdateCount >= MAX_SESSION_UPDATES) {
         debugLog("CAP", `Session cap hit (${MAX_SESSION_UPDATES}), skipping: ${traitKey}`);
-        return getTrait(traitKey);
+        return null;
     }
-    if (sessionTraitUpdates.has(traitKey)) {
+    if (!isExplicit && sessionTraitUpdates.has(traitKey)) {
         debugLog("CAP", `Trait already updated this session, skipping: ${traitKey}`);
-        return getTrait(traitKey);
+        return null;
     }
 
     // ── Conflict detection ──
@@ -139,7 +143,6 @@ export function reinforceTrait(
         }
     }
 
-    const isExplicit = options.explicit ?? false;
     const topics = options.topics || [];
     const existing = getTrait(traitKey);
 
@@ -176,6 +179,16 @@ export function reinforceTrait(
             // Different value → contradiction path
             sessionTraitUpdates.add(traitKey);
             sessionUpdateCount++;
+            if (isExplicit) {
+                // "Actually, keep it short": the correction replaces the old value at
+                // explicit confidence (contradictTrait would halve or zero it).
+                _db.run(
+                    `UPDATE behavioral_traits SET value = ?, confidence = ?, explicit = 1, reinforcement_count = 0,
+                     last_seen_ts = datetime('now') WHERE trait_key = ?`,
+                    [value, 0.65, traitKey],
+                );
+                return getTrait(traitKey);
+            }
             return contradictTrait(traitKey, value);
         }
     } else {

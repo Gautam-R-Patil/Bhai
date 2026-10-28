@@ -9,6 +9,7 @@
  */
 
 import type { Database } from "../memory/sqlite.js";
+import * as nativeModule from "../../native/index.js";
 
 // ── Types ─────────────────────────────────────
 
@@ -200,17 +201,10 @@ function simpleHash(content: string): string {
     return hash.toString(36);
 }
 
-let _native: any = null;
-let _nativeLoaded = false;
 
 function loadNative(): any {
-    if (_nativeLoaded) return _native;
-    _nativeLoaded = true;
-    try {
-        const { createRequire } = require("node:module");
-        const nativeRequire = createRequire(import.meta.url);
-        const path = require("node:path");
-        _native = nativeRequire(path.join(process.cwd(), "native", "index.js"));
-        return _native;
-    } catch { return null; }
+    // A static import: `require` doesn't exist in ESM (nor in the esbuild bundle),
+    // so the old createRequire path always returned null and the native scorers
+    // never ran.
+    return nativeModule;
 }

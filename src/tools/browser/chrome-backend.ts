@@ -16,6 +16,42 @@ import type { ClickOptions, InteractiveElement, TabInfo } from "./types.js";
 // can call page.goto(), page.evaluate(), page.mouse.click() etc.
 // and the proxy transparently routes to the Chrome extension.
 
+/**
+ * Page-ready over the bridge, event-driven: one in-page promise that resolves
+ * when a document created after `since` has finished loading and its DOM has
+ * been quiet for `quietMs`, or after `maxMs`. A navigation mid-wait destroys
+ * the old document and the call errors, so we retry on the new one. Replaces
+ * the fixed 300-1000ms sleeps (too slow on fast pages, too early on slow ones).
+ */
+export const readyJs = (maxMs: number, quietMs: number, since: number) => `new Promise((resolve) => {
+  const start = Date.now(); let last = Date.now();
+  const mo = new MutationObserver(() => { last = Date.now(); });
+  mo.observe(document.documentElement, { subtree: true, childList: true, characterData: true }); // not attributes: animations never stop
+  const tick = () => {
+    const now = Date.now();
+    const fresh = performance.timeOrigin >= ${since} - 1000;
+    const settled = document.readyState === "complete" && now - last >= ${quietMs};
+    // A single-page app changes route without a new document: once the old one has
+    // been settled for a second, accept it instead of waiting out the whole budget.
+    if ((settled && (fresh || now - start >= 1000)) || now - start >= ${maxMs}) {
+      mo.disconnect(); resolve(fresh ? "ready" : "stale");
+    } else setTimeout(tick, 50);
+  };
+  tick();
+})`;
+
+export async function waitBridgeReady(maxMs = 3000, quietMs = 300, since = 0): Promise<void> {
+    const deadline = Date.now() + maxMs;
+    let errors = 0;
+    while (Date.now() < deadline) {
+        const left = deadline - Date.now();
+        const r = await sendBridgeCommand("execute_js", { code: readyJs(left, quietMs, since) }, left + 2000).catch(() => null);
+        if (r === "ready" || r === "stale") return; // stale = settled on the same document
+        if (++errors >= 3) return; // the bridge keeps failing: don't spin, let the caller carry on
+        await new Promise((res) => setTimeout(res, 150));
+    }
+}
+
 export class ChromePageProxy {
     private _url = "";
     private _title = "";
@@ -37,10 +73,10 @@ export class ChromePageProxy {
     }
 
     async goto(url: string, opts?: { waitUntil?: string; timeout?: number }): Promise<void> {
+        const since = Date.now();
         await sendBridgeCommand("navigate", { url, timeout: opts?.timeout }, opts?.timeout || 30000);
         this._url = url;
-        // Wait for page to settle
-        await new Promise((resolve) => setTimeout(resolve, 500));
+        await waitBridgeReady(Math.min(opts?.timeout ?? 10000, 10000), 300, since);
         // Re-fetch actual URL (may have redirected)
         const tab = await getActiveExtensionTab();
         if (tab) {
@@ -88,9 +124,8 @@ export class ChromePageProxy {
         }
     }
 
-    async waitForLoadState(_state?: string, _opts?: { timeout?: number }): Promise<void> {
-        // The Chrome extension handles page load natively
-        await new Promise((resolve) => setTimeout(resolve, 300));
+    async waitForLoadState(_state?: string, opts?: { timeout?: number }): Promise<void> {
+        await waitBridgeReady(Math.min(opts?.timeout ?? 5000, 5000));
     }
 
     // Navigation
@@ -290,7 +325,6 @@ class ChromeLocatorProxy {
         if (!el.found) throw new Error(`Element not found: ${this.selector}`);
         // Click to focus, then type
         await sendBridgeCommand("click_at", { x: el.x, y: el.y });
-        await new Promise((r) => setTimeout(r, 100));
         // Clear existing value first
         await sendBridgeCommand("execute_js", {
             code: `(() => {
@@ -413,14 +447,13 @@ export class ChromeExtensionBackend implements BrowserBackend {
     ): Promise<{ title: string; url: string }> {
         const timeout = opts?.timeout || 30000;
 
+        const since = Date.now();
         if (opts?.newTab) {
             await sendBridgeCommand("navigate", { url, newTab: true, timeout }, timeout);
         } else {
             await sendBridgeCommand("navigate", { url, timeout }, timeout);
         }
-
-        // Wait for page to settle
-        await new Promise((resolve) => setTimeout(resolve, 500));
+        await waitBridgeReady(Math.min(timeout, 10000), 300, since);
 
         if (opts?.waitFor) {
             await sendBridgeCommand(
@@ -452,8 +485,7 @@ export class ChromeExtensionBackend implements BrowserBackend {
     }
 
     async waitForReady(timeoutMs = 3000): Promise<void> {
-        // Chrome handles page loading natively — give it a moment to stabilize
-        await new Promise((resolve) => setTimeout(resolve, Math.min(timeoutMs, 800)));
+        await waitBridgeReady(timeoutMs);
     }
 
     // ── Page / Tab Access ──
@@ -543,11 +575,9 @@ export class ChromeExtensionBackend implements BrowserBackend {
             modifiers: opts?.modifiers || [],
         });
 
-        // Wait after click (like Playwright mode)
-        const waitMs = opts?.waitAfterMs ?? 1000;
-        if (waitMs > 0) {
-            await new Promise((resolve) => setTimeout(resolve, waitMs));
-        }
+        // Wait for whatever the click started (navigation, re-render) to settle.
+        const waitMs = opts?.waitAfterMs ?? 2000;
+        if (waitMs > 0) await waitBridgeReady(waitMs, 300);
     }
 
     async typeText(text: string, editorType?: string): Promise<void> {

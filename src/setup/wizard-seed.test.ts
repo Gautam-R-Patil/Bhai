@@ -6,11 +6,11 @@ import { buildIdentityUpdate } from "./wizard-seed.js";
 describe("buildIdentityUpdate — name + tone (legacy)", () => {
     it("returns name from profile", () => {
         const out = buildIdentityUpdate({ name: "Dheeraj" });
-        expect(out.name).toBe("Dheeraj");
+        expect(out.name).toEqual({ value: "Dheeraj", verified: true });
     });
     it("trims whitespace from name", () => {
         const out = buildIdentityUpdate({ name: "  Dheeraj  " });
-        expect(out.name).toBe("Dheeraj");
+        expect(out.name).toEqual({ value: "Dheeraj", verified: true });
     });
     it("returns tone as preferences.communication_style", () => {
         const out = buildIdentityUpdate({ name: "X", tone: "professional" });
@@ -68,7 +68,7 @@ describe("buildIdentityUpdate — W2 persona", () => {
     });
     it("a profile with no persona behaves exactly as before W2", () => {
         const out = buildIdentityUpdate({ name: "X", tone: "playful", age: 25 });
-        expect(out.name).toBe("X");
+        expect(out.name).toEqual({ value: "X", verified: true });
         expect(out.preferences?.communication_style).toBe("playful");
         expect(out.extra?.age).toBe(25);
         expect(out.extra?.persona).toBeUndefined();

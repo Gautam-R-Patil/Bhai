@@ -376,6 +376,7 @@ const DESTRUCTIVE_ACTIONS: Record<string, Set<string>> = {
     wifi_control: new Set(["off"]),
     app_manager: new Set(["force_quit"]),
     delete_file: new Set(["*"]), // all actions
+    site_task: new Set(["confirm"]), // places an order / pays
 };
 
 // Dangerous shell command patterns that should trigger a warning
@@ -434,6 +435,9 @@ export function requiresConfirmation(
                 break;
             case "app_manager":
                 warning = `⚠️ Force-quitting "${args.app}" may cause unsaved data loss.`;
+                break;
+            case "site_task":
+                warning = `⚠️ This places the order and pays ₹${args.amount}. It cannot be undone.`;
                 break;
             case "delete_file":
                 warning = `⚠️ This will permanently delete "${args.path}". Use trash_manager instead for safe deletion.`;

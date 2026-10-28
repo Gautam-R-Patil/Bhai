@@ -10,7 +10,7 @@ import type {
 } from "./types.js";
 import { RESEARCH_DIR, AdaptiveRateLimiter } from "./profiles.js";
 import { multiEngineSearch, resetEngineHealth } from "./engines.js";
-import { fetchPages, extractOutboundLinks, rankOutboundLinks, scoreDomainQuality, getDomain } from "./fetcher.js";
+import { fetchPages, rankOutboundLinks, scoreDomainQuality, getDomain } from "./fetcher.js";
 import {
     generateSeedQueries, generateMoreQueries, analyzeAndExtract,
     detectContradictions, identifyGaps, synthesizeResearch,
@@ -180,8 +180,8 @@ export async function executeDeepResearch(
                                     for (const f of analysis.findings) {
                                         allFindings.push({ text: f, sourceUrl: page.url, sourceTitle: page.title, categories: analysis.categories });
                                     }
-                                    allSources.push(rankSource(page.url, page.title, page.content, analysis.findings,
-                                        retryNew.find(r => r.url === page.url)?.citationCount || 0, research.topic));
+                                    allSources.push({ ...rankSource(page.url, page.title, page.content, analysis.findings,
+                                        retryNew.find(r => r.url === page.url)?.citationCount || 0, research.topic), outboundLinks: page.links });
                                     for (const fq of analysis.followUpQueries) {
                                         if (!usedQueries.has(fq) && !pendingQueries.includes(fq)) pendingQueries.push(fq);
                                     }
@@ -217,6 +217,7 @@ export async function executeDeepResearch(
 
                     const ranked = rankSource(page.url, page.title, page.content, analysis.findings,
                         newResults.find(r => r.url === page.url)?.citationCount || 0, research.topic);
+                    ranked.outboundLinks = page.links;
                     allSources.push(ranked);
 
                     for (const fq of analysis.followUpQueries) {
@@ -298,7 +299,7 @@ export async function executeDeepResearch(
                             for (const f of analysis.findings) {
                                 allFindings.push({ text: f, sourceUrl: page.url, sourceTitle: page.title, categories: analysis.categories });
                             }
-                            allSources.push(rankSource(page.url, page.title, page.content, analysis.findings, 0, research.topic));
+                            allSources.push({ ...rankSource(page.url, page.title, page.content, analysis.findings, 0, research.topic), outboundLinks: page.links });
                             for (const fq of analysis.followUpQueries) {
                                 if (!usedQueries.has(fq) && !pendingQueries.includes(fq)) pendingQueries.push(fq);
                             }
@@ -413,7 +414,7 @@ export async function executeDeepResearch(
 
                     // Extract outbound links for citation chain
                     if (profile.citationDepth > 1) {
-                        const links = extractOutboundLinks(page.content, page.url);
+                        const links = page.links;
                         ranked.outboundLinks = links;
                         const topLinks = rankOutboundLinks(links, visitedUrls, 3, research.topic);
                         for (const link of topLinks) {

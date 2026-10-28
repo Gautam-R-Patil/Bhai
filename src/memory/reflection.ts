@@ -18,7 +18,7 @@ import { recordEpisode } from "./episodic.js";
 import { updateSelfStateFromSession, type EmotionalTone } from "./self-state.js";
 import { updateRelationshipAfterSession } from "./relationship.js";
 import { upsertLearning, type LearningCategory } from "./task-learnings.js";
-import { applyDecay, synapticPrune, findDuplicates, mergeDuplicates } from "./self-evolving.js";
+import { synapticPrune, findDuplicates, mergeDuplicates } from "./self-evolving.js";
 import { reorganizeMemories } from "./self-evolving.js";
 import { batchSurpriseAnalysis } from "./surprise-gate.js";
 import { addEntity, getKnowledgeGraphDB } from "./knowledge-graph.js";
@@ -44,6 +44,26 @@ const MAX_TRAIT_SIGNALS = 5;
 const MAX_RETRIES = 1;
 const HMAC_SECRET = "atlas-sacdr-audit-v1";  // Derived key for signing
 const CONSOLIDATION_EVERY_N_REFLECTIONS = 5; // Run lightweight consolidation every 5th reflection
+
+/**
+ * Images and audio are not stored: screenshots now reach history as real
+ * images, and every reflection would otherwise write full captures of the
+ * user's screen into memory.db, indefinitely.
+ */
+function withoutMedia<T extends { content?: unknown }>(messages: T[]): T[] {
+    return messages.map((m) =>
+        Array.isArray(m.content)
+            ? {
+                  ...m,
+                  content: (m.content as Array<{ type?: string }>).map((p) =>
+                      p?.type === "image_url" || p?.type === "input_audio"
+                          ? { type: "text", text: "[image omitted]" }
+                          : p,
+                  ),
+              }
+            : m,
+    );
+}
 
 // Default 0 = persist FULL conversation history into conversations.messages_json.
 // Emergency rollback to the legacy cap: set ATLAS_CORPUS_MAX_MESSAGES="20".
@@ -232,7 +252,7 @@ export async function runReflection(
         // ── 2. Summarize the session ──────────────
         const summary = await extractSummary(llm, reflectionInput);
         if (summary) {
-            remember(summary.summary, "session_summary", "reflection,session", 6);
+            remember(summary.summary, "session_summary", "reflection,session", 6, "reflection");
             signedAuditLog("session_summary_stored", { length: summary.summary.length });
             console.log(`[MEMORY][REFLECTION] Summary stored (${summary.summary.length} chars)`);
 
@@ -241,7 +261,9 @@ export async function runReflection(
                 const db = getKnowledgeGraphDB();
                 if (db) {
                     const sessionId = generateUUID();
-                    const messagesToStore = selectCorpusMessages(conversationHistory, CORPUS_MAX_MESSAGES);
+                    const messagesToStore = withoutMedia(
+                        selectCorpusMessages(conversationHistory, CORPUS_MAX_MESSAGES),
+                    );
                     const messagesJson = JSON.stringify(messagesToStore);
                     db.run(
                         `INSERT INTO conversations (session_id, messages_json, summary) VALUES (?, ?, ?)`,
@@ -1153,11 +1175,13 @@ export function runDailyDecay(): void {
     try {
         const kgDb = getKnowledgeGraphDB();
         if (kgDb) {
-            const memoriesDecayed = applyDecay(kgDb);
-
-            // Synaptic Homeostasis Pruning — prune/weaken/strengthen based on strength scores
+            // Synaptic Homeostasis Pruning — prune/weaken/strengthen based on
+            // strength scores. Once per pass (applyDecay is the same prune).
             const pruneResult = synapticPrune(kgDb);
-            console.log(`[MEMORY][DECAY] Synaptic prune: ${pruneResult.pruned} pruned, ${pruneResult.weakened} weakened, ${pruneResult.strengthened} strengthened`);
+            const memoriesDecayed = pruneResult.pruned;
+            console.log(
+                `[MEMORY][DECAY] Synaptic prune: ${pruneResult.pruned} pruned, ${pruneResult.weakened} weakened, ${pruneResult.strengthened} strengthened`,
+            );
 
             // HNSW-based duplicate merging — merge near-duplicate memories
             const dupesMerged = mergeDuplicates(kgDb);

@@ -306,6 +306,15 @@ export async function getBrowser(): Promise<BrowserContext> {
 
     try {
         const ctx = await _browserInitPromise;
+        // Done: later callers use browserContext. Left set, this resolved
+        // promise handed back the dead context after an idle close or
+        // browser_close, and every Playwright tool failed until a restart.
+        _browserInitPromise = null;
+        // Closed for any reason (idle timer, browser_close, the user closing
+        // the window) → the next tool relaunches instead of using a dead one.
+        ctx.on("close", () => {
+            if (browserContext === ctx) browserContext = null;
+        });
         _scheduleIdleClose();
         return ctx;
     } catch (err) {
@@ -545,7 +554,8 @@ export const ATLAS_HUD_JS = `
 // Strategy: domcontentloaded → framework hydration signal → DOM stability.
 export async function waitForPageReady(page: Page, timeoutMs = 2500): Promise<void> {
     if (getCurrentMode() === "chrome") {
-        await new Promise((resolve) => setTimeout(resolve, Math.min(timeoutMs, 600)));
+        const { waitBridgeReady } = await import("./chrome-backend.js");
+        await waitBridgeReady(timeoutMs);
         return;
     }
 
@@ -563,7 +573,7 @@ export async function waitForPageReady(page: Page, timeoutMs = 2500): Promise<vo
     // Step 2: Framework hydration signal — reads existing globals, no side effects
     try {
         await page.waitForFunction(
-            () => {
+            /* javascript-obfuscator:disable */ () => {
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const w = window as any;
                 const isNext = typeof w.__NEXT_DATA__ !== "undefined";
@@ -577,7 +587,7 @@ export async function waitForPageReady(page: Page, timeoutMs = 2500): Promise<vo
                 if (isNext || isVue || isNuxt || isReact) return document.readyState === "complete";
                 return document.readyState !== "loading";
             },
-            undefined,
+            /* javascript-obfuscator:enable */ undefined,
             { timeout: Math.min(deadline - Date.now(), 2500), polling: 150 },
         );
     } catch {
@@ -596,7 +606,9 @@ export async function waitForPageReady(page: Page, timeoutMs = 2500): Promise<vo
         try {
             await page
                 .evaluate(
-                    (maxMs: number, quietMs: number) => {
+                    // One argument only: Playwright's evaluate takes (fn, arg), so the
+                    // old (maxMs, quietMs) form never waited at all.
+                    /* javascript-obfuscator:disable */ ({ maxMs, quietMs }: { maxMs: number; quietMs: number }) => {
                         return new Promise<string>((resolve) => {
                             let timer: ReturnType<typeof setTimeout> | null = null;
                             const cap = setTimeout(() => {
@@ -624,8 +636,7 @@ export async function waitForPageReady(page: Page, timeoutMs = 2500): Promise<vo
                             }, quietMs);
                         });
                     },
-                    stabilityBudget,
-                    QUIET_MS,
+                    /* javascript-obfuscator:enable */ { maxMs: stabilityBudget, quietMs: QUIET_MS },
                 )
                 .catch(() => {}); // non-fatal
         } catch {

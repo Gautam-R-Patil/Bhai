@@ -210,6 +210,8 @@ const INTERACTIVE_ROLES_MAC = new Set([
     "AXPopUpButton",
     "AXMenuButton",
     "AXMenuItem",
+    "AXMenuBarItem",
+    "AXDisclosureTriangle",
     "AXSlider",
     "AXIncrementor",
     "AXComboBox",
@@ -387,16 +389,62 @@ function loadNative(): typeof _native {
 }
 
 /** Best-match by label or value substring. Returns null if no match meets the score floor. */
-export function findElementByLabel(elements: AxFlatElement[], query: string, minScore = 0.5): AxFlatElement | null {
+// Keys and symbols the agent writes vs the labels apps use (Calculator: "Multiply").
+const _SYMBOL_ALIASES: Record<string, string> = {
+    "×": "multiply",
+    "*": "multiply",
+    "÷": "divide",
+    "/": "divide",
+    "=": "equals",
+    "+": "add",
+    "−": "subtract",
+    "-": "subtract",
+    "%": "percent",
+};
+
+/**
+ * Best element for a natural-language instruction ("the "1" button on the
+ * Calculator keypad"). `appName`'s words are ignored: they described every
+ * element in that app and dragged real hits below the threshold.
+ */
+export function findElementByLabel(
+    elements: AxFlatElement[],
+    query: string,
+    minScore = 0.5,
+    appName?: string,
+): AxFlatElement | null {
     if (!query) return null;
-    const q = query.toLowerCase().trim();
+    const raw = query.toLowerCase().trim();
+
+    // A quoted target ("1", '×', “Save”) is what the agent means: try it exactly.
+    const quoted = /["'“‘]([^"'”’]{1,40})["'”’]/.exec(query)?.[1]?.toLowerCase().trim();
+    if (quoted) {
+        const want = [quoted, _SYMBOL_ALIASES[quoted]].filter(Boolean);
+        const exact = elements.find((el) => want.includes((el.label || "").toLowerCase().trim()));
+        if (exact) return exact;
+    }
+
+    const appWords = new Set(_tokens((appName || "").toLowerCase()));
+    let q = raw
+        .split(/\s+/)
+        .map((w) => _SYMBOL_ALIASES[w] ?? w)
+        .filter((w) => !appWords.has(w.replace(/[^a-z0-9]/g, "")))
+        .join(" ")
+        .trim();
+    if (!q) q = raw;
+
     let best: { el: AxFlatElement; score: number } | null = null;
     for (const el of elements) {
-        // Score against label AND value separately; take the higher.
         const label = (el.label || "").toLowerCase();
         const value = (el.value || "").toLowerCase();
         if (!label && !value) continue;
-        const score = Math.max(scoreText(q, label), scoreText(q, value));
+        // Score the raw instruction too: stripping the app name can leave a
+        // fragment ("All Mail" in Mail → "all") that only the full words pin down.
+        let score = Math.max(scoreText(q, label), q === raw ? 0 : scoreText(raw, label));
+        // Values are free text (a display showing "128 × 46", a document): an
+        // exact match counts; a fuzzy one only for short label-less text (macOS
+        // puts static text in the value), and never against the raw symbol.
+        if (value) score = Math.max(score, value === q || value === raw ? 0.9 : !label && value.length <= 40 ? scoreText(q, value) : 0);
         if (!best || score > best.score) best = { el, score };
     }
     if (!best || best.score < minScore) return null;
@@ -404,9 +452,48 @@ export function findElementByLabel(elements: AxFlatElement[], query: string, min
 }
 
 const _STOPWORDS = new Set([
-    "the", "a", "an", "to", "in", "on", "of", "for", "at", "by", "click", "tap",
-    "button", "icon", "menu", "item", "field", "the", "and", "or", "this", "that",
-    "with", "into", "left", "right", "top", "bottom", "sidebar", "bar", "open",
+    "the",
+    "a",
+    "an",
+    "to",
+    "in",
+    "on",
+    "of",
+    "for",
+    "at",
+    "by",
+    "click",
+    "tap",
+    "button",
+    "icon",
+    "menu",
+    "item",
+    "field",
+    "the",
+    "and",
+    "or",
+    "this",
+    "that",
+    "with",
+    "into",
+    "left",
+    "right",
+    "top",
+    "bottom",
+    "sidebar",
+    "bar",
+    "open",
+    // Containers, not targets ("the 1 key on the keypad").
+    "keypad",
+    "keyboard",
+    "key",
+    "keys",
+    "window",
+    "app",
+    "application",
+    "panel",
+    "toolbar",
+    "screen",
 ]);
 
 function _tokens(s: string): string[] {
@@ -416,12 +503,18 @@ function _tokens(s: string): string[] {
         .filter((t) => t.length > 0);
 }
 
+function _wordIn(hay: string, q: string): boolean {
+    const esc = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(^|[^\\p{L}\\p{N}])${esc}($|[^\\p{L}\\p{N}])`, "u").test(hay);
+}
+
 function scoreText(q: string, hay: string): number {
     if (!hay) return 0;
     if (hay === q) return 1.0;
     // Label CONTAINS the whole query → strong (the query is a specific substring
     // of a longer label, e.g. q="Downloads" hay="Downloads, 14 items").
-    if (hay.includes(q)) return 0.85;
+    // On word boundaries: "all" is not in "Install".
+    if (_wordIn(hay, q)) return 0.85;
     // Query CONTAINS the label as a substring — only strong when the label is a
     // SUBSTANTIAL fraction of the query. A short label buried in a long unrelated
     // instruction (q="the purple ... widget" ⊃ "Purple") must NOT score 0.85 here;

@@ -713,6 +713,13 @@ function saveEnvEncrypted(envContent) {
  */
 function saveEnvKVs(kvs) {
     if (!kvs || typeof kvs !== "object") return;
+    // One KEY=value line each: a newline in a value (or an odd key) would let a
+    // settings write smuggle extra env vars (NODE_OPTIONS, CONVEX_URL) into the bot.
+    for (const [k, v] of Object.entries(kvs)) {
+        if (!/^[A-Z0-9_]+$/.test(k) || /[\r\n]/.test(String(v))) {
+            throw new Error(`Invalid setting ${JSON.stringify(k)}`);
+        }
+    }
     const existing = loadEnvDecrypted() || "";
     const lines = existing.split("\n");
     const seen = new Set();
@@ -749,7 +756,7 @@ function buildDetectionDeps() {
         try {
             return {
                 account: store.get("account") || undefined,
-                personalize: store.get("personalize") || undefined,
+                personalize: (store.get("prefs") || {}).personalize || undefined,
             };
         } catch { return {}; }
     })();
@@ -1142,12 +1149,20 @@ async function checkForUpdates() {
     }
 }
 
+// `killed` turns true as soon as a signal is SENT, while the bot spends seconds
+// shutting down — so liveness comes from the exit fields instead.
+const isAlive = (c) => !!c && c.exitCode === null && c.signalCode === null;
+let stopPromise = null; // resolves when the bot being stopped has really exited
+let botCrashTimes = []; // recent crash times, for restart backoff
+let overlayLoadFailed = false; // the overlay tried to load before the bot was listening
+
 function getBotStatus() {
-    return botProcess && !botProcess.killed ? "running" : "stopped";
+    return isAlive(botProcess) ? "running" : "stopped";
 }
 
 async function startBot() {
-    if (botProcess && !botProcess.killed) return { status: "already_running" };
+    if (stopPromise) await stopPromise; // never run two bots at once
+    if (isAlive(botProcess)) return { status: "already_running" };
 
     // ── Account gate: check status before starting ──
     const session = loadAccountSession();
@@ -1225,6 +1240,8 @@ async function startBot() {
         // Where Settings writes .user-personality.json (personality-sync.ts).
         ATLAS_USER_DATA_DIR: app.getPath("userData"),
         NODE_ENV: "production",
+        // V8 code cache for the 23MB bundle: a warm start skips re-compiling it.
+        NODE_COMPILE_CACHE: path.join(app.getPath("userData"), "v8-cache"),
     };
 
     // Pass Convex URL + OTPless identity to bot process for credit enforcement
@@ -1251,8 +1268,9 @@ async function startBot() {
         spawnEnv.ATLAS_RUNTIME_KEY = _runtimeKey;
     }
 
+    let child = null;
     try {
-        botProcess = spawn(executable, args, {
+        child = botProcess = spawn(executable, args, {
             cwd: BOT_DIR,
             env: spawnEnv,
             stdio: ["pipe", "pipe", "pipe"],
@@ -1309,6 +1327,15 @@ async function startBot() {
                 }
             }
 
+            // Overlay server is listening: load the overlay now (it failed while the bot booted).
+            if (msg.includes("##ATLAS_READY##")) {
+                sendLog(`Bot ready in ${msg.split("##ATLAS_READY##")[1]?.trim() || "?"}ms`);
+                if (overlayLoadFailed && overlayWindow && !overlayWindow.isDestroyed()) {
+                    overlayLoadFailed = false;
+                    overlayWindow.loadURL(OVERLAY_URL);
+                }
+            }
+
             // WhatsApp OTP forwarding
             const otpMatch = msg.match(/##ATLAS_WA_OTP##(.+)##END_OTP##/);
             if (otpMatch) {
@@ -1362,7 +1389,10 @@ async function startBot() {
         }
     });
 
-    botProcess.on("error", (err) => {
+    // A stale child (an earlier bot finishing its shutdown) must not touch the
+    // state of the one that replaced it.
+    child.on("error", (err) => {
+        if (botProcess !== child) return;
         sendLog(`❌ Process error: ${err.message}`);
         botProcess = null;
         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -1371,9 +1401,27 @@ async function startBot() {
         updateTrayMenu();
     });
 
-    botProcess.on("exit", (code) => {
+    child.on("exit", (code, signal) => {
+        if (botProcess !== child) return;
         sendLog(`Process exited with code ${code}`);
         botProcess = null;
+        // A crash (not a Stop or app quit) restarts the bot with backoff:
+        // 1, 2, 4, 8, 16s, at most 5 restarts in 10 minutes.
+        // Exit 78 means "not allowed to run" (signed out / no credits): retrying won't help.
+        if (!stopPromise && !isQuitting && code !== 78 && (code !== 0 || signal)) {
+            const now = Date.now();
+            botCrashTimes = botCrashTimes.filter((t) => now - t < 10 * 60_000);
+            botCrashTimes.push(now);
+            if (botCrashTimes.length <= 5) {
+                const delay = 1000 * 2 ** (botCrashTimes.length - 1);
+                sendLog(`Bot crashed; restarting in ${delay / 1000}s`);
+                setTimeout(() => {
+                    if (!isAlive(botProcess) && !isQuitting) startBot().catch(() => {});
+                }, delay);
+            } else {
+                sendLog("Bot crashed 5 times in 10 minutes; not restarting. Use Start to try again.");
+            }
+        }
         hideBuddy();
         for (const k of Object.keys(channelStatuses)) delete channelStatuses[k];
         // Clean up temp env
@@ -1397,15 +1445,19 @@ async function startBot() {
 }
 
 function stopBot() {
-    if (!botProcess || botProcess.killed) return { status: "already_stopped" };
-
-    botProcess.kill("SIGTERM");
-    setTimeout(() => {
-        if (botProcess && !botProcess.killed) {
-            botProcess.kill("SIGKILL");
-        }
-    }, 5000);
-
+    const child = botProcess;
+    if (!isAlive(child)) return { status: "already_stopped" };
+    if (!stopPromise) {
+        stopPromise = new Promise((resolve) => {
+            child.once("exit", resolve);
+            child.kill("SIGTERM");
+            setTimeout(() => {
+                if (isAlive(child)) child.kill("SIGKILL");
+            }, 5000);
+        }).finally(() => {
+            stopPromise = null;
+        });
+    }
     return { status: "stopping" };
 }
 
@@ -1851,13 +1903,15 @@ function createOverlayWindow() {
     // Retry loading if the bot server isn't ready yet (race condition on first show)
     overlayWindow.webContents.on("did-fail-load", (_e, errCode, errDesc, url) => {
         if (errCode === -102 || errCode === -6 || errDesc === "ERR_CONNECTION_REFUSED") {
-            // Bot server not up yet — retry after short delay
-            console.warn("[OVERLAY] Server not ready, retrying in 1s...");
+            // Bot server not up yet: the bot's ##ATLAS_READY## line reloads it the
+            // moment it listens; this slower retry is only a fallback.
+            overlayLoadFailed = true;
             setTimeout(() => {
-                if (overlayWindow && !overlayWindow.isDestroyed()) {
+                if (overlayLoadFailed && overlayWindow && !overlayWindow.isDestroyed()) {
+                    overlayLoadFailed = false;
                     overlayWindow.loadURL(OVERLAY_URL);
                 }
-            }, 1000);
+            }, 5000);
         } else {
             console.error(`[OVERLAY] Failed to load: ${errDesc} (${errCode}) — ${url}`);
         }
@@ -2211,6 +2265,8 @@ function registerIPC() {
     });
     ipcMain.on("overlay:notify", (_, { title, body }) => {
         const { Notification } = require("electron");
+        // The only sender today is "research complete" — a task notice.
+        if (store.get("notificationsEnabled") === false || store.get("notifyOnTask") === false) return;
         if (Notification.isSupported()) {
             // Windows silently drops notifications with an empty body — always provide one
             const safeBody = body || "Bhai notification";
@@ -2290,6 +2346,13 @@ function registerIPC() {
                 if (Object.prototype.hasOwnProperty.call(settings, key)) {
                     kvs[key] = settings[key] ?? "";
                 }
+            }
+            if (Object.prototype.hasOwnProperty.call(settings, "PRIMARY_CHANNEL")) {
+                const ch = String(settings.PRIMARY_CHANNEL || "").toLowerCase();
+                if (!["telegram", "whatsapp", "discord", "slack", "overlay", "email", "matrix"].includes(ch)) {
+                    return { success: false, error: "Unknown channel" };
+                }
+                kvs.PRIMARY_CHANNEL = ch;
             }
             saveEnvKVs(kvs);
             return { success: true };
@@ -4611,7 +4674,7 @@ function registerIPC() {
     // ── Connection Status IPC ────────────────────
     ipcMain.handle("status:connections", () => {
         // Derived from what the bot actually logged — never assume a channel is up.
-        const running = !!(botProcess && !botProcess.killed);
+        const running = isAlive(botProcess);
         return {
             telegram: running && channelStatuses.telegram === "connected",
             telegramConfigured: channelStatuses.telegram !== "not_configured",
@@ -4786,28 +4849,46 @@ function registerIPC() {
         }
     });
 
+    // slug/type come from the renderer: never put them in a path unchecked
+    // (slug "../../.." made uninstall rm -rf the home directory).
+    function storeItemDir(type, slug) {
+        if (!["skill", "mcp", "tool"].includes(type)) throw new Error("Invalid store item type");
+        if (typeof slug !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(slug)) {
+            throw new Error("Invalid store item slug");
+        }
+        const base = path.resolve(STORE_DIR, type + "s");
+        const dir = path.resolve(base, slug);
+        if (!dir.startsWith(base + path.sep)) throw new Error("Invalid store item path");
+        return dir;
+    }
+    const STORE_MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024;
+
     ipcMain.handle("store:install", async (_, item) => {
         try {
             const { slug, type, name, version, downloadUrl, permissions } = item;
 
-            // Create type-specific directory
-            const typeDir = path.join(STORE_DIR, type + "s", slug);
+            const typeDir = storeItemDir(type, slug);
+            if (typeof downloadUrl !== "string" || !/^https:\/\//i.test(downloadUrl)) {
+                throw new Error("Store downloads must use https");
+            }
             fs.mkdirSync(typeDir, { recursive: true });
 
             // Download content
             console.log(`[Store] Downloading ${name}...`);
             const https = require("https");
-            const http = require("http");
-            const protocol = downloadUrl.startsWith("https") ? https : http;
 
             await new Promise((resolve, reject) => {
-                const request = protocol.get(downloadUrl, (response) => {
+                const request = https.get(downloadUrl, (response) => {
                     if (response.statusCode === 302 || response.statusCode === 301) {
-                        // Follow redirect
-                        const redirectProtocol = response.headers.location.startsWith("https") ? https : http;
-                        redirectProtocol.get(response.headers.location, (res) => {
-                            handleDownload(res, resolve, reject);
-                        }).on("error", reject);
+                        // Follow one redirect, still https only.
+                        const location = new URL(response.headers.location || "", downloadUrl).toString();
+                        if (!location.startsWith("https://"))
+                            return reject(new Error("Store downloads must use https"));
+                        https
+                            .get(location, (res) => {
+                                handleDownload(res, resolve, reject);
+                            })
+                            .on("error", reject);
                     } else {
                         handleDownload(response, resolve, reject);
                     }
@@ -4816,14 +4897,26 @@ function registerIPC() {
 
                 function handleDownload(response, resolve, reject) {
                     const chunks = [];
-                    response.on("data", (chunk) => chunks.push(chunk));
+                    let size = 0;
+                    response.on("data", (chunk) => {
+                        size += chunk.length;
+                        if (size > STORE_MAX_DOWNLOAD_BYTES) {
+                            response.destroy();
+                            reject(new Error("Store download too large"));
+                            return;
+                        }
+                        chunks.push(chunk);
+                    });
                     response.on("end", async () => {
                         try {
                             const buffer = Buffer.concat(chunks);
 
-                            // Extract zip
+                            // Extract zip — same entry checks as sideload (no
+                            // traversal, absolute paths or symlinks).
                             const AdmZip = require("adm-zip");
                             const zip = new AdmZip(buffer);
+                            const check = validateZipEntries(zip.getEntries());
+                            if (!check.ok) throw new Error(check.error);
                             zip.extractAllTo(typeDir, true);
 
                             console.log(`[Store] Extracted to ${typeDir}`);
@@ -4874,7 +4967,7 @@ function registerIPC() {
             const { slug, type } = item;
 
             // Remove directory
-            const typeDir = path.join(STORE_DIR, type + "s", slug);
+            const typeDir = storeItemDir(type, slug);
             if (fs.existsSync(typeDir)) {
                 fs.rmSync(typeDir, { recursive: true, force: true });
             }
@@ -5072,7 +5165,15 @@ function registerIPC() {
                 // Also track all extracted files for MCP/tool packages
                 extractedFiles = entries.map(e => e.entryName);
             } else if (ext === ".md") {
-                // Direct .md file
+                // Direct .md file — never signed, so it needs the same consent
+                // as an unsigned zip.
+                if (!acceptUnsigned) {
+                    return {
+                        success: false,
+                        error: "Skill is unsigned. Re-call with options.acceptUnsigned=true after warning the user.",
+                        requiresUnsignedConsent: true,
+                    };
+                }
                 skillContent = fs.readFileSync(filePath, "utf-8");
             } else {
                 return { success: false, error: "Unsupported file type. Use .zip or .md files." };
@@ -5397,7 +5498,7 @@ ${body}`;
             const newEnvContent = envLines.join("\n") + "\n";
             saveEnvEncrypted(newEnvContent);
 
-            const isBotRunning = botProcess && !botProcess.killed;
+            const isBotRunning = isAlive(botProcess);
             return { success: true, botRunning: isBotRunning };
         } catch (err) {
             console.error("[Channels] save-config error:", err.message);
@@ -6207,11 +6308,9 @@ app.whenReady().then(async () => {
 
     if (fs.existsSync(SETUP_FLAG)) {
         createPanelWindow();
-        // Auto-start bot
-        setTimeout(() => {
-            startBot();
-            updateTrayMenu();
-        }, 1000);
+        // Auto-start bot (no fixed delay: it was a second added to every launch)
+        startBot().catch((err) => console.error("[BOT] Auto-start failed:", err.message));
+        updateTrayMenu();
 
         // Check for updates on launch (after 5 seconds)
         setTimeout(() => {

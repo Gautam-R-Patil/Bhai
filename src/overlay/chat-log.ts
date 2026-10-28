@@ -4,6 +4,7 @@
 // dashboard's Chats page reads it, and on boot the last few turns are put back
 // into the agent's context so Bhai remembers the conversation after a restart.
 
+import { protect } from "../security/pii-vault.js";
 import fs from "node:fs";
 import path from "node:path";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
@@ -26,7 +27,7 @@ export function chatLogPath(): string {
 
 // ponytail: append-only, never rotated; trim it if files over a few MB show up.
 export function logChatMessage(chat: string, role: ChatRole, text: string, source = "overlay"): void {
-    const clean = text.trim();
+    const clean = protect(text.trim()); // no card numbers, OTPs etc. on disk
     if (!clean) return;
     try {
         fs.mkdirSync(getDataDir(), { recursive: true });

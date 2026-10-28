@@ -157,8 +157,13 @@ export function recallLearnings(task: string, category?: LearningCategory): Task
         for (const kw of keywords) {
             if (patternLower.includes(kw)) score += 2;
             if (contextLower.includes(kw)) score += 1;
-            if (taskLower.includes(contextLower.split(/\s+/)[0])) score += 1;
         }
+        const contextHead = contextLower.split(/\s+/)[0];
+        if (contextHead.length > 2 && taskLower.includes(contextHead)) score += 1;
+        // Relevance first: recency/reinforcement/success bonuses alone used to
+        // clear the bar, so every recent learning (e.g. "couldn't read the
+        // Calculator display") was injected into every unrelated task.
+        if (score === 0) continue;
 
         // Recency bonus
         const daysSince = (Date.now() - new Date(entry.lastSeen).getTime()) / 86_400_000;
@@ -184,7 +189,9 @@ export function getTaskLearningsContext(task: string, category?: LearningCategor
     if (matches.length === 0) return "";
 
     const lines: string[] = [];
-    lines.push("📚 PAST LEARNINGS for similar tasks:");
+    lines.push(
+        "📚 PAST LEARNINGS for similar tasks (notes from earlier attempts — tools and fixes change, so a past failure is a hint, not a reason to skip trying):",
+    );
 
     for (const m of matches) {
         lines.push(`\n[${m.category.toUpperCase()}] "${m.taskPattern}" (${m.context}) — success: ${(m.successScore * 100).toFixed(0)}%, used ${m.timesReinforced}x`);

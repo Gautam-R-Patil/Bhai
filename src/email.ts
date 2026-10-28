@@ -56,83 +56,89 @@ export function sanitizeIncomingChannelText(text: string): string {
  * Handles folded headers (continuation lines starting with whitespace).
  */
 function extractHeaderFromSource(rawSource: string, headerName: string): string | null {
-    // Headers end at the first blank line
-    const headerEndIdx = rawSource.indexOf("\r\n\r\n");
-    const headerSection = headerEndIdx > -1 ? rawSource.substring(0, headerEndIdx) : rawSource;
+    // Headers end at the first blank line (CRLF or bare LF) — never search the
+    // body, where a sender could write any "header" they like.
+    const m = /\r?\n\r?\n/.exec(rawSource);
+    const headerSection = m ? rawSource.substring(0, m.index) : rawSource;
 
     // Unfold continuation lines (lines starting with whitespace are part of the previous header)
     const unfolded = headerSection.replace(/\r?\n([ \t]+)/g, " ");
 
+    // First occurrence = topmost = added by the receiving server.
     const regex = new RegExp(`^${headerName}:\\s*(.+)$`, "im");
     const match = unfolded.match(regex);
     return match ? match[1].trim() : null;
 }
 
+function domainOf(addr: string | null | undefined): string {
+    const m = /@([a-z0-9.-]+)/i.exec(addr || "") || /^([a-z0-9-]+(?:\.[a-z0-9-]+)+)$/i.exec((addr || "").trim());
+    return (m?.[1] || "").toLowerCase().replace(/\.$/, "");
+}
+
+/** Relaxed DMARC-style alignment: same domain, or one is a subdomain of the other. */
+function aligned(authDomain: string, fromDomain: string): boolean {
+    if (!authDomain || !fromDomain) return false;
+    return authDomain === fromDomain || fromDomain.endsWith(`.${authDomain}`) || authDomain.endsWith(`.${fromDomain}`);
+}
+
 /**
- * Parse email authentication headers (Authentication-Results or ARC-Authentication-Results)
- * to check SPF, DKIM, and DMARC results.
+ * Check the receiving server's SPF/DKIM/DMARC verdict for this email.
  *
- * Fail-CLOSED policy. Header must be present, at least one of spf/dkim/dmarc
- * must explicitly `pass`, and no check may explicitly fail/softfail. Set
- * ATLAS_EMAIL_REQUIRE_DMARC=true to additionally require dmarc=pass.
+ * Fail-CLOSED. A pass only counts when it is ALIGNED with the From: domain —
+ * dmarc=pass (header.from), dkim=pass (header.d / header.i) or spf=pass
+ * (smtp.mailfrom). An unaligned pass is what a spoofer gets for free: their
+ * own domain passes SPF while From: says the owner's address. Any explicit
+ * fail/softfail rejects. ARC-Authentication-Results is not trusted (anyone
+ * upstream can write one). ATLAS_EMAIL_REQUIRE_DMARC=true additionally
+ * requires dmarc=pass.
  */
 export function isEmailAuthenticated(rawSource: string): { authenticated: boolean; details: string } {
-    // Try Authentication-Results first, then fall back to ARC-Authentication-Results
-    const authHeader =
-        extractHeaderFromSource(rawSource, "Authentication-Results") ||
-        extractHeaderFromSource(rawSource, "ARC-Authentication-Results");
-
+    const authHeader = extractHeaderFromSource(rawSource, "Authentication-Results");
     if (!authHeader) {
         return {
             authenticated: false,
             details: "No Authentication-Results header found (fail-closed: rejected)",
         };
     }
+    // The address inside <…>, not the display name: `"x@evil.com" <owner@victim.com>`
+    // must align with victim.com, the address the whitelist checks.
+    const rawFrom = extractHeaderFromSource(rawSource, "From") ?? "";
+    const fromDomain = domainOf(/<([^>]+)>\s*$/.exec(rawFrom)?.[1] ?? rawFrom);
 
-    const spfMatch = authHeader.match(/\bspf\s*=\s*(\w+)/i);
-    const dkimMatch = authHeader.match(/\bdkim\s*=\s*(\w+)/i);
-    const dmarcMatch = authHeader.match(/\bdmarc\s*=\s*(\w+)/i);
+    const results: Array<{ method: string; result: string; domain: string }> = [];
+    for (const seg of authHeader.split(";")) {
+        const m = /\b(spf|dkim|dmarc)\s*=\s*(\w+)/i.exec(seg);
+        if (!m) continue;
+        const method = m[1].toLowerCase();
+        const prop = (name: string) =>
+            new RegExp(`\\b${name.replace(".", "\\.")}\\s*=\\s*([^\\s;]+)`, "i").exec(seg)?.[1];
+        const domain =
+            method === "dkim"
+                ? domainOf(prop("header.d") || prop("header.i"))
+                : method === "spf"
+                  ? domainOf(prop("smtp.mailfrom") || prop("smtp.helo"))
+                  : domainOf(prop("header.from"));
+        results.push({ method, result: m[2].toLowerCase(), domain });
+    }
+    const details =
+        results.map((r) => `${r.method}=${r.result}${r.domain ? ` (${r.domain})` : ""}`).join(", ") || "none";
 
-    const spfResult = spfMatch ? spfMatch[1].toLowerCase() : "absent";
-    const dkimResult = dkimMatch ? dkimMatch[1].toLowerCase() : "absent";
-    const dmarcResult = dmarcMatch ? dmarcMatch[1].toLowerCase() : "absent";
-
-    const details = `spf=${spfResult}, dkim=${dkimResult}, dmarc=${dmarcResult}`;
-
-    const failValues = new Set(["fail", "softfail"]);
-    const spfFailed = failValues.has(spfResult);
-    const dkimFailed = failValues.has(dkimResult);
-    const dmarcFailed = failValues.has(dmarcResult);
-
-    if (spfFailed || dkimFailed || dmarcFailed) {
+    if (results.some((r) => r.result === "fail" || r.result === "softfail")) {
+        return { authenticated: false, details: `Authentication check explicitly failed: ${details}` };
+    }
+    const alignedPass = (method: string) =>
+        results.some((r) => r.method === method && r.result === "pass" && aligned(r.domain, fromDomain));
+    const dmarcPass = alignedPass("dmarc");
+    if (!dmarcPass && !alignedPass("dkim") && !alignedPass("spf")) {
         return {
             authenticated: false,
-            details: `Authentication check explicitly failed: ${details}`,
+            details: `No pass aligned with the From: domain (${fromDomain || "unknown"}): ${details}`,
         };
     }
-
-    const spfPass = spfResult === "pass";
-    const dkimPass = dkimResult === "pass";
-    const dmarcPass = dmarcResult === "pass";
-
-    if (!spfPass && !dkimPass && !dmarcPass) {
-        return {
-            authenticated: false,
-            details: `No explicit pass on any of spf/dkim/dmarc: ${details}`,
-        };
-    }
-
     if (process.env.ATLAS_EMAIL_REQUIRE_DMARC === "true" && !dmarcPass) {
-        return {
-            authenticated: false,
-            details: `ATLAS_EMAIL_REQUIRE_DMARC set but dmarc != pass: ${details}`,
-        };
+        return { authenticated: false, details: `ATLAS_EMAIL_REQUIRE_DMARC set but dmarc != pass: ${details}` };
     }
-
-    return {
-        authenticated: true,
-        details,
-    };
+    return { authenticated: true, details };
 }
 
 // Per-sender inbound rate limit (F2): max 5 emails/hour processed.

@@ -1,6 +1,7 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 // Deep Research v2 — Search engines (Google, Brave, DDG, Bing, SearXNG, Mojeek, Semantic Scholar, arXiv)
 
+import { decodeBingUrl } from "../tools/web-search.js";
 import type { SearchResult } from "./types.js";
 import { randomUA, sleep, ENGINE_COOLDOWN_MS, ENGINE_MAX_CONSECUTIVE_FAILURES, SEARCH_BROWSER_IDLE_MS } from "./profiles.js";
 import { getSessionToken } from "../session.js";
@@ -43,16 +44,17 @@ async function getSearchBrowser(): Promise<{ context: any; newPage: () => Promis
     return { context: _searchContext, newPage: () => _searchContext.newPage() };
 }
 
-const _cleanupSearchBrowser = async () => {
+/** Closes the research search browser; called from the bot's shutdown (index.ts). */
+export const closeSearchBrowser = async () => {
     if (_searchBrowserIdleTimer) clearTimeout(_searchBrowserIdleTimer);
     try { if (_searchContext) await _searchContext.close().catch(() => {}); } catch {}
     try { if (_searchBrowser) await _searchBrowser.close().catch(() => {}); } catch {}
     _searchBrowser = null;
     _searchContext = null;
 };
-process.on("beforeExit", _cleanupSearchBrowser);
-process.on("SIGTERM", () => { _cleanupSearchBrowser().then(() => process.exit(0)); });
-process.on("SIGINT", () => { _cleanupSearchBrowser().then(() => process.exit(0)); });
+// No SIGTERM/SIGINT handlers here: exiting from an import-time handler cut off
+// the bot's own graceful shutdown (MCP, WhatsApp, session) on every quit.
+process.on("beforeExit", closeSearchBrowser);
 
 // ── Engine Health Tracking ──────────────────
 
@@ -124,45 +126,68 @@ async function searchGoogle(query: string): Promise<SearchResult[]> {
         page = await newPage();
 
         // Anti-detection stealth
-        await page.evaluate(() => {
-            Object.defineProperty(navigator, "webdriver", { get: () => false });
-        });
+        await page.evaluate(
+            /* javascript-obfuscator:disable */ () => {
+                Object.defineProperty(navigator, "webdriver", { get: () => false });
+            },
+            /* javascript-obfuscator:enable */ undefined,
+        );
 
         const url = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=15&hl=en`;
         await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 });
 
         // Wait for results to load
-        await page.waitForFunction(() => document.querySelectorAll("h3").length > 0, { timeout: 10000 }).catch(() => {});
+        await page
+            .waitForFunction(
+                /* javascript-obfuscator:disable */ () => document.querySelectorAll("h3").length > 0,
+                /* javascript-obfuscator:enable */ { timeout: 10000 },
+            )
+            .catch(() => {});
         await sleep(800);
 
-        const results: SearchResult[] = await page.evaluate(() => {
-            const items: Array<{ url: string; title: string; snippet: string }> = [];
-            const seen = new Set<string>();
+        const results: SearchResult[] = await page.evaluate(
+            /* javascript-obfuscator:disable */ () => {
+                const items: Array<{ url: string; title: string; snippet: string }> = [];
+                const seen = new Set<string>();
 
-            // Primary: structured result blocks
-            document.querySelectorAll("div.g, div[data-hveid]").forEach((block: Element) => {
-                const linkEl = block.querySelector("a[href^='http']") as HTMLAnchorElement | null;
-                const h3El = block.querySelector("h3");
-                const snippetEl = block.querySelector("div[data-sncf], div.VwiC3b, span.aCOpRe, div[style*='line-clamp']");
-                if (linkEl && h3El && linkEl.href && !linkEl.href.includes("google.com")) {
-                    if (seen.has(linkEl.href)) return;
-                    seen.add(linkEl.href);
-                    items.push({ url: linkEl.href, title: h3El.textContent?.trim() || "", snippet: snippetEl?.textContent?.trim() || "" });
-                }
-            });
-
-            // Fallback: any a > h3
-            if (items.length === 0) {
-                document.querySelectorAll("a").forEach((a: HTMLAnchorElement) => {
-                    const h3 = a.querySelector("h3");
-                    if (h3 && a.href && a.href.startsWith("http") && !a.href.includes("google.com") && !seen.has(a.href)) {
-                        seen.add(a.href);
-                        items.push({ url: a.href, title: h3.textContent?.trim() || "", snippet: "" });
+                // Primary: structured result blocks
+                document.querySelectorAll("div.g, div[data-hveid]").forEach((block: Element) => {
+                    const linkEl = block.querySelector("a[href^='http']") as HTMLAnchorElement | null;
+                    const h3El = block.querySelector("h3");
+                    const snippetEl = block.querySelector(
+                        "div[data-sncf], div.VwiC3b, span.aCOpRe, div[style*='line-clamp']",
+                    );
+                    if (linkEl && h3El && linkEl.href && !linkEl.href.includes("google.com")) {
+                        if (seen.has(linkEl.href)) return;
+                        seen.add(linkEl.href);
+                        items.push({
+                            url: linkEl.href,
+                            title: h3El.textContent?.trim() || "",
+                            snippet: snippetEl?.textContent?.trim() || "",
+                        });
                     }
                 });
-            }
-            return items.slice(0, 15);
-        });
+
+                // Fallback: any a > h3
+                if (items.length === 0) {
+                    document.querySelectorAll("a").forEach((a: HTMLAnchorElement) => {
+                        const h3 = a.querySelector("h3");
+                        if (
+                            h3 &&
+                            a.href &&
+                            a.href.startsWith("http") &&
+                            !a.href.includes("google.com") &&
+                            !seen.has(a.href)
+                        ) {
+                            seen.add(a.href);
+                            items.push({ url: a.href, title: h3.textContent?.trim() || "", snippet: "" });
+                        }
+                    });
+                }
+                return items.slice(0, 15);
+            },
+            /* javascript-obfuscator:enable */ undefined,
+        );
 
         // Fallback: parse raw HTML if evaluate found nothing (e.g. Google changed DOM)
         if (results.length === 0) {
@@ -385,22 +410,9 @@ async function searchBing(query: string): Promise<SearchResult[]> {
             const title = h2LinkM[2].replace(/<[^>]+>/g, "").trim();
             if (title.length < 3) continue;
 
-            // Get actual URL: prefer <cite> tag (has real URL), fall back to href
-            let url = h2LinkM[1];
-            const citeM = block.match(/<cite[^>]*>([\s\S]*?)<\/cite>/i);
-            if (citeM) {
-                let citeUrl = citeM[1].replace(/<[^>]+>/g, "").trim();
-                if (!citeUrl.startsWith("http")) citeUrl = "https://" + citeUrl;
-                // Clean up: remove trailing "› ..." path segments Bing adds
-                citeUrl = citeUrl.split(" ")[0].replace(/›/g, "/").replace(/\/+/g, "/").replace(/:\//g, "://");
-                if (citeUrl.startsWith("http")) url = citeUrl;
-            }
-
-            // If still a bing redirect, try to decode
-            if (url.includes("bing.com/ck/a")) {
-                const pMatch = url.match(/[?&]u=a1(https?%3[Aa][^&]+)/);
-                if (pMatch) { try { url = decodeURIComponent(pMatch[1]); } catch {} }
-            }
+            // The h2 link is a bing.com/ck/a redirect; the real URL is its base64
+            // `u` param. (<cite> is display text, often just the domain.)
+            const url = decodeBingUrl(h2LinkM[1].replace(/&amp;/g, "&"));
 
             // Skip bing/microsoft internal pages
             if (url.includes("bing.com") || url.includes("microsoft.com/bing")) continue;

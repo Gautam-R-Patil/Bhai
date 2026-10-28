@@ -156,3 +156,43 @@ describe("Observer.tuneSourceWeights", () => {
         obs.stop();
     });
 });
+
+describe("resolveChannel", () => {
+    it("routes to a channel that can deliver: preference, then Primary channel, then overlay", async () => {
+        const { resolveChannel } = await import("./observer.js");
+        const { registerChannelSender } = await import("../tools/channel-send.js");
+        expect(resolveChannel("any")).toBe("telegram"); // nothing registered: unchanged
+        registerChannelSender("overlay", async () => true as never);
+        expect(resolveChannel("telegram")).toBe("overlay"); // desktop-only user
+        registerChannelSender("whatsapp", async () => true as never);
+        process.env.PRIMARY_CHANNEL = "whatsapp";
+        expect(resolveChannel("any")).toBe("whatsapp");
+        expect(resolveChannel("overlay")).toBe("overlay"); // a deliverable preference wins
+        delete process.env.PRIMARY_CHANNEL;
+    });
+});
+
+describe("quiet hours", () => {
+    it("inWindow handles windows that cross midnight", async () => {
+        const { inWindow } = await import("./config.js");
+        const night = { start: "22:30", end: "07:00" };
+        const at = (h: number, m = 0) => new Date(2026, 9, 28, h, m);
+        expect(inWindow(night, at(23))).toBe(true);
+        expect(inWindow(night, at(3))).toBe(true);
+        expect(inWindow(night, at(7))).toBe(false);
+        expect(inWindow(night, at(22, 29))).toBe(false);
+        expect(inWindow({ start: "05:00", end: "12:00" }, at(9))).toBe(true);
+    });
+
+    it("morning sources don't run at 3 AM", async () => {
+        const { SourceRegistry } = await import("./sources/registry.js");
+        const reg = new SourceRegistry();
+        let ran = 0;
+        reg.register({ name: "news_morning", collectIntents: async () => (ran++, []) } as never);
+        await reg.collectAll({ now: new Date(2026, 9, 28, 3).getTime() } as never);
+        expect(ran).toBe(0);
+        await reg.collectAll({ now: new Date(2026, 9, 28, 8).getTime() } as never);
+        expect(ran).toBe(1);
+    });
+});
+

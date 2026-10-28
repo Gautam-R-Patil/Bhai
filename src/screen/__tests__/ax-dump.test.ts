@@ -174,3 +174,52 @@ describe("findElementByLabel", () => {
         expect(el?.label).toMatch(/Save/i);
     });
 });
+
+describe("findElementByLabel — Calculator-style instructions", () => {
+    const keys = ["7", "8", "9", "Multiply", "4", "5", "6", "Subtract", "1", "2", "3", "Add", "0", "Equals"];
+    const calc = flattenInteractive(
+        dump(
+            node("AXWindow", "Calculator", 0, 0, 300, 400, [
+                node("AXStaticText", "Display", 10, 10, 280, 60, [], "128 × 46"),
+                ...keys.map((k, i) => node("AXButton", k, 10 + (i % 4) * 70, 100 + Math.floor(i / 4) * 70, 60, 60)),
+            ]),
+        ),
+    );
+
+    it("finds a quoted key despite app and container words", () => {
+        expect(findElementByLabel(calc, 'the "1" button on the Calculator keypad', 0.95, "Calculator")?.label).toBe(
+            "1",
+        );
+    });
+
+    it("finds an unquoted key once app/container words are ignored", () => {
+        expect(findElementByLabel(calc, "the 1 key on the Calculator keypad", 0.8, "Calculator")?.label).toBe("1");
+    });
+
+    it("maps symbols to Calculator's names", () => {
+        expect(findElementByLabel(calc, "×", 0.8)?.label).toBe("Multiply");
+        expect(findElementByLabel(calc, '"="', 0.8)?.label).toBe("Equals");
+        expect(findElementByLabel(calc, "the + button", 0.8)?.label).toBe("Add");
+    });
+
+    it("never clicks the display because its value contains the symbol", () => {
+        expect(findElementByLabel(calc, "×", 0.5)?.label).not.toBe("Display");
+    });
+});
+
+describe("findElementByLabel — app-name stripping can't pick the wrong element", () => {
+    const els = (labels: Array<[string, string?]>) =>
+        flattenInteractive(dump(node("AXWindow", "w", 0, 0, 800, 600, labels.map(([l, v], i) => node("AXButton", l, 10, 10 + i * 40, 100, 30, [], v)))));
+
+    it("'All Mail' in Mail is All Mail, not Install", () => {
+        expect(findElementByLabel(els([["Install"], ["All Mail"]]), "All Mail", 0.8, "Mail")?.label).toBe("All Mail");
+    });
+
+    it("an instruction left with only stopwords still matches on its full words", () => {
+        expect(findElementByLabel(els([["General"], ["Settings"]]), "Settings button", 0.8, "System Settings")?.label).toBe("Settings");
+    });
+
+    it("label-less static text (macOS puts it in the value) still matches a description", () => {
+        expect(findElementByLabel(els([["", "Downloads"], ["", "Documents"]]), "Downloads folder in the sidebar", 0.8)?.value).toBe("Downloads");
+    });
+});

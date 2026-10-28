@@ -36,13 +36,35 @@ export function wrapUntrustedToolResult(toolName: string, body: string): string 
     return `${UNTRUSTED_NOTE}\n${UNTRUSTED_RESULT_OPEN} tool="${toolName}"\n${deSpoofed}\n${UNTRUSTED_RESULT_CLOSE}`;
 }
 
-// True for tools whose output is attacker-influenceable and should be fenced.
-const UNTRUSTED_EXACT = new Set(["web_search", "web_fetch", "web_extract", "deep_research", "gitmcp_docs"]);
-const UNTRUSTED_PREFIXES = ["browser_", "mcp_", "research_"];
+// Fence by default: any tool output may carry text someone else wrote (a web
+// page, an email, a file in a cloned repo, curl output, a deep-research report,
+// a chat message, OCR of a page on screen). Only results Bhai generates itself
+// — confirmations, the clock, its own memory, system state — go unfenced, so a
+// new tool is fenced unless someone decides otherwise.
+const TRUSTED_EXACT = new Set([
+    "get_current_time",
+    "write",
+    "edit",
+    "append_file",
+    "remember",
+    "send_message",
+    "request_tools",
+    "cron",
+    "set_volume",
+    "set_brightness",
+    "dark_mode",
+    "lock_screen",
+    "sleep_display",
+    "set_do_not_disturb",
+    "approve_design_docs",
+    "approve_dynamic_tool",
+    "revoke_dynamic_tool",
+]);
+const TRUSTED_PREFIXES = ["memory_", "core_memory_", "trait_", "identity_", "self_improvement_"];
 
 export function isUntrustedToolResult(toolName: string): boolean {
-    if (UNTRUSTED_EXACT.has(toolName)) return true;
-    return UNTRUSTED_PREFIXES.some((p) => toolName.startsWith(p));
+    if (TRUSTED_EXACT.has(toolName)) return false;
+    return !TRUSTED_PREFIXES.some((p) => toolName.startsWith(p));
 }
 
 // ── Wrapping ───────────────────────────────────

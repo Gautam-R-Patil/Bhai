@@ -83,11 +83,12 @@ export async function getUserModel(): Promise<UserModel> {
 
     // ── Identity ──
     try {
-        const { getIdentityProfile } = await import("./identity.js");
+        const { getIdentityProfile, getFieldValue } = await import("./identity.js");
         const identity = getIdentityProfile();
         if (identity) {
-            model.name = (identity as any).name || "";
-            model.role = (identity as any).role || "";
+            // Fields may be { value, verified } (wizard, OS location), not plain strings.
+            model.name = getFieldValue((identity as any).name) || "";
+            model.role = getFieldValue((identity as any).role) || "";
             model.timezone = (identity as any).location?.timezone || getTimezone();
         }
     } catch { /* */ }

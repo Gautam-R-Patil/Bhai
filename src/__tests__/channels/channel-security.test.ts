@@ -30,10 +30,28 @@ describe("F1 email auth", () => {
         expect(result.details).toMatch(/No Authentication-Results/);
     });
 
-    it("accepts email with one explicit pass", () => {
-        const raw = emailWith("example.com; spf=pass");
-        const result = isEmailAuthenticated(raw);
-        expect(result.authenticated).toBe(true);
+    it("accepts a pass aligned with the From: domain (From is a@b.com)", () => {
+        expect(isEmailAuthenticated(emailWith("mx.google.com; spf=pass smtp.mailfrom=bounce@b.com")).authenticated).toBe(true);
+        expect(isEmailAuthenticated(emailWith("mx.google.com; dkim=pass header.d=b.com; spf=neutral")).authenticated).toBe(true);
+        expect(isEmailAuthenticated(emailWith("mx.google.com; dmarc=pass header.from=b.com")).authenticated).toBe(true);
+    });
+
+    it("rejects a display-name spoof: alignment uses the address in <…>", () => {
+        const raw = 'From: "x@attacker.example" <owner@victim.example>\r\nAuthentication-Results: mx; dkim=pass header.d=attacker.example; dmarc=none\r\n\r\nhi';
+        expect(isEmailAuthenticated(raw).authenticated).toBe(false);
+    });
+
+    it("rejects a spoof: a pass for the sender's own domain, From: the owner", () => {
+        const raw = emailWith("mx.google.com; spf=pass smtp.mailfrom=x@attacker.example; dkim=pass header.d=attacker.example");
+        expect(isEmailAuthenticated(raw).authenticated).toBe(false);
+        expect(isEmailAuthenticated(emailWith("example.com; spf=pass")).authenticated).toBe(false); // no domain = not aligned
+    });
+
+    it("ignores ARC-Authentication-Results and fake headers in the body", () => {
+        const arcOnly = "From: a@b.com\r\nARC-Authentication-Results: i=1; x; dkim=pass header.d=b.com\r\n\r\nhi";
+        expect(isEmailAuthenticated(arcOnly).authenticated).toBe(false);
+        const bodyHeader = "From: a@b.com\nSubject: t\n\nAuthentication-Results: x; dkim=pass header.d=b.com\n";
+        expect(isEmailAuthenticated(bodyHeader).authenticated).toBe(false);
     });
 
     it("rejects email with all checks absent", () => {

@@ -888,7 +888,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 setDeepResearchProgress(progressCallback);
                 setLongTaskProgress(progressCallback);
                 const senderIsOwner = !!ctx.from?.id && telegramOwners.has(ctx.from.id);
-                const response = await runAgent(llm, agentMessage, progressCallback, undefined, controller.signal, historyFork, modelHint, undefined, { channel: "telegram", userId: String(ctx.from?.id || ""), userName: ctx.from?.first_name, isOwner: senderIsOwner });
+                const response = await runAgent(llm, agentMessage, progressCallback, undefined, controller.signal, historyFork, modelHint, undefined, { channel: "telegram", userId: String(ctx.from?.id || ""), userName: ctx.from?.first_name, isOwner: senderIsOwner, isPrivate: ctx.chat?.type === "private" });
                 clearSwarmProgress();
                 clearDeepResearchProgress();
                 clearLongTaskProgress();
@@ -1369,7 +1369,7 @@ async function handleMediaMessage(
         };
 
         const senderIsOwner = !!ctx.from?.id && isPlatformOwner("telegram", ctx.from.id, config);
-        const result = await runAgent(llm, caption, progressCallback, media, undefined, undefined, undefined, undefined, { channel: "telegram", userId: String(ctx.chat.id), userName: ctx.from?.first_name, isOwner: senderIsOwner });
+        const result = await runAgent(llm, caption, progressCallback, media, undefined, undefined, undefined, undefined, { channel: "telegram", userId: String(ctx.chat.id), userName: ctx.from?.first_name, isOwner: senderIsOwner, isPrivate: (ctx.chat as { type?: string })?.type === "private" });
 
         console.log(`🤖 Bhai: ${result.text.substring(0, 200)}...`);
 
@@ -1517,7 +1517,7 @@ Respond naturally. If music was identified, tell them the song. NEVER mention Ge
         };
 
         const senderIsOwner = !!ctx.from?.id && isPlatformOwner("telegram", ctx.from.id as number, config);
-        const result = await runAgent(llm, enrichedPrompt, progressCallback, undefined, undefined, undefined, undefined, undefined, { channel: "telegram", userId: String(ctx.from?.id || ""), userName: ctx.from?.first_name, isOwner: senderIsOwner });
+        const result = await runAgent(llm, enrichedPrompt, progressCallback, undefined, undefined, undefined, undefined, undefined, { channel: "telegram", userId: String(ctx.from?.id || ""), userName: ctx.from?.first_name, isOwner: senderIsOwner, isPrivate: ctx.chat?.type === "private" });
 
         console.log(`🤖 Bhai: ${result.text.substring(0, 200)}...`);
 

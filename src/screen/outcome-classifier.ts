@@ -7,7 +7,7 @@
  *
  * After every click, classify the screen-state change into one of:
  *   - success       : visible state changed in the expected region (~target bbox)
- *   - no_op         : essentially no change (diff < 0.005)
+ *   - no_op         : essentially no change (diff < 0.0005)
  *   - modal_pop     : new modal/dialog appeared (large new region in foreground)
  *   - wrong_target  : changes happened but NOT near the target
  *
@@ -88,7 +88,10 @@ export function classifyOutcome(
         return { outcome: "success", diffPercent, nearTargetDiff, confidence: 0.8, reason: "change_near_target" };
     }
 
-    if (diffPercent < 0.005) {
+    // Only a static frame (a caret blink at most) is a no-op. A keypad press
+    // changes a few digits in the display, away from the key, and a false miss
+    // makes the caller click again — a second keypress.
+    if (diffPercent < 0.0005) {
         return { outcome: "no_op", diffPercent, nearTargetDiff, confidence: 0.9, reason: "no_visible_change" };
     }
 

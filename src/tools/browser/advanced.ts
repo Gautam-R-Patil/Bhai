@@ -217,7 +217,10 @@ export const browserParallelTabs: ToolDefinition = {
                         // Extract content
                         let extracted: string | undefined;
                         if (tabAction.extract_text) {
-                            extracted = await page.evaluate(() => document.body.innerText.substring(0, 5000));
+                            extracted = await page.evaluate(
+                                /* javascript-obfuscator:disable */ () => document.body.innerText.substring(0, 5000),
+                                /* javascript-obfuscator:enable */ undefined,
+                            );
                         } else if (tabAction.extract_selector) {
                             const _sel = (tabAction.extract_selector as string).replace(/`/g, "\\`");
                             const els = (await page
@@ -376,14 +379,14 @@ export const browserParallelActions: ToolDefinition = {
                             const sel = action.selector as string;
                             const elements = await page
                                 .evaluate(
-                                    ({ s }: { s: string }) =>
+                                    /* javascript-obfuscator:disable */ ({ s }: { s: string }) =>
                                         Array.from(document.querySelectorAll(s))
                                             .slice(0, 30)
                                             .map((e) => ({
                                                 text: (e as HTMLElement).textContent?.trim().substring(0, 200),
                                                 href: e.getAttribute("href"),
                                             })),
-                                    { s: sel },
+                                    /* javascript-obfuscator:enable */ { s: sel },
                                 )
                                 .catch(() => []);
                             return { id, success: true, data: elements };
@@ -759,7 +762,7 @@ export const browserMultiAction: ToolDefinition = {
                         if (hrWaitFor) {
                             await page
                                 .waitForFunction(
-                                    (sel: string) => {
+                                    /* javascript-obfuscator:disable */ (sel: string) => {
                                         const el = document.querySelector(sel);
                                         if (!el) return false;
                                         const s = window.getComputedStyle(el);
@@ -769,7 +772,7 @@ export const browserMultiAction: ToolDefinition = {
                                             parseFloat(s.opacity) > 0.1
                                         );
                                     },
-                                    hrWaitFor,
+                                    /* javascript-obfuscator:enable */ hrWaitFor,
                                     { timeout: 3000, polling: 100 },
                                 )
                                 .catch(() => {});
@@ -809,12 +812,12 @@ export const browserMultiAction: ToolDefinition = {
                         const threshold = (act.opacity_threshold as number) ?? 0.5;
                         const timeout = (act.timeout_ms as number) || 5000;
                         await page.waitForFunction(
-                            ({ sel, thresh }: { sel: string; thresh: number }) => {
+                            /* javascript-obfuscator:disable */ ({ sel, thresh }: { sel: string; thresh: number }) => {
                                 const el = document.querySelector(sel);
                                 if (!el) return false;
                                 return parseFloat(window.getComputedStyle(el).opacity) >= thresh;
                             },
-                            { sel: act.selector as string, thresh: threshold },
+                            /* javascript-obfuscator:enable */ { sel: act.selector as string, thresh: threshold },
                             { timeout, polling: 100 },
                         );
                         return { success: true, result: { selector: act.selector, opacity_reached: threshold } };

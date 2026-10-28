@@ -221,11 +221,14 @@ export function startHeartbeat(llm: LLMClient, cfg: HeartbeatConfig): void {
                             userIdleMinutes: presence.idleMinutes,
                             hourOfDay: hourNow,
                         });
+                        // Set before logging: the log line used to throw first, so a
+                        // suppressed thought went out anyway. ("queue" still surfaces —
+                        // the heuristic fallback never says "surface" and there is no queue.)
+                        shouldSurface = rewardScore.recommendation !== "suppress";
                         if (rewardScore.recommendation === "suppress") {
                             console.log(
                                 `💓 Inner thought suppressed by reward model (acceptance: ${rewardScore.acceptanceProbability.toFixed(2)})`,
                             );
-                            shouldSurface = false;
                         } else {
                             console.log(
                                 `💓 Inner thought scored (acceptance: ${rewardScore.acceptanceProbability.toFixed(2)}, rec: ${rewardScore.recommendation})`,

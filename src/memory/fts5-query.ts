@@ -56,7 +56,7 @@ function restorePhrases(text: string, phrases: string[]): string {
 const FTS5_OPERATOR_CHARS = /[*^~+(){}\[\]:]/g;
 
 /** Tokens that look like `foo-bar`, `foo.bar.baz`, `src/foo.ts` — quote them. */
-const HYPHENDOT_TOKEN_RE = /(^|\s)([^\s"]*[-.][^\s"]*)/g;
+const HYPHENDOT_TOKEN_RE = /(^|\s)([^\s"\x00]*[-./][^\s"\x00]*)/g; // \x00 = quoted-phrase placeholder
 
 /**
  * Sanitize a user-supplied query for safe use against SQLite FTS5.
@@ -70,17 +70,25 @@ export function sanitizeFts5Query(input: string): string {
     // 1. Protect balanced quoted phrases first — these pass through untouched.
     const { masked, phrases } = protectQuotedPhrases(input);
 
-    // 2. Strip operator characters from the unmasked body.
-    let body = masked.replace(FTS5_OPERATOR_CHARS, " ");
+    // 2. Strip operator characters — and any other punctuation: a bare FTS5
+    //    term may only hold letters and digits, so "what's" or "word?" was a
+    //    syntax error and the memory search silently found nothing. A user's
+    //    "NOT"/"AND" is a word, not an operator.
+    let body = masked
+        .replace(FTS5_OPERATOR_CHARS, " ")
+        .replace(/[^\p{L}\p{M}\p{N}\s"._\-/\x00]/gu, " ") // \p{M}: matras, virama, harakat are part of words
+        .replace(/\b(AND|OR|NOT|NEAR)\b/g, (w) => w.toLowerCase());
 
-    // 3. Collapse runs of whitespace.
-    body = body.replace(/\s+/g, " ").trim();
+    // 3. A quoted phrase glued to a word ("config"/settings) is two terms:
+    //    split them, or the leftover "/settings" is an FTS5 syntax error.
+    //    Then collapse runs of whitespace.
+    body = body.replace(/\x00[^\x00]*\x00/g, " $& ").replace(/\s+/g, " ").trim();
 
     // 4. Auto-quote hyphenated / dotted tokens so the FTS5 tokenizer doesn't
     //    split them. Skip tokens that are purely separator noise (`.`/`-`).
     body = body.replace(HYPHENDOT_TOKEN_RE, (_m, lead: string, token: string) => {
         // If the token is entirely made of separators, drop it.
-        if (!/[^\-.]/.test(token)) return lead;
+        if (!/[^\-./]/.test(token)) return lead;
         // Already-protected placeholders won't match this regex (they contain
         // \x00), so this only fires on real tokens.
         return `${lead}"${token}"`;

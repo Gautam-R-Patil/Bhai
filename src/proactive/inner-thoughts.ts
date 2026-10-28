@@ -25,7 +25,7 @@ import type { Database } from "../memory/sqlite.js";
 import { collectSignals, shouldActivate, type TriggerSignal } from "./trigger-detector.js";
 import {
     initThoughtJournal, recordThought, getRecentThoughts,
-    getJournalEntriesForStats, getQueuedThoughts, markQueuedAsSurfaced,
+    getJournalEntriesForStats, getQueuedThoughts, markQueuedAsSurfaced, updateThoughtResponse,
     type ThoughtRecord,
 } from "./thought-journal.js";
 import { getIdentityPromptSnippet } from "../memory/identity.js";
@@ -35,6 +35,7 @@ import { describePresence } from "./activity.js";
 import { shouldSuppressMessage } from "./dnd.js";
 import { embedText, cosineSimilarity, isReady as isEmbeddingReady } from "../memory/embeddings.js";
 import { getTimeContext } from "../alive-ux.js";
+import * as nativeModule from "../../native/index.js";
 
 // ── Types ─────────────────────────────────────
 
@@ -383,7 +384,9 @@ function updateAdaptiveThresholds(): void {
         if (native) {
             const entries = getJournalEntriesForStats(168); // Last 7 days
             if (entries.length > 10) {
-                const thresholds = native.computeAdaptiveThresholds(entries);
+                const thresholds = native.computeAdaptiveThresholds(
+                    entries.map((e) => ({ compositeScore: e.composite_score, decision: e.decision, userResponse: e.user_response, createdAtMs: e.created_at_ms })),
+                );
                 if (thresholds.length >= 2) {
                     surfaceThreshold = thresholds[0];
                     queueThreshold = thresholds[1];
@@ -398,23 +401,12 @@ function updateAdaptiveThresholds(): void {
 
 // ── Native Module ─────────────────────────────
 
-let _native: any = null;
-let _nativeLoaded = false;
 
 function loadNative(): any {
-    if (_nativeLoaded) return _native;
-    _nativeLoaded = true;
-
-    try {
-        const { createRequire } = require("node:module");
-        const nativeRequire = createRequire(import.meta.url);
-        const path = require("node:path");
-        const modulePath = path.join(process.cwd(), "native", "index.js");
-        _native = nativeRequire(modulePath);
-        return _native;
-    } catch {
-        return null;
-    }
+    // A static import: `require` doesn't exist in ESM (nor in the esbuild bundle),
+    // so the old createRequire path always returned null and the native scorers
+    // never ran.
+    return nativeModule;
 }
 
 // ── Export for Heartbeat Integration ──────────
@@ -427,7 +419,6 @@ export function recordUserEngagement(engaged: boolean): void {
     try {
         const recent = getRecentThoughts(1, 1).filter(t => t.decision === "surfaced" && !t.user_response);
         if (recent.length > 0) {
-            const { updateThoughtResponse } = require("./thought-journal.js");
             updateThoughtResponse(recent[0].id, engaged ? "engaged" : "ignored");
         }
     } catch { /* */ }

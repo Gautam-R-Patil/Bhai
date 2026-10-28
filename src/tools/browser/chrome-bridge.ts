@@ -15,6 +15,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { type WebSocket, WebSocketServer } from "ws";
 import { getOverlayLocalToken } from "../../overlay/overlay-chat.js";
+import { isLoopbackHost, isWebOrigin } from "../../security/loopback.js";
 import { resetBackend } from "./browser-backend.js";
 import type { ChromeBridgeCommand, ChromeBridgeEvent, ChromeBridgeResponse, ChromeTabInfo } from "./types.js";
 
@@ -375,6 +376,12 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
     // This allows the extension to auto-discover the token via HTTP GET /discover
     // and then upgrade to WebSocket for ongoing communication.
     httpServer = http.createServer((req, res) => {
+        // DNS-rebinding guard: /discover hands out the bridge AND overlay tokens.
+        if (!isLoopbackHost(req.headers.host, port)) {
+            res.writeHead(421, { "Content-Type": "text/plain" });
+            res.end("Misdirected request");
+            return;
+        }
         // ── Discovery Endpoint ──
         // The extension fetches this on boot to get the token automatically.
         // CORS is intentionally NOT wildcarded — "localhost is safe" was wrong:
@@ -499,6 +506,12 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
     wss = new WebSocketServer({ noServer: true });
 
     httpServer.on("upgrade", (req, socket, head) => {
+        // Only the extension (chrome-extension:// origin) or a local CLI (no
+        // Origin) may connect — never a web page, rebound hostname or not.
+        if (!isLoopbackHost(req.headers.host, port) || isWebOrigin(req.headers.origin)) {
+            socket.destroy();
+            return;
+        }
         wss!.handleUpgrade(req, socket, head, (ws) => {
             wss!.emit("connection", ws, req);
         });

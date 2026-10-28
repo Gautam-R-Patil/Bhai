@@ -21,9 +21,22 @@ describe("isUntrustedToolResult", () => {
         expect(isUntrustedToolResult("mcp_github__list")).toBe(true);
         expect(isUntrustedToolResult("research_status")).toBe(true);
     });
-    it("does NOT flag trusted local tools", () => {
-        for (const t of ["read", "write", "edit", "shell_exec", "remember", "send_message"]) {
+    it("does NOT flag results Bhai generates itself", () => {
+        for (const t of ["get_current_time", "write", "edit", "remember", "send_message", "memory_search"]) {
             expect(isUntrustedToolResult(t)).toBe(false);
+        }
+    });
+    it("fences by default: files, shell, mail, chat and reports can carry someone else's text", () => {
+        for (const t of [
+            "read",
+            "shell_exec",
+            "check_deep_research",
+            "email_read",
+            "whatsapp_read",
+            "os_inspect",
+            "some_new_tool",
+        ]) {
+            expect(isUntrustedToolResult(t)).toBe(true);
         }
     });
 });

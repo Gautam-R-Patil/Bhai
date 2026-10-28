@@ -77,7 +77,8 @@ static INTERACTIVE_ROLES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     [
         // macOS AX
         "AXButton", "AXLink", "AXTextField", "AXTextArea", "AXCheckBox", "AXRadioButton",
-        "AXPopUpButton", "AXMenuButton", "AXMenuItem", "AXSlider", "AXIncrementor",
+        "AXPopUpButton", "AXMenuButton", "AXMenuItem", "AXMenuBarItem", "AXDisclosureTriangle",
+        "AXSlider", "AXIncrementor",
         "AXComboBox", "AXTabGroup", "AXTab", "AXRow", "AXCell", "AXImage", "AXStaticText",
         // Windows UIA
         "Button", "Hyperlink", "Edit", "Document", "CheckBox", "RadioButton",

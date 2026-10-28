@@ -1353,18 +1353,18 @@ http.route({
       );
     }
 
-    // ⚠ Session-token route MUST use the USER allowlist, NOT the admin one.
-    // The admin allowlist contains privilege-escalating mutations (create
-    // admin, approve/ban developers, moderate submissions). Merging the two
-    // lets any signed-in Bhai user call those mutations through their
-    // normal session.
-    const mutationRef = USER_STORE_MUTATION_ALLOWLIST[functionPath];
-    if (!mutationRef) {
-      return new Response(
-        JSON.stringify({ error: "Forbidden: function path not in allowlist" }),
-        { status: 403, headers: { "Content-Type": "application/json" } }
-      );
-    }
+        // ⚠ Session-token route MUST use the USER allowlist, NOT the admin one.
+        // The admin allowlist contains privilege-escalating mutations (create
+        // admin, approve/ban developers, moderate submissions). Merging the two
+        // lets any signed-in Bhai user call those mutations through their
+        // normal session.
+        const mutationRef = USER_STORE_MUTATION_ALLOWLIST[functionPath];
+        if (!mutationRef) {
+            return new Response(JSON.stringify({ error: "Forbidden: function path not in allowlist" }), {
+                status: 403,
+                headers: { "Content-Type": "application/json" },
+            });
+        }
 
     // F1: rewrite userId to authenticated identity so a session holder cannot
     // mutate another user's installs/reviews by spoofing args.userId.
@@ -1896,6 +1896,106 @@ http.route({
       return await buildResponse({ error: err.message }, 500, encrypted, account.sharedKey, request);
     }
   }),
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// POST /api/search/claude — web search through Claude's server-side search tool
+// Uses the Anthropic key the proxy already has (no Tavily/Exa account needed).
+// Billed like one Haiku call, refunded if the search fails.
+// ══════════════════════════════════════════════════════════════════════════
+
+http.route({
+    path: "/api/search/claude",
+    method: "POST",
+    handler: httpAction(async (ctx, request) => {
+        const validation = await validateRequest(ctx, request);
+        if (validation instanceof Response) return validation;
+        const { account } = validation;
+        const { body, encrypted } = await parseRequestBody(request, account.sharedKey);
+        const query = typeof body.query === "string" ? body.query.trim().slice(0, 400) : "";
+        if (!query)
+            return await buildResponse({ error: "query is required" }, 400, encrypted, account.sharedKey, request);
+
+        const anthropicKey = process.env.ANTHROPIC_API_KEY;
+        if (!anthropicKey)
+            return await buildResponse({ error: "search not configured" }, 500, encrypted, account.sharedKey, request);
+
+        const cost = getCreditCost("claude-haiku-5-5");
+        const deducted = await ctx.runMutation(internal.accounts.deductCreditsInternal, {
+            otplessUserId: account.otplessUserId,
+            amount: cost,
+        });
+        if (!deducted || !deducted.success) {
+            return await buildResponse({ error: "Insufficient credits" }, 402, encrypted, account.sharedKey, request);
+        }
+
+        // Approximate location makes results local ("under 5k" means rupees in India).
+        const country = typeof body.country === "string" && /^[A-Z]{2}$/.test(body.country) ? body.country : undefined;
+        const city = typeof body.city === "string" ? body.city.slice(0, 80) : undefined;
+        const timezone = typeof body.timezone === "string" ? body.timezone.slice(0, 64) : undefined;
+        const user_location =
+            country || city || timezone ? { type: "approximate" as const, country, city, timezone } : undefined;
+
+        try {
+            const anthropic = new Anthropic({ apiKey: anthropicKey });
+            const msg = await anthropic.messages.create({
+                model: "claude-haiku-5-5",
+                max_tokens: 1500,
+                tools: [
+                    {
+                        type: "web_search_20250305",
+                        name: "web_search",
+                        max_uses: 1,
+                        ...(user_location ? { user_location } : {}),
+                    },
+                ],
+                messages: [
+                    {
+                        role: "user",
+                        content: `Search the web for: ${query}\n\nThen, for each useful result, say in one line what that page says that answers the search, citing it.`,
+                    },
+                ],
+            });
+            const results: Array<{ url: string; title: string; snippet: string; page_age: string | null }> = [];
+            const snippets = new Map<string, string>();
+            for (const block of msg.content) {
+                if (block.type === "text") {
+                    for (const c of block.citations ?? []) {
+                        if (c.type === "web_search_result_location" && !snippets.has(c.url))
+                            snippets.set(c.url, c.cited_text);
+                    }
+                }
+            }
+            for (const block of msg.content) {
+                if (block.type === "web_search_tool_result" && Array.isArray(block.content)) {
+                    for (const r of block.content) {
+                        if (r.type === "web_search_result") {
+                            results.push({
+                                url: r.url,
+                                title: r.title,
+                                snippet: (snippets.get(r.url) ?? "").slice(0, 300),
+                                page_age: r.page_age ?? null,
+                            });
+                        }
+                    }
+                }
+            }
+            return await buildResponse({ query, results }, 200, encrypted, account.sharedKey, request);
+        } catch (err: any) {
+            try {
+                await ctx.runMutation(internal.accounts.addCreditsInternal, { id: account.accountId, amount: cost });
+            } catch {
+                /* refund best-effort */
+            }
+            return await buildResponse(
+                { error: String(err?.message ?? err).slice(0, 300) },
+                502,
+                encrypted,
+                account.sharedKey,
+                request,
+            );
+        }
+    }),
 });
 
 // ══════════════════════════════════════════════════════════════════════════

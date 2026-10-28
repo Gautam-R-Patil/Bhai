@@ -21,7 +21,8 @@
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { approveAndExit, enterAwaitingApproval, isAwaitingApproval } from "../../agents/plan-mode.js";
+import { approveAndExit, enterAwaitingApproval, getPlanModeState, isAwaitingApproval } from "../../agents/plan-mode.js";
+import { ownerSaid } from "../../security/consent.js";
 import { getConvexSiteUrl } from "../../config/keys.js";
 import { getWorkspaceSubdir } from "../../config/paths.js";
 import { encryptedFetch } from "../../crypto-transport.js";
@@ -267,6 +268,13 @@ export const approveDesignDocsTool: ToolDefinition = {
                 error: "Not in awaiting_approval mode — nothing to approve. Either design docs haven't been generated yet, or approval already landed.",
             });
         }
+        // Must be the owner's own words, sent after the docs were put up for approval.
+        if (!ownerSaid(quote, approvalRequestedAt())) {
+            return JSON.stringify({
+                success: false,
+                error: "user_quote must be the user's own words from a message sent after the design docs were shown. Ask them to approve first.",
+            });
+        }
         auditLog("approve_design_docs", { user_quote: quote.slice(0, 200) });
         logToolAction({ tool: "approve_design_docs", action: `approved via user message: ${quote.slice(0, 80)}` });
         approveAndExit();
@@ -277,3 +285,9 @@ export const approveDesignDocsTool: ToolDefinition = {
         });
     },
 };
+
+/** When the approval state began; "now" outside one (so no quote qualifies). */
+function approvalRequestedAt(): number {
+    const st = getPlanModeState();
+    return "enteredAt" in st ? st.enteredAt : Date.now();
+}

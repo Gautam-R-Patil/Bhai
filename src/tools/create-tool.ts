@@ -8,21 +8,16 @@
 // Handler code is executed inside a vm.createContext() sandbox to prevent
 // access to the global scope, prototype chain, and dangerous Node APIs.
 
-import { exec, execFile } from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import * as path from "node:path";
-import * as querystring from "node:querystring";
-import * as url from "node:url";
-import { promisify } from "node:util";
 import * as vm from "node:vm";
 import type { ChatCompletionTool } from "openai/resources/chat/completions.js";
-import { isShellBypass, isSystemDestructive, shellArgsTargetProtectedPath } from "../security/allowlist.js";
+import { isPathAllowed } from "../security/allowlist.js";
+import { isSensitivePath } from "../security/sensitive-paths.js";
 import type { ToolDefinition } from "./get-current-time.js";
 
-const execFileAsync = promisify(execFile);
-const execAsync = promisify(exec);
 const DYNAMIC_TOOLS_DIR = path.join(homedir(), ".atlas", "dynamic-tools");
 
 // ── Registry reference (set by index.ts at boot) ─────────
@@ -136,220 +131,140 @@ function quarantineCorruptTool(srcPath: string, reason: string): void {
     }
 }
 
-// ── Read-only fs subset ─────────────────────────────────
-// Dynamic tools may read files but not create, write, or delete them.
-// Write/delete operations must be done through proper tools or utils.exec().
-
-const readOnlyFs = Object.freeze({
-    readFile: fs.promises.readFile.bind(fs.promises),
-    readFileSync: fs.readFileSync.bind(fs),
-    readdir: fs.promises.readdir.bind(fs.promises),
-    readdirSync: fs.readdirSync.bind(fs),
-    stat: fs.promises.stat.bind(fs.promises),
-    statSync: fs.statSync.bind(fs),
-    existsSync: fs.existsSync.bind(fs),
-    access: fs.promises.access.bind(fs.promises),
-    lstat: fs.promises.lstat.bind(fs.promises),
-    lstatSync: fs.lstatSync.bind(fs),
-    realpath: fs.promises.realpath.bind(fs.promises),
-    realpathSync: fs.realpathSync.bind(fs),
-    createReadStream: fs.createReadStream.bind(fs),
-    // Expose constants for access() checks (e.g. fs.constants.R_OK)
-    constants: Object.freeze({ ...fs.constants }),
-});
-
-// ── Shell command validation ────────────────────────────
-// Wraps exec/execFile to run commands through the existing security
-// allowlist before execution, preventing system-destructive operations.
-
-function validateShellCommand(cmd: string, args?: string[]): void {
-    const fullCommand = args && args.length > 0 ? `${cmd} ${args.join(" ")}` : cmd;
-
-    if (isSystemDestructive(fullCommand)) {
-        throw new Error(
-            `Blocked: command "${cmd}" is system-destructive and not allowed. ` +
-                `Commands that wipe the system disk, destroy boot files, or format the main drive are blocked.`,
-        );
-    }
-
-    if (args && isShellBypass(cmd, args)) {
-        throw new Error(`Blocked: inline command contains a system-destructive operation.`);
-    }
-
-    // Codebase self-protection: block destructive shell commands targeting the atlas folder
-    const DESTRUCTIVE_CMDS = new Set(["rm", "mv", "cp", "rsync", "dd"]);
-    const baseCmd = cmd.split("/").at(-1)?.split(" ")[0] ?? cmd;
-    if (DESTRUCTIVE_CMDS.has(baseCmd)) {
-        const allTokens = args ? [cmd, ...args] : cmd.split(/\s+/);
-        const hit = shellArgsTargetProtectedPath(allTokens);
-        if (hit) {
-            throw new Error(
-                `Blocked: command "${cmd}" targets the bot's own codebase path "${hit}". ` +
-                    `Write/delete operations on the atlas codebase are not allowed.`,
-            );
-        }
-    }
-}
-
-// Note: host `fetch` is not exposed to the sandbox until Phase-4 kernel sandbox
-// ships capability enforcement. utils.fetch refuses outright.
-
-// ── Require shim for the sandbox ────────────────────────
-// Only a curated set of safe, side-effect-free modules are allowed.
-// Dangerous modules (child_process, fs full write access, net, etc.) are blocked.
-
-const SAFE_REQUIRE_MODULES: Record<string, unknown> = {
-    path,
-    "node:path": path,
-    url,
-    "node:url": url,
-    querystring,
-    "node:querystring": querystring,
-    crypto,
-    "node:crypto": crypto,
-    // Provide read-only fs via require('fs') too
-    fs: readOnlyFs,
-    "node:fs": readOnlyFs,
-    os: Object.freeze({ homedir, tmpdir, platform: process.platform }),
-    "node:os": Object.freeze({ homedir, tmpdir, platform: process.platform }),
-};
-
-function sandboxRequire(moduleName: string): unknown {
-    const mod = SAFE_REQUIRE_MODULES[moduleName];
-    if (!mod) {
-        throw new Error(
-            `require("${moduleName}") is not available in the sandbox. ` +
-                `Allowed modules: ${Object.keys(SAFE_REQUIRE_MODULES)
-                    .filter((k) => !k.startsWith("node:"))
-                    .join(", ")}. ` +
-                `Use utils.fs (read-only), utils.path, utils.exec instead.`,
-        );
-    }
-    return mod;
-}
-
 // ── Sandboxed handler builder ────────────────────────────
-// Handler code runs inside a vm.createContext() sandbox. The sandbox
-// has NO access to the host global scope (no process, no globalThis,
-// no prototype chain traversal back to the host).
+// Handler code runs in a vm context that holds NO host object at all. Any host
+// function or object inside the context (parseInt, the input object, a bound
+// fs function, a required module, a Timeout) leads back to the host Function
+// constructor — e.g. `utils.path.join.constructor("return process")()` — and
+// from there to child_process. So input crosses as a JSON string, and fs, path,
+// console and setTimeout are functions created INSIDE the sandbox that call one
+// host bridge with strings only. The bridge is captured in a closure and
+// removed from the sandbox's globals before handler code runs.
+
+const SANDBOX_FS = ["readFile", "readFileSync", "readdir", "readdirSync", "existsSync", "stat", "statSync"];
+const SANDBOX_PATH = ["join", "resolve", "basename", "dirname", "extname", "relative", "normalize", "isAbsolute"];
+
+/** The one host entry point: string in, string out. Reads are path-checked. */
+function sandboxBridge(op: string, argsJson: string): string {
+    try {
+        const { fn, args } = JSON.parse(argsJson) as { fn: string; args: unknown[] };
+        let value: unknown = null;
+        if (op === "fs" && SANDBOX_FS.includes(fn)) {
+            const target = path.resolve(String(args[0] ?? ""));
+            if (!isPathAllowed(target) || isSensitivePath(target).denied)
+                throw new Error(`Path not allowed: ${target}`);
+            const base = fn === "existsSync" ? fn : fn.replace(/Sync$/, "");
+            if (base === "readFile") value = fs.readFileSync(target, "utf8");
+            else if (base === "readdir") {
+                const withTypes = (args[1] as { withFileTypes?: boolean } | undefined)?.withFileTypes === true;
+                value = withTypes
+                    ? fs.readdirSync(target, { withFileTypes: true }).map((d) => ({ name: d.name, isFile: d.isFile(), isDirectory: d.isDirectory() }))
+                    : fs.readdirSync(target);
+            }
+            else if (base === "existsSync") value = fs.existsSync(target);
+            else {
+                const st = fs.statSync(target);
+                value = { size: st.size, isFile: st.isFile(), isDirectory: st.isDirectory(), mtimeMs: st.mtimeMs };
+            }
+        } else if (op === "path" && SANDBOX_PATH.includes(fn)) {
+            value = (path as unknown as Record<string, (...a: string[]) => unknown>)[fn](...args.map(String));
+        } else if (op === "log") {
+            console.log("  [dynamic-tool]", ...args.map(String));
+        } else {
+            throw new Error(`${op}.${fn} is not available`);
+        }
+        return JSON.stringify({ ok: true, value });
+    } catch (err) {
+        return JSON.stringify({ ok: false, error: String((err as Error)?.message ?? err) });
+    }
+}
+
+// Runs inside the sandbox first. Builds utils/console/setTimeout out of
+// sandbox-realm functions; only strings ever cross to the host.
+const SANDBOX_BOOTSTRAP = `
+(function () {
+    "use strict";
+    const bridge = globalThis.__bridge, timer = globalThis.__timer, cfg = JSON.parse(globalThis.__cfg);
+    delete globalThis.__bridge; delete globalThis.__timer; delete globalThis.__cfg;
+    const call = (op, fn, args) => {
+        const r = JSON.parse(bridge(op, JSON.stringify({ fn, args })));
+        if (!r.ok) throw new Error(r.error);
+        return r.value;
+    };
+    const fns = (op, names, isAsync, post = (n, v) => v) => Object.freeze(Object.fromEntries(names.map((n) => [n,
+        isAsync(n) ? (...a) => new Promise((ok, no) => { try { ok(post(n, call(op, n, a))); } catch (e) { no(e); } })
+                   : (...a) => post(n, call(op, n, a))])));
+    // Stats and Dirents as Node shapes: s.isFile() / d.isDirectory() are methods.
+    const nodeShape = (s) => Object.freeze({ ...s, isFile: () => s.isFile, isDirectory: () => s.isDirectory });
+    const fsPost = (n, v) => /^stat/.test(n) ? nodeShape(v)
+        : /^readdir/.test(n) && Array.isArray(v) && v.length && typeof v[0] === "object" ? v.map(nodeShape) : v;
+    const fsApi = fns("fs", cfg.fs, (n) => !/Sync$/.test(n) && n !== "existsSync", fsPost);
+    const pathApi = Object.freeze({ ...fns("path", cfg.path, () => false), sep: cfg.sep, delimiter: cfg.delimiter });
+    const log = (...a) => call("log", "log", a.map((x) => typeof x === "string" ? x : JSON.stringify(x)));
+    const consoleApi = Object.freeze({ log, info: log, warn: log, error: log });
+    const setTimeoutApi = (cb, ms) => { timer(Number(ms) || 0, () => { try { cb(); } catch (e) {} }); return 0; };
+    const deny = (what) => () => { throw new Error(what + " is denied here: shell and network need the Phase-4 kernel sandbox (declare the capability in the forge envelope)."); };
+    const osApi = Object.freeze({ homedir: () => cfg.home, tmpdir: () => cfg.tmp, platform: cfg.platform });
+    const modules = { path: pathApi, "node:path": pathApi, fs: fsApi, "node:fs": fsApi, os: osApi, "node:os": osApi };
+    const requireApi = (m) => {
+        if (Object.prototype.hasOwnProperty.call(modules, m)) return modules[m];
+        throw new Error('require("' + m + '") is not available in the sandbox. Allowed: path, fs (read-only), os.');
+    };
+    globalThis.console = consoleApi;
+    globalThis.setTimeout = setTimeoutApi;
+    globalThis.utils = Object.freeze({
+        fs: fsApi, path: pathApi, homedir: cfg.home, console: consoleApi, JSON, setTimeout: setTimeoutApi,
+        require: requireApi, exec: deny("utils.exec"), execFile: deny("utils.execFile"), fetch: deny("utils.fetch"),
+    });
+    globalThis.require = requireApi;
+})();
+`;
 
 function buildHandler(code: string): (input: Record<string, unknown>) => Promise<string> {
-    // Pre-compile the script outside the per-call path for efficiency.
-    // The script wraps user code in an async IIFE that receives input, utils, require.
     const wrappedSource = `
-        (async function __sandboxedHandler(__input, __utils, __require) {
-            // Alias for LLM-generated code that uses bare names
-            const input = __input;
-            const utils = __utils;
-            const require = __require;
+        (async function __sandboxedHandler(__inputJson) {
+            const input = JSON.parse(__inputJson);
+            const utils = globalThis.utils;
+            const require = globalThis.require;
             ${code}
         })
     `;
-
-    // Compile once — this will throw early if the code has syntax errors
-    const compiledScript = new vm.Script(wrappedSource, {
-        filename: "dynamic-tool-sandbox.vm",
-    });
-
-    // The utils object exposed inside the sandbox.
-    //
-    // Phase-4 plan: capabilities (fs/net/exec) enforced by an OS-level kernel
-    // sandbox (seccomp/sandbox-exec/AppContainer). Until then, the interim
-    // vm.createContext sandbox is NOT strong enough to safely expose
-    // exec/execFile/fetch/Buffer/URL — those let LLM-supplied code reach
-    // arbitrary host code via constructor chains or shell escape.
-    //
-    // Read-only fs stays (the allowlist gates protected paths) and is the
-    // single privileged capability available to legacy synthesized handlers.
-    const sandboxConsole = Object.freeze({
-        log: console.log.bind(console),
-        warn: console.warn.bind(console),
-        error: console.error.bind(console),
-        info: console.info.bind(console),
-    });
-    const denyExec = () => {
-        throw new Error(
-            "utils.exec/execFile denied — exec capability requires the Phase-4 kernel sandbox. " +
-                "Declare an `exec` capability in your forge envelope; the verifier will provision it.",
-        );
-    };
-    const denyFetch = () => {
-        throw new Error(
-            "utils.fetch denied — net capability requires the Phase-4 kernel sandbox. " +
-                "Declare a `net` capability in your forge envelope; the verifier will provision it.",
-        );
-    };
-    const utils = Object.freeze({
-        // Read-only filesystem access (path-gated by allowlist at write sites).
-        fs: readOnlyFs,
-        path,
-        homedir: homedir(),
-        exec: denyExec,
-        execFile: denyExec,
-        fetch: denyFetch,
-        JSON,
-        console: sandboxConsole,
-        setTimeout: globalThis.setTimeout,
-        require: sandboxRequire,
+    // Compile once — throws early on syntax errors.
+    const compiledScript = new vm.Script(wrappedSource, { filename: "dynamic-tool-sandbox.vm" });
+    const bootstrap = new vm.Script(SANDBOX_BOOTSTRAP, { filename: "dynamic-tool-bootstrap.vm" });
+    const cfg = JSON.stringify({
+        fs: SANDBOX_FS,
+        path: SANDBOX_PATH,
+        sep: path.sep,
+        delimiter: path.delimiter,
+        home: homedir(),
+        tmp: tmpdir(),
+        platform: process.platform,
     });
 
     return async (input: Record<string, unknown>): Promise<string> => {
         try {
-            // Bootstrap-only globals. Host-realm constructors (Buffer, URL, Promise,
-            // Error, Map, Set, WeakMap, RegExp, Array, Object) are NOT passed in:
-            // their .constructor chains all resolve back to the host Function
-            // constructor and enable `({}).constructor.constructor("...")()` style
-            // escapes. The new vm context's own realm provides realm-isolated
-            // copies of Array/Object/Date/Promise/Error/RegExp/Map/Set/etc
-            // — code inside the sandbox uses those, not these.
-            const sandbox: Record<string, unknown> = {
-                // Static value-only globals — no constructor exposed back to host.
-                JSON,
-                Math,
-                // Safe global functions (do not expose a useful .constructor surface).
-                parseInt,
-                parseFloat,
-                isNaN,
-                isFinite,
-                encodeURIComponent,
-                decodeURIComponent,
-                encodeURI,
-                decodeURI,
-                // Timers stay (handlers commonly await delays). These are host refs,
-                // but they don't expose a constructor-escape chain the way Buffer does.
-                setTimeout: globalThis.setTimeout,
-                clearTimeout: globalThis.clearTimeout,
-                setInterval: globalThis.setInterval,
-                clearInterval: globalThis.clearInterval,
-                // Console is a sanitized object literal (no host method backrefs).
-                console: utils.console,
-            };
-
-            const context = vm.createContext(sandbox, {
-                name: "dynamic-tool-sandbox",
-                codeGeneration: {
-                    strings: false, // Block eval() and new Function() inside the sandbox
-                    wasm: false, // Block WebAssembly compilation
+            // Only these three host values ever enter the context, and the
+            // bootstrap deletes them before any handler code runs.
+            const context = vm.createContext(
+                {
+                    __bridge: sandboxBridge,
+                    __timer: (ms: number, cb: () => void) => {
+                        globalThis.setTimeout(cb, Math.min(Math.max(ms, 0), 60_000));
+                    },
+                    __cfg: cfg,
                 },
-            });
-
-            // Run the compiled script in the sandbox to get the handler function
-            const handlerFn = compiledScript.runInContext(context, {
-                timeout: 60000,
-            }) as (
-                input: Record<string, unknown>,
-                utils: Record<string, unknown>,
-                require: (mod: string) => unknown,
+                { name: "dynamic-tool-sandbox", codeGeneration: { strings: false, wasm: false } },
+            );
+            bootstrap.runInContext(context);
+            const handlerFn = compiledScript.runInContext(context, { timeout: 60000 }) as (
+                inputJson: string,
             ) => Promise<unknown>;
-
-            // Execute the handler with the sandboxed utilities
-            const result = await handlerFn(input, utils, sandboxRequire);
-
-            // Ensure string return
+            const result = await handlerFn(JSON.stringify(input ?? {}));
             if (typeof result === "string") return result;
             return JSON.stringify(result);
         } catch (err) {
-            return JSON.stringify({ error: `Dynamic tool error: ${(err as Error).message}` });
+            return JSON.stringify({ error: `Dynamic tool error: ${(err as Error)?.message ?? String(err)}` });
         }
     };
 }
@@ -361,7 +276,7 @@ export const createTool: ToolDefinition = {
         type: "function",
         function: {
             name: "create_tool",
-            description: `Create a new tool at runtime. The handler runs in a sandboxed async context with two variables: 'input' (parameters) and 'utils' (fs [read-only: readFile/readdir/stat/existsSync], path, homedir, JSON, console.log, setTimeout, require [path/url/querystring/crypto/os only]). Built-in sandbox globals: Math, JSON, parseInt, parseFloat, isNaN, isFinite, encode/decodeURIComponent, plus the vm-realm's own Array/Object/Date/Promise/Error/RegExp/Map/Set (use these — host Buffer/URL/fetch are NOT exposed). Shell/network capabilities (utils.exec/execFile/fetch) are DENIED in this sandbox; they require the Phase-4 kernel-sandbox. Use the forge envelope (capabilities_declared) for those.`,
+            description: `Create a new tool at runtime. The handler runs in a sandboxed async context with two variables: 'input' (parameters) and 'utils' (fs [read-only: readFile/readdir/stat/existsSync], path, homedir, JSON, console.log, setTimeout, require [path, fs (read-only), os only]). Plus the sandbox's own JavaScript built-ins: Math, JSON, parseInt, Array, Object, Date, Promise, Map, Set, RegExp, Error (no Buffer, URL, crypto or fetch). Reads outside allowed paths and of sensitive files are refused. Shell/network capabilities (utils.exec/execFile/fetch) are DENIED in this sandbox; they require the Phase-4 kernel-sandbox. Use the forge envelope (capabilities_declared) for those.`,
             parameters: {
                 type: "object",
                 properties: {
@@ -709,3 +624,6 @@ export async function loadDynamicTools(): Promise<void> {
         console.warn(`⚠️ ${quarantined} persisted tool(s) quarantined due to integrity failure`);
     }
 }
+
+/** @internal — tests only. */
+export const _buildHandlerForTest = buildHandler;

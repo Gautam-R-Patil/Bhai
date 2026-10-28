@@ -83,6 +83,9 @@ export interface CascadeOptions {
      * null at the cloud tier and the caller falls back to the agentic VLM.
      */
     llm?: LLMClient;
+    /** cloud_grounding model (default Haiku) and how long it may take. */
+    groundingModel?: string;
+    groundingTimeoutMs?: number;
 }
 
 const DEFAULT_THRESHOLDS: Record<CascadeTier, number> = {
@@ -122,11 +125,11 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
     // Tier 2+3: AX exact then fuzzy. Runs the match against a flattened AX dump.
     // Returns a finalized ClickTarget on hit, else null. Pushes tier-tried +
     // elapsed as a side effect so telemetry reflects every attempt.
-    const matchAx = (els: AxFlatElement[]): ClickTarget | null => {
+    const matchAx = (els: AxFlatElement[], appName?: string): ClickTarget | null => {
         if (!skip.has("ax_exact")) {
             tried.push("ax_exact");
             const t = Date.now();
-            const exact = findElementByLabel(els, instruction, thresholds.ax_exact);
+            const exact = findElementByLabel(els, instruction, thresholds.ax_exact, appName);
             elapsed.ax_exact = Date.now() - t;
             if (exact) {
                 return finalize(
@@ -138,7 +141,7 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
         if (!skip.has("ax_fuzzy")) {
             tried.push("ax_fuzzy");
             const t = Date.now();
-            const fuzzy = findElementByLabel(els, instruction, thresholds.ax_fuzzy);
+            const fuzzy = findElementByLabel(els, instruction, thresholds.ax_fuzzy, appName);
             elapsed.ax_fuzzy = Date.now() - t;
             if (fuzzy) {
                 return finalize(
@@ -160,7 +163,7 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
             }
         }
         if (axDump && !axDump.error) {
-            const hit = matchAx(flattenInteractive(axDump));
+            const hit = matchAx(flattenInteractive(axDump), axDump.app);
             if (hit) return hit;
 
             // Cold-window retry: a freshly-activated window's AX tree is often
@@ -175,7 +178,7 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
                 try {
                     const redump = await dumpAccessibilityTree({ depth: 20 });
                     if (redump && !redump.error) {
-                        const retryHit = matchAx(flattenInteractive(redump));
+                        const retryHit = matchAx(flattenInteractive(redump), redump.app);
                         if (retryHit) return retryHit;
                     }
                 } catch {
@@ -239,7 +242,11 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
         tried.push("cloud_grounding");
         const cgStart = Date.now();
         try {
-            const grounded = await cloudGroundClick(opts.screenshotPath, instruction, { llm: opts.llm });
+            const grounded = await cloudGroundClick(opts.screenshotPath, instruction, {
+                llm: opts.llm,
+                model: opts.groundingModel,
+                timeoutMs: opts.groundingTimeoutMs,
+            });
             elapsed.cloud_grounding = Date.now() - cgStart;
             if (!grounded.error && grounded.confidence >= thresholds.cloud_grounding) {
                 const screen = toScreenCoords(grounded.x, grounded.y, grounded.imageWidth, opts.screenDims);

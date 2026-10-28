@@ -489,37 +489,86 @@ async function ensureYdotoold(): Promise<void> {
 // clipboard. We use real keystrokes for short ASCII text and fall back to the
 // (faster, unicode-safe) clipboard-paste only for long or non-ASCII strings.
 // ATLAS_TYPE_VIA_CLIPBOARD=true forces the old paste behavior everywhere.
-function shouldRealKeystroke(text: string): boolean {
+export function shouldRealKeystroke(text: string): boolean {
     if (process.env.ATLAS_TYPE_VIA_CLIPBOARD === "true") return false;
     // ASCII printable only, and short enough that per-char synthesis isn't slow.
     return text.length <= 200 && /^[\x20-\x7e]*$/.test(text);
 }
 
-async function dispatchType(text: string): Promise<void> {
-    if (process.platform === "darwin") {
-        if (shouldRealKeystroke(text)) {
-            // System Events `keystroke` sends REAL synthetic key events (not paste).
-            const escaped = escapeApplescript(text);
-            await execFileAsync("osascript", ["-e", `tell application "System Events" to keystroke "${escaped}"`], {
-                timeout: 15000,
-            });
-            return;
+// The text comes in on stdin: it may be a revealed OTP or card number, and a
+// command line is visible to every process. Paste mode snapshots every item and
+// type on the pasteboard (images and files too, not just text), marks the pasted
+// text so clipboard managers skip it (nspasteboard.org), and puts it all back.
+export const MAC_TYPE_JXA = `ObjC.import('AppKit');
+function run(argv) {
+    const text = $.NSString.alloc.initWithDataEncoding($.NSFileHandle.fileHandleWithStandardInput.readDataToEndOfFile, $.NSUTF8StringEncoding).js;
+    const se = Application('System Events');
+    if (argv[0] === 'keys') { se.keystroke(text); return; }
+    const pb = $.NSPasteboard.generalPasteboard;
+    const saved = [];
+    const items = pb.pasteboardItems;
+    for (let i = 0; i < items.count; i++) {
+        const it = items.objectAtIndex(i), types = it.types, entry = [];
+        for (let j = 0; j < types.count; j++) {
+            const t = types.objectAtIndex(j), d = it.dataForType(t);
+            if (!d.isNil()) entry.push([t, d]);
         }
-        const escaped = escapeApplescript(text);
-        const script = `
-set oldClipboard to ""
-try
-    set oldClipboard to the clipboard as text
-end try
-set the clipboard to "${escaped}"
-tell application "System Events"
-    keystroke "v" using command down
-end tell
-delay 0.3
-try
-    set the clipboard to oldClipboard
-end try`;
-        await execFileAsync("osascript", ["-e", script], { timeout: 10000 });
+        saved.push(entry);
+    }
+    pb.clearContents;
+    pb.setStringForType($(text), $.NSPasteboardTypeString);
+    pb.setStringForType($(''), $('org.nspasteboard.ConcealedType'));
+    pb.setStringForType($(''), $('org.nspasteboard.TransientType'));
+    se.keystroke('v', { using: 'command down' });
+    delay(0.3);
+    pb.clearContents;
+    if (saved.length) {
+        pb.writeObjects($(saved.map((entry) => {
+            const it = $.NSPasteboardItem.alloc.init;
+            entry.forEach(([t, d]) => it.setDataForType(d, t));
+            return it;
+        })));
+    }
+}`;
+
+/** Type `text` into the focused app on macOS: real keystrokes when short ASCII, else paste. */
+export async function typeTextMac(text: string): Promise<"keystroke" | "paste"> {
+    const mode = shouldRealKeystroke(text) ? "keystroke" : "paste";
+    const { spawn } = await import("node:child_process");
+    await new Promise<void>((resolve, reject) => {
+        const child = spawn(
+            "osascript",
+            ["-l", "JavaScript", "-e", MAC_TYPE_JXA, mode === "keystroke" ? "keys" : "paste"],
+            {
+                stdio: ["pipe", "ignore", "pipe"],
+            },
+        );
+        let stderr = "";
+        child.stderr.on("data", (d) => {
+            stderr += d;
+        });
+        const t = setTimeout(() => {
+            child.kill("SIGKILL");
+            reject(new Error("typing timed out"));
+        }, 15_000);
+        child.on("exit", (code) => {
+            clearTimeout(t);
+            if (code === 0) resolve();
+            else reject(new Error(stderr.trim().slice(0, 300) || `osascript exited with ${code}`));
+        });
+        child.on("error", (err) => {
+            clearTimeout(t);
+            reject(err);
+        });
+        child.stdin.on("error", () => {}); // EPIPE if osascript died first: the exit handler reports it
+        child.stdin.end(text, "utf-8");
+    });
+    return mode;
+}
+
+export async function dispatchType(text: string): Promise<void> {
+    if (process.platform === "darwin") {
+        await typeTextMac(text);
         return;
     }
     if (process.platform === "linux") {

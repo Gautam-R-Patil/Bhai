@@ -10,6 +10,7 @@
 import type { LLMClient } from "../llm.js";
 import { validateIntent, type ProactiveIntent, type Channel, type IntentSource } from "./intent.js";
 import {
+    inWindow,
     loadProactiveConfig,
     getPosture,
     POSTURE_PARAMS,
@@ -26,6 +27,8 @@ import {
     debugProactive,
 } from "./kill-switches.js";
 import * as native from "../../native/index.js";
+import { getToneReminder } from "../setup/personality-sync.js";
+import { getChannelSender } from "../tools/channel-send.js";
 import { SourceRegistry } from "./sources/registry.js";
 import type { IntentSourceModule } from "./sources/source.js";
 import { getInboxManager } from "./inbox/manager.js";
@@ -69,6 +72,22 @@ export type ObserverDeps = {
     llm: LLMClient | null;
     configPath: string;
 };
+
+const FALLBACK_CHANNELS: Channel[] = ["overlay", "telegram", "whatsapp", "discord", "slack", "matrix"];
+
+/**
+ * Where an intent can actually be delivered: its own channel when that has a
+ * sender, else the user's Primary channel (Settings), else the first channel
+ * that has one. Sources default to Telegram, which desktop-only users don't
+ * have — every proactive message used to be dropped as dispatch_failed.
+ */
+export function resolveChannel(pref: Channel | "any"): Channel {
+    if (pref !== "any" && getChannelSender(pref)) return pref;
+    for (const c of [process.env.PRIMARY_CHANNEL as Channel | undefined, ...FALLBACK_CHANNELS]) {
+        if (c && getChannelSender(c)) return c;
+    }
+    return pref === "any" ? "telegram" : pref;
+}
 
 export class Observer {
     private cfg: ProactiveConfig;
@@ -156,7 +175,7 @@ export class Observer {
             return false;
         }
 
-        const channel: Channel = intent.channelPreference === "any" ? "telegram" : intent.channelPreference;
+        const channel = resolveChannel(intent.channelPreference);
         if (isChannelDisabled(channel)) {
             debugProactive("observer_enqueue_channel_disabled", { id: intent.id, channel });
             this.telemetry().log({
@@ -251,7 +270,19 @@ export class Observer {
         } catch (err) {
             debugProactive("observer_collect_err", { err: (err as Error).message });
         }
-        // 2. Release eligible intents per channel
+        // 2. Quiet hours: the scheduler holds normal/ambient intents while DND is
+        //    on and still lets urgent ones through. nightWindows was never read.
+        const night = this.cfg.nightWindows?.default; // a hand-edited config may lack it
+        const quiet = night ? inWindow(night) : false;
+        for (const ch of ALL_CHANNELS) {
+            try {
+                native.schedulerSetDnd(ch, quiet);
+            } catch {
+                /* native scheduler unavailable */
+            }
+        }
+
+        // 3. Release eligible intents per channel
         for (const ch of ALL_CHANNELS) {
             await this.releaseChannel(ch).catch((err) =>
                 debugProactive("observer_release_err", { ch, err: (err as Error).message })
@@ -333,7 +364,9 @@ export class Observer {
             });
             const intentRecent = this.recentSendsByChannel.get(channel) ?? [];
             try {
-                const composed = await compose(intent, channel, { tone: "warm" }, intentRecent, { llm: this.deps.llm });
+                const composed = await compose(intent, channel, { tone: getToneReminder() ?? "warm" }, intentRecent, {
+                    llm: this.deps.llm,
+                });
                 if (!composed) {
                     this.telemetry().log({
                         intentId: intent.id,

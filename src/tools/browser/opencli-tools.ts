@@ -67,7 +67,7 @@ export const browserBatchFetch: ToolDefinition = {
             // Worker-pool pattern: configurable concurrency to avoid overwhelming servers.
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const results = await page.evaluate(
-                async ([urlList, meth, hdrs, conc, resType, toutMs]: any[]) => {
+                /* javascript-obfuscator:disable */ async ([urlList, meth, hdrs, conc, resType, toutMs]: any[]) => {
                     const results: Array<{ url: string; status: number; data: unknown; error?: string; size: number }> =
                         new Array(urlList.length);
                     let idx = 0;
@@ -110,7 +110,7 @@ export const browserBatchFetch: ToolDefinition = {
                     await Promise.all(workers);
                     return results;
                 },
-                [urls, method, headers, concurrency, responseType, timeoutMs],
+                /* javascript-obfuscator:enable */ [urls, method, headers, concurrency, responseType, timeoutMs],
             );
 
             const successCount = (results as Array<{ error?: string }>).filter((r) => !r.error).length;
@@ -463,83 +463,86 @@ export const browserExtractArticle: ToolDefinition = {
 
             // In-page Readability execution (needs browser DOM APIs)
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const result = await page.evaluate(async (fmt: string) => {
-                // Single <pre> shortcut (GitHub file views, raw text)
-                if (document.body.children.length === 1 && document.body.children[0].tagName === "PRE") {
-                    const text = (document.body.children[0] as HTMLElement).innerText || "";
-                    return { source: "pre", title: document.title, text, html: `<pre>${text}</pre>` };
-                }
+            const result = await page.evaluate(
+                /* javascript-obfuscator:disable */ async (fmt: string) => {
+                    // Single <pre> shortcut (GitHub file views, raw text)
+                    if (document.body.children.length === 1 && document.body.children[0].tagName === "PRE") {
+                        const text = (document.body.children[0] as HTMLElement).innerText || "";
+                        return { source: "pre", title: document.title, text, html: `<pre>${text}</pre>` };
+                    }
 
-                // Denoise clone
-                const clone = document.cloneNode(true) as Document;
-                const noisy = [
-                    "script",
-                    "style",
-                    "nav",
-                    "footer",
-                    "aside",
-                    '[aria-hidden="true"]',
-                    '[role="navigation"]',
-                    ".cookie-banner",
-                    ".ad-banner",
-                    ".advertisement",
-                    "#comments",
-                    ".sidebar",
-                ];
-                noisy.forEach((sel) => {
-                    try {
-                        clone.querySelectorAll(sel).forEach((e) => e.remove());
-                    } catch {}
-                });
+                    // Denoise clone
+                    const clone = document.cloneNode(true) as Document;
+                    const noisy = [
+                        "script",
+                        "style",
+                        "nav",
+                        "footer",
+                        "aside",
+                        '[aria-hidden="true"]',
+                        '[role="navigation"]',
+                        ".cookie-banner",
+                        ".ad-banner",
+                        ".advertisement",
+                        "#comments",
+                        ".sidebar",
+                    ];
+                    noisy.forEach((sel) => {
+                        try {
+                            clone.querySelectorAll(sel).forEach((e) => e.remove());
+                        } catch {}
+                    });
 
-                // Try Readability if available (may be loaded by the page)
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const Readability = (window as any).Readability;
-                if (Readability) {
-                    try {
-                        const article = new Readability(clone).parse();
-                        if (article && article.textContent?.length > 100) {
-                            return {
-                                source: "readability",
-                                title: article.title,
-                                byline: article.byline,
-                                publishedTime: article.publishedTime,
-                                siteName: article.siteName,
-                                text: article.textContent?.trim(),
-                                html: article.content,
-                            };
-                        }
-                    } catch {}
-                }
+                    // Try Readability if available (may be loaded by the page)
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const Readability = (window as any).Readability;
+                    if (Readability) {
+                        try {
+                            const article = new Readability(clone).parse();
+                            if (article && article.textContent?.length > 100) {
+                                return {
+                                    source: "readability",
+                                    title: article.title,
+                                    byline: article.byline,
+                                    publishedTime: article.publishedTime,
+                                    siteName: article.siteName,
+                                    text: article.textContent?.trim(),
+                                    html: article.content,
+                                };
+                            }
+                        } catch {}
+                    }
 
-                // CSS fallback chain (OpenCLI's 8-selector fallback)
-                const selectors = [
-                    "main",
-                    '[role="main"]',
-                    "#main-content",
-                    "#main",
-                    "#content",
-                    ".content",
-                    ".post-content",
-                    "article",
-                    "body",
-                ];
-                for (const sel of selectors) {
-                    const el = clone.querySelector(sel);
-                    if (el) {
-                        const text = (el as HTMLElement).innerText?.trim() || "";
-                        if (text.length > 80) {
-                            return { source: "fallback_" + sel, title: document.title, text, html: el.innerHTML };
+                    // CSS fallback chain (OpenCLI's 8-selector fallback)
+                    const selectors = [
+                        "main",
+                        '[role="main"]',
+                        "#main-content",
+                        "#main",
+                        "#content",
+                        ".content",
+                        ".post-content",
+                        "article",
+                        "body",
+                    ];
+                    for (const sel of selectors) {
+                        const el = clone.querySelector(sel);
+                        if (el) {
+                            const text = (el as HTMLElement).innerText?.trim() || "";
+                            if (text.length > 80) {
+                                return { source: "fallback_" + sel, title: document.title, text, html: el.innerHTML };
+                            }
                         }
                     }
-                }
-                return {
-                    source: "none",
-                    title: document.title,
-                    text: document.body.innerText?.substring(0, 5000) || "",
-                    html: "",
-                };
-            }, format);
+                    return {
+                        source: "none",
+                        title: document.title,
+                        text: document.body.innerText?.substring(0, 5000) || "",
+                        html: "",
+                    };
+                },
+                /* javascript-obfuscator:enable */ format,
+            );
 
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const r = result as any;
@@ -715,7 +718,7 @@ export const browserWaitForSelector: ToolDefinition = {
             // MutationObserver-based wait (OpenCLI waitForSelectorJs)
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const result = await page.evaluate(
-                async ([sel, st, tout]: any[]) => {
+                /* javascript-obfuscator:disable */ async ([sel, st, tout]: any[]) => {
                     return new Promise((resolve, reject) => {
                         const checkFn = () => !!document.querySelector(sel);
                         const satisfied = st === "hidden" ? !checkFn() : checkFn();
@@ -739,7 +742,7 @@ export const browserWaitForSelector: ToolDefinition = {
                         obs.observe(document.documentElement, { childList: true, subtree: true, attributes: true });
                     });
                 },
-                [selector, state, timeoutMs],
+                /* javascript-obfuscator:enable */ [selector, state, timeoutMs],
             );
 
             return JSON.stringify({ success: true, selector, state, resolved: result });

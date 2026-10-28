@@ -23,7 +23,11 @@ import {
 // PROTECTED_PATHS is populated at runtime by the host (no longer baked
 // into the binary). Tests register the repo root once so the protected-
 // path assertions still hold regardless of where the suite runs from.
-const REPO = "/Users/user/Desktop/ATLAS";
+// A real directory (realpath'd: macOS tmp is /private/var/...) so the relative-
+// path and symlink tests can chdir into it and link to files inside it.
+const REPO = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "atlas-protected-")));
+fs.mkdirSync(path.join(REPO, "src"));
+fs.writeFileSync(path.join(REPO, "src", "agent.ts"), "");
 beforeAll(() => {
     registerProtectedPath(REPO);
 });

@@ -2,6 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
+import { checkConsent } from "../security/consent.js";
 import fs from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -172,6 +173,7 @@ import { osComputerAction } from "./os-computer-action.js";
 import { osGround, osVisualize } from "./os-grounding.js";
 import { osClickId, osInspect } from "./os-inspect.js";
 import { osSmartClick, setSmartClickLLM } from "./os-smart-click.js";
+import { siteTask } from "./site-task.js";
 export { setSmartClickLLM };
 import { IS_LINUX, IS_MAC, IS_WIN } from "./platform.js";
 import { platformInfoTool } from "./platform-info.js";
@@ -329,6 +331,7 @@ registry.set(osGround.schema.function.name, osGround);
 // This is the agent's primary entry point for "click X" tasks — it picks the right tier
 // automatically based on capability + AX availability + memory recall.
 registry.set(osSmartClick.schema.function.name, osSmartClick);
+registry.set(siteTask.schema.function.name, siteTask);
 
 // ── Platform-specific OS tools ────────────────
 if (IS_MAC) {
@@ -658,7 +661,11 @@ const TOOL_TIMEOUTS: Record<string, number> = {
     // Browser tools - can be slow due to page loads
     browser_navigate: 30_000,
     browser_click: 15_000,
-    browser_type: 10_000,
+    browser_type: 30_000, // long text + submit + page-ready can take a while
+    site_task: 180_000, // up to 40 steps; a cut-off checkout would keep running unseen
+    // AX dump + activation + capture + grounding (+ one Sonnet re-ground). The
+    // handler stops itself at 40s so it never clicks after we report a timeout.
+    os_smart_click: 45_000,
     browser_scroll: 10_000,
     browser_scan: 20_000,
     browser_screenshot: 15_000,
@@ -706,6 +713,23 @@ async function executeWithTimeout<T>(promise: Promise<T>, timeoutMs: number, too
 }
 
 /** Execute a tool by name — with caching, rate limiting, audit logging, timeouts, and analytics */
+/** JSON with sorted keys at every level, so the same arguments always give the same key. */
+/** The consent ledger key for a gated tool call (site_task records it when it shows a total). */
+export function consentKey(name: string, args: Record<string, unknown>): string {
+    return `${name}:${stableJson(args)}`;
+}
+
+function stableJson(v: unknown): string {
+    if (Array.isArray(v)) return `[${v.map(stableJson).join(",")}]`;
+    if (v && typeof v === "object") {
+        return `{${Object.keys(v as object)
+            .sort()
+            .map((k) => `${JSON.stringify(k)}:${stableJson((v as Record<string, unknown>)[k])}`)
+            .join(",")}}`;
+    }
+    return JSON.stringify(v);
+}
+
 export async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
     const startTime = Date.now();
     const timeout = getToolTimeout(name);
@@ -742,6 +766,35 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         return JSON.stringify({ error: rateCheck.reason });
     }
 
+    // Irreversible actions need the owner's OK first (security/consent.ts):
+    // refused and recorded the first time; allowed when the same call returns
+    // with confirmed: true after the owner said yes in a new message.
+    // `confirmed` is stripped only for gated calls: other tools (git_op) read
+    // their own `confirmed` flag.
+    const { confirmed, ...actionArgs } = input;
+    const confirmCheck = requiresConfirmation(name, actionArgs);
+    if (
+        confirmCheck.needsConfirmation &&
+        checkConsent(consentKey(name, actionArgs), confirmed === true) !== "granted"
+    ) {
+        console.log(`  ⚠️  ${name} needs the owner's OK first`);
+        auditLog({
+            tool: name,
+            args: actionArgs,
+            success: false,
+            cached: false,
+            durationMs: 0,
+            error: "needs_confirmation",
+        });
+        return JSON.stringify({
+            error: confirmCheck.warningMessage,
+            needs_confirmation: true,
+            next_step:
+                "Tell the user exactly what this will do and ask. Only if they say yes, call the same tool again with the same arguments plus confirmed: true.",
+        });
+    }
+    if (confirmCheck.needsConfirmation) input = actionArgs;
+
     // Zod schema validation — validate input before execution
     const validation = validateToolInput(name, input);
     if (!validation.valid) {
@@ -749,14 +802,6 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         console.warn(`  ⚠️ Tool input validation failed: ${errorMessage}`);
         auditLog({ tool: name, args: input, success: false, cached: false, durationMs: 0, error: "validation_failed" });
         return JSON.stringify({ error: errorMessage, validation_errors: validation.errors });
-    }
-
-    // Destructive action check — returns warning in result for LLM to handle
-    const confirmCheck = requiresConfirmation(name, input);
-    if (confirmCheck.needsConfirmation) {
-        // Inject warning into the result so the LLM sees it and can ask the user
-        // The LLM should relay this warning before proceeding
-        console.log(`  ⚠️  Destructive action detected: ${name}`);
     }
 
     // Cache check

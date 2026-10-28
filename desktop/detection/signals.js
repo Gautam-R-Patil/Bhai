@@ -348,6 +348,8 @@ function detectPersonalize(prefs, platform) {
         wakeWord: stored.wakeWord
             ? { enabled: !!stored.wakeWord.enabled, phrase: stored.wakeWord.phrase || defaults.wakeWord.phrase }
             : defaults.wakeWord,
+        // Pass the saved tone through so the wizard (reconfigure) shows it.
+        personality: stored.personality || undefined,
     };
 }
 

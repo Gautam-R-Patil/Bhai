@@ -2,6 +2,9 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
+import "./security/log-redaction.js"; // first: redacts secrets/PII from every log line
+import { join } from "node:path";
+import { getDataDir } from "./config/paths.js";
 import { loadConfig } from "./config.js";
 import { createLLMClient } from "./llm.js";
 import { createTelegramBot, sendProactiveMessage } from "./telegram.js";
@@ -10,7 +13,7 @@ import { getToolNames, setSwarmLLM, setDeepResearchLLM, setLongTaskLLM, setDeepR
 import { initMemoryDB, embedExistingMemories, setMemoryLLM } from "./memory/sqlite.js";
 import { initKnowledgeGraph } from "./memory/knowledge-graph.js";
 import { initSupabase } from "./memory/supabase.js";
-import { getIdentityProfile, initIdentityDB, updateIdentityProfile } from "./memory/identity.js";
+import { getFieldValue, getIdentityProfile, initIdentityDB, updateIdentityProfile } from "./memory/identity.js";
 import { initTraitsDB, setMemoryDebug } from "./memory/traits.js";
 import { seedProfileIfPresent } from "./setup/wizard-seed.js";
 import { runDailyDecay, runDreamReplay } from "./memory/reflection.js";
@@ -401,8 +404,9 @@ async function boot() {
         try {
             const locationStr = [data.city, data.region, data.countryName || data.country].filter(Boolean).join(", ");
             const currentProfile = getIdentityProfile();
-            if (currentProfile.location !== locationStr && locationStr) {
-                updateIdentityProfile({ location: locationStr });
+            // Verified: the OS reported it (a raw string reads as an unverified claim).
+            if (getFieldValue(currentProfile.location) !== locationStr && locationStr) {
+                updateIdentityProfile({ location: { value: locationStr, verified: true } });
                 console.log(`[LOCATION] Identity updated: ${locationStr}`);
             }
         } catch { /* identity not initialized */ }
@@ -570,7 +574,7 @@ async function boot() {
     });
 
     // Wire voice handlers (Telegram-only — skipped when bot is null)
-    if (bot) setupTelegramVoice(bot, llm);
+    if (bot) setupTelegramVoice(bot, llm, config);
 
     // Live voice mode (real-time conversation — Gemini Live / OpenAI Realtime)
     try {
@@ -631,6 +635,7 @@ async function boot() {
             try {
                 const { intentFromThought } = await import("./proactive/intent-from-thought.js");
                 const { compose } = await import("./proactive/composer.js");
+                const { getToneReminder } = await import("./setup/personality-sync.js");
                 const { dispatchProactiveMessage } = await import("./proactive/dispatch.js");
                 const intent = intentFromThought(message, { hourNow: new Date().getHours() });
                 const channelOrder: Array<"telegram" | "whatsapp" | "discord" | "slack" | "matrix" | "overlay"> = [
@@ -639,7 +644,7 @@ async function boot() {
                 const primary = channelOrder.find((c) => c === PRIMARY_CHANNEL);
                 const rest = channelOrder.filter((c) => c !== primary);
                 const sendOne = async (channel: typeof channelOrder[number]): Promise<void> => {
-                    const composed = await compose(intent, channel, { tone: "warm" }, [], { llm });
+                    const composed = await compose(intent, channel, { tone: getToneReminder() ?? "warm" }, [], { llm });
                     if (!composed) return;
                     await dispatchProactiveMessage(channel, composed.text, composed.modeTag);
                 };
@@ -993,6 +998,16 @@ async function boot() {
         if (next3am <= now) next3am.setDate(next3am.getDate() + 1);
         const msUntil = next3am.getTime() - now.getTime();
 
+        // Memory over time (24h soak: must stay under 1GB). One line per 10 min.
+        const _memT = setInterval(() => {
+            const m = process.memoryUsage();
+            const line = { t: new Date().toISOString(), rssMb: Math.round(m.rss / 1e6), heapMb: Math.round(m.heapUsed / 1e6) };
+            import("node:fs")
+                .then(({ appendFileSync }) => appendFileSync(join(getDataDir(), "mem.jsonl"), `${JSON.stringify(line)}\n`))
+                .catch(() => {});
+        }, 10 * 60 * 1000);
+        _memT.unref?.();
+
         // First run at 3am, then decay every 6h
         setTimeout(() => {
             runDailyDecay();
@@ -1037,6 +1052,7 @@ async function boot() {
                         channel,
                         userId: ctx.userId || "cron",
                         isOwner: ctx.isOwner,
+                        autonomous: true,
                     },
                 );
                 return response.text;
@@ -1132,6 +1148,12 @@ async function boot() {
         } catch { /* never loaded */ }
         await closeMCPServers();
         await closeBrowser();
+        try {
+            const { closeSearchBrowser } = await import("./research/engines.js");
+            await closeSearchBrowser();
+        } catch {
+            /* not loaded */
+        }
         closeChromeBridge();
         closeCanvas();
         closeOverlayChat();
@@ -1150,6 +1172,17 @@ async function boot() {
 
     process.on("SIGINT", () => shutdown("SIGINT"));
     process.on("SIGTERM", () => shutdown("SIGTERM"));
+
+    // One stray rejection used to kill the bot for good (Node's default). Log it
+    // and keep serving; a real uncaught exception leaves state unknown, so exit
+    // non-zero and let the desktop app restart us (main.js backoff).
+    process.on("unhandledRejection", (reason) => {
+        console.error("⚠️ Unhandled rejection (continuing):", reason instanceof Error ? reason.stack : reason);
+    });
+    process.on("uncaughtException", (err) => {
+        console.error("💥 Uncaught exception, exiting for a clean restart:", err.stack ?? err);
+        process.exit(1);
+    });
 }
 
 // ── Run ───────────────────────────────────────

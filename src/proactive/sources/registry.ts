@@ -5,6 +5,9 @@
 import type { ProactiveIntent } from "../intent.js";
 import type { IntentSourceModule, SourceCtx } from "./source.js";
 import { isSourceDisabled, debugProactive } from "../kill-switches.js";
+import { inWindow } from "../config.js";
+
+const MORNING = { start: "05:00", end: "12:00" };
 
 export class SourceRegistry {
     private sources: IntentSourceModule[] = [];
@@ -23,6 +26,11 @@ export class SourceRegistry {
             this.sources.map(async (s) => {
                 if (isSourceDisabled(s.name)) {
                     debugProactive("source_skipped_disabled", { source: s.name });
+                    return [] as ProactiveIntent[];
+                }
+                // Morning briefings only in the morning: they used to fetch news,
+                // search the web and call the LLM around the clock, then queue up.
+                if (s.name.endsWith("_morning") && !inWindow(MORNING, new Date(ctx.now))) {
                     return [] as ProactiveIntent[];
                 }
                 try {

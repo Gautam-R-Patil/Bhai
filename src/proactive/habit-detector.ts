@@ -3,6 +3,7 @@
 // Uses native Rust time-series analysis for pattern matching.
 
 import type { Database } from "../memory/sqlite.js";
+import * as nativeModule from "../../native/index.js";
 
 export interface Habit {
     eventType: string;
@@ -27,34 +28,33 @@ export function detectHabits(db: Database): Habit[] {
         const content = (r[0] as string || "").toLowerCase();
         const topic = content.includes("code") ? "coding" : content.includes("email") ? "email" :
             content.includes("research") ? "research" : "general";
+        // napi field names are camelCase (snake_case made every call throw).
         return {
-            timestamp_ms: ts.getTime(), event_type: topic,
-            hour_of_day: ts.getHours() + ts.getMinutes() / 60, day_of_week: ts.getDay(),
+            timestampMs: ts.getTime(), eventType: topic,
+            hourOfDay: ts.getHours() + ts.getMinutes() / 60, dayOfWeek: ts.getDay(),
         };
     });
 
     const native = loadNative();
     if (native) {
-        const detected = native.detectHabits(events, 3);
+        let detected: any[];
+        try {
+            detected = native.detectHabits(events, 3);
+        } catch {
+            return [];
+        }
         return detected.map((h: any) => ({
-            eventType: h.event_type, pattern: h.pattern, typicalHour: h.typical_hour,
-            frequency: h.frequency, confidence: h.confidence, nextExpectedMs: h.next_expected_ms,
+            eventType: h.eventType, pattern: h.pattern, typicalHour: h.typicalHour,
+            frequency: h.frequency, confidence: h.confidence, nextExpectedMs: h.nextExpectedMs,
         }));
     }
 
     return []; // JS fallback: rely on native module
 }
 
-let _native: any = null;
-let _nativeLoaded = false;
 function loadNative(): any {
-    if (_nativeLoaded) return _native;
-    _nativeLoaded = true;
-    try {
-        const { createRequire } = require("node:module");
-        const r = createRequire(import.meta.url);
-        const path = require("node:path");
-        _native = r(path.join(process.cwd(), "native", "index.js"));
-        return _native;
-    } catch { return null; }
+    // A static import: `require` doesn't exist in ESM (nor in the esbuild bundle),
+    // so the old createRequire path always returned null and the native scorers
+    // never ran.
+    return nativeModule;
 }

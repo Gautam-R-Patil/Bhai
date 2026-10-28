@@ -59,7 +59,7 @@ SUGGESTION: "${proposedAction}"
 CONTEXT:
 - User is currently using: ${context.userActiveApp || "unknown"}
 - User idle for: ${context.userIdleMinutes || 0} minutes
-- Time: ${context.hourOfDay || 12}:00
+- Time: ${context.hourOfDay ?? 12}:00
 - ${context.recentProactiveCount || 0} recent proactive messages sent
 - User mood: ${context.userMood || "neutral"}
 
@@ -120,7 +120,7 @@ function estimateInterruptionCost(context: {
     }
 
     // Low cost during transition times
-    const hour = context.hourOfDay || 12;
+    const hour = context.hourOfDay ?? 12; // 0 is midnight, not "unknown"
     if (hour === 9 || hour === 13 || hour === 18) {
         cost -= 0.1; // Natural break times
     }
@@ -140,8 +140,9 @@ function computeAcceptanceProbability(
     const noveltyBoost = 0.8 + novelty * 0.2;
     const relationshipFactor = 0.7 + relDepth * 0.3;
 
-    return (relevance * (1 - interruptionCost * 0.7) * noveltyBoost * relationshipFactor)
-        .toFixed(3) as unknown as number;
+    // A number, not toFixed's string: the heartbeat's suppress branch called
+    // .toFixed on it, threw, and the catch surfaced the suppressed thought.
+    return Number((relevance * (1 - interruptionCost * 0.7) * noveltyBoost * relationshipFactor).toFixed(3));
 }
 
 function heuristicScore(

@@ -6,6 +6,8 @@ import type { Bot } from "grammy";
 import type { LLMClient } from "../llm.js";
 import { transcribeBuffer } from "./transcribe.js";
 import { runAgent, type MediaAttachment } from "../agent.js";
+import type { Config } from "../config.js";
+import { isPlatformOwner } from "../telegram.js";
 import { setTelegramContext } from "../tools/send-file.js";
 import { getVoiceStagePhrase, getErrorMessage, categorizeError } from "../alive-ux.js";
 
@@ -17,6 +19,7 @@ import { getVoiceStagePhrase, getErrorMessage, categorizeError } from "../alive-
 export function setupTelegramVoice(
     bot: Bot,
     llm: LLMClient,
+    config: Config,
 ): void {
     // Handle voice messages (recorded in Telegram)
     bot.on("message:voice", async (ctx) => {
@@ -76,7 +79,14 @@ export function setupTelegramVoice(
             setTelegramContext(bot, chatId);
             await ctx.replyWithChatAction("typing");
 
-            const result = await runAgent(llm, agentMessage, undefined, media);
+            const result = await runAgent(llm, agentMessage, undefined, media, undefined, undefined, undefined, undefined, {
+                channel: "telegram",
+                userId: String(ctx.from?.id ?? ""),
+                userName: ctx.from?.first_name,
+                // A voice "yes" from the owner answers a consent question like a typed one.
+                isOwner: !!ctx.from?.id && isPlatformOwner("telegram", ctx.from.id, config),
+                isPrivate: ctx.chat?.type === "private",
+            });
             console.log(`  🤖 Response: ${result.text.substring(0, 200)}`);
 
             // Send text reply
@@ -142,7 +152,14 @@ export function setupTelegramVoice(
             setTelegramContext(bot, chatId);
             await ctx.replyWithChatAction("typing");
 
-            const result = await runAgent(llm, agentMessage, undefined, media);
+            const result = await runAgent(llm, agentMessage, undefined, media, undefined, undefined, undefined, undefined, {
+                channel: "telegram",
+                userId: String(ctx.from?.id ?? ""),
+                userName: ctx.from?.first_name,
+                // A voice "yes" from the owner answers a consent question like a typed one.
+                isOwner: !!ctx.from?.id && isPlatformOwner("telegram", ctx.from.id, config),
+                isPrivate: ctx.chat?.type === "private",
+            });
             console.log(`  🤖 Response: ${result.text.substring(0, 200)}`);
 
             await ctx.reply(result.text);

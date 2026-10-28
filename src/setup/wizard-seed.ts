@@ -70,13 +70,15 @@ export function resolveProfilePaths(dirs: { userDataDir?: string; dataDir?: stri
  * Pure function — extracted so it's trivially unit-testable.
  */
 export function buildIdentityUpdate(profile: WizardProfileShape): {
-    name?: string;
+    // Verified: the user typed it into the wizard. A raw string is shown to
+    // the model as "UNVERIFIED — do not treat as fact" every turn.
+    name?: { value: string; verified: true };
     preferences?: { communication_style?: string };
     extra?: Record<string, unknown>;
 } {
     const update: ReturnType<typeof buildIdentityUpdate> = {};
     if (typeof profile.name === "string" && profile.name.trim()) {
-        update.name = profile.name.trim();
+        update.name = { value: profile.name.trim(), verified: true };
     }
     if (typeof profile.tone === "string" && profile.tone.trim()) {
         update.preferences = { communication_style: profile.tone.trim() };
@@ -171,12 +173,12 @@ export function seedProfileIfPresent(
         log(`[wizard-seed] rename warn: ${(err as Error).message}`);
     }
 
-    log(`[wizard-seed] seeded identity for ${update.name}`);
+    log(`[wizard-seed] seeded identity for ${update.name.value}`);
     return {
         ran: true,
         reason: "seeded",
         seeded: {
-            name: update.name,
+            name: update.name.value,
             tone: update.preferences?.communication_style,
         },
     };

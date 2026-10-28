@@ -201,6 +201,7 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "Web browsing, navigating to websites and URLs, clicking on web page elements, typing into web forms, scrolling web pages, extracting data from websites, scraping, automating web interactions, filling out online forms, logging into websites, web page analysis, tab management, uploading files to websites, downloading from the web, opening multiple URLs in parallel tabs, batch processing. Includes using the user's real Chrome browser via extension (for their active tab, logged-in sites, current page) or headless Playwright (for independent research, background tasks). When the user references 'my tab', 'this page', 'use my Chrome', or asks about what they're viewing, prefer chrome mode.",
         tools: [
             "browser_navigate",
+            "site_task",
             "browser_click_at",
             "browser_type",
             "browser_scan",
@@ -905,6 +906,7 @@ const messageEmbeddingCache: Map<string, CachedEmbedding> = new Map();
 const selectionCache: Map<string, CachedSelection> = new Map();
 const SELECTION_CACHE_TTL_MS = 60_000; // 60 seconds
 const MAX_CACHE_SIZE = 50;
+const MAX_REQUESTED_CATEGORIES = 4;
 const CATEGORY_EXPIRY_ITERATIONS = 3; // Auto-expire after 3 unused selections (≈ turns: later iterations reuse the turn's set)
 
 // ── Collision-free hash function for cache keys ───────
@@ -1430,6 +1432,12 @@ export async function selectTools(opts: {
     const allSchemas = getToolSchemas();
     const allToolNames = new Set(allSchemas.map((t) => t.function.name));
 
+    // Categories fetched with request_tools last for the turn that asked for
+    // them; a new message starts clean (they used to linger into "thanks!").
+    if (opts.iteration === 1 && !opts.requestedCategories) {
+        activeRequestedCategories = { categories: [], lastUsedIteration: 0 };
+    }
+
     // Apply any explicitly requested categories
     if (opts.requestedCategories) {
         activeRequestedCategories = {
@@ -1581,11 +1589,11 @@ export async function selectTools(opts: {
         if (iterationsUnused > CATEGORY_EXPIRY_ITERATIONS) {
             activeRequestedCategories = { categories: [], lastUsedIteration: 0 };
         } else {
-            for (const cat of activeRequestedCategories.categories) {
-                if (!selectedCategories.includes(cat)) {
-                    selectedCategories.push(cat);
-                }
-            }
+            // First, so their tools get slots before the cap (the agent asked for them).
+            selectedCategories = [
+                ...activeRequestedCategories.categories,
+                ...selectedCategories.filter((c) => !activeRequestedCategories.categories.includes(c)),
+            ];
         }
     }
 
@@ -1809,16 +1817,20 @@ export async function handleToolRequest(request: ToolRequest): Promise<{
         }
         scored.sort((a, b) => b.score - a.score);
 
-        // Take categories with score > 0.2 (reasonable match)
+        // Close to the best match only: an absolute 0.2 floor let MiniLM's
+        // 0.3 noise floor add 16 categories (190 tools) for one request, which
+        // then crowded the asked-for tools out of the 36-tool cap.
+        const top = scored[0]?.score ?? 0;
         for (const { category, score } of scored) {
-            if (score > 0.2) {
-                matchedCategories.push(category);
-            }
+            if (matchedCategories.length >= MAX_REQUESTED_CATEGORIES) break;
+            if (CATEGORIES[category]?.alwaysInclude) continue; // already always sent
+            if (score > 0.2 && score >= top - 0.25) matchedCategories.push(category);
         }
     } else {
         // Fallback: use structural matching on the capability description
         const fallback = structuralClassify(capability);
         for (const { category, score } of fallback) {
+            if (matchedCategories.length >= MAX_REQUESTED_CATEGORIES) break;
             if (score > 0.25) {
                 matchedCategories.push(category);
             }
@@ -1882,7 +1894,7 @@ export async function handleToolRequest(request: ToolRequest): Promise<{
 
     // ── Store these as active categories so selectTools picks them up ──
     activeRequestedCategories = {
-        categories: [...new Set([...activeRequestedCategories.categories, ...matchedCategories])],
+        categories: [...new Set([...matchedCategories, ...activeRequestedCategories.categories])].slice(0, 6),
         lastUsedIteration: currentIteration,
     };
 

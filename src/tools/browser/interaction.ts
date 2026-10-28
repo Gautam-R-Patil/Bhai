@@ -740,20 +740,29 @@ export const browserType: ToolDefinition = {
                     delayFn = () => 35;
                 }
 
-                for (const ch of input.text as string) {
+                // Human rhythm for the first few characters only: per-character
+                // delays on long text overran the tool timeout (~45+ chars) while
+                // typing carried on in the background.
+                const text = input.text as string;
+                const HUMAN_CHARS = 15;
+                for (const ch of text.slice(0, HUMAN_CHARS)) {
                     await page.keyboard.type(ch, { delay: 0 });
                     const delay = delayFn(ch.charCodeAt(0));
                     if (delay > 0) await page.waitForTimeout(delay);
                 }
+                if (text.length > HUMAN_CHARS) await page.keyboard.type(text.slice(HUMAN_CHARS), { delay: 10 });
             }
 
             if (input.press_enter) {
                 const urlBefore = page.url();
                 await page.keyboard.press("Enter");
-                await page.waitForTimeout(1500);
-                if (page.url() !== urlBefore) {
-                    await waitForPageReady(page);
+                // A navigation ends the wait as soon as it commits (Playwright only:
+                // the Chrome bridge proxy has no waitForURL). Then wait for the page
+                // — new or updated in place (SPA search) — to settle.
+                if (typeof (page as { waitForURL?: unknown }).waitForURL === "function") {
+                    await page.waitForURL((u: URL) => u.toString() !== urlBefore, { timeout: 1500 }).catch(() => {});
                 }
+                await waitForPageReady(page);
             }
 
             const waitTime = input.wait_after_ms !== undefined ? (input.wait_after_ms as number) : 200;
@@ -835,7 +844,7 @@ export const browserHover: ToolDefinition = {
             // Inject MutationObserver using obfuscated variable names (IP protection)
             await page
                 .evaluate(
-                    ([nNodes, nObs]: string[]) => {
+                    /* javascript-obfuscator:disable */ ([nNodes, nObs]: string[]) => {
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
                         const w = window as any;
                         w[nNodes] = [];
@@ -855,7 +864,7 @@ export const browserHover: ToolDefinition = {
                         });
                         w[nObs].observe(document.body, { childList: true, subtree: true });
                     },
-                    [varNodes, varObserver],
+                    /* javascript-obfuscator:enable */ [varNodes, varObserver],
                 )
                 .catch(() => {}); // non-fatal
 
@@ -893,7 +902,7 @@ export const browserHover: ToolDefinition = {
             if (waitFor) {
                 try {
                     await page.waitForFunction(
-                        (sel: string) => {
+                        /* javascript-obfuscator:disable */ (sel: string) => {
                             const el = document.querySelector(sel);
                             if (!el) return false;
                             const style = window.getComputedStyle(el);
@@ -903,7 +912,7 @@ export const browserHover: ToolDefinition = {
                                 parseFloat(style.opacity) > 0.1
                             );
                         },
-                        waitFor,
+                        /* javascript-obfuscator:enable */ waitFor,
                         { timeout: 3000, polling: 100 },
                     );
                     waitForResult = `"${waitFor}" is now visible`;
@@ -915,7 +924,7 @@ export const browserHover: ToolDefinition = {
             // Collect what appeared after hover (using obfuscated variable names)
             const addedNodes = await page
                 .evaluate(
-                    ([nNodes, nObs]: string[]) => {
+                    /* javascript-obfuscator:disable */ ([nNodes, nObs]: string[]) => {
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
                         const w = window as any;
                         const nodes = (w[nNodes] || []) as Array<Record<string, string>>;
@@ -924,7 +933,7 @@ export const browserHover: ToolDefinition = {
                         delete w[nObs];
                         return nodes;
                     },
-                    [varNodes, varObserver],
+                    /* javascript-obfuscator:enable */ [varNodes, varObserver],
                 )
                 .catch(() => []);
 
@@ -1085,9 +1094,12 @@ export const browserScrollElement: ToolDefinition = {
             }
 
             const block = (input.block as string) || "center";
-            await el.handle.evaluate((node: HTMLElement, b: string) => {
-                node.scrollIntoView({ behavior: "smooth", block: b as ScrollLogicalPosition });
-            }, block);
+            await el.handle.evaluate(
+                /* javascript-obfuscator:disable */ (node: HTMLElement, b: string) => {
+                    node.scrollIntoView({ behavior: "smooth", block: b as ScrollLogicalPosition });
+                },
+                /* javascript-obfuscator:enable */ block,
+            );
 
             await page.waitForTimeout(300);
 

@@ -35,7 +35,7 @@ describe("cloudGroundClick — downscale + coordinate space", () => {
         expect({ x: r.x, y: r.y }).toEqual({ x: 784, y: 490 });
         expect(seen.systemPrompt).toMatch(/grounding/i);
         expect(seen.thinkingLevel).toBe("low");
-        expect(seen.modelOverride).toBe("anthropic/claude-sonnet-4.6");
+        expect(seen.modelOverride).toBe("anthropic/claude-haiku-4.5"); // Sonnet only on a verified miss
         expect(seen.messages[0].content[0].text).toContain("1568x980");
         const url: string = seen.messages[0].content[1].image_url.url;
         const sent = await sharp(Buffer.from(url.split(",")[1], "base64")).metadata();

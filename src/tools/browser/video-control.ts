@@ -224,11 +224,11 @@ export const browserVideoControl: ToolDefinition = {
                                         return JSON.stringify({ error: "seek requires seek_to_seconds" });
                                     await page.evaluate(
                                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                                        (secs: number) => {
+                                        /* javascript-obfuscator:disable */ (secs: number) => {
                                             const p = document.getElementById("movie_player") as any;
                                             p?.seekTo?.(secs, true);
                                         },
-                                        seekTo,
+                                        /* javascript-obfuscator:enable */ seekTo,
                                     );
                                     break;
                                 case "volume":
@@ -236,11 +236,11 @@ export const browserVideoControl: ToolDefinition = {
                                         return JSON.stringify({ error: "volume requires volume_level (0-100)" });
                                     await page.evaluate(
                                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                                        (vol: number) => {
+                                        /* javascript-obfuscator:disable */ (vol: number) => {
                                             const p = document.getElementById("movie_player") as any;
                                             p?.setVolume?.(vol);
                                         },
-                                        volumeLevel,
+                                        /* javascript-obfuscator:enable */ volumeLevel,
                                     );
                                     break;
                                 case "set_speed":
@@ -248,11 +248,11 @@ export const browserVideoControl: ToolDefinition = {
                                         return JSON.stringify({ error: "set_speed requires speed" });
                                     await page.evaluate(
                                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                                        (r: number) => {
+                                        /* javascript-obfuscator:disable */ (r: number) => {
                                             const p = document.getElementById("movie_player") as any;
                                             p?.setPlaybackRate?.(r);
                                         },
-                                        speed,
+                                        /* javascript-obfuscator:enable */ speed,
                                     );
                                     break;
                                 case "captions":
@@ -323,7 +323,10 @@ export const browserVideoControl: ToolDefinition = {
                     // HTML5 <video> fallback
                     if (siteHint === "html5" || !isYouTube) {
                         const videoExists = await page
-                            .evaluate(() => !!document.querySelector("video"))
+                            .evaluate(
+                                /* javascript-obfuscator:disable */ () => !!document.querySelector("video"),
+                                /* javascript-obfuscator:enable */ undefined,
+                            )
                             .catch(() => false);
                         if (videoExists) {
                             switch (action) {
@@ -354,26 +357,35 @@ export const browserVideoControl: ToolDefinition = {
                                 case "seek":
                                     if (seekTo === undefined)
                                         return JSON.stringify({ error: "seek requires seek_to_seconds" });
-                                    await page.evaluate((t: number) => {
-                                        const v = document.querySelector("video");
-                                        if (v) v.currentTime = t;
-                                    }, seekTo);
+                                    await page.evaluate(
+                                        /* javascript-obfuscator:disable */ (t: number) => {
+                                            const v = document.querySelector("video");
+                                            if (v) v.currentTime = t;
+                                        },
+                                        /* javascript-obfuscator:enable */ seekTo,
+                                    );
                                     break;
                                 case "volume":
                                     if (volumeLevel === undefined)
                                         return JSON.stringify({ error: "volume requires volume_level (0-100)" });
-                                    await page.evaluate((vol: number) => {
-                                        const v = document.querySelector("video");
-                                        if (v) v.volume = vol / 100;
-                                    }, volumeLevel);
+                                    await page.evaluate(
+                                        /* javascript-obfuscator:disable */ (vol: number) => {
+                                            const v = document.querySelector("video");
+                                            if (v) v.volume = vol / 100;
+                                        },
+                                        /* javascript-obfuscator:enable */ volumeLevel,
+                                    );
                                     break;
                                 case "set_speed":
                                     if (speed === undefined)
                                         return JSON.stringify({ error: "set_speed requires speed" });
-                                    await page.evaluate((r: number) => {
-                                        const v = document.querySelector("video");
-                                        if (v) v.playbackRate = r;
-                                    }, speed);
+                                    await page.evaluate(
+                                        /* javascript-obfuscator:disable */ (r: number) => {
+                                            const v = document.querySelector("video");
+                                            if (v) v.playbackRate = r;
+                                        },
+                                        /* javascript-obfuscator:enable */ speed,
+                                    );
                                     break;
                                 case "get_info": {
                                     const info = await page.evaluate(`(async()=>{ ${HTML5_API.get_info} })()`);
@@ -493,11 +505,11 @@ export const browserVideoControl: ToolDefinition = {
                     const controlSel = isYouTube ? ".ytp-chrome-bottom" : '[class*="control"]';
                     await page
                         .waitForFunction(
-                            (sel: string) => {
+                            /* javascript-obfuscator:disable */ (sel: string) => {
                                 const el = document.querySelector(sel);
                                 return el && parseFloat(window.getComputedStyle(el).opacity) > 0.1;
                             },
-                            controlSel,
+                            /* javascript-obfuscator:enable */ controlSel,
                             { timeout: 3000, polling: 100 },
                         )
                         .catch(() => {}); // non-fatal — try click anyway

@@ -14,6 +14,7 @@
 
 import type { LLMClient, ChatCompletionMessageParam } from "../llm.js";
 import type { Database } from "../memory/sqlite.js";
+import * as nativeModule from "../../native/index.js";
 
 // ── Types ─────────────────────────────────────
 
@@ -287,7 +288,7 @@ export function applyGoalDecay(): void {
                 title: g.title,
                 priority: g.priority,
                 progress: g.progress,
-                days_since_update: (Date.now() - new Date(g.updatedAt).getTime()) / 86400000,
+                daysSinceUpdate: (Date.now() - new Date(g.updatedAt).getTime()) / 86400000, // napi: camelCase
                 source: g.source,
             }));
 
@@ -308,17 +309,10 @@ export function applyGoalDecay(): void {
 
 // ── Native Module ─────────────────────────────
 
-let _native: any = null;
-let _nativeLoaded = false;
 
 function loadNative(): any {
-    if (_nativeLoaded) return _native;
-    _nativeLoaded = true;
-    try {
-        const { createRequire } = require("node:module");
-        const nativeRequire = createRequire(import.meta.url);
-        const path = require("node:path");
-        _native = nativeRequire(path.join(process.cwd(), "native", "index.js"));
-        return _native;
-    } catch { return null; }
+    // A static import: `require` doesn't exist in ESM (nor in the esbuild bundle),
+    // so the old createRequire path always returned null and the native scorers
+    // never ran.
+    return nativeModule;
 }

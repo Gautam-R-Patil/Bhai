@@ -375,7 +375,11 @@ export function findStrategy(task: string, domain?: string): BrowsingStrategy | 
         }
 
         // Domain match bonus
-        if (domain && strategy.domain === domain) score += 5;
+        const domainMatch = !!domain && strategy.domain === domain;
+        if (domainMatch) score += 5;
+        // Relevance first: the bonuses below alone used to clear the bar, so a
+        // saved strategy was offered for every message, even "hello".
+        if (score === 0) continue;
 
         // Success rate bonus
         score += strategy.successRate * 3;

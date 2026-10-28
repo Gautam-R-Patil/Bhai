@@ -27,7 +27,7 @@ const EMOTION_SIGNALS: Record<string, { words: string[]; valence: number; arousa
         valence: -0.7, arousal: 0.6,
     },
     angry: {
-        words: ["angry", "furious", "ridiculous", "unacceptable", "bull", "stupid", "waste of time", "horrible"],
+        words: ["angry", "furious", "ridiculous", "unacceptable", "bullshit", "stupid", "waste of time", "horrible"],
         valence: -0.9, arousal: 0.9,
     },
     stressed: {
@@ -52,6 +52,14 @@ const EMOTION_SIGNALS: Record<string, { words: string[]; valence: number; arousa
     },
 };
 
+// Whole words only: substring matching read "bullet points" as angry ("bull")
+// and "whatever" as frustrated ("hate"), which injected sympathy into replies.
+const WORD_RE = new Map(
+    Object.values(EMOTION_SIGNALS)
+        .flatMap((d) => d.words)
+        .map((w) => [w, new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`)] as const),
+);
+
 // ── Detection ─────────────────────────────────
 
 /**
@@ -71,7 +79,7 @@ export function detectEmotion(text: string): EmotionAnalysis {
     for (const [emotion, data] of Object.entries(EMOTION_SIGNALS)) {
         let matchCount = 0;
         for (const word of data.words) {
-            if (lower.includes(word)) {
+            if (WORD_RE.get(word)?.test(lower)) {
                 matchCount++;
                 signals.push(`"${word}" → ${emotion}`);
             }

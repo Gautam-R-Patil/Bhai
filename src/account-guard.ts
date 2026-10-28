@@ -161,14 +161,14 @@ export async function initAccountGuard(): Promise<void> {
     const userId = process.env.ATLAS_OTPLESS_USER_ID;
     if (!userId) {
         console.error("[AccountGuard] No ATLAS_OTPLESS_USER_ID — bot cannot start without a signed-in account.");
-        setTimeout(() => process.exit(1), 1000);
+        setTimeout(() => process.exit(78), 1000); // 78: not allowed to run — the app won't auto-restart
         return;
     }
 
     const check = await checkAccountStatus();
     if (!check.allowed) {
         console.error(`[AccountGuard] Startup blocked: ${check.reason}`);
-        setTimeout(() => process.exit(1), 1000);
+        setTimeout(() => process.exit(78), 1000); // 78: not allowed to run — the app won't auto-restart
     } else {
         console.log("[AccountGuard] Startup authorized");
     }

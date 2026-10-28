@@ -94,6 +94,10 @@ export function getDomain(url: string): string {
 
 // ── Page Content Extraction ──────────────────
 
+// Outbound links from each page's RAW html (the returned content has every tag
+// stripped, so no href survives): fetchPages hands them to the citation chain.
+const linksByUrl = new Map<string, string[]>();
+
 async function fetchPageContentOnce(url: string): Promise<string> {
     // SSRF guard. Attacker-supplied URLs (search results, outbound links) must
     // not reach private/loopback/metadata targets. Fail-open: research continues.
@@ -128,6 +132,7 @@ async function fetchPageContentOnce(url: string): Promise<string> {
 
         const html = await response.text();
         clearTimeout(timeout);
+        linksByUrl.set(url, extractOutboundLinks(html, url));
 
         const text = html
             .replace(/<script[\s\S]*?<\/script>/gi, "")
@@ -221,17 +226,18 @@ export function rankOutboundLinks(
 
 export async function fetchPages(
     urls: Array<{ url: string; title: string }>,
-): Promise<Array<{ url: string; title: string; content: string }>> {
-    const results: Array<{ url: string; title: string; content: string }> = [];
+): Promise<Array<{ url: string; title: string; content: string; links: string[] }>> {
+    const results: Array<{ url: string; title: string; content: string; links: string[] }> = [];
 
     for (let i = 0; i < urls.length; i += CONCURRENT_FETCHES) {
         const batch = urls.slice(i, i + CONCURRENT_FETCHES);
         const batchResults = await Promise.all(
-            batch.map(async (item) => ({
-                url: item.url,
-                title: item.title,
-                content: await fetchPageContent(item.url),
-            }))
+            batch.map(async (item) => {
+                const content = await fetchPageContent(item.url);
+                const links = linksByUrl.get(item.url) ?? [];
+                linksByUrl.delete(item.url);
+                return { url: item.url, title: item.title, content, links };
+            })
         );
         results.push(...batchResults);
         if (i + CONCURRENT_FETCHES < urls.length) await sleep(400);

@@ -15,6 +15,7 @@
 
 import type { UserPresence } from "./activity.js";
 import { trackAction, getRecommendations } from "./recommendations.js";
+import * as nativeModule from "../../native/index.js";
 
 // ── Types ─────────────────────────────────────
 
@@ -188,9 +189,9 @@ export function shouldActivate(signals: TriggerSignal[]): ActivationResult {
         if (native) {
             const nativeSignals = signals.map(s => ({
                 source: s.source,
-                signal_type: s.signalType,
+                signalType: s.signalType, // napi fields are camelCase
                 weight: s.weight,
-                timestamp_ms: s.timestampMs,
+                timestampMs: s.timestampMs,
                 metadata: s.metadata,
             }));
 
@@ -199,13 +200,13 @@ export function shouldActivate(signals: TriggerSignal[]): ActivationResult {
 
             const events = native.aggregateTriggers(nativeSignals, times, sources, 0.3);
 
-            if (events.length > 0 && events[0].should_activate) {
+            if (events.length > 0 && events[0].shouldActivate) {
                 const primary = events[0];
-                lastActivationTimes.set(primary.primary_trigger, Date.now());
+                lastActivationTimes.set(primary.primaryTrigger, Date.now());
                 return {
                     shouldActivate: true,
-                    primaryTrigger: primary.primary_trigger,
-                    combinedWeight: primary.combined_weight,
+                    primaryTrigger: primary.primaryTrigger,
+                    combinedWeight: primary.combinedWeight,
                     signals,
                 };
             }
@@ -243,21 +244,10 @@ export function shouldActivate(signals: TriggerSignal[]): ActivationResult {
 
 // ── Native Module ─────────────────────────────
 
-let _native: any = null;
-let _nativeLoaded = false;
 
 function loadNative(): any {
-    if (_nativeLoaded) return _native;
-    _nativeLoaded = true;
-
-    try {
-        const { createRequire } = require("node:module");
-        const nativeRequire = createRequire(import.meta.url);
-        const path = require("node:path");
-        const modulePath = path.join(process.cwd(), "native", "index.js");
-        _native = nativeRequire(modulePath);
-        return _native;
-    } catch {
-        return null;
-    }
+    // A static import: `require` doesn't exist in ESM (nor in the esbuild bundle),
+    // so the old createRequire path always returned null and the native scorers
+    // never ran.
+    return nativeModule;
 }

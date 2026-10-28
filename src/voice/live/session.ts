@@ -28,6 +28,7 @@ import { startScreenShare, stopScreenShare } from "./screen-share.js";
 import { TranscriptSpeaker } from "./transcript-speaker.js";
 import { getAck, startAckBankWarmup, isAckBankReady } from "./ack-bank.js";
 import { nativeVadAnyFrame16Khz } from "../../native/index.js";
+import { noteOwnerMessage } from "../../security/consent.js";
 
 // ── Session State ────────────────────────────────
 
@@ -559,7 +560,10 @@ export class LiveVoiceSession extends EventEmitter {
         // per-chunk filter drops single-letter words so fragmented partial
         // display would look broken ("Ho are you" with missing "w").
         this.backend.on("user_transcript", (text: string) => {
-            if (!this.hybridMode) this.emitEvent("user_transcript", text);
+            if (!this.hybridMode) {
+                this.emitEvent("user_transcript", text);
+                noteOwnerMessage(text); // live voice is the owner at their Mac: a spoken yes counts
+            }
             this.speaker.onNewTurn();
         });
 
@@ -639,6 +643,7 @@ export class LiveVoiceSession extends EventEmitter {
                 console.log(`[HYBRID] end-of-speech fired (waited ${wait}ms), dispatching: "${finalText}"`);
                 // Emit the clean final transcript for UI display.
                 this.emitEvent("user_transcript", finalText);
+                noteOwnerMessage(finalText); // a spoken yes answers a consent question
                 // Memory-verb shortcut: "remember that X" / "note that Y" /
                 // "don't forget Z" saves to sqlite BEFORE llm.chat so the
                 // model doesn't waste a turn on memory_store and the fact

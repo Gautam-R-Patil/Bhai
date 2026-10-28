@@ -170,7 +170,7 @@ contextBridge.exposeInMainWorld("atlas", {
 
     // ── Sideloading ─────────────────────────────────────
     sideloadPick: () => ipcRenderer.invoke("store:sideload-pick"),
-    sideloadInstall: (filePath) => ipcRenderer.invoke("store:sideload-install", filePath),
+    sideloadInstall: (filePath, options) => ipcRenderer.invoke("store:sideload-install", filePath, options),
 
     // ── Channels ─────────────────────────────────────
     getChannelConfig: () => ipcRenderer.invoke("channels:get-config"),

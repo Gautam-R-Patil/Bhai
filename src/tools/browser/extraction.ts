@@ -58,7 +58,7 @@ export const browserAnalyze: ToolDefinition = {
         try {
             const page = await getActivePage();
             const analysis = await page.evaluate(
-                (includeText: boolean) => {
+                /* javascript-obfuscator:disable */ (includeText: boolean) => {
                     const r: Record<string, unknown[]> = { buttons: [], links: [], inputs: [], selects: [] };
 
                     document.querySelectorAll("button, [role='button'], input[type='submit']").forEach((el, i) => {
@@ -123,7 +123,7 @@ export const browserAnalyze: ToolDefinition = {
                     if (includeText) info.pageText = document.body.innerText.substring(0, 3000);
                     return info;
                 },
-                (input.include_text as boolean) !== false,
+                /* javascript-obfuscator:enable */ (input.include_text as boolean) !== false,
             );
 
             return JSON.stringify(analysis);
@@ -242,11 +242,11 @@ export const browserWait: ToolDefinition = {
                     if (sel) {
                         await page
                             .waitForFunction(
-                                ({ s, t }: { s: string; t: number }) => {
+                                /* javascript-obfuscator:disable */ ({ s, t }: { s: string; t: number }) => {
                                     const el = document.querySelector(s);
                                     return el ? parseFloat(window.getComputedStyle(el).opacity) >= t : false;
                                 },
-                                { s: sel, t: thresh },
+                                /* javascript-obfuscator:enable */ { s: sel, t: thresh },
                                 { timeout, polling: 100 },
                             )
                             .catch(() => {}); // non-fatal — continue if timed out
@@ -344,13 +344,13 @@ export const browserExtract: ToolDefinition = {
             const attr = (input.attribute as string) || "textContent";
             // Pass selector and attr as parameters — never interpolate user input into eval strings
             const elements = await page.evaluate(
-                ({ sel, at }: { sel: string; at: string }) =>
+                /* javascript-obfuscator:disable */ ({ sel, at }: { sel: string; at: string }) =>
                     Array.from(document.querySelectorAll(sel))
                         .slice(0, 50)
                         .map((el) =>
                             at === "textContent" ? (el as HTMLElement).textContent?.trim() : el.getAttribute(at),
                         ),
-                { sel: selector, at: attr },
+                /* javascript-obfuscator:enable */ { sel: selector, at: attr },
             );
             return JSON.stringify({ success: true, elements, count: (elements as unknown[]).length });
         } catch (err) {

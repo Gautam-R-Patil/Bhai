@@ -185,6 +185,11 @@ const ROLE_TOOLS: Record<AgentRole, string[]> = {
         "get_current_time",
     ],
     system: [
+        // Element-aware clicking and app control first; coordinates/AppleScript are fallbacks.
+        "os_smart_click",
+        "os_inspect",
+        "app_manager",
+        "open_in_app",
         "shell_exec",
         "apple_script",
         "os_screenshot",

@@ -5,7 +5,61 @@
 import { getConvexSiteUrl } from "../config/keys.js";
 import { encryptedFetch } from "../crypto-transport.js";
 import { getSessionToken } from "../session.js";
+import { getLocation } from "../location/index.js";
 import type { ToolDefinition } from "./get-current-time.js";
+
+// One log line per engine and failure kind — a silent `return []` hid that
+// Tavily/Exa had no API key, so every search quietly ran on Bing scraping.
+const reportedFailures = new Set<string>();
+function engineFailed(engine: string, why: string): void {
+    const key = `${engine}:${why.slice(0, 60)}`;
+    if (reportedFailures.has(key)) return;
+    reportedFailures.add(key);
+    console.warn(`  [web_search] ${engine} unavailable: ${why.slice(0, 200)}`);
+}
+
+/** Where the user is, for local results ("under 5k" means rupees in India). */
+function searchLocale(): { country?: string; city?: string; timezone?: string } {
+    const loc = getLocation();
+    const country = loc?.country && /^[A-Za-z]{2}$/.test(loc.country) ? loc.country.toUpperCase() : undefined;
+    return { country, city: loc?.city, timezone: loc?.timezone };
+}
+
+// ── Claude web search (proxied via Convex; needs no third-party search key) ──
+
+async function searchClaudeLite(query: string): Promise<SearchResult[]> {
+    try {
+        const sessionToken = await getSessionToken();
+        if (!sessionToken) {
+            engineFailed("claude", "no session");
+            return [];
+        }
+        const response = await encryptedFetch(`${getConvexSiteUrl()}/api/search/claude`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${sessionToken}` },
+            body: JSON.stringify({ query, ...searchLocale() }),
+            signal: AbortSignal.timeout(12000), // settles well inside the 20s tool cap, so the other engines' results survive
+        });
+        if (!response.ok) {
+            engineFailed("claude", `HTTP ${response.status} ${(await response.text().catch(() => "")).slice(0, 120)}`);
+            return [];
+        }
+        const data = (await response.json()) as {
+            results?: Array<{ url: string; title: string; snippet?: string; page_age?: string | null }>;
+        };
+        return (data.results || [])
+            .filter((r) => r.url && r.title)
+            .map((r) => ({
+                url: r.url,
+                title: r.title,
+                snippet: (r.snippet || "").substring(0, 300),
+                ...(r.page_age ? { age: r.page_age } : {}),
+            }));
+    } catch (err) {
+        engineFailed("claude", (err as Error).message);
+        return [];
+    }
+}
 
 // ── Web Search Tool ───────────────────────────
 // Lightweight, fetch-only search. NO Playwright, NO headless browser.
@@ -16,6 +70,8 @@ interface SearchResult {
     title: string;
     url: string;
     snippet: string;
+    /** How old the page is, when the engine says (Claude search). */
+    age?: string;
 }
 
 const USER_AGENTS = [
@@ -232,7 +288,10 @@ async function searchTavilyLite(query: string): Promise<SearchResult[]> {
             body: JSON.stringify({ query, search_depth: "basic", max_results: 10 }),
             signal: AbortSignal.timeout(8000),
         });
-        if (!response.ok) return [];
+        if (!response.ok) {
+            engineFailed("tavily", `HTTP ${response.status} ${(await response.text().catch(() => "")).slice(0, 120)}`);
+            return [];
+        }
         const data = (await response.json()) as any;
         return (data.results || [])
             .map((r: any) => ({
@@ -263,7 +322,10 @@ async function searchExaLite(query: string): Promise<SearchResult[]> {
             }),
             signal: AbortSignal.timeout(8000),
         });
-        if (!response.ok) return [];
+        if (!response.ok) {
+            engineFailed("exa", `HTTP ${response.status} ${(await response.text().catch(() => "")).slice(0, 120)}`);
+            return [];
+        }
         const data = (await response.json()) as any;
         return (data.results || [])
             .map((r: any) => ({
@@ -281,7 +343,9 @@ async function searchExaLite(query: string): Promise<SearchResult[]> {
 
 async function searchBingLite(query: string): Promise<SearchResult[]> {
     try {
-        const response = await fetch(`https://www.bing.com/search?q=${encodeURIComponent(query)}&count=10`, {
+        const cc = searchLocale().country;
+        const region = cc ? `&cc=${cc}&mkt=en-${cc}&setlang=en` : "";
+        const response = await fetch(`https://www.bing.com/search?q=${encodeURIComponent(query)}&count=10${region}`, {
             headers: {
                 "User-Agent": randomUA(),
                 Accept: "text/html,application/xhtml+xml",
@@ -305,15 +369,10 @@ async function searchBingLite(query: string): Promise<SearchResult[]> {
             const title = h2LinkM[2].replace(/<[^>]+>/g, "").trim();
             if (title.length < 3) continue;
 
-            // Get real URL from cite tag (Bing uses redirect URLs)
-            let url = h2LinkM[1];
-            const citeM = block.match(/<cite[^>]*>([\s\S]*?)<\/cite>/i);
-            if (citeM) {
-                let citeUrl = citeM[1].replace(/<[^>]+>/g, "").trim();
-                if (!citeUrl.startsWith("http")) citeUrl = "https://" + citeUrl;
-                citeUrl = citeUrl.split(" ")[0].replace(/›/g, "/").replace(/\/+/g, "/").replace(/:\//g, "://");
-                if (citeUrl.startsWith("http")) url = citeUrl;
-            }
+            // The h2 link is a bing.com/ck/a redirect; the real URL is in its `u`
+            // param ("a1" + base64url). The <cite> text is display-only and
+            // often just the domain, so it is not used.
+            const url = decodeBingUrl(h2LinkM[1].replace(/&amp;/g, "&"));
             if (url.includes("bing.com") || seenUrls.has(url)) continue;
             seenUrls.add(url);
 
@@ -332,44 +391,80 @@ async function searchBingLite(query: string): Promise<SearchResult[]> {
     }
 }
 
-// ── Lightweight multi-engine (fetch-only, parallel) ───────────
+/** Real target of a Bing result link (bing.com/ck/a?…&u=a1<base64url>). */
+export function decodeBingUrl(href: string): string {
+    try {
+        const u = new URL(href, "https://www.bing.com");
+        const enc = u.searchParams.get("u");
+        if (u.hostname.endsWith("bing.com") && enc && enc.startsWith("a1")) {
+            const decoded = Buffer.from(enc.slice(2).replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
+            if (/^https?:\/\//.test(decoded)) return decoded;
+        }
+        return href;
+    } catch {
+        return href;
+    }
+}
 
-async function lightweightSearch(query: string): Promise<{ results: SearchResult[]; engine: string }> {
-    // Fire all lightweight engines in parallel
-    const [tavilyResults, exaResults, bingResults, ddgResults, braveResults, googleResults] = await Promise.all([
-        searchTavilyLite(query),
-        searchExaLite(query),
-        searchBingLite(query),
-        searchDDGLite(query),
-        searchBraveLite(query),
-        searchGoogleLite(query),
-    ]);
+// Words that say nothing about WHAT is searched for: "best earphones" matched a
+// dictionary page for "best" when every word counted.
+const STOP = new Set(
+    "a an and are as at be best buy by can cheap cheapest compare find for from get good great how i in is it latest me my near new of on or price rs the to top under vs what where which who why with you your".split(
+        " ",
+    ),
+);
+const terms = (t: string): string[] =>
+    (t.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []).filter((w) => w.length > 1 && !STOP.has(w));
 
-    // Merge and deduplicate, prioritizing AI-optimized engines
-    const seenUrls = new Set<string>();
+/**
+ * Interleave engines (best first) instead of concatenating them, then rank by
+ * how many of the query's meaningful words a result mentions. Results that
+ * mention none are dropped once at least two relevant ones remain.
+ */
+export function mergeAndRank(query: string, lists: SearchResult[][]): SearchResult[] {
+    const seen = new Set<string>();
     const merged: SearchResult[] = [];
-    const enginesUsed: string[] = [];
-
-    const addResults = (results: SearchResult[], engineName: string) => {
-        if (results.length > 0) enginesUsed.push(engineName);
-        for (const r of results) {
-            if (!seenUrls.has(r.url)) {
-                seenUrls.add(r.url);
+    for (let i = 0; lists.some((l) => i < l.length); i++) {
+        for (const l of lists) {
+            const r = l[i];
+            if (r && !seen.has(r.url)) {
+                seen.add(r.url);
                 merged.push(r);
             }
         }
-    };
+    }
+    const q = [...new Set(terms(query))];
+    if (!q.length) return merged;
+    const scored = merged.map((r, i) => {
+        const hay = terms(`${r.title} ${r.snippet} ${r.url}`);
+        const hits = q.filter((t) =>
+            hay.some((h) => h === t || (h.length > 3 && t.length > 3 && (h.startsWith(t) || t.startsWith(h)))),
+        ).length;
+        return { r, i, hits };
+    });
+    const relevant = scored.filter((x) => x.hits > 0);
+    const pool = relevant.length >= 2 ? relevant : scored;
+    return pool.sort((a, b) => b.hits - a.hits || a.i - b.i).map((x) => x.r);
+}
 
-    addResults(tavilyResults, "tavily");
-    addResults(exaResults, "exa");
-    addResults(bingResults, "bing");
-    addResults(ddgResults, "duckduckgo");
-    addResults(braveResults, "brave");
-    addResults(googleResults, "google");
+// ── Lightweight multi-engine (fetch-only, parallel) ───────────
 
+async function lightweightSearch(query: string): Promise<{ results: SearchResult[]; engine: string; empty: string[] }> {
+    const names = ["claude", "tavily", "exa", "brave", "duckduckgo", "google", "bing"];
+    const lists = await Promise.all([
+        searchClaudeLite(query),
+        searchTavilyLite(query),
+        searchExaLite(query),
+        searchBraveLite(query),
+        searchDDGLite(query),
+        searchGoogleLite(query),
+        searchBingLite(query),
+    ]);
+    const used = names.filter((_, i) => lists[i].length > 0);
     return {
-        results: merged,
-        engine: enginesUsed[0] || "none",
+        results: mergeAndRank(query, lists),
+        engine: used.join(",") || "none",
+        empty: names.filter((_, i) => lists[i].length === 0),
     };
 }
 
@@ -398,13 +493,14 @@ export const webSearch: ToolDefinition = {
         const numResults = Math.min((input.num_results as number) || 5, 15);
 
         try {
-            const { results, engine } = await lightweightSearch(query);
+            const { results, engine, empty } = await lightweightSearch(query);
             const capped = results.slice(0, numResults);
 
             return JSON.stringify({
                 success: true,
                 query,
                 engine_used: engine,
+                ...(empty.length ? { engines_without_results: empty } : {}),
                 results: capped,
                 count: capped.length,
             });

@@ -26,6 +26,8 @@ export default defineConfig({
             "src/voice/**/*.test.ts",
             "src/forge/**/*.test.ts",
             "src/screen/**/*.test.ts",
+            "src/research/**/*.test.ts",
+            "src/social/**/*.test.ts",
             "src/diagnostics/**/*.test.ts",
             "src/overlay/**/*.test.ts",
             "src/__tests__/**/*.test.ts",

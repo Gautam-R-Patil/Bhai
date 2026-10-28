@@ -80,6 +80,19 @@ func axString(_ el: AXUIElement, _ attr: String) -> String? {
     return v as? String
 }
 
+/// Empty strings count as missing: a button's title is often "" while its
+/// description carries the real name.
+func ne(_ s: String?) -> String? {
+    guard let s = s?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty else { return nil }
+    return s
+}
+
+// Traffic-light buttons have no title or description, only a subrole.
+let subroleNames: [String: String] = [
+    "AXCloseButton": "Close", "AXMinimizeButton": "Minimize",
+    "AXZoomButton": "Zoom", "AXFullScreenButton": "Full Screen",
+]
+
 func axBool(_ el: AXUIElement, _ attr: String) -> Bool {
     var v: CFTypeRef?
     if AXUIElementCopyAttributeValue(el, attr as CFString, &v) == .success, let b = v as? Bool { return b }
@@ -148,8 +161,8 @@ func walk(_ el: AXUIElement, depth: Int) -> AXNode {
     let subrole = axString(el, kAXSubroleAttribute)
 
     // Try multiple label fields in priority order; AXValue can be a string or a number.
-    var label = axString(el, kAXTitleAttribute) ?? axString(el, kAXDescriptionAttribute)
-    if label == nil { label = axString(el, kAXHelpAttribute) }
+    let label = ne(axString(el, kAXTitleAttribute)) ?? ne(axString(el, kAXDescriptionAttribute))
+        ?? subrole.flatMap { subroleNames[$0] } ?? ne(axString(el, kAXHelpAttribute))
 
     // SECURITY: never expose password-field contents. macOS marks them with subrole AXSecureTextField.
     let isSecure = (subrole == "AXSecureTextField")
@@ -190,6 +203,10 @@ func walk(_ el: AXUIElement, depth: Int) -> AXNode {
 // ── Dump ──────────────────────────────────────────
 
 let app = AXUIElementCreateApplication(pid)
+// Electron apps (Slack, VS Code, Discord…) only build their tree for assistive
+// tech that asks; other apps ignore the attribute. A cold tree fills in shortly
+// after, which the caller's one-shot re-dump picks up.
+AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
 let root = walk(app, depth: 0)
 
 struct Output: Encodable {

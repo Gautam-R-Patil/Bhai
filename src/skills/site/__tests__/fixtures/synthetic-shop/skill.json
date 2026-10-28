@@ -1,0 +1,23 @@
+{
+    "name": "synthetic-shop",
+    "version": 1,
+    "domains": [
+        "shop.test"
+    ],
+    "commits": [
+        {
+            "op": "click",
+            "target": {
+                "sel": "#checkout",
+                "text": "Place order"
+            }
+        }
+    ],
+    "questions": [
+        {
+            "id": "otp",
+            "kind": "otp",
+            "prompt": "Enter the code the shop sent to your phone"
+        }
+    ]
+}

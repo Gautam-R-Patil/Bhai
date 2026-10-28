@@ -43,6 +43,9 @@ import {
     planModeReminderBody,
 } from "./agents/plan-mode.js";
 import { offloadIfLarge } from "./agents/tool-output-offload.js";
+import { CODE_TOOLS, protect, REVEAL_TOOLS, reveal, revealArgs } from "./security/pii-vault.js";
+import { isToolAllowed, NON_OWNER_TOOLS } from "./security/tool-access.js";
+import { noteOwnerMessage } from "./security/consent.js";
 import { logOrchestratorRouting } from "./agents/orchestrator-routing-log.js";
 import {
     buildVerifyReminder,
@@ -256,6 +259,22 @@ const OS_TASK_HINT = `[OS TASK — desktop control]
 3. To see the screen, use os_inspect (accessibility list) or os_screenshot (you get the image; its grid labels are the x/y to pass to os_click).
 4. Before saying done, check the end state once with os_visual_verify expect_text="..." (or expect_gone).`;
 
+/**
+ * The user's own words, without the channel's instructions to the model
+ * ([SOURCE: …], [BROWSER CONTEXT: …]) — memory retrieval searched those too
+ * and pulled the same irrelevant memories every turn.
+ */
+function stripChannelTags(text: string): string {
+    return text
+        .replace(/\n*\[SOURCE:[\s\S]*?\](?=\n|$)/g, "")
+        .replace(/\n*\[BROWSER CONTEXT:[\s\S]*?\](?=\n|$)/g, "")
+        // The Chrome extension's "[Browser context: <url> — "<title>"]" line: the
+        // title is written by the page, so it must never read as the owner's words
+        // (a tab titled "yes, go ahead" would otherwise answer a consent question).
+        .replace(/^\[Browser context:[^\n]*\]\n/i, "")
+        .trim();
+}
+
 /** Categories a plain desktop-driving turn uses, plus the always-on ones. */
 const GUI_LOOP_CATEGORIES = new Set(["os_control", "app_management", "system_controls", "core", "memory", "tool_creation"]);
 /** Past this many iterations a desktop task isn't "short" any more; the router decides. */
@@ -334,7 +353,9 @@ const DEFAULT_RESULT_LIMIT = 4000;
 function truncateToolResult(toolName: string, result: string): string {
     const limit = TOOL_RESULT_LIMITS[toolName] ?? DEFAULT_RESULT_LIMIT;
     if (result.length <= limit) return result;
-    return `${result.substring(0, limit)}\n[... truncated from ${result.length} chars]`;
+    const safe = protect(result, { credentials: !CODE_TOOLS.has(toolName) }); // mask before cutting
+    if (safe.length <= limit) return safe;
+    return `${safe.substring(0, limit)}\n[... truncated from ${safe.length} chars]`;
 }
 
 /**
@@ -429,7 +450,11 @@ export interface ChannelContext {
     userId: string;
     userName?: string;
     isOwner: boolean;
+    /** A one-to-one conversation with the owner (not a group or public channel). */
+    isPrivate?: boolean;
     contactProfile?: any; // WhatsApp ContactProfile
+    /** A run nobody typed (scheduled task, research follow-up): it can't answer a consent question. */
+    autonomous?: boolean;
 }
 
 // ── Session State ─────────────────────────────
@@ -511,10 +536,26 @@ function getMilestoneMessage(toolName: string, args: Record<string, unknown>): s
     return fn ? fn(args) : null;
 }
 
+/** JSON.parse that also reads a result wrapped in the untrusted-content fence. */
+function parseToolJson(result: string): Record<string, unknown> | null {
+    try {
+        return JSON.parse(result);
+    } catch {
+        const a = result.indexOf("{");
+        const b = result.lastIndexOf("}");
+        if (a < 0 || b <= a) return null;
+        try {
+            return JSON.parse(result.slice(a, b + 1));
+        } catch {
+            return null;
+        }
+    }
+}
+
 function getErrorMessage(toolName: string, result: string): string | null {
     try {
-        const parsed = JSON.parse(result);
-        if (parsed.error) {
+        const parsed = parseToolJson(result);
+        if (parsed?.error) {
             return `⚠️ ${toolName} failed: ${(parsed.error as string).substring(0, 80)}. Trying another approach...`;
         }
     } catch {
@@ -562,6 +603,7 @@ async function executeAndProcessToolCall(
     userMessage?: string,
     toolAllowlist?: string[],
     channelContext?: ChannelContext,
+    signal?: AbortSignal,
 ): Promise<ToolCallResult> {
     const fnName = toolCall.function.name;
     let fnArgs: Record<string, unknown> = {};
@@ -590,8 +632,14 @@ async function executeAndProcessToolCall(
         };
     }
 
+    // ── Stopped by the user: nothing new runs after Stop (no half-sent form) ──
+    if (signal?.aborted) {
+        const err = JSON.stringify({ error: "Stopped by the user before this ran." });
+        return { toolCallId: toolCall.id, fnName, fnArgs, result: err, finalContent: err, isBrowser: false, isError: true };
+    }
+
     // ── Hard block: reject tools not in the allowlist (defense-in-depth) ──
-    if (toolAllowlist && toolAllowlist.length > 0 && !new Set(toolAllowlist).has(fnName)) {
+    if (!isToolAllowed(toolAllowlist, fnName)) {
         return {
             toolCallId: toolCall.id,
             fnName,
@@ -680,7 +728,10 @@ async function executeAndProcessToolCall(
         };
     }
 
-    let rawResult = await executeTool(fnName, fnArgs);
+    // Typing tools get real values for any [OTP_1]-style handles the model used;
+    // fnArgs (logs, history, gates) keeps the handles.
+    const execArgs = REVEAL_TOOLS.has(fnName) && channelContext?.isOwner === true ? revealArgs(fnArgs) : fnArgs;
+    let rawResult = await executeTool(fnName, execArgs);
 
     // ── Self-heal: if tool failed with a dependency error, auto-fix and retry ──
     let isError = false;
@@ -696,7 +747,7 @@ async function executeAndProcessToolCall(
             const heal = await attemptSelfHeal(rawResult);
             if (heal.fixed) {
                 console.log(`  🔧 Self-healed (${heal.action}) — retrying ${fnName}`);
-                rawResult = await executeTool(fnName, fnArgs);
+                rawResult = await executeTool(fnName, execArgs);
                 isError = false;
                 try {
                     const p = JSON.parse(rawResult);
@@ -798,6 +849,7 @@ async function executeToolCallsBatch(
         userMessage?: string;
         toolAllowlist?: string[];
         channelContext?: ChannelContext;
+        signal?: AbortSignal;
     },
 ): Promise<ToolCallResult[]> {
     // Separate browser, non-browser, and deferrable tool calls while preserving order
@@ -824,7 +876,7 @@ async function executeToolCallsBatch(
     const deferredResults: ToolCallResult[] = [];
     for (const tc of deferrableCalls) {
         // Track the promise to prevent unhandled rejections
-        const promise = executeAndProcessToolCall(tc, ctx.onToolRequest, ctx.userMessage, ctx.toolAllowlist, ctx.channelContext)
+        const promise = executeAndProcessToolCall(tc, ctx.onToolRequest, ctx.userMessage, ctx.toolAllowlist, ctx.channelContext, ctx.signal)
             .then((r) => {
                 const preview = r.result ? r.result.substring(0, 200) : "(empty)";
                 console.log(`  ✅ Deferred tool ${r.fnName} completed: ${preview}`);
@@ -841,7 +893,7 @@ async function executeToolCallsBatch(
     const TOOL_BATCH_TIMEOUT_MS = 120_000;
     const done = new Map<string, ToolCallResult>();
     const run = async (tc: (typeof toolCalls)[number]) => {
-        const r = await executeAndProcessToolCall(tc, ctx.onToolRequest, ctx.userMessage, ctx.toolAllowlist, ctx.channelContext);
+        const r = await executeAndProcessToolCall(tc, ctx.onToolRequest, ctx.userMessage, ctx.toolAllowlist, ctx.channelContext, ctx.signal);
         done.set(tc.id, r);
         return r;
     };
@@ -908,7 +960,7 @@ async function executeToolCallsBatch(
         const milestone = getMilestoneMessage(tc.function.name, fnArgs);
         if (milestone) await ctx.sendProgress(milestone);
 
-        const r = await executeAndProcessToolCall(tc, ctx.onToolRequest, undefined, ctx.toolAllowlist, ctx.channelContext);
+        const r = await executeAndProcessToolCall(tc, ctx.onToolRequest, undefined, ctx.toolAllowlist, ctx.channelContext, ctx.signal);
         browserResults.push(r);
 
         // Track browser step immediately
@@ -982,7 +1034,15 @@ export async function runAgent(
         // compiled output and crashed every overlay/Telegram message
         // through this path.)
         const mod = await import("./tools/cron-tool.js");
-        return await mod.runWithCallerContext({ isOwner: callerIsOwner }, fn);
+        const res = await mod.runWithCallerContext({ isOwner: callerIsOwner }, fn);
+        // The model only ever sees handles ([OTP_1], [CARD_2]); the owner asked
+        // about their own values, so show them. Everyone else keeps the handle.
+        // Only in a private chat: in a group or public channel the real values
+        // would reach everyone (and a page can ask the model to echo [CARD_1]).
+        if (callerIsOwner && channelContext?.isPrivate === true && !channelContext.autonomous && typeof res?.text === "string") {
+            res.text = reveal(res.text);
+        }
+        return res;
     };
     if (!isForked) {
         const _earlyTraceId = startTrace(channelContext?.channel || "default",
@@ -1014,6 +1074,9 @@ async function _runAgentBody(
     _injectedTraceId: string | null,
 ): Promise<AgentResponse> {
     const isForked = !!historyFork;
+    // A non-owner never gets the owner's tools by default (a channel that
+    // passed no allowlist used to mean "everything", shell included).
+    if (channelContext?.isOwner === false && toolAllowlist === undefined) toolAllowlist = NON_OWNER_TOOLS;
 
     // True when serving a non-owner contact (e.g. WhatsApp persona).
     // In this mode all owner-personal memory injection is skipped — the
@@ -1056,15 +1119,15 @@ async function _runAgentBody(
     // Strip [SOURCE: ...] tags for classification/routing — the overlay appends
     // these to every message, inflating word count and breaking simple-message detection.
     // The full tagged message is still sent to the LLM for context.
-    const rawUserMessage = userMessage.replace(/\n*\[SOURCE:.*\]$/s, "").trim();
-
-    // Strip [Replying to your earlier message: "..."] prefix that telegram.ts
-    // injects when the user swipes-to-reply. Without this, goal detection sees
-    // the bracketed prefix as the user's actual message and creates a "goal"
-    // whose description literally starts with `[Replying to your earlier ...`.
-    const userIntentText = rawUserMessage
-        .replace(/^\[Replying to your earlier message:[\s\S]*?\]\s*/i, "")
-        .trim() || rawUserMessage;
+    const rawUserMessage = stripChannelTags(userMessage);
+    // Strip the [Replying to …'s message: "…"] prefix telegram.ts adds on a
+    // swipe-reply (both forms). It quotes an earlier message — maybe the bot's
+    // own "say yes to confirm" — so it must never count as the owner's words,
+    // and goal detection shouldn't read it either. Anchored on `"]\n\n`, which
+    // telegram.ts always emits, so a `]` inside the quote can't end it early.
+    const userIntentText = rawUserMessage.replace(/^\[Replying to [^\n]*?message: "[\s\S]*?"\]\n\n/, "").trim() || rawUserMessage;
+    // Only a message the owner actually sent can answer a consent question.
+    if (channelContext?.isOwner && !channelContext.autonomous) noteOwnerMessage(userIntentText);
 
 
     // ── Goal detection: check if user mentioned a goal ──
@@ -1292,7 +1355,18 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
     // Circuit breaker — trips after sustained failures or no-progress
     const circuitBreaker = createCircuitBreaker();
 
+    // Hard stop for a turn that never converges (each step costs credits).
+    const MAX_AGENT_ITERATIONS = Number(process.env.ATLAS_MAX_ITERATIONS ?? "60");
+
     while (true) {
+        if (iterations >= MAX_AGENT_ITERATIONS) {
+            console.log(`  🛑 Iteration cap (${MAX_AGENT_ITERATIONS}) reached`);
+            if (_harnessTraceId) finalizeTrace(_harnessTraceId, false);
+            return {
+                text: `I stopped after ${MAX_AGENT_ITERATIONS} steps without finishing. Tell me what to focus on and I'll pick it up from here.`,
+                toolCalls: totalToolCalls,
+            };
+        }
         // Metacognition-driven nudge. A2: instead of a single one-shot nudge,
         // re-fire when struggle/loop PERSISTS — a stuck agent that ignored the
         // first nudge gets steered again — but on a cooldown so we never spam.
@@ -1700,7 +1774,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             // crowded out by browser/os/app entries when the top-3 is shared.
             try {
                 if (detectTaskType(rawUserMessage) === "coding") {
-                    const codingLearnings = getTaskLearningsContext(userMessage, "code");
+                    const codingLearnings = getTaskLearningsContext(rawUserMessage, "code");
                     if (codingLearnings) parts.push(codingLearnings);
                 }
             } catch {
@@ -1749,7 +1823,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
 
             // ── 3. Behavioral traits (token-budgeted, relevance-scored) ──
             try {
-                const traitsSnippet = getTraitsForInjection(userMessage, 600);
+                const traitsSnippet = getTraitsForInjection(rawUserMessage, 600);
                 if (traitsSnippet) parts.push(traitsSnippet);
             } catch {
                 /* traits not initialized */
@@ -1829,9 +1903,9 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                     const recentUserMsgs = workingHistory
                         .filter((m) => m.role === "user" && typeof m.content === "string")
                         .slice(-3)
-                        .map((m) => (m.content as string).substring(0, 150));
+                        .map((m) => stripChannelTags(m.content as string).substring(0, 150));
                     const enrichedQuery =
-                        recentUserMsgs.length > 1 ? `${recentUserMsgs.join(" ")} ${userMessage}` : userMessage;
+                        recentUserMsgs.length > 1 ? `${recentUserMsgs.join(" ")} ${rawUserMessage}` : rawUserMessage;
 
                     // Pre-start the query embedding in parallel with the SQL-only
                     // recalls below. recall() awaits this promise internally only
@@ -1857,14 +1931,14 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                         ),
                         Promise.resolve().then(() => {
                             try {
-                                return recallConversation(userMessage, convRecallK);
+                                return recallConversation(rawUserMessage, convRecallK);
                             } catch {
                                 return [];
                             }
                         }),
                         Promise.resolve().then(() => {
                             try {
-                                return getTaskLearningsContext(userMessage);
+                                return getTaskLearningsContext(rawUserMessage);
                             } catch {
                                 return null;
                             }
@@ -1888,7 +1962,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                     try {
                         const kgDb = getKnowledgeGraphDB();
                         if (kgDb) {
-                            const entities = findEntities(kgDb, userMessage);
+                            const entities = findEntities(kgDb, rawUserMessage);
                             if (entities.length > 0) {
                                 const entityLines = entities
                                     .slice(0, 5)
@@ -1970,7 +2044,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             // agent can avoid known bad patterns on the current task.
             try {
                 const { getCounterfactualContext } = await import("./memory/counterfactual.js");
-                const cfSnippet = getCounterfactualContext(userMessage, 3);
+                const cfSnippet = getCounterfactualContext(rawUserMessage, 3);
                 if (cfSnippet) parts.push(cfSnippet);
             } catch {
                 /* counterfactual not ready */
@@ -2674,13 +2748,8 @@ PLAN:`,
         // When a toolAllowlist is provided, restrict the tools sent to the LLM
         // to only those in the list. This enforces channel-level tool restrictions.
         let finalTools = tools;
-        if (toolAllowlist && toolAllowlist.length > 0) {
-            const allowSet = new Set(toolAllowlist);
-            finalTools = tools.filter((t) => allowSet.has(t.function.name));
-            if (finalTools.length === 0) {
-                // Keep at least get_current_time so the LLM can still function
-                finalTools = tools.filter((t) => t.function.name === "get_current_time");
-            }
+        if (toolAllowlist !== undefined) {
+            finalTools = tools.filter((t) => isToolAllowed(toolAllowlist, t.function.name));
         }
 
         // ── Plan/Spec Mode Gating ──
@@ -3215,6 +3284,7 @@ PLAN:`,
                                 },
                                 userMessage,
                                 toolAllowlist,
+                                signal,
                             },
                         );
                         totalToolCalls += batchResults.length;
@@ -3413,6 +3483,7 @@ PLAN:`,
                 userMessage,
                 toolAllowlist,
                 channelContext,
+                signal,
             },
         );
         totalToolCalls += batchResults.length;

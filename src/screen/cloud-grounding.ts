@@ -11,8 +11,9 @@
  * path for Lite/Standard tiers (no local UI-TARS) and the self-heal path for a
  * degraded Full tier (Full hardware but UI-TARS model not pulled).
  *
- * Model: Sonnet (the Convex proxy maps every id onto Claude, so a second
- * "fallback" model would just re-hit the same one). The screenshot is
+ * Model: Haiku by default (a quarter of Sonnet's price, and faster). The
+ * caller re-grounds with Sonnet once when a Haiku click verifies as a miss
+ * (os-smart-click.ts self-correction). The screenshot is
  * downscaled to ≤1568px longest side BEFORE sending so Claude does not resize
  * it again server-side; returned coords are in the SENT image's pixel space and
  * we report those dims as imageWidth/Height for toScreenCoords. Only invoked
@@ -32,7 +33,7 @@ const MAX_IMAGE_BYTES = 40 * 1024 * 1024;
 /** Claude's per-image limit (~5MB base64). */
 const MAX_SENT_BASE64_BYTES = 5 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 30_000;
-const GROUNDING_MODEL = MODELS.SONNET;
+const GROUNDING_MODEL = MODELS.HAIKU;
 const GROUNDING_SYSTEM_PROMPT =
     "You are a GUI grounding model. Given a screenshot and a target UI element, output ONLY a JSON object with the pixel coordinate to click. No prose.";
 
@@ -82,7 +83,7 @@ function errorResult(model: string, start: number, message: string): CloudGround
 export async function cloudGroundClick(
     screenshotPath: string,
     instruction: string,
-    opts: { llm: LLMClient; timeoutMs?: number },
+    opts: { llm: LLMClient; timeoutMs?: number; model?: string },
 ): Promise<CloudGroundingResult> {
     const start = Date.now();
     if (process.env.ATLAS_NO_CLOUD_GROUNDING === "true") {
@@ -130,13 +131,14 @@ Coordinates are in the screenshot's own pixel space (top-left origin).`;
     ];
 
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const model = opts.model ?? GROUNDING_MODEL;
     let timer: NodeJS.Timeout | undefined;
     try {
         const resp = await Promise.race([
             opts.llm.chat({
                 messages,
                 systemPrompt: GROUNDING_SYSTEM_PROMPT,
-                modelOverride: GROUNDING_MODEL,
+                modelOverride: model,
                 thinkingLevel: "low",
                 responseFormat: "json_object",
             }),
@@ -147,11 +149,11 @@ Coordinates are in the screenshot's own pixel space (top-left origin).`;
         const text = resp.choices?.[0]?.message?.content ?? "";
         const parsed = parseGroundingResponse(typeof text === "string" ? text : "");
         if (parsed) {
-            return { ...parsed, elapsedMs: Date.now() - start, model: GROUNDING_MODEL, imageWidth, imageHeight };
+            return { ...parsed, elapsedMs: Date.now() - start, model: model, imageWidth, imageHeight };
         }
-        return errorResult(GROUNDING_MODEL, start, "unparseable");
+        return errorResult(model, start, "unparseable");
     } catch (err) {
-        return errorResult(GROUNDING_MODEL, start, (err as Error).message);
+        return errorResult(model, start, (err as Error).message);
     } finally {
         clearTimeout(timer);
     }

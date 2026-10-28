@@ -1365,7 +1365,7 @@ async function handleOwnerMessage(
             historyFork.length > 0 ? historyFork : undefined,
             undefined,
             undefined,
-            { channel: "whatsapp", userId: jid, userName: pushName || undefined, isOwner: true },
+            { channel: "whatsapp", userId: jid, userName: pushName || undefined, isOwner: true, isPrivate: !jid.endsWith("@g.us") },
         );
 
         if (progressTimer) clearTimeout(progressTimer);

@@ -3,6 +3,7 @@
 // See LICENSE.md for details.
 
 import type { Channel, ProactiveMode } from "./intent.js";
+import { getToneReminder } from "../setup/personality-sync.js";
 import { getChannelSender } from "../tools/channel-send.js";
 import { isProactiveDisabled, isChannelDisabled, isShadowMode, debugProactive } from "./kill-switches.js";
 
@@ -65,9 +66,9 @@ export async function dispatchProactiveMessage(
     if (!sender) {
         throw new Error(`no sender registered for channel: ${channel}`);
     }
-    const prefixed = PREFIXED_CHANNELS.includes(channel)
-        ? `${EMOJI[mode]} ${text}`
-        : text;
+    // Professional and Direct presets say "no emoji"; the prefix is one too.
+    const plain = /PROFESSIONAL|DIRECT/.test(getToneReminder() ?? "");
+    const prefixed = PREFIXED_CHANNELS.includes(channel) && !plain ? `${EMOJI[mode]} ${text}` : text;
     if (isShadowMode()) {
         debugProactive("shadow_dispatch", { channel, mode, preview: prefixed.slice(0, 80) });
         return;

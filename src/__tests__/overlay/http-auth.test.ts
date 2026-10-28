@@ -10,11 +10,14 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import WebSocket from "ws";
+import http from "node:http";
 
 const runAgentSpy = vi.fn(async () => ({ text: "stubbed", toolCalls: 0 }));
 vi.mock("../../agent.js", () => ({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     runAgent: (...args: any[]) => runAgentSpy(...(args as [])),
+    getConversationHistory: () => [],
+    setConversationHistory: () => {},
 }));
 vi.mock("../../notifications/push.js", () => ({
     initPushNotifications: vi.fn(),
@@ -22,7 +25,7 @@ vi.mock("../../notifications/push.js", () => ({
     registerSubscription: vi.fn(),
 }));
 
-const PORT = 18792;
+const PORT = 28792; // not 18792: a running Bhai holds that one
 const BASE = `http://127.0.0.1:${PORT}`;
 const VALID_TOKEN = "T".repeat(48);
 
@@ -38,6 +41,7 @@ beforeAll(async () => {
     process.env.ATLAS_WORKSPACE = workspaceDir;
     process.env.WIDGET_TOKEN = VALID_TOKEN;
     process.env.HOME = scratch;
+    process.env.ATLAS_OVERLAY_PORT = String(PORT);
 
     writeFileSync(join(workspaceDir, "foo.txt"), "hello");
     writeFileSync(join(workspaceDir, ".env"), "SECRET=1");
@@ -209,6 +213,31 @@ describe("F3: WS owner-distinguishing", () => {
         expect(channelCtx.isOwner).toBe(true);
     });
 
+    it("Stop aborts the running turn and answers within 2s", async () => {
+        let seenSignal: AbortSignal | undefined;
+        runAgentSpy.mockImplementationOnce(((...args: unknown[]) => {
+            seenSignal = args[4] as AbortSignal;
+            // A long turn that only ends when aborted.
+            return new Promise((resolve) =>
+                seenSignal?.addEventListener("abort", () => resolve({ text: "✅ Task stopped.", toolCalls: 0 })),
+            );
+        }) as never);
+        const ws = await connectWS(`localToken=${localToken}`);
+        const replies: Array<{ type: string; text?: string }> = [];
+        ws.on("message", (d) => replies.push(JSON.parse(d.toString())));
+        await sendChat(ws, "do something long");
+        expect(seenSignal?.aborted).toBe(false);
+
+        const t0 = Date.now();
+        ws.send(JSON.stringify({ type: "stop" }));
+        await new Promise((r) => setTimeout(r, 300));
+        ws.close();
+        expect(seenSignal?.aborted).toBe(true);
+        expect(Date.now() - t0).toBeLessThan(2000);
+        const responses = replies.filter((m) => m.type === "response");
+        expect(responses.map((m) => m.text)).toEqual(["Stopped."]); // no second, late reply
+    });
+
     it("rejects WS connection with no credentials", async () => {
         await expect(connectWS("")).rejects.toBeTruthy();
     });
@@ -221,3 +250,30 @@ describe("F3: WS owner-distinguishing", () => {
         await expect(connectWS("localToken=wrong")).rejects.toBeTruthy();
     });
 });
+
+describe("DNS-rebinding guard", () => {
+    const get = (host: string) =>
+        new Promise<number>((resolve, reject) => {
+            const req = http.request({ host: "127.0.0.1", port: PORT, path: "/", headers: { host } }, (res) => {
+                res.resume();
+                resolve(res.statusCode ?? 0);
+            });
+            req.on("error", reject);
+            req.end();
+        });
+
+    it("refuses a request addressed to another hostname (421)", async () => {
+        expect(await get(`evil.example:${PORT}`)).toBe(421);
+        expect(await get(`127.0.0.1:${PORT}`)).toBe(200);
+    });
+
+    it("closes an owner socket opened from a foreign web page, even with the token", async () => {
+        const ws = new WebSocket(`ws://127.0.0.1:${PORT}/?localToken=${localToken}`, { origin: "https://evil.example" });
+        const code = await new Promise<number>((resolve) => {
+            ws.on("close", (c) => resolve(c));
+            setTimeout(() => resolve(0), 3000);
+        });
+        expect(code).toBe(4003);
+    });
+});
+

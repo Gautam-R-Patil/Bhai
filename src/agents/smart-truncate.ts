@@ -6,6 +6,8 @@
 // Tool-specific truncation strategies that preserve the most valuable
 // parts of tool output rather than blindly cutting at a char limit.
 
+import { CODE_TOOLS, protect } from "../security/pii-vault.js";
+
 const DEFAULT_MAX_CHARS = 4000;
 
 // ── Tool Category Detection ──────────────────
@@ -189,7 +191,11 @@ function truncateDefault(output: string, maxChars: number): string {
  * Smart-truncate tool output based on the tool name.
  * Uses tool-specific strategies to preserve the most valuable parts.
  */
-export function smartTruncate(toolName: string, output: string, maxChars = DEFAULT_MAX_CHARS): string {
+export function smartTruncate(toolName: string, raw: string, maxChars = DEFAULT_MAX_CHARS): string {
+    if (raw.length <= maxChars) return raw;
+    // Mask before cutting: a cut through "Authorization: Bearer abc…" leaves a
+    // fragment no pattern recognises (Pomerado's redact-then-cut rule).
+    const output = protect(raw, { credentials: !CODE_TOOLS.has(toolName) });
     if (output.length <= maxChars) return output;
 
     const strategy = TOOL_STRATEGIES[toolName] || "default";

@@ -580,7 +580,7 @@
     }
 
     /* ── Mic Button ── */
-    #mic-btn {
+    #mic-btn, #stop-btn {
       appearance: none;
       border: none;
       background: transparent;
@@ -600,7 +600,9 @@
       z-index: 1;
     }
 
-    #mic-btn:hover {
+    #stop-btn[hidden] { display: none; }
+
+    #mic-btn:hover, #stop-btn:hover {
       color: var(--text-primary);
       background: var(--bg-card);
     }
@@ -2740,6 +2742,9 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
             <line x1="8" y1="23" x2="16" y2="23" />
           </svg>
         </button>
+        <button id="stop-btn" type="button" title="Stop (Esc)" aria-label="Stop the current task" hidden>
+          <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2.5" fill="currentColor" /></svg>
+        </button>
         <button id="live-btn" title="Start live voice conversation" aria-label="Start live voice conversation" aria-pressed="false" tabindex="0">LIVE</button>
       </div>
       <!-- @ Mention Picker extracted from input-box so it's not clipped by overflow:hidden -->
@@ -2861,7 +2866,19 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
       }
 
       // ── ARIA Busy State ──
+      const stopBtn = document.getElementById('stop-btn');
+      function stopTask() {
+        if (!waiting || !ws || ws.readyState !== 1) return;
+        ws.send(JSON.stringify({ type: 'stop', chat: chatId }));
+        progress.textContent = 'Stopping…';
+      }
+      stopBtn.addEventListener('click', stopTask);
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && waiting) { e.preventDefault(); stopTask(); }
+      });
+
       function setAgentBusy(busy) {
+        stopBtn.hidden = !busy;
         replyBox.setAttribute('aria-busy', busy ? 'true' : 'false');
         if (busy) announceToSR('Bhai is processing your request');
       }
@@ -3165,6 +3182,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           progress.classList.remove('visible');
           progress.innerHTML = '';
 
+          if (msg.newChat) chatId = newChatId(); // "/new": later messages file under a fresh chat
           const rawText = msg.text || '(no response)';
           console.log('[OVERLAY] Response text length:', rawText.length, 'preview:', rawText.substring(0, 100));
           const renderedText = msg.type === 'error' ? `⚠️ ${esc(rawText)}` : renderMd(rawText);
@@ -3411,7 +3429,8 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
 
 
 
-      function esc(t) { return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+      // Quotes too: model text ends up inside attributes (link hrefs).
+      function esc(t) { return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
 
       function renderMd(text) {
         let h = esc(text);
@@ -3442,7 +3461,8 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         h = h.replace(/`([^`\n]+)`/g, '<code>$1</code>');
         h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
         h = h.replace(/(?<!\w)\*([^*\n]+?)\*(?!\w)/g, '<em>$1</em>');
-        h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" style="color:#818cf8">$1</a>');
+        // Only http(s) links — never javascript: or other schemes.
+        h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, label, url) => /^https?:\/\//i.test(url) ? `<a href="${url}" target="_blank" rel="noopener noreferrer" style="color:#818cf8">${label}</a>` : label);
         h = h.replace(/^[\s]*[*\-]\s+/gm, '• ');
         h = h.replace(/\n/g, '<br>');
         return h;

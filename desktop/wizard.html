@@ -26,10 +26,10 @@
                 <path d="M11 5L6 9H2v6h4l5 4z"/><path d="M19.07 4.93a10 10 0 010 14.14"/><path d="M15.54 8.46a5 5 0 010 7.07"/>
             </svg>
         </button>
-        <button class="chrome-btn" title="Minimize" onclick="atlas.minimize()">
+        <button class="chrome-btn" title="Minimize" data-window-action="minimize" aria-label="Minimize">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
         </button>
-        <button class="chrome-btn" title="Close" onclick="atlas.close()">
+        <button class="chrome-btn" title="Close" data-window-action="close" aria-label="Close">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
     </div>
@@ -69,5 +69,6 @@
 <script src="wizard/copy.js"></script>
 <script src="wizard/audio.js"></script>
 <script src="wizard/boot.js"></script>
+<script src="components/window-chrome.js"></script>
 </body>
 </html>

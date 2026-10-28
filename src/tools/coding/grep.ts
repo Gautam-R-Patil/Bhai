@@ -9,6 +9,25 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { getPathBlockedReason, isPathAllowed } from "../../security/allowlist.js";
+import { sanitizeSecrets } from "../../security/secrets-sanitizer.js";
+import { isSensitivePath } from "../../security/sensitive-paths.js";
+
+// Same files read refuses, skipped when grep walks a directory.
+const SENSITIVE_GLOBS = [
+    "!.env",
+    "!.env.*",
+    "!*.env",
+    "!*.pem",
+    "!*private*key*",
+    "!.ssh",
+    "!.aws",
+    "!.gnupg",
+    "!.netrc",
+    "!.npmrc",
+    "!.git-credentials",
+    "!*_history",
+    "!.atlas",
+];
 import type { ToolDefinition } from "../get-current-time.js";
 
 const DEFAULT_HEAD_LIMIT = 250;
@@ -95,6 +114,10 @@ export const grep: ToolDefinition = {
             const reason = getPathBlockedReason(searchPath) ?? `Path "${searchPath}" is not allowed.`;
             return JSON.stringify({ error: reason });
         }
+        const sensitive = isSensitivePath(searchPath);
+        if (sensitive.denied) {
+            return JSON.stringify({ error: `Refusing to search a sensitive path. ${sensitive.reason ?? ""}` });
+        }
 
         const mode = (input.output_mode as string) || "files_with_matches";
         const headLimit = Math.max(1, Math.floor(Number(input.head_limit) || DEFAULT_HEAD_LIMIT));
@@ -112,6 +135,8 @@ export const grep: ToolDefinition = {
         if (input["-i"] === true) args.push("-i");
         if (input.multiline === true) args.push("--multiline", "--multiline-dotall");
         if (input.glob) args.push("--glob", String(input.glob));
+        // After the caller's glob: ripgrep lets the last matching glob win.
+        args.push(...SENSITIVE_GLOBS.flatMap((g) => ["--glob", g]));
         if (input.type) args.push("--type", String(input.type));
 
         if (mode === "files_with_matches") {
@@ -131,7 +156,9 @@ export const grep: ToolDefinition = {
 
         args.push(pattern, searchPath);
 
-        const { code, stdout, stderr } = await runCommand("rg", args);
+        const run = await runCommand("rg", args);
+        const { code, stderr } = run;
+        const stdout = sanitizeSecrets(run.stdout).sanitized; // a key inside an ordinary file
 
         // rg exits 1 when no matches — that's not an error from the user's POV
         if (code !== 0 && code !== 1) {

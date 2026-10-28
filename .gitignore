@@ -82,6 +82,32 @@ desktop/hostinger-upload/
 # Individual test files that should ship with the repo go here so
 # they survive the broad ignore. Add a new entry when you commit a
 # test you want to keep.
+# Session 2026-10-28: security, consent, Site Skills, computer use, proactive, memory
+!src/security/loopback.test.ts
+!src/security/tool-access.test.ts
+!src/security/consent.test.ts
+!src/security/pii-redactor.test.ts
+!src/security/pii-vault.test.ts
+!src/security/credential-mask.test.ts
+!src/tools/create-tool-sandbox.test.ts
+!src/tools/web-search-rank.test.ts
+!src/tools/site-task-consent.test.ts
+!src/tools/site-task-restore.test.ts
+!src/tools/browser/page-callbacks.test.ts
+!src/tools/browser/bridge-ready.test.ts
+!src/tools/browser/popup-guard.test.ts
+!src/memory/self-evolving-safety.test.ts
+!src/memory/task-learnings-relevance.test.ts
+!src/memory/traits-correction.test.ts
+!src/overlay/inline-scripts.test.ts
+!src/research/fetcher-links.test.ts
+!src/social/emotion-detector.test.ts
+!src/proactive/proactive-reward.test.ts
+!src/tools/__tests__/
+!src/tools/__tests__/mac-typing.test.ts
+!src/tools/__tests__/os-smart-click.test.ts
+!src/skills/site/__tests__/
+!src/skills/site/__tests__/**
 !src/memory/embedding-cache.test.ts
 !src/memory/resolve-embedding.test.ts
 !src/memory/reflection-cache.test.ts
