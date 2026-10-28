@@ -7,7 +7,7 @@
 
 import { getResourceLimits } from "../../utils/system-resources.js";
 import type { ToolDefinition } from "../get-current-time.js";
-import { agentCursor } from "./agent-cursor.js";
+import { agentCursor, withAgentUIHidden } from "./agent-cursor.js";
 import {
     buildElementsText,
     getActivePage,
@@ -408,11 +408,9 @@ export const browserParallelActions: ToolDefinition = {
                         case "screenshot_region": {
                             const region = action.region as { x: number; y: number; width: number; height: number };
                             if (region) {
-                                const buffer = await page.screenshot({
-                                    type: "jpeg",
-                                    quality: 60,
-                                    clip: region,
-                                });
+                                const buffer = await withAgentUIHidden(page, () =>
+                                    page.screenshot({ type: "jpeg", quality: 60, clip: region }),
+                                );
                                 return {
                                     id,
                                     success: true,
@@ -844,11 +842,9 @@ export const browserMultiAction: ToolDefinition = {
                         return { success: true, result: { elements, count: elements.length } };
                     }
                     case "screenshot": {
-                        const screenshotBuffer = await page.screenshot({
-                            type: "jpeg",
-                            quality: 50,
-                            fullPage: !!act.fullPage,
-                        });
+                        const screenshotBuffer = await withAgentUIHidden(page, () =>
+                            page.screenshot({ type: "jpeg", quality: 50, fullPage: !!act.fullPage }),
+                        );
                         return { success: true, result: { size_kb: Math.round(screenshotBuffer.length / 1024) } };
                     }
                     case "assert": {

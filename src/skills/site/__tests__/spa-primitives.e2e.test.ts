@@ -66,6 +66,8 @@ const install = (withExpect: boolean, source = skillSource(withExpect)) => {
 let browser: any = null;
 beforeAll(async () => {
     process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000";
+    // These time the page's own outcomes; Bhai's cursor glide would pad them (agent-cursor.test covers it).
+    process.env.ATLAS_NO_AGENT_CURSOR = "true";
     try {
         const { chromium } = await import("playwright");
         browser = await chromium.launch({ headless: true, args: [SHOP_RESOLVER_ARG] });
@@ -76,6 +78,7 @@ beforeAll(async () => {
 }, 60_000);
 afterAll(async () => {
     delete process.env.ATLAS_SPEND_CAP_DAY_INR;
+    delete process.env.ATLAS_NO_AGENT_CURSOR;
     await browser?.close();
 });
 

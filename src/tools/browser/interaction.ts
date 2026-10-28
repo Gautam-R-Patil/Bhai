@@ -525,7 +525,8 @@ export const browserDrag: ToolDefinition = {
             await agentCursor(page, { x: fx, y: fy }, "hold");
             await page.mouse.move(fx, fy);
             await page.mouse.down();
-            await Promise.all([page.mouse.move(tx, ty, { steps }), agentCursor(page, { x: tx, y: ty }, "hover")]);
+            await agentCursor(page, { x: tx, y: ty }, "hover"); // never alongside the real move (Chrome bridge)
+            await page.mouse.move(tx, ty, { steps });
             await page.mouse.up();
 
             if (input.meta) await page.keyboard.up("Meta");
@@ -680,6 +681,8 @@ export const browserType: ToolDefinition = {
             if (input.label !== undefined) {
                 const el = lastElementMap.find((e) => e.label === (input.label as number));
                 if (el) {
+                    // Scrolled in first, so the cursor glides to where the click lands.
+                    await Promise.resolve(el.handle?.scrollIntoViewIfNeeded?.({ timeout: 1000 })).catch(() => {});
                     await agentCursor(page, el.handle ?? el, "click");
                     if (el.handle) {
                         try {

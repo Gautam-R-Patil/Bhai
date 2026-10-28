@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { getDataDir } from "../../config/paths.js";
 import { runOCR } from "../../models/local-ocr.js";
+import { withAgentUIHidden } from "./agent-cursor.js";
 import { getActiveBackend, getCurrentMode } from "./browser-backend.js";
 import { type ChromeExtensionBackend, ChromePageProxy } from "./chrome-backend.js";
 import type {
@@ -1076,7 +1077,7 @@ async function batchDisposeHandles(elements: InteractiveElement[]): Promise<void
 
 async function ocrFallbackScan(page: Page): Promise<InteractiveElement[]> {
     try {
-        const screenshotBuffer = await page.screenshot({ type: "png", fullPage: false });
+        const screenshotBuffer = await withAgentUIHidden(page, () => page.screenshot({ type: "png", fullPage: false }));
         const tmpPath = path.join(tmpdir(), `atlas-ocr-fallback-${Date.now()}.png`);
         fs.writeFileSync(tmpPath, screenshotBuffer);
 

@@ -37,7 +37,10 @@ export const AGENT_UI_JS = `
         host.setAttribute('aria-hidden', 'true');
         host.style.cssText = 'all:initial;position:fixed;top:0;left:0;width:0;height:0;pointer-events:none;z-index:2147483647';
         const root = host.attachShadow({ mode: 'closed' });
-        root.innerHTML = '<style>' +
+        // Built node by node (no innerHTML): Trusted Types pages (Gmail, YouTube,
+        // Docs) throw on an innerHTML string. A constructed sheet also gets past
+        // a style-src that forbids inline <style>.
+        const css =
             '*{pointer-events:none;box-sizing:border-box}' +
             '.cur{position:fixed;left:0;top:0;opacity:0;will-change:transform;transition:transform var(--d,300ms) cubic-bezier(.22,.61,.36,1),opacity .4s ease}' +
             '.cur.on{opacity:1}' +
@@ -52,12 +55,26 @@ export const AGENT_UI_JS = `
             '@keyframes bhaiPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.8)}}' +
             '@keyframes bhaiRipple{0%{transform:scale(.3);opacity:1}100%{transform:scale(1.9);opacity:0}}' +
             '@keyframes bhaiGlow{50%{box-shadow:inset 0 0 0 2px rgba(59,130,246,.85),inset 0 0 42px 8px rgba(59,130,246,.42)}}' +
-            '@media (prefers-reduced-motion:reduce){.cur{transition:opacity .2s}.glow,.pill i,.cur.typing svg,.rip{animation:none}}' +
-            '</style>' +
-            '<div class="glow"></div><div class="pill"><i></i>Bhai is working here</div>' +
-            '<div class="cur"><svg width="20" height="22" viewBox="0 0 20 22"><path d="M1 1v17l4.6-4.4 3 6.9 3-1.3-3-6.8H15z" fill="#3b82f6" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg><span class="tag">Bhai</span></div>';
+            '@media (prefers-reduced-motion:reduce){.cur{transition:opacity .2s}.glow,.pill i,.cur.typing svg,.rip{animation:none}}';
+        try { const sheet = new CSSStyleSheet(); sheet.replaceSync(css); root.adoptedStyleSheets = [sheet]; }
+        catch (e) { const st = document.createElement('style'); st.textContent = css; root.appendChild(st); }
+        const add = (tag, cls, parent) => { const n = document.createElement(tag); n.className = cls; parent.appendChild(n); return n; };
+        add('div', 'glow', root);
+        const pill = add('div', 'pill', root);
+        add('i', '', pill);
+        pill.appendChild(document.createTextNode('Bhai is working here'));
+        const cur = add('div', 'cur', root);
+        const NS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(NS, 'svg');
+        const path = document.createElementNS(NS, 'path');
+        for (const [k, v] of [['width', '20'], ['height', '22'], ['viewBox', '0 0 20 22']]) svg.setAttribute(k, v);
+        for (const [k, v] of [['d', 'M1 1v17l4.6-4.4 3 6.9 3-1.3-3-6.8H15z'], ['fill', '#3b82f6'], ['stroke', '#fff'],
+                              ['stroke-width', '1.6'], ['stroke-linejoin', 'round']]) path.setAttribute(k, v);
+        svg.appendChild(path);
+        cur.appendChild(svg);
+        add('span', 'tag', cur).textContent = 'Bhai';
         (document.documentElement || document.body).appendChild(host);
-        ui = host.__bhai = { root, cur: root.querySelector('.cur'), x: innerWidth / 2, y: innerHeight / 2 };
+        ui = host.__bhai = { root, cur, x: innerWidth / 2, y: innerHeight / 2 };
         ui.cur.style.transform = 'translate(' + (ui.x - 1) + 'px,' + (ui.y - 1) + 'px)';
     }
     const r = ui.root;
@@ -135,6 +152,7 @@ export async function agentCursor(page: AnyPage, at?: CursorTarget | null, kind:
         });
     }
     const t0 = Date.now();
+    const left = () => AGENT_CURSOR_CAP_MS - (Date.now() - t0);
     const run = (async () => {
         let x: number | undefined;
         let y: number | undefined;
@@ -147,10 +165,42 @@ export async function agentCursor(page: AnyPage, at?: CursorTarget | null, kind:
         } else if (at) {
             ({ x, y } = at);
         }
+        if (left() <= 0) return; // cap spent finding the target: skip the overlay, don't race the action
         const glide = Number(
             await page.evaluate(call({ x, y, kind, idleMs: AGENT_PRESENCE_IDLE_MS, presence: presenceOn() })),
         );
-        await sleep(Math.min(glide || 0, AGENT_CURSOR_CAP_MS - (Date.now() - t0)));
+        await sleep(Math.min(glide || 0, left()));
     })().catch(() => {});
-    await Promise.race([run, sleep(AGENT_CURSOR_CAP_MS)]);
+    // The Chrome bridge (no page.on) attaches and detaches the debugger around
+    // every eval, so one left in flight can detach in the middle of the real
+    // action's command: wait for it there. Playwright queues a page's evals in
+    // order, so stop waiting at the cap.
+    await (bridge(page) ? run : Promise.race([run, sleep(AGENT_CURSOR_CAP_MS)]));
+}
+
+const bridge = (page: AnyPage) => typeof page.on !== "function";
+const HIDE_JS = (hide: boolean) => `(() => {
+  const h = document.getElementById('${AGENT_UI_HOST_ID}');
+  if (!h) return false;
+  h.style.visibility = '${hide ? "hidden" : ""}';
+  return ${hide} && new Promise((r) => { requestAnimationFrame(() => requestAnimationFrame(() => r(true))); setTimeout(() => r(true), 100); });
+})()`;
+
+/**
+ * Runs a screenshot / OCR / vision capture of the page with Bhai's overlay
+ * hidden, so the cursor, tag, glow and pill never reach Bhai's own vision or
+ * become OCR click targets. The Chrome bridge hides it inside the extension's
+ * screenshot command instead (no extra debugger attach).
+ */
+export async function withAgentUIHidden<T = Buffer>(page: AnyPage, capture: () => Promise<T>): Promise<T> {
+    const hidden =
+        !!page &&
+        typeof page.evaluate === "function" &&
+        !bridge(page) &&
+        (await page.evaluate(HIDE_JS(true)).catch(() => false));
+    try {
+        return await capture();
+    } finally {
+        if (hidden) await page.evaluate(HIDE_JS(false)).catch(() => {});
+    }
 }

@@ -1374,7 +1374,27 @@ async function captureScreenshot(payload) {
   const format = payload.format === "png" ? "png" : "jpeg";
   const quality = format === "jpeg" ? (payload.quality || 55) : undefined;
 
-  const dataUrl = await chrome.tabs.captureVisibleTab(null, { format, quality });
+  // Bhai's own cursor / glow / pill (src/tools/browser/agent-cursor.ts) must
+  // never reach its vision or OCR: hide the host for the capture. ISOLATED
+  // world shares the DOM and needs no debugger attach.
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const overlay = (hide) => !tab?.id ? Promise.resolve(false) : chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: (id, hide) => {
+      const h = document.getElementById(id);
+      if (!h) return false;
+      h.style.visibility = hide ? 'hidden' : '';
+      return hide && new Promise((r) => { requestAnimationFrame(() => requestAnimationFrame(() => r(true))); setTimeout(() => r(true), 100); });
+    },
+    args: ['__bhaiAgentUI', hide],
+  }).then((res) => !!res?.[0]?.result, () => false);
+  const hidden = await overlay(true);
+  let dataUrl;
+  try {
+    dataUrl = await chrome.tabs.captureVisibleTab(null, { format, quality });
+  } finally {
+    if (hidden) await overlay(false);
+  }
   const base64 = dataUrl.replace(/^data:image\/(png|jpeg);base64,/, "");
 
   return { base64 };

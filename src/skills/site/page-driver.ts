@@ -9,7 +9,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveScript } from "../../config/paths.js";
-import { agentCursor } from "../../tools/browser/agent-cursor.js";
+import { AGENT_UI_HOST_ID, agentCursor } from "../../tools/browser/agent-cursor.js";
 import type { ExpectSpec, SiteAction } from "./host.js";
 import { type ActResult, type CommitVerdict, onSite, type PageDriver, type Snapshot } from "./runtime.js";
 
@@ -67,6 +67,7 @@ export const SNAPSHOT_JS = `(() => {
 export const CAPTURE_JS = `(() => {
   const isCode = ${IS_CODE_FIELD_JS};
   const clone = document.documentElement.cloneNode(true);
+  clone.querySelector("#${AGENT_UI_HOST_ID}")?.remove(); // Bhai's own cursor host is not the site
   const live = document.body ? [...document.body.querySelectorAll("*")] : [];
   const cbody = clone.querySelector("body");
   const copy = cbody ? [...cbody.querySelectorAll("*")] : [];

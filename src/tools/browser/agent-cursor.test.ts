@@ -3,8 +3,8 @@
 // removable, invisible to Bhai's own page reading, click-through, latency-capped.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SHOP_RESOLVER_ARG, startShop } from "../../skills/site/__tests__/synthetic-shop.js";
-import { pageDriver } from "../../skills/site/page-driver.js";
-import { AGENT_CURSOR_CAP_MS, AGENT_UI_HOST_ID, AGENT_UI_JS, agentCursor } from "./agent-cursor.js";
+import { CAPTURE_JS, pageDriver } from "../../skills/site/page-driver.js";
+import { AGENT_CURSOR_CAP_MS, AGENT_UI_HOST_ID, AGENT_UI_JS, agentCursor, withAgentUIHidden } from "./agent-cursor.js";
 
 let browser: any = null;
 let shop: Awaited<ReturnType<typeof startShop>>;
@@ -46,6 +46,8 @@ describe("agent cursor", () => {
         if (!browser) return ctx.skip();
         const page = await freshPage();
         await agentCursor(page, page.locator("#accept"), "click");
+        // Keep it up for every read below, however slow the machine.
+        await page.evaluate(`(${AGENT_UI_JS})({ kind: "presence", idleMs: 120000 })`);
         const { getInteractiveElements } = await import("./core.js");
         const scanned = (await getInteractiveElements(page)).map(({ handle: _h, ...e }) => e);
         expect(scanned.length).toBeGreaterThan(0);
@@ -55,6 +57,7 @@ describe("agent cursor", () => {
             await page.locator("body").ariaSnapshot(),
             await page.evaluate("document.documentElement.innerText"),
             await page.getByText("Bhai").count(),
+            await page.evaluate(CAPTURE_JS), // the Site Skill minter's recorded HTML
         ]);
         expect(seen).not.toMatch(/__bhai|Bhai/);
         expect(await hosts(page)).toBe(1); // it is there, just unseen
@@ -79,7 +82,7 @@ describe("agent cursor", () => {
         let t = Date.now();
         await agentCursor(page, { x: 1, y: 1 }, "click"); // long glide from the centre
         expect(Date.now() - t).toBeLessThanOrEqual(AGENT_CURSOR_CAP_MS + 50);
-        const slow = { evaluate: () => new Promise((r) => setTimeout(() => r(300), 2000)) };
+        const slow = { on() {}, evaluate: () => new Promise((r) => setTimeout(() => r(300), 2000)) };
         t = Date.now();
         await agentCursor(slow, { x: 5, y: 5 });
         expect(Date.now() - t).toBeLessThanOrEqual(AGENT_CURSOR_CAP_MS + 50);
@@ -111,4 +114,66 @@ describe("agent cursor", () => {
         await page.waitForFunction(`!document.getElementById("${AGENT_UI_HOST_ID}")`, undefined, { timeout: 6000 });
         await page.context().close();
     }, 10_000);
+
+    it("hides itself from Bhai's own screenshots, on a Trusted Types + strict style-src page", async (ctx) => {
+        if (!browser) return ctx.skip();
+        const page = await (await browser.newContext()).newPage();
+        await page.route("https://tt.test/", (route: any) =>
+            route.fulfill({
+                contentType: "text/html",
+                headers: { "content-security-policy": "require-trusted-types-for 'script'; style-src 'self'" },
+                body: "<html><body style='margin:0;background:#fff'><button id=b>Go</button></body></html>",
+            }),
+        );
+        const errors: string[] = [];
+        page.on("pageerror", (e: Error) => errors.push(e.message));
+        await page.goto("https://tt.test/");
+        const before = await page.screenshot();
+        await agentCursor(page, page.locator("#b"), "click");
+        expect(errors).toEqual([]);
+        expect(await hosts(page)).toBe(1);
+        // Styled despite style-src (constructed sheet), so it is really on screen...
+        expect(
+            await page.evaluate(
+                `getComputedStyle(document.getElementById("${AGENT_UI_HOST_ID}").__bhai.root.querySelector(".pill")).position`,
+            ),
+        ).toBe("fixed");
+        expect((await page.screenshot()).equals(before)).toBe(false);
+        // ...but not in the capture, and back afterwards.
+        expect((await withAgentUIHidden(page, () => page.screenshot())).equals(before)).toBe(true);
+        expect(await page.evaluate(`document.getElementById("${AGENT_UI_HOST_ID}").style.visibility`)).toBe("");
+        await page.context().close();
+    });
+
+    it("Chrome bridge: never leaves a cursor eval in flight, skips the overlay once the cap is spent", async () => {
+        const calls: string[] = [];
+        // No page.on: the bridge proxy. Its eval outlives the cap; agentCursor waits for it.
+        let done = false;
+        const slowEval = {
+            evaluate: () =>
+                new Promise((r) =>
+                    setTimeout(() => {
+                        done = true;
+                        r(300);
+                    }, 600),
+                ),
+        };
+        await agentCursor(slowEval, { x: 5, y: 5 });
+        expect(done).toBe(true);
+        // Finding the target used up the cap: the overlay eval is never sent.
+        const slowBox = {
+            evaluate: async () => {
+                calls.push("eval");
+                return 0;
+            },
+        };
+        const target = {
+            boundingBox: () =>
+                new Promise<any>((r) =>
+                    setTimeout(() => r({ x: 0, y: 0, width: 4, height: 4 }), AGENT_CURSOR_CAP_MS + 50),
+                ),
+        };
+        await agentCursor(slowBox, target);
+        expect(calls).toEqual([]);
+    });
 });

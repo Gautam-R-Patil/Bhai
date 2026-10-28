@@ -7,6 +7,7 @@
 
 import type { ToolDefinition } from "../get-current-time.js";
 import { getCachedActions, markActionFailed, replayActions, shouldReplayActions } from "./action-cache.js";
+import { withAgentUIHidden } from "./agent-cursor.js";
 import { getActiveBackend, getCurrentMode } from "./browser-backend.js";
 import { CAPTCHA_HINT, quickCaptchaCheck } from "./captcha.js";
 import {
@@ -368,12 +369,14 @@ export const browserScan: ToolDefinition = {
             // Visual mode: attach screenshot. Auto-enabled for design tools and sparse DOM pages.
             if (doVisual) {
                 try {
-                    const screenshotBuffer = await page.screenshot({
-                        type: "jpeg",
-                        quality: isDesignApp ? 75 : 55, // Higher quality for design tools (need to read UI)
-                        fullPage: !!input.full_page,
-                        scale: "css",
-                    });
+                    const screenshotBuffer = await withAgentUIHidden(page, () =>
+                        page.screenshot({
+                            type: "jpeg",
+                            quality: isDesignApp ? 75 : 55, // Higher quality for design tools (need to read UI)
+                            fullPage: !!input.full_page,
+                            scale: "css",
+                        }),
+                    );
                     result.screenshot_base64 = screenshotBuffer.toString("base64");
                     result.mime_type = "image/jpeg";
                     result.screenshot_size_kb = Math.round(screenshotBuffer.length / 1024);
