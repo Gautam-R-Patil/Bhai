@@ -3,7 +3,7 @@
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { SkillHost, type SiteAction } from "../host.js";
 import { MAX_STEPS, mintConsent, runSiteTask } from "../runtime.js";
 
@@ -25,12 +25,13 @@ const fakeDriver = () => {
     };
 };
 
-beforeAll(() => {
-    process.env.ATLAS_SITE_SKILL_DEADLINE_MS = "1000";
-});
-afterAll(() => {
-    delete process.env.ATLAS_SITE_SKILL_DEADLINE_MS;
-});
+// Only the hang fixtures need a short deadline; everything else keeps the real
+// 5s one, so a slow CI runner (Windows process spawn) isn't read as a hang.
+const shortDeadline = (on: boolean) => {
+    if (on) process.env.ATLAS_SITE_SKILL_DEADLINE_MS = "1000";
+    else delete process.env.ATLAS_SITE_SKILL_DEADLINE_MS;
+};
+afterAll(() => shortDeadline(false));
 
 describe("isolation: a bad skill fails the task, never the runtime", () => {
     const fixtures: Array<[string, string, string]> = [
@@ -54,20 +55,25 @@ describe("isolation: a bad skill fails the task, never the runtime", () => {
     it("20 rounds: each bad skill ends as failed with its reason, then a good skill still runs", async () => {
         for (let round = 0; round < 20; round++) {
             const i = round % fixtures.length;
+            shortDeadline(fixtures[i][2] === "skill_timeout");
             const t0 = Date.now();
             const bad = await runSiteTask({ skillPath: paths[i], phase: "search", driver: fakeDriver() });
             expect([fixtures[i][0], bad.status, bad.reason]).toEqual([fixtures[i][0], "failed", fixtures[i][2]]);
             expect(Date.now() - t0).toBeLessThan(6000);
+            shortDeadline(false);
             const ok = await runSiteTask({ skillPath: good, phase: "search", driver: fakeDriver() });
             expect(ok.status).toBe("done");
         }
     }, 120_000);
 
     it("leaves no child processes behind", async () => {
+        shortDeadline(true);
         const hosts = paths.map((p) => new SkillHost(p));
         await Promise.all(hosts.map((h) => h.call("search", {})));
         for (const h of hosts) h.close();
-        await new Promise((r) => setTimeout(r, 300));
+        shortDeadline(false);
+        const exited = () => hosts.every((h) => h.spawned.every((c) => c.exitCode !== null || c.signalCode !== null));
+        for (let t = 0; t < 50 && !exited(); t++) await new Promise((r) => setTimeout(r, 100)); // Windows reaps slowly
         for (const h of hosts) for (const c of h.spawned) expect(c.exitCode !== null || c.signalCode !== null).toBe(true);
     }, 30_000);
 });
@@ -346,6 +352,20 @@ describe("review round 3", () => {
         expect(r.status).toBe("failed");
         expect(r.reason).toMatch(/^driver_error/);
         expect(r.writeStatus).toBe("may_have_applied");
+        delete process.env.ATLAS_SPEND_CAP_DAY_INR;
+    });
+
+    it("a skill that hangs while the total is re-checked fails with its own reason, not total_changed", async () => {
+        process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000";
+        const hang = withManifest(cartSkill.replace('if (phase === "select"', 'if (phase === "select" && state.n) return new Promise(() => {}); if (phase === "select"').replace("{ snapshot: s }", "{ snapshot: s, state }").replace("return { confirm:", "return { state: { n: 1 }, confirm:"), manifest);
+        const d = pageDriver();
+        const c = await runSiteTask({ skillPath: hang, phase: "select", driver: d });
+        expect(c.status).toBe("confirm");
+        shortDeadline(true);
+        const r = await runSiteTask({ task: c.task, phase: "confirm", consentToken: mintConsent(c.task), driver: d });
+        shortDeadline(false);
+        expect([r.status, r.reason, r.writeStatus]).toEqual(["failed", "skill_timeout", "not_attempted"]);
+        expect(d.calls.some((a) => a.target?.sel === "#checkout")).toBe(false);
         delete process.env.ATLAS_SPEND_CAP_DAY_INR;
     });
 

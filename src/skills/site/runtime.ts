@@ -440,6 +440,8 @@ export async function runSiteTask(opts: {
                     if (stop) return stop;
                 }
             }
+            // The skill itself failed (timeout, crash): say so; nothing was sent.
+            if (again.fail) return end("failed", { reason: again.fail.reason });
             if (!again.confirm || again.confirm.amount !== pending.amount || again.confirm.summary !== pending.summary) {
                 if (!again.confirm) {
                     task.pendingConfirm = undefined;
