@@ -733,15 +733,16 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
 
 // ── Send a proactive message to Discord ──────
 
-export async function sendDiscordProactiveMessage(message: string, filePath?: string): Promise<void> {
-    if (!discordClient) return;
+/** Resolves true once sent, false when not configured or the send failed. */
+export async function sendDiscordProactiveMessage(message: string, filePath?: string): Promise<boolean> {
+    if (!discordClient) return false;
 
     const channelId = process.env.DISCORD_NOTIFICATIONS_CHANNEL_ID;
-    if (!channelId) return;
+    if (!channelId) return false;
 
     try {
         const channel = await discordClient.channels.fetch(channelId);
-        if (!channel || !("send" in channel)) return;
+        if (!channel || !("send" in channel)) return false;
 
         const sanitized = sanitizeReply(message);
 
@@ -761,7 +762,7 @@ export async function sendDiscordProactiveMessage(message: string, filePath?: st
                         content: firstChunk,
                         files: [attachment],
                     });
-                    return;
+                    return true;
                 }
             } catch (fileErr) {
                 console.warn("[DISCORD] Attachment send failed, falling back to text:", (fileErr as Error).message);
@@ -773,8 +774,10 @@ export async function sendDiscordProactiveMessage(message: string, filePath?: st
         for (const chunk of chunks) {
             await (channel as TextChannel).send(chunk);
         }
+        return true;
     } catch (err) {
         console.warn("[DISCORD] Failed to send proactive message:", (err as Error).message);
+        return false;
     }
 }
 

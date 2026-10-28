@@ -2,16 +2,23 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import { checkConsent } from "../security/consent.js";
+import { AsyncLocalStorage } from "node:async_hooks";
 import fs from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { ChatCompletionTool } from "openai/resources/chat/completions.js";
 import { firePostToolUse, firePreToolUse } from "../hooks/index.js";
 import { executeMCPTool, getMCPToolSchemas, isMCPTool } from "../mcp/client.js";
+import { checkConsent } from "../security/consent.js";
+import { drainTrace, tracing } from "../skills/site/mint/recorder.js";
 import { sideloadSkillTool } from "../store/sideload.js";
-import { approveDynamicToolTool, revokeDynamicToolTool } from "./forge-approval.js";
-import { contactLookupTool, getWhatsAppStatus, whatsappGroupInfoTool, whatsappSendTool, whatsappStickerTool } from "../whatsapp.js";
+import {
+    contactLookupTool,
+    getWhatsAppStatus,
+    whatsappGroupInfoTool,
+    whatsappSendTool,
+    whatsappStickerTool,
+} from "../whatsapp.js";
 import {
     appManager,
     calendarTool,
@@ -26,6 +33,7 @@ import { askOwnerTool } from "./ask-owner.js";
 import { audioVisualize } from "./audio-visualize.js";
 import { blenderScript } from "./blender.js";
 import { brandAudit } from "./brand-audit.js";
+import { getActivePage } from "./browser/core.js";
 import {
     browserAnalyze,
     browserBack,
@@ -112,6 +120,7 @@ import { documentTools, initDocumentTools } from "./document.js";
 import { emailSend } from "./email-tool.js";
 import { compressFiles, fileMetadata, openInApp, runShortcut, screenRecord, trashManager } from "./file-utils.js";
 import { deleteFile, listDirectory } from "./files.js";
+import { approveDynamicToolTool, revokeDynamicToolTool } from "./forge-approval.js";
 import { generateImage } from "./generate-image.js";
 import { getCurrentTime, type ToolDefinition } from "./get-current-time.js";
 import { gifSearch } from "./gif-search.js";
@@ -168,16 +177,17 @@ import {
     traitUpdate,
 } from "./memory-tools.js";
 import { coreMemoryAppend, coreMemoryDelete, coreMemoryRead, coreMemoryReplace } from "./memory-tools-advanced.js";
-import { sessionSearch } from "./session-search.js";
 import { osComputerAction } from "./os-computer-action.js";
 import { osGround, osVisualize } from "./os-grounding.js";
 import { osClickId, osInspect } from "./os-inspect.js";
 import { osSmartClick, setSmartClickLLM } from "./os-smart-click.js";
-import { siteTask } from "./site-task.js";
+import { sessionSearch } from "./session-search.js";
 import { approveSiteSkillTool, setSiteMintLLM, siteSkillMintTool } from "./site-skill-mint.js";
-import { getActivePage } from "./browser/core.js";
-import { drainTrace, tracing } from "../skills/site/mint/recorder.js";
-export { setSmartClickLLM, setSiteMintLLM };
+import { siteTask } from "./site-task.js";
+
+export { setCaptchaLLM } from "./browser/captcha-vision.js";
+export { setSiteMintLLM, setSmartClickLLM };
+
 import { IS_LINUX, IS_MAC, IS_WIN } from "./platform.js";
 import { platformInfoTool } from "./platform-info.js";
 import { createPresentation, exportPresentation, listPresentations, modifyPresentation } from "./presentation/index.js";
@@ -309,7 +319,8 @@ registry.set(coreMemoryAppend.schema.function.name, coreMemoryAppend);
 registry.set(coreMemoryDelete.schema.function.name, coreMemoryDelete);
 
 // Self-improvement (local draft buffer; synthesized nightly to server)
-import { selfImprovementDraft, selfImprovementListDrafts, selfImprovementDiscardDraft } from "./self-improvement.js";
+import { selfImprovementDiscardDraft, selfImprovementDraft, selfImprovementListDrafts } from "./self-improvement.js";
+
 registry.set(selfImprovementDraft.schema.function.name, selfImprovementDraft);
 registry.set(selfImprovementListDrafts.schema.function.name, selfImprovementListDrafts);
 registry.set(selfImprovementDiscardDraft.schema.function.name, selfImprovementDiscardDraft);
@@ -676,7 +687,7 @@ const TOOL_TIMEOUTS: Record<string, number> = {
     browser_scan: 20_000,
     browser_screenshot: 15_000,
     // Covers the solver tiers plus the human hand-off wait (ATLAS_CAPTCHA_HANDOFF_MS, 5 min).
-    browser_handle_captcha: 330_000,
+    browser_handle_captcha: 600_000, // solver tiers, then the owner's ~5 min
     // Shell/system tools - variable execution time
     shell: 60_000, // Shell commands can take a while
     run_code: 30_000,
@@ -735,6 +746,15 @@ function stableJson(v: unknown): string {
     }
     return JSON.stringify(v);
 }
+
+// The turn's Stop signal, visible to every tool call made under it, including
+// the calls sub-agents and swarms make (they carry no signal of their own).
+const turnSignal = new AsyncLocalStorage<AbortSignal | undefined>();
+export function withTurnSignal<T>(signal: AbortSignal | undefined, fn: () => Promise<T>): Promise<T> {
+    return turnSignal.run(signal, fn);
+}
+// Tools that wait on the owner and must end when Stop is pressed (they read input._signal).
+const STOPPABLE_TOOLS = new Set(["browser_handle_captcha"]);
 
 export async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
     const startTime = Date.now();
@@ -844,6 +864,10 @@ export async function executeTool(name: string, input: Record<string, unknown>):
     } catch (err) {
         console.warn(`[TOOL] PreToolUse hook chain errored for ${name}: ${(err as Error).message}`);
     }
+    // Set after the hooks, so an input they rewrite (a JSON copy) keeps the signal.
+    // The turn's real Stop signal wins; a model-supplied _signal is only used if it really is one.
+    const stop = turnSignal.getStore() ?? (input._signal instanceof AbortSignal ? input._signal : undefined);
+    if (STOPPABLE_TOOLS.has(name) && stop) effectiveInput = { ...effectiveInput, _signal: stop };
 
     try {
         // Execute with timeout protection
@@ -872,7 +896,12 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         // without one the recorder finds the commit itself (recorder.ts commitEvent).
         if (name.startsWith("browser_") && tracing()) {
             const consented = confirmCheck.needsConfirmation;
-            await getActivePage().then((p) => drainTrace(p, { consented }), () => null).catch(() => null);
+            await getActivePage()
+                .then(
+                    (p) => drainTrace(p, { consented }),
+                    () => null,
+                )
+                .catch(() => null);
         }
 
         // PostToolUse hooks — side effects only. Fire-and-forget; don't await

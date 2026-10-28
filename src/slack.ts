@@ -452,11 +452,11 @@ function splitSlackMessage(text: string, maxLen: number): string[] {
  * Send a proactive message to a Slack channel or DM.
  * Used by the heartbeat/notification system.
  */
-export async function sendSlackProactiveMessage(message: string): Promise<void> {
-    if (!slackApp) return;
+export async function sendSlackProactiveMessage(message: string): Promise<boolean> {
+    if (!slackApp) return false;
 
     const channelId = process.env.SLACK_DEFAULT_CHANNEL;
-    if (!channelId) return;
+    if (!channelId) return false;
 
     try {
         const blocks = formatBlockKit(message);
@@ -465,8 +465,10 @@ export async function sendSlackProactiveMessage(message: string): Promise<void> 
             blocks,
             text: message,
         });
+        return true;
     } catch (err) {
         console.error("[SLACK] Failed to send proactive message:", (err as Error).message);
+        return false;
     }
 }
 

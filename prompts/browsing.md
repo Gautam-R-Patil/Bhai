@@ -13,6 +13,11 @@ HANDLING POPUPS AND OVERLAYS (do this FIRST on every new site):
 6. Press Escape (browser_keyboard combo='Escape') to dismiss most overlays
 7. Look for ✕ close buttons — usually in the top-right corner of popups
 
+HUMAN-VERIFICATION CHECKS ("I'm not a robot", reCAPTCHA, hCaptcha, Cloudflare "Verify you are human"):
+- Don't click the check yourself with other tools, and don't end the task over one. Call `browser_handle_captcha`: Bhai solves it itself, and only if that fails does it ask the owner on this channel and wait.
+- When it returns `success`, carry on with the task from the step you were on, without asking the owner anything. On `requires_user`, tell the owner the page is still waiting for them, in one line, and stop.
+- A browser result with `captcha_detected`, or a `site_task` result with `needsUser.kind: "human_check"`, means the same thing: call `browser_handle_captcha`, then continue.
+
 FORMS AND INPUTS:
 8. Use browser_type and ALWAYS pass the `label` parameter of the input field from the scan to click and type directly into the correct element.
 9. ⚠️ NEVER omit the `label` parameter if there are multiple text inputs on the screen (like a search bar and a chat input). Without the label, the browser might type into the wrong box.

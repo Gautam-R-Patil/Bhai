@@ -10,6 +10,7 @@
 import type { LLMClient, ChatCompletionMessageParam } from "../llm.js";
 import { selectForPlanning } from "../model-router.js";
 import { runSubAgent, type AgentRole } from "./sub-agent.js";
+import { withTurnSignal } from "../tools/index.js";
 import { promises as fs } from "node:fs";
 import { join } from "node:path";
 import { extractJSON } from "../utils/json-extract.js";
@@ -329,7 +330,8 @@ export async function startLongTask(
     await saveCheckpoint(task);
 
     // Execute phases asynchronously (fire and forget — this runs in the background)
-    executePhases(llm, task, abortController.signal, onProgress).catch(err => {
+    // Cancelling the task (not the turn that started it) ends a wait on the owner inside it.
+    withTurnSignal(abortController.signal, () => executePhases(llm, task, abortController.signal, onProgress)).catch(err => {
         console.error(`[LONG-TASK] Fatal error in task ${id}:`, err);
         task.status = "failed";
         task.error = (err as Error).message;
@@ -653,7 +655,8 @@ export async function resumeLongTask(
 
     console.log(`[LONG-TASK] 🔄 Resuming task ${taskId} from phase ${nextPhase + 1}/${task.phases.length}`);
 
-    executePhases(llm, task, abortController.signal, onProgress).catch(err => {
+    // Cancelling the task (not the turn that started it) ends a wait on the owner inside it.
+    withTurnSignal(abortController.signal, () => executePhases(llm, task, abortController.signal, onProgress)).catch(err => {
         console.error(`[LONG-TASK] Fatal error resuming task ${taskId}:`, err);
         task.status = "failed";
         task.error = (err as Error).message;

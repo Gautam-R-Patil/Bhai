@@ -125,7 +125,7 @@ import {
     recordToolSuccess,
 } from "./tool-router-analytics.js";
 import { autoSaveSession, getBrowserContext, trackBrowserStep } from "./tools/browser-memory.js";
-import { clearCache, executeTool, resetRateLimits } from "./tools/index.js";
+import { clearCache, executeTool, resetRateLimits, withTurnSignal } from "./tools/index.js";
 
 // ── Music fast-path helpers ──────────────────────
 // Short-circuits the Sonnet orchestrator + heavy memory briefing when the LLM
@@ -237,31 +237,8 @@ const MEMORY_NUDGE_INTERVAL = 5;
 
 // ── Browser tool names ────────────────────────
 
-const BROWSER_TOOLS = new Set([
-    "browser_navigate",
-    "browser_click_at",
-    "browser_type",
-    "browser_scan",
-    "browser_extract",
-    "browser_back",
-    "browser_scroll",
-    "browser_analyze",
-    "browser_run_js",
-    "browser_wait",
-    "browser_select",
-    "browser_right_click",
-    "browser_hold_click",
-    "browser_drag",
-    "browser_hover",
-    "browser_keyboard",
-    "browser_switch_tab",
-    "browser_upload_file",
-    "browser_save_strategy",
-    "browser_recall_strategy",
-    "browser_parallel_tabs",
-    "browser_parallel_actions",
-    "browser_multi_action",
-]);
+// Every browser tool shares one page, so they all run one at a time, in call order.
+const isBrowserTool = (name: string) => name.startsWith("browser_");
 
 const OS_TASK_HINT = `[OS TASK — desktop control]
 1. Click things by description with os_smart_click (it finds the element itself; no screenshot needed first).
@@ -760,7 +737,8 @@ async function executeAndProcessToolCall(
     // Typing tools get real values for any [OTP_1]-style handles the model used;
     // fnArgs (logs, history, gates) keeps the handles.
     const execArgs = REVEAL_TOOLS.has(fnName) && channelContext?.isOwner === true ? revealArgs(fnArgs) : fnArgs;
-    let rawResult = await executeTool(fnName, execArgs);
+    // Stop reaches long waits on the owner, also inside sub-agents/swarms this call starts.
+    let rawResult = await withTurnSignal(signal, () => executeTool(fnName, execArgs));
 
     // ── Self-heal: if tool failed with a dependency error, auto-fix and retry ──
     let isError = false;
@@ -776,7 +754,7 @@ async function executeAndProcessToolCall(
             const heal = await attemptSelfHeal(rawResult);
             if (heal.fixed) {
                 console.log(`  🔧 Self-healed (${heal.action}) — retrying ${fnName}`);
-                rawResult = await executeTool(fnName, execArgs);
+                rawResult = await withTurnSignal(signal, () => executeTool(fnName, execArgs));
                 isError = false;
                 try {
                     const p = JSON.parse(rawResult);
@@ -850,7 +828,7 @@ async function executeAndProcessToolCall(
         /* pattern speculator not wired in this build */
     }
 
-    const isBrowser = BROWSER_TOOLS.has(fnName);
+    const isBrowser = isBrowserTool(fnName);
 
     const finalContent: string | Array<Record<string, unknown>> = imageUrl
         ? [
@@ -888,7 +866,7 @@ async function executeToolCallsBatch(
 
     for (const tc of toolCalls) {
         const fnName = tc.function.name;
-        if (BROWSER_TOOLS.has(fnName)) {
+        if (isBrowserTool(fnName)) {
             browserCalls.push(tc);
         } else if (DEFERRABLE_TOOLS.has(fnName)) {
             deferrableCalls.push(tc);

@@ -45,7 +45,9 @@ export async function waitBridgeReady(maxMs = 3000, quietMs = 300, since = 0): P
     let errors = 0;
     while (Date.now() < deadline) {
         const left = deadline - Date.now();
-        const r = await sendBridgeCommand("execute_js", { code: readyJs(left, quietMs, since) }, left + 2000).catch(() => null);
+        const r = await sendBridgeCommand("execute_js", { code: readyJs(left, quietMs, since) }, left + 2000).catch(
+            () => null,
+        );
         if (r === "ready" || r === "stale") return; // stale = settled on the same document
         if (++errors >= 3) return; // the bridge keeps failing: don't spin, let the caller carry on
         await new Promise((res) => setTimeout(res, 150));
@@ -63,6 +65,15 @@ export class ChromePageProxy {
 
     url(): string {
         return this._url;
+    }
+
+    /** url() is sync and cached; re-read it from the tab after anything that may navigate. */
+    private async syncTab(): Promise<void> {
+        const tab = await getActiveExtensionTab().catch(() => null);
+        if (tab?.url) {
+            this._url = tab.url;
+            this._title = tab.title || "";
+        }
     }
 
     async title(): Promise<string> {
@@ -142,6 +153,7 @@ export class ChromePageProxy {
     mouse = {
         click: async (x: number, y: number, opts?: { button?: string }) => {
             await sendBridgeCommand("click_at", { x, y, button: opts?.button || "left" });
+            await this.syncTab();
         },
         dblclick: async (x: number, y: number) => {
             await sendBridgeCommand("click_at", { x, y, doubleClick: true });
@@ -174,6 +186,7 @@ export class ChromePageProxy {
     keyboard = {
         press: async (key: string) => {
             await sendBridgeCommand("keyboard", { key, action: "press" });
+            if (key === "Enter") await this.syncTab();
         },
         down: async (key: string) => {
             await sendBridgeCommand("keyboard", { key, action: "down" });

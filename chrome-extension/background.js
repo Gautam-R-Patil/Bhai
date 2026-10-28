@@ -1283,7 +1283,11 @@ async function scroll(payload) {
 }
 
 async function executeJS(payload) {
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  // Optional tabId pins the script to one tab (the human-check wait watches the
+  // tab the check is on, even if the user switches tabs). Default: the active tab.
+  const [tab] = payload.tabId != null
+    ? [await chrome.tabs.get(payload.tabId)]
+    : await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!tab || !tab.id) throw new Error("No active tab");
 
   // Use CDP Runtime.evaluate — this runs in the page context and bypasses

@@ -12,8 +12,8 @@ import { join } from "node:path";
 import { transcribeBuffer } from "../../voice/transcribe.js";
 import type { ToolDefinition } from "../get-current-time.js";
 import { getCurrentMode } from "./browser-backend.js";
-import { getActiveExtensionTab, sendBridgeCommand } from "./chrome-bridge.js";
-import { ATLAS_HUD_JS, getActivePage, touchBrowserActivity } from "./core.js";
+import { solveWithVision } from "./captcha-vision.js";
+import { getActivePage } from "./core.js";
 import { isNativeBrowserAvailable } from "./native-browser.js";
 
 // Try to use Rust-native CAPTCHA classifier for speed
@@ -142,18 +142,32 @@ export async function detectCaptcha(
             if (hcFrame || hcWidget) {
                 return { type: "hcaptcha", siteKey: (hcWidget as HTMLElement)?.dataset?.sitekey ?? null };
             }
-            // reCAPTCHA v3 (invisible — detected by script tag)
+            // reCAPTCHA v2 checkbox first: a page can load v3 everywhere and
+            // still show an "I'm not a robot" box (v3's own anchor frame is size=invisible).
+            const rcFrames = Array.from(
+                document.querySelectorAll('iframe[src*="google.com/recaptcha"],iframe[src*="recaptcha.net"]'),
+            );
+            const rcWidget = document.querySelector(".g-recaptcha");
+            const rcV2 = { type: "recaptcha-v2", siteKey: (rcWidget as HTMLElement)?.dataset?.sitekey ?? null };
+            const box = rcFrames.some((f) => {
+                const src = f.getAttribute("src") ?? "";
+                return src.includes("/anchor") && !src.includes("size=invisible");
+            });
+            if (box) return rcV2;
+            // Before any frame renders, a visible widget div means a box is coming.
+            // Once frames exist they decide (all size=invisible = no box), and a
+            // <button class="g-recaptcha"> is v3 / invisible v2 bound to a button.
+            const widgetBox =
+                !!rcWidget && rcWidget.tagName !== "BUTTON" && rcWidget.getAttribute("data-size") !== "invisible";
+            if (widgetBox && rcFrames.length === 0) return rcV2;
+            // reCAPTCHA v3 (invisible — detected by script tag; render=explicit is a v2 loader)
             const scripts = Array.from(document.scripts).map((s) => s.src);
-            const rcV3 = scripts.find((s) => s.includes("recaptcha/api.js?render="));
+            const rcV3 = scripts.find((s) => s.includes("recaptcha/api.js?render=") && !s.includes("render=explicit"));
             if (rcV3) {
                 return { type: "recaptcha-v3", siteKey: rcV3.match(/render=([^&]+)/)?.[1] ?? null };
             }
-            // reCAPTCHA v2
-            const rcFrame = document.querySelector('iframe[src*="google.com/recaptcha"],iframe[src*="recaptcha.net"]');
-            const rcWidget = document.querySelector(".g-recaptcha");
-            if (rcFrame || rcWidget) {
-                return { type: "recaptcha-v2", siteKey: (rcWidget as HTMLElement)?.dataset?.sitekey ?? null };
-            }
+            // Any other reCAPTCHA widget (invisible v2, a challenge frame)
+            if (rcFrames.length || rcWidget) return rcV2;
             return { type: "none", siteKey: null };
         },
         /* javascript-obfuscator:enable */ undefined,
@@ -166,18 +180,33 @@ export async function detectCaptcha(
     return info;
 }
 
-/** Cheap post-action check: CAPTCHA type on the page, or null if none/undetectable. Never throws. */
+// A ticked widget stays on the page; its response token field fills.
+export const CAPTCHA_SOLVED_JS = `[...document.querySelectorAll('textarea[name="g-recaptcha-response"],textarea[name="h-captcha-response"],input[name="cf-turnstile-response"]')].some((e) => !!e.value)`;
+
+/** True when a widget on the page already holds a response token (the owner ticked it). */
+export async function captchaSolved(page: unknown): Promise<boolean> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (await Promise.resolve((page as any).evaluate(CAPTCHA_SOLVED_JS)).catch(() => false)) === true;
+}
+
+/**
+ * Cheap check for a human check the owner still has to do: its type, or null
+ * if none, invisible v3 (nothing to tick), already ticked, or undetectable.
+ * Never throws.
+ */
 export async function quickCaptchaCheck(page: unknown): Promise<CaptchaType | null> {
     try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const info = await detectCaptcha(page as any);
-        return info.type === "none" ? null : info.type;
+        if (info.type === "none" || info.type === "recaptcha-v3") return null;
+        return (await captchaSolved(page)) ? null : info.type;
     } catch {
         return null;
     }
 }
 
-export const CAPTCHA_HINT = "A CAPTCHA is on this page — call browser_handle_captcha before continuing.";
+export const CAPTCHA_HINT =
+    "A human-verification check (CAPTCHA) is on this page. Call browser_handle_captcha: it solves it, or hands it to the owner if it can't, then continue the task.";
 
 // ─── Solver (2captcha) ────────────────────────
 
@@ -604,12 +633,14 @@ async function solveViaNopeCHA(type: CaptchaType, siteKey: string, pageUrl: stri
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function handleCaptchaIfPresent(
     page: any,
+    opts: { signal?: AbortSignal } = {},
 ): Promise<{ handled: boolean; type: CaptchaType; method: string }> {
     // Ensure CAPTCHA keys are loaded from Convex (if not already in process.env)
     await ensureCaptchaKeys();
 
     const info = await detectCaptcha(page);
     if (info.type === "none") return { handled: true, type: "none", method: "none" };
+    if (await captchaSolved(page)) return { handled: true, type: info.type, method: "already_solved" };
 
     console.log(`  🤖 CAPTCHA detected: ${info.type} (sitekey: ${info.siteKey?.substring(0, 20) ?? "unknown"})`);
 
@@ -630,7 +661,14 @@ export async function handleCaptchaIfPresent(
         }
     }
 
-    // ── Tier 3: NoCaptchaAI (set NOCAPTCHAAI_API_KEY) ─────────────────────────
+    // ── Tier 3: picture grid via Sonnet vision (built-in browser only: needs real input events) ──
+    if ((info.type === "hcaptcha" || info.type === "recaptcha-v2") && getCurrentMode() !== "chrome") {
+        if (await solveWithVision(page, captchaSolved, { signal: opts.signal })) {
+            return { handled: true, type: info.type, method: "vision" };
+        }
+    }
+
+    // ── Tier 4: NoCaptchaAI (set NOCAPTCHAAI_API_KEY) ─────────────────────────
     if (info.siteKey && process.env.NOCAPTCHAAI_API_KEY) {
         const token = await solveViaNoCaptchaAI(info.type, info.siteKey, page.url());
         if (token) {
@@ -639,7 +677,7 @@ export async function handleCaptchaIfPresent(
         }
     }
 
-    // ── Tier 4: NopeCHA (free 100/day — set NOPECHA_API_KEY) ─────────────────
+    // ── Tier 5: NopeCHA (free 100/day — set NOPECHA_API_KEY) ─────────────────
     if (info.siteKey && process.env.NOPECHA_API_KEY) {
         const token = await solveViaNopeCHA(info.type, info.siteKey, page.url());
         if (token) {
@@ -648,7 +686,7 @@ export async function handleCaptchaIfPresent(
         }
     }
 
-    // ── Tier 5: 2captcha (paid fallback — set CAPTCHA_API_KEY or TWO_CAPTCHA_API_KEY) ──
+    // ── Tier 6: 2captcha (paid fallback — set CAPTCHA_API_KEY or TWO_CAPTCHA_API_KEY) ──
     if (info.siteKey && (process.env.CAPTCHA_API_KEY || process.env.TWO_CAPTCHA_API_KEY)) {
         const token = await solve2captcha(info.type, info.siteKey, page.url());
         if (token) {
@@ -657,71 +695,13 @@ export async function handleCaptchaIfPresent(
         }
     }
 
-    // ── Tier 6: human handoff — surface the page and wait for the user ──
-    if (await handOffToHuman(page)) return { handled: true, type: info.type, method: "human" };
-
+    // Unsolved: the tool handler hands it to the owner (human-handoff.ts).
     return { handled: false, type: info.type, method: "unsolved" };
 }
 
-// ─── Human Handoff ────────────────────────────
-
-/**
- * Poll the detector until the CAPTCHA is gone or timeoutMs elapses. Detection
- * errors (page mid-navigation right after the user solves) count as "not yet".
- */
-export async function waitForCaptchaCleared(
-    page: unknown,
-    timeoutMs: number,
-    intervalMs = 2000,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    detect: (page: any) => Promise<CaptchaInfo> = detectCaptcha,
-): Promise<boolean> {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-        touchBrowserActivity(); // keep the idle-close timer from killing the browser mid-wait
-        await new Promise((r) => setTimeout(r, intervalMs));
-        const info = await detect(page).catch(() => null);
-        if (info?.type === "none") return true;
-    }
-    return false;
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function handOffToHuman(page: any): Promise<boolean> {
-    const raw = process.env.ATLAS_CAPTCHA_HANDOFF_MS;
-    const timeoutMs = raw ? Number(raw) : 300_000;
-    if (!(timeoutMs > 0)) return false; // ATLAS_CAPTCHA_HANDOFF_MS=0 disables the handoff
-
-    console.log(`  🙋 CAPTCHA: handing off to user (waiting up to ${Math.round(timeoutMs / 1000)}s)`);
-    try {
-        if (getCurrentMode() === "chrome") {
-            const tab = await getActiveExtensionTab();
-            if (tab?.id) await sendBridgeCommand("switch_tab", { tabId: tab.id, focus: true });
-        } else {
-            await page.bringToFront?.();
-        }
-    } catch {
-        /* best effort */
-    }
-    const banner = (label: string, done: boolean) =>
-        page.evaluate(`(${ATLAS_HUD_JS})(${JSON.stringify({ label, done, maxWidth: 460 })})`).catch(() => {});
-    await banner("⏸ Bhai paused — please solve the CAPTCHA, I'll continue automatically", false);
-    import("../platform-bridge.js")
-        .then(({ showNotification }) =>
-            showNotification(
-                "Bhai needs your help",
-                "Please solve the CAPTCHA in the browser — I'll continue automatically.",
-            ),
-        )
-        .catch(() => {});
-
-    const cleared = await waitForCaptchaCleared(page, timeoutMs);
-    await banner("", true);
-    console.log(`  🙋 CAPTCHA handoff: ${cleared ? "cleared by user ✓" : "timed out"}`);
-    return cleared;
-}
-
 // ─── Tool Definition ──────────────────────────
+
+const TOOL_BUDGET_S = 570; // TOOL_TIMEOUTS.browser_handle_captcha (600s) minus headroom
 
 export const browserHandleCaptcha: ToolDefinition = {
     schema: {
@@ -729,18 +709,16 @@ export const browserHandleCaptcha: ToolDefinition = {
         function: {
             name: "browser_handle_captcha",
             description:
-                "Detect and solve CAPTCHA challenges on the current page. Waterfall: 1) Cloudflare Turnstile — passive wait; 2) reCAPTCHA v2 — audio challenge; 3) NoCaptchaAI API for Turnstile (NOCAPTCHAAI_API_KEY); 4) NopeCHA API (NOPECHA_API_KEY); 5) 2captcha API (CAPTCHA_API_KEY); 6) if all fail, hands off to the user — brings the page to the front, notifies them, and waits (up to ~5 min) until they solve it, then returns success with method 'human'. If it returns requires_user:true, do NOT retry — tell the user the page needs a manual CAPTCHA solve. Call this when a page is blocked by a CAPTCHA before proceeding.",
-            parameters: {
-                type: "object",
-                properties: {},
-                required: [],
-            },
+                'Get past a CAPTCHA / human-verification check on the current page ("I\'m not a robot", hCaptcha, reCAPTCHA, Cloudflare Turnstile). Bhai solves it itself: Turnstile passive wait, reCAPTCHA audio, picture grids read with vision (built-in browser), then the NoCaptchaAI / NopeCHA / 2captcha APIs when keys are set. Only if all of that fails does it hand the check to the owner: brings the tab up, messages them on this channel, and waits (up to ~5 min). On success, continue the task from where you stopped. If it returns requires_user:true, do NOT call it again in a loop: tell the owner the page is still waiting on them.',
+            parameters: { type: "object", properties: {}, required: [] },
         },
     },
-    async handler() {
+    async handler(input) {
+        const start = Date.now();
         try {
             const page = await getActivePage();
-            const result = await handleCaptchaIfPresent(page);
+            const signal = input._signal as AbortSignal | undefined;
+            const result = await handleCaptchaIfPresent(page, { signal });
             if (result.type === "none") {
                 return JSON.stringify({ success: true, captcha_present: false });
             }
@@ -750,20 +728,19 @@ export const browserHandleCaptcha: ToolDefinition = {
                     captcha_present: true,
                     captcha_type: result.type,
                     method: result.method,
-                    message: `CAPTCHA solved via ${result.method}. You may now proceed.`,
+                    message: `CAPTCHA solved via ${result.method}. Continue the task.`,
                 });
             }
-            // `error` makes the agent loop count this as a failure; requires_user
-            // tells it retrying won't help.
+            // Lazy: human-handoff.ts imports this module.
+            const { browserWaitForHuman } = await import("./human-handoff.js");
+            const left = Math.floor(TOOL_BUDGET_S - (Date.now() - start) / 1000);
+            const out = JSON.parse(await browserWaitForHuman.handler({ timeout_s: left, _signal: signal }));
             return JSON.stringify({
-                success: false,
-                error: `CAPTCHA (${result.type}) not solved: automatic solvers failed and the user did not solve it in time.`,
-                requires_user: true,
+                ...out,
                 captcha_present: true,
                 captcha_type: result.type,
-                method: result.method,
-                message:
-                    "Stop retrying this page. Ask the user to solve the CAPTCHA in the browser, then continue. (Auto-solving needs NOPECHA_API_KEY or CAPTCHA_API_KEY.)",
+                method: "human",
+                auto_solve: "failed",
             });
         } catch (err) {
             return JSON.stringify({ error: `CAPTCHA handler failed: ${(err as Error).message}` });

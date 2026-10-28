@@ -9,7 +9,8 @@
 import type { ToolDefinition } from "./get-current-time.js";
 
 // ── Channel send function registry (populated at boot by each channel) ──
-type ChannelSendFn = (message: string, filePath?: string) => Promise<void>;
+// Resolves false when it had nowhere to send (e.g. Discord with no notifications channel set).
+type ChannelSendFn = (message: string, filePath?: string) => Promise<void | boolean>;
 const channelSenders = new Map<string, ChannelSendFn>();
 
 /**
