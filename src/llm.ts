@@ -77,6 +77,8 @@ export const MODELS = {
     SONNET: "anthropic/claude-sonnet-4.6",
     SONNET_45: "anthropic/claude-sonnet-4.5",
     HAIKU: "anthropic/claude-haiku-4.5",
+    // Unhinged mode's chat model (xAI Grok via Azure, server-side; falls back to Sonnet).
+    GROK: "xai/grok-4.7",
     GEMINI_PRO: "google/gemini-3.1-pro-preview-customtools",
     GEMINI_25_FLASH: "google/gemini-2.5-flash",
     FLASH: "google/gemini-3-flash-preview",

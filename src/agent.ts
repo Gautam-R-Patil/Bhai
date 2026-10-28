@@ -2393,12 +2393,13 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
 
         // Unhinged (an 18+ owner opt-in) needs a model that holds a persona:
         // Haiku under a long prompt of calm defaults answers in the normal voice.
-        // Owner turns only; costs 1 credit a turn instead of 0.25 while it's on.
+        // Pure chat goes to Grok (server-side, falls back to Sonnet); a quick
+        // tool turn stays on Claude. Owner turns only; 1 credit instead of 0.25.
         if (iterations === 1 && !forcedPick && claudeTier(model) === "haiku" && (!channelContext || channelContext.isOwner)) {
             const { getActivePreset } = await import("./setup/personality-sync.js");
             if (getActivePreset() === "unhinged") {
-                model = MODELS.SONNET;
-                console.log("  🧭 Unhinged tone → sonnet");
+                model = turnTier === "simple" ? MODELS.SONNET : MODELS.GROK;
+                console.log(`  🧭 Unhinged tone → ${model === MODELS.GROK ? "grok" : "sonnet"}`);
             }
         }
 

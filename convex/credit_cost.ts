@@ -27,5 +27,7 @@ export const CREDIT_COSTS: Record<string, number> = {
  * typo can't skip billing.
  */
 export function getCreditCost(modelId: string): number {
+    // Grok (unhinged mode) is priced like Sonnet; on Azure failure the request
+    // falls back to Sonnet anyway (toClaudeModel maps it there).
     return CREDIT_COSTS[toClaudeModel(modelId)];
 }

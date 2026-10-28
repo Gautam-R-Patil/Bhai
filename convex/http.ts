@@ -7,6 +7,7 @@ import { httpAction } from "./_generated/server";
 import { internal } from "./_generated/api";
 import Anthropic from "@anthropic-ai/sdk";
 import { toClaudeRequest, toOpenAIResponse } from "./claude";
+import { callGrok, isGrokModel } from "./grok";
 import {
   generateServerKeyPair,
   deriveSharedKey,
@@ -661,11 +662,11 @@ http.route({
     //    (prompt caching breakpoints are placed by the translator).
     const claudeParams = toClaudeRequest(body, messages);
 
-    // 7. Call Claude
+    // 7. Call Claude (or Grok for unhinged mode, falling back to Claude Sonnet)
     try {
       const anthropic = new Anthropic({ apiKey: anthropicKey });
-      let responseData;
-      try {
+      let responseData = isGrokModel(model) ? await callGrok(body, messages) : null;
+      if (!responseData) try {
         const message = await anthropic.beta.messages.stream(claudeParams).finalMessage();
         responseData = toOpenAIResponse(message);
       } catch (err) {
