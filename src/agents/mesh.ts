@@ -16,6 +16,7 @@ import { shouldOverrideRole } from "./role-analyzer.js";
 import { shouldSpeculate, executeSpeculatively } from "./speculative.js";
 import { Blackboard } from "./blackboard.js";
 import { requestHumanApproval } from "./human-interrupt.js";
+import { getActiveChannel } from "../tools/channel-send.js";
 
 // ── Types ─────────────────────────────────────
 
@@ -122,19 +123,55 @@ function computeMeshId(steps: MeshStep[]): string {
 
 // ── Dangerous Step Detection (for human-in-the-loop) ──
 
-const DANGEROUS_KEYWORDS = [
-    "delete", "remove", "erase", "destroy", "drop",
-    "send email", "send mail", "email to",
-    "purchase", "buy", "payment", "checkout", "order",
-    "deploy", "publish", "release", "push to prod",
-    "format", "wipe", "reset",
-    "transfer", "wire", "pay",
-    "uninstall", "rm -rf", "rm -r",
-];
+// Whole-word verbs with an irreversible effect. Past participles are left out
+// on purpose ("find deleted files", "published papers" are reads).
+const DANGEROUS_STEP_RE = new RegExp(
+    `\\b(?:${[
+        "delet(?:e|es|ing)",
+        "eras(?:e|es|ing)",
+        "destroy(?:s|ing)?",
+        "wip(?:e|es|ing)",
+        "uninstall(?:s|ing)?",
+        "rm\\s+-rf?",
+        "drop\\s+(?:the\\s+)?(?:table|database|schema)",
+        "format(?:ting)?\\s+(?:the\\s+)?(?:disk|drive|partition)",
+        "send(?:s|ing)?\\s+(?:an?\\s+|the\\s+)?(?:e-?mail|mail|message|dm|text|sms)",
+        "e-?mail\\s+(?:it\\s+|this\\s+|them\\s+)?to",
+        "purchas(?:e|es|ing)",
+        "buy(?:s|ing)?",
+        "checkout",
+        "pay(?:s|ing)?\\s+(?:for|the|an?)",
+        "make\\s+(?:a\\s+)?payment",
+        "place\\s+(?:an?\\s+|the\\s+)?order",
+        "(?:transfer|wire)(?:s|ring|ing)?\\s+(?:the\\s+)?(?:money|funds)",
+        "deploy(?:s|ing)?",
+        "publish(?:es|ing)?",
+        "push(?:ing)?\\s+to\\s+prod(?:uction)?",
+        "force[-\\s]push",
+    ].join("|")})\\b`,
+    "i",
+);
 
-function isDangerousStep(description: string): boolean {
-    const lower = description.toLowerCase();
-    return DANGEROUS_KEYWORDS.some(kw => lower.includes(kw));
+export function isDangerousStep(description: string): boolean {
+    return DANGEROUS_STEP_RE.test(description);
+}
+
+/** Only Telegram renders approval buttons (resolveInterrupt); elsewhere nobody can answer. */
+function canAskOwner(): boolean {
+    return getActiveChannel() === "telegram";
+}
+
+function needsApprovalResult(step: MeshStep, why: string): SubAgentResult {
+    return {
+        id: step.id,
+        role: step.role,
+        success: false,
+        output: "",
+        toolCalls: 0,
+        durationMs: 0,
+        estimatedCost: 0,
+        error: `Needs your approval: "${step.description}" — ${why}. It was NOT run; say go ahead to do it.`,
+    };
 }
 
 // ── Mesh Executor ─────────────────────────────
@@ -149,6 +186,8 @@ export async function executeMesh(
     steps: MeshStep[],
     onProgress?: (msg: string) => Promise<void>,
     stepTimeoutMs = 300000, // 5 minutes per step
+    /** Earlier waves (swarm replan): their successful steps satisfy deps here. */
+    prior?: { results: Map<string, SubAgentResult>; steps: MeshStep[] },
 ): Promise<MeshResult> {
     const startTime = Date.now();
     const meshId = computeMeshId(steps);
@@ -156,6 +195,23 @@ export async function executeMesh(
 
     // ── Per-execution shared blackboard for cross-agent discovery sharing ──
     const blackboard = new Blackboard();
+
+    // Deps outside this plan: a prior wave's successful step satisfies them;
+    // a removed, failed or hallucinated step is dropped instead of throwing.
+    const ids = new Set(steps.map((s) => s.id));
+    const externalDeps = new Map<string, string[]>();
+    for (const s of steps) {
+        const external = s.depends_on.filter((d) => !ids.has(d));
+        if (external.length === 0) continue;
+        const satisfied = external.filter((d) => prior?.results.get(d)?.success);
+        const dropped = external.filter((d) => !satisfied.includes(d));
+        if (dropped.length > 0) {
+            console.warn(`[MESH] Step ${s.id}: dropping deps on unknown/failed steps [${dropped.join(", ")}]`);
+        }
+        externalDeps.set(s.id, satisfied);
+        s.depends_on = s.depends_on.filter((d) => ids.has(d));
+    }
+    const priorStepMap = new Map((prior?.steps ?? []).map((s) => [s.id, s]));
 
     // ── Validate: detect cycles ──
     validateDAG(steps);
@@ -200,6 +256,7 @@ export async function executeMesh(
 
         // Restore completed steps and their results
         for (const stepId of existingCheckpoint.completedSteps) {
+            if (!stepMap.has(stepId)) continue;
             completed.add(stepId);
             completedCount++;
             const cachedOutput = existingCheckpoint.stepResults[stepId] || "(restored from checkpoint)";
@@ -275,7 +332,13 @@ export async function executeMesh(
         const waveResults = await Promise.all(
             ready.map(async (step) => {
                 // ── Human-in-the-loop check for dangerous steps ──
-                if (isDangerousStep(step.description) && onProgress) {
+                if (isDangerousStep(step.description)) {
+                    // No channel can show the question: fail now with a clear ask
+                    // instead of waiting 5 minutes and silently skipping.
+                    if (!onProgress || !canAskOwner()) {
+                        console.log(`  ✋ Step ${step.id} needs approval; no channel can ask — not running it`);
+                        return needsApprovalResult(step, "I couldn't ask you from this channel");
+                    }
                     try {
                         const approval = await requestHumanApproval(
                             {
@@ -286,13 +349,16 @@ export async function executeMesh(
                             },
                             onProgress,
                         );
-                        if (approval.answer === "Skip" || (approval.timedOut && approval.answer === "Skip")) {
-                            console.log(`  ⏭️ Step ${step.id} skipped by user (timedOut=${approval.timedOut})`);
+                        if (approval.timedOut) {
+                            return needsApprovalResult(step, "you didn't answer within 5 minutes");
+                        }
+                        if (approval.answer !== "Approve") {
+                            console.log(`  ⏭️ Step ${step.id} skipped by user`);
                             return {
                                 id: step.id,
                                 role: step.role,
                                 success: false,
-                                output: `Skipped by user: ${step.description}`,
+                                output: "",
                                 toolCalls: 0,
                                 durationMs: 0,
                                 estimatedCost: 0,
@@ -300,16 +366,16 @@ export async function executeMesh(
                             } as SubAgentResult;
                         }
                     } catch {
-                        // Approval mechanism failed — proceed anyway (fail-open)
-                        console.warn(`  ⚠️ Human approval check failed for ${step.id}, proceeding`);
+                        // Fail closed: an irreversible step never runs unapproved.
+                        return needsApprovalResult(step, "the approval request failed");
                     }
                 }
 
                 // Gather structured context from dependencies (#2)
-                const depContext = step.depends_on
-                    .map(depId => {
-                        const depResult = results.get(depId);
-                        const depStep = stepMap.get(depId);
+                const depContext = [...(externalDeps.get(step.id) ?? []), ...step.depends_on]
+                    .map((depId) => {
+                        const depResult = results.get(depId) ?? prior?.results.get(depId);
+                        const depStep = stepMap.get(depId) ?? priorStepMap.get(depId);
                         if (!depResult || !depStep) return "";
                         const handoff = buildHandoff(depResult, depStep);
                         return serializeHandoff(handoff);
@@ -421,15 +487,17 @@ export async function executeMesh(
         }
 
         // ── Save checkpoint after each wave ──
+        // Only successful steps count as done: a resume must re-run failed ones.
+        const succeeded = [...completed].filter((id) => results.get(id)?.success);
         const stepResultsMap: Record<string, string> = {};
-        for (const [id, r] of results) {
-            stepResultsMap[id] = r.output.substring(0, 2000); // Cap stored output
+        for (const id of succeeded) {
+            stepResultsMap[id] = (results.get(id)?.output ?? "").substring(0, 2000); // Cap stored output
         }
-        const pending = steps.filter(s => !completed.has(s.id)).map(s => s.id);
+        const pending = steps.filter((s) => !succeeded.includes(s.id)).map((s) => s.id);
         saveMeshCheckpoint({
             meshId,
             taskDescription,
-            completedSteps: [...completed],
+            completedSteps: succeeded,
             stepResults: stepResultsMap,
             pendingSteps: pending,
             createdAt: existingCheckpoint?.createdAt || startTime,

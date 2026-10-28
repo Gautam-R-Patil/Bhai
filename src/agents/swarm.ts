@@ -49,6 +49,22 @@ export interface SwarmResult {
 
 const MAX_STEPS = 20;
 const STEP_TIMEOUT_MS = 300000; // 5 minutes per step
+const MAX_SYNTH_STEP_CHARS = 4000; // per-step output cap in the synthesis prompt
+
+/**
+ * Hierarchical planning, logic verification and MCTS refinement cost ~25 LLM
+ * calls before any step runs and only add hint text. Opt-in.
+ */
+function deepPlanningEnabled(): boolean {
+    return process.env.ATLAS_SWARM_DEEP_PLANNING === "true";
+}
+
+/** Head + tail cap so one huge step output can't blow up the synthesis prompt. */
+export function capStepOutput(output: string, max = MAX_SYNTH_STEP_CHARS): string {
+    if (output.length <= max) return output;
+    const half = Math.floor(max / 2);
+    return `${output.slice(0, half)}\n…[${output.length - 2 * half} chars omitted]…\n${output.slice(-half)}`;
+}
 
 // ── Main Entry Point ─────────────────────────
 
@@ -74,7 +90,7 @@ export async function runSwarm(
     // For high-complexity tasks, use hierarchical planning
     try {
         const complexity = classifyComplexity(userRequest);
-        if (complexity.score > 0.7) {
+        if (deepPlanningEnabled() && complexity.score > 0.7) {
             console.log(`[SWARM] 🏗️ High complexity (${complexity.score.toFixed(2)}) — using hierarchical planner`);
             const hierPlan = await createHierarchicalPlan(llm, userRequest);
             if (hierPlan.abstractGoals.length > 0) {
@@ -137,34 +153,38 @@ export async function runSwarm(
     }
 
     // ── Logic Verification: check plan consistency before execution ──
-    try {
-        const stepDescriptions = plan.steps.map((s) => `${s.id} [${s.role}]: ${s.description}`);
-        const conclusion = `Task "${userRequest}" will be completed via ${plan.steps.length} steps`;
-        const verification = await verifyReasoning(llm, stepDescriptions, conclusion);
-        if (!verification.isConsistent) {
-            console.warn(
-                `[SWARM] ⚠️ Logic verifier found inconsistencies (soundness: ${verification.soundnessScore.toFixed(2)}):`,
-            );
-            for (const issue of verification.issues.slice(0, 3)) {
-                console.warn(`  - ${issue}`);
-            }
-            // Optionally re-decompose if soundness is critically low
-            if (verification.soundnessScore < 0.3) {
-                console.log(`[SWARM] 🔄 Soundness critically low — re-decomposing...`);
-                const revisedPlan = await decompose(
-                    llm,
-                    `${userRequest}\n\nIMPORTANT: A previous plan had logical issues: ${verification.issues.slice(0, 2).join("; ")}. Avoid these.`,
+    if (deepPlanningEnabled()) {
+        try {
+            const stepDescriptions = plan.steps.map((s) => `${s.id} [${s.role}]: ${s.description}`);
+            const conclusion = `Task "${userRequest}" will be completed via ${plan.steps.length} steps`;
+            const verification = await verifyReasoning(llm, stepDescriptions, conclusion);
+            if (!verification.isConsistent) {
+                console.warn(
+                    `[SWARM] ⚠️ Logic verifier found inconsistencies (soundness: ${verification.soundnessScore.toFixed(2)}):`,
                 );
-                if (revisedPlan && revisedPlan.steps.length > 0) {
-                    plan.steps = revisedPlan.steps;
-                    plan.reasoning = revisedPlan.reasoning + " (revised after logic verification)";
+                for (const issue of verification.issues.slice(0, 3)) {
+                    console.warn(`  - ${issue}`);
                 }
+                // Optionally re-decompose if soundness is critically low
+                if (verification.soundnessScore < 0.3) {
+                    console.log(`[SWARM] 🔄 Soundness critically low — re-decomposing...`);
+                    const revisedPlan = await decompose(
+                        llm,
+                        `${userRequest}\n\nIMPORTANT: A previous plan had logical issues: ${verification.issues.slice(0, 2).join("; ")}. Avoid these.`,
+                    );
+                    if (revisedPlan && revisedPlan.steps.length > 0) {
+                        plan.steps = revisedPlan.steps;
+                        plan.reasoning = revisedPlan.reasoning + " (revised after logic verification)";
+                    }
+                }
+            } else {
+                console.log(
+                    `[SWARM] ✅ Logic verification passed (soundness: ${verification.soundnessScore.toFixed(2)})`,
+                );
             }
-        } else {
-            console.log(`[SWARM] ✅ Logic verification passed (soundness: ${verification.soundnessScore.toFixed(2)})`);
+        } catch (lvErr) {
+            console.warn("[SWARM] Logic verification failed (non-fatal):", (lvErr as Error).message);
         }
-    } catch (lvErr) {
-        console.warn("[SWARM] Logic verification failed (non-fatal):", (lvErr as Error).message);
     }
 
     if (onProgress) {
@@ -182,16 +202,21 @@ export async function runSwarm(
     // Post-execution replan loop: on failures, ask the LLM whether to revise.
     // If it returns revisedSteps, run another mesh wave on those and merge
     // results back. Capped at MAX_REPLANS to bound cost.
+    // Results of the steps currently in the plan (replaced steps drop out).
+    const planResults = (): SubAgentResult[] =>
+        plan.steps.map((s) => meshResult.results.get(s.id)).filter((r): r is SubAgentResult => !!r);
     while (replanCount < MAX_REPLANS) {
-        const waveResults = [...meshResult.results.values()];
+        const waveResults = planResults();
         const stepsCompleted = waveResults.filter((r) => r.success).length;
         const stepsFailed = waveResults.filter((r) => !r.success).length;
         if (stepsFailed === 0) break;
         if (!shouldConsiderReplan(waveResults, stepsCompleted, plan.steps.length)) break;
 
+        // What still needs doing: steps that failed or never ran.
+        const remaining = plan.steps.filter((s) => !meshResult.results.get(s.id)?.success);
         let decision;
         try {
-            decision = await replan(llm, userRequest, meshResult.results, []);
+            decision = await replan(llm, userRequest, meshResult.results, remaining);
         } catch {
             break; // Replanner itself failed — stop retrying
         }
@@ -214,8 +239,20 @@ export async function runSwarm(
             await onProgress(`🔄 replanning: ${decision.revisedSteps.length} new step(s)`).catch(() => {});
         }
 
+        // The revised steps replace the remaining ones. Deps on steps that
+        // already succeeded resolve to their results; deps on removed steps drop.
+        const priorSteps = plan.steps;
+        const revisedIds = new Set(decision.revisedSteps.map((s) => s.id));
+        plan.steps = [
+            ...priorSteps.filter((s) => meshResult.results.get(s.id)?.success && !revisedIds.has(s.id)),
+            ...decision.revisedSteps,
+        ];
+
         try {
-            const revisedResult = await executeMesh(llm, decision.revisedSteps, onProgress, STEP_TIMEOUT_MS);
+            const revisedResult = await executeMesh(llm, decision.revisedSteps, onProgress, STEP_TIMEOUT_MS, {
+                results: meshResult.results,
+                steps: priorSteps,
+            });
             // Merge: revised wave results override any same-id earlier results,
             // new IDs are added. meshResult.totalDurationMs / parallelGroups
             // accumulate across waves.
@@ -228,7 +265,7 @@ export async function runSwarm(
         }
     }
 
-    const finalWaveResults = [...meshResult.results.values()];
+    const finalWaveResults = planResults();
     const stepsCompleted = finalWaveResults.filter((r) => r.success).length;
     const stepsFailed = finalWaveResults.filter((r) => !r.success).length;
     console.log(
@@ -493,7 +530,7 @@ User request: ${userRequest}${learningsHint}${memoryHint}${templateHint}`;
         // ── MCTS Refinement Pass ──
         // For complex tasks (> 5 steps), use MCTS to validate/refine the plan.
         // This is optional — falls back to the LLM-generated plan if MCTS fails.
-        if (steps.length > 5) {
+        if (deepPlanningEnabled() && steps.length > 5) {
             try {
                 const complexity = classifyComplexity(userRequest);
                 if (complexity.score >= 0.4) {
@@ -555,10 +592,12 @@ async function synthesize(
             if (!result) return `### Step ${step.id} (${step.role}): NOT EXECUTED`;
             if (!result.success) {
                 // Keep what a failed step got done (sub-agents return partial output).
-                const partial = result.output?.trim() ? `\nPartial output (incomplete):\n${result.output}` : "";
+                const partial = result.output?.trim()
+                    ? `\nPartial output (incomplete):\n${capStepOutput(result.output)}`
+                    : "";
                 return `### Step ${step.id} (${step.role}): FAILED\nError: ${result.error || "unknown"}${partial}`;
             }
-            return `### Step ${step.id} (${step.role}): ${step.description}\n${result.output}`;
+            return `### Step ${step.id} (${step.role}): ${step.description}\n${capStepOutput(result.output)}`;
         })
         .join("\n\n");
 

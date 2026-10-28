@@ -38,9 +38,25 @@ export function clearLongTaskProgress(): void {
 
 // ── Progress adapter ──────────────────────────
 
+/** Exactly what telegram.ts parses: /\[LONG-TASK:([^\]]+)\]\s*(.*)/ */
+export function longTaskMarker(taskId: string, message: string): string {
+    return `[LONG-TASK:${taskId}] ${message}`;
+}
+
+// A turn's progress callback (Telegram status message etc.) is only valid
+// while that turn runs: the channel clears/replaces it when the turn ends.
+// Later progress is dropped; completion still reaches the user through the
+// proactive long-task bus below.
 function makeProgressCallback(): ((progress: LongTaskProgress) => Promise<void>) | undefined {
     if (!_onProgress) return undefined;
-    const fn = _onProgress;
+    const turnFn = _onProgress;
+    const fn = async (msg: string): Promise<void> => {
+        if (_onProgress !== turnFn) {
+            console.log(`[LONG-TASK] turn ended — dropping progress: ${msg.substring(0, 80)}`);
+            return;
+        }
+        await turnFn(msg);
+    };
     return async (progress: LongTaskProgress) => {
         const elapsed = (progress.elapsedMs / 1000).toFixed(0);
         if (progress.status === "completed") {
@@ -118,6 +134,10 @@ The task runs asynchronously — you'll get a task ID to check on it later.`,
 
         try {
             const task = await startLongTask(_llm, description, makeProgressCallback());
+            // Telegram (progressCallback in telegram.ts) turns this marker into Check/Cancel buttons.
+            await _onProgress?.(
+                longTaskMarker(task.id, `Long task started: ${task.phases.length} phases running in background`),
+            ).catch(() => {});
 
             return JSON.stringify({
                 success: true,
@@ -284,6 +304,9 @@ export const resumeLongTaskTool: ToolDefinition = {
             if (!task) {
                 return JSON.stringify({ error: `Task "${taskId}" not found in checkpoints.` });
             }
+            await _onProgress?.(
+                longTaskMarker(task.id, `Long task resumed from phase ${task.currentPhase + 1}/${task.phases.length}`),
+            ).catch(() => {});
 
             return JSON.stringify({
                 success: true,

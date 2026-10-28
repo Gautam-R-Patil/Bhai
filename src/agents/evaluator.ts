@@ -8,7 +8,8 @@
 // synthesis on completeness, accuracy, coherence, and actionability.
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { LLMClient, ChatCompletionMessageParam } from "../llm.js";
+import { type ChatCompletionMessageParam, type LLMClient, MODELS } from "../llm.js";
+import { claudeTier, selectForSynthesis } from "../model-router.js";
 import type { SubAgentResult } from "./sub-agent.js";
 import type { SwarmPlan } from "./swarm.js";
 import { extractJSON } from "../utils/json-extract.js";
@@ -100,8 +101,8 @@ Output ONLY valid JSON:
         const response = await llm.chat({
             messages: [{ role: "user", content: prompt }] as ChatCompletionMessageParam[],
             systemPrompt: "You are a strict quality evaluator. Output valid JSON only. Be honest — do not inflate scores.",
-            // Use a light/fast model for evaluation to avoid self-confirmation bias
-            // The selectForSubAgent with "simple" hint picks a cheaper model
+            // Judge on a different tier than the synthesizer to avoid self-confirmation bias
+            modelOverride: claudeTier(selectForSynthesis(userRequest).modelId) === "haiku" ? MODELS.SONNET : MODELS.HAIKU,
             responseFormat: "json_object",
         });
 
@@ -221,7 +222,7 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 /** Coerce a rubric dimension to a 0-100 score, defaulting to 70 only when it isn't a finite number. */
-function clampScore(value: unknown): number {
+export function clampScore(value: unknown): number {
     // null / undefined / "" mean the model omitted the dimension → default 70;
     // a numeric string still coerces; anything non-finite → 70.
     if (value === null || value === undefined || value === "") return 70;
@@ -237,3 +238,6 @@ function defaultAccept(synthesis: string): EvaluationResult {
         feedback: "",
     };
 }
+
+/** Same as clampScore (the name an earlier change used). */
+export const rubricScore = clampScore;

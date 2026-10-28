@@ -15,6 +15,7 @@ import { executeTool, getToolSchemasByNames } from "../tools/index.js";
 import { extractPrimaryPath, logToolAction, summarizeToolCall } from "../utils/debug-log.js";
 import { isToolError } from "./error-types.js";
 import { smartTruncate } from "./smart-truncate.js";
+import { isMutator } from "./verify-before-done.js";
 
 // ── Worktree path rewriting (Phase 4G) ────────
 // File-tool arg names that carry a path the operation will act on. For
@@ -67,7 +68,6 @@ function rewritePathsForWorktree(fnName: string, fnArgs: Record<string, unknown>
 // ── Context Window Configuration ─────────────────
 // Keep last N messages in LLM context to prevent token bloat in long tasks
 const MAX_CONTEXT_MESSAGES = 20; // Keep last 20 messages (10 exchanges)
-const SUMMARIZE_THRESHOLD = 30; // Summarize when history exceeds this
 
 // ── Loop / Stuckness Detection ────────────────────
 // Detects when a sub-agent is repeating the same tool calls
@@ -360,6 +360,8 @@ export interface SubAgentTask {
      * worktree isolation for parallel coder agents.
      */
     workingDirectory?: string;
+    /** Checked between iterations and tool calls; aborting stops the sub-agent. */
+    signal?: AbortSignal;
 }
 
 export interface SubAgentResult {
@@ -371,6 +373,52 @@ export interface SubAgentResult {
     durationMs: number;
     estimatedCost: number; // Accumulated estimated cost in credits (#16)
     error?: string;
+    /** Side-effecting tools that completed (sends, clicks, edits…). A blind re-run would repeat them. */
+    mutatorsRan?: string[];
+}
+
+// Tools whose successful run changed the world outside the conversation.
+// UI clicks/typing come from verify-before-done's isMutator.
+const SIDE_EFFECT_TOOLS = new Set([
+    "email_send",
+    "send_message_on_channel",
+    "send_file",
+    "send_screenshot",
+    "social_post",
+    "whatsapp_send",
+    "whatsapp_sticker",
+    "edit",
+    "write",
+    "append_file",
+    "delete_file",
+    "notebook_edit",
+    "shell_exec",
+    "shell_exec_background",
+    "git_op",
+]);
+
+export function isSideEffectTool(fnName: string, fnArgs: Record<string, unknown>): boolean {
+    return SIDE_EFFECT_TOOLS.has(fnName) || /_send$/.test(fnName) || isMutator(fnName, fnArgs);
+}
+
+/**
+ * Window a long history for the next LLM call: always keep the original task
+ * (first message) and cut only where no tool result is separated from the
+ * assistant tool_calls message it answers (the API rejects orphan results).
+ * Dropped messages are folded into the task message as a short summary.
+ */
+export function windowSubAgentHistory(
+    full: ChatCompletionMessageParam[],
+    max = MAX_CONTEXT_MESSAGES,
+): ChatCompletionMessageParam[] {
+    if (full.length <= max) return full;
+    let start = full.length - (max - 1);
+    while (start > 1 && full[start].role === "tool") start--;
+    if (start <= 1) return full;
+    const task = full[0];
+    const summary = summarizeOldMessages(full.slice(1, start));
+    const content = `${typeof task.content === "string" ? task.content : ""}\n\n[CONTEXT SUMMARY - ${start - 1} earlier messages]\n${summary}\n[END SUMMARY - recent conversation continues below]`;
+    return [{ role: "user", content }, ...full.slice(start)];
 }
 
 // ── Smart Context Windowing Helpers ─────────────
@@ -462,9 +510,6 @@ export async function runSubAgent(
     // Full history (for context retention and debugging)
     const fullHistory: ChatCompletionMessageParam[] = [{ role: "user", content: userContent }];
 
-    // Summary of older messages (created when history exceeds threshold)
-    let historySummary = "";
-
     let iterations = 0;
     let totalToolCalls = 0;
     let errorCount = 0; // Track errors for model escalation (#13)
@@ -473,9 +518,14 @@ export async function runSubAgent(
     // Why the loop stopped without a final answer. Every such exit is a failure,
     // so swarm/mesh recovery (retry → rephrase → reroute → skip) gets to run.
     let failure = "";
+    const mutatorsRan = new Set<string>();
 
     try {
         while (iterations < maxIter) {
+            if (task.signal?.aborted) {
+                failure = "Sub-agent cancelled";
+                break;
+            }
             // Check timeout
             if (Date.now() - startTime > timeout) {
                 console.warn(`  ⏰ Sub-agent ${task.id} timed out after ${timeout}ms`);
@@ -487,31 +537,7 @@ export async function runSubAgent(
 
             // ── Smart Context Windowing ──────────────────
             // Send only recent messages to LLM to prevent token bloat
-            let messages: ChatCompletionMessageParam[];
-            if (fullHistory.length <= MAX_CONTEXT_MESSAGES) {
-                // Short history — send everything
-                messages = fullHistory;
-            } else {
-                // Long history — send summary + recent messages
-                const recentMessages = fullHistory.slice(-MAX_CONTEXT_MESSAGES);
-
-                // Create a context summary if we haven't yet, or if history grew a lot
-                if (fullHistory.length >= SUMMARIZE_THRESHOLD && !historySummary) {
-                    const oldMessages = fullHistory.slice(0, -MAX_CONTEXT_MESSAGES);
-                    historySummary = summarizeOldMessages(oldMessages);
-                }
-
-                // Prepend summary context to first message
-                if (historySummary) {
-                    const contextNote: ChatCompletionMessageParam = {
-                        role: "user",
-                        content: `[CONTEXT SUMMARY - Previous ${fullHistory.length - MAX_CONTEXT_MESSAGES} messages]\n${historySummary}\n\n[END SUMMARY - Recent conversation continues below]`,
-                    };
-                    messages = [contextNote, ...recentMessages];
-                } else {
-                    messages = recentMessages;
-                }
-            }
+            const messages = windowSubAgentHistory(fullHistory);
 
             const modelSelection = selectForSubAgent(
                 task.priority === "critical" ? `[COMPLEX TASK] ${task.description}` : task.description,
@@ -547,6 +573,7 @@ export async function runSubAgent(
                     toolCalls: totalToolCalls,
                     durationMs: Date.now() - startTime,
                     estimatedCost,
+                    mutatorsRan: [...mutatorsRan],
                 };
             }
 
@@ -554,6 +581,7 @@ export async function runSubAgent(
             fullHistory.push({ role: "assistant", content, tool_calls: toolCalls } as ChatCompletionMessageParam);
 
             for (const tc of toolCalls) {
+                if (task.signal?.aborted) break; // loop top reports the cancel
                 const fnName = tc.function.name;
                 let fnArgs: Record<string, unknown> = {};
                 try {
@@ -644,6 +672,8 @@ export async function runSubAgent(
                 // Track errors for model escalation (#13)
                 if (isToolError(result)) {
                     errorCount++;
+                } else if (isSideEffectTool(fnName, fnArgs)) {
+                    mutatorsRan.add(fnName);
                 }
 
                 // Track tool calls for loop detection (#11). Fold in the result so
@@ -699,6 +729,7 @@ export async function runSubAgent(
             toolCalls: totalToolCalls,
             durationMs: Date.now() - startTime,
             estimatedCost,
+            mutatorsRan: [...mutatorsRan],
             error: failure || `Sub-agent hit max iterations (${maxIter}) without finishing`,
         };
     } catch (err) {
@@ -710,6 +741,7 @@ export async function runSubAgent(
             toolCalls: totalToolCalls,
             durationMs: Date.now() - startTime,
             estimatedCost,
+            mutatorsRan: [...mutatorsRan],
             error: (err as Error).message,
         };
     }

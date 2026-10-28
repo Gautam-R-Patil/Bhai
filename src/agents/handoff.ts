@@ -15,7 +15,7 @@ const MAX_SUMMARY_CHARS = 300;
 const MAX_FINDINGS = 5;
 const MAX_FINDING_CHARS = 150;
 const MAX_ERRORS = 3;
-const MAX_RAW_TAIL_CHARS = 500;
+const MAX_RAW_TAIL_CHARS = 1500;
 const MAX_ARTIFACT_CHARS = 200; // cap each path/url — URL_PATTERN can match arbitrarily long URLs
 
 // ── Types ────────────────────────────────────
@@ -146,6 +146,13 @@ export function serializeHandoff(handoff: HandoffMessage): string {
         for (const e of handoff.errors) {
             lines.push(`  ⚠️ ${e}`);
         }
+    }
+
+    // The summary is only the first paragraph; the tail carries the actual
+    // result (tables, values, conclusions) that downstream steps need.
+    const tail = handoff.rawOutputTail.trim();
+    if (tail && tail !== handoff.summary) {
+        lines.push(`Output (last ${MAX_RAW_TAIL_CHARS} chars):`, tail);
     }
 
     lines.push("[END HANDOFF]");

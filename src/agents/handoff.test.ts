@@ -191,11 +191,24 @@ describe("buildHandoff — raw tail", () => {
         expect(h.rawOutputTail).toEqual("short");
     });
 
-    it("long output: rawOutputTail is last 500 chars", () => {
-        const long = "a".repeat(1000) + "END_MARKER";
+    it("long output: rawOutputTail is last 1500 chars", () => {
+        const long = `${"a".repeat(3000)}END_MARKER`;
         const h = buildHandoff(makeResult({ output: long }), makeStep());
-        expect(h.rawOutputTail.length).toBeLessThanOrEqual(500);
+        expect(h.rawOutputTail.length).toBe(1500);
         expect(h.rawOutputTail.endsWith("END_MARKER")).toBe(true);
+    });
+});
+
+describe("serializeHandoff — output tail", () => {
+    it("downstream steps see the end of a long output, not just the first paragraph", () => {
+        const output = `Intro paragraph.\n\n${"filler ".repeat(400)}\n\nFINAL ANSWER: 42`;
+        const s = serializeHandoff(buildHandoff(makeResult({ output }), makeStep()));
+        expect(s).toContain("FINAL ANSWER: 42");
+    });
+
+    it("does not repeat a short output that already is the summary", () => {
+        const s = serializeHandoff(buildHandoff(makeResult({ output: "just this" }), makeStep()));
+        expect(s).not.toContain("Output (last");
     });
 });
 

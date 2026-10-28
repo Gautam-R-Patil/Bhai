@@ -88,6 +88,12 @@ Output JSON: {"action": "continue"|"replan"|"complete_early", "reason": "...", "
     }
 }
 
+/** A phase is done only if it ran and didn't fail; failed phases re-run on resume. */
+export function phaseSucceeded(task: Pick<LongTask, "checkpointData">, phaseId: string): boolean {
+    const out = task.checkpointData[phaseId];
+    return !!out && !out.startsWith("PHASE FAILED:") && !out.startsWith("PHASE ERROR:");
+}
+
 // ── Types ─────────────────────────────────────
 
 export interface TaskPhase {
@@ -361,6 +367,7 @@ async function executePhases(
         }
 
         const phase = task.phases[i];
+        if (phaseSucceeded(task, phase.id)) continue; // resumed: already done
         const phaseStartTime = Date.now();
         task.currentPhase = i;
         task.updatedAt = new Date().toISOString();
@@ -435,7 +442,17 @@ async function executePhases(
                 context: depContext || undefined,
                 maxIterations: phase.maxIterations || DEFAULT_PHASE_ITERATIONS,
                 timeoutMs: phase.timeoutMs || DEFAULT_PHASE_TIMEOUT,
+                signal,
             });
+
+            if (signal.aborted) {
+                // Cancelled mid-phase: record nothing as done; cancelLongTask set the status.
+                task.status = "cancelled";
+                task.updatedAt = new Date().toISOString();
+                await saveCheckpoint(task);
+                console.log(`[LONG-TASK] ❌ Task ${task.id} cancelled during phase ${phase.id}`);
+                return;
+            }
 
             const phaseDurationSec = ((Date.now() - phaseStartTime) / 1000).toFixed(1);
 
@@ -527,10 +544,7 @@ async function executePhases(
         })
         .join("\n\n");
 
-    const failedPhases = task.phases.filter(p => {
-        const out = task.checkpointData[p.id] || "";
-        return out.startsWith("PHASE FAILED:") || out.startsWith("PHASE ERROR:");
-    });
+    const failedPhases = task.phases.filter((p) => task.checkpointData[p.id] && !phaseSucceeded(task, p.id));
 
     // ── Quality Review Sub-Agent ──────────────────
     // Run a review agent that checks if the task was actually completed correctly,
@@ -568,7 +582,9 @@ ${failedPhases.length > 0 ? `⚠️ ${failedPhases.length} phase(s) FAILED — c
 Output format: Start with a one-line verdict (✅ DONE / ⚠️ PARTIAL / ❌ FAILED), then 2-4 sentences explaining what was accomplished and where to find the result.`,
             maxIterations: 15,
             timeoutMs: 120_000, // 2 min max for review
+            signal,
         });
+        if (signal.aborted) return; // cancelled during review — keep "cancelled"
 
         qualityReport = reviewResult.output || "";
         task.checkpointData["__quality_review"] = qualityReport;
@@ -637,8 +653,8 @@ export async function resumeLongTask(
         return task;
     }
 
-    // Resume from the next uncompleted phase
-    const nextPhase = task.phases.findIndex(p => !task.checkpointData[p.id]);
+    // Resume from the first phase that didn't succeed (failed ones re-run)
+    const nextPhase = task.phases.findIndex((p) => !phaseSucceeded(task, p.id));
     if (nextPhase === -1) {
         task.status = "completed";
         await saveCheckpoint(task);
@@ -713,7 +729,7 @@ export async function autoResumeInterruptedTasks(
             // Only resume tasks that were running (not completed/cancelled/failed)
             if (task.status === "running" || task.status === "paused") {
                 console.log(`[LONG-TASK] 🔄 Auto-resuming interrupted task: ${taskId}`);
-                const nextPhase = task.phases.findIndex(p => !task.checkpointData[p.id]);
+                const nextPhase = task.phases.findIndex((p) => !phaseSucceeded(task, p.id));
                 if (nextPhase >= 0) {
                     await resumeLongTask(llm, taskId, onProgress);
                     resumed.push(taskId);
