@@ -21,7 +21,7 @@
     },
     "dependencies": {
         "@whiskeysockets/baileys": "^7.0.0-rc14",
-        "adm-zip": "^0.5.16",
+        "adm-zip": "^0.6.1",
         "better-sqlite3": "^12.6.2",
         "electron-store": "^8.2.0",
         "electron-updater": "^6.1.7",

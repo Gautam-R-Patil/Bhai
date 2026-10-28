@@ -59,7 +59,7 @@
         "kokoro-js": "^1.2.1",
         "markdown-it": "^14.1.1",
         "node-cron": "^3.0.3",
-        "nodemailer": "^8.0.1",
+        "nodemailer": "^10.2.1",
         "openai": "^4.85.4",
         "pdf-lib": "^1.17.1",
         "pdf-parse": "^1.1.1",
@@ -70,7 +70,7 @@
         "qrcode-terminal": "^0.12.0",
         "resumed": "^6.1.0",
         "screenshot-desktop": "^1.12.7",
-        "sharp": "^0.33.5",
+        "sharp": "^0.35.5",
         "snoowrap": "^1.23.0",
         "tar": "^7.5.22",
         "tree-sitter": "^0.22.4",
@@ -97,7 +97,6 @@
         "@types/markdown-it": "^14.1.2",
         "@types/node": "^22.13.4",
         "@types/node-cron": "^3.0.11",
-        "@types/nodemailer": "^7.0.11",
         "@types/proper-lockfile": "^4.1.4",
         "@types/snoowrap": "^1.16.1",
         "@types/tar": "^6.1.13",
@@ -112,11 +111,16 @@
         "node": ">=20"
     },
     "overrides": {
-        "sharp": "^0.33.5",
+        "sharp": "^0.35.5",
         "proxy-addr": "^2.0.8",
         "request": {
             "form-data": "^2.5.4"
         },
-        "protobufjs": "^7.5.5"
+        "protobufjs": "^7.5.5",
+        "basic-ftp": "^6.2.3",
+        "image-size": "^2.0.3",
+        "snoowrap": {
+            "ws": "^5.2.7"
+        }
     }
 }

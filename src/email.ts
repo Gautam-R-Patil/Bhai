@@ -8,15 +8,16 @@
 
 import { ImapFlow } from "imapflow";
 import nodemailer from "nodemailer";
-import type { LLMClient } from "./llm.js";
+import type { SendMailOptions, Transporter } from "nodemailer/lib/mailer";
+import { type ChannelContext, runAgent } from "./agent.js";
 import type { Config } from "./config.js";
-import { runAgent, type ChannelContext } from "./agent.js";
+import type { LLMClient } from "./llm.js";
 import { sendOverlayNotification } from "./overlay/overlay-chat.js";
 
 // ── State ─────────────────────────────────────
 
 let imapClient: ImapFlow | null = null;
-let smtpTransport: nodemailer.Transporter | null = null;
+let smtpTransport: Transporter | null = null;
 let emailConfig: Config | null = null;
 let llmClient: LLMClient | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -27,7 +28,12 @@ let isShuttingDown = false;
 function parseEmailOwners(): Set<string> {
     const raw = process.env.OWNER_EMAIL_ADDRESSES;
     if (!raw) return new Set();
-    return new Set(raw.split(",").map(s => s.trim().toLowerCase()).filter(Boolean));
+    return new Set(
+        raw
+            .split(",")
+            .map((s) => s.trim().toLowerCase())
+            .filter(Boolean),
+    );
 }
 
 export function isPlatformOwner(channel: "email", userId: string): boolean {
@@ -149,7 +155,7 @@ const emailRateBuckets = new Map<string, number[]>();
 function emailRateLimitAllow(senderEmail: string): boolean {
     const now = Date.now();
     const arr = emailRateBuckets.get(senderEmail) || [];
-    const fresh = arr.filter(ts => now - ts < EMAIL_RATE_LIMIT_WINDOW_MS);
+    const fresh = arr.filter((ts) => now - ts < EMAIL_RATE_LIMIT_WINDOW_MS);
     if (fresh.length >= EMAIL_RATE_LIMIT_MAX) {
         emailRateBuckets.set(senderEmail, fresh);
         return false;
@@ -161,7 +167,7 @@ function emailRateLimitAllow(senderEmail: string): boolean {
 
 // ── SMTP Sender ───────────────────────────────
 
-function createSMTPTransport(config: Config): nodemailer.Transporter {
+function createSMTPTransport(config: Config): Transporter {
     return nodemailer.createTransport({
         host: config.smtpHost || "smtp.hostinger.com",
         port: config.smtpPort || 465,
@@ -188,7 +194,7 @@ export async function sendEmailFromAtlas(
     }
 
     try {
-        const mailOptions: nodemailer.SendMailOptions = {
+        const mailOptions: SendMailOptions = {
             from: `Bhai <${emailConfig.emailUser}>`,
             to,
             subject,
@@ -246,7 +252,7 @@ async function startIMAPListener(config: Config, llm: LLMClient): Promise<void> 
         console.log(`✅ Email connected: ${config.emailUser}`);
 
         // Start listening for new emails (fire-and-forget — this is an infinite polling loop)
-        listenForEmails(config, llm).catch(err => {
+        listenForEmails(config, llm).catch((err) => {
             console.error("❌ [EMAIL] Listener loop crashed:", (err as Error).message);
             if (!isShuttingDown) scheduleReconnect(config, llm);
         });
@@ -265,8 +271,16 @@ function scheduleReconnect(config: Config, llm: LLMClient): void {
         try {
             // Close old client fully before reconnecting
             if (imapClient) {
-                try { await imapClient.logout(); } catch { /* ignore */ }
-                try { imapClient.close(); } catch { /* ignore */ }
+                try {
+                    await imapClient.logout();
+                } catch {
+                    /* ignore */
+                }
+                try {
+                    imapClient.close();
+                } catch {
+                    /* ignore */
+                }
                 imapClient = null;
             }
             await startIMAPListener(config, llm);
@@ -284,13 +298,13 @@ async function listenForEmails(config: Config, llm: LLMClient): Promise<void> {
 
     // Run forever in a loop: lock → process unseen → release → IDLE → repeat
     while (!isShuttingDown && imapClient) {
-        let lock;
+        let lock: Awaited<ReturnType<ImapFlow["getMailboxLock"]>> | undefined;
         try {
             lock = await imapClient.getMailboxLock("INBOX");
         } catch (err) {
             console.error("❌ [EMAIL] Failed to acquire mailbox lock:", (err as Error).message);
             if (!isShuttingDown) {
-                await new Promise(r => setTimeout(r, 10_000));
+                await new Promise((r) => setTimeout(r, 10_000));
             }
             continue;
         }
@@ -313,12 +327,12 @@ async function listenForEmails(config: Config, llm: LLMClient): Promise<void> {
                 // ensure we at least wait a minute before looping again to avoid a tight infinite loop.
                 const elapsed = Date.now() - idleStart;
                 if (!isShuttingDown && elapsed < 60000) {
-                    await new Promise(r => setTimeout(r, 60000 - elapsed));
+                    await new Promise((r) => setTimeout(r, 60000 - elapsed));
                 }
             } catch (err) {
                 if (!isShuttingDown) {
                     console.warn("⚠️ [EMAIL] IDLE interrupted:", (err as Error).message);
-                    await new Promise(r => setTimeout(r, 60_000));
+                    await new Promise((r) => setTimeout(r, 60_000));
                 }
             }
         }
@@ -344,11 +358,14 @@ async function processUnseenEmails(config: Config, llm: LLMClient): Promise<void
         }
         const collected: CollectedEmail[] = [];
 
-        const messages = imapClient.fetch({ seen: false }, {
-            envelope: true,
-            source: true,
-            uid: true,
-        });
+        const messages = imapClient.fetch(
+            { seen: false },
+            {
+                envelope: true,
+                source: true,
+                uid: true,
+            },
+        );
 
         for await (const msg of messages) {
             const envelope = msg.envelope;
@@ -380,7 +397,9 @@ async function processUnseenEmails(config: Config, llm: LLMClient): Promise<void
                 console.log(`🚫 Blocked email from non-whitelisted sender: ${email.senderEmail}`);
                 try {
                     await imapClient!.messageFlagsAdd({ uid: email.uid }, ["\\Seen"], { uid: true });
-                } catch { /* ignore */ }
+                } catch {
+                    /* ignore */
+                }
                 continue;
             }
 
@@ -391,7 +410,9 @@ async function processUnseenEmails(config: Config, llm: LLMClient): Promise<void
                 console.warn(`🚫 Skipping email from ${email.senderEmail} — possible spoofed sender`);
                 try {
                     await imapClient!.messageFlagsAdd({ uid: email.uid }, ["\\Seen"], { uid: true });
-                } catch { /* ignore */ }
+                } catch {
+                    /* ignore */
+                }
                 continue;
             }
             console.log(`   🔐 Email auth: ${authResult.details}`);
@@ -401,7 +422,9 @@ async function processUnseenEmails(config: Config, llm: LLMClient): Promise<void
                 console.warn(`🚫 [EMAIL] Rate limit hit for ${email.senderEmail} — marking seen but skipping`);
                 try {
                     await imapClient!.messageFlagsAdd({ uid: email.uid }, ["\\Seen"], { uid: true });
-                } catch { /* ignore */ }
+                } catch {
+                    /* ignore */
+                }
                 continue;
             }
 
@@ -433,7 +456,22 @@ async function processUnseenEmails(config: Config, llm: LLMClient): Promise<void
                 };
 
                 const senderIsOwner = isPlatformOwner("email", email.senderEmail);
-                const response = await runAgent(llm, agentMessage, progressCallback, undefined, undefined, undefined, undefined, undefined, { channel: "email", userId: email.senderEmail || "", userName: email.senderName, isOwner: senderIsOwner });
+                const response = await runAgent(
+                    llm,
+                    agentMessage,
+                    progressCallback,
+                    undefined,
+                    undefined,
+                    undefined,
+                    undefined,
+                    undefined,
+                    {
+                        channel: "email",
+                        userId: email.senderEmail || "",
+                        userName: email.senderName,
+                        isOwner: senderIsOwner,
+                    },
+                );
                 const replyText = response.text;
                 console.log(`   🤖 Agent response: ${replyText.substring(0, 200)}...`);
 
@@ -441,7 +479,9 @@ async function processUnseenEmails(config: Config, llm: LLMClient): Promise<void
                     // Re-check whitelist immediately before sending (config may have
                     // changed mid-process; never reply outbound to a removed sender).
                     if (!config.emailWhitelist.has(email.senderEmail)) {
-                        console.warn(`🚫 [EMAIL] Whitelist re-check failed for ${email.senderEmail}, suppressing reply`);
+                        console.warn(
+                            `🚫 [EMAIL] Whitelist re-check failed for ${email.senderEmail}, suppressing reply`,
+                        );
                         continue;
                     }
                     const replySubject = email.subject.startsWith("Re:") ? email.subject : `Re: ${email.subject}`;
@@ -565,7 +605,9 @@ export async function closeEmail(): Promise<void> {
     if (imapClient) {
         try {
             await imapClient.logout();
-        } catch { /* ignore */ }
+        } catch {
+            /* ignore */
+        }
         imapClient = null;
     }
 
