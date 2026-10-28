@@ -20,13 +20,23 @@ new Worker(
 
 process.once("message", async (m) => {
     try {
-        const { extractText, getDocumentProxy } = await import("unpdf");
+        const { getDocumentProxy } = await import("unpdf");
         const pdf = await getDocumentProxy(new Uint8Array(m.data));
-        const { text } = await extractText(pdf, { mergePages: true });
-        process.send({
-            ok: true,
-            text: (Array.isArray(text) ? text.join("\n") : String(text ?? "")).slice(0, MAX_TEXT),
-        });
+        // One page at a time, stopping at MAX_TEXT: unpdf's extractText loads every
+        // page at once, so a long ordinary PDF (5000 text pages) outgrew the heap.
+        // Same output as extractText({mergePages: true}): pages joined, whitespace collapsed.
+        let text = "";
+        for (let i = 1; i <= pdf.numPages && text.length < MAX_TEXT; i++) {
+            const page = await pdf.getPage(i);
+            const { items } = await page.getTextContent();
+            const pageText = items
+                .filter((it) => it.str != null)
+                .map((it) => it.str + (it.hasEOL ? "\n" : ""))
+                .join("");
+            text += (i > 1 ? " " : "") + pageText.replace(/\s+/g, " ");
+            page.cleanup();
+        }
+        process.send({ ok: true, text: text.replace(/\s+/g, " ").slice(0, MAX_TEXT) });
     } catch (e) {
         process.send({ ok: false, error: String((e && e.message) || e).slice(0, 300) });
     }

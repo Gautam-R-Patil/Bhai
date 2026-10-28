@@ -14,6 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import zlib from "node:zlib";
+import { PDFDocument, StandardFonts } from "pdf-lib";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const children: ChildProcess[] = [];
@@ -126,6 +127,47 @@ describe("ingestPdfToDocument limits", () => {
         delete process.env.ATLAS_PDF_PARSE_DEADLINE_MS;
         expect(await ingestHello()).toContain("Hello Ingest");
     });
+
+    it("an empty or non-numeric ATLAS_PDF_PARSE_DEADLINE_MS falls back to the default deadline", async () => {
+        for (const v of ["", "abc", "60s", "0", "-5"]) {
+            process.env.ATLAS_PDF_PARSE_DEADLINE_MS = v;
+            expect(await ingestHello()).toContain("Hello Ingest");
+        }
+    });
+
+    it("a long ordinary text PDF parses, page by page, within a small heap", async () => {
+        // 1500 pages of text (~5.6M chars). Loading every page at once (unpdf's
+        // extractText) ran a 64MB heap out of memory; the real cap is 512MB, and
+        // 5000 such pages broke it the same way.
+        const doc = await PDFDocument.create();
+        const font = await doc.embedFont(StandardFonts.Helvetica);
+        const body = Array.from(
+            { length: 50 },
+            (_, i) => `${i} The quick brown fox jumps over the lazy dog 0123456789`,
+        ).join("\n");
+        for (let p = 0; p < 1500; p++)
+            doc.addPage([612, 792]).drawText(body, { x: 20, y: 770, size: 9, font, lineHeight: 15 });
+        const data = Buffer.from(await doc.save());
+
+        const script = fileURLToPath(new URL("../../scripts/pdf-text.cjs", import.meta.url));
+        const m = await new Promise<{ ok?: boolean; text?: string; signal?: string }>((resolve) => {
+            const c = fork(script, [], {
+                execArgv: ["--max-old-space-size=64"],
+                serialization: "advanced",
+                stdio: ["ignore", "ignore", "ignore", "ipc"],
+            });
+            c.once("message", (msg) => resolve(msg as { ok: boolean; text: string }));
+            c.once("exit", (_code, signal) => resolve({ signal: String(signal) }));
+            c.send({ data });
+        });
+        expect(m.ok).toBe(true);
+        expect(m.text).toHaveLength(2_000_000);
+        expect(m.text?.startsWith("0 The quick brown fox")).toBe(true);
+
+        const file = path.join(dir, "long.pdf");
+        fs.writeFileSync(file, data);
+        expect(JSON.stringify((await ingestPdfToDocument(file, "generic")).doc)).toContain("The quick brown fox");
+    }, 60_000);
 
     it("a decompression bomb dies in the child, at the deadline or its memory cap; the next PDF still parses", async () => {
         // ~1.4MB on disk, 300MB of spaces once pdf.js inflates the content stream
