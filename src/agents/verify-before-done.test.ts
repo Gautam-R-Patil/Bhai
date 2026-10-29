@@ -165,4 +165,16 @@ describe("pickReceipt", () => {
         recordBatch(g, [{ fnName: "os_screenshot", isError: false, isBrowser: false, imageUrl: shot, receiptUrl: shot }]);
         expect(pickReceipt(g, owner)).toBeDefined();
     });
+
+describe("browser_form_state", () => {
+    it("is a check of typed fields, not an action that needs one", () => {
+        const state = newVerifyGateState();
+        recordToolCall(state, "browser_type", { text: "hi" });
+        recordToolCall(state, "browser_form_state", {});
+        expect(state.verifyCalled).toBe(true);
+        const fresh = newVerifyGateState();
+        recordToolCall(fresh, "browser_form_state", {});
+        expect(fresh.osStateMutated).toBe(false);
+    });
+});
 });

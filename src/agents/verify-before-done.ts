@@ -54,7 +54,6 @@ const MUTATOR_TOOLS = new Set<string>([
     "browser_type",
     "browser_click",
     "browser_drag",
-    "browser_form_state",
 ]);
 
 const VERIFIER_TOOLS = new Set<string>([
@@ -69,6 +68,7 @@ const VERIFIER_TOOLS = new Set<string>([
     "browser_get_text",
     "browser_wait_for_selector",
     "browser_extract_article",
+    "browser_form_state", // reads the fields: checks what was typed (it was listed as an action)
 ]);
 
 const ACTING_COMPUTER_ACTIONS = new Set([
