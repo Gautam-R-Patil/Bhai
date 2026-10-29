@@ -112,6 +112,17 @@ describe("a saved secret is never accepted as a key name or hotkey (finding #2)"
         expect(r).toHaveProperty("error");
         expect(JSON.stringify(r)).not.toContain("Gh-Secret-77!");
     });
+    it("refuses a token in os_computer_action text when the action presses keys", async () => {
+        noteOwnerMessage("yes");
+        // action:"key" presses `text` as a key; a token there is a key press, not typed text.
+        const r = await resolveVaultArgs(
+            "os_computer_action",
+            { action: "key", text: "{{vault:gh.password}}", confirmed: true },
+            owner(""),
+        );
+        expect(r).toHaveProperty("error");
+        expect(JSON.stringify(r)).not.toContain("Gh-Secret-77!");
+    });
 });
 
 describe("a payment is bound to the approved merchant host (finding #1)", () => {

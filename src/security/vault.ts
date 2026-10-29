@@ -326,9 +326,13 @@ export const hasVaultToken = (args: unknown) => ANY_TOKEN.test(JSON.stringify(ar
 function tokenInKeyField(v: unknown): boolean {
     if (Array.isArray(v)) return v.some(tokenInKeyField);
     if (v && typeof v === "object") {
-        for (const [k, x] of Object.entries(v)) {
-            if ((k === "key" || k === "combo" || k === "hotkey") && typeof x === "string" && ANY_TOKEN.test(x))
-                return true;
+        const o = v as Record<string, unknown>;
+        // os_computer_action / os_multi_action press keys via `text` when action
+        // is "key"/"hold_key" — so a token there is a key press, not typed text.
+        const keyAction = o.action === "key" || o.action === "hold_key";
+        for (const [k, x] of Object.entries(o)) {
+            const isKeyField = k === "key" || k === "combo" || k === "hotkey" || (keyAction && k === "text");
+            if (isKeyField && typeof x === "string" && ANY_TOKEN.test(x)) return true;
             if (tokenInKeyField(x)) return true;
         }
     }

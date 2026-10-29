@@ -843,7 +843,14 @@ async function executeAndProcessToolCall(
             // auto-advanced — and an image is never masked (protect() can't touch pixels).
             // Withhold it; the model still reads the page via browser_scan/extract (text,
             // which IS masked). Only pay the origin lookup once a secret has been typed.
-            if (fnName.startsWith("browser_") && anySecretTyped() && (await browserOriginTainted())) {
+            // A browser screenshot: withhold if the live tab's origin is tainted.
+            // Any full-screen capture (os_screenshot, os_smart_click, os_computer_action
+            // …): withhold whenever a secret was typed into any browser page this task,
+            // since the capture can include that window whatever tab is active.
+            const withhold =
+                anySecretTyped() &&
+                (fnName.startsWith("browser_") ? await browserOriginTainted() : true);
+            if (withhold) {
                 delete parsed.screenshot_base64;
                 delete parsed.zoomed_base64;
                 delete parsed.mime_type;
