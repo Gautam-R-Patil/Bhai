@@ -12,7 +12,14 @@ import {
 } from "../memory/identity.js";
 import { getMemoryStats, listMemories, recall, remember, supersedeMemory } from "../memory/sqlite.js";
 import { exportTraitsSnapshot, getAllTraits, reinforceTrait } from "../memory/traits.js";
-import { isOwnerCaller, noteStoredMemory, ownerTurnMessage } from "./cron-tool.js";
+import {
+    claimSupersede,
+    isMainLoopCall,
+    isOwnerCaller,
+    noteShownMemories,
+    noteStoredMemory,
+    ownerTurnMessage,
+} from "./cron-tool.js";
 import type { ToolDefinition } from "./get-current-time.js";
 
 // ── Memory Tools for LLM ──────────────────────
@@ -56,9 +63,11 @@ export const memoryStore: ToolDefinition = {
     async handler(input) {
         const imp = (input.importance as number) || 5;
         const oldId = input.supersedes == null ? 0 : Number(String(input.supersedes).replace(/^#/, ""));
-        // Owner only, and only when their message says something changed: a contact or a
-        // misread turn must not be able to hide what the owner told Bhai.
-        const supersede = oldId > 0 && Number.isInteger(oldId) && hasCorrectionCue(ownerTurnMessage());
+        // Owner only, and only when their message says something changed and the id was shown
+        // to the main loop this turn: a contact, sub-agent or misread turn must not be able to
+        // hide what the owner told Bhai.
+        const supersede =
+            oldId > 0 && Number.isInteger(oldId) && hasCorrectionCue(ownerTurnMessage()) && claimSupersede(oldId);
         // Use smart write (LLM deduplication) for important memories (>= 7); not on a supersede,
         // which may merge or drop the new row the old one now points at.
         const useSmartWrite = imp >= 7 && !supersede;
@@ -90,7 +99,7 @@ export const memoryStore: ToolDefinition = {
             id,
             message: supersede
                 ? `Memory stored; supersede ignored: #${oldId} is not a live memory.`
-                : "Memory stored; supersede ignored: only the owner's own correction can replace a memory.",
+                : "Memory stored; supersede ignored: only the owner's own correction, once per turn, can replace a memory shown this turn.",
         });
     },
 };
@@ -114,6 +123,7 @@ export const memorySearch: ToolDefinition = {
     },
     async handler(input) {
         const results = await recall(input.query as string, (input.limit as number) || 10);
+        if (isMainLoopCall("memory_search")) noteShownMemories(results.map((m) => m.id));
         return JSON.stringify({ results, count: results.length });
     },
 };

@@ -146,6 +146,7 @@ import {
     recordToolSuccess,
 } from "./tool-router-analytics.js";
 import { autoSaveSession, getBrowserContext, trackBrowserStep } from "./tools/browser-memory.js";
+import { noteShownMemories, runAsMainLoopTool } from "./tools/cron-tool.js";
 import { clearCache, executeTool, resetRateLimits, withTurnSignal } from "./tools/index.js";
 import { withSendLedger } from "./tools/send-ledger.js";
 
@@ -1027,7 +1028,7 @@ async function executeAndProcessToolCall(
     }
     // Stop reaches long waits on the owner, also inside sub-agents/swarms this call starts.
     const runTool = () => {
-        const run = () => withTurnSignal(signal, () => executeTool(fnName, execArgs));
+        const run = () => runAsMainLoopTool(fnName, () => withTurnSignal(signal, () => executeTool(fnName, execArgs)));
         return vault ? runVaultCall(vault, run) : run();
     };
     let rawResult = await runTool();
@@ -2451,6 +2452,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 // Core Identity & Important Facts (Always injected)
                 const coreMems = getCoreMemory(getDimensionValue<number>("memory.coreMemory.k") ?? 10);
                 if (coreMems && coreMems.length > 0) {
+                    noteShownMemories(coreMems.map((m) => m.id));
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     parts.push(
                         `🧠 CORE MEMORY (Always remember these facts about the user):\n${coreMems.map((m: any) => `- (#${m.id} · ${m.category} · ${ageLabel(m.created_at)}) ${m.content}`).join("\n")}`,
@@ -2510,6 +2512,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                     const topScore = queriedMems.length > 0 ? ((queriedMems[0] as any).score ?? 0) : 0;
                     if (_harnessTraceId) recordMemoryHit(_harnessTraceId, uniqueMems.length, topScore);
                     if (uniqueMems && uniqueMems.length > 0) {
+                        noteShownMemories(uniqueMems.map((m: { id: number }) => m.id));
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
                         parts.push(
                             `🧠 RELEVANT RECALLED MEMORIES (Based on current prompt):\n${uniqueMems.map((m: any) => `- (#${m.id} · ${m.category} · ${ageLabel(m.created_at)}) ${m.content}`).join("\n")}`,

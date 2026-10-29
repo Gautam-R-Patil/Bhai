@@ -20,8 +20,19 @@ export interface CronCallerContext {
     message?: string;
     /** The last memory memory_store saved in this owner turn, for the reply's "Forget that" button. */
     storedMemory?: { id: number; at: number };
+    /** Memory ids the main loop showed the model this turn: the only ones memory_store may supersede. */
+    shownMemories?: Set<number>;
+    superseded?: boolean;
 }
 const _callerStorage = new AsyncLocalStorage<CronCallerContext>();
+// The tool the owner's main loop (agent.ts) is running; a sub-agent or swarm that tool
+// starts inherits the outer name, so its own memory_store/memory_search don't match.
+const _mainLoopTool = new AsyncLocalStorage<string>();
+
+export function runAsMainLoopTool<T>(name: string, fn: () => T): T {
+    return _mainLoopTool.run(name, fn);
+}
+export const isMainLoopCall = (tool: string): boolean => _mainLoopTool.getStore() === tool;
 
 /** Run `fn` with `ctx` as the ambient caller context for cron-scheduling. */
 export function runWithCallerContext<T>(ctx: CronCallerContext, fn: () => Promise<T> | T): Promise<T> | T {
@@ -43,6 +54,26 @@ export function ownerTurnMessage(): string {
 export function noteStoredMemory(id: number): void {
     const ctx = _callerStorage.getStore();
     if (ctx && isOwnerCaller()) ctx.storedMemory = { id, at: Date.now() };
+}
+
+/** The main loop showed the model these memory ids on the owner's turn. */
+export function noteShownMemories(ids: number[]): void {
+    const ctx = _callerStorage.getStore();
+    if (!ctx || !isOwnerCaller()) return;
+    ctx.shownMemories ??= new Set();
+    for (const id of ids) ctx.shownMemories.add(id);
+}
+
+/**
+ * The owner's main-loop memory_store may retire `id`: it was shown this turn, and it is the
+ * turn's first supersede (so injected text riding an owner turn can't retire arbitrary ids).
+ */
+export function claimSupersede(id: number): boolean {
+    const ctx = _callerStorage.getStore();
+    if (!ctx || !isOwnerCaller() || !isMainLoopCall("memory_store")) return false;
+    if (ctx.superseded || !ctx.shownMemories?.has(id)) return false;
+    ctx.superseded = true;
+    return true;
 }
 
 /** Legacy setter preserved for callers that can't wrap — always overwrites
