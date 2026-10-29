@@ -16,7 +16,7 @@ import path from "node:path";
 import { type WebSocket, WebSocketServer } from "ws";
 import { getDataDir, getScriptsDir } from "../../config/paths.js";
 import { getOverlayLocalToken } from "../../overlay/overlay-chat.js";
-import { isForeignExtensionOrigin } from "../../security/extension-origin.js";
+import { bhaiExtensionIds, isForeignExtensionOrigin } from "../../security/extension-origin.js";
 import { isBrowserPageLoad, isLoopbackHost, isWebOrigin } from "../../security/loopback.js";
 import { resetBackend } from "./browser-backend.js";
 import type { ChromeBridgeCommand, ChromeBridgeEvent, ChromeBridgeResponse, ChromeTabInfo } from "./types.js";
@@ -246,6 +246,13 @@ function removeDiscoveryFile(): void {
 
 // ── Register Native Messaging Host ───────────
 
+// Once Bhai's extension has fetched its token over native messaging (scoped to this OS user)
+// and connected with it, /discover stops handing tokens to any local caller that asks.
+// Delete this file to go back to HTTP discovery.
+const NATIVE_OK_FILE = path.join(homedir(), ".atlas", "bridge-native-ok");
+let nativeHostRegistered = false;
+export const discoverServesTokens = (): boolean => !(nativeHostRegistered && fs.existsSync(NATIVE_OK_FILE));
+
 async function registerNativeMessagingHost(_port: number): Promise<void> {
     try {
         // Write the native host script next to the discovery file
@@ -294,13 +301,28 @@ function sendMessage(msg) {
 `;
         fs.writeFileSync(hostScriptPath, hostScript, { mode: 0o755 });
 
+        // Chrome starts a native host with a minimal PATH (no node there, and a packaged
+        // install may have none at all): a launcher runs the host with Bhai's own runtime.
+        const ids = bhaiExtensionIds();
+        if (!ids) return; // Chrome rejects wildcard origins, so without Bhai's ID there's nothing to register
+        let hostPath = hostScriptPath;
+        if (process.platform !== "win32") {
+            const q = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
+            hostPath = path.join(homedir(), ".atlas", "atlas-bridge-host");
+            fs.writeFileSync(
+                hostPath,
+                `#!/bin/sh\nELECTRON_RUN_AS_NODE=1 exec ${q(process.execPath)} ${q(hostScriptPath)}\n`,
+                { mode: 0o755 },
+            );
+        }
+
         // Write the native messaging host manifest
         const manifest = {
             name: "com.atlas.bridge",
             description: "Bhai Browser Bridge — auto-discovery for Chrome extension",
-            path: hostScriptPath,
+            path: hostPath,
             type: "stdio",
-            allowed_origins: ["chrome-extension://*/"],
+            allowed_origins: [...ids].map((id) => `chrome-extension://${id}/`),
         };
 
         // macOS: ~/Library/Application Support/Google/Chrome/NativeMessagingHosts/
@@ -362,6 +384,7 @@ function sendMessage(msg) {
         }
 
         fs.writeFileSync(path.join(manifestDir, "com.atlas.bridge.json"), JSON.stringify(manifest, null, 2));
+        nativeHostRegistered = true;
     } catch (err) {
         // Native messaging registration is non-fatal — HTTP discovery is the primary method
         console.warn("⚠️  Could not register native messaging host (non-fatal):", (err as Error).message);
@@ -418,13 +441,11 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
                 );
                 return;
             }
-            const discovery = {
-                port,
-                token: bridgeToken,
-                wsUrl: `ws://127.0.0.1:${port}`,
-                pid: process.pid,
-                overlay: getOverlayInfo(),
-            };
+            // After the extension has connected over native messaging, tokens stay off HTTP:
+            // a no-Origin GET can come from any local process, not only the extension.
+            const discovery = discoverServesTokens()
+                ? { port, token: bridgeToken, wsUrl: `ws://127.0.0.1:${port}`, pid: process.pid, overlay: getOverlayInfo() }
+                : { port, wsUrl: `ws://127.0.0.1:${port}`, pid: process.pid, native: true };
             const discoverHeaders: Record<string, string> = {
                 "Content-Type": "application/json",
                 "Cache-Control": "no-store",
@@ -669,7 +690,15 @@ function handleExtensionMessage(ws: WebSocket, msg: Record<string, unknown>, aut
             // Reset the browser backend so auto-mode picks up the extension
             resetBackend();
             notifyEvent({ type: "extension_connected", data: {} });
-            console.log("🔌 Chrome extension authenticated ✓");
+            console.log(`🔌 Chrome extension authenticated ✓${msg.native === true ? " (native messaging)" : ""}`);
+            if (msg.native === true && !fs.existsSync(NATIVE_OK_FILE)) {
+                try {
+                    fs.writeFileSync(NATIVE_OK_FILE, new Date().toISOString(), { mode: 0o600 });
+                    console.log("🔌 Bridge tokens now go out only over native messaging; /discover no longer serves them");
+                } catch {
+                    /* keep serving them */
+                }
+            }
             askOutdatedExtensionToReload(ws, msg.version);
         } else {
             ws.send(JSON.stringify({ type: "auth_failed", error: "Invalid token" }));

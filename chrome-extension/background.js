@@ -101,7 +101,7 @@ function connect() {
     connectionAttempts = 0;
     reconnectDelay = 1000;
     // The version lets Bhai ask an outdated copy (an update installed under a running Chrome) to reload.
-    ws.send(JSON.stringify({ type: "auth", token: authToken, version: chrome.runtime.getManifest().version }));
+    ws.send(JSON.stringify({ type: "auth", token: authToken, version: chrome.runtime.getManifest().version, native: discoveredVia === "native" }));
     startHeartbeat();
     updateBadge(true);
   };
@@ -1937,7 +1937,32 @@ async function autoDiscover() {
   }
 }
 
+// How the token was obtained, told to the bridge on auth: once it has seen native messaging
+// work, it stops handing tokens out over HTTP (any local process can GET /discover).
+let discoveredVia = "";
+
+function nativeConfig() {
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendNativeMessage("com.atlas.bridge", { action: "get_config" }, (resp) => {
+        resolve(chrome.runtime.lastError ? null : resp);
+      });
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
 async function _autoDiscover() {
+  // Native messaging first: Chrome only starts the host for this extension, as this OS user.
+  const native = await nativeConfig();
+  if (native?.success && native.token) {
+    console.log("[ATLAS Bridge] Discovered via native messaging");
+    discoveredVia = "native";
+    applyDiscovery(native);
+    return true;
+  }
+
   try {
     const res = await fetch(discoveryUrl);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1945,6 +1970,7 @@ async function _autoDiscover() {
 
     if (config.token && config.wsUrl) {
       console.log("[ATLAS Bridge] Auto-discovered Bhai server");
+      discoveredVia = "http";
       applyDiscovery(config);
       return true;
     }
@@ -1955,32 +1981,9 @@ async function _autoDiscover() {
     console.warn("[ATLAS Bridge] /discover fetch failed:", err && err.message ? err.message : String(err));
   }
 
-  // Try native messaging as fallback
-  try {
-    const response = await new Promise((resolve, reject) => {
-      chrome.runtime.sendNativeMessage("com.atlas.bridge", { action: "get_config" }, (resp) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-        } else {
-          resolve(resp);
-        }
-      });
-    });
-
-    if (response && response.success && response.token) {
-      console.log("[ATLAS Bridge] Auto-discovered via native messaging");
-      applyDiscovery(response);
-      return true;
-    }
-  } catch {
-    // Native messaging not available
-  }
-
   // No fallback to the overlay port. 18792 is the overlay chat server — it
   // speaks a different protocol AND requires ?localToken= auth that this
-  // extension does not hold. Connecting there used to silently fail with
-  // ERR_CONNECTION_REFUSED-style errors when the bot wasn't fully booted,
-  // and surface as 4001 closes after. Keep retrying /discover at 18800.
+  // extension does not hold. Keep retrying discovery.
   return false;
 }
 

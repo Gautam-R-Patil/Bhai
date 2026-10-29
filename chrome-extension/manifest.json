@@ -12,7 +12,8 @@
     "contextMenus",
     "debugger",
     "alarms",
-    "cookies"
+    "cookies",
+    "nativeMessaging"
   ],
   "host_permissions": [
     "<all_urls>",
