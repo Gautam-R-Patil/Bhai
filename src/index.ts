@@ -688,10 +688,8 @@ async function boot() {
                 const obs = getObserver();
                 if (obs) {
                     const { intentFromThought } = await import("./proactive/intent-from-thought.js");
+                    // No push here: dispatch.ts pushes what is actually delivered.
                     obs.enqueue(intentFromThought(message, { hourNow: new Date().getHours() }));
-                    if (getSubscriptionCount() > 0) {
-                        sendPushNotification("Bhai", message.substring(0, 180)).catch(() => {});
-                    }
                     return;
                 }
             } catch (err) {
@@ -732,9 +730,6 @@ async function boot() {
                     sendOne(c).catch((err) => {
                         console.log(`proactive dispatch failed (${c}):`, (err as Error).message);
                     });
-                if (getSubscriptionCount() > 0) {
-                    sendPushNotification("Bhai", message.substring(0, 180)).catch(() => {});
-                }
             } catch (err) {
                 console.log("[proactive] Composer fallback also failed — staying silent:", (err as Error).message);
             }

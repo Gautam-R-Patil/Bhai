@@ -75,4 +75,14 @@ export async function dispatchProactiveMessage(
     }
     await sender(prefixed);
     debugProactive("dispatched", { channel, mode, preview: prefixed.slice(0, 80) });
+    // Push subscribers follow the overlay. The push mirrors what was delivered — composed, past
+    // every gate above — never the raw thought (heartbeat used to push it regardless of
+    // "shut up", the kill switches, shadow mode or the night window).
+    if (channel === "overlay") {
+        import("../notifications/push.js")
+            .then(({ getSubscriptionCount, sendPushNotification }) =>
+                getSubscriptionCount() > 0 ? sendPushNotification("Bhai", text.slice(0, 180)) : undefined,
+            )
+            .catch(() => {});
+    }
 }

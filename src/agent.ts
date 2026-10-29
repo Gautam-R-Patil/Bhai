@@ -1573,7 +1573,13 @@ async function _runAgentBody(
     const userIntentText =
         rawUserMessage.replace(/^\[Replying to [^\n]*?message: "[\s\S]*?"\]\n\n/, "").trim() || rawUserMessage;
     // Only a message the owner actually sent can answer a consent question.
-    if (channelContext?.isOwner && !channelContext.autonomous) noteOwnerMessage(userIntentText);
+    if (channelContext?.isOwner && !channelContext.autonomous) {
+        noteOwnerMessage(userIntentText);
+        // Any channel: the owner talking back is engagement (proactive fatigue gate).
+        import("./proactive/notification-tracker.js")
+            .then((m) => m.recordOwnerEngagement())
+            .catch(() => {});
+    }
 
     // ── Goal detection: check if user mentioned a goal ──
     try {

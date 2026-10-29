@@ -10,6 +10,8 @@ export type ProactiveConfig = {
     postures: Record<Channel, Posture>;
     urgentAllowedAfter: string;            // "HH:MM"
     nightWindows: { default: { start: string; end: string } };
+    /** "shut up": no proactive messages until "resume" — kept across restarts. */
+    quiet?: boolean;
 };
 
 const VALID_CHANNELS: Channel[] = [
@@ -59,6 +61,14 @@ export function loadProactiveConfig(path: string): ProactiveConfig {
 
 export function getPosture(cfg: ProactiveConfig, ch: Channel): Posture {
     return cfg.postures[ch] ?? "calm";
+}
+
+/** Persist "shut up" / "resume" (atomic, like setPosture), so a restart doesn't undo it. */
+export function setQuiet(path: string, quiet: boolean): void {
+    const next: ProactiveConfig = { ...loadProactiveConfig(path), quiet };
+    const tmp = `${path}.tmp`;
+    writeFileSync(tmp, JSON.stringify(next, null, 2));
+    renameSync(tmp, path);
 }
 
 export function setPosture(

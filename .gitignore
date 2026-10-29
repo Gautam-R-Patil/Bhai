@@ -224,6 +224,9 @@ desktop/hostinger-upload/
 !src/tools/browser/chrome-tabs.test.ts
 !src/language-scope.test.ts
 !src/agent.owner-state.test.ts
+!src/proactive/dispatch.test.ts
+!src/proactive/notification-fatigue.test.ts
+!src/proactive/observer-config-reload.test.ts
 !src/config/paths.test.ts
 !src/tools/coding/checkpoint-manager.test.ts
 !src/language.test.ts
