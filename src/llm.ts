@@ -232,6 +232,7 @@ export function createLLMClient(config: Config): LLMClient {
                 responseFormat,
                 _resolvedModel: model,
                 _isThinking: isThinking,
+                _lean: lean,
             };
 
             // The middleware pipeline wraps the core LLM call

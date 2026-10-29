@@ -222,6 +222,7 @@ desktop/hostinger-upload/
 !src/security/extension-origin.test.ts
 !src/tools/browser/live-center.test.ts
 !src/tools/browser/chrome-tabs.test.ts
+!src/language-scope.test.ts
 !src/config/paths.test.ts
 !src/tools/coding/checkpoint-manager.test.ts
 !src/language.test.ts
