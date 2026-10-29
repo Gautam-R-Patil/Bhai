@@ -79,9 +79,21 @@ export async function waitForHuman(
         await nap(Math.min(intervalMs, Math.max(0, deadline - Date.now())), signal);
         if (signal?.aborted) return "cancelled";
         const info = await detect(page).catch(() => null);
-        if (info?.type === "none" || info?.type === "recaptcha-v3") return "cleared"; // v3 left alone is invisible
         const s = await pageState(page);
-        if (s?.solved || (s && startUrl && s.href !== startUrl)) return "cleared";
+        const why =
+            info?.type === "none"
+                ? "no check on the page"
+                : info?.type === "recaptcha-v3" // v3 left alone is invisible
+                  ? "only invisible v3 left"
+                  : s?.solved
+                    ? "the widget holds a token"
+                    : s && startUrl && s.href !== startUrl
+                      ? `the page moved on (${s.href.slice(0, 80)})`
+                      : null;
+        if (why) {
+            console.log(`  🙋 Human check cleared: ${why}`);
+            return "cleared";
+        }
     }
     return "timeout";
 }

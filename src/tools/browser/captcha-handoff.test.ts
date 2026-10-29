@@ -145,3 +145,26 @@ describe("captchaAfterAction", () => {
         expect(JSON.stringify(out)).not.toMatch(/captcha/i);
     });
 });
+
+describe("clearCaptchaIfAny on a page it already gave up on", () => {
+    it("doesn't ask the owner again for every later step on the same page", async () => {
+        const page = {
+            url: () => "https://gave-up.test/form#step2",
+            screenshot: vi.fn(),
+            mouse: { move: vi.fn(), click: vi.fn() },
+            evaluate: vi.fn(async (code: unknown) => {
+                if (typeof code !== "function") return false;
+                return String(code).includes("innerHTML") ? '<div class="h-captcha"></div>' : { type: "hcaptcha", siteKey: null };
+            }),
+        };
+        getActivePage.mockResolvedValue(page);
+        waitHandler.mockClear();
+        waitHandler.mockResolvedValue(JSON.stringify({ error: "timed out", status: "timeout", requires_user: true }));
+        const { clearCaptchaIfAny } = await import("./captcha.js");
+        expect(await clearCaptchaIfAny(page)).toMatchObject({ present: true, cleared: false });
+        expect(await clearCaptchaIfAny(page)).toMatchObject({ present: true, cleared: false, detail: { status: "still_waiting" } });
+        expect(waitHandler).toHaveBeenCalledTimes(1);
+        waitHandler.mockReset();
+        waitHandler.mockResolvedValue(JSON.stringify({ success: true, status: "cleared" }));
+    });
+});

@@ -215,9 +215,30 @@ export async function quickCaptchaCheck(page: unknown): Promise<CaptchaType | nu
 
 type CaptchaOutcome = { present: false } | { present: true; cleared: boolean; detail: Record<string, unknown> };
 
+// A page the pipeline just gave up on (solvers and owner both): later steps on it go
+// straight to "the owner has to do it" instead of re-running solvers and another
+// ~5 min wait for each step. Cleared, the entry goes; it expires after GAVE_UP_MS.
+const gaveUp = new Map<string, number>();
+const GAVE_UP_MS = 180_000;
+const pageKey = (page: unknown) => {
+    try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return String((page as any).url?.() ?? "").split("#")[0];
+    } catch {
+        return "";
+    }
+};
+
 export async function clearCaptchaIfAny(page: unknown, signal?: AbortSignal): Promise<CaptchaOutcome> {
     const type = await quickCaptchaCheck(page);
-    if (!type) return { present: false };
+    const key = pageKey(page);
+    if (!type) {
+        gaveUp.delete(key);
+        return { present: false };
+    }
+    const since = gaveUp.get(key);
+    if (since && Date.now() - since < GAVE_UP_MS)
+        return { present: true, cleared: false, detail: { status: "still_waiting" } };
     console.log(`  🧩 CAPTCHA pipeline: ${type} on the page, taking over`);
     const raw =
         process.env.ATLAS_NO_CAPTCHA_AUTO === "true"
@@ -226,6 +247,8 @@ export async function clearCaptchaIfAny(page: unknown, signal?: AbortSignal): Pr
     const detail = JSON.parse(raw) as Record<string, unknown>;
     const cleared = detail.success === true;
     console.log(`  🧩 CAPTCHA pipeline: ${cleared ? `cleared (${detail.method ?? detail.status})` : "not cleared"}`);
+    if (cleared) gaveUp.delete(key);
+    else if (detail.status !== "cancelled" && key) gaveUp.set(key, Date.now());
     return { present: true, cleared, detail };
 }
 
@@ -818,8 +841,11 @@ export const browserHandleCaptcha: ToolDefinition = {
             }
             // Lazy: human-handoff.ts imports this module.
             const { browserWaitForHuman } = await import("./human-handoff.js");
+            // The owner's wait: ATLAS_CAPTCHA_HANDOFF_MS when set, never past the pipeline's budget.
             const left = Math.floor(TOOL_BUDGET_S - (Date.now() - start) / 1000);
-            const out = JSON.parse(await browserWaitForHuman.handler({ timeout_s: left, _signal: signal }));
+            const configured = Number(process.env.ATLAS_CAPTCHA_HANDOFF_MS) / 1000;
+            const timeout_s = configured > 0 ? Math.min(left, configured) : left;
+            const out = JSON.parse(await browserWaitForHuman.handler({ timeout_s, _signal: signal }));
             return JSON.stringify({
                 ...out,
                 captcha_present: true,

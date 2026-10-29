@@ -113,11 +113,12 @@ export function parseAnswer(text: string, kind: "tiles" | "grid"): Answer | null
 // ponytail: a phrase match; a model that refuses in other words just costs one wasted call per page.
 const REFUSAL = /\b(can['’]?t|cannot|unable to|won['’]?t|not able to)\b[^.]{0,40}\b(help|assist|solve|do that|comply)/i;
 
-// Measured on 64 real reCAPTCHA pages (and 7 hCaptcha, all right): GPT-6 Astra and
-// GPT-6.1 Terra answer together and GPT-5.4 breaks ties, 97% of pages right at about
-// $0.015 a page. Alone, the best single model got 84%. Astra goes first for grid
-// puzzles (click / drag), where it got every one.
-const DEFAULT_MODELS = "azure/gpt-6-astra,azure/gpt-6.1-terra,azure/gpt-5.4";
+// Measured on 64 real reCAPTCHA pages (and 7 hCaptcha, all right): GPT-6.1 Terra and
+// GPT-6 Astra answer tiles together and GPT-5.4 breaks ties, 97% of pages right at about
+// $0.015 a page; alone, the best single model got 84%. Grid puzzles (click / drag) take
+// the first model: Terra got every one, at a ninth of Astra's price and faster; Astra is
+// the fallback when Terra refuses.
+const DEFAULT_MODELS = "azure/gpt-6.1-terra,azure/gpt-6-astra,azure/gpt-5.4";
 const refusals = new Map<string, number>(); // some models refuse now and then; skip one only after two
 function models(): string[] {
     const list = (process.env.ATLAS_CAPTCHA_MODELS || DEFAULT_MODELS)
@@ -199,6 +200,19 @@ export interface CaptchaDriver {
     up(): Promise<void>;
 }
 
+/** Screenshots of the challenge at this many image pixels per CSS pixel. */
+export const CAPTURE_SCALE = 2;
+
+const cdpSessions = new WeakMap<object, Promise<{ send(m: string, p?: object): Promise<{ data: string }> }>>();
+function cdpOf(page: Page) {
+    let s = cdpSessions.get(page);
+    if (!s) {
+        s = page.context().newCDPSession(page);
+        cdpSessions.set(page, s as Promise<{ send(m: string, p?: object): Promise<{ data: string }> }>);
+    }
+    return s as Promise<{ send(m: string, p?: object): Promise<{ data: string }> }>;
+}
+
 export function playwrightDriver(page: Page): CaptchaDriver | null {
     if (typeof page?.screenshot !== "function" || typeof page?.mouse?.click !== "function") return null;
     return {
@@ -229,7 +243,21 @@ export function playwrightDriver(page: Page): CaptchaDriver | null {
             };
         },
         tickBox: async () => (await boxes(findFrame(page, ANCHOR_URL), TICK_SEL))[0] ?? null,
-        shot: (r) => page.screenshot({ type: "png", clip: { x: r.x, y: r.y, width: r.w, height: r.h } }),
+        async shot(r) {
+            // At 2x whatever the window's own density: at 1x the whole challenge is ~500px,
+            // and thin shapes vanish under the grid labels.
+            try {
+                const cdp = await cdpOf(page);
+                const at = (await page.evaluate("({ x: scrollX, y: scrollY })")) as { x: number; y: number };
+                const { data } = await cdp.send("Page.captureScreenshot", {
+                    format: "png",
+                    clip: { x: r.x + at.x, y: r.y + at.y, width: r.w, height: r.h, scale: CAPTURE_SCALE },
+                });
+                return Buffer.from(data, "base64");
+            } catch {
+                return page.screenshot({ type: "png", clip: { x: r.x, y: r.y, width: r.w, height: r.h } });
+            }
+        },
         move: (x, y, steps = 1) => page.mouse.move(x, y, { steps }),
         click: (x, y) => page.mouse.click(x, y),
         down: () => page.mouse.down(),

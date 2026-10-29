@@ -9,7 +9,7 @@
 // come from the extension's captcha_frames command; screenshots from CDP.
 
 import type { CaptchaDriver, ChallengeView, Frames, Rect } from "./captcha-vision.js";
-import { FRAMES_JS } from "./captcha-vision.js";
+import { CAPTURE_SCALE, FRAMES_JS } from "./captcha-vision.js";
 import { sendBridgeCommand } from "./chrome-bridge.js";
 
 /** One widget frame as the extension reads it, in that frame's own viewport. */
@@ -90,23 +90,16 @@ export function chromeDriver(page: any): CaptchaDriver {
         },
 
         async shot(area) {
-            const { data } = await cdp("Page.captureScreenshot", { format: "png" });
-            const png = Buffer.from(String(data), "base64");
-            const sharp = (await import("sharp")).default;
-            const { width = 0, height = 0 } = await sharp(png).metadata();
-            const cssWidth = Number(await page.evaluate("innerWidth")) || width;
-            const k = width / cssWidth; // device pixels per CSS px
-            const left = Math.max(0, Math.min(width - 1, Math.round(area.x * k)));
-            const top = Math.max(0, Math.min(height - 1, Math.round(area.y * k)));
-            return sharp(png)
-                .extract({
-                    left,
-                    top,
-                    width: Math.max(1, Math.min(width - left, Math.round(area.w * k))),
-                    height: Math.max(1, Math.min(height - top, Math.round(area.h * k))),
-                })
-                .png()
-                .toBuffer();
+            // Just the challenge, at CAPTURE_SCALE whatever the screen's density (clip is in page coordinates).
+            const at = ((await page.evaluate("({ x: scrollX, y: scrollY })").catch(() => null)) as {
+                x: number;
+                y: number;
+            } | null) ?? { x: 0, y: 0 };
+            const { data } = await cdp("Page.captureScreenshot", {
+                format: "png",
+                clip: { x: area.x + at.x, y: area.y + at.y, width: area.w, height: area.h, scale: CAPTURE_SCALE },
+            });
+            return Buffer.from(String(data), "base64");
         },
 
         async move(x, y, steps = 1) {
