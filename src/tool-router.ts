@@ -133,6 +133,8 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "Reading files, writing files, creating files, editing documents and code, listing directories, searching files by name or content, finding a file anywhere on the computer (Spotlight), searching code with regex, finding files by glob pattern, deleting files, file metadata, compressing archives, managing the trash can, opening files in applications, appending to log files.",
         tools: [
             "read",
+            "find_files",
+            "open_in_app",
             "edit",
             "write",
             "append_file",
@@ -143,8 +145,6 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "file_metadata",
             "compress_files",
             "trash_manager",
-            "open_in_app",
-            "find_files",
         ],
     },
     coding: {
@@ -305,6 +305,7 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "System settings and hardware controls: volume, brightness, clipboard, system info, WiFi, Bluetooth, Do Not Disturb, dark mode, locking the screen, display sleep, opening any System Settings pane or privacy permission page directly. Platform capability detection: which shell, screenshot engine, clipboard, OCR, and automation tools are available at runtime.",
         tools: [
             "set_volume",
+            "open_settings",
             "clipboard",
             "system_info",
             "platform_info",
@@ -314,7 +315,6 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "dark_mode",
             "lock_screen",
             "sleep_display",
-            "open_settings",
         ],
     },
     media: {
@@ -734,6 +734,33 @@ const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] 
     {
         pattern:
             /\b(open|launch|switch.?to|focus|activate|quit|hide|close)\b.{0,40}\b(whatsapp|telegram|discord|slack|signal|messages|outlook|teams|zoom|notion|figma|photoshop|illustrator|finder|safari|chrome|spotify|apple.?music|app|application)\b/i,
+        category: "app_management",
+        minScore: 0.7,
+    },
+    // Settings, permissions and machine state ("give zoom access to my camera", "battery")
+    {
+        pattern:
+            /\b(settings?|preferences|permissions?|wallpaper|desktop background|battery|night.?shift|resolution|trackpad|notifications?|login items|privacy)\b|\b(access to|use) (my |the )?(camera|microphone|mic|screen|files|location|contacts|photos)\b|\b(airpods|earbuds|headphones|bluetooth)\b/i,
+        category: "system_controls",
+        minScore: 0.7,
+    },
+    // Finding a file somewhere on the machine
+    {
+        pattern:
+            /\b(find|where(?:'s| is| are| did)|locate|search for|look for|show me)\b.{0,40}\b(files?|folders?|pdfs?|docs?|docx|documents?|invoices?|resume|cv|photos?|images?|pictures?|spreadsheets?|xlsx?|csv|downloads?|screenshots?)\b/i,
+        category: "file_system",
+        minScore: 0.75,
+    },
+    // Acting on whatever is on screen
+    {
+        pattern:
+            /\b(click|double.?click|right.?click|tap on|scroll (up|down)|press the|type (in|into)|on (the )?screen)\b|\bopen (the )?(calculator|notes|terminal|photos|preview|textedit|system settings|app store|facetime|xcode|word|excel)\b/i,
+        category: "os_control",
+        minScore: 0.7,
+    },
+    // Window layout
+    {
+        pattern: /\b(windows?|full.?screen|minimi[sz]e|maximi[sz]e|split.?screen|side by side|tile)\b/i,
         category: "app_management",
         minScore: 0.7,
     },
