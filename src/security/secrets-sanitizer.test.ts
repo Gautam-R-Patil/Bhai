@@ -539,3 +539,23 @@ describe("containsSecrets", () => {
         expect(containsSecrets(input)).toBe(true);
     });
 });
+
+it("redacts a bare Telegram bot token inside an api.telegram.org URL", () => {
+    const token = `8123456789:${"A".repeat(35)}`;
+    const r = sanitizeSecrets(`error: GET https://api.telegram.org/bot${token}/getMe failed`);
+    expect(r.sanitized).not.toContain(token);
+    expect(r.sanitized).toContain("[REDACTED:TELEGRAM_BOT_TOKEN]");
+});
+
+it("redacts a bare HuggingFace token", () => {
+    const token = `hf_${"a".repeat(34)}`;
+    const r = sanitizeSecrets(`model load failed with token ${token}`);
+    expect(r.sanitized).not.toContain(token);
+    expect(r.sanitized).toContain("[REDACTED:HUGGINGFACE_TOKEN]");
+});
+
+it("does not flag an ordinary digits:word pair as a Telegram token", () => {
+    // 35 chars is the discriminator — a short ratio/time like 12345678:90 stays.
+    const r = sanitizeSecrets("ratio 12345678:90 and ts 1700000000:left");
+    expect(r.totalRedactions).toBe(0);
+});

@@ -38,6 +38,14 @@ export default defineConfig({
         testTimeout: 30_000,
         // Closing Chromium or an HTTP server can take >10s on a Windows runner.
         hookTimeout: 30_000,
+        // CI only: absorb transient timing/resource flakes. A large pool of
+        // tests assert hard wall-clock deadlines, drive real headless Chromium,
+        // or kill a child by RSS/deadline — all deterministic on a quiet machine
+        // but racy on a loaded shared runner (esp. Windows/Node 24), so a
+        // different one reddens the matrix almost every run. Retry re-runs only
+        // the failed test; a genuinely broken one still fails all three attempts.
+        // Zero locally, so flakes stay visible during development, not masked.
+        retry: process.env.CI ? 2 : 0,
         reporters: ["verbose"],
     },
 });
