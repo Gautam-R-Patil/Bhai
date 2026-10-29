@@ -3070,7 +3070,12 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         const qs = _tok ? `?localToken=${encodeURIComponent(_tok)}` : '';
         ws = new WebSocket(`ws://${location.host}${qs}`);
         window._atlasWS = ws; // Expose for Electron IPC (live voice shortcut)
-        ws.onopen = () => { connRefused = false; clearConnNotice(); blobs.forEach(b => b.classList.add('on')); grabFocus(); };
+        ws.onopen = () => {
+          connRefused = false; clearConnNotice(); blobs.forEach(b => b.classList.add('on')); grabFocus();
+          // Name this chat on the new socket, so a reply to a turn that started before a
+          // reconnect still finds its way here.
+          ws.send(JSON.stringify({ type: 'hello', chat: chatId }));
+        };
         ws.onmessage = (e) => { try { handle(JSON.parse(e.data)); } catch (err) { console.error('[OVERLAY] handle() error:', err); } };
         ws.onclose = (e) => {
           // 4001/4003: the server refused this socket (token or origin) — retrying won't help.
@@ -3252,6 +3257,22 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           }
 
           grabFocus();
+        }
+        else if (msg.type === 'ready') {
+          // Reconnected while waiting, and no turn is running any more: its reply was lost.
+          // Unlock instead of showing "thinking" forever.
+          if (waiting && !msg.busy) {
+            icon.classList.remove('thinking');
+            setMood('idle');
+            setAgentBusy(false);
+            input.disabled = false;
+            waiting = false;
+            const lost = "The connection dropped and I lost my reply. Ask me again.";
+            progress.innerHTML = `<div class="progress-card"><span class="progress-icon">🔌</span><span class="progress-label">${esc(lost)}</span></div>`;
+            progress.classList.add('visible');
+            announceToSR(lost);
+            grabFocus();
+          }
         }
         else if (msg.type === 'silent') {
           icon.classList.remove('thinking');
@@ -4176,6 +4197,9 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           if (e.key === 'ArrowUp') { e.preventDefault(); pickerSelectedIdx = Math.max(pickerSelectedIdx - 1, 0); highlightItem(pickerSelectedIdx); return; }
           if (e.key === 'Tab') { e.preventDefault(); if (pickerSelectedIdx >= 0) selectItem(pickerSelectedIdx); else if (pickerItems.length > 0) selectItem(0); return; }
         }
+        // Enter that commits an IME candidate (Japanese, Chinese, Korean, some Hindi
+        // keyboards) is part of typing, not a send.
+        if (e.isComposing || e.keyCode === 229) return;
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
         // Backspace on empty input removes last chip
         if (e.key === 'Backspace' && input.value === '') {
