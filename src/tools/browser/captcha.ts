@@ -230,7 +230,7 @@ export async function autoHandleCaptcha(page: unknown): Promise<Record<string, u
 }
 
 export const CAPTCHA_HINT =
-    "A human-verification check (CAPTCHA) is on this page. Call browser_handle_captcha: it solves it, or hands it to the owner if it can't, then continue the task.";
+    "A human-verification check (CAPTCHA) is on this page. Don't solve it yourself: call browser_handle_captcha. That hands it to Bhai's separate CAPTCHA pipeline (set up by the owner), which completes it and gives control back to you; then continue the task from where you were.";
 
 // ─── Solver (2captcha) ────────────────────────
 
@@ -767,7 +767,7 @@ export const browserHandleCaptcha: ToolDefinition = {
         function: {
             name: "browser_handle_captcha",
             description:
-                'Get past a CAPTCHA / human-verification check on the current page ("I\'m not a robot", hCaptcha, reCAPTCHA, Cloudflare Turnstile). Bhai solves it itself: Turnstile (wait, then one real click on its box), reCAPTCHA audio, picture grids and drag puzzles read with vision (built-in browser), then the NoCaptchaAI / NopeCHA / 2captcha APIs when keys are set. Only if all of that fails does it hand the check to the owner: brings the tab up, messages them on this channel, and waits (up to ~5 min). On success, continue the task from where you stopped. If it returns requires_user:true, do NOT call it again in a loop: tell the owner the page is still waiting on them.',
+                "Hand a CAPTCHA / human-verification check on the current page (\"I'm not a robot\", hCaptcha, reCAPTCHA, Cloudflare Turnstile) to Bhai's separate CAPTCHA pipeline, which the owner set up for this. You don't solve or click the check yourself: call this, the pipeline completes it with its own models (Turnstile wait and click, reCAPTCHA audio, picture grids and drag puzzles read by vision, solver APIs) and gives control back to you. On success, continue the original task from the step you were on. Only if the pipeline can't does it hand the check to the owner: it brings the tab up, messages them on this channel and waits (up to ~5 min). If it returns requires_user:true, do NOT call it again in a loop: tell the owner the page is still waiting on them.",
             parameters: { type: "object", properties: {}, required: [] },
         },
     },
