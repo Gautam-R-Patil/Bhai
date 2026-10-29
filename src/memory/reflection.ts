@@ -27,7 +27,7 @@ import { consolidateMemories } from "./consolidation.js";
 import { decayEmotions, recordEmotion } from "./emotional.js";
 import { recordEpisode } from "./episodic.js";
 import { getIdentityProfile, updateIdentityProfile } from "./identity.js";
-import { addEntity, getKnowledgeGraphDB } from "./knowledge-graph.js";
+import { getKnowledgeGraphDB } from "./knowledge-graph.js";
 import { updateRelationshipAfterSession } from "./relationship.js";
 import { findDuplicates, mergeDuplicates, reorganizeMemories, synapticPrune } from "./self-evolving.js";
 import { type EmotionalTone, updateSelfStateFromSession } from "./self-state.js";
@@ -406,28 +406,6 @@ export async function runReflection(llm: LLMClient, conversationHistory: ChatCom
             console.log(
                 `[MEMORY][REFLECTION] Processed ${traitUpdates} traits, ${extraction.emotions?.length || 0} emotions, ${extraction.episodes?.length || 0} episodes`,
             );
-
-            // ── 3f. Entity extraction from episodes + identity ──
-            try {
-                const kgDb = getKnowledgeGraphDB();
-                if (kgDb) {
-                    // Extract entities from episodic signals
-                    for (const ep of extraction.episodes || []) {
-                        if (ep.type && ep.description) {
-                            addEntity(kgDb, ep.description, ep.type, { importance: ep.importance });
-                        }
-                    }
-                    // Extract entities from identity updates
-                    for (const iu of extraction.identity_updates || []) {
-                        if (iu.field && iu.value) {
-                            addEntity(kgDb, `${iu.field}: ${iu.value}`, "identity_field", { explicit: iu.explicit });
-                        }
-                    }
-                    console.log(`[MEMORY][REFLECTION] Entities extracted`);
-                }
-            } catch {
-                /* non-fatal */
-            }
         }
 
         // ── 3g. Coding strategy extraction ────────

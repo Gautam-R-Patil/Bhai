@@ -7,7 +7,6 @@
 // but as a standalone, reusable function.
 
 import { ageLabel, recall, getCoreMemory } from "../../memory/sqlite.js";
-import { findEntities, getKnowledgeGraphDB } from "../../memory/knowledge-graph.js";
 import { getIdentityPromptSnippet } from "../../memory/identity.js";
 import { getTraitsForInjection } from "../../memory/traits.js";
 import { getSessionSummary } from "../../memory/session.js";
@@ -108,20 +107,6 @@ export async function getFullMemoryContext(userHint?: string): Promise<string> {
                     "RELEVANT MEMORIES:\n" +
                     queriedMems.map((m: any) => `- (${m.category} · ${ageLabel(m.created_at)}) ${m.content}`).join("\n")
                 );
-            }
-        } catch { /* */ }
-
-        // ── Knowledge graph ──
-        try {
-            const kgDb = getKnowledgeGraphDB();
-            if (kgDb) {
-                const entities = findEntities(kgDb, userHint);
-                if (entities.length > 0) {
-                    const entityLines = entities.slice(0, 5).map(e =>
-                        `- [${e.type}] ${e.name}${e.properties && Object.keys(e.properties).length > 0 ? ` (${JSON.stringify(e.properties)})` : ""}`
-                    );
-                    parts.push("RELATED ENTITIES:\n" + entityLines.join("\n"));
-                }
             }
         } catch { /* */ }
     }

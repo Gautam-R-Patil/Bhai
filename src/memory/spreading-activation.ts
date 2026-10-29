@@ -30,7 +30,6 @@ const MAX_ACTIVATED_NODES = 150; // Global budget — stop traversal when hit
 const MAX_HOPS = 3; // Maximum graph distance from seeds
 const DECAY_PER_HOP = 0.7; // Energy decays by 30% per hop
 const ACTIVATION_THRESHOLD = 0.15; // Minimum activation to keep
-const SAN_WEIGHT = 0.3; // Blend weight: final = direct + SAN_WEIGHT × activation
 
 // Native spreading-BFS is OPT-IN, not default. The Rust BFS itself is faster
 // than the TS loop, but the FFI marshalling cost dominates the actual BFS
@@ -225,30 +224,6 @@ export function spreadActivation(seedScores: Map<number, number>, db: Database |
 
     // Sort by activation score descending
     return Array.from(deduped.values()).sort((a, b) => b.activationScore - a.activationScore);
-}
-
-/** Merge SAN results into fused scores */
-export function mergeSANResults(
-    fusedScores: Array<{ id: number; score: number }>,
-    sanResults: ActivationResult[],
-): void {
-    const existingIds = new Set(fusedScores.map((f) => f.id));
-
-    for (const san of sanResults) {
-        if (existingIds.has(san.memoryId)) {
-            // Boost existing result
-            const existing = fusedScores.find((f) => f.id === san.memoryId);
-            if (existing) {
-                existing.score += SAN_WEIGHT * san.activationScore;
-            }
-        } else {
-            // Add new associatively-linked memory
-            fusedScores.push({
-                id: san.memoryId,
-                score: SAN_WEIGHT * san.activationScore,
-            });
-        }
-    }
 }
 
 // ── BFS dispatch (native-first) ─────────────────

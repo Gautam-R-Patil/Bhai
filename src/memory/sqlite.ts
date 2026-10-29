@@ -21,7 +21,7 @@ import { CONVERSATIONS_FTS_SYNC_SQL, MEMORIES_FTS_SYNC_SQL } from "./fts-trigger
 import { buildTrigramQuery, containsCjk, sanitizeFts5Query } from "./fts5-query.js";
 import { logGateDecision } from "./gate-audit.js";
 import { boostMemory } from "./self-evolving.js";
-import { mergeSANResults, spreadActivation } from "./spreading-activation.js";
+import { spreadActivation } from "./spreading-activation.js";
 import { getTemporalCache } from "./temporal-cache.js";
 import { gateVerdict, llmGate, threatReject } from "./value-gate.js";
 // ── Brain-Inspired Module Imports ─────────────
@@ -1682,7 +1682,7 @@ export async function recall(
 
     const scopePlaceholders = effectiveScopes.map(() => "?").join(",");
     const scopeWhereClause = `scope IN (${scopePlaceholders})`;
-    // Shared visibility filter for the secondary paths (KG / SAN / HyDE).
+    // Shared visibility filter for the secondary paths (SAN / HyDE).
     const visibleWhere = `decay_score > 0.2 AND consolidated_into IS NULL AND ${recallableSql()} AND ${scopeWhereClause}`;
 
     // Extract meaningful keywords
@@ -1852,117 +1852,26 @@ export async function recall(
         }
     }
 
-    // ── Layer 1c: Knowledge Graph Entity Search ──
-    // Find memories linked to entities mentioned in the query (1-hop traversal)
-    const kgResults = new Map<number, { record: MemoryRecord; rank: number }>();
-    try {
-        const { findEntities, getRelationships, getKnowledgeGraphDB: getKGDB } = await import("./knowledge-graph.js");
-        const kgDb = getKGDB();
-        if (kgDb) {
-            const entities = findEntities(kgDb, query);
-            // Collect entity names + 1-hop neighbor names for content matching
-            const entityNames = new Set<string>();
-            for (const ent of entities.slice(0, 5)) {
-                entityNames.add(ent.name.toLowerCase());
-                try {
-                    const rels = getRelationships(kgDb, ent.id);
-                    for (const r of rels.slice(0, 5)) {
-                        entityNames.add(r.entity.name.toLowerCase());
-                    }
-                } catch {
-                    /* */
-                }
-            }
-            // Search memories whose content mentions these entities
-            if (entityNames.size > 0) {
-                const nameArray = [...entityNames];
-                const likeClauses = nameArray.map(() => `LOWER(content) LIKE ?`).join(" OR ");
-                const likeParams = nameArray.map((n) => `%${n}%`);
-                const kgMemories = db.exec(
-                    `SELECT id, content, category, tags, importance, created_at, access_count
-           FROM memories WHERE (${likeClauses}) AND ${visibleWhere}
-           ORDER BY importance DESC LIMIT 10`,
-                    [...likeParams, ...effectiveScopes],
-                );
-                if (kgMemories.length > 0) {
-                    kgMemories[0].values.forEach((row, idx) => {
-                        const rec = rowToMemory(row);
-                        if (!kgResults.has(rec.id)) {
-                            kgResults.set(rec.id, { record: rec, rank: idx + 1 });
-                        }
-                    });
-                }
-
-                // Boost KG results with spreading activation through entity relationships.
-                // Uses mergeSANResults to blend activation scores into KG rankings.
-                if (kgResults.size > 0) {
-                    try {
-                        const kgSeedScores = new Map<number, number>();
-                        for (const [id, entry] of kgResults) {
-                            kgSeedScores.set(id, 1 / (60 + entry.rank)); // Normalize rank to score
-                        }
-                        const sanBoosts = spreadActivation(kgSeedScores, db);
-                        if (sanBoosts.length > 0) {
-                            const kgFused: Array<{ id: number; score: number }> = [];
-                            for (const [id, entry] of kgResults) {
-                                kgFused.push({ id, score: 1 / (60 + entry.rank) });
-                            }
-                            mergeSANResults(kgFused, sanBoosts);
-                            // Re-rank KG results based on SAN-boosted scores
-                            kgFused.sort((a, b) => b.score - a.score);
-                            let newRank = 1;
-                            for (const f of kgFused) {
-                                const entry = kgResults.get(f.id);
-                                if (entry) entry.rank = newRank++;
-                            }
-                            // Add newly discovered SAN memories to KG results
-                            for (const san of sanBoosts) {
-                                if (!kgResults.has(san.memoryId)) {
-                                    const sanMem = db.exec(
-                                        `SELECT id, content, category, tags, importance, created_at, access_count
-                     FROM memories WHERE id = ? AND ${visibleWhere}`,
-                                        [san.memoryId, ...effectiveScopes],
-                                    );
-                                    if (sanMem.length > 0 && sanMem[0].values.length > 0) {
-                                        kgResults.set(san.memoryId, {
-                                            record: rowToMemory(sanMem[0].values[0]),
-                                            rank: newRank++,
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    } catch {
-                        /* SAN boost non-fatal */
-                    }
-                }
-            }
-        }
-    } catch {
-        /* KG fusion non-fatal */
-    }
-
     // ── Layer 2a: Reciprocal Rank Fusion (RRF) ──
     const k = 60;
-    const allIds = new Set([...ftsResults.keys(), ...vectorResults.keys(), ...kgResults.keys()]);
+    const allIds = new Set([...ftsResults.keys(), ...vectorResults.keys()]);
     const fusedScores: Array<{ id: number; record: MemoryRecord; score: number }> = [];
-    const activeSources = [ftsResults, vectorResults, kgResults].filter((m) => m.size > 0).length;
+    const activeSources = [ftsResults, vectorResults].filter((m) => m.size > 0).length;
     // Weights tunable via Meta-Harness registry
     const wRel = getDimensionValue<number>("memory.fusion.relevanceWeight") ?? 0.5;
     const wRec = getDimensionValue<number>("memory.fusion.recencyWeight") ?? 0.25;
     const wImp = getDimensionValue<number>("memory.fusion.importanceWeight") ?? 0.25;
-    // Drop weak matches (e.g. single-retriever hits deep in the list while all
-    // three retrievers are active) instead of letting importance/recency carry them in.
+    // Drop weak matches (e.g. single-retriever hits deep in the list while both
+    // retrievers are active) instead of letting importance/recency carry them in.
     const minRelevance = getDimensionValue<number>("memory.fusion.minRelevance") ?? 0.1;
 
     for (const id of allIds) {
         const fts = ftsResults.get(id);
         const vec = vectorResults.get(id);
-        const kg = kgResults.get(id);
-        const record = fts?.record || vec?.record || kg?.record;
+        const record = fts?.record || vec?.record;
         if (!record) continue;
 
-        const relevance = normalizedFusionScore([fts?.rank, vec?.rank, kg?.rank], activeSources, k);
+        const relevance = normalizedFusionScore([fts?.rank, vec?.rank], activeSources, k);
         if (relevance < minRelevance) continue;
 
         // ── Generative Agents-style composite scoring (Park et al. 2023) ──

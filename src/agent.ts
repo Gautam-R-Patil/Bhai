@@ -83,7 +83,6 @@ import { getEmotionalContextSnippet } from "./memory/emotional.js";
 import { getEpisodicSnippet } from "./memory/episodic.js";
 import { createGoal, detectGoalFromMessage, getGoalsSnippet } from "./memory/goals.js";
 import { getIdentityPromptSnippet } from "./memory/identity.js";
-import { findEntities, getKnowledgeGraphDB } from "./memory/knowledge-graph.js";
 import { getProjectMemorySnippet } from "./memory/project-memory.js";
 import { runReflection } from "./memory/reflection.js";
 import { getRelationshipSnippet } from "./memory/relationship.js";
@@ -2491,25 +2490,6 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                         parts.push(
                             `🧠 RELEVANT RECALLED MEMORIES (Based on current prompt):\n${uniqueMems.map((m: any) => `- (${m.category} · ${ageLabel(m.created_at)}) ${m.content}`).join("\n")}`,
                         );
-                    }
-
-                    // Knowledge graph entity lookup (sync — fast SQLite)
-                    try {
-                        const kgDb = getKnowledgeGraphDB();
-                        if (kgDb) {
-                            const entities = findEntities(kgDb, rawUserMessage);
-                            if (entities.length > 0) {
-                                const entityLines = entities
-                                    .slice(0, 5)
-                                    .map(
-                                        (e) =>
-                                            `- [${e.type}] ${e.name}${e.properties && Object.keys(e.properties).length > 0 ? ` (${JSON.stringify(e.properties)})` : ""}`,
-                                    );
-                                parts.push(`🔗 RELATED ENTITIES:\n${entityLines.join("\n")}`);
-                            }
-                        }
-                    } catch {
-                        /* KG not initialized */
                     }
 
                     if (pastConvos.length > 0) {
