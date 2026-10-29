@@ -504,6 +504,8 @@ const _SYMBOL_ALIASES: Record<string, string> = {
     "−": "subtract",
     "-": "subtract",
     "%": "percent",
+    // Calculator's "AC" key is labelled "All Clear" in the accessibility tree.
+    ac: "all clear",
 };
 
 /**
@@ -569,13 +571,22 @@ export function matchElementByLabel(
             .join(" ")
             .trim();
         if (!q) q = raw;
+        // When the rest of the instruction still names a target ("the AC button in Calculator"
+        // → "ac"), an element labelled only with the app's name (its menu-bar menu) is the
+        // container, not the target: the raw-text score below must not let it win.
+        const namesTarget = _tokens(q).some((t) => !_STOPWORDS.has(t));
+        const appOnly = (label: string) => {
+            const t = _tokens(label);
+            return t.length > 0 && t.every((w) => appWords.has(w));
+        };
         for (const el of elements) {
             const label = (el.label || "").toLowerCase();
             const value = (el.value || "").toLowerCase();
             if (!label && !value) continue;
             // Score the raw instruction too: stripping the app name can leave a
             // fragment ("All Mail" in Mail → "all") that only the full words pin down.
-            let score = Math.max(scoreText(q, label), q === raw ? 0 : scoreText(raw, label));
+            const rawScore = q === raw || (namesTarget && appOnly(label)) ? 0 : scoreText(raw, label);
+            let score = Math.max(scoreText(q, label), rawScore);
             // Values are free text (a display showing "128 × 46", a document): an
             // exact match counts; a fuzzy one only for short label-less text (macOS
             // puts static text in the value), and never against the raw symbol.

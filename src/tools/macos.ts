@@ -765,6 +765,57 @@ function findBestMatch(
 
 export { findBestMatch as _findBestMatchForTest };
 
+/**
+ * Where os_visual_verify's expected text counts. It read the whole display with a loose
+ * fuzzy match, so "display shows 0" passed on the menu-bar clock ("Fri Oct 30 …") and
+ * "shows 7" on another window's title. Now: never the menu bar; the focused window first;
+ * elsewhere (a toast, a notification) only a strong match of longer text; and a short
+ * expected value ("0", "7", "OK") must be a whole word in the window, not a fragment of "30".
+ */
+export function findVerifyMatch(
+    elements: OcrElement[],
+    expect: string,
+    win?: { x: number; y: number; w: number; h: number },
+    menuBarBottom = 25,
+): { element: OcrElement; score: number } | null {
+    const q = expect.trim().toLowerCase();
+    if (!q) return null;
+    const words = (t: string) =>
+        t
+            .toLowerCase()
+            .split(/[^\p{L}\p{N}.,]+/u)
+            .filter(Boolean);
+    const short = q.length <= 3;
+    const candidates = elements.filter((el) => el.cy_screen >= menuBarBottom);
+    const inWin = win
+        ? candidates.filter(
+              (el) =>
+                  el.cx_screen >= win.x &&
+                  el.cx_screen <= win.x + win.w &&
+                  el.cy_screen >= win.y &&
+                  el.cy_screen <= win.y + win.h,
+          )
+        : candidates;
+    const pick = (els: OcrElement[], minScore: number) => {
+        if (short) {
+            const el = els.find((e) => e.text.trim().toLowerCase() === q || words(e.text).includes(q));
+            return el ? { element: el, score: 1 } : null;
+        }
+        const m = findBestMatch(els, expect, minScore);
+        return m && m.score >= minScore ? m : null;
+    };
+    // A short value ("0", "7", "OK") is everywhere on a screen: only the window counts.
+    return (
+        pick(inWin, 0.6) ??
+        (win && !short
+            ? pick(
+                  candidates.filter((el) => !inWin.includes(el)),
+                  0.85,
+              )
+            : null)
+    );
+}
+
 /** Perform a native click at logical screen coordinates. */
 async function nativeClick(x: number, y: number): Promise<boolean> {
     const eventScript = `
@@ -1471,7 +1522,12 @@ export const osVisualVerify: ToolDefinition = {
         let overallSuccess = true;
 
         if (expectText) {
-            const found = findBestMatch(ocrResult.elements, expectText, 0.6);
+            const found = findVerifyMatch(
+                ocrResult.elements,
+                expectText,
+                verifyDims?.focusedWindow,
+                (verifyDims?.originY ?? 0) + 25,
+            );
             const pass = !!found;
             results.expect_text = {
                 query: expectText,
