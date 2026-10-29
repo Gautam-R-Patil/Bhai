@@ -1017,6 +1017,7 @@
                                 <div class="auth-icon">🔐</div>
                                 <h3 class="auth-title">Sign in to Bhai</h3>
                                 <p class="auth-subtitle">Use your phone number or Google account to sign in securely</p>
+                                <p class="auth-device-removed" id="authDeviceRemoved" style="display:none;">This Mac was removed from your account on another device. Sign in again to use Bhai here.</p>
                             </div>
                             <div style="margin-top:24px;">
                                 <button class="btn btn-primary auth-submit-btn" id="signInBtn" onclick="openSignIn()" style="font-size:15px;padding:14px;">
@@ -1054,45 +1055,35 @@
 
                         <div class="account-details-grid">
                             <div class="account-detail-card surface-card">
-                                <div class="account-detail-icon">📋</div>
+                                <div class="account-detail-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg></div>
                                 <div class="account-detail-label">Plan</div>
                                 <div class="account-detail-value" id="accountPlan">Free</div>
                             </div>
                             <div class="account-detail-card surface-card">
-                                <div class="account-detail-icon">⚡</div>
+                                <div class="account-detail-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg></div>
                                 <div class="account-detail-label">AI Credits</div>
                                 <div class="account-detail-value" id="accountCredits">0</div>
                             </div>
                             <div class="account-detail-card surface-card">
-                                <div class="account-detail-icon">🔑</div>
-                                <div class="account-detail-label">Activations</div>
+                                <div class="account-detail-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M2 20h20"/></svg></div>
+                                <div class="account-detail-label">Devices</div>
                                 <div class="account-detail-value" id="accountActivations">0 / 3</div>
                             </div>
                             <div class="account-detail-card surface-card">
-                                <div class="account-detail-icon">📅</div>
+                                <div class="account-detail-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div>
                                 <div class="account-detail-label">Member Since</div>
                                 <div class="account-detail-value" id="accountCreatedAt">—</div>
                             </div>
                         </div>
 
-                        <div class="coming-soon-section">
-                            <div class="coming-soon-card surface-card">
-                                <div class="coming-soon-icon">🛒</div>
-                                <div class="coming-soon-info">
-                                    <div class="coming-soon-title">Subscription & Credits</div>
-                                    <div class="coming-soon-desc">Manage your plan and AI credit balance</div>
-                                </div>
-                                <span class="coming-soon-badge">Coming Soon</span>
+                        <section class="account-devices surface-card">
+                            <div class="account-devices-head">
+                                <h3>Devices</h3>
+                                <span class="account-devices-count" id="accountDevicesCount"></span>
                             </div>
-                            <div class="coming-soon-card surface-card">
-                                <div class="coming-soon-icon">💻</div>
-                                <div class="coming-soon-info">
-                                    <div class="coming-soon-title">Device Activations</div>
-                                    <div class="coming-soon-desc">Manage your activated devices</div>
-                                </div>
-                                <span class="coming-soon-badge">Coming Soon</span>
-                            </div>
-                        </div>
+                            <p class="account-devices-sub">Where you're signed in to Bhai. Removing a device signs it out until someone signs in on it again.</p>
+                            <div class="account-devices-list" id="accountDevicesList"><div class="account-devices-empty">Loading…</div></div>
+                        </section>
 
                         <button class="btn btn-secondary account-logout-btn" onclick="accountLogout()">
                             Sign Out
@@ -3005,6 +2996,7 @@
                 if (!info || !info.signedIn) {
                     document.getElementById('accountAuthView').style.display = 'block';
                     document.getElementById('accountProfileView').style.display = 'none';
+                    document.getElementById('authDeviceRemoved').style.display = info && info.deviceRemoved ? '' : 'none';
                     return;
                 }
 
@@ -3042,7 +3034,8 @@
                 // Details
                 document.getElementById('accountPlan').textContent = (info.plan || 'free').charAt(0).toUpperCase() + (info.plan || 'free').slice(1);
                 document.getElementById('accountCredits').textContent = info.ai_credits != null ? info.ai_credits : '—';
-                document.getElementById('accountActivations').textContent = `${info.activations ?? 0} / ${info.max_activations ?? 3}`;
+                document.getElementById('accountActivations').textContent = `${info.activations ?? 1} of ${info.max_activations ?? 3}`;
+                loadDevices();
 
                 if (info.created_at) {
                     const d = new Date(info.created_at);
@@ -3054,6 +3047,56 @@
                 document.getElementById('accountAuthView').style.display = 'block';
                 document.getElementById('accountProfileView').style.display = 'none';
             }
+        }
+
+        // ── Account → Devices ──
+        const DEVICE_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M2 20h20"/></svg>';
+        function lastActive(ms) {
+            const mins = Math.round((Date.now() - ms) / 60000);
+            if (mins < 10) return 'Active now';
+            if (mins < 60) return `Last active ${mins} min ago`;
+            const hrs = Math.round(mins / 60);
+            if (hrs < 24) return `Last active ${hrs} h ago`;
+            const days = Math.round(hrs / 24);
+            return days < 30 ? `Last active ${days} day${days === 1 ? '' : 's'} ago` : `Last active ${new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+        }
+        async function loadDevices() {
+            const list = document.getElementById('accountDevicesList');
+            const r = await atlas.getDevices().catch(() => null);
+            if (!r || !r.success) {
+                list.innerHTML = '<div class="account-devices-empty">Couldn\'t load your devices. Check your connection and reopen this page.</div>';
+                return;
+            }
+            document.getElementById('accountDevicesCount').textContent = r.devices.length ? String(r.devices.length) : '';
+            list.innerHTML = r.devices.length ? r.devices.map((d) => `
+                <div class="account-device-row">
+                    <span class="account-device-icon">${DEVICE_ICON}</span>
+                    <div class="account-device-main">
+                        <div class="account-device-name">${escapeHtml(d.name)}</div>
+                        <div class="account-device-detail">${escapeHtml(d.platform)} · ${escapeHtml(lastActive(d.lastSeen))}</div>
+                    </div>
+                    ${d.current
+                        ? '<span class="account-device-badge">This device</span>'
+                        : `<button class="btn btn-secondary btn-sm account-device-remove" data-device="${escapeHtml(d.id)}" onclick="removeDevice(this)">Remove</button>`}
+                </div>`).join('') : '<div class="account-devices-empty">No devices yet.</div>';
+        }
+        // Two clicks: the first arms the button for a few seconds.
+        async function removeDevice(btn) {
+            if (!btn.classList.contains('armed')) {
+                btn.classList.add('armed');
+                btn.textContent = 'Remove?';
+                setTimeout(() => { btn.classList.remove('armed'); btn.textContent = 'Remove'; }, 4000);
+                return;
+            }
+            btn.disabled = true;
+            const r = await atlas.removeDevice(btn.dataset.device).catch((e) => ({ success: false, error: e.message }));
+            if (!r || !r.success) {
+                btn.disabled = false;
+                showToast(r && r.error ? r.error : "Couldn't remove that device", true);
+                return;
+            }
+            showToast('Device removed — it has been signed out');
+            loadAccountInfo();
         }
 
         let lastKnownCredits = null;

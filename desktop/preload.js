@@ -119,6 +119,8 @@ contextBridge.exposeInMainWorld("atlas", {
     accountLogin: (otplessData) => ipcRenderer.invoke("account:login", otplessData),
     accountLogout: () => ipcRenderer.invoke("account:logout"),
     getAccountInfo: () => ipcRenderer.invoke("account:info"),
+    getDevices: () => ipcRenderer.invoke("account:devices"),
+    removeDevice: (deviceId) => ipcRenderer.invoke("account:remove-device", deviceId),
     onAccountStatusChange: (callback) => {
         ipcRenderer.on("account-status-change", (_, data) => callback(data));
     },

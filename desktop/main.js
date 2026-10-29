@@ -199,6 +199,15 @@ const { readVault, registerVaultIpc } = require("./vault-store");
 // kept here as breadcrumbs for legacy callers.
 let _desktopSessionToken = null;
 let _desktopSessionExpiry = 0;
+// Set when the server says the owner removed this Mac (Account → Devices on another one):
+// it gets no session until someone signs in here again.
+let _deviceRemoved = false;
+
+/** This device as the bot names it (src/session.ts getDeviceFingerprint): one Devices row per Mac. */
+function deviceFingerprint() {
+    const user = process.env.USER || process.env.USERNAME || "unknown";
+    return `${process.platform}:${require("node:os").hostname()}:${user}`;
+}
 
 async function getDesktopSessionToken(overrideUserId, overrideInfo) {
     if (_desktopSessionToken && _desktopSessionExpiry > Date.now() + 3600000) {
@@ -216,6 +225,7 @@ async function getDesktopSessionToken(overrideUserId, overrideInfo) {
     const https = require("https");
     const bodyStr = JSON.stringify({
         otplessUserId: userId,
+        deviceFingerprint: deviceFingerprint(),
     });
 
     return new Promise((resolve) => {
@@ -234,10 +244,12 @@ async function getDesktopSessionToken(overrideUserId, overrideInfo) {
                 try {
                     const data = JSON.parse(raw);
                     if (data.token) {
+                        _deviceRemoved = false;
                         _desktopSessionToken = data.token;
                         _desktopSessionExpiry = data.expiresAt || (Date.now() + 86400000);
                         resolve(data.token);
                     } else {
+                        if (data.error === "device_removed") _deviceRemoved = true;
                         console.warn("[Session] Desktop session failed:", data.error || "unknown");
                         resolve(null);
                     }
@@ -2422,7 +2434,8 @@ function registerIPC() {
             return { success: false, error: "Missing token" };
         }
         try {
-            const raw = await convexPostNoAuth("/api/otpless/validate-token", { token });
+            // The fingerprint lets a verified sign-in bring back a Mac removed in Account → Devices.
+            const raw = await convexPostNoAuth("/api/otpless/validate-token", { token, deviceFingerprint: deviceFingerprint() });
             const parsed = parseOtplessVerifyResponse(raw);
             if (!parsed.ok) return { success: false, error: parsed.error };
             finalizeAuth(parsed);
@@ -4992,6 +5005,7 @@ function registerIPC() {
             } catch (err) {
                 console.warn("[Account] Convex info query failed:", err.message);
             }
+            if (_deviceRemoved) return { signedIn: false, deviceRemoved: true };
 
             return {
                 signedIn: true,
@@ -5009,6 +5023,25 @@ function registerIPC() {
         } catch (err) {
             console.error("[Account] account:info error:", err.message);
             return { signedIn: false, error: err.message };
+        }
+    });
+
+    // Account → Devices
+    ipcMain.handle("account:devices", async () => {
+        try {
+            const data = await convexSiteRequest("GET", "/api/account/devices");
+            return { success: true, devices: Array.isArray(data?.devices) ? data.devices : [] };
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+    ipcMain.handle("account:remove-device", async (_, deviceId) => {
+        if (typeof deviceId !== "string" || !deviceId) return { success: false, error: "No device" };
+        try {
+            const r = await convexSiteRequest("POST", "/api/account/devices/remove", { deviceId });
+            return r?.ok ? { success: true } : { success: false, error: r?.error || "Couldn't remove it" };
+        } catch (err) {
+            return { success: false, error: err.message };
         }
     });
 

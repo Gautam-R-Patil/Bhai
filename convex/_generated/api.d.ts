@@ -18,6 +18,7 @@ import type * as contact from "../contact.js";
 import type * as credit_cost from "../credit_cost.js";
 import type * as crons from "../crons.js";
 import type * as crypto from "../crypto.js";
+import type * as devices from "../devices.js";
 import type * as errorLog from "../errorLog.js";
 import type * as grok from "../grok.js";
 import type * as http from "../http.js";
@@ -57,6 +58,7 @@ declare const fullApi: ApiFromModules<{
   credit_cost: typeof credit_cost;
   crons: typeof crons;
   crypto: typeof crypto;
+  devices: typeof devices;
   errorLog: typeof errorLog;
   grok: typeof grok;
   http: typeof http;
