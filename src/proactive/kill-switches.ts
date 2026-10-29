@@ -52,16 +52,19 @@ export function isQuietNow(now = Date.now()): boolean {
     return now < quietUntil;
 }
 
-// The owner brushing Bhai off in their own words. Short messages only, so
-// "later today remind me to file the GST return" isn't one.
+// The owner brushing Bhai off in their own words. A few words and no question
+// only, so "busy, book the tatkal ticket for me" or "later today remind me to
+// file the GST return" isn't one.
 const BUSY_RE = /^\s*(not now|busy|later|in a meeting|can'?t talk|abhi nahi|baad me(in)?)\b/i;
 
 /** An owner message like "not now" or "busy" quiets proactive sends for 2h. */
 export function noteOwnerBusy(text: string, now = Date.now()): void {
-    if (text.length < 40 && BUSY_RE.test(text)) setQuietUntil(now + 2 * 3_600_000);
+    if (text.trim().split(/\s+/).length <= 4 && !text.includes("?") && BUSY_RE.test(text))
+        setQuietUntil(now + 2 * 3_600_000);
 }
 
-export function _resetQuietForTests(): void {
+/** "bhai resume": the owner wants Bhai back now. */
+export function clearQuiet(): void {
     quietUntil = 0;
 }
 

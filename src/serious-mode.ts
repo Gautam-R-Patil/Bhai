@@ -31,7 +31,8 @@ const SERIOUS_RE = new RegExp(
         String.raw`\b(?:has|have|had|got) cancer\b`,
         String.raw`\b(?:had|having) (?:a )?(?:heart attack|stroke|panic attack|seizure)\b`,
         // money
-        String.raw`\b(?:got|been|was|were) scammed\b`,
+        String.raw`\b(?:got|been|was|were) (?:scammed|defrauded)\b`,
+        String.raw`\bfraud (?:on|with|against) (?:me|my|us|our)\b`,
         String.raw`\b(?:lost|lose) my job\b`,
         String.raw`\b(?:got|been|was|were|i'?m) (?:laid off|fired)\b(?! up)`,
         String.raw`\blost (?:all )?(?:my|our) (?:money|savings)\b`,

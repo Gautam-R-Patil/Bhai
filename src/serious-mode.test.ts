@@ -1,6 +1,6 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 import { beforeEach, describe, expect, it } from "vitest";
-import { _resetQuietForTests, isQuietNow } from "./proactive/kill-switches.js";
+import { clearQuiet, isQuietNow } from "./proactive/kill-switches.js";
 import { _resetSeriousMode, isSerious, noteOwnerMood } from "./serious-mode.js";
 
 // Labelled owner messages: [text, isSerious].
@@ -13,6 +13,8 @@ const CORPUS: [string, boolean][] = [
     ["mom's in the hospital", true],
     ["he had a panic attack at work", true],
     ["I got scammed out of 2 lakh", true],
+    ["someone did fraud on my card and took 2 lakh", true],
+    ["I got defrauded", true],
     ["I lost my job", true],
     ["I got laid off today", true],
     ["lost all my savings in that crypto thing", true],
@@ -33,6 +35,7 @@ const CORPUS: [string, boolean][] = [
     ["is the funeral home stock up", false],
     ["the surgery scene in Grey's anatomy", false],
     ["in the hospital wing of the game", false],
+    ["add fraud detection to the checkout", false],
     ["my dad is in the hospital, send me the ward number", true],
     ["grandma's funeral is on sunday", true],
     ["mom starts chemo next week", true],
@@ -43,7 +46,7 @@ const CORPUS: [string, boolean][] = [
 describe("serious mode", () => {
     beforeEach(() => {
         _resetSeriousMode();
-        _resetQuietForTests();
+        clearQuiet();
     });
 
     it.each(CORPUS)("%s → %s", (text, serious) => {
