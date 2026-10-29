@@ -2,6 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { checkAccountStatus, getKnownCreditBalance, getSessionCreditStats } from "./account-guard.js";
 import {
     injectSystemReminder,
@@ -323,14 +324,18 @@ const SCREEN_TOOLS = new Set(["app_manager", "apple_script", "window_manage", "r
  * matter only for the turn that raised them. They're tagged here and stripped
  * from history when the turn ends, so they aren't resent on every later turn.
  */
-const turnNudges = new WeakSet<object>();
+// Per turn (ALS), so a turn ending doesn't strip an overlapping turn's nudges.
+const turnNudges = new AsyncLocalStorage<Set<object>>();
 export function pushNudge(msgs: ChatCompletionMessageParam[], content: string): void {
     const m: ChatCompletionMessageParam = { role: "system", content };
-    turnNudges.add(m);
+    turnNudges.getStore()?.add(m);
     msgs.push(m);
 }
-export function stripTurnNudges(msgs: ChatCompletionMessageParam[]): void {
-    for (let i = msgs.length - 1; i >= 0; i--) if (turnNudges.has(msgs[i])) msgs.splice(i, 1);
+export function runWithTurnNudges<T>(owned: Set<object>, fn: () => T): T {
+    return turnNudges.run(owned, fn);
+}
+export function stripTurnNudges(msgs: ChatCompletionMessageParam[], owned: ReadonlySet<object>): void {
+    for (let i = msgs.length - 1; i >= 0; i--) if (owned.has(msgs[i])) msgs.splice(i, 1);
 }
 
 /** The orchestrator's TOOLS block, built from the tools this turn actually offers. */
@@ -511,6 +516,8 @@ const MAX_CONVERSATION_HISTORY = 200; // Hard cap to prevent unbounded memory gr
 type PendingPrune = { base: ChatCompletionMessageParam[]; result: Awaited<ReturnType<typeof pruneContext>> } | null;
 /** A prune started at the end of the last turn over a snapshot (`base`) of the history. */
 let pendingPrune: Promise<PendingPrune> | null = null;
+const MAX_SUMMARYLESS_PRUNES = 3;
+let summarylessPrunes = 0;
 
 /**
  * Swap a background prune into the live history: its summary replaces the
@@ -524,6 +531,12 @@ export function applyPendingPrune(
     if (!pending || pending.result.pruned === 0) return null;
     const { base, result } = pending;
     if (history.length < base.length || !base.every((m, i) => history[i] === m)) return null;
+    // No summary = the summary call failed (402/offline): don't drop context
+    // unsummarized; the next turn's prune retries. Only a few times, though: a
+    // call that keeps failing (timeout, oversized prompt) would otherwise pin
+    // the history at the hard cap and re-pay the summary + fact flush each turn.
+    if (!result.summary && ++summarylessPrunes < MAX_SUMMARYLESS_PRUNES) return null;
+    summarylessPrunes = 0;
     console.log(`  ✂️ Pruned ${result.pruned} old messages`);
     return [...result.messages, ...history.slice(base.length)];
 }
@@ -870,6 +883,7 @@ async function executeAndProcessToolCall(
                 console.log(`  🔧 Self-healed (${heal.action}) — retrying ${fnName}`);
                 rawResult = await runTool();
                 isError = false;
+                reportedFailure = false;
                 try {
                     const p = JSON.parse(rawResult);
                     if (p.error) isError = true;
@@ -1204,12 +1218,15 @@ export async function runAgent(
         // through this path.)
         const mod = await import("./tools/cron-tool.js");
         let res: AgentResponse;
+        const nudges = new Set<object>();
         try {
             // Outermost turn ending = Bhai lets go of the screen (glow fades).
-            res = await mod.runWithCallerContext({ isOwner: callerIsOwner }, () => trackCursorTurn(fn));
+            res = await runWithTurnNudges(nudges, () =>
+                mod.runWithCallerContext({ isOwner: callerIsOwner }, () => trackCursorTurn(fn)),
+            );
         } finally {
             // Read after the turn: pruning may have swapped the history array.
-            stripTurnNudges(historyFork ?? conversationHistory);
+            stripTurnNudges(historyFork ?? conversationHistory, nudges);
             // Prune between turns, off the next turn's critical path.
             if (!historyFork && !pendingPrune) {
                 const base = [...conversationHistory];
@@ -1374,6 +1391,20 @@ async function _runAgentBody(
         }
     };
 
+    if (!isForked && pendingPrune) {
+        // Pruning (an LLM summary) ran in the background after the last turn;
+        // usually it's done by now, so the first token doesn't wait on it.
+        // Applied before the hard cap below: the cap builds a new array, which
+        // would fail the prune's prefix check and drop it.
+        const pending = pendingPrune;
+        pendingPrune = null;
+        const merged = applyPendingPrune(workingHistory, await pending);
+        if (merged) {
+            conversationHistory = merged;
+            workingHistory = conversationHistory;
+        }
+    }
+
     // Strip any literal <system-reminder> tags from user input — those tags
     // are reserved for Bhai runtime instructions and must not be forgeable
     // by attacker-controlled message text.
@@ -1436,18 +1467,6 @@ async function _runAgentBody(
         console.log(
             `  ✂️ Hard-capped conversation history: dropped ${trimmed} oldest messages (limit: ${MAX_CONVERSATION_HISTORY})`,
         );
-    }
-
-    if (!isForked && pendingPrune) {
-        // Pruning (an LLM summary) ran in the background after the last turn;
-        // usually it's done by now, so the first token doesn't wait on it.
-        const pending = pendingPrune;
-        pendingPrune = null;
-        const merged = applyPendingPrune(workingHistory, await pending);
-        if (merged) {
-            conversationHistory = merged;
-            workingHistory = conversationHistory;
-        }
     }
 
     const messages: ChatCompletionMessageParam[] = workingHistory;
