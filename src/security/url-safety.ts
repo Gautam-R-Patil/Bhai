@@ -228,6 +228,11 @@ export async function fetchWithRedirectGuard(
         if (response.status >= 300 && response.status < 400) {
             const loc = response.headers.get("location");
             if (!loc) return { response, finalUrl: currentUrl };
+            // This hop's body is discarded; close its sockets now instead of
+            // churning a short-lived Agent per hop across a 500-source run. The
+            // FINAL response's dispatcher is left to self-close (keepAliveTimeout:1)
+            // so the caller can still read its body.
+            void (dispatcher as Agent | undefined)?.destroy?.();
             if (++hop > maxHops) return { error: `Too many redirects (>${maxHops})` };
             currentUrl = new URL(loc, currentUrl).toString();
             continue;

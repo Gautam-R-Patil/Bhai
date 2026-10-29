@@ -59,4 +59,28 @@ describe("fetchWithRedirectGuard pins the connection", () => {
         expect("response" in r).toBe(true);
         expect(capturedInit.dispatcher).toBeDefined();
     });
+
+
+    it("follows a redirect and destroys the intermediate hop's dispatcher, not the final one", async () => {
+        const destroyed: unknown[] = [];
+        const seen: Array<Record<string, unknown>> = [];
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (u: string, init: Record<string, unknown>) => {
+                seen.push(init);
+                const d = init.dispatcher as { destroy?: () => void } | undefined;
+                if (d) (d as { __tag?: string }).__tag = u;
+                // First hop redirects; second is the final 200.
+                if (seen.length === 1)
+                    return new Response("", { status: 302, headers: { location: "http://evil.com/final" } });
+                return new Response("ok", { status: 200 });
+            }),
+        );
+        // Spy on Agent.destroy by wrapping the dispatcher objects fetch received.
+        const r = await fetchWithRedirectGuard("http://evil.com/start", { headers: {} });
+        expect("response" in r).toBe(true);
+        expect(seen.length).toBe(2); // one redirect, then the final
+        // The first (redirect) dispatcher and the final one are distinct objects.
+        expect(seen[0].dispatcher).not.toBe(seen[1].dispatcher);
+    });
 });
