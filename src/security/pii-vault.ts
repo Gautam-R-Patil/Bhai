@@ -98,6 +98,36 @@ type Span = [start: number, end: number, replacement: string];
  * ("12") is not a value; handle-shaped text never issued ("[OTP_9041]") is
  * plain text, so the 9041 in it is masked. Exported for the property test.
  */
+// A saved secret a page echoes back with a separator between every character
+// ("s k - l i v e - 3 e 9 a") slips past the literal forms. Strip separators,
+// find the normalized secret, and map the span back to the original text. Costs
+// nothing unless vault secrets are loaded (secretNormMap is then non-empty).
+function normSpans(text: string): Span[] {
+    if (secretNormMap.size === 0) return [];
+    let norm = "";
+    const start: number[] = [];
+    const end: number[] = [];
+    let i = 0;
+    for (const ch of text) {
+        const nc = ch.toLowerCase();
+        if (nc.length === 1 && /[\p{L}\p{N}@]/u.test(nc)) {
+            norm += nc;
+            start.push(i);
+            end.push(i + ch.length);
+        }
+        i += ch.length;
+    }
+    const spans: Span[] = [];
+    for (const [ns, token] of secretNormMap) {
+        for (let idx = norm.indexOf(ns); idx >= 0; idx = norm.indexOf(ns, idx + ns.length)) {
+            const s = start[idx];
+            const e = end[idx + ns.length - 1];
+            if (e - s > ns.length) spans.push([s, e, token]); // only when spread out; literal forms cover the rest
+        }
+    }
+    return spans;
+}
+
 export function knownValueSpans(text: string): Span[] {
     const re = knownFormsRe();
     if (!re) return [];
@@ -114,6 +144,7 @@ export function knownValueSpans(text: string): Span[] {
         for (let k = h; k < handles.length && handles[k][0] <= at && at < e; k++) at = handles[k][1];
         if (at < e) occ.push([s, e, handleByForm.get(m[1]) as string]);
     }
+    occ.push(...normSpans(text)); // char-spaced echoes of a saved secret
     if (!occ.length) return [];
     occ.push(...handles);
     occ.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
@@ -199,6 +230,11 @@ let partials = new Map<string, string>();
 let secretNorms = new Set<string>();
 let secretTokens = new Set<string>();
 const normSecret = (v: string) => v.toLowerCase().replace(/[^\p{L}\p{N}@]/gu, "");
+// Normalized secret (separators stripped) → token, for catching a value a page
+// echoes back spaced out char-by-char ("s k - l i v e - …") to dodge the literal
+// forms. Only 8+ normalized chars, so a short value can't collide by chance.
+const NORM_SECRET_MIN = 8;
+let secretNormMap = new Map<string, string>();
 
 /** Replace the set of saved secrets protect() hides (vault.ts calls it on every vault load). */
 export function setSecrets(next: Map<string, string>, nextPartials = new Map<string, string>()): void {
@@ -206,6 +242,11 @@ export function setSecrets(next: Map<string, string>, nextPartials = new Map<str
     secrets = new Map(next);
     partials = new Map(nextPartials);
     secretNorms = new Set([...secrets.keys()].map(normSecret).filter(Boolean));
+    secretNormMap = new Map();
+    for (const [value, token] of secrets) {
+        const n = normSecret(value);
+        if (n.length >= NORM_SECRET_MIN) secretNormMap.set(n, token);
+    }
     secretTokens = new Set(secrets.values());
     generation++;
 }
