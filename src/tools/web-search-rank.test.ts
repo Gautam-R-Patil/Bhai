@@ -1,6 +1,6 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 import { describe, expect, it } from "vitest";
-import { canonicalUrl, decodeBingUrl, htmlText, mergeAndRank } from "./web-search.js";
+import { canonicalUrl, decodeBingUrl, htmlText, mergeAndRank, parseBraveHtml } from "./web-search.js";
 
 const r = (title: string, url: string, snippet = "") => ({ title, url, snippet });
 
@@ -81,5 +81,25 @@ describe("htmlText", () => {
     it("keeps a bolded word whole and leaves unknown entities alone", () => {
         expect(htmlText("Apple <b>iPhone</b>s compared")).toBe("Apple iPhones compared");
         expect(htmlText("a &bogus; b &#0; c")).toBe("a &bogus; b &#0; c");
+    });
+});
+
+describe("parseBraveHtml", () => {
+    it("reads results from a normal page, which mentions 'captcha' in its UI strings", () => {
+        const html = `<script>{"Switch to traditional captcha":"Switch to traditional CAPTCHA"}</script>
+            <a href="https://search.brave.com/settings">Settings and more</a>
+            <a href="https://www.rtings.com/laptop/best/programming"><div class="title svelte-1">The 4 Best Laptops For Programming &amp; Coding</div></a>
+            <div class="snippet-content content svelte-2">1 week ago - The best laptop for programming we've tested is…</div>`;
+        expect(parseBraveHtml(html)).toEqual([
+            {
+                url: "https://www.rtings.com/laptop/best/programming",
+                title: "The 4 Best Laptops For Programming & Coding",
+                snippet: "1 week ago - The best laptop for programming we've tested is…",
+            },
+        ]);
+    });
+
+    it("a challenge page yields nothing", () => {
+        expect(parseBraveHtml("<title>Captcha - Brave Search</title><form>verify you are human</form>")).toEqual([]);
     });
 });

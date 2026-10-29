@@ -194,38 +194,43 @@ async function searchBraveLite(query: string): Promise<SearchResult[]> {
 
         if (response.status !== 200) return [];
 
-        const html = await response.text();
-        if (html.includes("captcha") || html.includes("rate limit")) return [];
-
-        const snippetPattern = /<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
-        const results: SearchResult[] = [];
-        const seenUrls = new Set<string>();
-
-        let match;
-        while ((match = snippetPattern.exec(html)) !== null && results.length < 15) {
-            const url = match[1];
-            const content = match[2];
-
-            const titleMatch = content.match(/<div[^>]*class="[^"]*title[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
-            const title = htmlText(titleMatch ? titleMatch[1] : content);
-
-            if (url.startsWith("http") && !url.includes("brave.com") && title.length > 5 && !seenUrls.has(url)) {
-                seenUrls.add(url);
-
-                const afterLink = html.substring(match.index + match[0].length, match.index + match[0].length + 1500);
-                const snippetMatch = afterLink.match(/<div[^>]*class="[^"]*content[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
-                const snippet = snippetMatch ? htmlText(snippetMatch[1]) : "";
-
-                if (snippet.length > 10) {
-                    results.push({ url, title, snippet: snippet.substring(0, 300) });
-                }
-            }
-        }
-
-        return results;
+        // No "page mentions captcha" check: Brave's normal results page carries the string
+        // "Switch to traditional captcha", so that check dropped every Brave result. A real
+        // challenge page has no external result links, and parses to nothing anyway.
+        return parseBraveHtml(await response.text());
     } catch {
         return [];
     }
+}
+
+/** Results from a Brave Search results page (web results; Brave's own links skipped). */
+export function parseBraveHtml(html: string): SearchResult[] {
+    const snippetPattern = /<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+    const results: SearchResult[] = [];
+    const seenUrls = new Set<string>();
+
+    let match;
+    while ((match = snippetPattern.exec(html)) !== null && results.length < 15) {
+        const url = match[1];
+        const content = match[2];
+
+        const titleMatch = content.match(/<div[^>]*class="[^"]*title[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+        const title = htmlText(titleMatch ? titleMatch[1] : content);
+
+        if (url.startsWith("http") && !url.includes("brave.com") && title.length > 5 && !seenUrls.has(url)) {
+            seenUrls.add(url);
+
+            const afterLink = html.substring(match.index + match[0].length, match.index + match[0].length + 1500);
+            const snippetMatch = afterLink.match(/<div[^>]*class="[^"]*content[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+            const snippet = snippetMatch ? htmlText(snippetMatch[1]) : "";
+
+            if (snippet.length > 10) {
+                results.push({ url, title, snippet: snippet.substring(0, 300) });
+            }
+        }
+    }
+
+    return results;
 }
 
 // ── Google via fetch (no JS rendering, works for simple queries) ──
