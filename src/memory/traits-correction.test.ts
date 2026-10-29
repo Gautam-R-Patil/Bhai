@@ -35,4 +35,28 @@ describe.skipIf(!DatabaseSync)("trait corrections", () => {
         expect(reinforceTrait("response_length", "detailed", { explicit: false })).toBeNull();
         expect(getTrait("response_length")?.value).toBe("short");
     });
+
+    it("reinforcing a trait lowers its opposite's confidence but keeps the opposite's own value", () => {
+        const raw = new (DatabaseSync as NonNullable<typeof DatabaseSync>)(":memory:");
+        const db = {
+            exec: (sql: string, params: unknown[] = []) => {
+                const r = raw.prepare(sql).all(...params);
+                return r.length ? [{ columns: Object.keys(r[0]), values: r.map((x) => Object.values(x)) }] : [];
+            },
+            run: (sql: string, params: unknown[] = []) => raw.prepare(sql).run(...params),
+        };
+        initTraitsDB(db as never);
+        resetSessionTraitCaps("s2");
+        for (let i = 0; i < 4; i++) {
+            resetSessionTraitCaps(`d${i}`); // one reinforcement per session
+            reinforceTrait("likes_detailed_answers", "walk me through the reasoning", { explicit: true });
+        }
+        const before = getTrait("likes_detailed_answers")?.confidence ?? 0;
+        expect(before).toBeGreaterThanOrEqual(0.7); // high enough to count as a conflict
+        resetSessionTraitCaps("s3");
+        reinforceTrait("likes_short_answers", "short replies", { explicit: true });
+        const opposite = getTrait("likes_detailed_answers");
+        expect(opposite?.value).toBe("walk me through the reasoning");
+        expect(opposite?.confidence).toBeLessThan(before);
+    });
 });

@@ -614,7 +614,8 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
         }
 
         // ── Proactive-subsystem commands (shut up / resume / set posture / status + monitor CRUD) ──
-        {
+        // Owner only: another allowed user must not silence the owner's Bhai or add monitors.
+        if (ctx.from?.id && telegramOwners.has(ctx.from.id)) {
             const { tryProactiveCommand } = await import("./proactive/chat-commands.js");
             const { parseMonitorRule } = await import("./proactive/monitors/monitor-parser.js");
             const { getMonitorStore } = await import("./proactive/monitors/store-singleton.js");
@@ -2201,7 +2202,7 @@ export async function sendProactiveMessage(
     message: string,
     filePath?: string,
     buttons?: ProactiveButton[],
-    ownerOnly = false,
+    _ownerOnly = false, // all proactive sends are owner-only now
 ): Promise<boolean> {
     if (config.allowedUserIds.size === 0) {
         console.warn("⚠️ No allowed Telegram users to send proactive message to.");
@@ -2286,13 +2287,14 @@ export async function sendProactiveMessage(
     }
 
     const chunks = chunkMarkdownForTelegram(sanitizeReply(message));
-    // Buttons act on the owner's memory, and ownerOnly messages quote it: the owners' private chats only.
     const keyboard = buttons?.length ? new InlineKeyboard() : undefined;
     for (const [i, b] of (buttons ?? []).entries()) {
         keyboard?.text(b.text, b.data);
         if (i % 4 === 3) keyboard?.row();
     }
-    const recipients = keyboard || ownerOnly ? parseTelegramOwners(config) : config.allowedUserIds;
+    // Proactive messages are the owner's (briefings, reminders, alerts carry their calendar,
+    // tasks and mail): owners only, never every allowed user.
+    const recipients = parseTelegramOwners(config);
 
     let delivered = false;
     for (const userId of recipients) {

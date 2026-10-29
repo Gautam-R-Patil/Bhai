@@ -580,7 +580,9 @@ export const wifiControl: ToolDefinition = {
                         power: isOn ? "on" : "off",
                         connected: w.connected,
                         connected_ssid: w.ssid ?? shown,
-                        ...(shown && { source: "read from the Wi-Fi pane in System Settings (opened in the background)" }),
+                        ...(shown && {
+                            source: "read from the Wi-Fi pane in System Settings (opened in the background). networksetup saying \"not associated\" is macOS hiding the name, not a disconnect.",
+                        }),
                         ...(w.nameHidden && !shown && { note: WIFI_NAME_HIDDEN_HINT }),
                     });
                 }

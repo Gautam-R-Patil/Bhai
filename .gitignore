@@ -234,6 +234,7 @@ desktop/hostinger-upload/
 !src/tools/browser/bridge-heartbeat.test.ts
 !src/tools/browser/extension-frame-offset.test.ts
 !src/tools/mac-wifi.test.ts
+!src/telegram-proactive-recipients.test.ts
 !src/tools/browser/extension-agent-tab.test.ts
 !convex/devices.test.ts
 !src/llm-guest.test.ts
