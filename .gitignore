@@ -106,6 +106,7 @@ desktop/hostinger-upload/
 !src/agents/orchestration-reliability.test.ts
 !src/agents/long-task-reliability.test.ts
 !src/memory/remember-gate.test.ts
+!src/memory/self-state.test.ts
 !src/memory/vector-index-rebuild.test.ts
 !src/security/vm-isolate.test.ts
 !src/security/sensitive-paths.test.ts
