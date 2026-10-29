@@ -1157,7 +1157,16 @@ export const openSettings: ToolDefinition = {
                 return JSON.stringify({ success: false, error: `No settings pane matches "${pane}". Panes: ${names}` });
             }
             await execFileAsync("open", [url], { timeout: 5000 });
-            return JSON.stringify({ success: true, opened: url });
+            // Return once the pane is in front: a screen read in the same batch (os_inspect)
+            // otherwise reads whatever was in front before (live: Chrome).
+            const { waitForFrontmost } = await import("../screen/frontmost.js");
+            const front = !!(await waitForFrontmost("System Settings", 5000));
+            if (front) await new Promise((r) => setTimeout(r, 500)); // the pane's content draws a moment later
+            return JSON.stringify({
+                success: true,
+                opened: url,
+                ...(front ? {} : { note: "System Settings isn't in front yet: check with os_inspect app='System Settings'." }),
+            });
         } catch (err) {
             return JSON.stringify({ success: false, error: (err as Error).message });
         }
