@@ -144,9 +144,26 @@ export function getCached(toolName: string, args: Record<string, unknown>): stri
 }
 
 /**
- * Store result in cache.
+ * A tool result that signals failure. Caching one would pin a transient error
+ * (a network blip, a momentarily locked file) for the whole TTL — web_search
+ * 2min, read_file 1min, system_info 5min — so an identical retry keeps getting
+ * the stale failure instead of re-running. Non-JSON (plain text) is a real
+ * result and stays cacheable.
+ */
+export function isErrorResult(result: string): boolean {
+    try {
+        const p = JSON.parse(result);
+        return Boolean(p && typeof p === "object" && ((p as Record<string, unknown>).error || (p as Record<string, unknown>).success === false));
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Store result in cache. Error results are never cached (see isErrorResult).
  */
 export function setCache(toolName: string, args: Record<string, unknown>, result: string): void {
+    if (isErrorResult(result)) return;
     const key = getCacheKey(toolName, args);
     if (cache.size >= MAX_CACHE_ENTRIES && !cache.has(key)) {
         // Evict the oldest — Map preserves insertion order so the first key is oldest.
