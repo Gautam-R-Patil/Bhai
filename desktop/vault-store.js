@@ -202,9 +202,14 @@ function registerVaultIpc({ ipcMain, safeStorage, file, trusted, canTouchId, pro
     );
     ipcMain.handle(
         "vault:delete",
-        guard(async (id) => {
+        guard(async (id, password) => {
             const vault = load();
-            vault.entries = vault.entries.filter((e) => e.id !== id);
+            const e = vault.entries.find((x) => x.id === id);
+            if (!e) return { success: false, error: "That entry no longer exists" };
+            // Gated like viewing or editing it: the Touch ID prompt is also the "are you sure".
+            if (!(await authenticate(vault, password, `delete "${e.label}" from your vault`)))
+                return { success: false, error: "auth_failed" };
+            vault.entries = vault.entries.filter((x) => x.id !== id);
             return save(vault);
         }),
     );

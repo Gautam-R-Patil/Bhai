@@ -198,7 +198,7 @@ contextBridge.exposeInMainWorld("atlas", {
     vault: {
         list: () => ipcRenderer.invoke("vault:list"),
         save: (entry, password) => ipcRenderer.invoke("vault:save", entry, password),
-        remove: (id) => ipcRenderer.invoke("vault:delete", id),
+        remove: (id, password) => ipcRenderer.invoke("vault:delete", id, password),
         reveal: (id, password) => ipcRenderer.invoke("vault:reveal", id, password),
         setPassword: (password, oldPassword) => ipcRenderer.invoke("vault:set-password", password, oldPassword),
         submitCvv: (id, cvv) => ipcRenderer.invoke("vault:cvv-submit", id, cvv),

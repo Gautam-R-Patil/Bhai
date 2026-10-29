@@ -3399,7 +3399,15 @@
         let vaultEditingId = null;
         let vaultState = { touchId: false, hasPassword: false, entries: [] };
         const vaultPw = () => document.getElementById('vaultPassword').value;
-        const vaultMsg = (t) => { document.getElementById('vaultStatus').textContent = t || ''; };
+        // In the open modal, its status line; otherwise a toast (Show/Delete fail outside it).
+        const vaultMsg = (t) => {
+            const open = document.getElementById('vaultModal').style.display === 'flex';
+            document.getElementById('vaultStatus').textContent = open ? (t || '') : '';
+            if (!open && t) showToast(t, true);
+        };
+        const VAULT_FIELD_LABEL = { username: 'Username', password: 'Password', name: 'Key name', value: 'Key', holder: 'Name on card', number: 'Card number', expiry: 'Expiry', brand: 'Brand', vpa: 'UPI ID' };
+        const VAULT_SECRET_FIELDS = new Set(['password', 'value', 'number', 'vpa']);
+        const vaultShown = new Map(); // id → re-mask timer
         const vaultErr = (r) => r && r.error === 'auth_failed'
             ? (vaultState.touchId ? 'Touch ID was cancelled.' : 'Enter the vault password first.')
             : (r && r.error) || 'Something went wrong';
@@ -3433,6 +3441,11 @@
             const first = document.querySelector('#vaultForm [data-vault-field]');
             if (first) first.focus();
         }
+        document.addEventListener('keydown', (ev) => {
+            if (document.getElementById('vaultModal').style.display !== 'flex') return;
+            if (ev.key === 'Escape') { ev.preventDefault(); vaultCloseModal(); }
+            else if (ev.key === 'Enter' && ev.target.matches('#vaultForm [data-vault-field]')) { ev.preventDefault(); vaultSave(); }
+        });
         function vaultCloseModal() {
             document.getElementById('vaultModal').style.display = 'none';
             vaultEditingId = null;
@@ -3443,6 +3456,8 @@
             const r = await atlas.vault.list();
             if (!r || !r.success) return vaultMsg(r && r.error);
             vaultState = r;
+            for (const t of vaultShown.values()) clearTimeout(t);
+            vaultShown.clear(); // a re-render masks everything again
             document.getElementById('vaultPwRow').style.display = r.touchId ? 'none' : '';
             document.getElementById('vaultSetPwBtn').textContent = r.hasPassword ? 'Change' : 'Set password';
             for (const kind of ['login', 'api_key', 'card', 'upi']) {
@@ -3456,7 +3471,7 @@
                         <div class="vault-row-main"><div class="vault-row-name">${escapeHtml(e.label)}</div>
                         <div class="vault-row-detail" id="vaultDetail-${id}">${escapeHtml(detail) || '—'}</div></div>
                         <div class="vault-row-actions">
-                            <button class="btn btn-secondary btn-sm" onclick="vaultShow('${id}')">Show</button>
+                            <button class="btn btn-secondary btn-sm" data-vault-show="${id}" onclick="vaultShow('${id}')">Show</button>
                             <button class="btn btn-secondary btn-sm" onclick="vaultEdit('${id}')">Edit</button>
                             <button class="btn btn-secondary btn-sm vault-del" onclick="vaultDelete('${id}')">Delete</button>
                         </div></div>`;
@@ -3466,12 +3481,35 @@
             const unlock = document.getElementById('vaultUnlockChip') || document.getElementById('vaultTrust').appendChild(Object.assign(document.createElement('span'), { id: 'vaultUnlockChip', className: 'vault-chip' }));
             unlock.textContent = r.touchId ? 'Touch ID to view' : 'Password to view';
         }
+        function vaultHide(id) {
+            clearTimeout(vaultShown.get(id));
+            vaultShown.delete(id);
+            vaultLoad();
+        }
         async function vaultShow(id) {
+            if (vaultShown.has(id)) return vaultHide(id);
             const r = await atlas.vault.reveal(id, vaultPw());
             if (!r || !r.success) return vaultMsg(vaultErr(r));
-            document.getElementById('vaultDetail-' + id).textContent =
-                Object.entries(r.values).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join(' · ');
-            setTimeout(vaultLoad, 20000); // masked again after 20s
+            const detail = document.getElementById('vaultDetail-' + id);
+            detail.innerHTML = Object.entries(r.values).filter(([, v]) => v).map(([k, v]) =>
+                `<span class="vault-reveal"><span class="vault-reveal-k">${escapeHtml(VAULT_FIELD_LABEL[k] || k)}</span>`
+                + `<code>${escapeHtml(k === 'number' ? v.replace(/(\d{4})(?=\d)/g, '$1 ') : v)}</code>`
+                + (VAULT_SECRET_FIELDS.has(k) || k === 'username' ? `<button class="vault-copy" data-v="${escapeHtml(v)}" onclick="vaultCopy(this)">Copy</button>` : '')
+                + `</span>`).join('');
+            const btn = document.querySelector(`[data-vault-show="${CSS.escape(id)}"]`);
+            if (btn) btn.textContent = 'Hide';
+            vaultShown.set(id, setTimeout(() => vaultHide(id), 20000)); // masked again after 20s
+        }
+        // Copied secrets leave the clipboard after 30s, unless something else was copied since.
+        async function vaultCopy(btn) {
+            const v = btn.dataset.v;
+            try {
+                await navigator.clipboard.writeText(v);
+                btn.textContent = 'Copied';
+                setTimeout(async () => {
+                    try { if ((await navigator.clipboard.readText()) === v) await navigator.clipboard.writeText(''); } catch {}
+                }, 30000);
+            } catch { vaultMsg('Could not copy'); }
         }
         async function vaultEdit(id) {
             const r = await atlas.vault.reveal(id, vaultPw());
@@ -3490,8 +3528,8 @@
             vaultLoad();
         }
         async function vaultDelete(id) {
-            if (!confirm('Delete this from the vault?')) return;
-            const r = await atlas.vault.remove(id);
+            // Touch ID (or the vault password) is the confirmation.
+            const r = await atlas.vault.remove(id, vaultPw());
             if (!r || !r.success) return vaultMsg(vaultErr(r));
             vaultLoad();
         }

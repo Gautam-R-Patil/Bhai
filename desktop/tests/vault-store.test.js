@@ -144,6 +144,21 @@ describe("vault IPC: the renderer can't read raw secrets", () => {
         expect((await call("vault:reveal", id, "correct horse")).values.password).toBe(PASSWORD); // blank kept the old one
     });
 
+    it("delete needs Touch ID (or the vault password) like viewing", async () => {
+        const denied = setup({ touchOk: false });
+        await denied.call("vault:save", LOGIN);
+        const id = (await denied.call("vault:list")).entries[0].id;
+        expect(await denied.call("vault:delete", id)).toEqual({ success: false, error: "auth_failed" });
+        expect((await denied.call("vault:list")).entries).toHaveLength(1);
+
+        const pw = setup({ canTouchId: false });
+        await pw.call("vault:save", LOGIN);
+        await pw.call("vault:set-password", "correct horse");
+        const id2 = (await pw.call("vault:list")).entries[0].id;
+        expect(await pw.call("vault:delete", id2, "wrong")).toMatchObject({ success: false, error: "auth_failed" });
+        expect((await pw.call("vault:delete", id2, "correct horse")).entries).toHaveLength(0);
+    });
+
     it("a login must name its website", async () => {
         const { call } = setup();
         expect(await call("vault:save", { ...LOGIN, domains: "" })).toMatchObject({ success: false });
