@@ -238,6 +238,7 @@ desktop/hostinger-upload/
 !src/memory/session-expiry.test.ts
 !src/tools/browser/secret-fields.test.ts
 !src/overlay/overlay-turns.test.ts
+!src/overlay/overlay-task-drawer.test.ts
 !src/tools/browser/bridge-heartbeat.test.ts
 !src/tools/browser/extension-frame-offset.test.ts
 !src/tools/mac-wifi.test.ts

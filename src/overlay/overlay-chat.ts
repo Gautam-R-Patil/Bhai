@@ -187,6 +187,44 @@ const chatOf = (ws: WebSocket) => chatIds.get(ws) || "overlay";
 // The "Forget that" this socket was last offered; a forget tap must match it (ids are guessable).
 const offeredUndo = new WeakMap<WebSocket, string>();
 
+let drawerIds = new Set<string>();
+
+/** Send the owner's open chat bars every running research / long task, and what has ended. */
+async function pushTaskDrawer(): Promise<void> {
+    const owners = ownerClients().filter((c) => c.readyState === 1);
+    if (owners.length === 0) return;
+    const [{ listRunningResearch }, { listActiveLongTasks }] = await Promise.all([
+        import("../research/index.js"),
+        import("../agents/long-task.js"),
+    ]);
+    const items = [
+        ...listRunningResearch().map((r) => ({
+            taskId: r.id,
+            name: r.topic.slice(0, 80),
+            taskType: "research",
+            progress: r.progress,
+            phase: r.phase,
+        })),
+        ...listActiveLongTasks()
+            .filter((t) => t.status === "running" || t.status === "planning")
+            .map((t) => ({
+                taskId: t.id,
+                name: t.description.slice(0, 80),
+                taskType: "long_task",
+                progress: t.phases.length ? (100 * t.currentPhase) / t.phases.length : undefined,
+                phase: t.phases[t.currentPhase]?.description?.slice(0, 80) ?? t.status,
+            })),
+    ];
+    const now = new Set(items.map((i) => i.taskId));
+    const ended = [...drawerIds].filter((id) => !now.has(id));
+    drawerIds = now;
+    if (items.length === 0 && ended.length === 0) return;
+    for (const c of owners) {
+        for (const i of items) c.send(JSON.stringify({ type: "task_progress", ...i }));
+        for (const taskId of ended) c.send(JSON.stringify({ type: "task_complete", taskId }));
+    }
+}
+
 export function initOverlayChat(llm: LLMClient): void {
     llmClient = llm;
     // Pick up where the conversation left off before a restart.
@@ -598,6 +636,16 @@ export function initOverlayChat(llm: LLMClient): void {
 
                 if (typeof msg.chat === "string" && msg.chat) chatIds.set(ws, msg.chat.slice(0, 64));
 
+                if (msg.type === "cancel_task") {
+                    // The task drawer's Cancel: the owner's researches and long tasks only.
+                    if (!wsIsOwner(ws) || typeof msg.taskId !== "string") return;
+                    const { cancelResearchById } = await import("../research/index.js");
+                    const { cancelLongTask } = await import("../agents/long-task.js");
+                    const cancelled = (await cancelResearchById(msg.taskId)) || cancelLongTask(msg.taskId);
+                    sendToClient(ws, cancelled ? { type: "task_cancelled", taskId: msg.taskId } : { type: "task_complete", taskId: msg.taskId });
+                    return;
+                }
+
                 if (msg.type === "stop") {
                     // Stop button / Esc: abort this socket's running turn. No new
                     // tool starts after this (agent.ts checks the signal per tool).
@@ -733,6 +781,12 @@ export function initOverlayChat(llm: LLMClient): void {
         // (createOverlayWindow in desktop/main.js, toggled by the global hotkey).
         // The server just hosts the HTTP+WS endpoint it connects to.
     });
+
+    // The chat bar's task drawer: running deep researches and long tasks, with Cancel.
+    // (The drawer existed but nothing on the server ever sent it a task.)
+    setInterval(() => {
+        pushTaskDrawer().catch(() => {});
+    }, 4000).unref();
 
     // ── Persistent Overlay Research Progress ──────
     // This callback persists across agent iterations (unlike _onProgress which is cleared)
