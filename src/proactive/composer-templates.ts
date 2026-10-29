@@ -6,10 +6,27 @@ import type { Channel, ProactiveIntent } from "./intent.js";
 
 type TemplateFn = (i: ProactiveIntent) => string | null;
 
+// Every channel, so a commitment nudge never depends on the LLM composer.
+const commitmentDue: TemplateFn = (i) => {
+    const { content, dueMs } = i.payload as { content?: string; dueMs?: number };
+    if (!content || dueMs == null) return null;
+    const when = new Date(dueMs).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+    return `you said you'd do this: ${content.replace(/\s+/g, " ").slice(0, 200)} (due ${when}). done, or still on it?`;
+};
+
 // Templates return null when required payload fields are missing.
 // This falls through to the LLM path; for deterministic intents that
 // missed required fields, the caller sees "null" and suppresses the send.
 export const TEMPLATES: Record<string, Partial<Record<Channel, TemplateFn>>> = {
+    commitment_due: {
+        whatsapp: commitmentDue,
+        telegram: commitmentDue,
+        discord: commitmentDue,
+        slack: commitmentDue,
+        matrix: commitmentDue,
+        email: commitmentDue,
+        overlay: commitmentDue,
+    },
     long_task_status: {
         whatsapp: (i) => {
             const { task, summary } = i.payload as { task?: string; summary?: string };

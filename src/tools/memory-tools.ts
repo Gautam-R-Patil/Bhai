@@ -11,7 +11,16 @@ import {
     getIdentityProfile,
     updateIdentityProfile,
 } from "../memory/identity.js";
-import { getMemoryStats, listMemories, recall, remember, setMemoryPinned, supersedeMemory } from "../memory/sqlite.js";
+import {
+    getMemoryStats,
+    listMemories,
+    markCommitmentDone,
+    recall,
+    remember,
+    setCommitmentDue,
+    setMemoryPinned,
+    supersedeMemory,
+} from "../memory/sqlite.js";
 import { exportTraitsSnapshot, getAllTraits, reinforceTrait } from "../memory/traits.js";
 import {
     canPinMemory,
@@ -45,20 +54,60 @@ export function hasPinCue(text: string): boolean {
     );
 }
 
+const COMMIT_CUE =
+    /\b(?:i['’]ll|i will|i shall|i['’]?m (?:going to|gonna)|i am (?:going to|gonna)|i (?:need|have|got) to|i['’]ve got to|i gotta|i must|i promised?|i owe)\b|\b(?:main|mai|mein|me|mujhe|mujhko)\b.*?(?:\p{L}(?:unga|ungi|oonga|oongi)\b|\p{L}na (?:hai|h|he|padega|padegi)\b)/iu;
+const COMMIT_CUE_HI = /(?:मैं|मै|मुझे).*(?:ूँगा|ूंगा|ूँगी|ूंगी|ऊँगा|ऊंगा|ना है)/;
+const TIME_CUE =
+    /\b(?:today|tonight|tomorrow|tmrw?|(?:mon|tues|wednes|thurs|fri|satur|sun)day|weekend|(?:this|next|coming) (?:week|month|year)|end of (?:the )?(?:day|week|month)|eo[dwm]|noon|midnight|morning|afternoon|evening|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.? \d{1,2}|\d{1,2}(?:st|nd|rd|th)?(?: of)? (?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*|\d{1,2}(?::\d\d)? ?[ap]\.?m\b|\d{1,2}:\d\d|in (?:a|an|\d+) (?:min(?:ute)?s?|hours?|hrs?|days?|weeks?|months?)|aaj|kal|parso|parson|shaam|subah|raat|(?:som|mangal|budh|guru|shukra|shani|ravi)var)\b|\d{4}-\d\d-\d\d|\b\d{1,2}\/\d{1,2}\b|आज|कल|परसों|सुबह|शाम|रात|(?:सोम|मंगल|बुध|गुरु|शुक्र|शनि|रवि)वार/i;
+const YEAR_MS = 366 * 86_400_000;
+
+/**
+ * A commitment is only the owner's own first-person promise with a time in their message
+ * ("I'll send Riya the deck by Friday", "kal tak bhej dunga"), never one inferred; `dueAt` is
+ * the model's ISO reading of that time. "Remind me" asks for the cron tool, not this.
+ */
+export function commitmentDue(message: string, dueAt: unknown, now = Date.now()): { dueAt: string } | { error: string } {
+    if (/\bremind me\b|yaad dila/i.test(message)) {
+        return { error: "Not stored: the owner asked for a reminder; use the cron tool for that." };
+    }
+    if (!COMMIT_CUE.test(message) && !COMMIT_CUE_HI.test(message)) {
+        return {
+            error: "Not stored as a commitment: only the owner's own first-person promise (I'll / I need to / main ... karunga) is one, never an inferred one. Store it without category commitment / due_at if it's still worth keeping.",
+        };
+    }
+    if (!TIME_CUE.test(message)) {
+        return { error: "Not stored as a commitment: the owner's message names no time it is due." };
+    }
+    const ms = typeof dueAt === "string" ? Date.parse(dueAt) : Number.NaN;
+    if (!Number.isFinite(ms) || ms <= now || ms > now + YEAR_MS) {
+        return { error: "Not stored: due_at must be an ISO UTC time in the coming year, read from the owner's words." };
+    }
+    return { dueAt: new Date(ms).toISOString() };
+}
+
+/** The owner's message says a commitment is done or off. */
+export function hasDoneCue(text: string): boolean {
+    return (
+        /\b(?:done|did|finished|completed?|sent|submitted|delivered|handled|sorted|paid|called|cancell?ed|dropped|not doing|ho gaya|ho gya|kar diya|kar di|bhej diya|bhej di)\b/i.test(
+            text,
+        ) || /हो गया|कर दिया|भेज दिया/.test(text)
+    );
+}
+
 export const memoryStore: ToolDefinition = {
     schema: {
         type: "function",
         function: {
             name: "memory_store",
             description:
-                'Store a fact, preference, or important information in persistent memory. Use this when the user shares something worth remembering. When the owner corrects or updates something you already know ("actually it\'s Tuesday", "I moved to Pune", "ab main X nahi karta"), store the corrected fact as a full sentence and pass `supersedes` with the old memory\'s id (the #id in recalled memory lines, or from memory_search) so the old one stops being recalled instead of both standing. When the owner says something matters ("remember this, it matters", "never forget this", "yeh yaad rakhna"), pass `pin: true`: pinned memories always stay in core memory and never fade. To pin or unpin a memory already shown (#id), pass `pin_id` with `pin` true/false and its text as content; nothing new is stored. Tag who and what a memory is about as `person:<name>` / `project:<name>` (e.g. tags "person:riya, project:atlas") so it comes up on their card whenever they are mentioned.',
+                'Store a fact, preference, or important information in persistent memory. Use this when the user shares something worth remembering. When the owner corrects or updates something you already know ("actually it\'s Tuesday", "I moved to Pune", "ab main X nahi karta"), store the corrected fact as a full sentence and pass `supersedes` with the old memory\'s id (the #id in recalled memory lines, or from memory_search) so the old one stops being recalled instead of both standing. When the owner says something matters ("remember this, it matters", "never forget this", "yeh yaad rakhna"), pass `pin: true`: pinned memories always stay in core memory and never fade. To pin or unpin a memory already shown (#id), pass `pin_id` with `pin` true/false and its text as content; nothing new is stored. Tag who and what a memory is about as `person:<name>` / `project:<name>` (e.g. tags "person:riya, project:atlas") so it comes up on their card whenever they are mentioned. When the owner commits to doing something by a time ("I\'ll send Riya the deck by Friday", "kal tak bhej dunga"), store the commitment itself as content ("Send Riya the deck by Friday") with category "commitment" and `due_at`: Bhai nudges them once near then. Only their own first-person promises, never ones you infer; if they say "remind me", use the cron tool instead. When they say a commitment is done or off, pass `done_id` with its #id and its text as content; nothing new is stored.',
             parameters: {
                 type: "object",
                 properties: {
                     content: { type: "string", description: "The information to remember" },
                     category: {
                         type: "string",
-                        description: "Category: general, preference, fact, person, task, note",
+                        description: "Category: general, preference, fact, person, task, note, commitment",
                     },
                     tags: {
                         type: "string",
@@ -76,12 +125,35 @@ export const memoryStore: ToolDefinition = {
                         description: "true when the owner says it matters; false with pin_id to unpin",
                     },
                     pin_id: { type: "number", description: "Id of an existing memory to pin/unpin instead of storing" },
+                    due_at: {
+                        type: "string",
+                        description:
+                            "Commitments only: when it is due, ISO 8601 UTC (e.g. 2026-11-06T18:00:00Z), from the owner's words",
+                    },
+                    done_id: { type: "number", description: "Id of an open commitment the owner says is done or off" },
                 },
                 required: ["content"],
             },
         },
     },
     async handler(input) {
+        const doneId = input.done_id == null ? 0 : Number(String(input.done_id).replace(/^#/, ""));
+        if (doneId > 0) {
+            // Owner only, on their own word, on a commitment shown this turn.
+            if (!hasDoneCue(ownerTurnMessage()) || !canPinMemory(doneId) || !markCommitmentDone(doneId)) {
+                return JSON.stringify({ success: false, error: `Can't mark #${doneId} done.` });
+            }
+            return JSON.stringify({ success: true, id: doneId, done: true });
+        }
+        let dueAt: string | undefined;
+        if (input.category === "commitment" || input.due_at != null) {
+            // Owner's main loop only: a contact or sub-agent never sets up nudges to the owner.
+            const gate = canPinMemory()
+                ? commitmentDue(ownerTurnMessage(), input.due_at)
+                : { error: "Not stored: only the owner's own commitments are tracked." };
+            if ("error" in gate) return JSON.stringify({ success: false, error: gate.error });
+            dueAt = gate.dueAt;
+        }
         const pinId = input.pin_id == null ? 0 : Number(String(input.pin_id).replace(/^#/, ""));
         if (pinId > 0) {
             // Owner only, on their own ask, once per turn, on a memory shown this turn: contacts and
@@ -102,10 +174,10 @@ export const memoryStore: ToolDefinition = {
             oldId > 0 && Number.isInteger(oldId) && hasCorrectionCue(ownerTurnMessage()) && claimSupersede(oldId);
         // Use smart write (LLM deduplication) for important memories (>= 7); not on a supersede,
         // which may merge or drop the new row the old one now points at.
-        const useSmartWrite = imp >= 7 && !supersede && !pin;
+        const useSmartWrite = imp >= 7 && !supersede && !pin && !dueAt;
         const id = await remember(
             input.content as string,
-            (input.category as string) || "general",
+            dueAt ? "commitment" : (input.category as string) || "general",
             normalizeTags(typeof input.tags === "string" ? input.tags : ""),
             imp,
             "user",
@@ -115,6 +187,7 @@ export const memoryStore: ToolDefinition = {
             return JSON.stringify({ success: false, reason: "rejected_by_value_gate" });
         }
         if (pin) setMemoryPinned(id, true);
+        if (dueAt) setCommitmentDue(id, dueAt);
         const retired = supersede && id !== oldId && supersedeMemory(oldId, id);
         // Smart write may merge or drop this row moments later, so its id can't back an undo.
         if (!useSmartWrite) noteStoredMemory(id, retired);
@@ -122,8 +195,11 @@ export const memoryStore: ToolDefinition = {
             return JSON.stringify({
                 success: true,
                 id,
+                ...(dueAt ? { due_at: dueAt } : {}),
                 message: pin
                     ? "Memory stored and pinned."
+                    : dueAt
+                      ? "Commitment stored; Bhai nudges the owner once near due_at."
                     : input.pin === true
                       ? "Memory stored; not pinned: only the owner's own ask can pin."
                       : "Memory stored.",

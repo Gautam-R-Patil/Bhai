@@ -238,6 +238,17 @@ export async function initMemoryDB(): Promise<CompatDatabase> {
     } catch {
         /* */
     }
+    // Commitments: when the owner said it's due (ISO UTC) and when Bhai nudged them about it.
+    try {
+        db.run("ALTER TABLE memories ADD COLUMN due_at TEXT DEFAULT NULL");
+    } catch {
+        /* exists */
+    }
+    try {
+        db.run("ALTER TABLE memories ADD COLUMN fired_at TEXT DEFAULT NULL");
+    } catch {
+        /* exists */
+    }
     // The old surprise gate stored decay_score up to 1.5, so routine
     // importance-5 rows outranked importance-7 ones. 1.0 is the cap.
     try {
@@ -2482,6 +2493,28 @@ export function setMemoryPinned(id: number, pinned: boolean): boolean {
             `UPDATE memories SET pinned = ?${pinned ? ", decay_score = MAX(decay_score, 1.0)" : ""} WHERE id = ? AND consolidated_into IS NULL`,
         )
         .run(pinned ? 1 : 0, id);
+    getTemporalCache().clearCache();
+    return res.changes > 0;
+}
+
+/** Memory `id` is the owner's commitment, due at `dueIso`; a new due time re-arms its one nudge. */
+export function setCommitmentDue(id: number, dueIso: string): void {
+    rawDb
+        ?.prepare(
+            "UPDATE memories SET category = 'commitment', fired_at = CASE WHEN due_at = ? THEN fired_at END, due_at = ? WHERE id = ?",
+        )
+        .run(dueIso, dueIso, id);
+    getTemporalCache().clearCache();
+}
+
+/** The owner did (or dropped) commitment `id`: it leaves the COMMITMENTS card and never fires. */
+export function markCommitmentDone(id: number): boolean {
+    if (!rawDb) return false;
+    const res = rawDb
+        .prepare(
+            "UPDATE memories SET category = 'commitment_done' WHERE id = ? AND category = 'commitment' AND consolidated_into IS NULL",
+        )
+        .run(id);
     getTemporalCache().clearCache();
     return res.changes > 0;
 }

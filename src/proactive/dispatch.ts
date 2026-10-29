@@ -38,25 +38,26 @@ const PREFIXED_CHANNELS: Channel[] = ["whatsapp", "telegram", "discord", "slack"
  * registered in the existing getChannelSender registry (tools/channel-send.ts).
  *
  * No separate registry — reuses what is already wired at boot.
+ * Resolves true only when the message was actually sent.
  */
 export async function dispatchProactiveMessage(
     channel: Channel,
     text: string,
     mode: ProactiveMode,
-): Promise<void> {
+): Promise<boolean> {
     if (isProactiveDisabled()) {
         debugProactive("suppressed_global", { channel, mode });
-        return;
+        return false;
     }
     if (isChannelDisabled(channel)) {
         debugProactive("suppressed_channel", { channel, mode });
-        return;
+        return false;
     }
     if (_fatigueCheck !== null) {
         try {
             if (_fatigueCheck()) {
                 debugProactive("suppressed_fatigue", { channel, mode });
-                return;
+                return false;
             }
         } catch {
             // Fail open — a broken fatigue check should never block sends.
@@ -71,8 +72,9 @@ export async function dispatchProactiveMessage(
     const prefixed = PREFIXED_CHANNELS.includes(channel) && !plain ? `${EMOJI[mode]} ${text}` : text;
     if (isShadowMode()) {
         debugProactive("shadow_dispatch", { channel, mode, preview: prefixed.slice(0, 80) });
-        return;
+        return false;
     }
     await sender(prefixed);
     debugProactive("dispatched", { channel, mode, preview: prefixed.slice(0, 80) });
+    return true;
 }

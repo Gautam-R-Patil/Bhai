@@ -59,6 +59,7 @@ const SOURCE_WEIGHTS: Record<IntentSource, number> = {
     // They're soft, time-gated, and never urgent; the dispatcher should
     // hold them when anything else competes for the same channel slot.
     onboarding_graduation: 0.4,
+    commitment_due: 1.3,
 };
 
 const BOUNDARY_WINDOW_MS = 120_000;          // 2-minute window after a boundary
@@ -322,7 +323,9 @@ export class Observer {
                 try {
                     const composed = await composeMorningBatch(intents, channel, recent, { llm: this.deps.llm });
                     if (composed) {
-                        await dispatchProactiveMessage(channel, composed.text, composed.modeTag);
+                        if (await dispatchProactiveMessage(channel, composed.text, composed.modeTag)) {
+                            for (const intent of intents) this.registry.dispatched(intent);
+                        }
                         this.telemetry().log({
                             intentId: intents[0].id,
                             source: intents[0].source,
@@ -403,7 +406,9 @@ export class Observer {
                     debugProactive("observer_inbox_absent_fallback", { id: intent.id });
                 }
 
-                await dispatchProactiveMessage(channel, composed.text, composed.modeTag);
+                if (await dispatchProactiveMessage(channel, composed.text, composed.modeTag)) {
+                    this.registry.dispatched(intent);
+                }
                 this.telemetry().log({
                     intentId: intent.id,
                     source: intent.source,

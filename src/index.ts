@@ -841,6 +841,14 @@ async function boot() {
                 );
             }
 
+            try {
+                const { COMMITMENT_DUE } = await import("./proactive/sources/commitment-due.js");
+                obs.registerSource(COMMITMENT_DUE);
+                console.log("💓 Registered source: commitment_due");
+            } catch (err) {
+                console.log("[BOOT] commitment_due registration failed (non-fatal):", (err as Error).message);
+            }
+
             // ── V3 sources (default ON; set ATLAS_PROACTIVE_V3_SOURCES=false to disable) ──
             if (process.env.ATLAS_PROACTIVE_V3_SOURCES !== "false") {
                 const webSearch = async (query: string): Promise<string> => {
