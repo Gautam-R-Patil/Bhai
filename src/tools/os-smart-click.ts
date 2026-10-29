@@ -147,8 +147,6 @@ async function captureWindowRegion(fw: Rect): Promise<Buffer | null> {
 }
 
 const VISION_TIERS = new Set<CascadeTier>(["omniparser", "ui_tars", "cloud_grounding"]);
-/** AX roles clicked by setting AXSelected when they have no AXPress. */
-const SELECTABLE_ROLES = new Set(["AXRow", "AXCell", "AXOutlineRow", "AXTab"]);
 
 /** "Google Chrome" for a pid, for messages; the pid itself if ps can't say. */
 async function appNameOfPid(pid: number): Promise<string> {
@@ -523,13 +521,6 @@ export const osSmartClick: ToolDefinition = {
                                 calY: target.y,
                                 dispatchErr: `ax_press_unconfirmed: AXPress on "${target.matchedLabel}" did not report back (${pressed.error}); it may have worked. Take an os_screenshot before retrying; nothing else was clicked.`,
                             };
-                        }
-                        // Rows and cells (Finder's sidebar, lists, tables) have no AXPress but
-                        // take AXSelected — like a press, it doesn't care what covers them.
-                        if (SELECTABLE_ROLES.has(target.ax.role)) {
-                            const selected = await axPerformAction(target.ax.pid, target.ax, "select");
-                            if (selected.ok)
-                                return { ok: true, target, calX: target.x, calY: target.y, verdict: "ax_select" };
                         }
                     }
                     if (target.ax.offscreen) {

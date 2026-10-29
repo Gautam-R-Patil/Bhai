@@ -202,7 +202,7 @@ const _AX_REFUSED = /^(element_gone|element_changed|unsupported|unknown_action|n
 export async function axPerformAction(
     pid: number,
     el: Pick<AxFlatElement, "path" | "role" | "bbox">,
-    action: "press" | "reveal" | "select" | "focus",
+    action: "press" | "reveal" | "focus",
 ): Promise<{
     ok: boolean;
     error?: string;

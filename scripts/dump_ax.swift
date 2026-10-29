@@ -5,11 +5,11 @@
 //
 // Usage:
 //   dump_ax_bin [--pid <pid>] [--frontmost] [--depth N] [--bbox-only]
-//   dump_ax_bin --pid <pid> --action press|reveal|select|focus --path 0,2,1 [--expect-role R] [--expect-frame x,y,w,h]
+//   dump_ax_bin --pid <pid> --action press|reveal|focus --path 0,2,1 [--expect-role R] [--expect-frame x,y,w,h]
 //     Acts on the element at that child-index path (as in the dump), after checking it
-//     is still the same element: press = AXPress, reveal = AXScrollToVisible, select =
-//     set AXSelected (sidebar/list rows, tabs), focus = raise the element's own window
-//     and bring its app forward. Prints "ok|x,y,w,h" (its frame afterwards) or
+//     is still the same element: press = AXPress, reveal = AXScrollToVisible, focus =
+//     raise the element's own window and bring its app forward. (Setting AXSelected is
+//     no click: on Finder's sidebar it moves the highlight but doesn't open the folder.) Prints "ok|x,y,w,h" (its frame afterwards) or
 //     "error|<reason>"; focus adds "|<pid>", the app whose UI is now at the element's
 //     centre (another pid = something still covers it).
 //
@@ -398,7 +398,7 @@ func fail(_ reason: String) -> Never {
 }
 
 if let act = actionName {
-    guard ["press", "reveal", "select", "focus"].contains(act) else { fail("unknown_action:\(act)") }
+    guard ["press", "reveal", "focus"].contains(act) else { fail("unknown_action:\(act)") }
     var el = app
     for idx in actionPath {
         let kids = cfChildren(axCopy(el, kAXChildrenAttribute))
@@ -414,12 +414,6 @@ if let act = actionName {
     }
     var extra = ""
     switch act {
-    case "select":
-        var settable: DarwinBoolean = false
-        guard AXUIElementIsAttributeSettable(el, kAXSelectedAttribute as CFString, &settable) == .success, settable.boolValue
-        else { fail("unsupported:AXSelected") }
-        let res = AXUIElementSetAttributeValue(el, kAXSelectedAttribute as CFString, kCFBooleanTrue)
-        guard res == .success else { fail("failed:\(res.rawValue)") }
     case "focus":
         // The element's own window, raised and made main, its app frontmost: a pixel click
         // then lands in it, not in whatever window was in front.

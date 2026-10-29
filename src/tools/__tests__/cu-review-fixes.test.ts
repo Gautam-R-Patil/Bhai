@@ -126,20 +126,12 @@ describe("os_smart_click review fixes", () => {
             press.mockImplementation(async (...a: unknown[]) => byAction[a[2] as string] ?? { ok: false, error: "unsupported:x" });
         afterEach(() => press.mockImplementation(async () => ({ ok: false, error: "unsupported:AXPress" })));
 
-        it("selects a row that has no AXPress instead of clicking pixels (works under other windows)", async () => {
-            actions({ select: { ok: true, frame: row.bbox } });
-            findClickTarget.mockResolvedValueOnce(target());
-            const out = JSON.parse(await osSmartClick.handler({ instruction: "Downloads in the Finder sidebar" }));
-            expect(out).toMatchObject({ success: true, verified: "ax_select" });
-            expect(click).not.toHaveBeenCalled();
-        });
-
         it("raises the element's window, and refuses to click when another app still covers it", async () => {
             actions({ focus: { ok: true, frame: row.bbox, hitPid: 777 } });
             findClickTarget.mockResolvedValueOnce(target());
             const out = JSON.parse(await osSmartClick.handler({ instruction: "Downloads in the Finder sidebar" }));
             expect(out.error).toMatch(/element_covered/);
-            expect(press.mock.calls.map((c) => c[2])).toEqual(["press", "select", "focus"]);
+            expect(press.mock.calls.map((c) => c[2])).toEqual(["press", "focus"]);
             expect(click).not.toHaveBeenCalled();
         });
 
