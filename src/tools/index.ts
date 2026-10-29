@@ -223,6 +223,7 @@ import {
     auditLog,
     checkRateLimit,
     getCached,
+    invalidateLocalState,
     isCacheable,
     recordToolUsage,
     requiresConfirmation,
@@ -1005,9 +1006,11 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         if (name.startsWith("browser_") && !NO_PAGE_CHECK.has(name)) result = await captchaAfterAction(result, stop);
         const durationMs = Date.now() - startTime;
 
-        // Cache the result if eligible
+        // Cache the result if eligible; any other call may have changed local state.
         if (isCacheable(name, effectiveInput)) {
             setCache(name, effectiveInput, result);
+        } else {
+            invalidateLocalState();
         }
 
         // Determine success

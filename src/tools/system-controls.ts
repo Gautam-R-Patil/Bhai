@@ -994,29 +994,21 @@ export const darkMode: ToolDefinition = {
             }
 
             // macOS
+            // The global default reads in ~20ms; asking System Events cold takes ~2.5s.
+            // The key is absent in light mode, so a failed read means light.
+            const isDarkNow = () =>
+                execFileAsync("defaults", ["read", "-g", "AppleInterfaceStyle"], { timeout: 3000 }).then(
+                    ({ stdout }) => stdout.trim() === "Dark",
+                    () => false,
+                );
             if (mode === "status") {
-                const result = await runAppleScript(`
-tell application "System Events"
-    tell appearance preferences
-        return dark mode as text
-    end tell
-end tell`);
-                return JSON.stringify({
-                    success: true,
-                    dark_mode: result === "true",
-                    appearance: result === "true" ? "dark" : "light",
-                });
+                const dark = await isDarkNow();
+                return JSON.stringify({ success: true, dark_mode: dark, appearance: dark ? "dark" : "light" });
             }
 
             let setDark: boolean;
             if (mode === "toggle") {
-                const current = await runAppleScript(`
-tell application "System Events"
-    tell appearance preferences
-        return dark mode as text
-    end tell
-end tell`);
-                setDark = current !== "true";
+                setDark = !(await isDarkNow());
             } else {
                 setDark = mode === "dark";
             }
