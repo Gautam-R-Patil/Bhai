@@ -85,13 +85,18 @@ function fenceToolResult(fnName: string, result: string): string {
     return wrapUntrustedToolResult(fnName, result);
 }
 
-/** Fast hash for tool call deduplication (FNV-1a inspired). */
-function hashToolCall(toolName: string, args: string): string {
-    return `${toolName}::${args}`;
+/**
+ * Fast signature for tool-call loop detection. Folds in a cheap fingerprint of
+ * the RESULT so that legitimate polling (same call, changing result) is NOT
+ * flagged as stuck, while a genuinely stuck call (same call, same result) is.
+ */
+export function hashToolCall(toolName: string, args: string, result?: string): string {
+    const r = result === undefined ? "" : `::${result.length}:${result.slice(0, 80)}`;
+    return `${toolName}::${args}${r}`;
 }
 
 /** Check for repeated tool call patterns. Returns "none" | "warning" | "critical". */
-function detectStuckPattern(toolHistory: string[]): "none" | "warning" | "critical" {
+export function detectStuckPattern(toolHistory: string[]): "none" | "warning" | "critical" {
     if (toolHistory.length < STUCK_WARNING_THRESHOLD) return "none";
     const recent = toolHistory.slice(-STUCK_CRITICAL_THRESHOLD);
     const last = recent[recent.length - 1];
@@ -101,6 +106,13 @@ function detectStuckPattern(toolHistory: string[]): "none" | "warning" | "critic
     for (let i = recent.length - 1; i >= 0; i--) {
         if (recent[i] === last) consecutive++;
         else break;
+    }
+
+    // Cycle detection: an oscillating loop (A,B,A,B,…) never has a long run of
+    // adjacent-identical calls, but a full window dominated by ≤2 distinct
+    // signatures is still a loop. Catches the 2-step cycle the run check misses.
+    if (recent.length >= STUCK_CRITICAL_THRESHOLD && new Set(recent).size <= 2) {
+        return "critical";
     }
 
     if (consecutive >= STUCK_CRITICAL_THRESHOLD) return "critical";
@@ -586,7 +598,7 @@ export async function runSubAgent(
                     try {
                         const delegateResult = await execA2ADelegate(llm, delegateArgs);
                         totalToolCalls++;
-                        toolCallHistory.push(hashToolCall(fnName, tc.function.arguments || ""));
+                        toolCallHistory.push(hashToolCall(fnName, tc.function.arguments || "", delegateResult));
                         fullHistory.push({
                             role: "tool",
                             tool_call_id: tc.id,
@@ -634,8 +646,9 @@ export async function runSubAgent(
                     errorCount++;
                 }
 
-                // Track tool calls for loop detection (#11)
-                toolCallHistory.push(hashToolCall(fnName, tc.function.arguments || ""));
+                // Track tool calls for loop detection (#11). Fold in the result so
+                // productive polling (changing result) isn't mistaken for a loop.
+                toolCallHistory.push(hashToolCall(fnName, tc.function.arguments || "", result));
 
                 fullHistory.push({
                     role: "tool",

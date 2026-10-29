@@ -16,6 +16,7 @@ const MAX_FINDINGS = 5;
 const MAX_FINDING_CHARS = 150;
 const MAX_ERRORS = 3;
 const MAX_RAW_TAIL_CHARS = 500;
+const MAX_ARTIFACT_CHARS = 200; // cap each path/url — URL_PATTERN can match arbitrarily long URLs
 
 // ── Types ────────────────────────────────────
 
@@ -69,7 +70,7 @@ export function buildHandoff(result: SubAgentResult, step: MeshStep): HandoffMes
 
     FILE_PATH_PATTERN.lastIndex = 0;
     while ((match = FILE_PATH_PATTERN.exec(output)) !== null && artifacts.length < 10) {
-        const path = match[1];
+        const path = match[1].substring(0, MAX_ARTIFACT_CHARS);
         if (!seenPaths.has(path)) {
             seenPaths.add(path);
             artifacts.push({ type: "file", path });
@@ -78,7 +79,7 @@ export function buildHandoff(result: SubAgentResult, step: MeshStep): HandoffMes
 
     URL_PATTERN.lastIndex = 0;
     while ((match = URL_PATTERN.exec(output)) !== null && artifacts.length < 10) {
-        const url = match[0];
+        const url = match[0].substring(0, MAX_ARTIFACT_CHARS);
         if (!seenPaths.has(url)) {
             seenPaths.add(url);
             artifacts.push({ type: "url", path: url });

@@ -341,3 +341,17 @@ describe("buildDependencyContext", () => {
         expect(ctx).toMatch(/\[END HANDOFF\]\n\n\[HANDOFF/);
     });
 });
+
+describe("buildHandoff — artifact paths/urls are length-capped", () => {
+    it("a multi-KB URL is capped, not stored verbatim (protects the token budget)", () => {
+        const hugeUrl = "https://x.com/d?q=" + "a".repeat(50_000);
+        const h = buildHandoff(
+            makeResult({ success: true, output: `see ${hugeUrl}` }),
+            makeStep(),
+        );
+        expect(h.artifacts.length).toBeGreaterThan(0);
+        for (const a of h.artifacts) {
+            expect(a.path.length).toBeLessThanOrEqual(200);
+        }
+    });
+});

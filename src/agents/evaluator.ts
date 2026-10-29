@@ -113,11 +113,14 @@ Output ONLY valid JSON:
 
         const parsed = JSON.parse(jsonStr);
 
+        // Coerce explicitly: `x || 70` turns a legitimate 0 into 70 and a
+        // non-numeric string (e.g. "excellent") into NaN. Default to 70 only
+        // when the value isn't a finite number.
         const rubric: EvaluationRubric = {
-            completeness: clamp(parsed.completeness || 70, 0, 100),
-            accuracy: clamp(parsed.accuracy || 70, 0, 100),
-            coherence: clamp(parsed.coherence || 70, 0, 100),
-            actionability: clamp(parsed.actionability || 70, 0, 100),
+            completeness: clampScore(parsed.completeness),
+            accuracy: clampScore(parsed.accuracy),
+            coherence: clampScore(parsed.coherence),
+            actionability: clampScore(parsed.actionability),
         };
 
         const score = Math.round(
@@ -134,8 +137,12 @@ Output ONLY valid JSON:
             try { recordEvaluationScore(activeTrace, score); } catch { /* non-fatal */ }
         }
 
+        // Derive the verdict from the computed score only — do NOT trust the
+        // model's self-reported `verdict` field. The whole point of a separate
+        // evaluator is to avoid self-confirmation; a model that scores 10/10/10/10
+        // but claims "accept" must still be sent back for retry/replan.
         return {
-            verdict: (["accept", "retry", "replan"] as const).includes(parsed.verdict) ? parsed.verdict : verdict,
+            verdict,
             score,
             rubric,
             feedback: parsed.feedback || "",
@@ -204,6 +211,12 @@ export async function evaluateAndOptimize(
 
 function clamp(value: number, min: number, max: number): number {
     return Math.max(min, Math.min(max, value));
+}
+
+/** Coerce a rubric dimension to a 0-100 score, defaulting to 70 only when it isn't a finite number. */
+function clampScore(value: unknown): number {
+    const n = Number(value);
+    return clamp(Number.isFinite(n) ? n : 70, 0, 100);
 }
 
 function defaultAccept(synthesis: string): EvaluationResult {

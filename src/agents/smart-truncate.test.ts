@@ -287,3 +287,67 @@ describe("smartTruncate — edge cases", () => {
         expect(out.length).toBeLessThan(LONG.length);
     });
 });
+
+describe("smartTruncate — UTF-16 surrogate safety at cut boundaries", () => {
+    it("default strategy never ends in a lone high surrogate", () => {
+        // "😀" (U+1F600) occupies UTF-16 units at idx 3999 (high) and 4000 (low).
+        const input = "a".repeat(3999) + "😀" + "bb";
+        const out = smartTruncate("unknown_tool", input, 4000);
+        const lastUnit = out.charCodeAt(out.length - 1);
+        expect(lastUnit >= 0xd800 && lastUnit <= 0xdbff).toBe(false);
+    });
+
+    it("head_tail cut boundaries carry no dangling surrogate halves", () => {
+        const input = "😀".repeat(5000); // every char is a surrogate pair
+        const out = smartTruncate("read", input, 1000);
+        const first = out.charCodeAt(0);
+        const last = out.charCodeAt(out.length - 1);
+        expect(first >= 0xdc00 && first <= 0xdfff).toBe(false); // not a lone low surrogate
+        expect(last >= 0xd800 && last <= 0xdbff).toBe(false); // not a lone high surrogate
+    });
+});
+
+describe("smartTruncate — keep_ids always returns valid JSON (never head_tail a JSON string)", () => {
+    it("large JSON that overflows even after pruning stays parseable", () => {
+        const data = {
+            elements: Array.from({ length: 50 }, (_, i) => ({
+                id: `el-${i}`,
+                value: "v".repeat(300),
+            })),
+        };
+        const out = smartTruncate("browser_scan", JSON.stringify(data), 5000);
+        expect(out.length).toBeLessThanOrEqual(5000);
+        expect(() => JSON.parse(out)).not.toThrow(); // would throw if head_tail cut mid-structure
+    });
+});
+
+describe("smartTruncate — keep_ids non-JSON honors the cap and keeps whole ID lines", () => {
+    it("ID-bearing lines exceeding the cap are kept whole head-first (no mid-line cut)", () => {
+        const idLines = Array.from({ length: 200 }, (_, i) => `button id=#${i} clickable`);
+        const out = smartTruncate("browser_scan", idLines.join("\n") + "\n", 5000);
+        // Every surviving line must be a complete ID line (no truncated final line).
+        for (const line of out.split("\n")) {
+            if (line.length === 0) continue;
+            expect(line).toMatch(/^button id=#\d+ clickable$/);
+        }
+    });
+
+    it("does not overflow the cap when ID lines nearly fill it (no negative remaining)", () => {
+        // ~166 ID lines ≈ just under 5000 chars, plus a few non-ID lines.
+        const idLines = Array.from({ length: 166 }, (_, i) => `link href=/p/${i} here`);
+        const restLines = Array.from({ length: 5 }, (_, i) => `plain descriptive sentence number ${i}`);
+        const input = [...idLines, ...restLines].join("\n");
+        const out = smartTruncate("browser_scan", input, 5000);
+        expect(out.length).toBeLessThanOrEqual(5000);
+    });
+});
+
+describe("smartTruncate — small maxChars head/tail math stays sane", () => {
+    it("tail_heavy with tiny maxChars honors the cap and reports no bogus omitted count", () => {
+        const input = "z".repeat(10_000);
+        const out = smartTruncate("shell_exec", input, 50);
+        expect(out.length).toBeLessThanOrEqual(50);
+        const m = out.match(/truncated (\d+) chars/);
+        if (m) expect(Number(m[1])).toBeLessThanOrEqual(input.length);
+    });
+});

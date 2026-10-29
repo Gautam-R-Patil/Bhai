@@ -209,6 +209,8 @@ desktop/hostinger-upload/
 !src/agents/progress-judge.test.ts
 !src/agents/role-analyzer.test.ts
 !src/agents/handoff.test.ts
+!src/agents/evaluator.test.ts
+!src/agents/sub-agent-loop.test.ts
 !src/agents/circuit-breaker.test.ts
 !src/agents/tool-call-guardrail.test.ts
 !src/agents/metacognition.test.ts
