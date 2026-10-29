@@ -106,7 +106,9 @@ export function loadVault(list: unknown): void {
     entries = next;
     auths.clear(); // an edited card must be authorized again
     stickyCvv.clear();
-    tainted.clear();
+    // NOT tainted: a page a secret was typed into may still hold it after an edit
+    // (back-nav refills the field), so the JS/screenshot lock is per-task document
+    // state, cleared only at a real task boundary (resetVaultTask), not on reload.
     syncMasks();
 }
 
@@ -114,21 +116,25 @@ export function loadVault(list: unknown): void {
 const PARTIAL_FIELDS = new Set(["password", "apikey", "number"]);
 const PARTIAL_MIN = 8;
 
+// Every secret value masked this task → its token. syncMasks() only ADDS: a value
+// removed or changed by a mid-task vault edit stays masked (the page may still hold
+// the old value) until a real task boundary (resetVaultTask) clears it.
+const taskMask = new Map<string, string>();
+const taskPartial = new Map<string, string>();
+
 /** Every secret value → its token, for pii-vault's masking (plus a CVV while its authorization lasts). */
 function syncMasks(): void {
-    const m = new Map<string, string>();
-    const partial = new Map<string, string>();
     const add = (value: string, id: string, field: string) => {
         // ponytail: values under 4 chars aren't masked (they'd eat ordinary words); a 3-digit CVV is the exception.
-        if (value.length >= 4 || field === "cvv") m.set(value, tokenOf(id, field));
+        if (value.length >= 4 || field === "cvv") taskMask.set(value, tokenOf(id, field));
         if (PARTIAL_FIELDS.has(field))
-            for (let n = PARTIAL_MIN; n < value.length; n++) partial.set(value.slice(0, n), tokenOf(id, field));
+            for (let n = PARTIAL_MIN; n < value.length; n++) taskPartial.set(value.slice(0, n), tokenOf(id, field));
     };
     for (const e of entries.values()) {
         for (const [field, value] of fieldsOf(e)) if (field !== "holder" && field !== "expiry") add(value, e.id, field);
     }
-    for (const [value, token] of stickyCvv) m.set(value, token);
-    setSecrets(m, partial);
+    for (const [value, token] of stickyCvv) taskMask.set(value, token);
+    setSecrets(taskMask, taskPartial);
 }
 
 function fieldsOf(e: VaultEntry): Array<[string, string]> {
@@ -369,7 +375,8 @@ export function vaultTargetError(rules: VaultRule[], top: string, frame: string)
 
 // Origins a secret was typed into: page JavaScript is refused and screenshots are
 // withheld there, for the rest of the task (back/forward can refill the field on a
-// new document of the same origin). Cleared on vault reload; one entry per origin.
+// new document of the same origin). Cleared only at a task boundary (resetVaultTask),
+// NOT on a vault reload — a mid-task edit/delete must not re-open the page. One per origin.
 const tainted = new Set<string>();
 export const noteSecretTyped = (origin: string): void => {
     tainted.add(origin);
@@ -377,6 +384,18 @@ export const noteSecretTyped = (origin: string): void => {
 export const secretTypedIn = (origin: string): boolean => tainted.has(origin);
 /** True once any saved secret has been typed into a page this task (cheap screenshot gate). */
 export const anySecretTyped = (): boolean => tainted.size > 0;
+
+/**
+ * A new top-level agent turn: forget which origins were tainted and which removed
+ * secret values we were still masking from the previous task. Called from agent.ts
+ * per non-forked turn; sub-agents (forked) share the task and don't reset it.
+ */
+export function resetVaultTask(): void {
+    tainted.clear();
+    taskMask.clear();
+    taskPartial.clear();
+    syncMasks(); // rebuild the mask from the current vault only
+}
 
 /** A stable text for a consent key / question: tokens as written, values masked. */
 const describeArgs = (args: Record<string, unknown>) =>

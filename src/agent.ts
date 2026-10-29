@@ -50,7 +50,7 @@ import {
 } from "./agents/tool-call-guardrail.js";
 import { offloadIfLarge } from "./agents/tool-output-offload.js";
 import { trackCursorTurn } from "./screen/agent-cursor.js";
-import { anySecretTyped, hasVaultToken, resolveVaultArgs, runVaultCall, secretTypedIn, type VaultCall } from "./security/vault.js";
+import { anySecretTyped, hasVaultToken, resetVaultTask, resolveVaultArgs, runVaultCall, secretTypedIn, type VaultCall } from "./security/vault.js";
 import {
     buildVerifyReminder,
     isMutator,
@@ -1236,6 +1236,10 @@ async function _runAgentBody(
     // Tag every runAgent invocation with a unique turn id so offloaded
     // tool outputs cluster per turn on disk.
     if (!isForked) nextTurnId();
+
+    // A new top-level turn is the vault's task boundary: forget page taint and any
+    // removed-secret masks from the last task (sub-agents / forks share the task).
+    if (!isForked) resetVaultTask();
 
     // Tell tools which channel produced this turn so they can deliver back
     // on the same channel. Cleared in finally below.

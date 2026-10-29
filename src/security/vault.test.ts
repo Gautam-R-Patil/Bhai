@@ -3,8 +3,18 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { requiresConfirmation } from "../tools/tool-intelligence.js";
 import { vaultAuthorizePayment, vaultList } from "../tools/vault.js";
 import { _resetConsent, noteOwnerMessage } from "./consent.js";
-import { protect, protectMessages, REVEAL_TOOLS, reveal, revealArgs } from "./pii-vault.js";
-import { authorizePayment, handleDesktopLine, listVault, loadVault, resolveVaultArgs } from "./vault.js";
+import { maskKnownValues, protect, protectMessages, REVEAL_TOOLS, reveal, revealArgs } from "./pii-vault.js";
+import {
+    anySecretTyped,
+    authorizePayment,
+    handleDesktopLine,
+    listVault,
+    loadVault,
+    noteSecretTyped,
+    resetVaultTask,
+    resolveVaultArgs,
+    secretTypedIn,
+} from "./vault.js";
 
 const PASSWORD = "Hunter2-zomato!";
 const USER = "dheeraj@example.com";
@@ -229,6 +239,45 @@ describe("vault: payments", () => {
         expect(
             await resolveVaultArgs("browser_type", { text: "{{vault:hdfc.number}}" }, owner("https://pay.example.com")),
         ).toHaveProperty("error");
+    });
+});
+
+describe("vault: taint and masks are per-task, not cleared by a mid-task vault edit (finding)", () => {
+    const LOGIN = (password: string) => [
+        { id: "l", label: "Site", kind: "login", domains: ["legit.test"], username: "u@e.com", password },
+    ];
+
+    it("a vault edit/delete keeps the origin tainted (JS + screenshots stay off for the task)", () => {
+        loadVault(LOGIN("Old-Password-123!"));
+        noteSecretTyped("https://legit.test");
+        expect(secretTypedIn("https://legit.test")).toBe(true);
+        expect(anySecretTyped()).toBe(true);
+        loadVault(LOGIN("New-Password-456!")); // owner fixes a typo / rotates the password mid-task
+        expect(secretTypedIn("https://legit.test")).toBe(true);
+        expect(anySecretTyped()).toBe(true);
+        loadVault([]); // deleted entirely mid-task
+        expect(secretTypedIn("https://legit.test")).toBe(true);
+    });
+
+    it("the old secret value stays masked after it is edited/deleted out of the vault (page may still hold it)", () => {
+        const OLD = "Old-Password-123!";
+        loadVault(LOGIN(OLD));
+        expect(maskKnownValues(`field value is ${OLD}`)).not.toContain(OLD);
+        loadVault(LOGIN("New-Password-456!")); // rotated mid-task
+        expect(maskKnownValues(`field value is ${OLD}`)).not.toContain(OLD);
+        loadVault([]); // deleted mid-task
+        expect(maskKnownValues(`field value is ${OLD}`)).not.toContain(OLD);
+    });
+
+    it("a real task boundary clears the taint and drops removed values from the mask", () => {
+        const OLD = "Only-This-Task-999!";
+        loadVault(LOGIN(OLD));
+        noteSecretTyped("https://legit.test");
+        loadVault([]); // removed this task
+        resetVaultTask(); // next top-level turn
+        expect(anySecretTyped()).toBe(false);
+        expect(secretTypedIn("https://legit.test")).toBe(false);
+        expect(maskKnownValues(`value is ${OLD}`)).toContain(OLD); // not a secret any more
     });
 });
 
