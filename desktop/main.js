@@ -257,11 +257,11 @@ function convexPostNoAuth(urlPath, bodyObj) {
     });
 }
 
-function convexSiteRequest(method, urlPath, bodyObj) {
-    return new Promise(async (resolve, reject) => {
-        const token = await getDesktopSessionToken();
-        if (!token) return reject(new Error("No session token available"));
+async function convexSiteRequest(method, urlPath, bodyObj) {
+    const token = await getDesktopSessionToken();
+    if (!token) throw new Error("No session token available");
 
+    return new Promise((resolve, reject) => {
         const https = require("https");
         const bodyStr = bodyObj ? JSON.stringify(bodyObj) : "";
         const url = new URL(`${CONVEX_SITE_URL}${urlPath}`);
