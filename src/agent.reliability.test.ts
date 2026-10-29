@@ -103,6 +103,12 @@ describe("asksLeaveToLook", () => {
                 true,
             ),
         ).toBe(true);
+        expect(
+            asksLeaveToLook(
+                "macOS is hiding the SSID from me, so I don't have it. Tell me the name from the Wi-Fi menu and I'll use it.",
+                true,
+            ),
+        ).toBe(true);
         expect(asksLeaveToLook("Done. If you can see any typo, tell me.", true)).toBe(false);
     });
 });

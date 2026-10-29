@@ -538,8 +538,8 @@ export function asksLeaveToLook(responseText: string, canSeeScreen = false): boo
     // tools in hand, looking is Bhai's job, not the owner's.
     if (
         canSeeScreen &&
-        /\b(can't|cannot|couldn't|unable to|not able to)\b/.test(l) &&
-        /\bif you (can )?(see|check|look|open|click)\b|\b(check|look at|read) (it|that|the [a-z -]{1,30}) (yourself|on your screen)\b|\byou(?:'ll| will| can) (see|find) (it|the [a-z -]{1,30}) (in|on|under)\b/.test(
+        /\b(can't|cannot|couldn't|unable to|not able to|don't have|do not have)\b/.test(l) &&
+        /\bif you (can )?(see|check|look|open|click)\b|\btell me (the|what|which|its) [a-z -]{0,30}(from|in|on) (the|your) |\b(check|look at|read) (it|that|the [a-z -]{1,30}) (yourself|on your screen)\b|\byou(?:'ll| will| can) (see|find) (it|the [a-z -]{1,30}) (in|on|under)\b/.test(
             l,
         )
     )
