@@ -28,6 +28,7 @@
  * Kill-switch: ATLAS_NO_VERIFY_GATE=true disables the gate entirely.
  */
 
+import { getActiveChannel } from "../tools/channel-send.js";
 import { isPhotoFile } from "../tools/send-file.js";
 
 const MUTATOR_TOOLS = new Set<string>([
@@ -202,12 +203,22 @@ export function recordToolCall(
     }
 }
 
-/** Tools that can send the owner a file: an image sent with one is the screen already delivered. */
-const FILE_SENDERS = new Set(["send_file", "send_message_on_channel", "whatsapp_send"]);
-
-/** The agent already sent the owner an image of the screen (a PDF or a song doesn't count). */
-const sentTheScreen = (fnName: string, fnArgs: Record<string, unknown>) =>
-    fnName === "send_screenshot" || (FILE_SENDERS.has(fnName) && isPhotoFile(String(fnArgs?.file_path ?? "")));
+/**
+ * The agent already sent the owner an image of the screen in the chat this turn
+ * runs in (a PDF or a song doesn't count). send_screenshot and send_file go to
+ * the owner's Telegram chat; send_message_on_channel only counts on this turn's
+ * own channel. whatsapp_send goes to a contact or group, never the owner's chat.
+ */
+const sentTheScreen = (fnName: string, fnArgs: Record<string, unknown>) => {
+    // send_screenshot / send_file deliver to the owner's Telegram chat: that's this turn's chat only on Telegram.
+    const onTelegram = (getActiveChannel() ?? "telegram") === "telegram";
+    if (fnName === "send_screenshot") return onTelegram;
+    const toOwnerChat =
+        (fnName === "send_file" && onTelegram) ||
+        // ponytail: the active channel is process-global, so a concurrent turn on another channel can blur this.
+        (fnName === "send_message_on_channel" && String(fnArgs?.channel ?? "").toLowerCase() === getActiveChannel());
+    return toOwnerChat && isPhotoFile(String(fnArgs?.file_path ?? ""));
+};
 
 /**
  * Record one tool batch in the order it may have run. The parallel lane (calls

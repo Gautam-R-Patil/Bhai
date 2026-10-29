@@ -9,6 +9,7 @@
 // or message bodies.
 
 import { drivesScreen, isMutator, isVerifier } from "../agents/verify-before-done.js";
+import { isStuckReplyPhrase, STUCK_REPLY_LINE, stuckCallbackMessage } from "../channel-text.js";
 import { maskCredentials } from "../security/credential-mask.js";
 import { findPii } from "../security/pii-redactor.js";
 import { sanitizeSecrets } from "../security/secrets-sanitizer.js";
@@ -85,6 +86,18 @@ export function hasUnresolvedError(calls: PlaybookCall[]): boolean {
     return open.size > 0;
 }
 
+/**
+ * A batch in the order its calls can be trusted to have finished: other tools, then the in-order
+ * screen lane, then the browser lane (it runs alongside the screen lane, so a screen check in the
+ * same batch may have run before a browser action). Same order as verify-before-done's recordBatch.
+ */
+export function inLaneOrder<T extends { fnName: string; fnArgs?: Record<string, unknown>; isBrowser: boolean }>(
+    batch: T[],
+): T[] {
+    const lane = (r: T) => (r.isBrowser ? 2 : drivesScreen(r.fnName, r.fnArgs) ? 1 : 0);
+    return [...batch].sort((a, b) => lane(a) - lane(b));
+}
+
 export type LastCheck = "no_action" | "none" | "failed" | "screenshot" | "checked";
 
 const isScreenshot = (c: PlaybookCall) => /^(win_)?os_screenshot$/.test(c.fnName) || c.fnName === "os_computer_action";
@@ -135,6 +148,37 @@ export function looksSensitive(text: string): boolean {
         sanitizeSecrets(text).totalRedactions > 0 ||
         maskCredentials(text) !== text
     );
+}
+
+const HANDOFF_MESSAGES = new Set(["takeover", "retry", "skip"].map((a) => stuckCallbackMessage(`stuck:${a}`)));
+/** The quoted message telegram.ts / whatsapp.ts put in front of a reply. */
+const REPLY_QUOTE_RE = /^\[Replying to [^\n]*?message: "([\s\S]*?)"\]\n\n/;
+
+/** A stuck-report handoff: a Retry / Skip / take-over button's text, or the typed "retry it" etc. */
+export function isStuckHandoff(text: string): boolean {
+    return HANDOFF_MESSAGES.has(text.trim()) || isStuckReplyPhrase(text);
+}
+
+/** How agent.ts stuckNote() opens its templated report. */
+export const STUCK_NOTE_OPENER = "I got stuck and stopped:";
+const STUCK_NOTE_CONTRACT_RE = /\(done = ([\s\S]+)\)\. I can retry/;
+
+/**
+ * The task a turn's playbook is keyed by: the owner's own words, or for a handoff turn the
+ * report it replies to (the button text would match every later retry). A templated stuckNote
+ * is all boilerplate (it would match every other stuck report), so only its "done = …"
+ * contract counts. Undefined: learn nothing.
+ */
+export function playbookTaskText(rawUserMessage: string, userIntentText: string): string | undefined {
+    if (!isStuckHandoff(userIntentText)) return userIntentText;
+    // Drop the channel's own handoff line ("Reply: retry it · …" / "@mention me with: …"): it's boilerplate, not the task.
+    let quoted = REPLY_QUOTE_RE.exec(rawUserMessage)?.[1]
+        ?.split("\n")
+        .filter((line) => !line.includes(STUCK_REPLY_LINE.slice("Reply: ".length)))
+        .join("\n")
+        .trim();
+    if (quoted?.startsWith(STUCK_NOTE_OPENER)) quoted = STUCK_NOTE_CONTRACT_RE.exec(quoted)?.[1]?.trim();
+    return quoted && !looksSensitive(quoted) ? quoted : undefined;
 }
 
 /** The playbook a verified win teaches, or null when the turn wasn't one. */

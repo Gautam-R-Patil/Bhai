@@ -63,6 +63,7 @@ import {
     type Receipt,
     recordBatch as recordBatchForVerifyGate,
     shouldForceVerify,
+    type VerifyGateState,
 } from "./agents/verify-before-done.js";
 import { getDimensionValue } from "./harness/registry.js";
 import {
@@ -93,7 +94,14 @@ import { appendTurn, getSessionSummary, shouldReflect, touchSession } from "./me
 // ── Dynamic Context Injections ────────────────
 import { getCoreMemory, recall, recallConversation } from "./memory/sqlite.js";
 import { getStrategyContext, saveStrategy } from "./memory/strategy-library.js";
-import { buildPlaybook, type PlaybookCall, verificationFailed } from "./memory/playbooks.js";
+import {
+    buildPlaybook,
+    inLaneOrder,
+    type PlaybookCall,
+    playbookTaskText,
+    STUCK_NOTE_OPENER,
+    verificationFailed,
+} from "./memory/playbooks.js";
 import { demoteLearnings, getTaskLearningsContext, upsertLearning } from "./memory/task-learnings.js";
 import { getTraitsForInjection, resetSessionTraitCaps } from "./memory/traits.js";
 import { getUserModelSnippet } from "./memory/user-model.js";
@@ -353,6 +361,50 @@ export function contractProgressLine(content: string | null | undefined, hasTool
 /** Steers the verify step to check the criterion the agent itself promised. */
 export function contractCheckNudge(contract: string): string {
     return `Your own done-criterion was: "${contract}". Check exactly that and say what you saw.`;
+}
+
+/** An honest stuck report: why it stopped, what it tried, that it isn't done, and the owner's options. */
+export function stuckNote(stopped: string, triedTools: string[], contract?: string): string {
+    const tried = [...new Set(triedTools)].slice(-5);
+    return [
+        `${STUCK_NOTE_OPENER} ${stopped}.`,
+        tried.length > 0 ? `I tried ${tried.join(", ")}.` : "",
+        contract ? `It isn't done yet (done = ${contract}).` : "It isn't done yet.",
+        "I can retry with a different approach, or you can take over from here.",
+    ]
+        .filter(Boolean)
+        .join(" ");
+}
+
+/**
+ * The reply for a turn that stopped early: the latest text the model wrote this turn, but never the
+ * ack ("on it …; done = …" reads as still working), else an honest stuck note.
+ */
+export function stuckExitText(
+    messages: ChatCompletionMessageParam[],
+    stopped: string,
+    triedTools: string[],
+    contract?: string,
+): string {
+    let turnStart = messages.length - 1;
+    while (turnStart >= 0 && messages[turnStart].role !== "user") turnStart--;
+    const partial = messages
+        .slice(turnStart + 1)
+        .flatMap((m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.trim() &&
+            !extractDoneContract(m.content)
+                ? [m.content]
+                : [],
+        )
+        .pop();
+    return partial ?? stuckNote(stopped, triedTools, contract);
+}
+
+/** The verify gate wants one more iteration, unless the final reply is a stuck report (the agreed handoff). */
+export function verifyGateFires(gate: VerifyGateState, responseText: string): boolean {
+    return !takeStuckMarker(responseText).stuck && shouldForceVerify(gate);
 }
 
 /** The orchestrator's TOOLS block, built from the tools this turn actually offers. */
@@ -1565,13 +1617,18 @@ async function _runAgentBody(
     const injectedLearnings = new Set<string>();
     const recordBatch = (batch: ToolCallResult[]) => {
         recordBatchForVerifyGate(verifyGate, batch);
-        for (const r of batch) turnCalls.push({ fnName: r.fnName, fnArgs: r.fnArgs, failed: toolFailed(r) });
+        // Lane order, like the gate: a screen check batched with a browser action may have run before it.
+        for (const r of inLaneOrder(batch)) {
+            turnCalls.push({ fnName: r.fnName, fnArgs: r.fnArgs, failed: toolFailed(r) });
+        }
     };
     // A verified win teaches a playbook; a failed replay demotes what it was shown.
+    // A Retry/Skip handoff turn is keyed by the report it replies to, or learns nothing.
+    const playbookTask = playbookTaskText(rawUserMessage, userIntentText);
     const settleLearnings = (reply: string, stuck = takeStuckMarker(reply).stuck) => {
-        if (channelContext?.isOwner !== true) return;
+        if (channelContext?.isOwner !== true || playbookTask === undefined) return;
         try {
-            const pb = buildPlaybook(userIntentText, turnCalls, reply, stuck);
+            const pb = buildPlaybook(playbookTask, turnCalls, reply, stuck);
             if (pb) {
                 upsertLearning(pb.category, pb.taskPattern, pb.context, pb.steps, [], [], 1, new Date().toISOString());
             } else if (injectedLearnings.size > 0 && (stuck || verificationFailed(turnCalls))) {
@@ -1750,8 +1807,13 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             if (_harnessTraceId) finalizeTrace(_harnessTraceId, false);
             settleLearnings("", true);
             return {
-                text: `I stopped after ${MAX_AGENT_ITERATIONS} steps without finishing. Tell me what to focus on and I'll pick it up from here.`,
+                text: stuckNote(
+                    `I hit the ${MAX_AGENT_ITERATIONS}-step limit without finishing`,
+                    turnCalls.map((c) => c.fnName),
+                    turnContract,
+                ),
                 toolCalls: totalToolCalls,
+                stuck: true,
             };
         }
         // Metacognition-driven nudge. A2: instead of a single one-shot nudge,
@@ -1859,14 +1921,6 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                             /* non-fatal */
                         }
                     }
-                    const partialResponses = messages
-                        .filter(
-                            (m) => m.role === "assistant" && typeof (m as { content?: string }).content === "string",
-                        )
-                        .map((m) => (m as { content: string }).content)
-                        .filter(Boolean);
-                    const partialText =
-                        partialResponses.length > 0 ? partialResponses[partialResponses.length - 1] : null;
                     // P5.2 STEP-0: genuine reasoning-failure terminal exit (circuit
                     // breaker tripped on sustained trouble) → true-negative label.
                     // model not picked at this point → global-calibrator fallback.
@@ -1878,10 +1932,14 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                     if (_harnessTraceId) finalizeTrace(_harnessTraceId, false);
                     settleLearnings("", true);
                     return {
-                        text:
-                            partialText ||
-                            `I've been having trouble completing this task (${tripResult.reason}). Please try again or try a different approach.`,
+                        text: stuckExitText(
+                            messages,
+                            "the same steps kept failing",
+                            turnCalls.map((c) => c.fnName),
+                            turnContract,
+                        ),
                         toolCalls: totalToolCalls,
+                        stuck: true,
                     };
                 }
             }
@@ -3282,33 +3340,22 @@ PLAN:`,
                 errorCount++;
                 if (errorCount >= 3) {
                     console.error(`[AGENT] ${errorCount} consecutive LLM failures — returning partial results`);
-                    // Guard against returning stale responses from previous turns.
-                    // Only use a partial response if it was generated in THIS agent run (iterations > 0),
-                    // not a leftover from conversation history.
-                    // Only text written after THIS turn's user message counts (the old
-                    // iterations*3 window reached back into the previous turn, and an
-                    // out-of-credits user got the last turn's answer again).
-                    let turnStart = messages.length - 1;
-                    while (turnStart >= 0 && messages[turnStart].role !== "user") turnStart--;
-                    const currentRunResponses = messages
-                        .filter(
-                            (m, idx) =>
-                                m.role === "assistant" &&
-                                typeof (m as { content?: string }).content === "string" &&
-                                idx > turnStart,
-                        )
-                        .map((m) => (m as { content: string }).content)
-                        .filter(Boolean);
-                    const partialText = currentRunResponses.length > 0 ? currentRunResponses.pop() : null;
+                    // Only text written after THIS turn's user message counts (an out-of-credits
+                    // user once got the last turn's answer again), and never the ack.
                     if (_harnessTraceId) finalizeTrace(_harnessTraceId, false);
                     const outOfCredits = /run out of (AI )?credits|insufficient credits/i.test(lastLlmError);
                     return {
-                        text:
-                            partialText ||
-                            (outOfCredits
-                                ? "You're out of AI credits, so I can't do this right now. Top up in Settings → Account and ask me again."
-                                : "I'm having trouble connecting right now. Please try again in a moment."),
+                        text: outOfCredits
+                            ? "You're out of AI credits, so I can't do this right now. Top up in Settings → Account and ask me again."
+                            : stuckExitText(
+                                  messages,
+                                  "I lost my connection to the AI model",
+                                  turnCalls.map((c) => c.fnName),
+                                  turnContract,
+                              ),
                         toolCalls: totalToolCalls,
+                        // Out of credits: a Retry tap would fail the same way, so no handoff buttons.
+                        stuck: !outOfCredits,
                     };
                 }
                 console.warn(`[AGENT] LLM error (attempt ${errorCount}/3) — retrying next iteration`);
@@ -3668,7 +3715,7 @@ PLAN:`,
             // on count-of-tool-calls, not on whether the actions were
             // verified). Capped at one fire per run via verifyGate.nudgedThisRun.
             // Kill-switch: ATLAS_NO_VERIFY_GATE=true disables.
-            if (shouldForceVerify(verifyGate)) {
+            if (verifyGateFires(verifyGate, responseText)) {
                 console.log(
                     `  🔍 Verify gate: ${verifyGate.lastMutator} mutated UI but no verification ran — forcing one more iteration`,
                 );
@@ -3695,6 +3742,7 @@ PLAN:`,
                 (responseText.length > 200 && totalToolCalls >= 2) ||
                 responseText.length > 600;
             const shouldNudge =
+                !takeStuckMarker(responseText).stuck &&
                 totalToolCalls > 0 &&
                 totalToolCalls < 6 &&
                 !hasSubstantialResponse &&

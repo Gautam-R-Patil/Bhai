@@ -8,9 +8,12 @@ import {
     describeStep,
     extractSteps,
     hasUnresolvedError,
+    inLaneOrder,
+    isStuckHandoff,
     lastCheck,
     looksSensitive,
     type PlaybookCall,
+    playbookTaskText,
     verificationFailed,
 } from "./playbooks.js";
 
@@ -155,6 +158,41 @@ describe("playbook success rule", () => {
     });
 });
 
+describe("stuck handoff turns", () => {
+    const report = "I couldn't post the photo on Instagram: the Share button never enabled.";
+    const quoted = (msg: string) => `[Replying to your earlier message: "${report}"]\n\n${msg}`;
+
+    it("recognises the button texts and typed reply phrases", () => {
+        expect(isStuckHandoff("Try that again, with a different approach this time.")).toBe(true);
+        expect(isStuckHandoff("Skip that part and carry on with the rest.")).toBe(true);
+        expect(isStuckHandoff("retry it")).toBe(true);
+        expect(isStuckHandoff("I'll take over")).toBe(true);
+        expect(isStuckHandoff("retry the upload on instagram")).toBe(false);
+    });
+
+    it("keys a handoff turn by the report it replies to, else learns nothing", () => {
+        const retry = "Try that again, with a different approach this time.";
+        expect(playbookTaskText(quoted(retry), retry)).toBe(report);
+        expect(playbookTaskText("retry it", "retry it")).toBeUndefined();
+        const withContact = `[Replying to your earlier message: "email priya@example.com failed"]\n\n${retry}`;
+        expect(playbookTaskText(withContact, retry)).toBeUndefined();
+        expect(playbookTaskText("send an email on gmail", "send an email on gmail")).toBe("send an email on gmail");
+    });
+});
+
+describe("lane order", () => {
+    it("a screen check batched with a browser action doesn't count as checking it", () => {
+        const batch = [
+            { fnName: "browser_click_at", fnArgs: { label: "Place order" }, isBrowser: true },
+            { fnName: "os_visual_verify", fnArgs: { expect_text: "Order placed" }, isBrowser: false },
+        ];
+        const calls = inLaneOrder(batch).map((r) => call(r.fnName, r.fnArgs));
+        expect(calls.map((c) => c.fnName)).toEqual(["os_visual_verify", "browser_click_at"]);
+        expect(lastCheck(calls)).toBe("none");
+        expect(lastCheck(batch.map((r) => call(r.fnName, r.fnArgs)))).toBe("checked");
+    });
+});
+
 describe("playbook store", () => {
     let tl: typeof import("./task-learnings.js");
     beforeAll(async () => {
@@ -279,5 +317,23 @@ describe("playbook store", () => {
         expect(l.whatWorked).toEqual(["a", "b", "c"]);
         expect(l.lastVerifiedAt).toBeUndefined();
         expect(l.successScore).toBeCloseTo(0.7);
+    });
+
+    it("a failed replay demotes only playbooks, not reflection lessons", () => {
+        const lesson = tl.upsertLearning("code", "fix vitest ESM import", "repo", ["use .js suffix"], [], [], 0.9);
+        const pb = tl.upsertLearning(
+            "browser",
+            "open the dashboard",
+            "dash.example",
+            ["browser_click_at(Open)"],
+            [],
+            [],
+            1,
+            new Date().toISOString(),
+        );
+        tl.demoteLearnings([lesson.id, pb.id]);
+        expect(lesson.successScore).toBe(0.9);
+        expect(lesson.whatFailed).toEqual([]);
+        expect(pb.successScore).toBe(0.7);
     });
 });

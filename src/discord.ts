@@ -17,7 +17,7 @@ import {
     type ThreadChannel,
     type Attachment,
 } from "discord.js";
-import { withStuckReplyLine } from "./channel-text.js";
+import { STUCK_REPLY_LINE, withStuckReplyLine } from "./channel-text.js";
 import type { LLMClient } from "./llm.js";
 import {
     runAgent,
@@ -180,6 +180,19 @@ async function sendResponse(
     }
 }
 
+// ── Stuck-report reply line ──
+
+/**
+ * Outside a DM Discord only hands Bhai messages that mention it (a reply to
+ * its message counts), so a bare "retry it" in a channel or thread would
+ * vanish: there the stuck report asks for a mention.
+ */
+const STUCK_MENTION_LINE = STUCK_REPLY_LINE.replace("Reply:", "@mention me with:");
+export function discordStuckReplyText(res: { text: string; stuck?: boolean }, toOwner: boolean, isDM: boolean): string {
+    if (isDM) return withStuckReplyLine(res, toOwner);
+    return res.stuck && toOwner ? `${res.text}\n\n${STUCK_MENTION_LINE}` : res.text;
+}
+
 // ── Send follow-up chunks after the initial editReply ──
 
 async function sendFollowUps(
@@ -243,7 +256,8 @@ async function runAndReply(
             return;
         }
 
-        await sendFollowUps(interaction, withStuckReplyLine(result, senderIsOwner), contractShown);
+        const replyText = discordStuckReplyText(result, senderIsOwner, !interaction.inGuild());
+        await sendFollowUps(interaction, replyText, contractShown);
     } finally {
         clearSwarmProgress();
         clearDeepResearchProgress();
@@ -338,7 +352,7 @@ async function runInThread(
         }
 
         // Post final result as an embed
-        const sanitized = sanitizeReply(withStuckReplyLine(result, senderIsOwner));
+        const sanitized = sanitizeReply(discordStuckReplyText(result, senderIsOwner, false));
         const embed = buildResultEmbed(
             embedTitle,
             sanitized.substring(0, DISCORD_EMBED_DESC_LIMIT),
@@ -735,7 +749,7 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
                 return;
             }
 
-            const sanitized = sanitizeReply(withStuckReplyLine(result, senderIsOwner));
+            const sanitized = sanitizeReply(discordStuckReplyText(result, senderIsOwner, isDM));
             const chunks = splitForDiscord(sanitized);
 
             for (const chunk of chunks) {

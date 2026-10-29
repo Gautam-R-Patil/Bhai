@@ -9,6 +9,8 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
+import { readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 
 type Result = Record<string, unknown>;
 /** Tools that deliver something to someone, with the fields naming who and what. */
@@ -66,6 +68,26 @@ const recipient = (v: unknown): string =>
         .sort()
         .join(",");
 
+const FILE_FIELDS = new Set(["file_path", "image_path", "media_path"]);
+/** A file by its bytes, not its path: a file rewritten at the same path is a new send. */
+const fileFingerprint = (v: unknown): string => {
+    if (Array.isArray(v)) return v.map(fileFingerprint).join(",");
+    const p = String(v ?? "").trim();
+    if (!p) return "";
+    const abs = p.replace(/^~(?=\/|$)/, homedir());
+    // ponytail: reads the whole file to hash it; stream it if multi-GB sends ever show up.
+    try {
+        return createHash("sha256").update(readFileSync(abs)).digest("hex");
+    } catch {
+        try {
+            const st = statSync(abs);
+            return `${text(p)}|${st.mtimeMs}|${st.size}`;
+        } catch {
+            return text(p);
+        }
+    }
+};
+
 export interface SendClaim {
     key: string;
     to: string;
@@ -76,9 +98,8 @@ export interface SendClaim {
 export function sendClaim(name: string, args: Record<string, unknown>): SendClaim | null {
     const spec = SENDS[name];
     if (!spec || (spec.actions && !spec.actions.includes(String(args.action ?? "")))) return null;
-    const content = createHash("sha256")
-        .update(JSON.stringify(spec.content.map((f) => text(args[f]))))
-        .digest("hex");
+    const parts = spec.content.map((f) => (FILE_FIELDS.has(f) ? fileFingerprint(args[f]) : text(args[f])));
+    const content = createHash("sha256").update(JSON.stringify(parts)).digest("hex");
     return {
         key: `${name}|${String(args.action ?? "")}|${spec.to.map((f) => recipient(args[f])).join("|")}|${content}`,
         to:

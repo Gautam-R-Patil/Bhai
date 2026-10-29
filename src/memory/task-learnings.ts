@@ -231,12 +231,15 @@ export function getTaskLearningsContext(task: string, category?: LearningCategor
 
 // ── Demote ────────────────────────────────────
 
-/** A turn replayed these learnings and still failed: record it and lower their score. */
+/**
+ * A turn replayed these playbooks and still failed: record it and lower their score.
+ * Only playbooks (entries with lastVerifiedAt) are replayed recipes; reflection lessons are left alone.
+ */
 export function demoteLearnings(ids: Iterable<string>, now = new Date()): void {
     const wanted = new Set(ids);
     let changed = false;
     for (const l of store.learnings) {
-        if (!wanted.has(l.id)) continue;
+        if (!wanted.has(l.id) || !l.lastVerifiedAt) continue;
         l.whatFailed = [...l.whatFailed, `replay failed ${now.toISOString().slice(0, 10)}`].slice(-10);
         l.successScore = Math.max(0, Math.round((l.successScore - 0.3) * 100) / 100);
         changed = true;

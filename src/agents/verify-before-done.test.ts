@@ -1,6 +1,7 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 import { describe, expect, it } from "vitest";
 import { anySecretTyped, noteSecretTyped, resetVaultTask } from "../security/vault.js";
+import { setActiveChannel } from "../tools/channel-send.js";
 import {
     drivesScreen,
     isVerifier,
@@ -76,13 +77,19 @@ describe("pickReceipt", () => {
         recordToolCall(sent, "os_type", { text: "hi" });
         recordToolCall(sent, "os_screenshot", {}, false, { imageUrl: shot, receiptUrl: shot });
         expect(pickReceipt(sent, owner)).toBeDefined();
-        // Nor an image already sent along with a message; a PDF there leaves the receipt.
-        for (const sender of ["send_message_on_channel", "whatsapp_send"]) {
-            const send = (file_path: string) =>
-                turn([["os_click", { x: 1, y: 2 }], ["os_screenshot", {}, shot], [sender, { message: "done", file_path }]]);
-            expect(pickReceipt(send("/tmp/screen.png"), owner)).toBeUndefined();
-            expect(pickReceipt(send("/tmp/report.pdf"), owner)).toBeDefined();
-        }
+        // Nor an image already sent along with a message in this chat; a PDF there leaves the receipt.
+        setActiveChannel("whatsapp");
+        const send = (sender: string, args: Record<string, unknown>) =>
+            turn([["os_click", { x: 1, y: 2 }], ["os_screenshot", {}, shot], [sender, { message: "done", ...args }]]);
+        expect(pickReceipt(send("send_message_on_channel", { channel: "whatsapp", file_path: "/tmp/screen.png" }), owner)).toBeUndefined();
+        expect(pickReceipt(send("send_message_on_channel", { channel: "whatsapp", file_path: "/tmp/report.pdf" }), owner)).toBeDefined();
+        // An image sent to another channel, or WhatsApp'd to a contact, never reached this chat: the receipt stays.
+        expect(pickReceipt(send("send_message_on_channel", { channel: "telegram", file_path: "/tmp/screen.png" }), owner)).toBeDefined();
+        expect(pickReceipt(send("whatsapp_send", { to: "Mom", file_path: "/tmp/cat.jpg" }), owner)).toBeDefined();
+        // send_screenshot / send_file go to Telegram: on a WhatsApp turn they never reached this chat.
+        expect(pickReceipt(send("send_screenshot", {}), owner)).toBeDefined();
+        expect(pickReceipt(send("send_file", { file_path: "/tmp/screen.png" }), owner)).toBeDefined();
+        setActiveChannel(null);
         // A failed send leaves the receipt in place.
         const g = turn([["os_smart_click", { instruction: "Play" }], ["os_screenshot", {}, shot]]);
         recordToolCall(g, "send_screenshot", {}, true);

@@ -1,5 +1,8 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 // Idempotent sends: a retry never delivers the same message to the same person twice.
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 let reply = JSON.stringify({ success: true });
@@ -102,6 +105,23 @@ describe("send ledger", () => {
         expect(sendClaim("whatsapp_send", { to: "+91 98765-43210", message: "x" })?.key).toBe(
             sendClaim("whatsapp_send", { to: "+919876543210", message: "x" })?.key,
         );
+    });
+
+    it("keys a file send on the file's bytes, not its path", () => {
+        const dir = mkdtempSync(join(tmpdir(), "ledger-"));
+        const file = join(dir, "report.pdf");
+        const claim = () => sendClaim("whatsapp_send", { to: "Rahul", message: "Report", file_path: file })?.key;
+        writeFileSync(file, "v1 wrong date");
+        const first = claim();
+        expect(claim()).toBe(first);
+        writeFileSync(file, "v2 fixed date"); // regenerated at the same path: a new send
+        expect(claim()).not.toBe(first);
+        // A missing file still keys by its path.
+        const gone = join(dir, "gone.pdf");
+        expect(sendClaim("whatsapp_send", { to: "R", message: "m", file_path: gone })?.key).toBe(
+            sendClaim("whatsapp_send", { to: "R", message: "m", file_path: gone })?.key,
+        );
+        rmSync(dir, { recursive: true, force: true });
     });
 
     it("only counts the actions that send", () => {

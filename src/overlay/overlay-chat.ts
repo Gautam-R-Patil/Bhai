@@ -1023,8 +1023,9 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
             files: interactive.files,
             links: interactive.links,
             widgets: interactive.widgets,
+            // The done-receipt rides with the reply so it shows under the text, never instead of it.
+            receipt: result.receipt ? `data:${result.receipt.mimeType};base64,${result.receipt.imageBase64}` : undefined,
         });
-        if (result.receipt) sendOverlayImage(result.receipt.imageBase64, result.receipt.mimeType);
     } catch (err) {
         if (timeoutWarningTimer) clearTimeout(timeoutWarningTimer);
         console.error("[OVERLAY] Agent error:", err);
@@ -1109,8 +1110,9 @@ async function handleFileAttachment(
             files: interactive.files,
             links: interactive.links,
             widgets: interactive.widgets,
+            // The done-receipt rides with the reply so it shows under the text, never instead of it.
+            receipt: result.receipt ? `data:${result.receipt.mimeType};base64,${result.receipt.imageBase64}` : undefined,
         });
-        if (result.receipt) sendOverlayImage(result.receipt.imageBase64, result.receipt.mimeType);
     } catch (err) {
         console.error("[OVERLAY] File attachment error:", err);
         sendToClient(ws, { type: "error", text: "Could not process the file." });
