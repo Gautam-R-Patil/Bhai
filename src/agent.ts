@@ -1417,6 +1417,7 @@ export async function runAgent(
         const caller: import("./tools/cron-tool.js").CronCallerContext = {
             isOwner: callerIsOwner,
             autonomous: channelContext?.autonomous === true,
+            message: stripChannelTags(userMessage),
         };
         try {
             // Outermost turn ending = Bhai lets go of the screen (glow fades).
@@ -2452,7 +2453,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 if (coreMems && coreMems.length > 0) {
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     parts.push(
-                        `🧠 CORE MEMORY (Always remember these facts about the user):\n${coreMems.map((m: any) => `- (${m.category} · ${ageLabel(m.created_at)}) ${m.content}`).join("\n")}`,
+                        `🧠 CORE MEMORY (Always remember these facts about the user):\n${coreMems.map((m: any) => `- (#${m.id} · ${m.category} · ${ageLabel(m.created_at)}) ${m.content}`).join("\n")}`,
                     );
                 }
 
@@ -2511,7 +2512,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                     if (uniqueMems && uniqueMems.length > 0) {
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
                         parts.push(
-                            `🧠 RELEVANT RECALLED MEMORIES (Based on current prompt):\n${uniqueMems.map((m: any) => `- (${m.category} · ${ageLabel(m.created_at)}) ${m.content}`).join("\n")}`,
+                            `🧠 RELEVANT RECALLED MEMORIES (Based on current prompt):\n${uniqueMems.map((m: any) => `- (#${m.id} · ${m.category} · ${ageLabel(m.created_at)}) ${m.content}`).join("\n")}`,
                         );
                     }
 

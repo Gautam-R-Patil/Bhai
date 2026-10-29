@@ -17,7 +17,7 @@ import { ownerApproved } from "../security/consent.js";
 import { clearCache as clearToolCache } from "../tools/tool-intelligence.js";
 import { getFieldValue, getIdentityProfile, type UserProfile } from "./identity.js";
 import { redactCurrentSession, redactSession, type SessionState } from "./session.js";
-import { extractMsgText, forgetMemoryWithReason, getRawDb } from "./sqlite.js";
+import { extractMsgText, forgetMemoryWithReason, getRawDb, restoreSuperseded } from "./sqlite.js";
 import { deleteLearnings, getAllLearnings } from "./task-learnings.js";
 import { getTemporalCache } from "./temporal-cache.js";
 import { deleteTrait, getAllTraits } from "./traits.js";
@@ -425,7 +425,9 @@ export function undoMemoryTap(data: string, now = Date.now()): string | undefine
     const m = /^mem:forget:(\d+):(\d+)$/.exec(data);
     if (!m) return undefined;
     if (now - Number(m[2]) * 1000 > UNDO_TTL_MS) return "Too late for the button, ask me to forget it.";
-    return forgetMemoryById(Number(m[1])) ? "Forgotten." : "Already gone.";
+    if (!forgetMemoryById(Number(m[1]))) return "Already gone.";
+    restoreSuperseded(Number(m[1]));
+    return "Forgotten.";
 }
 
 /** @internal — tests only. */

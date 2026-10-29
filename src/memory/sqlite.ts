@@ -2353,14 +2353,51 @@ export function buildScopeChain(userId?: string, sessionId?: string, taskId?: st
 export function listMemories(category?: string, limit = 20): MemoryRecord[] {
     if (!db) throw new Error("Memory DB not initialized");
 
+    // Superseded/consolidated rows stay for undo but are no longer what Bhai knows.
     const query = category
-        ? "SELECT id, content, category, tags, importance, created_at, access_count FROM memories WHERE category = ? ORDER BY created_at DESC LIMIT ?"
-        : "SELECT id, content, category, tags, importance, created_at, access_count FROM memories ORDER BY created_at DESC LIMIT ?";
+        ? "SELECT id, content, category, tags, importance, created_at, access_count FROM memories WHERE category = ? AND consolidated_into IS NULL ORDER BY created_at DESC LIMIT ?"
+        : "SELECT id, content, category, tags, importance, created_at, access_count FROM memories WHERE consolidated_into IS NULL ORDER BY created_at DESC LIMIT ?";
 
     const params = category ? [category, limit] : [limit];
     const results = db.exec(query, params);
     if (results.length === 0) return [];
     return results[0].values.map(rowToMemory);
+}
+
+/**
+ * A correction replaced global memory `oldId` with `newId`: recall, core memory and
+ * lists skip rows with consolidated_into set, and the old vector leaves the index
+ * (boot re-embeds only live rows, so it stays out).
+ */
+export function supersedeMemory(oldId: number, newId: number): boolean {
+    if (!rawDb || oldId === newId) return false;
+    const res = rawDb
+        .prepare(
+            "UPDATE memories SET consolidated_into = ? WHERE id = ? AND consolidated_into IS NULL AND scope = 'global'",
+        )
+        .run(newId, oldId);
+    if (res.changes === 0) return false;
+    rawDb.prepare("DELETE FROM memory_embeddings WHERE memory_id = ?").run(oldId);
+    try {
+        getHNSWIndex().removeVector(oldId);
+    } catch {
+        /* */
+    }
+    getTemporalCache().clearCache();
+    return true;
+}
+
+/** The correction `newId` was undone: the memories it superseded are live again. */
+export function restoreSuperseded(newId: number): void {
+    if (!rawDb) return;
+    const rows = rawDb
+        .prepare("SELECT id, content FROM memories WHERE consolidated_into = ? AND tier IS NOT 'archived'")
+        .all(newId) as Array<{ id: number; content: string }>;
+    for (const r of rows) {
+        rawDb.prepare("UPDATE memories SET consolidated_into = NULL WHERE id = ?").run(r.id);
+        embedAndStore(r.id, r.content).catch(() => {});
+    }
+    if (rows.length) getTemporalCache().clearCache();
 }
 
 export function forgetMemory(id: number): boolean {
@@ -2761,7 +2798,7 @@ export async function embedExistingMemories(): Promise<void> {
             .prepare(
                 `SELECT m.id, m.content FROM memories m
        LEFT JOIN memory_embeddings e ON m.id = e.memory_id
-       WHERE e.memory_id IS NULL`,
+       WHERE e.memory_id IS NULL AND m.consolidated_into IS NULL`,
             )
             .all() as Array<{ id: number; content: string }>;
 

@@ -10,12 +10,21 @@ import {
     getIdentityProfile,
     updateIdentityProfile,
 } from "../memory/identity.js";
-import { getMemoryStats, listMemories, recall, remember } from "../memory/sqlite.js";
+import { getMemoryStats, listMemories, recall, remember, supersedeMemory } from "../memory/sqlite.js";
 import { exportTraitsSnapshot, getAllTraits, reinforceTrait } from "../memory/traits.js";
-import { isOwnerCaller, noteStoredMemory } from "./cron-tool.js";
+import { isOwnerCaller, noteStoredMemory, ownerTurnMessage } from "./cron-tool.js";
 import type { ToolDefinition } from "./get-current-time.js";
 
 // ── Memory Tools for LLM ──────────────────────
+
+/** The owner's message reads like a correction of something Bhai knew (English, Hinglish, Hindi). */
+export function hasCorrectionCue(text: string): boolean {
+    return (
+        /\b(actually|no longer|not any ?more|anymore|chang(?:e|ed|es)|moved|shifted|switched|instead|now (?:it'?s|is|i'?m|we'?re|my)|wrong|correction|i meant|scratch that|not true|nahi|nahin|nhi|ab|badal|badla|badli|galat|ghalat)\b|^\s*(?:no|nope)\b/i.test(
+            text,
+        ) || /नहीं|अब|बदल|ग़?लत/.test(text)
+    );
+}
 
 export const memoryStore: ToolDefinition = {
     schema: {
@@ -23,7 +32,7 @@ export const memoryStore: ToolDefinition = {
         function: {
             name: "memory_store",
             description:
-                "Store a fact, preference, or important information in persistent memory. Use this when the user shares something worth remembering.",
+                'Store a fact, preference, or important information in persistent memory. Use this when the user shares something worth remembering. When the owner corrects or updates something you already know ("actually it\'s Tuesday", "I moved to Pune", "ab main X nahi karta"), store the corrected fact as a full sentence and pass `supersedes` with the old memory\'s id (the #id in recalled memory lines, or from memory_search) so the old one stops being recalled instead of both standing.',
             parameters: {
                 type: "object",
                 properties: {
@@ -34,6 +43,11 @@ export const memoryStore: ToolDefinition = {
                     },
                     tags: { type: "string", description: "Comma-separated tags for easier retrieval" },
                     importance: { type: "number", description: "1-10 importance level (default 5)" },
+                    supersedes: {
+                        type: "number",
+                        description:
+                            "Id of the memory this corrects (e.g. 42 for #42); only on the owner's corrections",
+                    },
                 },
                 required: ["content"],
             },
@@ -41,8 +55,13 @@ export const memoryStore: ToolDefinition = {
     },
     async handler(input) {
         const imp = (input.importance as number) || 5;
-        // Use smart write (LLM deduplication) for important memories (>= 7)
-        const useSmartWrite = imp >= 7;
+        const oldId = input.supersedes == null ? 0 : Number(String(input.supersedes).replace(/^#/, ""));
+        // Owner only, and only when their message says something changed: a contact or a
+        // misread turn must not be able to hide what the owner told Bhai.
+        const supersede = oldId > 0 && Number.isInteger(oldId) && hasCorrectionCue(ownerTurnMessage());
+        // Use smart write (LLM deduplication) for important memories (>= 7); not on a supersede,
+        // which may merge or drop the new row the old one now points at.
+        const useSmartWrite = imp >= 7 && !supersede;
         const id = await remember(
             input.content as string,
             (input.category as string) || "general",
@@ -56,7 +75,23 @@ export const memoryStore: ToolDefinition = {
         }
         // Smart write may merge or drop this row moments later, so its id can't back an undo.
         if (!useSmartWrite) noteStoredMemory(id);
-        return JSON.stringify({ success: true, id, message: "Memory stored." });
+        if (input.supersedes == null || id === oldId)
+            return JSON.stringify({ success: true, id, message: "Memory stored." });
+        if (supersede && supersedeMemory(oldId, id)) {
+            return JSON.stringify({
+                success: true,
+                id,
+                superseded: oldId,
+                message: `Memory stored; #${oldId} retired.`,
+            });
+        }
+        return JSON.stringify({
+            success: true,
+            id,
+            message: supersede
+                ? `Memory stored; supersede ignored: #${oldId} is not a live memory.`
+                : "Memory stored; supersede ignored: only the owner's own correction can replace a memory.",
+        });
     },
 };
 

@@ -16,6 +16,8 @@ type Op = "schedule" | "list" | "cancel" | "trigger";
 export interface CronCallerContext {
     isOwner: boolean;
     autonomous?: boolean;
+    /** The owner's words this turn: memory_store supersedes only when they read like a correction. */
+    message?: string;
     /** The last memory memory_store saved in this owner turn, for the reply's "Forget that" button. */
     storedMemory?: { id: number; at: number };
 }
@@ -30,6 +32,11 @@ export function runWithCallerContext<T>(ctx: CronCallerContext, fn: () => Promis
 export function isOwnerCaller(): boolean {
     const ctx = _callerStorage.getStore();
     return ctx?.isOwner === true && !ctx.autonomous;
+}
+
+/** The owner's own message this turn, or "" for contacts and autonomous runs. */
+export function ownerTurnMessage(): string {
+    return isOwnerCaller() ? (_callerStorage.getStore()?.message ?? "") : "";
 }
 
 /** memory_store saved `id` on the owner's live turn: the reply may offer a one-tap undo. */
