@@ -568,6 +568,46 @@ export function createContactRequest(
     return request;
 }
 
+/**
+ * The group an owner command names: an exact name, else the only one containing it.
+ * Group names are chosen by whoever creates the group, so "approve Family" must not pick a
+ * stranger's "Family chat free crypto" over the real one (it took the first substring hit).
+ */
+export function findGroupByName<G extends { name: string }>(groups: G[], name: string): G | undefined {
+    const want = name.trim().toLowerCase();
+    if (!want) return undefined;
+    const exact = groups.filter((g) => g.name.trim().toLowerCase() === want);
+    if (exact.length === 1) return exact[0];
+    if (exact.length > 1) return undefined;
+    const partial = groups.filter((g) => g.name.toLowerCase().includes(want));
+    return partial.length === 1 ? partial[0] : undefined;
+}
+
+/** The pending request from `jid`, if they are already waiting. */
+export function pendingRequestFrom(jid: string): ContactRequest | undefined {
+    return getPendingRequests().find((r) => r.jid === jid);
+}
+
+/**
+ * Which pending request an owner's "allow …" / "block …" means: the only one, or the one
+ * whose number appears in the text (that number is removed from `rest`). null = ambiguous.
+ * It used to be "the latest", so a stranger writing just before the owner's reply got
+ * allowed in place of the person the owner was told about.
+ */
+export function pickPendingRequest(text: string): { request: ContactRequest; rest: string } | null {
+    const pending = getPendingRequests();
+    const digits = (s: string) => s.replace(/\D/g, "");
+    for (const m of text.match(/\+?[\d][\d\s-]{5,}\d/g) ?? []) {
+        const want = digits(m);
+        const hit = pending.find((r) => {
+            const phone = digits(r.jid.split("@")[0]);
+            return phone === want || phone.endsWith(want);
+        });
+        if (hit) return { request: hit, rest: text.replace(m, " ").replace(/\s+/g, " ").trim() };
+    }
+    return pending.length === 1 ? { request: pending[0], rest: text } : null;
+}
+
 export function getPendingRequests(): ContactRequest[] {
     return Array.from(pendingContactRequests.values()).filter(
         (r) => r.status === "pending",

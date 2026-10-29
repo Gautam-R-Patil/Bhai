@@ -242,6 +242,7 @@ desktop/hostinger-upload/
 !src/tools/mac-wifi.test.ts
 !src/telegram-proactive-recipients.test.ts
 !src/prompts/dynamic-context.test.ts
+!src/whatsapp-owner-commands.test.ts
 !src/tools/browser/extension-agent-tab.test.ts
 !convex/devices.test.ts
 !src/llm-guest.test.ts
