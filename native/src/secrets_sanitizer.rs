@@ -4,7 +4,7 @@
 // Strategy: sequential per-pattern passes, byte-for-byte mirroring the TS
 // PATTERNS-array iteration order. Each pass uses `regex::Regex` and
 // short-circuits when the pattern doesn't match (zero allocation), so the
-// 23 patterns cost one scan each and only the patterns that actually fire
+// 25 patterns cost one scan each and only the patterns that actually fire
 // pay the cost of building a new String.
 //
 // Why NOT a single alternation: an early benchmark replaced the 23 passes
@@ -112,6 +112,10 @@ const STANDARD_PATTERNS_HEAD: &[(&str, &str)] = &[
         r"\b(?:secret_[A-Za-z0-9]{43}|ntn_[A-Za-z0-9]{45,})\b",
     ),
     ("SQUARE_ACCESS_TOKEN", r"\bEAAA[A-Za-z0-9_-]{60,}\b"),
+    // Telegram bot token (bare, as in api.telegram.org/bot<token>/ URLs) and
+    // HuggingFace token — mirror the two TS entries added after SQUARE.
+    ("TELEGRAM_BOT_TOKEN", r"\d{8,12}:[A-Za-z0-9_-]{35}\b"),
+    ("HUGGINGFACE_TOKEN", r"\bhf_[A-Za-z0-9]{34,}\b"),
 ];
 
 const STANDARD_PATTERNS_TAIL: &[(&str, &str)] = &[

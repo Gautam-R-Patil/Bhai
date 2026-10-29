@@ -174,6 +174,20 @@ const PATTERNS: Pattern[] = [
         // EAAA + 60 base64url chars
         regex: /\bEAAA[A-Za-z0-9_-]{60,}\b/g,
     },
+    {
+        name: "TELEGRAM_BOT_TOKEN",
+        // <8-12 digit bot id>:<35-char base64url secret>. This is Bhai's own
+        // bot credential and appears BARE inside api.telegram.org/bot<token>/
+        // URLs, which the Bot API echoes verbatim in error payloads — so it
+        // never reaches the KEY=value ENV_VAR_SECRET pass.
+        regex: /\d{8,12}:[A-Za-z0-9_-]{35}\b/g,
+    },
+    {
+        name: "HUGGINGFACE_TOKEN",
+        // hf_ + >=34 alnum. The bare form (not an "Authorization: Bearer"
+        // header) slips both the BEARER_TOKEN and ENV_VAR_SECRET passes.
+        regex: /\bhf_[A-Za-z0-9]{34,}\b/g,
+    },
     // Note on Cloudflare API tokens: they're 40 chars from a specific
     // alphabet but lack a distinctive prefix, so a standalone pattern
     // produces too many false positives. The BEARER_TOKEN and

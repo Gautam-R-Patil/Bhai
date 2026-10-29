@@ -54,6 +54,9 @@ const REFERENCE_INPUTS: Array<{ name: string; input: string }> = [
     { name: "notion-old", input: `key: secret_${"a".repeat(43)}` },
     { name: "notion-new", input: `key: ntn_${"a".repeat(45)}` },
     { name: "square", input: `EAAA${"a".repeat(60)}` },
+    { name: "telegram-url", input: `GET https://api.telegram.org/bot8123456789:${"A".repeat(35)}/getMe` },
+    { name: "telegram-bare", input: `token 123456789:${"z".repeat(35)} rejected` },
+    { name: "huggingface", input: `load failed: hf_${"a".repeat(34)}` },
     {
         name: "jwt",
         input: "token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c done",
