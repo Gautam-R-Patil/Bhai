@@ -37,6 +37,14 @@ export function wrapUntrustedToolResult(toolName: string, body: string): string 
     //   2. We must NOT early-return when the body merely contains our open tag:
     //      that let any page disable fencing for its whole result by including the
     //      literal string. Always strip, then always wrap.
+    // Idempotent for OUR OWN output only: the body must be the EXACT wrapper
+    // shape (note, one open tag, inner, one close — anchored) AND its inner must
+    // carry no framing tags. A substring check (the old `includes(OPEN)`) was
+    // attacker-triggerable; this isn't, because crafted content that reproduces
+    // the shape with a hidden inner tag fails the SPOOF_TAG check and falls
+    // through to a full re-wrap.
+    const already = body.match(ALREADY_WRAPPED_RE);
+    if (already && already[1].match(SPOOF_TAG_RE) === null) return body;
     let deSpoofed = body;
     for (let prev = ""; prev !== deSpoofed; ) {
         prev = deSpoofed;
@@ -44,6 +52,14 @@ export function wrapUntrustedToolResult(toolName: string, body: string): string 
     }
     return `${UNTRUSTED_NOTE}\n${UNTRUSTED_RESULT_OPEN} tool="${toolName}"\n${deSpoofed}\n${UNTRUSTED_RESULT_CLOSE}`;
 }
+
+// Our exact wrapper shape, anchored: note, open tag with a tool attribute, the
+// inner body (captured), then the close at the very end. Used only to keep
+// wrap(wrap(x)) === wrap(x); the inner is re-checked for framing tags before we
+// trust it, so an attacker can't use this to smuggle instructions past the fence.
+const ALREADY_WRAPPED_RE = new RegExp(
+    `^${escapeRegex(UNTRUSTED_NOTE)}\\n${escapeRegex(UNTRUSTED_RESULT_OPEN)} tool="[^"\\n]*"\\n([\\s\\S]*)\\n${escapeRegex(UNTRUSTED_RESULT_CLOSE)}$`,
+);
 
 // Fence by default: any tool output may carry text someone else wrote (a web
 // page, an email, a file in a cloned repo, curl output, a deep-research report,
