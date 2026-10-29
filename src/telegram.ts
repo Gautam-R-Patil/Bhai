@@ -50,6 +50,7 @@ import type { LLMClient } from "./llm.js";
 import { MODELS } from "./llm.js";
 import { classifyQuery } from "./memory/classifier.js";
 import { getSessionToken } from "./session.js";
+import { mapStepStatus, parseStepLine, STEP_HEARTBEAT_MS } from "./step-status.js";
 import { batchKey } from "./telegram-batch.js";
 import {
     clearDeepResearchProgress,
@@ -882,6 +883,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 // tool milestone updates. Deleted before the real answer arrives.
                 let statusMessageId: number | null = null;
                 let lastStatusText = "";
+                let lastStatusAt = 0; // when a tool/step status last landed
                 let statusTimeout: ReturnType<typeof setTimeout> | null = null;
                 let pendingStatus: string | null = null;
                 let statusCleared = false; // ← Race condition guard
@@ -897,6 +899,10 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                     thinkingTimer = setInterval(
                         async () => {
                             if (controller.signal.aborted || statusCleared) return;
+                            // A fresh step line says what's actually running; filler never covers it.
+                            // Once it goes quiet (the batch ended, a long model call runs), rotate again.
+                            if (parseStepLine(lastStatusText) && Date.now() - lastStatusAt < STEP_HEARTBEAT_MS + 5000)
+                                return;
 
                             const elapsed = Date.now() - statusStartTime;
 
@@ -1025,7 +1031,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
 
                     console.log(`  📊 [progress] ${msg}`);
 
-                    const humanized = humanizeProgress(msg);
+                    const humanized = mapStepStatus(msg, humanizeProgress);
                     if (!humanized || statusCleared) return;
 
                     if (!statusMessageId) {
@@ -1045,6 +1051,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                                         } else {
                                             statusMessageId = sent.message_id;
                                             lastStatusText = pendingStatus!;
+                                            lastStatusAt = Date.now();
                                             startThinkingRotation();
                                         }
                                     } catch {
@@ -1060,6 +1067,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                             try {
                                 await bot.api.editMessageText(chatId, statusMessageId, humanized);
                                 lastStatusText = humanized;
+                                lastStatusAt = Date.now();
                             } catch {
                                 /* message may have been deleted */
                             }

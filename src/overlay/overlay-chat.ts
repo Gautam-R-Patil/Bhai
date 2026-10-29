@@ -26,6 +26,7 @@ import {
     type ChannelContext,
 } from "../agent.js";
 import { isLoopbackHost as isLoopbackHostFor, isWebOrigin } from "../security/loopback.js";
+import { formatStepStatus, parseStepLine } from "../step-status.js";
 import { logChatMessage, markChatReset, recentChatContext } from "./chat-log.js";
 import { classifyQuery } from "../memory/classifier.js";
 import { captureScreenshot } from "../tools/platform.js";
@@ -1301,7 +1302,14 @@ function inboxItemToWire(item: InboxItemLike): Record<string, unknown> {
  */
 export function overlayProgressMessage(msg: string): { type: "contract" | "progress"; text: string } {
     if (msg.startsWith("[ACK] ")) return { type: "contract", text: msg.slice(6) };
-    return { type: "progress", text: humanizeForOverlay(msg) };
+    const line = parseStepLine(msg);
+    if (!line) return { type: "progress", text: humanizeForOverlay(msg) };
+    // The overlay takes the card's icon off the front of the text, so the
+    // status emoji leads: "🔍 step 3 · looking up x · 12s", not "step 3 · 🔍 …".
+    const status = humanizeForOverlay(line.status);
+    const icon = /^(?:\p{Extended_Pictographic}|\u200d|\ufe0f)+\s*/u.exec(status)?.[0] ?? "";
+    const text = formatStepStatus(line.step, status.slice(icon.length), line.elapsedMs);
+    return { type: "progress", text: icon ? `${icon.trim()} ${text}` : text };
 }
 
 function humanizeForOverlay(msg: string): string {

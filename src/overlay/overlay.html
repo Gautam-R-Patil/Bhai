@@ -3181,7 +3181,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           if (waiting || icon.classList.contains('thinking')) setMood(moodFromProgress(msg.text));
           // Render as enhanced progress card
           const progressIcon = extractProgressIcon(msg.text);
-          const progressLabel = msg.text.replace(/^[\u2728\u2699\ufe0f\ud83d\udd0d\ud83c\udf10\ud83d\udcd6\u270f\ufe0f\ud83d\udcf8\ud83d\udcad\u23f3\u26a0\ufe0f]\s?/u, '');
+          const progressLabel = msg.text.startsWith(progressIcon) ? msg.text.slice(progressIcon.length).trimStart() : msg.text;
           progress.innerHTML = `<div class="progress-card"><span class="progress-icon">${progressIcon}</span><span class="progress-label">${esc(progressLabel)}</span><div class="progress-dots"><span></span><span></span><span></span></div></div>`;
           progress.classList.add('visible');
         }
@@ -3433,7 +3433,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
 
       // ── Progress icon extraction ──
       function extractProgressIcon(text) {
-        const match = text.match(/^([\p{Emoji}\u200d\ufe0f]+)/u);
+        const match = text.match(/^([\p{Extended_Pictographic}\u200d\ufe0f]+)/u); // not \p{Emoji}: digits match it
         return match ? match[1] : '💭';
       }
 

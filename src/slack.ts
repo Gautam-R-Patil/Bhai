@@ -12,6 +12,7 @@ import { withStuckReplyLine } from "./channel-text.js";
 import type { LLMClient } from "./llm.js";
 import { runAgent, type MediaAttachment, type ChannelContext } from "./agent.js";
 import { classifyQuery } from "./memory/classifier.js";
+import { mapStepStatus, parseStepLine } from "./step-status.js";
 
 // -- State ------------------------------------------------
 
@@ -183,7 +184,9 @@ async function handleSlackMessage(
                 return;
             }
 
-            const progressText = msg.replace(/<[^>]+>/g, "").substring(0, 100);
+            // Trim the status, not the line, so a step line keeps its elapsed time.
+            const cap = parseStepLine(msg) ? 80 : 100;
+            const progressText = mapStepStatus(msg, (m) => m.replace(/<[^>]+>/g, "").substring(0, cap));
             if (!progressText) return;
 
             try {

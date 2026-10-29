@@ -117,6 +117,7 @@ import { lateNightNote, noteOwnerReply } from "./late-night-nudge.js";
 import { noteOwnerMessage } from "./security/consent.js";
 import { CODE_TOOLS, protect, REVEAL_TOOLS, reveal, revealArgs } from "./security/pii-vault.js";
 import { isToolAllowed, NON_OWNER_TOOLS } from "./security/tool-access.js";
+import { formatStepStatus, SELF_REPORTING_TOOLS, startStepHeartbeat } from "./step-status.js";
 import {
     clearToolRouterState,
     getLastIntent,
@@ -1060,6 +1061,8 @@ async function executeToolCallsBatch(
     toolCalls: Array<{ id: string; function: { name: string; arguments: string } }>,
     ctx: {
         sendProgress: (msg: string) => Promise<void>;
+        /** A tool's status line ("🌐 Opening …"); the caller stamps it with the step and elapsed time. */
+        sendStatus: (status: string) => Promise<void>;
         trackBrowserFn: (fnName: string, fnArgs: Record<string, unknown>, success: boolean) => void;
         onError: () => void;
         onToolComplete: (count: number) => Promise<void>;
@@ -1196,7 +1199,7 @@ async function executeToolCallsBatch(
             /* */
         }
         const milestone = getMilestoneMessage(tc.function.name, fnArgs);
-        if (milestone) await ctx.sendProgress(milestone);
+        if (milestone) await ctx.sendStatus(milestone);
 
         const r = await executeAndProcessToolCall(
             tc,
@@ -1219,7 +1222,7 @@ async function executeToolCallsBatch(
     // Send milestones for non-browser tools (after they complete)
     for (const r of nonBrowserResults) {
         const milestone = getMilestoneMessage(r.fnName, r.fnArgs);
-        if (milestone) await ctx.sendProgress(milestone);
+        if (milestone) await ctx.sendStatus(milestone);
 
         // Diff preview for edit/write: surface the change so the user can
         // see what happened. Not a blocking approval gate (which would
@@ -1601,6 +1604,42 @@ async function _runAgentBody(
             await onProgress(msg);
         } catch {
             /* don't let progress errors kill the agent */
+        }
+    };
+
+    // Tool statuses read "step N · <status> · <elapsed>s"; a batch that runs
+    // quiet for ~20s re-sends its current status so long tasks show a pulse.
+    const turnStartedAt = Date.now();
+    let toolStep = 0;
+    let stepStatus = "working on it";
+    const sendStatus = (status: string) => {
+        stepStatus = status;
+        return sendProgress(formatStepStatus(toolStep, status, Date.now() - turnStartedAt));
+    };
+    const runToolBatch = async (
+        calls: Array<{ id: string; function: { name: string; arguments: string } }>,
+        ctx: Omit<Parameters<typeof executeToolCallsBatch>[1], "sendProgress" | "sendStatus">,
+    ): Promise<ToolCallResult[]> => {
+        toolStep++;
+        const milestoneOf = (tc: (typeof calls)[number]) => {
+            try {
+                return getMilestoneMessage(tc.function.name, JSON.parse(tc.function.arguments || "{}"));
+            } catch {
+                return null;
+            }
+        };
+        stepStatus = calls.map(milestoneOf).find(Boolean) ?? "working on it";
+        const stop =
+            onProgress && !calls.some((tc) => SELF_REPORTING_TOOLS.has(tc.function.name))
+            ? startStepHeartbeat(
+                  () => lastProgressTime,
+                  () => void sendStatus(stepStatus),
+              )
+            : () => {};
+        try {
+            return await executeToolCallsBatch(calls, { ...ctx, sendProgress, sendStatus });
+        } finally {
+            stop();
         }
     };
 
@@ -3683,13 +3722,12 @@ PLAN:`,
                         lastToolCalls = finalChoice.message.tool_calls.map((tc) => ({
                             function: { name: tc.function.name },
                         }));
-                        const batchResults = await executeToolCallsBatch(
+                        const batchResults = await runToolBatch(
                             finalChoice.message.tool_calls as Array<{
                                 id: string;
                                 function: { name: string; arguments: string };
                             }>,
                             {
-                                sendProgress,
                                 trackBrowserFn: (fn, args, ok) => {
                                     usedBrowserTools = true;
                                     trackBrowserStep(fn, args, ok, 0);
@@ -3883,10 +3921,9 @@ PLAN:`,
         }));
 
         // ── Execute tools (parallel for non-browser, sequential for browser) ──
-        const batchResults = await executeToolCallsBatch(
+        const batchResults = await runToolBatch(
             assistantMessage.tool_calls as Array<{ id: string; function: { name: string; arguments: string } }>,
             {
-                sendProgress,
                 trackBrowserFn: (fn, args, ok) => {
                     usedBrowserTools = true;
                     trackBrowserStep(fn, args, ok, 0);

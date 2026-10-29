@@ -38,6 +38,7 @@ import {
     categorizeError,
     getErrorMessage,
 } from "./alive-ux.js";
+import { parseStepLine } from "./step-status.js";
 
 // ── Constants ────────────────────────────────
 
@@ -288,6 +289,9 @@ async function runInThread(
 
     let lastProgressUpdate = 0;
     const PROGRESS_THROTTLE_MS = 3000;
+    // A heartbeat repeats the last step line with a new elapsed time: edit
+    // that message in place instead of posting a new one each ~20s.
+    let lastStep: { key: string; msg: Message } | null = null;
 
     const progressCallback: ProgressCallback = async (msg: string) => {
         console.log(`  [DISCORD][thread-progress] ${msg}`);
@@ -308,7 +312,15 @@ async function runInThread(
             // One ack, not two: the contract line replaces "Working on it...".
             if (isAck)
                 await statusMsg.edit(`**${embedTitle}**\n${truncated}`).catch(() => thread.send(`> ${truncated}`));
-            else await thread.send(`> ${truncated}`);
+            else {
+                const line = parseStepLine(text);
+                const key = line ? `${line.step}|${line.status}` : "";
+                if (key && lastStep?.key === key) await lastStep.msg.edit(`> ${truncated}`);
+                else {
+                    const sent = await thread.send(`> ${truncated}`);
+                    lastStep = key ? { key, msg: sent } : null;
+                }
+            }
         } catch { /* thread may have been archived */ }
     };
 

@@ -14,4 +14,8 @@ describe("overlayProgressMessage", () => {
     it("keeps everything else a progress update", () => {
         expect(overlayProgressMessage("Searching the web...").type).toBe("progress");
     });
+    it("leads a step line with its status icon, once, so the card shows the right icon", () => {
+        const { text } = overlayProgressMessage("step 3 · 📸 Taking a screenshot · 12s");
+        expect(text).toMatch(/^\p{Extended_Pictographic}\S* step 3 · [^\p{Extended_Pictographic}]+ · 12s$/u);
+    });
 });
