@@ -283,6 +283,9 @@ export function createLLMClient(config: Config): LLMClient {
                     // middleware-agnostic code paths.
                     response_format: responseFormat === "json_object" ? { type: "json_object" } : undefined,
                     lean: lean || undefined,
+                    // A guest's or contact's turn: the server leaves out the owner's Settings
+                    // tone (unhinged is 18+, owner-only) and the owner's personal learnings.
+                    guest: (await import("./tools/cron-tool.js")).callerIsOwner() === false || undefined,
                 };
 
                 // Always send an effort: every Claude model thinks by default

@@ -230,6 +230,7 @@ desktop/hostinger-upload/
 !src/proactive/observer-state-persist.test.ts
 !src/memory/at-rest-scrub.test.ts
 !src/tools/browser/extension-agent-tab.test.ts
+!src/llm-guest.test.ts
 !src/config/paths.test.ts
 !src/tools/coding/checkpoint-manager.test.ts
 !src/language.test.ts

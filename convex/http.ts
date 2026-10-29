@@ -633,6 +633,8 @@ http.route({
             platform,
             skillSlugs,
             userId: account.otplessUserId,
+            // A guest's/contact's turn never gets the owner's tone or personal learnings.
+            guest: body.guest === true,
           }
         );
 
