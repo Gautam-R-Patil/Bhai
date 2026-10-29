@@ -27,6 +27,24 @@ let connectionAttempts = 0;
 let discoveryAttempts = 0;
 let lastAtlasResponse = "";
 
+// The side panel's conversation. Session storage keeps it while the service
+// worker sleeps and the panel is closed; it's gone when Chrome quits.
+const MAX_CHAT = 60;
+let _chat = [];
+const chatReady = chrome.storage.session.get("chat")
+  .then((r) => { if (Array.isArray(r.chat)) _chat = r.chat; })
+  .catch(() => {});
+function addChat(role, text) {
+  if (!text) return;
+  _chat.push({ role, text: String(text).slice(0, 20000), ts: Date.now() });
+  if (_chat.length > MAX_CHAT) _chat = _chat.slice(-MAX_CHAT);
+  chrome.storage.session.set({ chat: _chat }).catch(() => {});
+  chrome.runtime.sendMessage({ type: "chat_update", chat: _chat }).catch(() => { /* panel closed */ });
+}
+
+// Clicking the toolbar icon opens Bhai in the side panel.
+chrome.sidePanel?.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+
 // Overlay socket (port 18792): auxiliary chat/page-context relay. Separate
 // from the bridge so the two never share connection state. Auth via the
 // ?localToken= query param at handshake time (the overlay closes token-less
@@ -374,6 +392,7 @@ function handleOverlayMessage(msg) {
 
   if (msg.type === "response") {
     lastAtlasResponse = msg.text || "";
+    addChat("bhai", lastAtlasResponse);
     chrome.runtime.sendMessage({
       type: "atlas_response",
       text: lastAtlasResponse,
@@ -390,6 +409,7 @@ function handleOverlayMessage(msg) {
   }
 
   if (msg.type === "error") {
+    addChat("error", msg.text || "Something went wrong");
     chrome.runtime.sendMessage({
       type: "atlas_error",
       text: msg.text || "Something went wrong",
@@ -420,19 +440,21 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (!tab) return;
+  // A menu click is a user gesture, so the panel may open here.
+  chrome.sidePanel?.open({ tabId: tab.id }).catch(() => {});
 
   const url = tab.url || "unknown";
   const title = tab.title || "Untitled";
 
   if (info.menuItemId === "atlas-ask-page") {
     const message = `[From browser: ${url}] User asks about this page: "${title}"`;
-    sendToAtlas(message, { url, title, action: "ask_page" });
+    if (sendToAtlas(message, { url, title, action: "ask_page" })) addChat("you", `About this page: ${title}`);
   }
 
   if (info.menuItemId === "atlas-ask-selection") {
     const selectedText = info.selectionText || "";
     const message = `[From browser: ${url}] User asks about: "${selectedText}"`;
-    sendToAtlas(message, { url, title, selectedText, action: "ask_selection" });
+    if (sendToAtlas(message, { url, title, selectedText, action: "ask_selection" })) addChat("you", `About: "${selectedText.slice(0, 200)}"`);
   }
 });
 
@@ -2062,6 +2084,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     });
     return true;
   }
+  if (msg.type === "get_chat") {
+    chatReady.then(() => sendResponse({ chat: _chat }));
+    return true;
+  }
+  if (msg.type === "clear_chat") {
+    _chat = [];
+    lastAtlasResponse = "";
+    chrome.storage.session.set({ chat: [] }).catch(() => {});
+    sendResponse({ ok: true });
+    return true;
+  }
   if (msg.type === "get_action_log") {
     sendResponse({ log: _actionLog });
     return true;
@@ -2102,6 +2135,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         title: ctx.title,
         action: "send_page",
       });
+      if (sent) addChat("you", msg.display || `Sent this page: ${ctx.title || ctx.url}`);
       sendResponse({ ok: sent });
     });
     return true;
@@ -2122,6 +2156,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         selectedText,
         action: "send_selection",
       });
+      if (sent) addChat("you", msg.display || `About: "${selectedText.slice(0, 200)}"`);
       sendResponse({ ok: sent });
     });
     return true;
@@ -2138,6 +2173,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         title,
         action: "send_message",
       });
+      if (sent && msg.text !== "stop") addChat("you", msg.text);
       sendResponse({ ok: sent });
     });
     return true;
