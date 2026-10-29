@@ -2428,16 +2428,13 @@ export function forgetMemoryWithReason(id: number, reason: string, source: "user
     if (!db) throw new Error("Memory DB not initialized");
     try {
         beginTransaction();
-        // Snapshot for the tombstone audit trail.
-        const snapResult = db.exec("SELECT content FROM memories WHERE id = ? LIMIT 1", [id]);
-        const snapshot =
-            snapResult.length > 0 && snapResult[0].values.length > 0
-                ? ((snapResult[0].values[0]?.[0] as string | null) ?? null)
-                : null;
-        db.run(
-            "INSERT INTO memory_forget_log (kind, original_id, content_snapshot, reason, source) VALUES (?, ?, ?, ?, ?)",
-            ["memory", String(id), snapshot, reason || "unspecified", source],
-        );
+        // The tombstone keeps the reason, never the content: forgotten means gone.
+        db.run("INSERT INTO memory_forget_log (kind, original_id, reason, source) VALUES (?, ?, ?, ?)", [
+            "memory",
+            String(id),
+            reason || "unspecified",
+            source,
+        ]);
         // Hard delete + cleanup the embedding row (no FK cascade exists).
         db.run("DELETE FROM memory_embeddings WHERE memory_id = ?", [id]);
         db.run("DELETE FROM memories WHERE id = ?", [id]);
@@ -2461,15 +2458,12 @@ export function bulkForget(ids: number[], reason: string, source: "user" | "syst
     try {
         beginTransaction();
         for (const id of ids) {
-            const snapResult = db.exec("SELECT content FROM memories WHERE id = ? LIMIT 1", [id]);
-            const snapshot =
-                snapResult.length > 0 && snapResult[0].values.length > 0
-                    ? ((snapResult[0].values[0]?.[0] as string | null) ?? null)
-                    : null;
-            db.run(
-                "INSERT INTO memory_forget_log (kind, original_id, content_snapshot, reason, source) VALUES (?, ?, ?, ?, ?)",
-                ["memory", String(id), snapshot, reason || "unspecified", source],
-            );
+            db.run("INSERT INTO memory_forget_log (kind, original_id, reason, source) VALUES (?, ?, ?, ?)", [
+                "memory",
+                String(id),
+                reason || "unspecified",
+                source,
+            ]);
             db.run("DELETE FROM memory_embeddings WHERE memory_id = ?", [id]);
             db.run("DELETE FROM memories WHERE id = ?", [id]);
             count++;
@@ -2497,18 +2491,16 @@ export function forgetEntity(
     let relCount = 0;
     try {
         beginTransaction();
-        const snap = db.exec("SELECT name FROM entities WHERE id = ? LIMIT 1", [id]);
-        const snapshot =
-            snap.length > 0 && snap[0].values.length > 0 ? ((snap[0].values[0]?.[0] as string | null) ?? null) : null;
         if (cascade) {
             // FK cascade is set; counting first for the report.
             const r = db.exec("SELECT COUNT(*) FROM relationships WHERE from_id = ? OR to_id = ?", [id, id]);
             relCount = r.length > 0 && r[0].values.length > 0 ? ((r[0].values[0]?.[0] as number) ?? 0) : 0;
         }
-        db.run(
-            "INSERT INTO memory_forget_log (kind, original_id, content_snapshot, reason, source) VALUES (?, ?, ?, ?, 'user')",
-            ["entity", String(id), snapshot, reason || "unspecified"],
-        );
+        db.run("INSERT INTO memory_forget_log (kind, original_id, reason, source) VALUES (?, ?, ?, 'user')", [
+            "entity",
+            String(id),
+            reason || "unspecified",
+        ]);
         db.run("DELETE FROM entities WHERE id = ?", [id]);
         commitTransaction();
         return { forgotten: 1, relationshipsRemoved: relCount };

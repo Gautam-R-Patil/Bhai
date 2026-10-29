@@ -285,6 +285,32 @@ export function updateSessionGoal(goal: string): void {
     persistSession();
 }
 
+/** Blank whatever `hit` matches in a session (memory_forget). True if anything changed. */
+export function redactSession(
+    s: Pick<SessionState, "recent_turns" | "short_summary" | "current_goal" | "lastCompressionSummary">,
+    hit: (text: string) => boolean,
+): boolean {
+    let changed = false;
+    for (const t of s.recent_turns) {
+        if (hit(t.content)) {
+            t.content = "[forgotten]";
+            changed = true;
+        }
+    }
+    for (const k of ["short_summary", "current_goal", "lastCompressionSummary"] as const) {
+        if (hit(s[k] ?? "")) {
+            s[k] = "";
+            changed = true;
+        }
+    }
+    return changed;
+}
+
+/** memory_forget on the live session; its row is rewritten by the next persist. */
+export function redactCurrentSession(hit: (text: string) => boolean): void {
+    if (currentSession && redactSession(currentSession, hit)) persistSession();
+}
+
 // ── End Session ───────────────────────────────
 
 export function endSession(): SessionState | null {

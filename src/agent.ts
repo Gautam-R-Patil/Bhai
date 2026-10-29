@@ -1416,7 +1416,10 @@ export async function runAgent(
             // Outermost turn ending = Bhai lets go of the screen (glow fades).
             const turn = () =>
                 runWithTurnNudges(nudges, () =>
-                    mod.runWithCallerContext({ isOwner: callerIsOwner }, () => trackCursorTurn(fn)),
+                    mod.runWithCallerContext(
+                        { isOwner: callerIsOwner, autonomous: channelContext?.autonomous === true },
+                        () => trackCursorTurn(fn),
+                    ),
                 );
             // Turns share one send ledger (send-ledger.ts); an autonomous run gets its own,
             // so a recurring cron job may send the same text on its next tick.

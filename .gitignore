@@ -320,6 +320,7 @@ desktop/hostinger-upload/
 !src/proactive/heartbeat-wake-adaptation.test.ts
 # Session 2026-10-29: memory pure-logic bugfixes (NaN/div-by-zero, gate ordering)
 !src/memory/session-continuity.test.ts
+!src/memory/__tests__/forget.test.ts
 !src/memory/episodic.test.ts
 !src/memory/classifier.test.ts
 !src/memory/value-gate.test.ts

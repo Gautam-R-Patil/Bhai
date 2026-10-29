@@ -169,7 +169,7 @@ import { marketingSchedule } from "./marketing-schedule.js";
 import {
     identityUpdate,
     identityView,
-    memoryDelete,
+    memoryForget,
     memoryList,
     memorySearch,
     memorySnapshot,
@@ -304,7 +304,7 @@ registry.set(cronTool.schema.function.name, cronTool);
 registry.set(memoryStore.schema.function.name, memoryStore);
 registry.set(memorySearch.schema.function.name, memorySearch);
 registry.set(memoryList.schema.function.name, memoryList);
-registry.set(memoryDelete.schema.function.name, memoryDelete);
+registry.set(memoryForget.schema.function.name, memoryForget);
 if (process.env.ATLAS_NO_SESSION_SEARCH !== "true") {
     registry.set(sessionSearch.schema.function.name, sessionSearch);
 }

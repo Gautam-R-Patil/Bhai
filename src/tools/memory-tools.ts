@@ -2,6 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
+import { executeForget, previewForget } from "../memory/forget.js";
 import {
     addGoal,
     addProject,
@@ -9,8 +10,9 @@ import {
     getIdentityProfile,
     updateIdentityProfile,
 } from "../memory/identity.js";
-import { forgetMemory, getMemoryStats, listMemories, recall, remember } from "../memory/sqlite.js";
+import { getMemoryStats, listMemories, recall, remember } from "../memory/sqlite.js";
 import { exportTraitsSnapshot, getAllTraits, reinforceTrait } from "../memory/traits.js";
+import { isOwnerCaller } from "./cron-tool.js";
 import type { ToolDefinition } from "./get-current-time.js";
 
 // ── Memory Tools for LLM ──────────────────────
@@ -102,24 +104,55 @@ export const memoryList: ToolDefinition = {
     },
 };
 
-export const memoryDelete: ToolDefinition = {
+export const memoryForget: ToolDefinition = {
     schema: {
         type: "function",
         function: {
-            name: "memory_delete",
-            description: "Delete a specific memory by ID.",
+            name: "memory_forget",
+            description:
+                "Forget something everywhere Bhai keeps it: memories, traits, identity, episodes, task learnings, chat transcripts and session summaries. Owner only. Two steps: (1) call with `query`, a short distinctive phrase of the fact (every word must appear, e.g. 'Priya' or 'blood pressure'); show the owner the numbered preview and ask them to confirm. (2) After the owner says yes in a new message, call with the same `query`, the preview's `token`, `user_quote` (their exact confirming words) and `reason` (why, in their words if they gave one). Afterwards never repeat what was forgotten.",
             parameters: {
                 type: "object",
                 properties: {
-                    id: { type: "number", description: "Memory ID to delete" },
+                    query: { type: "string", description: "Words that all appear in what to forget" },
+                    token: { type: "string", description: "Step 2: the token the preview returned" },
+                    user_quote: { type: "string", description: "Step 2: the owner's own confirming words" },
+                    reason: { type: "string", description: "Step 2: why the owner wants it forgotten" },
                 },
-                required: ["id"],
+                required: ["query"],
             },
         },
     },
     async handler(input) {
-        const success = forgetMemory(input.id as number);
-        return JSON.stringify({ success, message: success ? "Memory deleted." : "Memory not found." });
+        if (!isOwnerCaller()) return JSON.stringify({ success: false, error: "Only the owner can make Bhai forget." });
+        const query = typeof input.query === "string" ? input.query.trim() : "";
+        if (query.replace(/\s/g, "").length < 3) {
+            return JSON.stringify({ success: false, error: "query is too broad; use a distinctive phrase." });
+        }
+        if (typeof input.token !== "string" || !input.token) {
+            const p = previewForget(query);
+            return JSON.stringify({
+                success: true,
+                query,
+                ...p,
+                hint: p.token
+                    ? "Show the owner this list and ask them to confirm before calling memory_forget again with token and user_quote."
+                    : "Nothing to forget for this query.",
+            });
+        }
+        const { getConversationHistory } = await import("../agent.js");
+        const res = executeForget(
+            input.token,
+            typeof input.user_quote === "string" ? input.user_quote : "",
+            typeof input.reason === "string" ? input.reason : "",
+            getConversationHistory(),
+        );
+        if ("error" in res) return JSON.stringify({ success: false, error: res.error });
+        return JSON.stringify({
+            success: true,
+            forgotten: res.forgotten,
+            hint: "Tell the owner it is forgotten, without repeating any of it.",
+        });
     },
 };
 

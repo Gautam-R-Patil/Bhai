@@ -15,12 +15,19 @@ type Op = "schedule" | "list" | "cancel" | "trigger";
 // both turns are interleaving LLM awaits on the same event loop.
 interface CronCallerContext {
     isOwner: boolean;
+    autonomous?: boolean;
 }
 const _callerStorage = new AsyncLocalStorage<CronCallerContext>();
 
 /** Run `fn` with `ctx` as the ambient caller context for cron-scheduling. */
 export function runWithCallerContext<T>(ctx: CronCallerContext, fn: () => Promise<T> | T): Promise<T> | T {
     return _callerStorage.run(ctx, fn);
+}
+
+/** The owner, speaking in this turn: not a contact, not a scheduled/autonomous run. */
+export function isOwnerCaller(): boolean {
+    const ctx = _callerStorage.getStore();
+    return ctx?.isOwner === true && !ctx.autonomous;
 }
 
 /** Legacy setter preserved for callers that can't wrap — always overwrites

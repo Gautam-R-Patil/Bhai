@@ -480,6 +480,8 @@ export function getHighConfidenceTraits(threshold = HIGH_CONFIDENCE): Behavioral
 export function deleteTrait(traitKey: string): boolean {
     if (!_db) return false;
     _db.run("DELETE FROM behavioral_traits WHERE trait_key = ?", [traitKey]);
+    _db.run("DELETE FROM trait_edges WHERE trait_a = ? OR trait_b = ?", [traitKey, traitKey]);
+    _predictiveCache = null;
     return true;
 }
 
