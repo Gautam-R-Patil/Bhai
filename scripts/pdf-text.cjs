@@ -13,10 +13,19 @@ const MAX_RSS = Number(process.argv[2]) || 1024 * 1024 * 1024; // argv only from
 const MAX_TEXT = 2_000_000; // chars sent back: a bomb's "text" must not flood the bot either
 
 // Its own thread, so it still runs while pdf.js decodes a stream synchronously.
-new Worker(
-    `setInterval(() => { if (process.memoryUsage.rss() > ${MAX_RSS}) process.kill(process.pid, "SIGKILL"); }, 50);`,
-    { eval: true },
-).unref();
+// Use process.memoryUsage().rss (always present in a worker on every Node
+// version) — the process.memoryUsage.rss() fast-path isn't defined in a worker
+// thread on Node 22, so it threw and crashed the parse. If the watchdog can't
+// start, parse anyway; the parent's deadline still bounds a runaway.
+try {
+    new Worker(
+        `const rss = () => process.memoryUsage().rss;\n` +
+            `setInterval(() => { try { if (rss() > ${MAX_RSS}) process.kill(process.pid, "SIGKILL"); } catch {} }, 50);`,
+        { eval: true },
+    ).unref();
+} catch {
+    /* no watchdog — the parent deadline still protects */
+}
 
 process.once("message", async (m) => {
     try {
