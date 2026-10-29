@@ -131,7 +131,7 @@ export const musicControl: ToolDefinition = {
                     },
                     query: {
                         type: "string",
-                        description: "Search query for 'search_play' (e.g. 'Taylor Swift', 'Blinding Lights')",
+                        description: "Search query for 'search_play': a song, artist, or one of the user's playlist names (e.g. 'Blinding Lights', 'Taylor Swift', 'Favourite Songs playlist')",
                     },
                 },
                 required: ["action"],
@@ -202,9 +202,26 @@ end tell`);
                 case "search_play": {
                     const query = input.query as string;
                     if (!query) return JSON.stringify({ error: "Provide 'query' for search_play." });
-                    // Search in Music library and play first match
+                    // A playlist of the user's by that name ("my chill playlist"), else the
+                    // first library match. AppleScript's "is" ignores case.
+                    const listName = query.replace(/^(my|the)\s+/i, "").replace(/\s+playlist$/i, "");
                     const result = await runAS(`
 tell application "Music"
+    repeat with p in user playlists
+        if name of p is "${asStr(listName)}" then
+            play p
+            -- play returns before playback switches: wait until it plays from this list.
+            repeat 30 times
+                try
+                    if player state is playing and name of current playlist is name of p then
+                        return name of current track & "|" & artist of current track & "|" & name of p
+                    end if
+                end try
+                delay 0.1
+            end repeat
+            return "NOT_STARTED|" & name of p
+        end if
+    end repeat
     set results to (search playlist "Library" for "${asStr(query)}")
     if (count of results) > 0 then
         play item 1 of results
@@ -230,8 +247,14 @@ end tell`);
                             error: `No results for "${query}" in the Apple Music library, and the catalog play failed (${catalog.error}). Try the spotify tool (action='play', query='...') instead, or use os_screenshot + os_click to play it visually in whichever music app is open.`,
                         });
                     }
-                    const [track, artist] = result.split("|");
-                    return JSON.stringify({ success: true, action: "search_play", track, artist });
+                    if (result.startsWith("NOT_STARTED|")) {
+                        return JSON.stringify({
+                            success: false,
+                            error: `Asked Music to play the playlist "${result.slice(12)}" but it did not start.`,
+                        });
+                    }
+                    const [track, artist, playlist] = result.split("|");
+                    return JSON.stringify({ success: true, action: "search_play", track, artist, playlist });
                 }
 
                 default:
