@@ -130,6 +130,7 @@ import {
 } from "./tool-router-analytics.js";
 import { autoSaveSession, getBrowserContext, trackBrowserStep } from "./tools/browser-memory.js";
 import { clearCache, executeTool, resetRateLimits, withTurnSignal } from "./tools/index.js";
+import { withSendLedger } from "./tools/send-ledger.js";
 
 // ── Music fast-path helpers ──────────────────────
 // Short-circuits the Sonnet orchestrator + heavy memory briefing when the LLM
@@ -1197,9 +1198,13 @@ export async function runAgent(
         const nudges = new Set<object>();
         try {
             // Outermost turn ending = Bhai lets go of the screen (glow fades).
-            res = await runWithTurnNudges(nudges, () =>
-                mod.runWithCallerContext({ isOwner: callerIsOwner }, () => trackCursorTurn(fn)),
-            );
+            const turn = () =>
+                runWithTurnNudges(nudges, () =>
+                    mod.runWithCallerContext({ isOwner: callerIsOwner }, () => trackCursorTurn(fn)),
+                );
+            // Turns share one send ledger (send-ledger.ts); an autonomous run gets its own,
+            // so a recurring cron job may send the same text on its next tick.
+            res = await (channelContext?.autonomous ? withSendLedger(turn) : turn());
         } finally {
             // Read after the turn: pruning may have swapped the history array.
             stripTurnNudges(historyFork ?? conversationHistory, nudges);

@@ -198,6 +198,7 @@ import { repoMapTool } from "./repo-map.js";
 import { cancelTask, listTasks, scheduleTask, setReminder } from "./scheduled.js";
 import { validateToolInput } from "./schema-validator.js";
 import { sendFileTool } from "./send-file.js";
+import { duplicateSend, holdSend, RESEND_PARAM, SEND_TOOLS, sendClaim } from "./send-ledger.js";
 import { shellExec } from "./shell.js";
 import { shellCheckProcess, shellExecBackground, shellKillProcess, shellWaitProcess } from "./shell-monitor.js";
 import { socialPost } from "./social-post.js";
@@ -646,6 +647,12 @@ try {
 
 // ── Exports ───────────────────────────────────
 
+// The send tools take resend: true when the user explicitly asks to send the same thing again.
+for (const n of SEND_TOOLS) {
+    const props = registry.get(n)?.schema.function.parameters?.properties as Record<string, unknown> | undefined;
+    if (props) props.resend = RESEND_PARAM;
+}
+
 /**
  * Whether a tool should be OFFERED to the agent right now. The Baileys WhatsApp
  * channel (whatsapp_send/_sticker/_group_info) only works when connected
@@ -794,6 +801,28 @@ const STOPPABLE_TOOLS = new Set(["site_task"]);
 export async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
     const startTime = Date.now();
     const timeout = getToolTimeout(name);
+
+    // Idempotent sends (send-ledger.ts): a retry never delivers the same message to the
+    // same recipient twice within 10 minutes, unless the call says resend: true (the user
+    // asked to send it again). Refused here, before any consent prompt, and checked
+    // again as the send starts, which catches a parallel twin.
+    const { resend, ...withoutResend } = input;
+    const send = sendClaim(name, withoutResend);
+    if (send) {
+        input = withoutResend;
+        const dup = duplicateSend(send, resend === true);
+        if (dup) {
+            auditLog({
+                tool: name,
+                args: input,
+                success: false,
+                cached: false,
+                durationMs: 0,
+                error: "duplicate_send",
+            });
+            return dup;
+        }
+    }
 
     // Inside a swarm run, external side effects need the owner's OK for the
     // step (agents/swarm-context.ts); the gate also stands in for the per-call
@@ -961,7 +990,11 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         // An allowed side effect runs outside the swarm's stores: background work it
         // starts (a long task's phases) must not inherit the step's grant.
         const run = () => tool.handler(effectiveInput);
-        let result = await executeWithTimeout(swarm === "allow" ? outsideSwarm(run) : run(), timeout, name);
+        const dup = send && duplicateSend(send, resend === true);
+        if (dup) return dup;
+        const pending = swarm === "allow" ? outsideSwarm(run) : run();
+        if (send) holdSend(send, pending);
+        let result = await executeWithTimeout(pending, timeout, name);
         // CAPTCHAs never reach the agent: a check this step left on the page goes to the
         // CAPTCHA pipeline (solvers, then the owner) while this call waits, outside the
         // tool's own timeout; Stop still ends it.

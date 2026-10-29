@@ -22,6 +22,7 @@ const { withSwarmRun, withSwarmStep, swarmConsentKey, currentSwarmRun, currentSw
 );
 const { getRegistryRef } = await import("./create-tool.js");
 const { _resetConsent } = await import("../security/consent.js");
+const { _resetSendLedger } = await import("./send-ledger.js");
 type Run = import("../agents/swarm-context.js").SwarmRunContext;
 const newRun = (over: Partial<Run> = {}): Run => ({
     consentKey: swarmConsentKey("t"),
@@ -36,6 +37,7 @@ const inStep = <T>(run: Run, approved: boolean, fn: () => Promise<T>) =>
 beforeEach(() => {
     calls.length = 0;
     _resetConsent();
+    _resetSendLedger();
 });
 
 describe("executeTool swarm gate", () => {
