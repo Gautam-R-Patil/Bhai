@@ -322,6 +322,7 @@ desktop/hostinger-upload/
 !src/memory/session-continuity.test.ts
 !src/memory/__tests__/forget.test.ts
 !src/memory/__tests__/supersede.test.ts
+!src/memory/__tests__/pin.test.ts
 !src/memory/episodic.test.ts
 !src/memory/classifier.test.ts
 !src/memory/value-gate.test.ts

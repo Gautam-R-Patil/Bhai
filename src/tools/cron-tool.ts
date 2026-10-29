@@ -77,10 +77,16 @@ export function noteShownMemories(ids: number[]): void {
  */
 export function claimSupersede(id: number): boolean {
     const ctx = _callerStorage.getStore();
-    if (!ctx || !isOwnerCaller() || !isMainLoopCall("memory_store")) return false;
-    if (ctx.superseded || !ctx.shownMemories?.has(id)) return false;
+    if (!ctx || !canPinMemory(id) || ctx.superseded) return false;
     ctx.superseded = true;
     return true;
+}
+
+/** The owner's main-loop memory_store may pin a new row (no id) or memory `id` shown this turn. */
+export function canPinMemory(id?: number): boolean {
+    const ctx = _callerStorage.getStore();
+    if (!ctx || !isOwnerCaller() || !isMainLoopCall("memory_store")) return false;
+    return id === undefined || ctx.shownMemories?.has(id) === true;
 }
 
 /** Legacy setter preserved for callers that can't wrap — always overwrites

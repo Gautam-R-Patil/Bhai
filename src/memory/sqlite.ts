@@ -1360,7 +1360,8 @@ async function _smartWriteDecision(
                     const rows = rawDb
                         .prepare(
                             `SELECT id, content, access_count, importance FROM memories
-             WHERE id IN (${placeholders}) AND decay_score > 0.2 AND consolidated_into IS NULL`,
+             WHERE id IN (${placeholders}) AND decay_score > 0.2 AND consolidated_into IS NULL
+               AND COALESCE(pinned, 0) = 0`,
                         )
                         .all(...ids) as Array<{
                         id: number;
@@ -2319,23 +2320,35 @@ export async function recall(
     return records;
 }
 
+/** Pinned memories ride along with the core list, newest first, up to this many. */
+export const PINNED_CORE_CAP = 10;
+
 export function getCoreMemory(limit = 10): MemoryRecord[] {
     if (!db) return [];
 
     // Skip archived/consolidated originals, smart-write "deleted" (decay 0) rows,
     // session/task-scoped rows and audit/JSON blobs — this is injected every turn.
+    const live = `consolidated_into IS NULL AND scope = 'global' AND ${recallableSql()}
+       AND category != 'session_summary'`; // already injected as ACTIVE SESSION / PAST CONVERSATIONS
+    const cols = "id, content, category, tags, importance, created_at, access_count";
+    // Pinned rows keep their own slots, so a busy week can't push "it matters" out.
+    const pinned = db.exec(
+        `SELECT ${cols} FROM memories WHERE pinned = 1 AND ${live} ORDER BY created_at DESC, id DESC LIMIT ?`,
+        [Math.min(PINNED_CORE_CAP, limit)],
+    );
     const results = db.exec(
-        `SELECT id, content, category, tags, importance, created_at, access_count
+        `SELECT ${cols}
      FROM memories
-     WHERE decay_score > 0.2 AND consolidated_into IS NULL AND scope = 'global' AND ${recallableSql()}
-       AND category != 'session_summary' -- already injected as ACTIVE SESSION / PAST CONVERSATIONS
+     WHERE decay_score > 0.2 AND COALESCE(pinned, 0) = 0 AND ${live}
      ORDER BY importance DESC, access_count DESC, created_at DESC
      LIMIT ?`,
         [limit],
     );
 
-    if (results.length === 0) return [];
-    return results[0].values.map(rowToMemory);
+    return [
+        ...(pinned[0]?.values ?? []).map((r) => ({ ...rowToMemory(r), pinned: true })),
+        ...(results[0]?.values ?? []).map(rowToMemory),
+    ];
 }
 
 // ── Scope Chain Builder ──────────────────────────────────
@@ -2377,6 +2390,10 @@ export function supersedeMemory(oldId: number, newId: number): boolean {
         )
         .run(newId, oldId);
     if (res.changes === 0) return false;
+    // A correction of a pinned fact is still the fact the owner said matters.
+    rawDb
+        .prepare("UPDATE memories SET pinned = 1 WHERE id = ? AND (SELECT pinned FROM memories WHERE id = ?) = 1")
+        .run(newId, oldId);
     rawDb.prepare("DELETE FROM memory_embeddings WHERE memory_id = ?").run(oldId);
     try {
         getHNSWIndex().removeVector(oldId);
@@ -2458,9 +2475,15 @@ export function setImportance(id: number, importance: number): boolean {
 }
 
 export function setMemoryPinned(id: number, pinned: boolean): boolean {
-    if (!db) throw new Error("Memory DB not initialized");
-    db.run("UPDATE memories SET pinned = ? WHERE id = ?", [pinned ? 1 : 0, id]);
-    return true;
+    if (!rawDb) throw new Error("Memory DB not initialized");
+    // Pinning revives a faded row too: it matters, so recall should find it again.
+    const res = rawDb
+        .prepare(
+            `UPDATE memories SET pinned = ?${pinned ? ", decay_score = MAX(decay_score, 1.0)" : ""} WHERE id = ? AND consolidated_into IS NULL`,
+        )
+        .run(pinned ? 1 : 0, id);
+    getTemporalCache().clearCache();
+    return res.changes > 0;
 }
 
 export function forgetMemoryWithReason(id: number, reason: string, source: "user" | "system" = "user"): boolean {
@@ -2576,6 +2599,7 @@ export interface MemoryRecord {
     importance: number;
     created_at: string;
     access_count: number;
+    pinned?: boolean;
 }
 
 // SQLite datetime('now') is UTC without a zone marker; new Date() alone reads it as local time.

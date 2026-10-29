@@ -2453,9 +2453,8 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 const coreMems = getCoreMemory(getDimensionValue<number>("memory.coreMemory.k") ?? 10);
                 if (coreMems && coreMems.length > 0) {
                     noteShownMemories(coreMems.map((m) => m.id));
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     parts.push(
-                        `🧠 CORE MEMORY (Always remember these facts about the user):\n${coreMems.map((m: any) => `- (#${m.id} · ${m.category} · ${ageLabel(m.created_at)}) ${m.content}`).join("\n")}`,
+                        `🧠 CORE MEMORY (Always remember these facts about the user):\n${coreMems.map((m) => `- (#${m.id} · ${m.category} · ${ageLabel(m.created_at)}${m.pinned ? " · pinned" : ""}) ${m.content}`).join("\n")}`,
                     );
                 }
 

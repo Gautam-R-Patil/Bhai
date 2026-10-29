@@ -10,9 +10,10 @@ import {
     getIdentityProfile,
     updateIdentityProfile,
 } from "../memory/identity.js";
-import { getMemoryStats, listMemories, recall, remember, supersedeMemory } from "../memory/sqlite.js";
+import { getMemoryStats, listMemories, recall, remember, setMemoryPinned, supersedeMemory } from "../memory/sqlite.js";
 import { exportTraitsSnapshot, getAllTraits, reinforceTrait } from "../memory/traits.js";
 import {
+    canPinMemory,
     claimSupersede,
     isMainLoopCall,
     isOwnerCaller,
@@ -39,7 +40,7 @@ export const memoryStore: ToolDefinition = {
         function: {
             name: "memory_store",
             description:
-                'Store a fact, preference, or important information in persistent memory. Use this when the user shares something worth remembering. When the owner corrects or updates something you already know ("actually it\'s Tuesday", "I moved to Pune", "ab main X nahi karta"), store the corrected fact as a full sentence and pass `supersedes` with the old memory\'s id (the #id in recalled memory lines, or from memory_search) so the old one stops being recalled instead of both standing.',
+                'Store a fact, preference, or important information in persistent memory. Use this when the user shares something worth remembering. When the owner corrects or updates something you already know ("actually it\'s Tuesday", "I moved to Pune", "ab main X nahi karta"), store the corrected fact as a full sentence and pass `supersedes` with the old memory\'s id (the #id in recalled memory lines, or from memory_search) so the old one stops being recalled instead of both standing. When the owner says something matters ("remember this, it matters", "never forget this", "yeh yaad rakhna"), pass `pin: true`: pinned memories always stay in core memory and never fade. To pin or unpin a memory already shown (#id), pass `pin_id` with `pin` true/false and its text as content; nothing new is stored.',
             parameters: {
                 type: "object",
                 properties: {
@@ -55,12 +56,27 @@ export const memoryStore: ToolDefinition = {
                         description:
                             "Id of the memory this corrects (e.g. 42 for #42); only on the owner's corrections",
                     },
+                    pin: {
+                        type: "boolean",
+                        description: "true when the owner says it matters; false with pin_id to unpin",
+                    },
+                    pin_id: { type: "number", description: "Id of an existing memory to pin/unpin instead of storing" },
                 },
                 required: ["content"],
             },
         },
     },
     async handler(input) {
+        const pinId = input.pin_id == null ? 0 : Number(String(input.pin_id).replace(/^#/, ""));
+        if (pinId > 0) {
+            // Owner only, on a memory shown this turn: contacts never pin or unpin the owner's memories.
+            const pin = input.pin !== false;
+            if (!canPinMemory(pinId) || !setMemoryPinned(pinId, pin)) {
+                return JSON.stringify({ success: false, error: `Can't ${pin ? "pin" : "unpin"} #${pinId}.` });
+            }
+            return JSON.stringify({ success: true, id: pinId, pinned: pin });
+        }
+        const pin = input.pin === true && canPinMemory();
         const imp = (input.importance as number) || 5;
         const oldId = input.supersedes == null ? 0 : Number(String(input.supersedes).replace(/^#/, ""));
         // Owner only, and only when their message says something changed and the id was shown
@@ -70,7 +86,7 @@ export const memoryStore: ToolDefinition = {
             oldId > 0 && Number.isInteger(oldId) && hasCorrectionCue(ownerTurnMessage()) && claimSupersede(oldId);
         // Use smart write (LLM deduplication) for important memories (>= 7); not on a supersede,
         // which may merge or drop the new row the old one now points at.
-        const useSmartWrite = imp >= 7 && !supersede;
+        const useSmartWrite = imp >= 7 && !supersede && !pin;
         const id = await remember(
             input.content as string,
             (input.category as string) || "general",
@@ -82,11 +98,12 @@ export const memoryStore: ToolDefinition = {
         if (id === null) {
             return JSON.stringify({ success: false, reason: "rejected_by_value_gate" });
         }
+        if (pin) setMemoryPinned(id, true);
         const retired = supersede && id !== oldId && supersedeMemory(oldId, id);
         // Smart write may merge or drop this row moments later, so its id can't back an undo.
         if (!useSmartWrite) noteStoredMemory(id, retired);
         if (input.supersedes == null || id === oldId)
-            return JSON.stringify({ success: true, id, message: "Memory stored." });
+            return JSON.stringify({ success: true, id, message: pin ? "Memory stored and pinned." : "Memory stored." });
         if (retired) {
             return JSON.stringify({
                 success: true,
