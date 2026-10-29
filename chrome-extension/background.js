@@ -57,13 +57,13 @@ function pinAgentTab(id) {
 async function agentTab() {
   if (agentTabId !== null && Date.now() - agentTabAt < AGENT_TAB_IDLE_MS) {
     const t = await chrome.tabs.get(agentTabId).catch(() => null);
-    if (t && t.id) {
+    if (t?.id) {
       agentTabAt = Date.now();
       return t;
     }
   }
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  pinAgentTab(tab && tab.id);
+  pinAgentTab(tab?.id);
   return tab;
 }
 // (agent-tab:end)
@@ -1579,7 +1579,7 @@ async function getCookies(payload) {
 async function navigate(payload) {
   if (payload.newTab) {
     const created = await chrome.tabs.create({ url: payload.url, active: true });
-    pinAgentTab(created && created.id);
+    pinAgentTab(created?.id);
   } else {
     const tab = await agentTab();
     if (!tab || !tab.id) throw new Error("No active tab");
@@ -1605,7 +1605,7 @@ async function captureScreenshot(payload) {
   const tab = await agentTab();
   // Chrome captures only a window's visible tab: if the owner switched tabs in Bhai's
   // window, bring Bhai's tab back to front (another window is left alone).
-  if (tab && tab.id && !tab.active) {
+  if (tab?.id && !tab.active) {
     await chrome.tabs.update(tab.id, { active: true }).catch(() => {});
     await new Promise((r) => setTimeout(r, 150));
   }
