@@ -2,7 +2,7 @@
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { describe, expect, it } from "vitest";
-import { antiGivingUpFailures, finalReplyText, planToolsBlock, toolFailed } from "./agent.js";
+import { antiGivingUpFailures, finalReplyText, isDeferrable, planToolsBlock, toolFailed } from "./agent.js";
 
 const msg = (content: string): ChatCompletionMessageParam => ({ role: "user", content });
 
@@ -11,6 +11,17 @@ describe("toolFailed", () => {
         expect(toolFailed({ isError: false })).toBe(false);
         expect(toolFailed({ isError: true })).toBe(true);
         expect(toolFailed({ isError: false, reportedFailure: true })).toBe(true);
+    });
+});
+
+describe("isDeferrable", () => {
+    const call = (name: string, args: object) => ({ function: { name, arguments: JSON.stringify(args) } });
+    it("runs pins and supersedes in the foreground so a refusal reaches the model", () => {
+        expect(isDeferrable(call("memory_store", { content: "x" }))).toBe(true);
+        expect(isDeferrable(call("memory_store", { content: "x", pin_id: 42 }))).toBe(false);
+        expect(isDeferrable(call("memory_store", { content: "x", supersedes: 7 }))).toBe(false);
+        expect(isDeferrable(call("memory_store", { content: "x", pin: true }))).toBe(false);
+        expect(isDeferrable(call("memory_search", { query: "x" }))).toBe(false);
     });
 });
 

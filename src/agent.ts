@@ -424,6 +424,17 @@ const HARD_DECISION_TOOLS = new Set(["web_search", "shell_exec", "memory_store"]
 /** Tools whose results don't affect conversation flow — executed in background, synthetic success returned immediately */
 const DEFERRABLE_TOOLS = new Set(["memory_store"]);
 
+/** A pin or supersede can be refused, so the model must see the real result rather than "Saved.". */
+export function isDeferrable(tc: { function: { name: string; arguments: string } }): boolean {
+    if (!DEFERRABLE_TOOLS.has(tc.function.name)) return false;
+    try {
+        const a = JSON.parse(tc.function.arguments || "{}");
+        return a.pin_id == null && a.supersedes == null && a.pin !== true;
+    } catch {
+        return true;
+    }
+}
+
 /** Strip internal debug tags and LLM artifacts from responses before returning to channels */
 function sanitizeAgentResponse(text: string): string {
     return text
@@ -1215,7 +1226,7 @@ async function executeToolCallsBatch(
         const fnName = tc.function.name;
         if (isBrowserTool(fnName)) {
             browserCalls.push(tc);
-        } else if (DEFERRABLE_TOOLS.has(fnName)) {
+        } else if (isDeferrable(tc)) {
             deferrableCalls.push(tc);
         } else {
             nonBrowserCalls.push(tc);
