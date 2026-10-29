@@ -367,8 +367,14 @@ export const browserExtract: ToolDefinition = {
                 /* javascript-obfuscator:disable */ ({ sel, at }: { sel: string; at: string }) =>
                     Array.from(document.querySelectorAll(sel))
                         .slice(0, 50)
+                        // innerText is what is rendered: textContent also carried <script>/<style>
+                        // source and hidden text (instructions planted for the model). Each value
+                        // is capped: 50 × a whole <body> was megabytes.
                         .map((el) =>
-                            at === "textContent" ? (el as HTMLElement).textContent?.trim() : el.getAttribute(at),
+                            (at === "textContent"
+                                ? ((el as HTMLElement).innerText ?? el.textContent)?.trim()
+                                : el.getAttribute(at)
+                            )?.slice(0, 2000),
                         ),
                 /* javascript-obfuscator:enable */ { sel: selector, at: attr },
             );

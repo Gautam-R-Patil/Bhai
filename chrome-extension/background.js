@@ -932,7 +932,22 @@ function scanPageElements() {
       return a.x - b.x;
     });
 
-    return merged.slice(0, 150);
+    // Coordinates are this frame's own; clicks use the tab's. Add each enclosing frame's
+    // offset; a frame inside another origin can't see its offset, and its elements would
+    // be clicked somewhere else, so it reports none.
+    let dx = 0, dy = 0;
+    try {
+      for (let w = window; w !== w.top; w = w.parent) {
+        const fe = w.frameElement;
+        if (!fe) return [];
+        const r = fe.getBoundingClientRect();
+        dx += r.left + (fe.clientLeft || 0);
+        dy += r.top + (fe.clientTop || 0);
+      }
+    } catch {
+      return [];
+    }
+    return merged.slice(0, 150).map((el) => ({ ...el, x: Math.round(el.x + dx), y: Math.round(el.y + dy) }));
 }
 
 // ── Shared visual feedback injected into real tabs ──────────────────────────
