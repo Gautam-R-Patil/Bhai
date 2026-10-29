@@ -4,6 +4,7 @@
 
 import { setCredential } from "../credential-manager.js";
 import { navigateToUrl } from "./browser-helper.js";
+import { newOAuthState } from "../../security/oauth-state.js";
 import { startOAuthCallback } from "./oauth-callback.js";
 import { deliverToActiveChannel } from "../../tools/channel-send.js";
 
@@ -47,13 +48,14 @@ export async function completeTikTokOAuth(
   clientSecret: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
+    const state = newOAuthState();
     const authUrl =
       `https://www.tiktok.com/v2/auth/authorize/` +
       `?client_key=${encodeURIComponent(clientKey)}` +
       `&response_type=code` +
       `&scope=user.info.basic,video.publish,video.upload` +
       `&redirect_uri=${encodeURIComponent(TIKTOK_REDIRECT_URI)}` +
-      `&state=atlas-${brandId}`;
+      `&state=${state}`;
 
     await deliverToActiveChannel(
       "Opening TikTok authorization page — please click **Authorize** when prompted.",
@@ -61,7 +63,7 @@ export async function completeTikTokOAuth(
     );
 
     const [callbackResult] = await Promise.all([
-      startOAuthCallback(TIKTOK_CALLBACK_PORT),
+      startOAuthCallback(TIKTOK_CALLBACK_PORT, state),
       navigateToUrl(authUrl),
     ]);
 
