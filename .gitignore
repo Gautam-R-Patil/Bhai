@@ -216,6 +216,7 @@ desktop/hostinger-upload/
 !src/memory/compression-template.test.ts
 !src/memory/corpus-persistence.test.ts
 !src/memory/compression-persist.test.ts
+!src/config/system-prompts.test.ts
 !src/config/paths.test.ts
 !src/tools/coding/checkpoint-manager.test.ts
 !src/language.test.ts

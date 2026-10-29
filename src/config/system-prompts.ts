@@ -23,6 +23,12 @@ interface CachedPrompt {
 }
 
 const cache = new Map<string, CachedPrompt>();
+// Prompts change rarely (only on a re-seed), but a long-running session should
+// still pick up a re-seed without a full restart. Serve from cache for this
+// long, then re-fetch once — and if that re-fetch fails, keep the stale copy
+// rather than dropping to "" (losing the prompt mid-session is worse than a
+// slightly old one).
+const PROMPT_TTL_MS = 60 * 60_000;
 // In-flight fetches are coalesced so parallel callers share a single network
 // roundtrip. Without this, a cold startup that fetches identity + rules +
 // rules-mac + coding + spec in parallel can stampede the endpoint and race
@@ -47,7 +53,9 @@ async function refreshAuthOnce(): Promise<string | null> {
  */
 export async function fetchSystemPrompt(slug: string): Promise<string> {
     const cached = cache.get(slug);
-    if (cached) return cached.content;
+    if (cached && Date.now() - cached.fetchedAt < PROMPT_TTL_MS) return cached.content;
+    // Stale (or absent): re-fetch, but fall back to the stale copy on any failure.
+    const stale = cached?.content ?? "";
 
     const pending = inflight.get(slug);
     if (pending) return pending;
@@ -56,7 +64,7 @@ export async function fetchSystemPrompt(slug: string): Promise<string> {
         try {
             const convexUrl = getConvexSiteUrl();
             let token = await getSessionToken();
-            if (!token) return "";
+            if (!token) return stale;
 
             const url = `${convexUrl}/api/system/prompt?slug=${encodeURIComponent(slug)}`;
             let response = await encryptedFetch(url, {
@@ -66,23 +74,23 @@ export async function fetchSystemPrompt(slug: string): Promise<string> {
 
             if (response.status === 401) {
                 token = await refreshAuthOnce();
-                if (!token) return "";
+                if (!token) return stale;
                 response = await encryptedFetch(url, {
                     method: "GET",
                     headers: { Authorization: `Bearer ${token}` },
                 });
             }
 
-            if (!response.ok) return "";
+            if (!response.ok) return stale;
 
             const body = (await response.json()) as { slug: string; content: string; version: number };
-            if (!body?.content) return "";
+            if (!body?.content) return stale;
 
             cache.set(slug, { content: body.content, version: body.version, fetchedAt: Date.now() });
             return body.content;
         } catch (err) {
             console.warn(`[system-prompts] Failed to fetch ${slug}:`, (err as Error).message);
-            return "";
+            return stale;
         } finally {
             inflight.delete(slug);
         }
