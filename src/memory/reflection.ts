@@ -32,7 +32,14 @@ import { updateRelationshipAfterSession } from "./relationship.js";
 import { findDuplicates, mergeDuplicates, reorganizeMemories, synapticPrune } from "./self-evolving.js";
 import { type EmotionalTone, updateSelfStateFromSession } from "./self-state.js";
 import { getShortSummary } from "./session.js";
-import { dbTimeMs, indexConversationMessages, listMemories, remember } from "./sqlite.js";
+import {
+    compactMemoryDB,
+    dbTimeMs,
+    indexConversationMessages,
+    listMemories,
+    remember,
+    withoutMedia,
+} from "./sqlite.js";
 import { type LearningCategory, upsertLearning } from "./task-learnings.js";
 import { getTemporalCache } from "./temporal-cache.js";
 import { contradictTrait, decayTraits, getAllTraits, recordSessionCoOccurrences, reinforceTrait } from "./traits.js";
@@ -44,26 +51,6 @@ const MAX_TRAIT_SIGNALS = 5;
 const MAX_RETRIES = 1;
 const HMAC_SECRET = "atlas-sacdr-audit-v1"; // Derived key for signing
 const CONSOLIDATION_EVERY_N_REFLECTIONS = 5; // Run lightweight consolidation every 5th reflection
-
-/**
- * Images and audio are not stored: screenshots now reach history as real
- * images, and every reflection would otherwise write full captures of the
- * user's screen into memory.db, indefinitely.
- */
-function withoutMedia<T extends { content?: unknown }>(messages: T[]): T[] {
-    return messages.map((m) =>
-        Array.isArray(m.content)
-            ? {
-                  ...m,
-                  content: (m.content as Array<{ type?: string }>).map((p) =>
-                      p?.type === "image_url" || p?.type === "input_audio"
-                          ? { type: "text", text: "[image omitted]" }
-                          : p,
-                  ),
-              }
-            : m,
-    );
-}
 
 // Default 0 = persist FULL conversation history into conversations.messages_json.
 // Emergency rollback to the legacy cap: set ATLAS_CORPUS_MAX_MESSAGES="20".
@@ -229,7 +216,11 @@ interface ExtractionResult {
  * Runs asynchronously after a session ends or after N turns.
  * Non-blocking — errors logged but never thrown to user.
  */
-export async function runReflection(llm: LLMClient, conversationHistory: ChatCompletionMessageParam[]): Promise<void> {
+export async function runReflection(
+    llm: LLMClient,
+    conversationHistory: ChatCompletionMessageParam[],
+    sessionId: string = generateUUID(),
+): Promise<void> {
     console.log("[MEMORY][REFLECTION] Starting post-session reflection...");
 
     try {
@@ -257,21 +248,28 @@ export async function runReflection(llm: LLMClient, conversationHistory: ChatCom
             try {
                 const db = getKnowledgeGraphDB();
                 if (db) {
-                    const sessionId = generateUUID();
                     const messagesToStore = withoutMedia(
                         selectCorpusMessages(conversationHistory, CORPUS_MAX_MESSAGES),
                     );
                     const messagesJson = JSON.stringify(messagesToStore);
-                    db.run(`INSERT INTO conversations (session_id, messages_json, summary) VALUES (?, ?, ?)`, [
+                    // One row per session: periodic reflections rewrite it with the grown history.
+                    let convId = db.exec("SELECT id FROM conversations WHERE session_id = ? ORDER BY id DESC LIMIT 1", [
                         sessionId,
-                        messagesJson,
-                        summary.summary,
-                    ]);
+                    ])[0]?.values[0]?.[0] as number | undefined;
+                    if (convId) {
+                        db.run(
+                            "UPDATE conversations SET messages_json = ?, summary = ?, updated_at = datetime('now') WHERE id = ?",
+                            [messagesJson, summary.summary, convId],
+                        );
+                    } else {
+                        db.run(`INSERT INTO conversations (session_id, messages_json, summary) VALUES (?, ?, ?)`, [
+                            sessionId,
+                            messagesJson,
+                            summary.summary,
+                        ]);
+                        convId = db.exec("SELECT last_insert_rowid()")[0]?.values[0]?.[0] as number;
+                    }
                     console.log(`[MEMORY][REFLECTION] Conversation saved (session ${sessionId.substring(0, 8)})`);
-
-                    // ── Async: embed conversation summary for vector search ──
-                    const convIdResult = db.exec("SELECT last_insert_rowid()");
-                    const convId = convIdResult[0]?.values[0]?.[0] as number;
 
                     // ── Incremental write-side sync: decompose into per-message
                     // rows so session_search's FTS index picks up this session
@@ -1165,7 +1163,7 @@ function detectTraitInstability(
 
 // ── Daily Decay + Dream Replay (Scheduler) ────
 
-export function runDailyDecay(): void {
+export function runDailyDecay(nightly = false): void {
     console.log("[MEMORY][DECAY] Running daily decay...");
     const traitsPruned = decayTraits();
     const emotionsPruned = decayEmotions();
@@ -1200,4 +1198,5 @@ export function runDailyDecay(): void {
         console.error("[MEMORY][DECAY] Memory decay failed (non-fatal):", err);
         console.log(`[MEMORY][DECAY] Daily decay partial: ${traitsPruned} traits, ${emotionsPruned} emotions pruned`);
     }
+    compactMemoryDB(nightly);
 }

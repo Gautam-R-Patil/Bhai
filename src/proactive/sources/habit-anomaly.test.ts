@@ -9,6 +9,7 @@ const mockExec = vi.fn((_sql: string, _params: unknown[]) => [{
 
 vi.mock("../../memory/sqlite.js", () => ({
     getMemoryDB: vi.fn(() => ({ exec: mockExec })),
+    dbTimeMs: (t: string) => new Date(t).getTime(),
 }));
 
 vi.mock("../../../native/index.js", () => ({

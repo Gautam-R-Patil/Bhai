@@ -255,6 +255,8 @@ export async function consolidateMemories(
         beginTransaction();
         try {
             for (const member of cluster.members) {
+                // The crystal matched this member exactly, so remember() returned it: keep it live.
+                if (member.id === crystalId) continue;
                 db.run(
                     "UPDATE memories SET consolidated_into = ?, tier = 'archived' WHERE id = ?",
                     [crystalId, member.id]

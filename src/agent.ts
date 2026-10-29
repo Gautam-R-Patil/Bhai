@@ -87,7 +87,7 @@ import { getProjectMemorySnippet } from "./memory/project-memory.js";
 import { runReflection } from "./memory/reflection.js";
 import { getRelationshipSnippet } from "./memory/relationship.js";
 import { getSelfStateSnippet } from "./memory/self-state.js";
-import { appendTurn, getSessionSummary, shouldReflect, touchSession } from "./memory/session.js";
+import { appendTurn, getSessionState, getSessionSummary, shouldReflect, touchSession } from "./memory/session.js";
 // ── Dynamic Context Injections ────────────────
 import { ageLabel, getCoreMemory, parseDateWindow, recall, recallConversation } from "./memory/sqlite.js";
 import { getStrategyContext, saveStrategy } from "./memory/strategy-library.js";
@@ -1582,7 +1582,9 @@ async function _runAgentBody(
     const maybeReflect = () => {
         if (!isForked && shouldReflect()) {
             console.log(`  🔄 Triggering async reflection (periodic)`);
-            runReflection(llm, [...workingHistory]).catch((err) => console.error("Reflection error (non-fatal):", err));
+            runReflection(llm, [...workingHistory], getSessionState()?.session_id).catch((err) =>
+                console.error("Reflection error (non-fatal):", err),
+            );
         }
     };
 
@@ -2139,7 +2141,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                     // Give reflection a moment so its DB writes usually land before
                     // memory retrieval, but never hold the user's first message
                     // after a break for its 2-4 LLM calls; it finishes in the background.
-                    const reflection = runReflection(llm, preSessionHistory).catch((err) =>
+                    const reflection = runReflection(llm, preSessionHistory, expiredSession.session_id).catch((err) =>
                         console.error("[MEMORY][REFLECTION] Expired session reflection failed:", err),
                     );
                     await Promise.race([reflection, new Promise((r) => setTimeout(r, 1500))]);

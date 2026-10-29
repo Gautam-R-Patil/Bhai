@@ -847,10 +847,11 @@ export function initConversationSearchSchema(raw: BetterSqlite3.Database): void 
 }
 
 /**
- * Insert one conversation_messages row per non-empty text message of a single
- * conversation. Triggers populate the FTS5 mirrors. Idempotent via
- * UNIQUE(conversation_id, msg_index) + INSERT OR IGNORE. Used by reflection.ts
- * for immediate write-side indexing and by backfill for existing rows.
+ * Append each non-empty text message of a conversation as a conversation_messages
+ * row; triggers populate the FTS5 mirrors. Re-indexing a session's grown (or
+ * pruned) history only adds messages not already stored for that conversation,
+ * so positions shifting under pruning never drop or duplicate rows. Used by
+ * reflection.ts for immediate write-side indexing and by backfill.
  */
 export function indexConversationMessages(
     conversationId: number,
@@ -860,22 +861,107 @@ export function indexConversationMessages(
 ): number {
     if (!rawDb || !Array.isArray(messages)) return 0;
     const stmt = rawDb.prepare(
-        `INSERT OR IGNORE INTO conversation_messages
-         (conversation_id, session_id, msg_index, role, content, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO conversation_messages (conversation_id, session_id, msg_index, role, content, created_at)
+         SELECT @conv, @sid, (SELECT COALESCE(MAX(msg_index), -1) + 1 FROM conversation_messages WHERE conversation_id = @conv),
+                @role, @content, COALESCE(@created, datetime('now'))
+         WHERE NOT EXISTS (SELECT 1 FROM conversation_messages WHERE conversation_id = @conv AND role = @role AND content = @content)`,
     );
     let inserted = 0;
-    for (let i = 0; i < messages.length; i++) {
-        const text = extractMsgText(messages[i]);
-        if (!text) continue;
+    for (const m of messages) {
+        const content = extractMsgText(m);
+        if (!content) continue;
         try {
-            stmt.run(conversationId, sessionId, i, getMsgRole(messages[i]), text, createdAt ?? null);
-            inserted++;
+            inserted += stmt.run({
+                conv: conversationId,
+                sid: sessionId,
+                role: getMsgRole(m),
+                content,
+                created: createdAt ?? null,
+            }).changes;
         } catch {
             /* skip malformed row */
         }
     }
     return inserted;
+}
+
+/**
+ * Images and audio are not stored: screenshots now reach history as real
+ * images, and every reflection would otherwise write full captures of the
+ * user's screen into memory.db, indefinitely.
+ */
+export function withoutMedia<T extends { content?: unknown }>(messages: T[]): T[] {
+    return messages.map((m) =>
+        Array.isArray(m.content)
+            ? {
+                  ...m,
+                  content: (m.content as Array<{ type?: string }>).map((p) =>
+                      p?.type === "image_url" || p?.type === "input_audio"
+                          ? { type: "text", text: "[image omitted]" }
+                          : p,
+                  ),
+              }
+            : m,
+    );
+}
+
+/**
+ * Housekeeping after decay: strip media that older builds stored in
+ * conversations, drop transcripts past ATLAS_TRANSCRIPT_RETENTION_DAYS (unset =
+ * keep forever), refresh planner stats, and on the nightly pass VACUUM when over
+ * a quarter of the file is free pages.
+ */
+export function compactMemoryDB(nightly = false): void {
+    if (!rawDb) return;
+    const raw = rawDb;
+    try {
+        const media = raw
+            .prepare(
+                `SELECT id, messages_json FROM conversations
+                 WHERE messages_json LIKE '%"type":"image_url"%' OR messages_json LIKE '%"type":"input_audio"%'`,
+            )
+            .all() as Array<{ id: number; messages_json: string }>;
+        if (media.length > 0) {
+            const update = raw.prepare("UPDATE conversations SET messages_json = ? WHERE id = ?");
+            raw.transaction(() => {
+                for (const r of media) {
+                    try {
+                        update.run(JSON.stringify(withoutMedia(JSON.parse(r.messages_json))), r.id);
+                    } catch {
+                        /* unparseable row: leave it */
+                    }
+                }
+            })();
+            console.log(`[MEMORY][COMPACT] Stripped media from ${media.length} stored conversations`);
+        }
+
+        const days = Number.parseInt(process.env.ATLAS_TRANSCRIPT_RETENTION_DAYS ?? "", 10);
+        if (days > 0) {
+            const old = "SELECT id FROM conversations WHERE COALESCE(updated_at, created_at) < datetime('now', ?)";
+            const cutoff = `-${days} days`;
+            const removed = raw.transaction(() => {
+                // conversation_messages is absent with ATLAS_NO_SESSION_SEARCH.
+                if (raw.prepare("SELECT 1 FROM sqlite_master WHERE name = 'conversation_messages'").get())
+                    raw.prepare(`DELETE FROM conversation_messages WHERE conversation_id IN (${old})`).run(cutoff);
+                raw.prepare(`DELETE FROM conversation_embeddings WHERE conversation_id IN (${old})`).run(cutoff);
+                return raw.prepare(`DELETE FROM conversations WHERE id IN (${old})`).run(cutoff).changes;
+            })();
+            if (removed > 0) console.log(`[MEMORY][COMPACT] Removed ${removed} transcripts older than ${days} days`);
+        }
+
+        raw.pragma("optimize");
+
+        if (nightly) {
+            const pages = raw.pragma("page_count", { simple: true }) as number;
+            const free = raw.pragma("freelist_count", { simple: true }) as number;
+            if (pages > 0 && free > pages * 0.25) {
+                raw.exec("VACUUM");
+                console.log(`[MEMORY][COMPACT] Vacuumed (${free}/${pages} pages were free)`);
+            }
+        }
+    } catch (err) {
+        console.warn("[MEMORY][COMPACT] Failed (non-fatal):", (err as Error).message);
+    }
 }
 
 /**
@@ -1135,6 +1221,18 @@ export async function remember(
         if (gateDecision === "reject") {
             return null;
         }
+    }
+
+    // Same fact again: reinforce the stored row instead of adding a copy. Before
+    // smart write, whose NOOP/UPDATE path purges the id it is handed.
+    const dup = findExactMemory(content, validScope);
+    if (dup) {
+        db.run(
+            "UPDATE memories SET access_count = access_count + 1, accessed_at = datetime('now'), importance = MAX(importance, ?), decay_score = 1.0 WHERE id = ?",
+            [Math.min(importance, 10), dup],
+        );
+        getTemporalCache().clearCache();
+        return dup;
     }
 
     if (smartWrite && memoryLLM && isEmbeddingReady()) {
@@ -1456,6 +1554,18 @@ async function embedAndStore(memoryId: number, content: string): Promise<void> {
 }
 
 // ── Standalone FTS5 Keyword Search (BM25 ranked) ──────────────────
+
+export const normFact = (t: string) =>
+    t
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}]+/gu, " ")
+        .trim();
+
+/** Id of a stored memory in this scope with the same text, ignoring case and punctuation. */
+export function findExactMemory(content: string, scope = "global"): number | null {
+    const n = normFact(content);
+    return keywordSearch(content, 5, [scope]).find((m) => normFact(m.content) === n)?.id ?? null;
+}
 
 /**
  * FTS5 keyword search using BM25 ranking with porter stemming.

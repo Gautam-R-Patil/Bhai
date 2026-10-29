@@ -3,7 +3,7 @@
 // See LICENSE.md for details.
 
 import type { Database } from "./sqlite.js";
-import { beginTransaction, commitTransaction, rollbackTransaction } from "./sqlite.js";
+import { beginTransaction, commitTransaction, dbTimeMs, rollbackTransaction } from "./sqlite.js";
 
 // ── Types ─────────────────────────────────────
 
@@ -321,11 +321,11 @@ export function decayTraits(): number {
         for (const row of results[0].values) {
             const traitKey = row[0] as string;
             const confidence = row[1] as number;
-            const lastSeen = new Date(row[2] as string).getTime();
+            const lastSeen = dbTimeMs(row[2] as string);
             // Anchor = the later of last-seen / last-decay. Reinforcement bumps
             // last_seen_ts to now, so a just-reinforced trait has anchor == now
             // and doesn't decay until real idle time accrues.
-            const lastDecay = row[3] ? new Date(row[3] as string).getTime() : lastSeen;
+            const lastDecay = row[3] ? dbTimeMs(row[3] as string) : lastSeen;
             const d = computeTraitDecay(confidence, lastSeen, lastDecay, now);
 
             if (d.action === "prune") {
@@ -380,7 +380,8 @@ export function getTraitsForInjection(
 
     // Score each trait
     const scored = allTraits
-        .filter(t => t.confidence >= 0.3)
+        // An inferred trait needs a second sighting before it is injected.
+        .filter(t => t.confidence >= (t.explicit ? 0.3 : 0.5))
         .map(t => {
             const relevance = computeRelevance(queryTokens, t);
             const recencyWeight = computeRecencyWeight(t.last_seen_ts);
@@ -591,7 +592,7 @@ function computeRelevance(queryTokens: Set<string>, trait: BehavioralTrait): num
 }
 
 function computeRecencyWeight(lastSeenTs: string): number {
-    const daysAgo = (Date.now() - new Date(lastSeenTs).getTime()) / (1000 * 60 * 60 * 24);
+    const daysAgo = (Date.now() - dbTimeMs(lastSeenTs)) / (1000 * 60 * 60 * 24);
     // Exponential falloff but never below 0.5
     return Math.max(0.5, Math.exp(-0.05 * daysAgo));
 }

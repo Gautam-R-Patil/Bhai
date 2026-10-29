@@ -1049,12 +1049,13 @@ async function boot() {
 
         // First run at 3am, then decay every 6h
         setTimeout(() => {
-            runDailyDecay();
+            runDailyDecay(true);
             runDreamReplay(llm).catch((err) => console.error("[MEMORY][REPLAY] Dream replay failed:", err));
-            // Decay runs every 6 hours for cleaner memory
+            // Decay runs every 6 hours for cleaner memory; every 4th tick is the 3am pass.
+            let decayTick = 0;
             const _decayT = setInterval(
                 () => {
-                    runDailyDecay();
+                    runDailyDecay(++decayTick % 4 === 0);
                 },
                 6 * 60 * 60 * 1000,
             );
