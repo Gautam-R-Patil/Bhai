@@ -275,6 +275,19 @@ describe("findElementByLabel — app-name stripping can't pick the wrong element
         expect(findElementByLabel(els([["Install"], ["All Mail"]]), "All Mail", 0.8, "Mail")?.label).toBe("All Mail");
     });
 
+    it("'the AC button in Calculator' is All Clear, not the Calculator menu", () => {
+        // The live miss: the app's own menu-bar item won on the app name in the instruction.
+        expect(
+            findElementByLabel(
+                els([["Calculator"], ["All Clear"], ["7"]]),
+                "the AC button in Calculator",
+                0.8,
+                "Calculator",
+            )?.label,
+        ).toBe("All Clear");
+        expect(findElementByLabel(els([["Calculator"], ["All Clear"]]), "the 7 key", 0.8, "Calculator")).toBeNull();
+    });
+
     it("an instruction left with only stopwords still matches on its full words", () => {
         expect(
             findElementByLabel(els([["General"], ["Settings"]]), "Settings button", 0.8, "System Settings")?.label,

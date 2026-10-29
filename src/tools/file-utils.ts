@@ -356,7 +356,7 @@ export const fileMetadata: ToolDefinition = {
                     const escaped = comment.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
                     await runAS(`
 tell application "Finder"
-    set comment of (POSIX file "${filePath.replace(/"/g, '\\"')}" as alias) to "${escaped}"
+    set comment of (POSIX file "${filePath.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}" as alias) to "${escaped}"
 end tell`);
                     return JSON.stringify({ success: true, path: filePath, comment });
                 }
@@ -597,7 +597,7 @@ if ($item) { $item.InvokeVerb("delete") } else { Write-Error "Item not found" }
                     } else {
                         await runAS(`
 tell application "Finder"
-    move POSIX file "${filePath.replace(/"/g, '\\"')}" to trash
+    move POSIX file "${filePath.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}" to trash
 end tell`);
                     }
                     return JSON.stringify({ success: true, action: "trash", trashed: basename(filePath) });

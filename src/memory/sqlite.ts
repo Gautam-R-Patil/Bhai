@@ -1378,9 +1378,13 @@ async function _smartWriteDecision(
                         .prepare(
                             `SELECT id, content, access_count, importance FROM memories
              WHERE id IN (${placeholders}) AND decay_score > 0.2 AND consolidated_into IS NULL
-               AND COALESCE(pinned, 0) = 0`,
+               AND COALESCE(pinned, 0) = 0 AND category = ?
+               AND COALESCE(scope, 'global') = (SELECT COALESCE(scope, 'global') FROM memories WHERE id = ?)`,
                         )
-                        .all(...ids) as Array<{
+                        // Only same-category, same-scope, unpinned neighbours: the model's
+                        // UPDATE/DELETE verdict (on model-written content) must never reach
+                        // a pinned memory or another scope's.
+                        .all(...ids, category, newId) as Array<{
                         id: number;
                         content: string;
                         access_count: number;

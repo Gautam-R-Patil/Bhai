@@ -122,6 +122,11 @@ export function canPinMemory(id?: number): boolean {
     return id === undefined || ctx.shownMemories?.has(id) === true;
 }
 
+/** The current turn's caller: true owner, false guest/contact, undefined outside any turn (background work). */
+export function callerIsOwner(): boolean | undefined {
+    return _callerStorage.getStore()?.isOwner;
+}
+
 /** Legacy setter preserved for callers that can't wrap — always overwrites
  * nothing (ALS-scoped reads ignore it). Kept as a no-op so existing call
  * sites don't break while we roll the ALS wrapper out. */

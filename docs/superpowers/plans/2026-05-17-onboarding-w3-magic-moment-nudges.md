@@ -1,3 +1,5 @@
+> **Status: PARTLY IMPLEMENTED (unverified end to end).** Magic-moment UI exists in `desktop/components/magic-moment*.js`, `try-this.js`, `desktop/detection/running-apps.js` (tests in `desktop/tests/`, not beside the sources as this plan says). The Ready Hub is still the last of the three first-run screens. `src/proactive/boot.ts` and `src/proactive/sources/index.ts` named here do not exist (`src/proactive/sources/` is now a directory with `_shared/` and per-source modules; proactive is now `dispatch.ts`/`composer.ts`/kill-switches per CLAUDE.md). Treat the proactive-nudge wiring as superseded.
+
 # Onboarding Reimagined — Wave 3: Magic Moment (rich) + Adaptive Nudges — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

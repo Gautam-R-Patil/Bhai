@@ -183,8 +183,17 @@ async function searchWikimedia(query: string, count: number): Promise<StockImage
         const meta = imageInfo.extmetadata as Record<string, { value?: string }> | undefined;
         const license = meta?.License?.value || meta?.LicenseShortName?.value || "See Wikimedia terms";
         const artist = meta?.Artist?.value || undefined;
-        // Artist field frequently contains HTML — strip tags for a clean string
-        const artistClean = typeof artist === "string" ? artist.replace(/<[^>]+>/g, "").slice(0, 120) : undefined;
+        // Artist field frequently contains HTML — keep only the text between tags. Splitting on
+        // "<" means no "<" survives, so a nested "<scr<b>ipt>" cannot reassemble into a tag in a page credit
+        const artistClean =
+            typeof artist === "string"
+                ? artist
+                      .split("<")
+                      .map((part, i) => (i === 0 ? part : part.slice(part.indexOf(">") + 1)))
+                      .join("")
+                      .replace(/>/g, "")
+                      .slice(0, 120)
+                : undefined;
         out.push({
             url: fullUrl,
             thumb_url: (imageInfo.thumburl as string) || undefined,

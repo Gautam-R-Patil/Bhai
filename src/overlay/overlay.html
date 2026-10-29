@@ -2910,7 +2910,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           const progressPct = task.progress != null ? Math.round(task.progress) : null;
           const detail = task.phase || (progressPct != null ? `${progressPct}%` : 'Running...');
 
-          html += `<div class="task-item" role="listitem" aria-label="${task.name || 'Task'}: ${detail}">`;
+          html += `<div class="task-item" role="listitem" aria-label="${esc(task.name || 'Task')}: ${esc(detail)}">`;
           html += `  <span class="task-item-icon" aria-hidden="true">${iconChar}</span>`;
           html += `  <div class="task-item-body">`;
           html += `    <div class="task-item-name">${esc(task.name || 'Task ' + taskId)}</div>`;
@@ -2921,7 +2921,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
             html += `    </div>`;
           }
           html += `  </div>`;
-          html += `  <button class="task-cancel-btn" aria-label="Cancel task: ${esc(task.name || taskId)}" onclick="cancelTask('${esc(taskId)}')">Cancel</button>`;
+          html += `  <button class="task-cancel-btn" aria-label="Cancel task: ${esc(task.name || taskId)}" onclick="cancelTask(${jsArg(taskId)})">Cancel</button>`;
           html += `</div>`;
         }
         taskDrawerContent.innerHTML = html;
@@ -2954,6 +2954,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           const body = item.editedText || item.composedText || '';
           const evidence = Array.isArray(item.evidence) ? item.evidence : [];
           const safeId = esc(id);
+          const idArg = jsArg(id);
 
           html += `<div class="inbox-item" data-inbox-id="${safeId}" role="listitem" aria-label="Inbox item: ${esc(topic)}">`;
           html += `  <div class="inbox-item-topic">${esc(topic)}</div>`;
@@ -2966,14 +2967,14 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
             html += `  </div>`;
           }
           html += `  <div class="inbox-item-actions">`;
-          html += `    <button class="inbox-action-btn approve" onclick="inboxApprove('${safeId}')">Approve</button>`;
-          html += `    <button class="inbox-action-btn" onclick="inboxDefer('${safeId}')">Defer 3h</button>`;
-          html += `    <button class="inbox-action-btn reject" onclick="inboxSkip('${safeId}')">Skip</button>`;
-          html += `    <button class="inbox-action-btn" onclick="inboxToggleEdit('${safeId}')">Edit</button>`;
+          html += `    <button class="inbox-action-btn approve" onclick="inboxApprove(${idArg})">Approve</button>`;
+          html += `    <button class="inbox-action-btn" onclick="inboxDefer(${idArg})">Defer 3h</button>`;
+          html += `    <button class="inbox-action-btn reject" onclick="inboxSkip(${idArg})">Skip</button>`;
+          html += `    <button class="inbox-action-btn" onclick="inboxToggleEdit(${idArg})">Edit</button>`;
           html += `  </div>`;
           html += `  <div class="inbox-edit-row" id="edit-row-${safeId}">`;
           html += `    <input type="text" class="inbox-edit-input" id="edit-input-${safeId}" placeholder="Rewrite the draft…" value="${esc(body)}" />`;
-          html += `    <button class="inbox-action-btn" onclick="inboxSubmitEdit('${safeId}')">Save</button>`;
+          html += `    <button class="inbox-action-btn" onclick="inboxSubmitEdit(${idArg})">Save</button>`;
           html += `  </div>`;
           html += `</div>`;
         }
@@ -3035,6 +3036,26 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         setTimeout(() => input.focus(), 300);
       }
 
+      // Sending while the socket is down used to do nothing at all (the glow that marked the
+      // connection is hidden), so a typed message just sat there. Say what's going on.
+      let connRefused = false;
+      let connNoticeShown = false;
+      function showConnNotice() {
+        const label = connRefused
+          ? "Bhai refused the connection. Quit and reopen Bhai."
+          : "Not connected to Bhai yet — reconnecting. Your message is still here.";
+        progress.innerHTML = `<div class="progress-card"><span class="progress-icon">🔌</span><span class="progress-label">${esc(label)}</span></div>`;
+        progress.classList.add('visible');
+        connNoticeShown = true;
+        announceToSR(label);
+      }
+      function clearConnNotice() {
+        if (!connNoticeShown) return;
+        connNoticeShown = false;
+        progress.classList.remove('visible');
+        progress.innerHTML = '';
+      }
+
       function connect() {
         // Authenticate the WS handshake with the server-injected loopback token.
         // The server rejects token-less connections (4001), which previously left
@@ -3049,9 +3070,14 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         const qs = _tok ? `?localToken=${encodeURIComponent(_tok)}` : '';
         ws = new WebSocket(`ws://${location.host}${qs}`);
         window._atlasWS = ws; // Expose for Electron IPC (live voice shortcut)
-        ws.onopen = () => { blobs.forEach(b => b.classList.add('on')); grabFocus(); };
+        ws.onopen = () => { connRefused = false; clearConnNotice(); blobs.forEach(b => b.classList.add('on')); grabFocus(); };
         ws.onmessage = (e) => { try { handle(JSON.parse(e.data)); } catch (err) { console.error('[OVERLAY] handle() error:', err); } };
-        ws.onclose = () => { blobs.forEach(b => b.classList.remove('on')); setTimeout(connect, 2000); };
+        ws.onclose = (e) => {
+          // 4001/4003: the server refused this socket (token or origin) — retrying won't help.
+          connRefused = e.code === 4001 || e.code === 4003;
+          blobs.forEach(b => b.classList.remove('on'));
+          setTimeout(connect, 2000);
+        };
         ws.onerror = () => ws.close();
       }
 
@@ -3182,7 +3208,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           // Render as enhanced progress card
           const progressIcon = extractProgressIcon(msg.text);
           const progressLabel = msg.text.startsWith(progressIcon) ? msg.text.slice(progressIcon.length).trimStart() : msg.text;
-          progress.innerHTML = `<div class="progress-card"><span class="progress-icon">${progressIcon}</span><span class="progress-label">${esc(progressLabel)}</span><div class="progress-dots"><span></span><span></span><span></span></div></div>`;
+          progress.innerHTML = `<div class="progress-card"><span class="progress-icon">${esc(progressIcon)}</span><span class="progress-label">${esc(progressLabel)}</span><div class="progress-dots"><span></span><span></span><span></span></div></div>`;
           progress.classList.add('visible');
         }
         else if (msg.type === 'response' || msg.type === 'error') {
@@ -3198,7 +3224,8 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           const renderedText = msg.type === 'error' ? `⚠️ ${esc(rawText)}` : renderMd(rawText);
           console.log('[OVERLAY] Rendered HTML length:', renderedText.length);
           replyText.innerHTML = renderedText;
-          if (msg.receipt) {
+          // Only the data:image receipt overlay-chat builds; never a navigable URL.
+          if (typeof msg.receipt === 'string' && msg.receipt.startsWith('data:image/')) {
             const receiptImg = document.createElement('img');
             receiptImg.src = msg.receipt;
             receiptImg.alt = 'Screen after the task';
@@ -3244,7 +3271,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           setMood('happy', 1600);
           progress.classList.remove('visible');
           progress.innerHTML = '';
-          let imgHtml = `<img src="${msg.url}" alt="Generated image" />`;
+          let imgHtml = `<img src="${esc(msg.url)}" alt="Generated image" />`;
           if (msg.caption) imgHtml += `<div class="img-caption">${esc(msg.caption)}</div>`;
           replyText.innerHTML = imgHtml;
           replyBox.classList.remove('visible');
@@ -3414,12 +3441,15 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         });
 
         links.forEach(url => {
+          // Web links only: a javascript: href would run inside the overlay, which holds the bot socket.
+          let parsed;
+          try { parsed = new URL(url); } catch { return; }
+          if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return;
           const card = document.createElement('a');
           card.className = 'link-card';
-          card.href = url;
+          card.href = parsed.href;
           card.target = '_blank';
-          let domain = url;
-          try { domain = new URL(url).hostname.replace(/^www\./, ''); } catch { }
+          const domain = parsed.hostname.replace(/^www\./, '');
           card.innerHTML = `<span class="card-icon">🌐</span><span class="card-label" title="${esc(url)}">${esc(domain)}</span>`;
           cardsBox.appendChild(card);
         });
@@ -3449,6 +3479,9 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
 
       // Quotes too: model text ends up inside attributes (link hrefs).
       function esc(t) { return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+      // A JS string argument inside an onclick="…" attribute: the browser decodes the
+      // entities before running the handler, so esc() alone can't keep a ' inside the string.
+      function jsArg(v) { return esc(JSON.stringify(String(v))); }
 
       function renderMd(text) {
         let h = esc(text);
@@ -4154,7 +4187,8 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
       // Override send to include chip context
       function send() {
         const text = buildFullMessage();
-        if (!text || !ws || ws.readyState !== 1 || waiting) return;
+        if (!text || waiting) return;
+        if (!ws || ws.readyState !== 1) return showConnNotice();
         waiting = true;
         input.disabled = true;
         setAgentBusy(true);

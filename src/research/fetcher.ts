@@ -128,7 +128,7 @@ function decodeHtml(buf: Uint8Array, contentType: string): string {
 // Stream the body and stop (cancelling the reader so undici stops decompressing)
 // once we have MAX_FETCH_BYTES. Replaces `await response.text()`, which buffers
 // the entire decompressed body before returning.
-async function readBodyCapped(response: Response, cap: number): Promise<Uint8Array> {
+export async function readBodyCapped(response: Response, cap: number): Promise<Uint8Array> {
     const body = response.body;
     if (!body) {
         const buf = new Uint8Array(await response.arrayBuffer());
@@ -158,13 +158,17 @@ async function readBodyCapped(response: Response, cap: number): Promise<Uint8Arr
     return out;
 }
 
+// Lowercase A-Z only. String#toLowerCase can change the length ("İ" becomes two
+// code units), and the indexes found in the lowered copy are used to slice the original.
+const asciiLower = (s: string) => s.replace(/[A-Z]+/g, (m) => m.toLowerCase());
+
 // Remove <tag …>…</tag> blocks in a single linear pass per tag (unclosed tags
 // are dropped to end-of-string). Native indexOf is O(n); this avoids the O(n²)
 // backtracking of a lazy /<tag[\s\S]*?<\/tag>/ regex on a page with many
 // unclosed openers (e.g. '<script '.repeat(2e6)), which froze the event loop.
 function stripTagBlocks(html: string, tags: string[]): string {
     for (const tag of tags) {
-        const lower = html.toLowerCase();
+        const lower = asciiLower(html);
         const openTok = `<${tag}`;
         const closeTok = `</${tag}>`;
         let out = "";
@@ -201,6 +205,14 @@ export function tagsToText(html: string): string {
         const lt = html.indexOf("<", i);
         if (lt === -1) { out += html.slice(i); break; }
         out += html.slice(i, lt);
+        if (html.startsWith("<!--", lt)) {
+            // A comment ends at "-->", not the first ">" (commented-out markup has plenty).
+            const end = html.indexOf("-->", lt + 4);
+            if (end === -1) break;
+            out += " ";
+            i = end + 3;
+            continue;
+        }
         const gt = html.indexOf(">", lt + 1);
         if (gt === -1) break; // no closing ">" → drop the remainder
         const raw = html.slice(lt + 1, gt).toLowerCase();
@@ -242,11 +254,14 @@ async function fetchPageContentOnce(url: string): Promise<string> {
         const response = guarded.response;
 
         // Don't clear the timeout yet — it should also cover response.text()
-        if (!response.ok) { clearTimeout(timeout); return ""; }
+        // Early returns cancel the unread body, or its socket stays open (500-source runs).
+        if (!response.ok) { clearTimeout(timeout); response.body?.cancel().catch(() => {}); return ""; }
 
-        const contentType = response.headers.get("content-type") || "";
-        if (!contentType.includes("text/html") && !contentType.includes("text/plain")) {
+        const contentType = (response.headers.get("content-type") || "").toLowerCase();
+        const plain = contentType.includes("text/plain");
+        if (!plain && !contentType.includes("text/html") && !contentType.includes("application/xhtml+xml")) {
             clearTimeout(timeout);
+            response.body?.cancel().catch(() => {});
             return `[Non-text content: ${contentType}]`;
         }
 
@@ -255,11 +270,19 @@ async function fetchPageContentOnce(url: string): Promise<string> {
         const buf = await readBodyCapped(response, MAX_FETCH_BYTES);
         clearTimeout(timeout);
         const html = decodeHtml(buf, contentType);
+        // Plain text has no tags: "x < 10 and y > 5" would lose its middle.
+        if (plain) return html.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim().substring(0, MAX_CONTENT_PER_PAGE);
         linksByUrl.set(url, extractOutboundLinks(html, url));
 
         const text = tagsToText(stripTagBlocks(html, ["script", "style", "nav", "footer", "header"]))
-            .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<")
+            .replace(/&nbsp;/g, " ").replace(/&lt;/g, "<")
             .replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+            .replace(/&mdash;/g, "—").replace(/&ndash;/g, "–").replace(/&hellip;/g, "…")
+            .replace(/&#(\d{1,7});|&#x([0-9a-f]{1,6});/gi, (m, d, h) => {
+                const cp = d ? Number(d) : Number.parseInt(h, 16);
+                return cp > 0 && cp <= 0x10ffff && cp !== 38 ? String.fromCodePoint(cp) : m;
+            })
+            .replace(/&amp;/g, "&") // last, so "&amp;lt;" stays the literal "&lt;"
             .replace(/[ \t]+/g, " ")
             .replace(/\n{3,}/g, "\n\n")
             .trim();

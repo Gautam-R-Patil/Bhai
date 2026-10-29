@@ -234,12 +234,12 @@ if (!SKIP_BUILD) {
 headline("Locating artifacts");
 
 const macDmg = findFirst(DIST_DIR, [
-    new RegExp(`A\\.T\\.L\\.A\\.S-${VERSION.replace(/\./g, "\\.")}-arm64\\.dmg$`),
+    new RegExp(`A\\.T\\.L\\.A\\.S-${VERSION.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-arm64\\.dmg$`),
     /\.dmg$/,
 ]);
 const macBlockmap = macDmg ? `${macDmg}.blockmap` : null;
 const winExe = findFirst(DIST_DIR, [
-    new RegExp(`A\\.T\\.L\\.A\\.S.*${VERSION.replace(/\./g, "\\.")}.*\\.exe$`, "i"),
+    new RegExp(`A\\.T\\.L\\.A\\.S.*${VERSION.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.*\\.exe$`, "i"),
     /Setup.*\.exe$/i,
     /\.exe$/i,
 ]);
@@ -314,30 +314,32 @@ if (winExe && existsSync(winExe)) {
 headline("Convex env vars");
 
 const suffix = CHANNEL === "stable" ? "" : `_${CHANNEL.toUpperCase()}`;
-const cmds = [];
-cmds.push(`npx convex env set UPDATE_VERSION${suffix} ${VERSION}`);
-cmds.push(`npx convex env set UPDATE_RELEASE_DATE${suffix} ${new Date().toISOString()}`);
+// [name, value] pairs, run as argv (no shell) so a value can never be read as shell syntax.
+const envVars = [];
+envVars.push([`UPDATE_VERSION${suffix}`, VERSION]);
+envVars.push([`UPDATE_RELEASE_DATE${suffix}`, new Date().toISOString()]);
 if (meta.mac) {
-    cmds.push(`npx convex env set UPDATE_URL_MAC${suffix} ${meta.mac.url}`);
-    cmds.push(`npx convex env set UPDATE_SHA512_MAC${suffix} ${meta.mac.sha512}`);
-    cmds.push(`npx convex env set UPDATE_SIZE_MAC${suffix} ${meta.mac.size}`);
+    envVars.push([`UPDATE_URL_MAC${suffix}`, meta.mac.url]);
+    envVars.push([`UPDATE_SHA512_MAC${suffix}`, meta.mac.sha512]);
+    envVars.push([`UPDATE_SIZE_MAC${suffix}`, String(meta.mac.size)]);
 }
 if (meta.win) {
-    cmds.push(`npx convex env set UPDATE_URL_WIN${suffix} ${meta.win.url}`);
-    cmds.push(`npx convex env set UPDATE_SHA512_WIN${suffix} ${meta.win.sha512}`);
-    cmds.push(`npx convex env set UPDATE_SIZE_WIN${suffix} ${meta.win.size}`);
+    envVars.push([`UPDATE_URL_WIN${suffix}`, meta.win.url]);
+    envVars.push([`UPDATE_SHA512_WIN${suffix}`, meta.win.sha512]);
+    envVars.push([`UPDATE_SIZE_WIN${suffix}`, String(meta.win.size)]);
 }
+const showCmd = ([name, value]) => `npx convex env set ${name} ${value}`;
 
 if (APPLY_CONVEX) {
     log("Applying Convex env vars:");
-    for (const c of cmds) {
-        const r = spawnSync("sh", ["-c", c], { stdio: "inherit", cwd: REPO_ROOT });
-        if (r.status !== 0) fatal(`Convex env command failed: ${c}`);
+    for (const [name, value] of envVars) {
+        const r = spawnSync("npx", ["convex", "env", "set", name, value], { stdio: "inherit", cwd: REPO_ROOT });
+        if (r.status !== 0) fatal(`Convex env command failed: ${showCmd([name, value])}`);
     }
     log("✅ Convex env updated.");
 } else {
     console.log("\nRun these to point the updater at the new release:\n");
-    for (const c of cmds) console.log(`  ${c}`);
+    for (const v of envVars) console.log(`  ${showCmd(v)}`);
     console.log("\n(Re-run with --apply-convex to execute them automatically.)");
 }
 

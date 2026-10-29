@@ -1,3 +1,5 @@
+> **Status: HISTORICAL checklist (2026-05-17); not re-verified on Windows.** Still relevant: Windows installer is built with `cd desktop && npm run build:win` (NSIS x64, `build/patch-nsis.js`); fresh-Windows installer fixes landed (`7667390`, PR #1) and the forge supervisor fails open without the native binary (`acd16a7`). Per CLAUDE.md the Windows AppContainer + JobObject spawn is still **deferred** (`native/src/forge_sandbox/windows_appcontainer.rs` exists). Stale references: the forge design spec `docs/superpowers/specs/2026-05-16-forge-sandbox-rust-supervisor-design.md` and plan `...-forge-sandbox-plan3-linux-windows.md` are **not in the repo** (CLAUDE.md cites the spec too); `src/screen/ocr.ts` and `src/screen/screenshot.ts` do not exist (OCR is `src/models/local-ocr.ts`; screen code is in `src/screen/` e.g. `perception-router.ts`, `capability-detector.ts`, `drift-calibration.ts`); `src/local-ocr.ts` is now `src/models/local-ocr.ts`. Windows release builds are done on a Windows host (see `docs/RELEASING.md`).
+
 # Windows Testing & Porting Handoff — Bhai Desktop
 
 **Date:** 2026-05-17
@@ -267,7 +269,7 @@ Bhai has a "computer-use" agent that takes screenshots, runs OCR + UI element de
 
 1. **Screenshot capture** (`src/screen/screenshot.ts`): uses `screencapture` on macOS, `gnome-screenshot`/`scrot` on Linux. On Windows it should fall back to a Node screenshot library — check `node-screenshots` or similar in package.json. If unavailable, `os_screenshot` tool will fail.
 
-2. **OCR fallback** (`src/screen/ocr.ts` → `src/local-ocr.ts`): macOS uses Vision Framework via the Swift helper. Linux/Windows use Tesseract via `node-tesseract-ocr` or shelling out to `tesseract.exe`. **Verify tesseract is on PATH** before running the OCR tier.
+2. **OCR fallback** (`src/screen/ocr.ts` → `src/models/local-ocr.ts`): macOS uses Vision Framework via the Swift helper. Linux/Windows use Tesseract via `node-tesseract-ocr` or shelling out to `tesseract.exe`. **Verify tesseract is on PATH** before running the OCR tier.
 
 3. **Accessibility tree (AX dump)** (`src/screen/__tests__/ax-dump.test.ts`): macOS uses the Swift CoreAX helper; Windows uses UI Automation (UIA) via... actually, **this is probably unimplemented on Windows** — check `src/screen/perception-router.ts` for whether it has a Windows branch.
 

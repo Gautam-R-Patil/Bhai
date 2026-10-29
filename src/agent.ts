@@ -20,6 +20,7 @@ import {
 } from "./agents/circuit-breaker.js";
 import { classifyComplexity } from "./agents/complexity-classifier.js";
 import { takeStuckMarker } from "./channel-text.js";
+import { historyForCaller } from "./guest-history.js";
 import { runWithEvalTraceId } from "./agents/evaluator.js";
 import { listActiveLongTasks } from "./agents/long-task.js";
 import {
@@ -1414,6 +1415,9 @@ export async function runAgent(
     toolAllowlist?: string[],
     channelContext?: ChannelContext,
 ): Promise<AgentResponse> {
+    // A non-owner (Slack/Discord guest, widget visitor) runs on a history of their own,
+    // never the owner's: forked, so isContactAgent also keeps owner memories out.
+    historyFork = historyForCaller(historyFork, channelContext);
     const isForked = !!historyFork;
     // Caller-context ALS wrapper — privilege-sensitive tools (cron, etc.)
     // read isOwner from this scope, not from a module-level slot, so
@@ -1544,6 +1548,9 @@ async function _runAgentBody(
     // historyFork already supplies the contact's context and we must not
     // leak the owner's identity, memories, location, or traits.
     const isContactAgent = isForked && channelContext?.isOwner === false;
+    // What a contact or guest says is never the owner's: it must not become the owner's goal,
+    // session context or anticipation pattern. (No channel context = an owner path, e.g. voice.)
+    const ownerTurn = channelContext?.isOwner !== false;
 
     // Tag every runAgent invocation with a unique turn id so offloaded
     // tool outputs cluster per turn on disk.
@@ -1594,7 +1601,13 @@ async function _runAgentBody(
     const userIntentText =
         rawUserMessage.replace(/^\[Replying to [^\n]*?message: "[\s\S]*?"\]\n\n/, "").trim() || rawUserMessage;
     // Only a message the owner actually sent can answer a consent question.
-    if (channelContext?.isOwner && !channelContext.autonomous) noteOwnerMessage(userIntentText);
+    if (channelContext?.isOwner && !channelContext.autonomous) {
+        noteOwnerMessage(userIntentText);
+        // Any channel: the owner talking back is engagement (proactive fatigue gate).
+        import("./proactive/notification-tracker.js")
+            .then((m) => m.recordOwnerEngagement())
+            .catch(() => {});
+    }
 
     // ── Goal detection: only the owner's own words become the owner's goals ──
     if (channelContext?.isOwner && !channelContext.autonomous) {
@@ -1665,7 +1678,8 @@ async function _runAgentBody(
         workingHistory.push({ role: "user", content: content as unknown as string });
 
         // ── Multimodal Memory: store image embeddings for cross-modal retrieval ──
-        try {
+        // The owner's images only: a contact's photo isn't the owner's memory.
+        if (ownerTurn) try {
             const { storeImageEmbedding } = await import("./memory/multimodal-embedding.js");
             const { embedText } = await import("./memory/embeddings.js");
             for (const m of media) {
@@ -2599,7 +2613,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
 
             // ── Working memory (active context from recent tool results & facts) ──
             try {
-                await wmReflect(rawUserMessage);
+                if (ownerTurn) await wmReflect(rawUserMessage); // working memory is the owner's
                 const wmSnippet = getWMSnippet();
                 if (wmSnippet) parts.push(wmSnippet);
             } catch {
@@ -2870,8 +2884,10 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             // would otherwise re-emerge in the next turn's session-summary
             // injection (and into overnight dream-replay), defeating the
             // boundary sanitizer.
-            appendTurn("user", safeUserMessage);
-            trackSessionForAnticipation();
+            if (ownerTurn) {
+                appendTurn("user", safeUserMessage);
+                trackSessionForAnticipation();
+            }
         }
 
         // Smart thinking: use router's recommended thinking level
@@ -3349,6 +3365,9 @@ PLAN:`,
                 // Unhinged on Grok gets its own personality prompt (rules + prompts/unhinged.md)
                 // instead of the default one, whose calm, short style rules won out.
                 serverPromptSlug: model === MODELS.GROK ? "unhinged" : undefined,
+                // Unhinged runs hot: a higher sampling temperature makes Grok wilder
+                // and less predictable — the point of the mode. Normal turns omit it.
+                temperature: model === MODELS.GROK ? 1.1 : undefined,
             });
         } catch (llmErr) {
             cbRecordFailure(circuitBreaker);
@@ -3859,7 +3878,7 @@ PLAN:`,
                         continue;
                     }
                     messages.push({ role: "assistant", content: text });
-                    appendTurn("assistant", text);
+                    if (ownerTurn) appendTurn("assistant", text);
                     maybeReflect();
                     if (usedBrowserTools) autoSaveSession();
                     // Credits deducted per-API-call in llm.ts
@@ -3929,7 +3948,7 @@ PLAN:`,
             }
 
             messages.push({ role: "assistant", content: text });
-            appendTurn("assistant", text);
+            if (ownerTurn) appendTurn("assistant", text);
             maybeReflect();
             if (usedBrowserTools) autoSaveSession();
 
@@ -4075,7 +4094,7 @@ PLAN:`,
                 const resultText = typeof r.finalContent === "string" ? r.finalContent : JSON.stringify(r.finalContent);
                 const importance = r.isError ? 0.3 : resultText.length > 200 ? 0.7 : 0.5;
                 const summary = resultText.length > 150 ? `${resultText.substring(0, 150)}...` : resultText;
-                wmRetain(`tool_${r.toolCallId}`, "tool_result", `[${r.fnName}] ${summary}`, importance);
+                if (ownerTurn) wmRetain(`tool_${r.toolCallId}`, "tool_result", `[${r.fnName}] ${summary}`, importance);
             } catch {
                 /* working memory not initialized */
             }
@@ -4134,7 +4153,7 @@ PLAN:`,
                 const stuckMsg =
                     "I tried several approaches but couldn't get a useful result — the commands kept returning nothing or failing. Rather than keep retrying, here's where I got stuck: the tool calls aren't returning the data I need. Could you tell me a bit more, or try running it directly?";
                 messages.push({ role: "assistant", content: stuckMsg });
-                appendTurn("assistant", stuckMsg);
+                if (ownerTurn) appendTurn("assistant", stuckMsg);
                 // P5.2 STEP-0: genuine reasoning-failure terminal exit (gave up after
                 // sustained no-progress) → true-negative label for calibration.
                 try {
@@ -4164,7 +4183,7 @@ PLAN:`,
                 const phaseCount = parsed.phases || 0;
                 const delegationText = `I've started working on your task in the background (${phaseCount} phases). Task ID: ${taskId}. I'll keep you updated on progress — you can also ask me to check anytime.`;
                 messages.push({ role: "assistant", content: delegationText });
-                appendTurn("assistant", delegationText);
+                if (ownerTurn) appendTurn("assistant", delegationText);
                 if (_harnessTraceId) finalizeTrace(_harnessTraceId, true);
                 return { text: delegationText, toolCalls: totalToolCalls };
             } catch {

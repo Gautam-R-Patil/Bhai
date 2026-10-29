@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Bhai (v0.2.1) is a continuously running, proactive personal AI agent: Node.js/TypeScript (~770 .ts) + native Rust performance layer (~78 .rs). Autonomous computer use, deep research, and long-running async workflows via Telegram, Discord, Slack, Matrix, WhatsApp, desktop overlay, email.
+Bhai (v0.2.1) is a continuously running, proactive personal AI agent: Node.js/TypeScript (~580 non-test `.ts` in `src/`; ~1,030 tracked incl. tests, `convex/`, `desktop/`) + native Rust performance layer (~80 `.rs` in `native/src/`). Autonomous computer use, deep research, and long-running async workflows via Telegram, Discord, Slack, Matrix, WhatsApp, desktop overlay, email.
 
 ## Build & Run Commands
 
@@ -20,6 +20,7 @@ npm run build:all        # native + helpers + TS
 npm run lint             # Biome check
 npm run typecheck        # tsc --noEmit
 npm test                 # vitest run
+npm run test:hermetic    # scripts/run-tests.sh: secrets/ATLAS_* unset, TZ=UTC, 4 workers (what CI runs)
 npm run test:watch       # vitest watch
 
 npx convex dev
@@ -31,7 +32,7 @@ cd desktop && npm run build:mac   # macOS DMG (create-dmg.sh)
 cd desktop && npm run build:win   # Windows NSIS installer
 ```
 
-Requires Node.js 20.19+ or 22.12+ (below that, `npm ci` skips rolldown's optional native binding and Vitest won't start). Vitest. CI runs on push/PR to `main` (`.github/workflows/ci.yml`): lint, typecheck, test (`npm run test:hermetic`), native build matrix, clippy + rustfmt.
+Requires Node.js 20.19+ or 22.12+ (below that, `npm ci` skips rolldown's optional native binding and Vitest won't start). Vitest. CI runs on push/PR to `main` (`.github/workflows/ci.yml`): typecheck + `npm run test:hermetic` on Node 22/24 × Linux/macOS/Windows, Biome on changed files only (PRs; the repo is only partly formatted), native build matrix, clippy + rustfmt; plus CodeQL, dependency review, workflow lint.
 
 ## Architecture
 
@@ -41,7 +42,7 @@ All LLM calls proxy through Convex — client never holds API keys. `createLLMCl
 Models in `MODELS` constant (Opus, Sonnet, Haiku, GPT-5.x, Gemini). `LLMClient` injected into agent, tools, swarm, research.
 
 Client-side layers in `.chat()`:
-- **Semantic response cache** (`llm-cache.ts`) — Embedding cache (cosine ≥ 0.88, 10min TTL, 200 LRU); tool-state not in cache key. Only caches simple queries (no tool calls or thinking).
+- **Semantic response cache** (`llm-cache.ts`) — Embedding cache (cosine ≥ 0.97 (`ATLAS_LLM_CACHE_THRESHOLD`), 10min TTL, 200 LRU); tool-state not in cache key. Only caches simple queries (no tool calls or thinking).
 - **Adaptive language matching** (`language.ts`) — Unicode script + keyword heuristics; injects "Respond in {language}". Devanagari/CJK/Cyrillic/Arabic/Hangul/Thai/Latin incl. Romanized Hindi/Hinglish.
 
 ### Boot Sequence (`src/index.ts`)
@@ -77,12 +78,12 @@ Task-context routing (iteration 1): the tool router's lean classifier also retur
 ### Tool Router (`src/tool-router.ts` + `src/tool-router-analytics.ts`)
 Semantic selection via MiniLM (384-dim). Boot: embed each category description. Per-message: embed query → cosine top-K → load schemas. `request_tools` meta-tool expands mid-task. 20+ categories. **FunctionGemma fallback** (`src/models/function-gemma.ts`): optional local 270M via Ollama for zero-cost routing. Analytics track usage/accuracy/hit rates.
 
-### Memory System (`src/memory/` — 70 files)
+### Memory System (`src/memory/` — ~60 files)
 All local SQLite (`data/memory.db`):
 - `sqlite.ts` — Primary store: `remember()`, `recall()`, `getCoreMemory()`; `knowledge-graph.ts` — entity-relationship graph; `vector-index.ts` — HNSW ANN; `reflection.ts` — nightly dream replay + 6h decay; `task-learnings.ts` — recurring-task strategies
 - Specialized tiers: `identity`, `traits`, `emotional`, `episodic`, `self-state`, `session`, `relationship`; short-term: `working-memory`
 - Predictive: `counterfactual`; consolidation/retrieval: `sleep-gate`, `surprise-gate`, `reranker`, `strategy-library`
-- `classifier`, `context-pruning`; goals/self-improvement: `goals`, `self-evolving`, `memory-informed-planning`; plus `consolidation`, `multimodal`, `temporal-cache`, `embeddings`, `multimodal-embedding`
+- `classifier`, `context-pruning`, `at-rest-scrub` (one-time scrub of secrets saved before at-rest masking; card numbers, codes and typed passwords are no longer stored in plaintext); goals/self-improvement: `goals`, `self-evolving`, `memory-informed-planning`; plus `consolidation`, `multimodal`, `temporal-cache`, `embeddings`, `multimodal-embedding`
 
 ### Channel Flow (Telegram: `src/telegram.ts`)
 `Message → whitelist → media extraction → runAgent() → streaming → smartChunkMessage() (sentence boundaries) → Markdown→HTML → send`. Internal tags (`<system_log>`, `<tool_log>`) stripped before send.
@@ -93,10 +94,10 @@ API key proxy + auth + store backend — LLM keys never reach client:
 - `schema.ts` — `accounts`, `sessions`, store tables (`developers`/`admins`/`store_items`/`submissions`/`store_installs`/`store_reviews`/`store_activity_log`), system content (`system_prompts`, `system_skills`)
 - `convex/store/` — Store CRUD (`items`/`submissions`/`developers`/`storage`/`admins`/`installs`/`reviews`)
 
-### Native Rust Layer (`native/src/` — 49 .rs files)
+### Native Rust Layer (`native/src/` — ~80 .rs files incl. `forge_sandbox/`)
 SIMD vector ops (~15-20x) via napi-rs. Built `opt-level=3`, LTO, `panic=abort`, stripped. Deps: `wide`, `simsimd`, `rayon`, `aes-gcm`. Modules mirror TS; `lib.rs` is napi entry, `chrome_bridge.rs` the extension bridge.
 
-### Agent Orchestration (`src/agents/` — 50 files)
+### Agent Orchestration (`src/agents/` — ~36 files)
 Four-tier execution model.
 
 **Core Tiers:**
@@ -146,7 +147,7 @@ User-facing artifacts under `getWorkspaceDir()`: `$ATLAS_WORKSPACE` → `~/Deskt
 
 Rule: tools writing user artifacts default to `getWorkspaceSubdir()`, override only when user names a path. `data/` is ATLAS-internal state.
 
-### Browser Tools (`src/tools/browser/` — 15 files; `src/tools/` ~45 top-level, ~60 total)
+### Browser Tools (`src/tools/browser/` — ~27 files; `src/tools/` ~140 files)
 Dual-backend via `BrowserBackend` interface (`browser-backend.ts`):
 - **Playwright** (`playwright-backend.ts`) — headless Chromium, persistent profile `data/browser-profile/`
 - **Chrome Extension** (`chrome-backend.ts` + `chrome-bridge.ts`) — WS bridge to real Chrome; `ChromePageProxy` mimics Playwright Page API
@@ -157,7 +158,7 @@ Dual-backend via `BrowserBackend` interface (`browser-backend.ts`):
 Per-tool caching (web_search 2min, read_file 1min, system_info 5min), rate limiting, audit log, confirmation gates. **Dynamic tools** persist to `~/.atlas/store/tools` and hot-reload; handlers run in `vm.createContext` sandbox with restricted require shim.
 
 ### Skill Forge — Phase 4 persisted-tier sandbox (`src/forge/sandbox-supervisor.ts` + `native/src/forge_sandbox/`)
-Persistent synthesized tools (`req.persistent === true`) live at `~/.atlas/store/dynamic/<slug>/{handler.js, manifest.json}` and execute inside OS-isolated Node child processes. The fence is the **kernel**, not the JS runtime — macOS sandbox-exec (SBPL profile per-spawn at `.sandbox.sb`), Linux seccomp + Landlock + CLONE_NEWNET via pre_exec, Windows AppContainer + JobObject (spawn deferred). Rust supervisor napi exports: `forge_invoke_tool`, `forge_spawn_warm`, `forge_evict`, `forge_strikes`, `forge_clear_strikes`, `forge_set_pool_size`. Pool: LRU cap 10, never evicts inflight. Three-strike auto-archive: 3 cap violations within `ATLAS_FORGE_STRIKE_WINDOW_MS` (default 1h) archives the slug; boot-failure burns all 3. `approve_dynamic_tool({slug, user_quote})` flips awaiting_approval → active + registers a closure delegating to `invokePersistedTool`; `revoke_dynamic_tool` evicts + clears strikes + archives. Plan-mode state `awaiting_dynamic_tool_approval` gates to approval/revoke tools only. `initForge` boot-scan re-registers approved manifests. 15-pattern adversarial regression suite (`capability-bypass.test.ts`) locks defeated bypass classes. Kill switches: `ATLAS_NO_FORGE_SANDBOX`, `ATLAS_FORGE_POOL_SIZE`, `ATLAS_FORGE_CALL_TIMEOUT_MS`, `ATLAS_FORGE_STRIKE_WINDOW_MS`, `ATLAS_FORGE_LANDLOCK_OPTIONAL`, `ATLAS_FORGE_STRICT`, `ATLAS_FORGE_LINUX_NET_PASSTHROUGH`, `ATLAS_FORGE_WINDOWS_STRICT`. Design doc: `docs/superpowers/specs/2026-05-16-forge-sandbox-rust-supervisor-design.md`.
+Persistent synthesized tools (`req.persistent === true`) live at `~/.atlas/store/dynamic/<slug>/{handler.js, manifest.json}` and execute inside OS-isolated Node child processes. The fence is the **kernel**, not the JS runtime — macOS sandbox-exec (SBPL profile per-spawn at `.sandbox.sb`), Linux seccomp + Landlock + CLONE_NEWNET via pre_exec, Windows AppContainer + JobObject (spawn deferred). Rust supervisor napi exports: `forge_invoke_tool`, `forge_spawn_warm`, `forge_evict`, `forge_strikes`, `forge_clear_strikes`, `forge_set_pool_size`. Pool: LRU cap 10, never evicts inflight. Three-strike auto-archive: 3 cap violations within `ATLAS_FORGE_STRIKE_WINDOW_MS` (default 1h) archives the slug; boot-failure burns all 3. `approve_dynamic_tool({slug, user_quote})` flips awaiting_approval → active + registers a closure delegating to `invokePersistedTool`; `revoke_dynamic_tool` evicts + clears strikes + archives. Plan-mode state `awaiting_dynamic_tool_approval` gates to approval/revoke tools only. `initForge` boot-scan re-registers approved manifests. 15-pattern adversarial regression suite (`capability-bypass.test.ts`) locks defeated bypass classes. Kill switches: `ATLAS_NO_FORGE_SANDBOX`, `ATLAS_FORGE_POOL_SIZE`, `ATLAS_FORGE_CALL_TIMEOUT_MS`, `ATLAS_FORGE_STRIKE_WINDOW_MS`, `ATLAS_FORGE_LANDLOCK_OPTIONAL`, `ATLAS_FORGE_STRICT`, `ATLAS_FORGE_LINUX_NET_PASSTHROUGH`, `ATLAS_FORGE_WINDOWS_STRICT`.
 
 ### Skill Forge (`src/forge/` — Phases 1+2+3 shipped)
 Dynamic-tool reliability layer. P1: foundation (SQLite library, manifest, hot-reload). P2: lookup-first short-circuit so `create_tool` reuses before synthesizing. P3: closed-loop verifier — LLM emits `{handler_code, tests, capabilities_declared, side_effects, synthesis_notes}`; sandbox runs tests; critics check compile + lint + SAST; diagnose prompt retries up to 3× (Track A/sync) or 10× (Track B/dream-replay). Pro-tier via `tool_synthesis` TaskType (Sonnet default; Opus + max with `ATLAS_FORGE_DREAM_OPUS=true`).
@@ -172,10 +173,9 @@ Wiring: `pending-consumer.ts::consumeOnePending()` pulls one queued candidate; `
 
 Router additions: `TaskType` += `"tool_synthesis"`; native enum `ToolSynthesis` + map entries. `maybeEscalateForSynthesis(base, isDreamReplay)` — Track A/B: Sonnet + high (Opus + max if `ATLAS_FORGE_DREAM_OPUS=true`). `selectForToolSynthesis()` is public entry. `selectForAgent` inserts synthesis escalation BEFORE browser/coding when `lastToolCalls` has `create_tool`.
 
-Spec: `docs/superpowers/specs/2026-05-15-forge-tool-creation-overhaul-design.md`.
 
 ### Deep Research (`src/research/` — 11 files)
-Background engine: `executor.ts` (≤500 sources), `engines.ts` (search providers), `fetcher.ts` (HTML→text), `scoring.ts`, `persistence.ts` (`data/research/`), `hypothesis-engine.ts`, `credibility-model.ts`, `analysis.ts`, `profiles.ts`.
+Background engine: `executor.ts` (≤500 sources), `engines.ts` (search providers; Parallel is the first engine for `web_search` and research, proxied via Convex `/api/search/parallel` so `PARALLEL_API_KEY` stays server-side), `fetcher.ts` (HTML→text), `scoring.ts`, `persistence.ts` (`data/research/`), `hypothesis-engine.ts`, `credibility-model.ts`, `analysis.ts`, `profiles.ts`.
 
 ### Runtime Data (`data/`)
 Gitignored; internal state ≠ user-facing outputs (see Workspace). `memories.db` (all memory subsystems), `codebase-index/<repo-hash>.db` (Phase 4L sidecars), `agent-worktrees/<step-id>/` (only with `ATLAS_AGENT_WORKTREE=true`), `long-tasks/` (checkpoints), `research/`, `browser-profile/`, `google-credentials.json` + `google-tokens/`, `proactive-config.json` (per-channel posture/night windows, hot-reload).
@@ -202,12 +202,14 @@ Embeddable chat widget at `/widget.js` from overlay server; IIFE injects DOM + s
 
 ### Additional Subsystems
 - **MCP** (`src/mcp/`) — `client.ts`, `gitmcp-bridge.ts` (exposed as `gitmcp_docs` via `src/tools/gitmcp.ts`)
-- **Proactive** (`src/proactive/` — 111 files) — Heartbeat, behaviors, night dreaming. P0+1: `intent.ts`/`intent-from-thought.ts`, `composer.ts`/`composer-templates.ts` (template → LLM → banned-phrase + third-person filter), `dispatch.ts` (single exit, mode emoji 💡/❓/✅), `config.ts` (per-channel posture calm/active/ambient; `data/proactive-config.json`), `kill-switches.ts`. Plus `goal-engine`, `habit-detector`, `inner-thoughts`, `thought-journal`, `trigger-detector`, `notification-tracker`, `environment-sensors`, `proactive-reward`, `dnd`, `monitors`, `activity`, `recommendations`.
+- **Proactive** (`src/proactive/` — ~60 files) — Heartbeat, behaviors, night dreaming. P0+1: `intent.ts`/`intent-from-thought.ts`, `composer.ts`/`composer-templates.ts` (template → LLM → banned-phrase + third-person filter), `dispatch.ts` (single exit, mode emoji 💡/❓/✅), `config.ts` (per-channel posture calm/active/ambient; `data/proactive-config.json`), `kill-switches.ts`. Plus `goal-engine`, `habit-detector`, `inner-thoughts`, `thought-journal`, `trigger-detector`, `notification-tracker`, `environment-sensors`, `proactive-reward`, `dnd`, `monitors`, `activity`, `recommendations`.
 - **Security** (`src/security/`) — `sandbox.ts`, `allowlist.ts`, `secrets-sanitizer.ts` (scans tool results for keys before LLM), `audit-log.ts`, Docker isolation
 - **Voice** (`src/voice/`) — `telegram-voice.ts`, `transcribe.ts`, `tts.ts` (`ATLAS_TTS_PROVIDER` → `ELEVENLABS_API_KEY` → `OPENAI_API_KEY`), `live/` (continuous voice)
 - **Canvas** (`src/canvas/`) — WS canvas channel; **Commands** (`src/commands/`) — slash-command parsing; **Skills Loader** (`src/skills/`) — gray-matter MD from `skills/` + `~/.atlas/store/skills`
 - **Store** (`src/store/`) — `client.ts`, `installer.ts` (download + extract + hot-reload), `sideload.ts`, `hot-reload.ts`. Read-only agent access via `store_browse` (search/list/info/featured/trending/categories/installed). Install/uninstall in desktop UI only.
 - **Channels** — Discord (`src/discord.ts`), Slack (`src/slack.ts`), Matrix (`src/matrix.ts`)
+- **Bhai mail** (`src/bhai-mail.ts` + `convex/bhaiMail*.ts`) — Bhai's own address `<name>.bhai@xagilab.com`, created in one click. The server reads the shared mailbox and queues each user's mail; owner mail gets full Bhai, anyone else gets guest mode (own conversation, `NON_OWNER_TOOLS`); newsletters/auto-replies are announced, never answered. Separate from the user's own IMAP/SMTP (`src/email.ts`).
+- **Devices** (`convex/devices.ts`) — Account → Devices lists the `platform:host:user` fingerprints that got sessions; removing one signs it out until someone signs in on it again.
 - **Config** (`src/config/` — `keys.ts`, `paths.ts`); **Notifications** (`src/notifications/push.ts`); **LLM Middleware** (`src/llm-middleware.ts`); **Types/Utils** (`src/types/`, `src/utils/` — `json-extract.ts`, `system-resources.ts`, `uuid.ts`)
 
 ### WhatsApp Channel (`src/whatsapp.ts` + `src/whatsapp-users.ts`)
@@ -227,10 +229,10 @@ Most privilege-differentiated channel. Baileys (`@whiskeysockets/baileys`). Stat
 Next.js + Tailwind, own `package.json` + `.env.example`: `admin-panel/` (users, store submissions, system prompts/skills), `developer-portal/` (skill/tool/MCP publishing).
 
 ### Overlay (`src/overlay/` + Electron)
-Electron overlay window (`overlay.html` + `overlay-chat.ts`, hosted by desktop app); former native Swift `overlay-app/` removed (`09391f1`). Overlay WebSocket authed via `?localToken=` gate from a discovery-first handshake (`/discover`).
+Electron overlay window (`overlay.html` + `overlay-chat.ts`, hosted by desktop app; the desktop `panel.html` holds Settings (search, saves by itself, Data & privacy, About, personality pills, update channel under Advanced), Account (Devices), Channels (one-click setup, e.g. Telegram managed-bot creation, WhatsApp link by QR/code; Overlay and Web Widget are "Always on"), Vault and Memory (opened from Settings));  former native Swift `overlay-app/` removed (`09391f1`). Overlay WebSocket authed via `?localToken=` gate from a discovery-first handshake (`/discover`).
 
 ### Chrome Extension (`chrome-extension/`)
-Companion for `chrome-backend.ts`. `background.js` (WS bridge), `content.js` (DOM), `popup.*` (toggle). Drives real Chrome instead of headless.
+Companion for `chrome-backend.ts`. `background.js` (WS bridge), `content.js` (DOM), `popup.*` (toggle). Drives real Chrome instead of headless. The extension fetches its bridge token over **native messaging** (host `com.atlas.bridge`, registered by `chrome-bridge.ts`, scoped to the OS user); `/discover` stops serving tokens once that works, and only Bhai's own extension may take the bridge token or owner socket. Bhai stays on its own tab when the owner switches tabs. Permission rationale: `chrome-extension/PERMISSIONS.md`.
 
 ### Admin Dashboard / Scripts / Docs
 - `admin-dashboard/index.html` — single-file static dashboard (separate from `portals/admin-panel/`)
@@ -301,7 +303,7 @@ Default ON unless marked opt-IN. Set `"true"` to disable. `grep -rnE "process\.e
 - `ATLAS_VISION_PROFILE=lite|standard` — override the profile (`src/screen/capability-detector.ts`). There is one setup for everyone (`standard`: accessibility tree → click memory → cloud grounding, no local ML download) and no tier picker in the wizard; `lite` only also skips OmniParser. The old `full` tier (Ollama + UI-TARS, ~4.5 GB) is retired; a stored `full` reads as `standard`.
 - `ATLAS_NO_CLICK_MEMORY` — disables `src/screen/click-memory.ts`; rules out poisoned `data/click-memory.db`
 - `ATLAS_NO_DRIFT_CALIBRATION` — disables `src/screen/drift-calibration.ts`; rules out bad affine fit
-- `ATLAS_NO_CLOUD_GROUNDING` — disables the cloud grounding tier (`cloud-grounding.ts`: one Sonnet call, low thinking, grounding-only system prompt, 30s timeout). Default ON; the last cascade tier after AX/OmniParser miss. The screenshot is downscaled to ≤1568px (`downscaleForVision`) and coordinates are scaled from the image actually sent. `os_smart_click` auto-captures a window-scoped screenshot (`screencapture -R`) so vision tiers always have an image.
+- `ATLAS_NO_CLOUD_GROUNDING` — disables the cloud grounding tier (`cloud-grounding.ts`: one Haiku call, Sonnet on a verified-miss re-ground, low thinking, grounding-only system prompt, 30s timeout). Default ON; the last cascade tier after AX/OmniParser miss. The screenshot is downscaled to ≤1568px (`downscaleForVision`) and coordinates are scaled from the image actually sent. `os_smart_click` auto-captures a window-scoped screenshot (`screencapture -R`) so vision tiers always have an image.
 - `ATLAS_NO_AGENT_CURSOR=true` — no ghost cursor / "Bhai is in control" edge glow. Default ON when the desktop app spawned the bot (`ATLAS_AGENT_CURSOR_IPC=1`; standalone bot = no-op). Computer-use tools emit `##BHAI_CURSOR##{json}` stdout lines (`src/screen/agent-cursor.ts`); `desktop/agent-cursor.js` draws one click-through window per display (made hidden at app ready, synced on display changes) and acks on the bot's stdin. Off on Linux (no opacity/content protection there). The glow ends when the last turn that drove the screen ends. Captures run inside `withCursorHidden()` (hide → ack ≤150ms → capture → show); glides wait ≤300ms. Shared name with the browser cursor.
 - `ATLAS_NO_WINDOW_SCOPED_CAPTURE` — forces `os_smart_click` to full-screen capture (macOS). Diagnostic for coord-offset issues.
 - OmniParser tier: runs only when its deps, icon_detect weights AND Florence caption weights (`omniParserCaptionsPresent()`) are present. No install ships them any more (the old Standard tier's ~500 MB never included captions, so it never ran).

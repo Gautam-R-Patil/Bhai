@@ -418,7 +418,10 @@ export async function showNotification(title: string, body: string): Promise<voi
     if (IS_MAC) {
         await execFileAsync(
             "osascript",
-            ["-e", `display notification "${body.replace(/"/g, '\\"')}" with title "${title.replace(/"/g, '\\"')}"`],
+            [
+                "-e",
+                `display notification "${body.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}" with title "${title.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`,
+            ],
             { timeout: 3000 },
         );
         return;

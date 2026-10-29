@@ -4,6 +4,7 @@
 
 import { setCredential, validateCredential } from "../credential-manager.js";
 import { navigateToUrl } from "./browser-helper.js";
+import { newOAuthState } from "../../security/oauth-state.js";
 import { startOAuthCallback } from "./oauth-callback.js";
 import { deliverToActiveChannel } from "../../tools/channel-send.js";
 
@@ -47,13 +48,14 @@ export async function completeLinkedInOAuth(
   clientSecret: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
+    const state = newOAuthState();
     const authUrl =
       `https://www.linkedin.com/oauth/v2/authorization` +
       `?response_type=code` +
       `&client_id=${encodeURIComponent(clientId)}` +
       `&redirect_uri=${encodeURIComponent(LINKEDIN_REDIRECT_URI)}` +
       `&scope=${encodeURIComponent(LINKEDIN_SCOPES)}` +
-      `&state=atlas-${brandId}`;
+      `&state=${state}`;
 
     await deliverToActiveChannel(
       "Opening LinkedIn authorization page — please click **Allow** when prompted.",
@@ -62,7 +64,7 @@ export async function completeLinkedInOAuth(
 
     // Race callback server against browser navigation
     const [callbackResult] = await Promise.all([
-      startOAuthCallback(LINKEDIN_CALLBACK_PORT),
+      startOAuthCallback(LINKEDIN_CALLBACK_PORT, state),
       navigateToUrl(authUrl),
     ]);
 

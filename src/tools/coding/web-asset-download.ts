@@ -14,6 +14,7 @@ import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { getPathBlockedReason, isPathAllowed, isProtectedPath } from "../../security/allowlist.js";
 import { auditLog } from "../../security/audit-log.js";
+import { readBodyCapped } from "../../research/fetcher.js";
 import { fetchWithRedirectGuard } from "../../security/url-safety.js";
 import type { ToolDefinition } from "../get-current-time.js";
 
@@ -221,28 +222,40 @@ export const webAssetDownload: ToolDefinition = {
             clearTimeout(killTimer);
             return JSON.stringify({ error: `Fetch failed: ${(err as Error).message}` });
         }
-        clearTimeout(killTimer);
+        // The timer stays armed through the body read below (a server can send headers, then drip forever).
+        const refuse = (error: string) => {
+            clearTimeout(killTimer);
+            res.body?.cancel().catch(() => {});
+            return JSON.stringify({ error });
+        };
 
         if (!res.ok) {
-            return JSON.stringify({ error: `HTTP ${res.status} ${res.statusText} fetching ${currentUrl}` });
+            return refuse(`HTTP ${res.status} ${res.statusText} fetching ${currentUrl}`);
         }
 
         const contentLength = Number(res.headers.get("content-length") || 0);
         if (contentLength > maxBytes) {
-            return JSON.stringify({ error: `Asset too large: ${contentLength} bytes > max ${maxBytes}` });
+            return refuse(`Asset too large: ${contentLength} bytes > max ${maxBytes}`);
         }
 
         const contentType = res.headers.get("content-type") || "";
         const mimeExt = extFromContentType(contentType);
         if (!mimeExt) {
-            return JSON.stringify({
-                error: `Refused: Content-Type "${contentType}" is not in the allowlist. Likely not a media file (possibly HTML or a blocked download).`,
-            });
+            return refuse(
+                `Refused: Content-Type "${contentType}" is not in the allowlist. Likely not a media file (possibly HTML or a blocked download).`,
+            );
         }
 
-        const arr = new Uint8Array(await res.arrayBuffer());
+        // Capped streaming read: Content-Length can be absent or lie, and a compressed body can expand past it.
+        let arr: Uint8Array;
+        try {
+            arr = await readBodyCapped(res, maxBytes + 1);
+        } catch (err) {
+            return refuse(`Download failed: ${controller.signal.aborted ? `timed out after ${timeoutMs}ms` : (err as Error).message}`);
+        }
+        clearTimeout(killTimer);
         if (arr.byteLength > maxBytes) {
-            return JSON.stringify({ error: `Asset too large: ${arr.byteLength} bytes > max ${maxBytes}` });
+            return JSON.stringify({ error: `Asset too large: more than max ${maxBytes} bytes` });
         }
         const buf = Buffer.from(arr);
 

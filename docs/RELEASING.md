@@ -38,9 +38,9 @@ The Convex YAML surface supports:
 - **Delta updates** — uploading the `.blockmap` alongside the binary
   lets electron-updater diff the old install and download only the
   changed chunks. A 400 MB full update typically becomes 50–100 MB.
-- **User-facing channel toggle** — the panel → Preferences → Updates
-  section has a dropdown that calls `update:setChannel`. Testers
-  pick "Alpha (early access)" to opt in.
+- **User-facing channel toggle** — Settings → Advanced has an update
+  channel dropdown (`prefUpdateChannel` in `desktop/panel.html`) that calls
+  `update:setChannel`. Testers pick "Alpha (early access)" to opt in.
 
 ## One-time setup
 
@@ -91,7 +91,33 @@ R2_ACCESS_KEY_ID=<from step 3>
 R2_SECRET_ACCESS_KEY=<from step 3>
 ```
 
+## Signing and notarization (read before shipping)
+
+What the config actually does today (`desktop/package.json` → `build.mac`):
+
+- `identity: "-"` (ad-hoc), `hardenedRuntime: true`, `notarize: false`. The
+  release DMG is therefore **not Developer-ID signed or notarized**; Gatekeeper
+  needs right-click → Open on first launch.
+- `build:mac` (local dev DMG) additionally runs `build/resign-local.sh`, which
+  re-signs with a stable self-made "Bhai Local Signing" identity if present
+  (`scripts/make-signing-cert.sh`) so macOS keeps Screen Recording /
+  Accessibility grants across updates. `build:mac:release` does NOT run it.
+- `desktop/build/check-signing.js` documents the env vars for real signing
+  (`CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`,
+  `APPLE_TEAM_ID`; `SKIP_SIGNING_CHECK=true` to skip). Windows uses
+  `signtoolOptions` (sha256) and needs `CSC_LINK`/`CSC_KEY_PASSWORD` to be signed.
+- Build hooks: `afterPack` runs `build/protect-source.js`; `build:*:protected`
+  variants run `npm run prebuild` first.
+
 ## Cutting a release
+
+CI (`.github/workflows/`: `ci.yml`, `codeql.yml`, `dependency-review.yml`,
+`workflow-lint.yml`) only lints/tests/builds native; it does **not** build or
+publish installers. Releases are cut by hand from a Mac (and a Windows host).
+Before releasing, run `npm run lint && npm run typecheck && npm run test:hermetic`,
+and `npx convex deploy` if `convex/` changed (the update feed is served by
+`convex/http.ts` at `/api/updates`, and the app's `publish.url` points at the
+Convex site `https://avid-finch-726.convex.site/api/updates`).
 
 ```
 # Stable release
@@ -101,13 +127,16 @@ npm run release -- --version 0.2.1 --apply-convex
 npm run release -- --version 0.3.0-beta.1 --channel beta --apply-convex
 ```
 
-The script:
+The script (uses the AWS S3 SDK multipart upload, not wrangler):
 
-1. Bumps `desktop/package.json` version.
-2. Builds the installer via `npm run build:mac:release` (which uses
-   `electron-builder --mac dmg` so a blockmap is emitted — the custom
-   `create-dmg.sh` does NOT produce blockmaps and must not be used for
-   releases).
+1. Bumps `desktop/package.json` version (the root `package.json` version,
+   currently 0.2.1, is not touched).
+2. Builds the installer via `npm run build:mac:release` (which first runs
+   `npm run build:helpers` — the Swift OCR/location/AX helpers must exist —
+   then `npm run build`, then `electron-builder --mac dmg` so a blockmap is
+   emitted; `build:mac`'s custom `create-dmg.sh` does NOT produce blockmaps
+   and must not be used for releases). On a Windows host it runs
+   `npm run build:win` (NSIS, x64).
 3. Locates the DMG / EXE / blockmap / `latest*.yml` in `desktop/dist/`.
 4. Uploads each file to `r2://<bucket>/<channel>/<version>/<filename>`.
 5. Computes SHA-512 (base64) and byte size for each binary.
@@ -170,20 +199,15 @@ npx convex env set UPDATE_RELEASE_DATE_ALPHA <iso-date>
 
 - 5 seconds after launch.
 - Every 4 hours thereafter.
-- On demand via the `update:check` IPC (wired into the tray menu and
-  panel UI).
+- On demand via the `update:check` IPC (tray menu and Settings).
 
 On failure it retries with exponential backoff (30 s → 2 min → 10 min)
 before falling back to the next 4 h tick. 404 responses are treated as
 "no release yet" rather than a retryable error.
 
-Users can opt in to the `beta` channel via:
-
-```
-window.api.invoke("update:setChannel", "beta")
-```
-
-which writes to `electron-store` and re-checks the feed immediately.
+Users can opt in to a non-stable channel (`beta`, `alpha`, `canary`) from
+Settings → Advanced, which calls `update:setChannel` (`atlas.setUpdateChannel` in the
+renderer), saves the choice to `electron-store`, and re-checks the feed immediately.
 
 ## Why not…
 

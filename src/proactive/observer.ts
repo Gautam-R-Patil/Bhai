@@ -7,6 +7,8 @@
 //   Composer → dispatch → channel.
 // Task 2.3. Phase 3 will register source adapters.
 
+import { readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { LLMClient } from "../llm.js";
 import { validateIntent, type ProactiveIntent, type Channel, type IntentSource } from "./intent.js";
 import {
@@ -111,9 +113,68 @@ export class Observer {
     /** Phase 5.3: per-source weights tuned hourly from telemetry rejection rates. */
     private dynamicWeights: Record<string, number> = { ...SOURCE_WEIGHTS };
 
+    private cfgMtime = 0;
+    /**
+     * Scheduled intents already queued, by source+topic+fire time → when they expire. Sources
+     * re-emit the same future alert on every poll (calendar prep every 5 min, with a fresh id),
+     * and the scheduler queued each copy: a 15:00 meeting seen from 09:00 fired ~69 times at 14:45.
+     */
+    private scheduledKeys = new Map<string, number>();
+
     constructor(private deps: ObserverDeps) {
         this.cfg = loadProactiveConfig(deps.configPath);
+        // An earlier "shut up" still holds after a restart (the observer starts at boot).
+        if (this.cfg.quiet) process.env.ATLAS_PROACTIVE_DISABLE = "true";
         this.configureAllPostures();
+        this.cfgMtime = this.configMtime();
+        this.restoreSchedulerState();
+    }
+
+    /** Daily counts, last-send times and recently sent topics, kept across restarts. */
+    private get statePath(): string {
+        return join(dirname(this.deps.configPath), "proactive-state.json");
+    }
+
+    private restoreSchedulerState(): void {
+        try {
+            const snaps = JSON.parse(readFileSync(this.statePath, "utf8")) as native.ChannelSnapshot[];
+            for (const snap of snaps) native.schedulerRestore?.(snap);
+        } catch {
+            /* first run, or unreadable: start fresh */
+        }
+    }
+
+    private saveSchedulerState(): void {
+        try {
+            const snaps = ALL_CHANNELS.map((ch) => native.schedulerSnapshot?.(ch)).filter(Boolean);
+            const tmp = `${this.statePath}.tmp`;
+            writeFileSync(tmp, JSON.stringify(snaps));
+            renameSync(tmp, this.statePath);
+        } catch (err) {
+            debugProactive("observer_state_save_err", { err: (err as Error).message });
+        }
+    }
+
+    private configMtime(): number {
+        try {
+            return statSync(this.deps.configPath).mtimeMs;
+        } catch {
+            return 0;
+        }
+    }
+
+    /**
+     * Re-read proactive-config.json when it changed. It was read once at boot, so "set whatsapp
+     * to ambient" (or a hand edit) answered "Got it" but changed nothing until a restart.
+     * Re-configuring keeps the scheduler's counters; only the posture limits change.
+     */
+    reloadConfigIfChanged(): void {
+        const m = this.configMtime();
+        if (m === this.cfgMtime) return;
+        this.cfgMtime = m;
+        this.cfg = loadProactiveConfig(this.deps.configPath);
+        this.configureAllPostures();
+        debugProactive("config_reloaded", {});
     }
 
     start(): void {
@@ -172,6 +233,16 @@ export class Observer {
                 dropReason: "source_disabled",
             });
             return false;
+        }
+        const scheduledKey =
+            intent.scheduledFor !== undefined ? `${intent.source}|${intent.topic}|${intent.scheduledFor}` : null;
+        if (scheduledKey) {
+            const now = Date.now();
+            for (const [k, exp] of this.scheduledKeys) if (exp <= now) this.scheduledKeys.delete(k);
+            if (this.scheduledKeys.has(scheduledKey)) {
+                debugProactive("observer_enqueue_duplicate_scheduled", { id: intent.id, topic: intent.topic });
+                return false;
+            }
         }
         const v = validateIntent(intent);
         if (!v.ok) {
@@ -240,6 +311,7 @@ export class Observer {
             decision: res === "scheduled" ? "scheduled" : "enqueued",
             ...(res === "scheduled" && intent.scheduledFor ? { scheduledFor: intent.scheduledFor } : {}),
         });
+        if (scheduledKey) this.scheduledKeys.set(scheduledKey, intent.expiresAt);
         return true;
     }
 
@@ -260,6 +332,7 @@ export class Observer {
     }
 
     async tickAll(): Promise<void> {
+        this.reloadConfigIfChanged();
         // 0. Drain wall-clock scheduled intents (V3)
         for (const ch of ALL_CHANNELS) {
             try {
@@ -304,6 +377,7 @@ export class Observer {
     private async releaseChannel(channel: Channel): Promise<void> {
         const r = native.schedulerReleaseGrouped(channel);
         if (!r) return;
+        if (r.morningBatch.length > 0 || r.singles.length > 0) this.saveSchedulerState();
 
         for (const d of r.dropped) {
             debugProactive("observer_dropped", { id: d.id, reason: d.reason });

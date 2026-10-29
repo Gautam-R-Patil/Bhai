@@ -741,8 +741,7 @@ STEP_RENDERERS["install"] = function (root) {
 STEP_RENDERERS["ready-hub"] = function (root) {
     const wrap = el("div", { class: "hub" });
 
-    const titleHtml = "Ready, <em>" + state.name + "</em>.";
-    wrap.appendChild(el("h1", { class: "hub-title", html: titleHtml }));
+    wrap.appendChild(el("h1", { class: "hub-title" }, "Ready, ", el("em", { text: state.name }), "."));
 
     const dek = el("p", { class: "hub-dek" });
     dek.appendChild(document.createTextNode("Press "));

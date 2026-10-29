@@ -130,9 +130,10 @@ export async function detectCaptcha(
             const result = nativeClassifyCaptcha(html);
             // The classifier only knows the big widgets: trust its "none" only when the page
             // doesn't so much as mention a check (Enterprise, text and vendor CAPTCHAs).
-            const mentions = /captcha|geetest|arkose|funcaptcha|awswaf|turnstile|challenge-form|just a moment/i.test(
-                html,
-            );
+            const mentions =
+                /captcha|geetest|arkose|funcaptcha|awswaf|turnstile|challenge-form|cf-chl-widget|cf-challenge|just a moment|attention required|checking your browser|verify you are human/i.test(
+                    html,
+                );
             if (result.kind === "none" && result.confidence === 0 && !mentions) {
                 return { type: "none", siteKey: null }; // definitively no CAPTCHA
             }
@@ -197,10 +198,10 @@ export async function detectCaptcha(
             });
             if (challengeUp) return rcV2;
             if (rcFrames.length || rcWidget) return { type: "recaptcha-v3", siteKey: rcV2.siteKey };
-            // Cloudflare's full-page check ("Just a moment…" / "Verify you are human")
+            // Cloudflare's full-page check. Only its own titles: "please wait" etc. are ordinary loading pages.
             if (
-                /^(just a moment|attention required)/i.test(document.title) ||
-                document.querySelector("#challenge-form,#challenge-stage,[id^='cf-chl-widget']")
+                /^(just a moment|attention required|checking your browser|verify you are human)/i.test(document.title) ||
+                document.querySelector("#challenge-form,#challenge-stage,[id^='cf-chl-widget'],.cf-challenge")
             ) {
                 return { type: "turnstile", siteKey: null };
             }

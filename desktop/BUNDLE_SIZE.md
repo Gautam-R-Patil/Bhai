@@ -1,5 +1,7 @@
 # Desktop Bundle Size — Analysis & Roadmap
 
+> **Historical (Oct 2026 audit).** Figures and the `node bot/dist/index.js` child-process layout predate the single esbuild bot bundle (`Contents/Resources/bot/bot-bundle.mjs`; see `CLAUDE.md`). Re-measure before relying on any number here.
+
 Live notes on why the Electron app bundle is as large as it is, what's
 already been trimmed, and what options exist for going further. The
 audit originally claimed a **−600 MB** win by removing the bundled

@@ -141,6 +141,24 @@ const OVERLAY_MAX_HEIGHT = 600;
 const OVERLAY_MARGIN_RIGHT = 16;
 const OVERLAY_MARGIN_TOP = 8;
 const OVERLAY_URL = "http://127.0.0.1:18792";
+// The overlay page embeds the owner token only for a request that proves it holds it
+// (src/overlay/overlay-chat.ts): this app's own requests add it, read from the 0600 file
+// the bot writes, so another local process or a browser tab opening the page gets none.
+let overlayTokenHooked = false;
+function hookOverlayToken(ses) {
+    if (overlayTokenHooked) return;
+    overlayTokenHooked = true;
+    const tokenFile = path.join(require("node:os").homedir(), ".atlas", "overlay-local-token");
+    ses.webRequest.onBeforeSendHeaders({ urls: [`${OVERLAY_URL}/*`] }, (details, cb) => {
+        try {
+            const tok = fs.readFileSync(tokenFile, "utf8").trim();
+            if (tok) details.requestHeaders["X-Bhai-Overlay"] = tok;
+        } catch {
+            /* bot hasn't written it yet: the page loads token-less and is reloaded on ##ATLAS_READY## */
+        }
+        cb({ requestHeaders: details.requestHeaders });
+    });
+}
 const OVERLAY_RESIZE_MS = 500;
 const OVERLAY_HIDE_DELAY_MS = 260;
 // macOS 26 Spotlight-style corners; keep in sync with --panel-radius in src/overlay/overlay.html.
@@ -181,6 +199,15 @@ const { readVault, registerVaultIpc } = require("./vault-store");
 // kept here as breadcrumbs for legacy callers.
 let _desktopSessionToken = null;
 let _desktopSessionExpiry = 0;
+// Set when the server says the owner removed this Mac (Account → Devices on another one):
+// it gets no session until someone signs in here again.
+let _deviceRemoved = false;
+
+/** This device as the bot names it (src/session.ts getDeviceFingerprint): one Devices row per Mac. */
+function deviceFingerprint() {
+    const user = process.env.USER || process.env.USERNAME || "unknown";
+    return `${process.platform}:${require("node:os").hostname()}:${user}`;
+}
 
 async function getDesktopSessionToken(overrideUserId, overrideInfo) {
     if (_desktopSessionToken && _desktopSessionExpiry > Date.now() + 3600000) {
@@ -198,6 +225,7 @@ async function getDesktopSessionToken(overrideUserId, overrideInfo) {
     const https = require("https");
     const bodyStr = JSON.stringify({
         otplessUserId: userId,
+        deviceFingerprint: deviceFingerprint(),
     });
 
     return new Promise((resolve) => {
@@ -216,10 +244,12 @@ async function getDesktopSessionToken(overrideUserId, overrideInfo) {
                 try {
                     const data = JSON.parse(raw);
                     if (data.token) {
+                        _deviceRemoved = false;
                         _desktopSessionToken = data.token;
                         _desktopSessionExpiry = data.expiresAt || (Date.now() + 86400000);
                         resolve(data.token);
                     } else {
+                        if (data.error === "device_removed") _deviceRemoved = true;
                         console.warn("[Session] Desktop session failed:", data.error || "unknown");
                         resolve(null);
                     }
@@ -257,11 +287,11 @@ function convexPostNoAuth(urlPath, bodyObj) {
     });
 }
 
-function convexSiteRequest(method, urlPath, bodyObj) {
-    return new Promise(async (resolve, reject) => {
-        const token = await getDesktopSessionToken();
-        if (!token) return reject(new Error("No session token available"));
+async function convexSiteRequest(method, urlPath, bodyObj) {
+    const token = await getDesktopSessionToken();
+    if (!token) throw new Error("No session token available");
 
+    return new Promise((resolve, reject) => {
         const https = require("https");
         const bodyStr = bodyObj ? JSON.stringify(bodyObj) : "";
         const url = new URL(`${CONVEX_SITE_URL}${urlPath}`);
@@ -902,6 +932,18 @@ let botMessageCount = 0;
 let botToolCount = 0;
 const channelStatuses = {};
 
+// WhatsApp owner sign-up: the bot's own number (from its ##ATLAS_WA_SELF## line)
+// lets the panel offer a wa.me link/QR with the code already typed in.
+let waSelfNumber = "";
+async function waOtpPayload(code) {
+    const payload = { code, self: waSelfNumber };
+    if (waSelfNumber) {
+        payload.link = `https://wa.me/${waSelfNumber}?text=${code}`;
+        try { payload.qr = await require("qrcode").toDataURL(payload.link, { width: 200, margin: 1 }); } catch { /* link still works */ }
+    }
+    return payload;
+}
+
 // Broadcast a theme change to every window that cares about it. The overlay
 // is a separate BrowserWindow from the main one, so both need to be notified.
 function broadcastThemeChange(theme) {
@@ -1245,9 +1287,10 @@ async function startBot() {
         return { status: "error", error: errMsg };
     }
 
-    // Validate env content
-    if (!envContent || !envContent.includes("TELEGRAM_BOT_TOKEN")) {
-        sendLog("⚠️ Warning: No credentials found. Configure settings first.");
+    // Only an empty/unreadable settings file is worth a warning; no Telegram
+    // token is normal (other channels, or just the overlay).
+    if (!envContent) {
+        sendLog("⚠️ Warning: settings are empty or couldn't be decrypted.");
     }
 
     sendLog(`Starting bot from: ${entryPoint}`);
@@ -1390,11 +1433,16 @@ async function startBot() {
             }
 
             // WhatsApp OTP forwarding
+            const selfMatch = msg.match(/##ATLAS_WA_SELF##(\d+)##END_SELF##/);
+            if (selfMatch) {
+                waSelfNumber = selfMatch[1];
+                if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("whatsapp-otp", { self: waSelfNumber });
+            }
             const otpMatch = msg.match(/##ATLAS_WA_OTP##(.+)##END_OTP##/);
             if (otpMatch) {
-                if (mainWindow && !mainWindow.isDestroyed()) {
-                    mainWindow.webContents.send("whatsapp-otp", { code: otpMatch[1] });
-                }
+                waOtpPayload(otpMatch[1]).then(p => {
+                    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("whatsapp-otp", p);
+                });
             }
             // WhatsApp owner verified
             if (msg.includes("[WHATSAPP] Owner verified:")) {
@@ -1562,7 +1610,7 @@ function startLocalServer() {
             fs.readFile(resolved, (err, data) => {
                 if (err) {
                     res.writeHead(404);
-                    res.end("Not found: " + req.url);
+                    res.end("Not found"); // never echo req.url: it would reflect into this origin
                     return;
                 }
                 // F1: ACAO:* removed. Same-origin loads from the BrowserWindow
@@ -1981,6 +2029,7 @@ function createOverlayWindow() {
         overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     }
 
+    hookOverlayToken(overlayWindow.webContents.session);
     overlayWindow.loadURL(OVERLAY_URL);
 
     // Retry loading if the bot server isn't ready yet (race condition on first show)
@@ -2386,7 +2435,8 @@ function registerIPC() {
             return { success: false, error: "Missing token" };
         }
         try {
-            const raw = await convexPostNoAuth("/api/otpless/validate-token", { token });
+            // The fingerprint lets a verified sign-in bring back a Mac removed in Account → Devices.
+            const raw = await convexPostNoAuth("/api/otpless/validate-token", { token, deviceFingerprint: deviceFingerprint() });
             const parsed = parseOtplessVerifyResponse(raw);
             if (!parsed.ok) return { success: false, error: parsed.error };
             finalizeAuth(parsed);
@@ -4183,6 +4233,62 @@ function registerIPC() {
         return null;
     }
 
+    // Settings → Integrations: what's connected, for the cards' status lines.
+    const googleTokensDir = path.join(DATA_DIR, "google-tokens");
+    function connectedGoogleAccounts() {
+        const out = [];
+        let files = [];
+        try { files = fs.readdirSync(googleTokensDir).filter(f => f.endsWith(".json")); } catch { return out; }
+        for (const file of files) {
+            let email = "";
+            try {
+                const tokens = JSON.parse(fs.readFileSync(path.join(googleTokensDir, file), "utf-8"));
+                if (tokens.id_token) email = JSON.parse(Buffer.from(tokens.id_token.split(".")[1], "base64").toString("utf-8")).email || "";
+            } catch { /* unreadable token file */ }
+            out.push({ file, email: email || file.replace(/\.json$/, "") });
+        }
+        return out;
+    }
+
+    ipcMain.handle("settings:integrations", () => {
+        const custom = loadEnvKey("ATLAS_WORKSPACE") || "";
+        return {
+            workspace: custom || path.join(app.getPath("desktop"), "Bhai Files"),
+            workspaceIsDefault: !custom,
+            googleAvailable: !!findGoogleCredentials(),
+            googleAccounts: connectedGoogleAccounts().map(a => a.email),
+            githubSaved: !!loadEnvKey("GITHUB_TOKEN"),
+        };
+    });
+
+    // Checks a GitHub token (or the saved one) and says whose it is.
+    ipcMain.handle("settings:test-github", async (_, token) => {
+        token = token || loadEnvKey("GITHUB_TOKEN") || "";
+        if (!token) return { success: false, message: "No token" };
+        try {
+            const res = await fetch("https://api.github.com/user", {
+                headers: { Authorization: `Bearer ${token}`, "User-Agent": "Bhai", Accept: "application/vnd.github+json" },
+                signal: AbortSignal.timeout(15000),
+            });
+            if (res.status === 401) return { success: false, message: "GitHub didn't accept this token. It may be mistyped, expired or revoked." };
+            if (!res.ok) return { success: false, message: `GitHub error (${res.status})` };
+            const user = await res.json();
+            return { success: true, login: user.login, name: user.name || "", scopes: res.headers.get("x-oauth-scopes") || "" };
+        } catch (err) { return { success: false, message: err.message }; }
+    });
+
+    ipcMain.handle("settings:google-disconnect", (_, email) => {
+        const hit = connectedGoogleAccounts().find(a => a.email === email);
+        if (hit) fs.rmSync(path.join(googleTokensDir, hit.file), { force: true });
+        return { success: !!hit };
+    });
+
+    ipcMain.handle("settings:open-workspace", () => {
+        const dir = loadEnvKey("ATLAS_WORKSPACE") || path.join(app.getPath("desktop"), "Bhai Files");
+        fs.mkdirSync(dir, { recursive: true });
+        return shell.openPath(dir);
+    });
+
     // Setup: Google OAuth
     ipcMain.handle("setup:google-oauth", async () => {
         try {
@@ -4618,6 +4724,8 @@ function registerIPC() {
         isDev: IS_DEV,
         defaultWorkspace: path.join(app.getPath("desktop"), "Bhai Files"),
         platform: process.platform,
+        // The shortcut actually registered: a fallback when the preferred one was taken.
+        overlayShortcut: getActiveOverlayShortcut(),
     }));
 
     // ── Auto-Updater IPC ─────────────────────────
@@ -4892,6 +5000,7 @@ function registerIPC() {
             } catch (err) {
                 console.warn("[Account] Convex info query failed:", err.message);
             }
+            if (_deviceRemoved) return { signedIn: false, deviceRemoved: true };
 
             return {
                 signedIn: true,
@@ -4909,6 +5018,25 @@ function registerIPC() {
         } catch (err) {
             console.error("[Account] account:info error:", err.message);
             return { signedIn: false, error: err.message };
+        }
+    });
+
+    // Account → Devices
+    ipcMain.handle("account:devices", async () => {
+        try {
+            const data = await convexSiteRequest("GET", "/api/account/devices");
+            return { success: true, devices: Array.isArray(data?.devices) ? data.devices : [] };
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+    ipcMain.handle("account:remove-device", async (_, deviceId) => {
+        if (typeof deviceId !== "string" || !deviceId) return { success: false, error: "No device" };
+        try {
+            const r = await convexSiteRequest("POST", "/api/account/devices/remove", { deviceId });
+            return r?.ok ? { success: true } : { success: false, error: r?.error || "Couldn't remove it" };
+        } catch (err) {
+            return { success: false, error: err.message };
         }
     });
 
@@ -5482,6 +5610,7 @@ ${body}`;
                     enabled: !!env.WHATSAPP_ALLOWED_JIDS,
                     jids: env.WHATSAPP_ALLOWED_JIDS || "",
                     status: channelStatuses.whatsapp || "disconnected",
+                    selfNumber: waSelfNumber,
                 },
                 discord: {
                     enabled: !!env.DISCORD_BOT_TOKEN,
@@ -5495,7 +5624,9 @@ ${body}`;
                     userIds: env.SLACK_ALLOWED_USER_IDS || "",
                 },
                 email: {
-                    enabled: !!env.EMAIL_USER,
+                    enabled: !!env.EMAIL_USER || !!env.BHAI_MAIL_ADDRESS,
+                    bhaiAddress: env.BHAI_MAIL_ADDRESS || "",
+                    bhaiOwner: env.BHAI_MAIL_OWNER || "",
                     user: env.EMAIL_USER || "",
                     whitelist: env.EMAIL_WHITELIST || "",
                     smtpHost: env.EMAIL_SMTP_HOST || "",
@@ -5543,6 +5674,7 @@ ${body}`;
                         "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_ALLOWED_USER_IDS",
                         "EMAIL_USER", "EMAIL_PASSWORD", "EMAIL_WHITELIST",
                         "EMAIL_SMTP_HOST", "EMAIL_SMTP_PORT", "EMAIL_IMAP_HOST", "EMAIL_IMAP_PORT",
+                        "BHAI_MAIL_ADDRESS", "BHAI_MAIL_OWNER",
                         "MATRIX_HOMESERVER", "MATRIX_USER_ID", "MATRIX_PASSWORD", "MATRIX_ALLOWED_ROOMS",
                     ];
                     if (channelKeys.includes(key)) {
@@ -5625,6 +5757,11 @@ ${body}`;
                 if (config.email.smtpPort) envLines.push(`EMAIL_SMTP_PORT=${config.email.smtpPort}`);
                 if (config.email.imapHost) envLines.push(`EMAIL_IMAP_HOST=${config.email.imapHost}`);
                 if (config.email.imapPort) envLines.push(`EMAIL_IMAP_PORT=${config.email.imapPort}`);
+                // Bhai's own address (server-issued, see channel:bhai-mail-claim)
+                if (/^[a-z0-9]+\.bhai@[a-z0-9.-]+$/.test(config.email.bhaiAddress || "") && config.email.bhaiOwner && !/[\s=]/.test(config.email.bhaiOwner)) {
+                    envLines.push(`BHAI_MAIL_ADDRESS=${config.email.bhaiAddress}`);
+                    envLines.push(`BHAI_MAIL_OWNER=${config.email.bhaiOwner}`);
+                }
             }
 
             // Matrix (UI sends username/rooms, map to userId/allowedRooms)
@@ -5657,60 +5794,170 @@ ${body}`;
     // ── Channel Connection Tests ─────────────────
     // These work WITHOUT the bot running — just HTTP calls to verify credentials
 
+    // Empty or masked ("***") field = use the token already saved.
+    const savedOr = (v, key) => (v && v !== "***" ? v : loadEnvKey(key) || "");
+
     ipcMain.handle("channel:test-telegram", async (_, { token }) => {
         try {
-            const res = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+            token = savedOr(token, "TELEGRAM_BOT_TOKEN");
+            const res = await fetch(`https://api.telegram.org/bot${encodeURIComponent(token)}/getMe`);
             const data = await res.json();
-            if (data.ok) return { success: true, message: `Connected as @${data.result.username} (${data.result.first_name})` };
+            if (data.ok) return { success: true, username: data.result.username, message: `Connected as @${data.result.username} (${data.result.first_name})` };
             return { success: false, message: data.description || "Invalid token" };
         } catch (err) { return { success: false, message: err.message }; }
     });
 
+    // Waits for the owner to message the new bot and returns their user id, so
+    // nobody has to look it up. Only runs before the bot uses this token (the
+    // bot's own polling would take the update instead). Single-flight per token.
+    const __tgOwnerWaits = new Map();
+    ipcMain.handle("channel:telegram-wait-owner", (_, { token }) => {
+        token = savedOr(token, "TELEGRAM_BOT_TOKEN");
+        if (!/^\d+:[A-Za-z0-9_-]{30,}$/.test(token)) return { success: false, message: "Bad Telegram token" };
+        if (token === loadEnvKey("TELEGRAM_BOT_TOKEN") && isAlive(botProcess)) return { success: false, message: "Bhai is already using this bot" };
+        if (__tgOwnerWaits.has(token)) return __tgOwnerWaits.get(token);
+        const p = (async () => {
+            const deadline = Date.now() + 3 * 60 * 1000;
+            while (Date.now() < deadline) {
+                try {
+                    const res = await fetch(`https://api.telegram.org/bot${encodeURIComponent(token)}/getUpdates?timeout=20&allowed_updates=["message"]`, { signal: AbortSignal.timeout(30000) });
+                    const data = await res.json();
+                    if (!data.ok) return { success: false, message: data.description || "Telegram refused getUpdates" };
+                    // Updates are not acknowledged, so the bot still sees the hi after it starts.
+                    const from = data.result.map(u => u.message && u.message.from).find(f => f && !f.is_bot);
+                    if (from) return { success: true, userId: String(from.id), name: [from.first_name, from.last_name].filter(Boolean).join(" ") || from.username || "" };
+                } catch { await new Promise(r => setTimeout(r, 2000)); }
+            }
+            return { success: false, message: "No message arrived in 3 minutes" };
+        })().finally(() => __tgOwnerWaits.delete(token));
+        __tgOwnerWaits.set(token, p);
+        return p;
+    });
+
+    // Also returns the app owner's id (fills the allowlist) and whether the
+    // Message Content intent is on (without it the bot reads empty messages).
     ipcMain.handle("channel:test-discord", async (_, { token }) => {
         try {
-            const res = await fetch("https://discord.com/api/v10/users/@me", { headers: { Authorization: `Bot ${token}` } });
-            if (!res.ok) return { success: false, message: `Invalid token (${res.status})` };
-            const data = await res.json();
-            return { success: true, message: `Connected as ${data.username}#${data.discriminator}` };
+            token = savedOr(token, "DISCORD_BOT_TOKEN");
+            const res = await fetch("https://discord.com/api/v10/applications/@me", { headers: { Authorization: `Bot ${token}` } });
+            if (!res.ok) return { success: false, message: res.status === 401 ? "Discord rejected this token. Reset it in the Bot tab and paste the new one." : `Discord error (${res.status})` };
+            const app = await res.json();
+            const owner = app.team ? (app.team.members || []).find(m => m.user && m.user.id === app.team.owner_user_id)?.user : app.owner;
+            const MESSAGE_CONTENT = (1 << 18) | (1 << 19);
+            return {
+                success: true,
+                clientId: app.id,
+                ownerId: owner ? owner.id : "",
+                ownerName: owner ? (owner.global_name || owner.username) : "",
+                intentOk: !!(app.flags & MESSAGE_CONTENT),
+                message: `Connected as ${app.bot ? app.bot.username : app.name}`,
+            };
         } catch (err) { return { success: false, message: err.message }; }
     });
 
+    // Also suggests the workspace's primary owner for the allowlist (users:read
+    // is in the manifest); the panel lets the user change it.
     ipcMain.handle("channel:test-slack", async (_, { botToken }) => {
         try {
-            const res = await fetch("https://slack.com/api/auth.test", { headers: { Authorization: `Bearer ${botToken}` } });
-            const data = await res.json();
-            if (data.ok) return { success: true, message: `Connected to ${data.team} as ${data.user}` };
-            return { success: false, message: data.error || "Invalid token" };
+            botToken = savedOr(botToken, "SLACK_BOT_TOKEN");
+            const headers = { Authorization: `Bearer ${botToken}` };
+            const data = await (await fetch("https://slack.com/api/auth.test", { headers })).json();
+            if (!data.ok) return { success: false, message: data.error || "Invalid token" };
+            let ownerId = "", ownerName = "";
+            try {
+                const ul = await (await fetch("https://slack.com/api/users.list?limit=200", { headers })).json();
+                const humans = (ul.members || []).filter(u => !u.is_bot && !u.deleted && u.id !== "USLACKBOT");
+                const owner = humans.find(u => u.is_primary_owner) || (humans.length === 1 ? humans[0] : null);
+                if (owner) { ownerId = owner.id; ownerName = owner.real_name || owner.name; }
+            } catch { /* optional */ }
+            let appId = "";
+            try {
+                const bi = await (await fetch(`https://slack.com/api/bots.info?bot=${encodeURIComponent(data.bot_id || "")}`, { headers })).json();
+                appId = (bi.bot && bi.bot.app_id) || "";
+            } catch { /* optional */ }
+            return { success: true, ownerId, ownerName, appId, message: `Connected to ${data.team} as ${data.user}` };
         } catch (err) { return { success: false, message: err.message }; }
     });
 
+    // Real IMAP login, not just a TLS reachability check: a wrong app password
+    // should fail here, not silently after the restart.
     ipcMain.handle("channel:test-email", async (_, { user, password, imapHost, imapPort }) => {
+        const { ImapFlow } = require("imapflow");
+        const port = Number(imapPort) || 993;
+        const client = new ImapFlow({ host: imapHost, port, secure: port === 993, auth: { user, pass: savedOr(password, "EMAIL_PASSWORD") }, logger: false });
         try {
-            // Simple TCP+TLS connection test to IMAP server
-            const net = require("net");
-            const tls = require("tls");
-            return new Promise((resolve) => {
-                const socket = tls.connect({ host: imapHost, port: imapPort || 993, rejectUnauthorized: false }, () => {
-                    socket.destroy();
-                    resolve({ success: true, message: `IMAP server ${imapHost}:${imapPort} reachable` });
-                });
-                socket.on("error", (err) => resolve({ success: false, message: `Cannot reach ${imapHost}:${imapPort}: ${err.message}` }));
-                socket.setTimeout(10000, () => { socket.destroy(); resolve({ success: false, message: "Connection timed out" }); });
-            });
-        } catch (err) { return { success: false, message: err.message }; }
+            await client.connect();
+            await client.logout();
+            return { success: true, message: `Signed in to ${user}` };
+        } catch (err) {
+            const auth = err.authenticationFailed || /auth|credential|password/i.test(String(err.responseText || err.message));
+            return { success: false, message: auth ? "Sign-in failed. Use an app password, not your normal password." : `Cannot reach ${imapHost}:${port}: ${err.message}` };
+        }
     });
 
-    ipcMain.handle("channel:test-matrix", async (_, { homeserver, userId, password }) => {
+    ipcMain.handle("channel:test-matrix", async (_, { homeserver, username, password }) => {
         try {
-            const res = await fetch(`${homeserver}/_matrix/client/v3/login`, {
+            const base = (homeserver || "https://matrix.org").replace(/\/$/, "");
+            const res = await fetch(`${base}/_matrix/client/v3/login`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ type: "m.login.password", user: userId, password })
+                body: JSON.stringify({ type: "m.login.password", identifier: { type: "m.id.user", user: username }, password: savedOr(password, "MATRIX_PASSWORD") })
             });
             const data = await res.json();
-            if (data.access_token) return { success: true, message: `Logged in as ${data.user_id}` };
+            if (data.access_token) return { success: true, userId: data.user_id, message: `Logged in as ${data.user_id}` };
             return { success: false, message: data.error || "Login failed" };
         } catch (err) { return { success: false, message: err.message }; }
+    });
+
+    // One-tap Telegram bot through Bhai's manager bot (convex/telegramManaged.ts):
+    // claim a username, open Telegram's prefilled "create bot" screen, then
+    // collect the token and the owner's id once the user taps Create.
+    ipcMain.handle("channel:telegram-managed-start", async () => {
+        const username = `bhai_${require("crypto").randomBytes(3).toString("hex")}_bot`;
+        try {
+            const r = await convexSiteRequest("POST", "/api/telegram/managed/claim", { username });
+            if (!r || !r.link) return { success: false, notConfigured: !!r && r.error === "not_configured", message: (r && r.error) || "No reply" };
+            await shell.openExternal(r.link);
+            return { success: true, username };
+        } catch (err) { return { success: false, message: err.message }; }
+    });
+
+    ipcMain.handle("channel:telegram-managed-wait", async (_, { username }) => {
+        const deadline = Date.now() + 10 * 60 * 1000;
+        while (Date.now() < deadline) {
+            await new Promise(r => setTimeout(r, 3000));
+            let r;
+            try { r = await convexSiteRequest("POST", "/api/telegram/managed/collect", { username }); } catch { continue; }
+            if (r && r.status === "ready") return { success: true, username, token: r.token, userId: r.ownerId, name: r.ownerName || "" };
+            if (r && r.status === "expired") return { success: false, message: "That request expired" };
+            if (r && r.error && !/rate limit/i.test(r.error)) return { success: false, message: r.error };
+        }
+        return { success: false, message: "Telegram didn't confirm in 10 minutes" };
+    });
+
+    // Bhai's own email: the server hands out <name>.bhai@xagilab.com for this
+    // account; it only takes mail from ownerEmail and only writes to it.
+    ipcMain.handle("channel:bhai-mail-claim", async (_, { ownerEmail }) => {
+        try {
+            const r = await convexSiteRequest("POST", "/api/mail/claim", { ownerEmail });
+            if (r && r.address) return { success: true, address: r.address };
+            return { success: false, notConfigured: !!r && r.error === "not_configured", message: (r && r.error) || "No reply" };
+        } catch (err) { return { success: false, message: err.message }; }
+    });
+
+    // Coming back from BotFather / the Discord or Slack portal with a token
+    // copied fills it in. Only a value shaped like the asked-for token leaves
+    // main; the rest of the clipboard never reaches the page.
+    const TOKEN_SHAPES = {
+        telegram: /^\d{6,}:[A-Za-z0-9_-]{30,}$/,
+        discord: /^[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{25,}$/,
+        slackBot: /^xoxb-[A-Za-z0-9-]{20,}$/,
+        slackApp: /^xapp-[A-Za-z0-9-]{20,}$/,
+        github: /^(ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{60,})$/,
+    };
+    ipcMain.handle("channel:clipboard-token", (_, kind) => {
+        const text = require("electron").clipboard.readText().trim();
+        return TOKEN_SHAPES[kind] && TOKEN_SHAPES[kind].test(text) ? text : "";
     });
 
     ipcMain.handle("channel:status-all", () => channelStatuses);
@@ -5738,11 +5985,11 @@ ${body}`;
     });
 
     ipcMain.handle("wa:generate-otp", () => {
-        // Generate OTP and write to a signal file that the bot watches
-        const code = String(Math.floor(100000 + Math.random() * 900000));
+        // The bot reads this file the next time a message arrives (getActiveOTP).
+        const code = String(require("crypto").randomInt(100000, 1000000));
         const otpPath = path.join(DATA_DIR, "whatsapp-otp-signal.json");
-        fs.writeFileSync(otpPath, JSON.stringify({ code, expiresAt: Date.now() + 5 * 60 * 1000 }));
-        return { code };
+        fs.writeFileSync(otpPath, JSON.stringify({ code, expiresAt: Date.now() + 5 * 60 * 1000 }), { mode: 0o600 });
+        return waOtpPayload(code);
     });
 
     // Setup: start a WhatsApp pair session from inside the wizard.

@@ -775,13 +775,6 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 } catch {
                     /* non-fatal */
                 }
-                try {
-                    const { recordResponse } = await import("./proactive/notification-tracker.js");
-                    // Find the most recent unresponded notification and mark as engaged
-                    recordResponse(0, "engaged", 1);
-                } catch {
-                    /* non-fatal */
-                }
 
                 const dreamResults = getDreamResultsForDelivery();
                 if (dreamResults && dreamResults.length > 0) {

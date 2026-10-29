@@ -3,7 +3,8 @@
 // See LICENSE.md for details.
 
 import { describe, expect, it } from "vitest";
-import { getOverlayLocalToken } from "./overlay-chat.js";
+import { isBrowserPageLoad } from "../security/loopback.js";
+import { getOverlayLocalToken, overlayPageToken } from "./overlay-chat.js";
 
 // Regression guard for the overlay WS-auth fix: the served HTML must have its
 // %%ATLAS_LOCAL_TOKEN%% placeholder replaced with the real loopback token, and
@@ -34,5 +35,24 @@ describe("overlay token injection", () => {
         expect(buildQuery(getOverlayLocalToken())).toBe(`?localToken=${getOverlayLocalToken()}`);
         expect(buildQuery(PLACEHOLDER)).toBe(""); // un-injected → no bogus token sent
         expect(buildQuery(undefined)).toBe("");
+    });
+});
+
+describe("the owner token isn't handed to whoever loads a page", () => {
+    it("the overlay page carries the token only for the desktop app's own request", () => {
+        const tok = getOverlayLocalToken();
+        expect(overlayPageToken(tok)).toBe(tok); // desktop/main.js sends X-Bhai-Overlay
+        expect(overlayPageToken(undefined)).toBe(""); // a browser tab, curl, another account
+        expect(overlayPageToken("guess")).toBe("");
+        expect(overlayPageToken([tok, tok])).toBe("");
+    });
+
+    it("/discover refuses a browser page load but not the extension's or a CLI's fetch", () => {
+        // The agent's browser sent to http://127.0.0.1:18800/discover by a web page.
+        expect(isBrowserPageLoad({ "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" })).toBe(true);
+        expect(isBrowserPageLoad({ "sec-fetch-dest": "iframe" })).toBe(true);
+        // The extension's service-worker fetch, and curl / a local tool (no fetch metadata).
+        expect(isBrowserPageLoad({ "sec-fetch-mode": "cors", "sec-fetch-dest": "empty" })).toBe(false);
+        expect(isBrowserPageLoad({})).toBe(false);
     });
 });

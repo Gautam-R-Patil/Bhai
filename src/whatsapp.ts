@@ -16,7 +16,6 @@ import { categorizeError, getErrorMessage, smartChunkMessage } from "./alive-ux.
 import { isStopCommand, STUCK_REPLY_LINE, withStuckReplyLine } from "./channel-text.js";
 import { getDataDir } from "./config/paths.js";
 import type { LLMClient } from "./llm.js";
-import { recall } from "./memory/sqlite.js";
 import {
     getPendingQueriesForOwner,
     registerOwnerRelaySender,
@@ -1838,17 +1837,9 @@ async function respondInGroup(
     const recentMessages = getGroupHistory(groupJid, 30);
     const senderInfo = getGroupParticipant(groupJid, senderJid);
 
-    // Recall group-scoped memories
-    let groupMemories = "";
-    try {
-        const results = await recall(text, 5, llm, undefined, [`group:${groupJid}`]);
-        if (results && Array.isArray(results)) {
-            groupMemories = results
-                .map((r) => r.content)
-                .filter(Boolean)
-                .join("\n");
-        }
-    } catch {}
+    // No memory recall here: recall() always adds the owner's global scope, and nothing
+    // writes group-scoped memories, so it could only put the owner's private memories
+    // in front of every group member.
 
     const systemPrompt = `You are Bhai participating in WhatsApp group "${group.name}".
 ${group.description ? `Group description: ${group.description}` : ""}
@@ -1868,7 +1859,6 @@ ABOUT ${senderName}:
 ${senderInfo?.topics?.length ? `Talks about: ${senderInfo.topics.join(", ")}` : ""}
 ${senderInfo?.messageCount ? `Active: ${senderInfo.messageCount} messages in group` : "New to the conversation"}
 
-${groupMemories ? `GROUP MEMORIES:\n${groupMemories}` : ""}
 
 RECENT GROUP CONVERSATION:
 ${recentMessages.map((m) => `${m.isFromBot ? "Bhai" : m.senderName}: ${m.content.substring(0, 200)}`).join("\n")}
@@ -2234,6 +2224,10 @@ async function connectWhatsApp(llm: LLMClient): Promise<void> {
 
             // Initialize multi-user system on connection
             initWhatsAppUsers();
+
+            // The desktop builds a wa.me link to this number for owner sign-up.
+            const selfNumber = (sock.user?.id || "").split(/[:@]/)[0];
+            if (/^\d+$/.test(selfNumber)) console.log(`##ATLAS_WA_SELF##${selfNumber}##END_SELF##`);
 
             // First-time setup: generate OTP for owner registration
             if (getOwners().length === 0) {

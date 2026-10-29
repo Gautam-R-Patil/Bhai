@@ -65,15 +65,6 @@
                     </svg>
                     <span>Chats</span>
                 </button>
-                <button class="nav-item" data-tab="memory" onclick="switchTab('memory')">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                        stroke-linecap="round" stroke-linejoin="round">
-                        <path
-                            d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z" />
-                        <line x1="10" y1="22" x2="14" y2="22" />
-                    </svg>
-                    <span>Memory</span>
-                </button>
                 <button class="nav-item" data-tab="channels" onclick="switchTab('channels')">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                         stroke-linecap="round" stroke-linejoin="round">
@@ -117,15 +108,6 @@
                         <circle cx="12" cy="7" r="4"></circle>
                     </svg>
                     <span>Account</span>
-                </button>
-                <button class="nav-item" data-tab="about" onclick="switchTab('about')">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                        stroke-linecap="round" stroke-linejoin="round">
-                        <circle cx="12" cy="12" r="10"></circle>
-                        <line x1="12" y1="16" x2="12" y2="12"></line>
-                        <line x1="12" y1="8" x2="12.01" y2="8"></line>
-                    </svg>
-                    <span>About</span>
                 </button>
                 <span class="nav-pill" aria-hidden="true"></span>
             </div>
@@ -304,27 +286,17 @@
             <div class="tab-content" id="tab-settings">
                 <div class="tab-header">
                     <h2 class="tab-title">Settings</h2>
-                    <button class="btn btn-primary btn-sm" id="saveSettingsBtn" onclick="saveSettings()">
-                        Save Changes
-                    </button>
+                    <input class="settings-search" id="settingsSearch" type="search" placeholder="Search settings" oninput="filterSettings(this.value)" autocomplete="off">
                 </div>
 
                 <div class="settings-scroll">
 
-                    <!-- ═════════ APP ═════════ -->
-                    <div class="settings-group-heading">App</div>
+                    <!-- ═════════ GENERAL ═════════ -->
+                    <div class="settings-group-heading">General</div>
 
-                    <!-- Appearance Section -->
                     <div class="pref-section surface-card">
-                        <div class="pref-section-header">
-                            <span class="pref-section-icon">🎨</span>
-                            <div>
-                                <h3 class="pref-section-title">Appearance</h3>
-                                <p class="pref-section-desc">Customize visual appearance</p>
-                            </div>
-                        </div>
                         <div class="pref-items">
-                            <div class="pref-select-group">
+                            <div class="pref-select-group" data-keywords="appearance dark light mode colour color">
                                 <span class="pref-select-label">Theme</span>
                                 <div class="pref-theme-buttons">
                                     <button class="pref-theme-btn" id="themeBtnLight" onclick="setTheme('light')">
@@ -357,101 +329,41 @@
                                     </button>
                                 </div>
                             </div>
-                        </div>
-                    </div>
-
-                    <!-- Startup Section -->
-                    <div class="pref-section surface-card">
-                        <div class="pref-section-header">
-                            <span class="pref-section-icon">🚀</span>
-                            <div>
-                                <h3 class="pref-section-title">Startup</h3>
-                                <p class="pref-section-desc">Control how Bhai launches</p>
-                            </div>
-                        </div>
-                        <div class="pref-items">
-                            <label class="pref-toggle">
-                                <span class="pref-toggle-label">Launch at login</span>
+                            <label class="pref-toggle" data-keywords="startup launch login boot">
+                                <span class="pref-toggle-label">Open Bhai when I log in</span>
                                 <input type="checkbox" id="prefLaunchAtLogin" onchange="setPref('launchAtLogin', this.checked)">
                                 <span class="pref-toggle-switch"></span>
                             </label>
-                        </div>
-                    </div>
-
-                    <!-- Notifications Section -->
-                    <div class="pref-section surface-card">
-                        <div class="pref-section-header">
-                            <span class="pref-section-icon">🔔</span>
-                            <div>
-                                <h3 class="pref-section-title">Notifications</h3>
-                                <p class="pref-section-desc">Manage system notifications</p>
-                            </div>
-                        </div>
-                        <div class="pref-items">
-                            <label class="pref-toggle">
-                                <span class="pref-toggle-label">Enable notifications</span>
-                                <input type="checkbox" id="prefNotifications" onchange="setPref('notificationsEnabled', this.checked)">
-                                <span class="pref-toggle-switch"></span>
-                            </label>
-                            <label class="pref-toggle">
-                                <span class="pref-toggle-label">Notify on task completion</span>
-                                <input type="checkbox" id="prefNotifyTask" onchange="setPref('notifyOnTask', this.checked)">
-                                <span class="pref-toggle-switch"></span>
-                            </label>
-                            <label class="pref-toggle">
-                                <span class="pref-toggle-label">Notify on updates</span>
-                                <input type="checkbox" id="prefNotifyUpdate" onchange="setPref('notifyOnUpdate', this.checked)">
-                                <span class="pref-toggle-switch"></span>
-                            </label>
-                        </div>
-                    </div>
-
-                    <!-- Keyboard Shortcuts -->
-                    <div class="pref-section surface-card">
-                        <div class="pref-section-header">
-                            <span class="pref-section-icon">⌨️</span>
-                            <div>
-                                <h3 class="pref-section-title">Keyboard Shortcuts</h3>
-                                <p class="pref-section-desc">Global hotkeys</p>
-                            </div>
-                        </div>
-                        <div class="pref-items">
-                            <div class="pref-shortcut">
-                                <span class="pref-shortcut-label">Show/Hide Bhai</span>
+                            <div class="pref-shortcut" data-keywords="keyboard shortcut hotkey overlay">
+                                <span class="pref-shortcut-label">Show or hide Bhai</span>
                                 <div class="pref-shortcut-control">
                                     <kbd id="prefHotkeyShow" tabindex="0" title="Click to change" onclick="startHotkeyRecording(this)">Alt + Space</kbd>
                                     <button class="pref-hotkey-reset" id="prefHotkeyReset" onclick="resetOverlayHotkey()" title="Reset to default" style="display:none;">Reset</button>
                                 </div>
                             </div>
-                        </div>
-                    </div>
-
-                    <!-- Updates Section -->
-                    <div class="pref-section surface-card">
-                        <div class="pref-section-header">
-                            <span class="pref-section-icon">⬆️</span>
-                            <div>
-                                <h3 class="pref-section-title">Updates</h3>
-                                <p class="pref-section-desc">Check for new versions</p>
+                            <label class="pref-toggle">
+                                <span class="pref-toggle-label">Notifications</span>
+                                <input type="checkbox" id="prefNotifications" onchange="setPref('notificationsEnabled', this.checked)">
+                                <span class="pref-toggle-switch"></span>
+                            </label>
+                            <div class="pref-subs">
+                                <label class="pref-toggle">
+                                    <span class="pref-toggle-label">When a task finishes</span>
+                                    <input type="checkbox" id="prefNotifyTask" onchange="setPref('notifyOnTask', this.checked)">
+                                    <span class="pref-toggle-switch"></span>
+                                </label>
+                                <label class="pref-toggle">
+                                    <span class="pref-toggle-label">When an update is ready</span>
+                                    <input type="checkbox" id="prefNotifyUpdate" onchange="setPref('notifyOnUpdate', this.checked)">
+                                    <span class="pref-toggle-switch"></span>
+                                </label>
                             </div>
-                        </div>
-                        <div class="pref-items">
                             <div class="pref-update-status">
-                                <span id="prefUpdateStatus">Last checked: Never</span>
-                                <button class="btn btn-sm btn-secondary" id="checkUpdateBtn" onclick="manualCheckUpdate()">
-                                    Check Now
-                                </button>
-                            </div>
-                            <div class="pref-update-status" style="align-items:flex-start;">
                                 <div>
-                                    <div>Update channel</div>
-                                    <small style="color:var(--text-secondary);">Alpha gets new builds first. Stable only publishes tested releases.</small>
+                                    <div>Version <span id="settingsVersion"></span></div>
+                                    <small id="prefUpdateStatus" style="color:var(--text-secondary);"></small>
                                 </div>
-                                <select id="prefUpdateChannel" onchange="setUpdateChannel(this.value)" style="background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px;outline:none;cursor:pointer;">
-                                    <option value="stable">Stable</option>
-                                    <option value="alpha">Alpha (early access)</option>
-                                    <option value="beta">Beta</option>
-                                </select>
+                                <button class="btn btn-sm btn-secondary" id="checkUpdateBtn" onclick="manualCheckUpdate()">Check for updates</button>
                             </div>
                         </div>
                     </div>
@@ -466,50 +378,48 @@
                             </div>
                         </div>
                         <div class="pref-items" style="flex-direction:column;gap:8px;align-items:stretch;">
-                            <div id="personalityPresets" style="display:flex;flex-direction:column;gap:8px;">
-                                <label class="radio-row" style="display:flex;gap:10px;padding:10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;align-items:flex-start;">
+                            <div id="personalityPresets" class="pp-pills" onchange="showPersonalityDesc()">
+                                <label class="radio-row pp-row">
                                     <input type="radio" name="personality-preset" value="casual_playful" id="ppPresetCasual" style="margin-top:3px;" onchange="savePersonality()" checked>
                                     <div style="flex:1;">
                                         <div style="font-weight:600;margin-bottom:2px;">Casual &amp; playful</div>
-                                        <div style="font-size:0.9em;color:var(--text-secondary);">Warm, witty, a little swag. Reacts like a close friend.</div>
+                                        <div class="pp-desc">Warm, witty, a little swag. Reacts like a close friend.</div>
                                     </div>
                                 </label>
-                                <label class="radio-row" style="display:flex;gap:10px;padding:10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;align-items:flex-start;">
+                                <label class="radio-row pp-row">
                                     <input type="radio" name="personality-preset" value="professional_concise" id="ppPresetProfessional" style="margin-top:3px;" onchange="savePersonality()">
                                     <div style="flex:1;">
                                         <div style="font-weight:600;margin-bottom:2px;">Professional &amp; concise</div>
-                                        <div style="font-size:0.9em;color:var(--text-secondary);">Clear and to the point. No slang, minimal emoji.</div>
+                                        <div class="pp-desc">Clear and to the point. No slang, minimal emoji.</div>
                                     </div>
                                 </label>
-                                <label class="radio-row" style="display:flex;gap:10px;padding:10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;align-items:flex-start;">
+                                <label class="radio-row pp-row">
                                     <input type="radio" name="personality-preset" value="warm_supportive" id="ppPresetWarm" style="margin-top:3px;" onchange="savePersonality()">
                                     <div style="flex:1;">
                                         <div style="font-weight:600;margin-bottom:2px;">Warm &amp; supportive</div>
-                                        <div style="font-size:0.9em;color:var(--text-secondary);">Patient and encouraging, no sarcasm. Best for stressful days.</div>
+                                        <div class="pp-desc">Patient and encouraging, no sarcasm. Best for stressful days.</div>
                                     </div>
                                 </label>
-                                <label class="radio-row" style="display:flex;gap:10px;padding:10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;align-items:flex-start;">
+                                <label class="radio-row pp-row">
                                     <input type="radio" name="personality-preset" value="direct_terse" id="ppPresetDirect" style="margin-top:3px;" onchange="savePersonality()">
                                     <div style="flex:1;">
                                         <div style="font-weight:600;margin-bottom:2px;">Direct &amp; no-nonsense</div>
-                                        <div style="font-size:0.9em;color:var(--text-secondary);">Results first, zero fluff. Good for power users.</div>
+                                        <div class="pp-desc">Results first, zero fluff. Good for power users.</div>
                                     </div>
                                 </label>
-                                <label class="radio-row" style="display:flex;gap:10px;padding:10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;align-items:flex-start;">
+                                <label class="radio-row pp-row">
                                     <input type="radio" name="personality-preset" value="unhinged" id="ppPresetUnhinged" style="margin-top:3px;" onchange="savePersonality()">
                                     <div style="flex:1;">
                                         <div style="font-weight:600;margin-bottom:2px;">Unhinged 😈 <span style="font-size:0.8em;font-weight:600;color:var(--text-secondary);border:1px solid var(--border);border-radius:5px;padding:0 5px;margin-left:4px;">18+</span></div>
-                                        <div style="font-size:0.9em;color:var(--text-secondary);">No filter: blunt opinions, swears freely, savage roasts, dirty and very dark jokes. Only with you, never your contacts. Turns serious when it really matters.</div>
+                                        <div class="pp-desc">No filter: blunt opinions, swears freely, savage roasts, dirty and very dark jokes. Only with you, never your contacts. Turns serious when it really matters.</div>
                                     </div>
                                 </label>
                             </div>
+                            <div id="ppDescShown" class="pp-desc-shown"></div>
                             <label style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">
-                                <span style="font-size:0.9em;color:var(--text-secondary);">Custom notes (optional)</span>
-                                <textarea id="personalityNotes" rows="3" maxlength="800" placeholder="e.g. 'always start with the bottom line', 'use Hindi-English mix sometimes', 'no emojis ever'" style="resize:vertical;min-height:60px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:8px;outline:none;font-family:inherit;font-size:13px;"></textarea>
+                                <span style="font-size:0.9em;color:var(--text-secondary);">Anything else? (optional)</span>
+                                <textarea id="personalityNotes" oninput="onPersonalityNotesInput()" rows="2" maxlength="800" placeholder="e.g. 'always start with the bottom line', 'use Hindi-English mix sometimes', 'no emojis ever'" style="resize:vertical;min-height:60px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:8px;outline:none;font-family:inherit;font-size:13px;"></textarea>
                             </label>
-                            <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px;">
-                                <button class="btn btn-sm btn-secondary" id="personalitySaveBtn" onclick="savePersonality()">Save personality</button>
-                            </div>
                             <div id="personalitySaveStatus" style="font-size:0.85em;color:var(--text-secondary);margin-top:4px;min-height:1em;"></div>
                         </div>
                     </div>
@@ -521,18 +431,54 @@
                     <div class="settings-section">
                         <div class="settings-section-header">
                             <span class="settings-section-icon">🐙</span>
-                            <div>
+                            <div style="flex:1;">
                                 <h3 class="settings-section-title">GitHub</h3>
-                                <p class="settings-section-desc">Personal access token for repo operations</p>
+                                <p class="settings-section-desc">Lets Bhai clone, commit, push and open pull requests on your repos</p>
                             </div>
+                            <span class="integration-state" id="ghState">Not connected</span>
                         </div>
                         <div class="settings-fields">
-                            <div class="input-group">
-                                <label class="input-label">GitHub Token</label>
-                                <input class="clean-input" type="password" id="settingGithubToken" placeholder="ghp_..."
-                                    autocomplete="off">
-                                <span class="input-hint">Optional — enables Git operations</span>
+                            <div id="ghConnected" style="display:none;">
+                                <div class="integration-row">
+                                    <span id="ghWho"></span>
+                                    <button class="btn btn-secondary btn-sm" onclick="disconnectGithub()">Disconnect</button>
+                                </div>
                             </div>
+                            <div id="ghSetup">
+                                <p class="integration-help">Create a token on GitHub (the right permissions are already ticked), copy it, and come back. Bhai picks it up and checks it.</p>
+                                <a class="wizard-link" target="_blank" href="https://github.com/settings/tokens/new?description=Bhai&scopes=repo,workflow,read:org">Create a GitHub token</a>
+                                <div class="input-group" style="margin-top:12px;">
+                                    <input class="clean-input" type="password" id="settingGithubToken" placeholder="ghp_… or github_pat_…" autocomplete="off" oninput="onGithubTokenInput()">
+                                </div>
+                            </div>
+                            <div class="channel-test-result" id="ghStatus"></div>
+                        </div>
+                    </div>
+
+                    <!-- Google Section -->
+                    <div class="settings-section">
+                        <div class="settings-section-header">
+                            <span class="settings-section-icon">📅</span>
+                            <div style="flex:1;">
+                                <h3 class="settings-section-title">Google</h3>
+                                <p class="settings-section-desc">Calendar, Gmail and Tasks</p>
+                            </div>
+                            <span class="integration-state" id="googleState">Not connected</span>
+                        </div>
+                        <div class="settings-fields" id="googleFields">
+                            <div id="googleAccounts"></div>
+                            <div style="display:flex;align-items:center;gap:12px;">
+                                <button class="google-btn btn-sm" onclick="connectGoogleAccount()" id="googleConnectBtn">
+                                    <svg viewBox="0 0 24 24" width="18" height="18">
+                                        <path fill="#4285F4" d="M23.7 12.3c0-.8-.1-1.6-.2-2.3H12.2v4.5h6.5c-.3 1.5-1.1 2.7-2.4 3.5v2.9h3.8c2.3-2.1 3.6-5.2 3.6-8.6z" />
+                                        <path fill="#34A853" d="M12.2 24c3.3 0 6-1.1 8-2.9l-3.8-2.9c-1.1.7-2.5 1.1-4.2 1.1-3.2 0-6-2.2-6.9-5.1H1.4v3C3.4 21.4 7.5 24 12.2 24z" />
+                                        <path fill="#FBBC05" d="M5.3 14.3c-.3-.7-.4-1.5-.4-2.3s.1-1.6.4-2.3V6.6H1.4C.5 8.4 0 10.1 0 12s.5 3.6 1.4 5.4l3.9-3.1z" />
+                                        <path fill="#EA4335" d="M12.2 4.8c1.8 0 3.4.6 4.7 1.8L20.3 3C18.2 1.1 15.5 0 12.2 0 7.5 0 3.4 2.6 1.4 6.6l3.9 3.1c.9-2.9 3.7-4.9 6.9-4.9z" />
+                                    </svg>
+                                    <span id="googleConnectLabel">Connect Google</span>
+                                </button>
+                            </div>
+                            <div class="channel-test-result" id="googleStatus"></div>
                         </div>
                     </div>
 
@@ -540,52 +486,19 @@
                     <div class="settings-section">
                         <div class="settings-section-header">
                             <span class="settings-section-icon">📁</span>
-                            <div>
-                                <h3 class="settings-section-title">Workspace</h3>
-                                <p class="settings-section-desc">Where Bhai saves files (screenshots, research,
-                                    exports)</p>
+                            <div style="flex:1;">
+                                <h3 class="settings-section-title">Workspace folder</h3>
+                                <p class="settings-section-desc">Where Bhai saves screenshots, research, documents and code</p>
                             </div>
                         </div>
                         <div class="settings-fields">
-                            <div class="input-group">
-                                <label class="input-label">Workspace Path</label>
-                                <div class="workspace-preview">
-                                    <input class="clean-input" type="text" id="settingWorkspace"
-                                        placeholder="C:\Users\You\Desktop\Bhai Files" readonly
-                                        style="flex: 1; cursor: default;">
-                                    <button class="btn btn-secondary btn-sm" onclick="chooseWorkspace()">Browse</button>
+                            <div class="integration-row">
+                                <code id="settingWorkspace" class="workspace-path"></code>
+                                <div style="display:flex;gap:6px;">
+                                    <button class="btn btn-secondary btn-sm" onclick="atlas.openWorkspace()">Open</button>
+                                    <button class="btn btn-secondary btn-sm" onclick="chooseWorkspace()">Change…</button>
+                                    <button class="btn btn-secondary btn-sm" id="workspaceResetBtn" onclick="resetWorkspace()" style="display:none;">Use default</button>
                                 </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Google Section -->
-                    <div class="settings-section">
-                        <div class="settings-section-header">
-                            <span class="settings-section-icon">🔗</span>
-                            <div>
-                                <h3 class="settings-section-title">Google Account</h3>
-                                <p class="settings-section-desc">Calendar and Gmail integration</p>
-                            </div>
-                        </div>
-                        <div class="settings-fields">
-                            <div style="display: flex; align-items: center; gap: 12px;">
-                                <button class="google-btn btn-sm" onclick="connectGoogleAccount()"
-                                    id="googleConnectBtn">
-                                    <svg viewBox="0 0 24 24" width="18" height="18">
-                                        <path fill="#4285F4"
-                                            d="M23.7 12.3c0-.8-.1-1.6-.2-2.3H12.2v4.5h6.5c-.3 1.5-1.1 2.7-2.4 3.5v2.9h3.8c2.3-2.1 3.6-5.2 3.6-8.6z" />
-                                        <path fill="#34A853"
-                                            d="M12.2 24c3.3 0 6-1.1 8-2.9l-3.8-2.9c-1.1.7-2.5 1.1-4.2 1.1-3.2 0-6-2.2-6.9-5.1H1.4v3C3.4 21.4 7.5 24 12.2 24z" />
-                                        <path fill="#FBBC05"
-                                            d="M5.3 14.3c-.3-.7-.4-1.5-.4-2.3s.1-1.6.4-2.3V6.6H1.4C.5 8.4 0 10.1 0 12s.5 3.6 1.4 5.4l3.9-3.1z" />
-                                        <path fill="#EA4335"
-                                            d="M12.2 4.8c1.8 0 3.4.6 4.7 1.8L20.3 3C18.2 1.1 15.5 0 12.2 0 7.5 0 3.4 2.6 1.4 6.6l3.9 3.1c.9-2.9 3.7-4.9 6.9-4.9z" />
-                                    </svg>
-                                    Connect Google
-                                </button>
-                                <span id="googleStatus" style="font-size: 13px; color: var(--text-secondary);">Not
-                                    connected</span>
                             </div>
                         </div>
                     </div>
@@ -594,24 +507,82 @@
                     <div class="settings-group-heading">Advanced</div>
 
                     <div class="pref-section surface-card">
-                        <div class="pref-section-header">
-                            <span class="pref-section-icon">🔬</span>
-                            <div>
-                                <h3 class="pref-section-title">Advanced</h3>
-                                <p class="pref-section-desc">Power user features — use at your own risk</p>
-                            </div>
-                        </div>
                         <div class="pref-items">
+                            <div class="pref-update-status">
+                                <div>
+                                    <div>Update channel</div>
+                                    <small style="color:var(--text-secondary);">Beta and Alpha get new versions sooner, with less testing.</small>
+                                </div>
+                                <select id="prefUpdateChannel" onchange="setUpdateChannel(this.value)" style="background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px;outline:none;cursor:pointer;">
+                                    <option value="stable">Stable</option>
+                                    <option value="beta">Beta</option>
+                                    <option value="alpha">Alpha (earliest)</option>
+                                </select>
+                            </div>
                             <label class="pref-toggle">
                                 <div>
-                                    <span class="pref-toggle-label">Enable Sideloading</span>
-                                    <span class="pref-toggle-hint" style="display:block; font-size:11px; color:var(--text-secondary); margin-top:2px;">Allow installing skills and plugins from external ZIP files (e.g. ClawHub). Sideloaded items are unvetted and may pose security risks.</span>
+                                    <span class="pref-toggle-label">Allow sideloading</span>
+                                    <span class="pref-toggle-hint" style="display:block; font-size:11px; color:var(--text-secondary); margin-top:2px;">Install skills from ZIP files outside the Store. They aren't checked, so only use ones you trust.</span>
                                 </div>
                                 <input type="checkbox" id="prefSideloading" onchange="setPref('sideloadingEnabled', this.checked); toggleSideloadButton(this.checked);">
                                 <span class="pref-toggle-switch"></span>
                             </label>
                         </div>
                     </div>
+
+<div class="settings-group-heading">Data &amp; privacy</div>
+
+                    <div class="pref-section surface-card">
+                        <div class="pref-items">
+                            <div class="pref-update-status data-row" data-keywords="memory memories remember forget privacy">
+                                <div>
+                                    <div>What Bhai remembers</div>
+                                    <small style="color:var(--text-secondary);">See, edit or delete memories</small>
+                                </div>
+                                <button class="btn btn-sm btn-secondary" onclick="switchTab('memory')">Open Memory</button>
+                            </div>
+                            <div class="pref-update-status data-row" data-keywords="chats chat history conversations delete clear privacy">
+                                <div>
+                                    <div>Chat history</div>
+                                    <small style="color:var(--text-secondary);">Chats with Bhai saved on this Mac</small>
+                                </div>
+                                <button class="btn btn-sm btn-secondary" id="clearChatsBtn" onclick="clearChatHistory()">Clear</button>
+                            </div>
+                            <div class="pref-update-status data-row" data-keywords="logs data folder files debug support">
+                                <div>
+                                    <div>Logs and data</div>
+                                    <small style="color:var(--text-secondary);">For troubleshooting or sending to support</small>
+                                </div>
+                                <div style="display:flex;gap:6px;">
+                                    <button class="btn btn-sm btn-secondary" onclick="atlas.openLogsDir()">Logs</button>
+                                    <button class="btn btn-sm btn-secondary" onclick="atlas.openDataDir()">Data folder</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-group-heading">About</div>
+
+                    <div class="pref-section surface-card">
+                        <div class="pref-items">
+                            <div class="pref-update-status data-row" data-keywords="about version legal terms privacy policy copyright">
+                                <div style="display:flex;align-items:center;gap:12px;">
+                                    <img src="logo.png" alt="" style="width:36px;height:36px;border-radius:8px;">
+                                    <div>
+                                        <div>Bhai <span id="aboutVersion" style="color:var(--text-secondary);"></span></div>
+                                        <small style="color:var(--text-secondary);">© 2024-2026 XAGI Labs Private Limited</small>
+                                    </div>
+                                </div>
+                                <small class="about-links">
+                                    <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/terms');">Terms</a> ·
+                                    <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/privacy');">Privacy</a> ·
+                                    <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/legal');">All legal</a>
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-empty" id="settingsEmpty" style="display:none;">No settings match.</div>
 
                     <div class="settings-note">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -620,7 +591,7 @@
                             <line x1="12" y1="16" x2="12" y2="12"></line>
                             <line x1="12" y1="8" x2="12.01" y2="8"></line>
                         </svg>
-                        Integration credentials require a restart to take effect. All values are encrypted with AES-256-GCM.
+                        Everything here saves by itself. Integration changes restart Bhai for a few seconds. Secrets are encrypted with AES-256-GCM.
                     </div>
                 </div>
             </div>
@@ -642,9 +613,6 @@
                             <option value="email">Email</option>
                             <option value="matrix">Matrix</option>
                         </select>
-                        <button class="btn btn-primary btn-sm" id="saveChannelsBtn" onclick="saveChannelConfig()">
-                            Save & Apply
-                        </button>
                     </div>
                 </div>
 
@@ -655,7 +623,7 @@
                         <div class="settings-section-header" onclick="toggleChannelSection('telegram')">
                             <div style="display:flex;align-items:center;gap:10px;">
                                 <span class="channel-status-dot disabled" id="chStatusTelegram"></span>
-                                <span>🤖 Telegram</span>
+                                <span>🤖 Telegram</span><span class="ch-hint">Easiest · about 1 min</span>
                             </div>
                             <label class="pref-toggle" style="margin:0;" onclick="event.stopPropagation()">
                                 <input type="checkbox" id="chToggleTelegram" onchange="onChannelToggle('telegram')">
@@ -667,56 +635,40 @@
                                 <div class="wizard-progress-step active" id="wizProgTelegram1">1</div>
                                 <div class="wizard-progress-line" id="wizLineTelegram1"></div>
                                 <div class="wizard-progress-step" id="wizProgTelegram2">2</div>
-                                <div class="wizard-progress-line" id="wizLineTelegram2"></div>
-                                <div class="wizard-progress-step" id="wizProgTelegram3">3</div>
-                                <div class="wizard-progress-line" id="wizLineTelegram3"></div>
-                                <div class="wizard-progress-step" id="wizProgTelegram4">4</div>
                             </div>
                             <div class="channel-wizard" id="wizardTelegram">
-                                <!-- Step 1: Open BotFather -->
                                 <div class="channel-wizard-step active" id="wizStepTelegram1">
-                                    <h4>Open Telegram and find BotFather</h4>
-                                    <p>BotFather is the official Telegram bot for creating and managing bots. Click the link below to open it directly.</p>
-                                    <a class="wizard-link" href="https://t.me/BotFather" target="_blank">Open @BotFather in Telegram</a>
-                                    <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('telegram', 1)">Next</button>
-                                    </div>
-                                </div>
-                                <!-- Step 2: Create bot -->
-                                <div class="channel-wizard-step" id="wizStepTelegram2">
                                     <h4>Create your bot</h4>
-                                    <p>In the BotFather chat, send <code>/newbot</code> and follow the prompts. You will be asked to choose a name and username for your bot. The username must end in <code>bot</code> (e.g. <code>MyBhaiBot</code>).</p>
-                                    <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('telegram', 2)">Back</button>
-                                        <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('telegram', 2)">Next</button>
-                                    </div>
-                                </div>
-                                <!-- Step 3: Paste token -->
-                                <div class="channel-wizard-step" id="wizStepTelegram3">
-                                    <h4>Paste your bot token</h4>
-                                    <p>After creating the bot, BotFather will give you an API token. Copy and paste it below.</p>
-                                    <div class="input-group">
-                                        <label class="input-label">Bot Token</label>
-                                        <input class="clean-input" type="password" id="chTelegramToken" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" autocomplete="off">
-                                    </div>
-                                    <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('telegram', 3)">Back</button>
-                                        <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('telegram', 3)">Next</button>
-                                    </div>
-                                </div>
-                                <!-- Step 4: User ID + Test -->
-                                <div class="channel-wizard-step" id="wizStepTelegram4">
-                                    <h4>Find your user ID</h4>
-                                    <p>Message the bot below on Telegram to get your numeric user ID. Only messages from these IDs will be accepted.</p>
-                                    <a class="wizard-link" href="https://t.me/userinfobot" target="_blank" style="margin-bottom:12px;">Open @userinfobot in Telegram</a>
+                                    <p>Telegram opens with your own Bhai bot ready to go. Tap <strong>Create</strong> there and you're done.</p>
+                                    <button class="wizard-btn wizard-btn-success" id="tgCreateBtn" onclick="createTelegramBot()">Create my Telegram bot</button>
+                                    <div class="channel-test-result" id="tgCreateStatus"></div>
+                                    <details class="ch-advanced" id="tgManual">
+                                        <summary class="advanced-toggle">Or make one yourself with BotFather</summary>
+                                        <p>Open BotFather and send <code>/newbot</code>. For the name say <code>Bhai</code>; for the username use <code id="tgSuggestedUsername">bhai_bot</code> <button class="copy-inline-btn" onclick="copyText(document.getElementById('tgSuggestedUsername').textContent)">Copy</button>. Then copy the token it sends back and come back here; Bhai picks it up by itself.</p>
+                                    <a class="wizard-link" href="https://t.me/BotFather" target="_blank">Open @BotFather</a>
                                     <div class="input-group" style="margin-top:12px;">
-                                        <label class="input-label">Allowed User IDs</label>
-                                        <input class="clean-input" type="text" id="chTelegramUserIds" placeholder="1151119331,987654321" autocomplete="off">
-                                        <span class="input-hint">Comma-separated if multiple users.</span>
+                                        <label class="input-label">Bot Token</label>
+                                        <input class="clean-input" type="password" id="chTelegramToken" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" autocomplete="off" oninput="onTokenInput('telegram')">
                                     </div>
+                                    <div class="channel-test-result" id="tgTokenStatus"></div>
+                                    </details>
+                                </div>
+                                <div class="channel-wizard-step" id="wizStepTelegram2">
+                                    <h4 id="tgStep2Title">Say hi to your bot</h4>
+                                    <p id="tgStep2Text">Tap the button and press <strong>Start</strong> in Telegram. Bhai recognises you from that message and finishes setup by itself.</p>
+                                    <a class="wizard-link" id="tgBotLink" href="https://t.me/BotFather" target="_blank" onclick="onTelegramBotLinkClick()">Open your bot</a>
+                                    <div class="channel-test-result" id="tgOwnerStatus"></div>
+                                    <details class="ch-advanced">
+                                        <summary class="advanced-toggle">Enter user IDs yourself</summary>
+                                        <div class="input-group">
+                                            <label class="input-label">Allowed User IDs</label>
+                                            <input class="clean-input" type="text" id="chTelegramUserIds" placeholder="1151119331,987654321" autocomplete="off">
+                                            <span class="input-hint">Comma-separated. Only these people can talk to Bhai.</span>
+                                        </div>
+                                        <button class="wizard-btn wizard-btn-success" onclick="connectChannel('telegram')">Connect</button>
+                                    </details>
                                     <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('telegram', 4)">Back</button>
-                                        <button class="wizard-btn wizard-btn-success" onclick="testChannelConnection('telegram')">Test Connection</button>
+                                        <button class="wizard-btn wizard-btn-secondary" onclick="goToWizardStep('telegram', 1)">Use a different bot</button>
                                     </div>
                                 </div>
                             </div>
@@ -729,7 +681,7 @@
                         <div class="settings-section-header" onclick="toggleChannelSection('whatsapp')">
                             <div style="display:flex;align-items:center;gap:10px;">
                                 <span class="channel-status-dot disabled" id="chStatusWhatsapp"></span>
-                                <span>💬 WhatsApp</span>
+                                <span>💬 WhatsApp</span><span class="ch-hint">Scan a QR · about 1 min</span>
                             </div>
                             <label class="pref-toggle" style="margin:0;" onclick="event.stopPropagation()">
                                 <input type="checkbox" id="chToggleWhatsapp" onchange="onChannelToggle('whatsapp')">
@@ -737,7 +689,7 @@
                             </label>
                         </div>
                         <div class="settings-fields" id="chFieldsWhatsapp" style="display:none;">
-                            <div class="wizard-progress" id="wizardProgressWhatsapp">
+                            <div class="wizard-progress" id="wizardProgressWhatsapp" style="display:none;">
                                 <div class="wizard-progress-step active" id="wizProgWhatsapp1">1</div>
                                 <div class="wizard-progress-line" id="wizLineWhatsapp1"></div>
                                 <div class="wizard-progress-step" id="wizProgWhatsapp2">2</div>
@@ -751,29 +703,31 @@
                             <div class="channel-wizard" id="wizardWhatsapp">
                                 <!-- Step 1: QR Code -->
                                 <div class="channel-wizard-step active" id="wizStepWhatsapp1">
-                                    <h4>Scan the QR code</h4>
-                                    <p>Enable WhatsApp above and start the bot. A QR code will appear below. Open WhatsApp on your phone, go to Settings > Linked Devices > Link a Device, and scan the code.</p>
+                                    <h4>Link Bhai's number</h4>
+                                    <p>On the phone with Bhai's WhatsApp number, open WhatsApp → Settings → Linked Devices → Link a Device, and scan this code.</p>
                                     <div id="waQRArea">
-                                        <div class="qr-waiting">Enable WhatsApp and start the bot to see QR code</div>
+                                        <div class="qr-waiting">Starting WhatsApp… the code appears here in a few seconds.</div>
                                     </div>
                                 </div>
                                 <!-- Step 2: Connected -->
                                 <div class="channel-wizard-step" id="wizStepWhatsapp2">
-                                    <h4>Connected!</h4>
-                                    <div class="qr-connected" id="waConnectedInfo">WhatsApp is paired and ready to use.</div>
+                                    <h4>You're all set</h4>
+                                    <p>Message Bhai's number from your phone anytime; it answers there.</p>
+                                    <div><a class="wizard-link" id="waChatLink" target="_blank" style="display:none;">Open chat with Bhai</a></div>
                                     <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('whatsapp',3)">Set Up Multi-User Access</button>
+                                        <button class="wizard-btn wizard-btn-secondary" onclick="startWhatsAppOwnerStep()">Add another owner</button>
+                                        <button class="wizard-btn wizard-btn-secondary" onclick="goToWizardStep('whatsapp', 4); loadWhatsAppOwners(); loadWhatsAppPersona();">Owners and other people</button>
                                     </div>
                                 </div>
                                 <!-- Step 3: Verify Your Number (OTP) -->
                                 <div class="channel-wizard-step" id="wizStepWhatsapp3">
-                                    <h4>Verify your number</h4>
-                                    <p>Send this code from your WhatsApp to register as the owner. Only verified owners get full access to Bhai capabilities.</p>
-                                    <div style="text-align:center;margin:20px 0;">
-                                        <div style="font-size:32px;font-weight:700;letter-spacing:8px;color:var(--accent-primary,#007AFF);font-family:monospace;" id="waOTPCode">------</div>
-                                        <div style="font-size:12px;color:var(--text-muted);margin-top:8px;" id="waOTPTimer">Expires in 5:00</div>
+                                    <h4>Make yourself the owner</h4>
+                                    <p>Scan this with your personal phone's camera. WhatsApp opens with a code already typed to Bhai's number; just tap Send. Use a different number from the one you linked above.</p>
+                                    <div style="text-align:center;margin:16px 0;">
+                                        <div id="waOTPQR" class="qr-container" style="display:none;"></div>
+                                        <div><a class="wizard-link" id="waOTPLink" target="_blank" style="display:none;">Open WhatsApp with the code</a></div>
+                                        <div style="font-size:12px;color:var(--text-muted);margin-top:10px;">Or send this code to Bhai's number: <span id="waOTPCode" style="font-weight:700;letter-spacing:3px;font-family:monospace;">------</span> · <span id="waOTPTimer">Expires in 5:00</span></div>
                                     </div>
-                                    <p style="font-size:12px;color:var(--text-muted);">Open WhatsApp, go to the bot chat, and send this code as a message.</p>
                                     <div class="wizard-nav">
                                         <button class="wizard-btn wizard-btn-secondary" onclick="regenerateWhatsAppOTP()">New Code</button>
                                         <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('whatsapp',4)">Skip (already verified)</button>
@@ -787,7 +741,7 @@
                                         <div style="color:var(--text-muted);font-size:13px;padding:20px;text-align:center;">No owners verified yet. Complete step 3 first.</div>
                                     </div>
                                     <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-secondary" onclick="goToWizardStep('whatsapp',3)">+ Add Another Owner</button>
+                                        <button class="wizard-btn wizard-btn-secondary" onclick="startWhatsAppOwnerStep()">+ Add Another Owner</button>
                                         <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('whatsapp',5)">Next</button>
                                     </div>
                                 </div>
@@ -830,7 +784,7 @@
                         <div class="settings-section-header" onclick="toggleChannelSection('discord')">
                             <div style="display:flex;align-items:center;gap:10px;">
                                 <span class="channel-status-dot disabled" id="chStatusDiscord"></span>
-                                <span>🎮 Discord</span>
+                                <span>🎮 Discord</span><span class="ch-hint">About 3 min</span>
                             </div>
                             <label class="pref-toggle" style="margin:0;" onclick="event.stopPropagation()">
                                 <input type="checkbox" id="chToggleDiscord" onchange="onChannelToggle('discord')">
@@ -842,59 +796,34 @@
                                 <div class="wizard-progress-step active" id="wizProgDiscord1">1</div>
                                 <div class="wizard-progress-line" id="wizLineDiscord1"></div>
                                 <div class="wizard-progress-step" id="wizProgDiscord2">2</div>
-                                <div class="wizard-progress-line" id="wizLineDiscord2"></div>
-                                <div class="wizard-progress-step" id="wizProgDiscord3">3</div>
-                                <div class="wizard-progress-line" id="wizLineDiscord3"></div>
-                                <div class="wizard-progress-step" id="wizProgDiscord4">4</div>
                             </div>
                             <div class="channel-wizard" id="wizardDiscord">
-                                <!-- Step 1: Create bot -->
                                 <div class="channel-wizard-step active" id="wizStepDiscord1">
-                                    <h4>Create a Discord bot</h4>
-                                    <p>Go to the Discord Developer Portal. Click "New Application", give it a name, then navigate to the "Bot" section and click "Add Bot".</p>
+                                    <h4>Create the bot</h4>
+                                    <p>In the Developer Portal: <strong>New Application</strong> → <strong>Bot</strong> → turn on <strong>Message Content Intent</strong> → <strong>Reset Token</strong>. Paste the token here.</p>
                                     <a class="wizard-link" href="https://discord.com/developers/applications" target="_blank">Open Discord Developer Portal</a>
-                                    <p style="margin-top:12px;">Under the Bot section, enable the <strong>Message Content Intent</strong> toggle (required to read messages).</p>
-                                    <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('discord', 1)">Next</button>
-                                    </div>
-                                </div>
-                                <!-- Step 2: Paste token -->
-                                <div class="channel-wizard-step" id="wizStepDiscord2">
-                                    <h4>Paste your bot token</h4>
-                                    <p>In the Bot section, click "Reset Token" to reveal your bot token. Copy and paste it below.</p>
-                                    <div class="input-group">
+                                    <div class="input-group" style="margin-top:12px;">
                                         <label class="input-label">Bot Token</label>
-                                        <input class="clean-input" type="password" id="chDiscordToken" placeholder="MTIzNDU2Nzg5MDEyMzQ1Njc4OQ..." autocomplete="off" oninput="onDiscordTokenChange(this.value)">
+                                        <input class="clean-input" type="password" id="chDiscordToken" placeholder="MTIzNDU2Nzg5MDEyMzQ1Njc4OQ..." autocomplete="off" oninput="onTokenInput('discord')">
                                     </div>
-                                    <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('discord', 2)">Back</button>
-                                        <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('discord', 2)">Next</button>
-                                    </div>
+                                    <div class="channel-test-result" id="dcTokenStatus"></div>
                                 </div>
-                                <!-- Step 3: Add to server -->
-                                <div class="channel-wizard-step" id="wizStepDiscord3">
-                                    <h4>Add bot to your server</h4>
-                                    <p>Click the invite link below to add your bot to a Discord server. You need "Manage Server" permission on the target server.</p>
-                                    <div id="discordInviteLink">
-                                        <div class="provider-note">Enter your bot token in the previous step to generate an invite link.</div>
-                                    </div>
+                                <div class="channel-wizard-step" id="wizStepDiscord2">
+                                    <h4>Add it to your server</h4>
+                                    <p>Bhai only answers you (the app's owner). Add it to a server you're in so you can DM it there.</p>
+                                    <div id="discordInviteLink"></div>
+                                    <div class="channel-test-result" id="dcIntentWarn"></div>
+                                    <details class="ch-advanced">
+                                        <summary class="advanced-toggle">Who can talk to Bhai</summary>
+                                        <div class="input-group">
+                                            <label class="input-label">Allowed User IDs</label>
+                                            <input class="clean-input" type="text" id="chDiscordUserIds" placeholder="123456789012345678" autocomplete="off">
+                                            <span class="input-hint">Comma-separated. Filled in with your ID automatically.</span>
+                                        </div>
+                                    </details>
                                     <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('discord', 3)">Back</button>
-                                        <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('discord', 3)">Next</button>
-                                    </div>
-                                </div>
-                                <!-- Step 4: Restrict access + Test -->
-                                <div class="channel-wizard-step" id="wizStepDiscord4">
-                                    <h4>Restrict access (optional)</h4>
-                                    <p>Limit who can interact with the bot by providing your Discord User ID. Enable Developer Mode in Discord Settings > Advanced, then right-click your name and "Copy User ID".</p>
-                                    <div class="input-group">
-                                        <label class="input-label">Allowed User IDs</label>
-                                        <input class="clean-input" type="text" id="chDiscordUserIds" placeholder="123456789012345678" autocomplete="off">
-                                        <span class="input-hint">Comma-separated. Leave blank to allow all server members.</span>
-                                    </div>
-                                    <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('discord', 4)">Back</button>
-                                        <button class="wizard-btn wizard-btn-success" onclick="testChannelConnection('discord')">Test Connection</button>
+                                        <button class="wizard-btn wizard-btn-secondary" onclick="goToWizardStep('discord', 1)">Back</button>
+                                        <button class="wizard-btn wizard-btn-success" onclick="connectChannel('discord')">Connect</button>
                                     </div>
                                 </div>
                             </div>
@@ -907,7 +836,7 @@
                         <div class="settings-section-header" onclick="toggleChannelSection('slack')">
                             <div style="display:flex;align-items:center;gap:10px;">
                                 <span class="channel-status-dot disabled" id="chStatusSlack"></span>
-                                <span>📋 Slack</span>
+                                <span>📋 Slack</span><span class="ch-hint">About 3 min</span>
                             </div>
                             <label class="pref-toggle" style="margin:0;" onclick="event.stopPropagation()">
                                 <input type="checkbox" id="chToggleSlack" onchange="onChannelToggle('slack')">
@@ -919,17 +848,16 @@
                                 <div class="wizard-progress-step active" id="wizProgSlack1">1</div>
                                 <div class="wizard-progress-line" id="wizLineSlack1"></div>
                                 <div class="wizard-progress-step" id="wizProgSlack2">2</div>
-                                <div class="wizard-progress-line" id="wizLineSlack2"></div>
-                                <div class="wizard-progress-step" id="wizProgSlack3">3</div>
                             </div>
                             <div class="channel-wizard" id="wizardSlack">
-                                <!-- Step 1: Create Slack app -->
                                 <div class="channel-wizard-step active" id="wizStepSlack1">
-                                    <h4>Create a Slack app</h4>
-                                    <p>Go to the Slack API portal and create a new app. You can use the manifest below for quick setup -- click "Create New App" > "From a manifest" and paste it.</p>
-                                    <a class="wizard-link" href="https://api.slack.com/apps" target="_blank" style="margin-bottom:12px;">Open Slack API Portal</a>
-                                    <div style="position:relative;margin-top:12px;">
-                                        <div class="manifest-code" id="slackManifest">{
+                                    <h4>Create the Slack app</h4>
+                                    <p>One click opens Slack with Bhai's settings filled in. Pick your workspace, click <strong>Create</strong>, then <strong>Install to Workspace</strong>.</p>
+                                    <a class="wizard-link" id="slackCreateLink" href="https://api.slack.com/apps" target="_blank">Create the Bhai app in Slack</a>
+                                    <details class="ch-advanced">
+                                        <summary class="advanced-toggle">Show the app manifest</summary>
+                                        <div style="position:relative;">
+                                            <div class="manifest-code" id="slackManifest">{
   "display_information": { "name": "Bhai" },
   "features": {
     "bot_user": { "display_name": "Bhai", "always_online": true }
@@ -946,43 +874,37 @@
     "socket_mode_enabled": true
   }
 }</div>
-                                        <button class="copy-manifest-btn" onclick="copySlackManifest()">Copy</button>
-                                    </div>
+                                            <button class="copy-manifest-btn" onclick="copySlackManifest()">Copy</button>
+                                        </div>
+                                    </details>
                                     <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('slack', 1)">Next</button>
+                                        <button class="wizard-btn wizard-btn-primary" onclick="goToWizardStep('slack', 2)">Installed, next</button>
                                     </div>
                                 </div>
-                                <!-- Step 2: Copy tokens -->
                                 <div class="channel-wizard-step" id="wizStepSlack2">
-                                    <h4>Copy your tokens</h4>
-                                    <p>After installing the app to your workspace, copy both tokens:</p>
+                                    <h4>Paste two tokens</h4>
                                     <div class="input-group">
                                         <label class="input-label">Bot Token</label>
-                                        <input class="clean-input" type="password" id="chSlackBotToken" placeholder="xoxb-..." autocomplete="off">
-                                        <span class="input-hint">Found in OAuth & Permissions > Bot User OAuth Token</span>
+                                        <input class="clean-input" type="password" id="chSlackBotToken" placeholder="xoxb-..." autocomplete="off" oninput="onTokenInput('slack')">
+                                        <span class="input-hint">OAuth &amp; Permissions → Bot User OAuth Token</span>
                                     </div>
+                                    <div class="channel-test-result" id="slTokenStatus"></div>
                                     <div class="input-group">
                                         <label class="input-label">App Token</label>
-                                        <input class="clean-input" type="password" id="chSlackAppToken" placeholder="xapp-..." autocomplete="off">
-                                        <span class="input-hint">Found in Basic Information > App-Level Tokens (create one with <code>connections:write</code> scope)</span>
+                                        <input class="clean-input" type="password" id="chSlackAppToken" placeholder="xapp-..." autocomplete="off" oninput="onTokenInput('slack-app')">
+                                        <span class="input-hint" id="slAppTokenHint">Basic Information → App-Level Tokens → Generate, add the <code>connections:write</code> scope</span>
                                     </div>
-                                    <div class="input-group">
-                                        <label class="input-label">Allowed User IDs (optional)</label>
-                                        <input class="clean-input" type="text" id="chSlackUserIds" placeholder="U0123456789" autocomplete="off">
-                                        <span class="input-hint">Your Slack Member ID. Click your profile picture > Profile > three dots > Copy Member ID.</span>
-                                    </div>
+                                    <details class="ch-advanced">
+                                        <summary class="advanced-toggle">Who can talk to Bhai</summary>
+                                        <div class="input-group">
+                                            <label class="input-label">Allowed Member IDs</label>
+                                            <input class="clean-input" type="text" id="chSlackUserIds" placeholder="U0123456789" autocomplete="off">
+                                            <span class="input-hint">Filled in with the workspace owner. Find yours: profile picture → Profile → ⋯ → Copy member ID.</span>
+                                        </div>
+                                    </details>
                                     <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('slack', 2)">Back</button>
-                                        <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('slack', 2)">Next</button>
-                                    </div>
-                                </div>
-                                <!-- Step 3: Test -->
-                                <div class="channel-wizard-step" id="wizStepSlack3">
-                                    <h4>Test your connection</h4>
-                                    <p>Everything is set up. Click below to verify Bhai can connect to your Slack workspace.</p>
-                                    <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('slack', 3)">Back</button>
-                                        <button class="wizard-btn wizard-btn-success" onclick="testChannelConnection('slack')">Test Connection</button>
+                                        <button class="wizard-btn wizard-btn-secondary" onclick="goToWizardStep('slack', 1)">Back</button>
+                                        <button class="wizard-btn wizard-btn-success" onclick="connectChannel('slack')">Connect</button>
                                     </div>
                                 </div>
                             </div>
@@ -995,7 +917,7 @@
                         <div class="settings-section-header" onclick="toggleChannelSection('email')">
                             <div style="display:flex;align-items:center;gap:10px;">
                                 <span class="channel-status-dot disabled" id="chStatusEmail"></span>
-                                <span>📧 Email</span>
+                                <span>📧 Email</span><span class="ch-hint">One click</span>
                             </div>
                             <label class="pref-toggle" style="margin:0;" onclick="event.stopPropagation()">
                                 <input type="checkbox" id="chToggleEmail" onchange="onChannelToggle('email')">
@@ -1003,84 +925,61 @@
                             </label>
                         </div>
                         <div class="settings-fields" id="chFieldsEmail" style="display:none;">
-                            <div class="wizard-progress" id="wizardProgressEmail">
-                                <div class="wizard-progress-step active" id="wizProgEmail1">1</div>
-                                <div class="wizard-progress-line" id="wizLineEmail1"></div>
-                                <div class="wizard-progress-step" id="wizProgEmail2">2</div>
-                                <div class="wizard-progress-line" id="wizLineEmail2"></div>
-                                <div class="wizard-progress-step" id="wizProgEmail3">3</div>
-                                <div class="wizard-progress-line" id="wizLineEmail3"></div>
-                                <div class="wizard-progress-step" id="wizProgEmail4">4</div>
-                            </div>
                             <div class="channel-wizard" id="wizardEmail">
-                                <!-- Step 1: Enter email -->
                                 <div class="channel-wizard-step active" id="wizStepEmail1">
-                                    <h4>Enter your email</h4>
-                                    <p>Bhai will use this email address to send and receive messages.</p>
+                                    <h4>Bhai's own email</h4>
+                                    <div id="bhaiMailSetup">
+                                        <p>Bhai gets its own address like <code>you.bhai@xagilab.com</code>. Anyone can email it and it replies; it can also send email for you. Mail from your address gets the full Bhai, everyone else gets a polite assistant that keeps your things private.</p>
+                                        <div class="input-group">
+                                            <label class="input-label">Your email (so Bhai knows it's you)</label>
+                                            <input class="clean-input" type="email" id="chBhaiMailOwner" placeholder="you@example.com" autocomplete="off">
+                                        </div>
+                                        <button class="wizard-btn wizard-btn-success" id="bhaiMailBtn" onclick="claimBhaiMail()">Get Bhai's email</button>
+                                    </div>
+                                    <div id="bhaiMailReady" style="display:none;">
+                                        <p>Bhai's address: <code id="bhaiMailAddress"></code> <button class="copy-inline-btn" onclick="copyText(document.getElementById('bhaiMailAddress').textContent)">Copy</button></p>
+                                        <p>Mail from <strong id="bhaiMailOwnerShown"></strong> is you; anyone else is a guest.</p>
+                                        <a class="wizard-link" id="bhaiMailWrite" target="_blank">Write to Bhai</a>
+                                    </div>
+                                    <div class="channel-test-result" id="bhaiMailStatus"></div>
+                                    <details class="ch-advanced" id="emailOwnMailbox">
+                                        <summary class="advanced-toggle">Or use a mailbox you already have</summary>
+                                    <p>Bhai reads and sends mail from this account. Server settings fill in by themselves for Gmail, Outlook, iCloud, Yahoo and Zoho.</p>
                                     <div class="input-group">
                                         <label class="input-label">Email Address</label>
                                         <input class="clean-input" type="email" id="chEmailUser" placeholder="you@gmail.com" autocomplete="off" oninput="onEmailDomainDetect(this.value)">
                                     </div>
-                                    <div class="provider-note" id="emailProviderNote" style="display:none;"></div>
-                                    <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('email', 1)">Next</button>
-                                    </div>
-                                </div>
-                                <!-- Step 2: Enter password -->
-                                <div class="channel-wizard-step" id="wizStepEmail2">
-                                    <h4>Enter your password</h4>
-                                    <p id="emailPasswordHint">Enter the password or app password for your email account.</p>
                                     <div class="input-group">
-                                        <label class="input-label">Password / App Password</label>
+                                        <label class="input-label">App Password</label>
                                         <input class="clean-input" type="password" id="chEmailPassword" placeholder="xxxx xxxx xxxx xxxx" autocomplete="off">
                                     </div>
-                                    <div class="provider-note" id="emailPasswordProviderNote" style="display:none;"></div>
+                                    <div class="provider-note" id="emailProviderNote" style="display:none;"></div>
+                                    <details class="ch-advanced" id="emailAdvanced">
+                                        <summary class="advanced-toggle">Server settings and allowed senders</summary>
+                                        <div class="input-group">
+                                            <label class="input-label">IMAP Host / Port</label>
+                                            <div style="display:flex;gap:8px;">
+                                                <input class="clean-input" type="text" id="chEmailImapHost" placeholder="imap.example.com" autocomplete="off" style="flex:3;">
+                                                <input class="clean-input" type="text" id="chEmailImapPort" placeholder="993" autocomplete="off" style="flex:1;">
+                                            </div>
+                                        </div>
+                                        <div class="input-group">
+                                            <label class="input-label">SMTP Host / Port</label>
+                                            <div style="display:flex;gap:8px;">
+                                                <input class="clean-input" type="text" id="chEmailSmtpHost" placeholder="smtp.example.com" autocomplete="off" style="flex:3;">
+                                                <input class="clean-input" type="text" id="chEmailSmtpPort" placeholder="465" autocomplete="off" style="flex:1;">
+                                            </div>
+                                        </div>
+                                        <div class="input-group">
+                                            <label class="input-label">Allowed Senders</label>
+                                            <input class="clean-input" type="text" id="chEmailWhitelist" placeholder="boss@company.com,friend@example.com" autocomplete="off">
+                                            <span class="input-hint">Bhai only acts on mail from these addresses. Left blank, it's just you.</span>
+                                        </div>
+                                    </details>
                                     <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('email', 2)">Back</button>
-                                        <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('email', 2)">Next</button>
+                                        <button class="wizard-btn wizard-btn-success" onclick="connectChannel('email')">Connect</button>
                                     </div>
-                                </div>
-                                <!-- Step 3: Server settings -->
-                                <div class="channel-wizard-step" id="wizStepEmail3">
-                                    <h4>Server settings</h4>
-                                    <p>These have been auto-filled based on your email provider. Only change them if you know what you are doing.</p>
-                                    <div class="input-group">
-                                        <label class="input-label">SMTP Host</label>
-                                        <input class="clean-input" type="text" id="chEmailSmtpHost" placeholder="smtp.gmail.com" autocomplete="off" readonly>
-                                    </div>
-                                    <div class="input-group">
-                                        <label class="input-label">SMTP Port</label>
-                                        <input class="clean-input" type="text" id="chEmailSmtpPort" placeholder="465" autocomplete="off" readonly>
-                                    </div>
-                                    <div class="input-group">
-                                        <label class="input-label">IMAP Host</label>
-                                        <input class="clean-input" type="text" id="chEmailImapHost" placeholder="imap.gmail.com" autocomplete="off" readonly>
-                                    </div>
-                                    <div class="input-group">
-                                        <label class="input-label">IMAP Port</label>
-                                        <input class="clean-input" type="text" id="chEmailImapPort" placeholder="993" autocomplete="off" readonly>
-                                    </div>
-                                    <div class="advanced-toggle" onclick="toggleEmailAdvanced()">
-                                        <span id="emailAdvToggleIcon">&#9654;</span> Advanced: Edit server settings manually
-                                    </div>
-                                    <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('email', 3)">Back</button>
-                                        <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('email', 3)">Next</button>
-                                    </div>
-                                </div>
-                                <!-- Step 4: Allowed senders + Test -->
-                                <div class="channel-wizard-step" id="wizStepEmail4">
-                                    <h4>Allowed senders</h4>
-                                    <p>Bhai will only process emails from these addresses. Leave blank to accept all.</p>
-                                    <div class="input-group">
-                                        <label class="input-label">Email Whitelist</label>
-                                        <input class="clean-input" type="text" id="chEmailWhitelist" placeholder="boss@company.com,friend@example.com" autocomplete="off">
-                                        <span class="input-hint">Comma-separated email addresses.</span>
-                                    </div>
-                                    <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('email', 4)">Back</button>
-                                        <button class="wizard-btn wizard-btn-success" onclick="testChannelConnection('email')">Test Connection</button>
-                                    </div>
+                                    </details>
                                 </div>
                             </div>
                             <div class="channel-test-result" id="testResultEmail"></div>
@@ -1092,7 +991,7 @@
                         <div class="settings-section-header" onclick="toggleChannelSection('matrix')">
                             <div style="display:flex;align-items:center;gap:10px;">
                                 <span class="channel-status-dot disabled" id="chStatusMatrix"></span>
-                                <span>🟩 Matrix</span>
+                                <span>🟩 Matrix</span><span class="ch-hint">About 1 min</span>
                             </div>
                             <label class="pref-toggle" style="margin:0;" onclick="event.stopPropagation()">
                                 <input type="checkbox" id="chToggleMatrix" onchange="onChannelToggle('matrix')">
@@ -1100,108 +999,35 @@
                             </label>
                         </div>
                         <div class="settings-fields" id="chFieldsMatrix" style="display:none;">
-                            <div class="wizard-progress" id="wizardProgressMatrix">
-                                <div class="wizard-progress-step active" id="wizProgMatrix1">1</div>
-                                <div class="wizard-progress-line" id="wizLineMatrix1"></div>
-                                <div class="wizard-progress-step" id="wizProgMatrix2">2</div>
-                                <div class="wizard-progress-line" id="wizLineMatrix2"></div>
-                                <div class="wizard-progress-step" id="wizProgMatrix3">3</div>
-                                <div class="wizard-progress-line" id="wizLineMatrix3"></div>
-                                <div class="wizard-progress-step" id="wizProgMatrix4">4</div>
-                            </div>
                             <div class="channel-wizard" id="wizardMatrix">
-                                <!-- Step 1: Homeserver -->
                                 <div class="channel-wizard-step active" id="wizStepMatrix1">
-                                    <h4>Enter your homeserver</h4>
-                                    <p>The homeserver URL for your Matrix account. The default public server is matrix.org.</p>
-                                    <div class="input-group">
-                                        <label class="input-label">Homeserver URL</label>
-                                        <input class="clean-input" type="text" id="chMatrixHomeserver" placeholder="https://matrix.org" autocomplete="off">
-                                    </div>
-                                    <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('matrix', 1)">Next</button>
-                                    </div>
-                                </div>
-                                <!-- Step 2: Username + password -->
-                                <div class="channel-wizard-step" id="wizStepMatrix2">
-                                    <h4>Enter username and password</h4>
-                                    <p>The bot will sign in with these credentials. You can create a dedicated Matrix account for Bhai or use your own.</p>
+                                    <p>Sign in with a Matrix account for Bhai. A separate account works best; it answers your DMs.</p>
                                     <div class="input-group">
                                         <label class="input-label">Username</label>
-                                        <input class="clean-input" type="text" id="chMatrixUsername" placeholder="@atlas:matrix.org" autocomplete="off">
+                                        <input class="clean-input" type="text" id="chMatrixUsername" placeholder="@bhai:matrix.org" autocomplete="off">
                                     </div>
                                     <div class="input-group">
                                         <label class="input-label">Password</label>
                                         <input class="clean-input" type="password" id="chMatrixPassword" placeholder="Your Matrix password" autocomplete="off">
                                     </div>
+                                    <details class="ch-advanced">
+                                        <summary class="advanced-toggle">Homeserver and rooms</summary>
+                                        <div class="input-group">
+                                            <label class="input-label">Homeserver URL</label>
+                                            <input class="clean-input" type="text" id="chMatrixHomeserver" value="https://matrix.org" autocomplete="off">
+                                        </div>
+                                        <div class="input-group">
+                                            <label class="input-label">Room IDs</label>
+                                            <input class="clean-input" type="text" id="chMatrixRooms" placeholder="!roomid:matrix.org" autocomplete="off">
+                                            <span class="input-hint">Comma-separated. Leave blank for DMs only.</span>
+                                        </div>
+                                    </details>
                                     <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('matrix', 2)">Back</button>
-                                        <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('matrix', 2)">Next</button>
-                                    </div>
-                                </div>
-                                <!-- Step 3: Rooms -->
-                                <div class="channel-wizard-step" id="wizStepMatrix3">
-                                    <h4>Choose rooms (optional)</h4>
-                                    <p>Specify room IDs the bot should join. If left blank, the bot will respond to direct messages only. Room IDs look like <code>!abc123:matrix.org</code>.</p>
-                                    <div class="input-group">
-                                        <label class="input-label">Room IDs</label>
-                                        <input class="clean-input" type="text" id="chMatrixRooms" placeholder="!roomid:matrix.org" autocomplete="off">
-                                        <span class="input-hint">Comma-separated. Leave blank for DMs only.</span>
-                                    </div>
-                                    <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('matrix', 3)">Back</button>
-                                        <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('matrix', 3)">Next</button>
-                                    </div>
-                                </div>
-                                <!-- Step 4: Test -->
-                                <div class="channel-wizard-step" id="wizStepMatrix4">
-                                    <h4>Test your connection</h4>
-                                    <p>Click below to verify Bhai can connect to your Matrix homeserver.</p>
-                                    <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('matrix', 4)">Back</button>
-                                        <button class="wizard-btn wizard-btn-success" onclick="testChannelConnection('matrix')">Test Connection</button>
+                                        <button class="wizard-btn wizard-btn-success" onclick="connectChannel('matrix')">Connect</button>
                                     </div>
                                 </div>
                             </div>
                             <div class="channel-test-result" id="testResultMatrix"></div>
-                        </div>
-                    </div>
-
-                    <!-- ── Overlay (always enabled) ── -->
-                    <div class="settings-section" id="channel-overlay">
-                        <div class="settings-section-header">
-                            <div style="display:flex;align-items:center;gap:10px;">
-                                <span class="channel-status-dot connected" id="chStatusOverlay"></span>
-                                <span>🖥️ Desktop Overlay</span>
-                            </div>
-                            <label class="pref-toggle" style="margin:0;">
-                                <input type="checkbox" id="chToggleOverlay" checked disabled>
-                                <span class="pref-toggle-switch"></span>
-                            </label>
-                        </div>
-                        <div class="settings-fields">
-                            <div style="font-size:12px;color:var(--text-secondary);padding:4px 0;">
-                                Always on. Change its keyboard shortcut in Settings.
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- ── Web Widget (always enabled) ── -->
-                    <div class="settings-section" id="channel-webwidget">
-                        <div class="settings-section-header">
-                            <div style="display:flex;align-items:center;gap:10px;">
-                                <span class="channel-status-dot connected" id="chStatusWebWidget"></span>
-                                <span>🌐 Web Widget</span>
-                            </div>
-                            <label class="pref-toggle" style="margin:0;">
-                                <input type="checkbox" id="chToggleWebWidget" checked disabled>
-                                <span class="pref-toggle-switch"></span>
-                            </label>
-                        </div>
-                        <div class="settings-fields">
-                            <div style="font-size:12px;color:var(--text-secondary);padding:4px 0;">
-                                Always enabled. Shares port 18792 with the overlay WebSocket server.
-                            </div>
                         </div>
                     </div>
 
@@ -1212,7 +1038,7 @@
                             <line x1="12" y1="16" x2="12" y2="12"></line>
                             <line x1="12" y1="8" x2="12.01" y2="8"></line>
                         </svg>
-                        Changes are saved to encrypted storage and require a bot restart to take effect.
+                        Settings save to encrypted storage and apply by themselves. Bhai restarts for a few seconds when a channel changes.
                     </div>
                 </div>
             </div>
@@ -1233,6 +1059,7 @@
                                 <div class="auth-icon">🔐</div>
                                 <h3 class="auth-title">Sign in to Bhai</h3>
                                 <p class="auth-subtitle">Use your phone number or Google account to sign in securely</p>
+                                <p class="auth-device-removed" id="authDeviceRemoved" style="display:none;">This Mac was removed from your account on another device. Sign in again to use Bhai here.</p>
                             </div>
                             <div style="margin-top:24px;">
                                 <button class="btn btn-primary auth-submit-btn" id="signInBtn" onclick="openSignIn()" style="font-size:15px;padding:14px;">
@@ -1270,45 +1097,35 @@
 
                         <div class="account-details-grid">
                             <div class="account-detail-card surface-card">
-                                <div class="account-detail-icon">📋</div>
+                                <div class="account-detail-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg></div>
                                 <div class="account-detail-label">Plan</div>
                                 <div class="account-detail-value" id="accountPlan">Free</div>
                             </div>
                             <div class="account-detail-card surface-card">
-                                <div class="account-detail-icon">⚡</div>
+                                <div class="account-detail-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg></div>
                                 <div class="account-detail-label">AI Credits</div>
                                 <div class="account-detail-value" id="accountCredits">0</div>
                             </div>
                             <div class="account-detail-card surface-card">
-                                <div class="account-detail-icon">🔑</div>
-                                <div class="account-detail-label">Activations</div>
+                                <div class="account-detail-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M2 20h20"/></svg></div>
+                                <div class="account-detail-label">Devices</div>
                                 <div class="account-detail-value" id="accountActivations">0 / 3</div>
                             </div>
                             <div class="account-detail-card surface-card">
-                                <div class="account-detail-icon">📅</div>
+                                <div class="account-detail-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div>
                                 <div class="account-detail-label">Member Since</div>
                                 <div class="account-detail-value" id="accountCreatedAt">—</div>
                             </div>
                         </div>
 
-                        <div class="coming-soon-section">
-                            <div class="coming-soon-card surface-card">
-                                <div class="coming-soon-icon">🛒</div>
-                                <div class="coming-soon-info">
-                                    <div class="coming-soon-title">Subscription & Credits</div>
-                                    <div class="coming-soon-desc">Manage your plan and AI credit balance</div>
-                                </div>
-                                <span class="coming-soon-badge">Coming Soon</span>
+                        <section class="account-devices surface-card">
+                            <div class="account-devices-head">
+                                <h3>Devices</h3>
+                                <span class="account-devices-count" id="accountDevicesCount"></span>
                             </div>
-                            <div class="coming-soon-card surface-card">
-                                <div class="coming-soon-icon">💻</div>
-                                <div class="coming-soon-info">
-                                    <div class="coming-soon-title">Device Activations</div>
-                                    <div class="coming-soon-desc">Manage your activated devices</div>
-                                </div>
-                                <span class="coming-soon-badge">Coming Soon</span>
-                            </div>
-                        </div>
+                            <p class="account-devices-sub">Where you're signed in to Bhai. Removing a device signs it out until someone signs in on it again.</p>
+                            <div class="account-devices-list" id="accountDevicesList"><div class="account-devices-empty">Loading…</div></div>
+                        </section>
 
                         <button class="btn btn-secondary account-logout-btn" onclick="accountLogout()">
                             Sign Out
@@ -1320,71 +1137,15 @@
             <!-- ═══════════════════════════════════ -->
             <!-- TAB: About                     -->
             <!-- ═══════════════════════════════════ -->
-            <div class="tab-content" id="tab-about">
-                <div class="tab-header">
-                    <h2 class="tab-title">About Bhai</h2>
-                </div>
-
-                <div class="about-content">
-                    <div class="about-hero surface-card">
-                        <img src="logo.png" alt="Bhai" class="about-logo">
-                        <div class="about-info">
-                            <h3 class="about-name">Bhai</h3>
-                            <div class="about-version" id="aboutVersion">Version 0.2.0</div>
-                            <div class="about-tagline">Personal AI Agent · All Systems</div>
-                        </div>
-                    </div>
-
-                    <div class="about-details surface-card">
-                        <div class="about-row">
-                            <span class="about-label">Architecture</span>
-                            <span class="about-value">SAC-DR · HNSW · RRF · SAN</span>
-                        </div>
-                        <div class="about-row">
-                            <span class="about-label">Memory</span>
-                            <span class="about-value">SQLite + Vector Search + Knowledge Graph</span>
-                        </div>
-                        <div class="about-row">
-                            <span class="about-label">Embedding Model</span>
-                            <span class="about-value">Xenova/all-MiniLM-L6-v2</span>
-                        </div>
-                        <div class="about-row">
-                            <span class="about-label">Security</span>
-                            <span class="about-value">AES-256-GCM · DPAPI</span>
-                        </div>
-                        <div class="about-row">
-                            <span class="about-label">Hotkey</span>
-                            <span class="about-value" id="aboutHotkey"><kbd>Alt + Space</kbd></span>
-                        </div>
-                    </div>
-
-                    <div class="about-details surface-card" style="margin-top:16px;">
-                        <div class="about-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
-                            <span class="about-label">Legal documents</span>
-                            <span class="about-value" style="font-size:13px;line-height:1.6;">
-                                <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/legal');">Legal Hub (index)</a> ·
-                                <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/terms');">Terms</a> ·
-                                <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/privacy');">Privacy</a> ·
-                                <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/acceptable-use');">Acceptable Use</a> ·
-                                <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/disclaimer');">Disclaimer</a> ·
-                                <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/refund');">Refund</a>
-                            </span>
-                        </div>
-                    </div>
-
-                    <div class="copyright" style="margin-top: 16px;">
-                        Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
-                    </div>
-                </div>
-            </div>
-
-
             <!-- ═══════════════════════════════ -->
             <!-- TAB: Memory Studio             -->
             <!-- ═══════════════════════════════ -->
             <div class="tab-content" id="tab-memory">
                 <div class="tab-header">
-                    <h2 class="tab-title">Memory Studio</h2>
+                    <div style="display:flex;align-items:center;gap:10px;">
+                        <button class="btn btn-secondary btn-sm" onclick="switchTab('settings')" title="Back to Settings">← Settings</button>
+                        <h2 class="tab-title">Memory</h2>
+                    </div>
                     <div style="display:flex;gap:8px">
                         <button class="btn btn-secondary btn-sm" id="studioDeletedToggle">View deleted</button>
                         <button class="btn btn-secondary btn-sm" id="studioAdvancedToggle">Show advanced</button>
@@ -1605,7 +1366,14 @@
                     <h2 class="tab-title">Vault</h2>
                 </div>
                 <div class="vault-page">
-                    <p class="vault-intro">Logins, API keys, cards and UPI IDs Bhai can use but never sees. Encrypted on this device with AES-256-GCM — a login is typed only on its own website, and every payment needs your OK.</p>
+                    <div class="vault-hero">
+                        <p class="vault-intro">Logins, API keys, cards and UPI IDs that Bhai can use without ever seeing them.</p>
+                        <div class="vault-trust" id="vaultTrust">
+                            <span class="vault-chip">On this device only</span>
+                            <span class="vault-chip">AES-256-GCM</span>
+                            <span class="vault-chip">Payments need your OK</span>
+                        </div>
+                    </div>
 
                     <div class="vault-lock" id="vaultPwRow" style="display:none;">
                         <div class="vault-lock-icon">🔒</div>
@@ -1621,40 +1389,51 @@
 
                     <section class="vault-section" data-kind="login">
                         <div class="vault-section-head">
-                            <h3>Logins<span class="vault-count" id="vaultCount-login"></span></h3>
-                            <button class="vault-add" onclick="vaultOpenModal('login')" title="Add a login" aria-label="Add a login">＋</button>
+                            <span class="vault-section-icon" data-kind="login" aria-hidden="true"></span>
+                            <div class="vault-section-title">
+                                <h3>Logins<span class="vault-count" id="vaultCount-login"></span></h3>
+                                <p class="vault-section-sub">Typed only on the website it belongs to.</p>
+                            </div>
+                            <button class="vault-add" onclick="vaultOpenModal('login')" aria-label="Add a login">＋ Add</button>
                         </div>
                         <div class="vault-list" id="vaultList-login"></div>
                     </section>
 
                     <section class="vault-section" data-kind="api_key">
                         <div class="vault-section-head">
-                            <h3>API keys<span class="vault-count" id="vaultCount-api_key"></span></h3>
-                            <button class="vault-add" onclick="vaultOpenModal('api_key')" title="Add an API key" aria-label="Add an API key">＋</button>
+                            <span class="vault-section-icon" data-kind="api_key" aria-hidden="true"></span>
+                            <div class="vault-section-title">
+                                <h3>API keys<span class="vault-count" id="vaultCount-api_key"></span></h3>
+                                <p class="vault-section-sub">Typed only on its own site. The key never reaches the chat.</p>
+                            </div>
+                            <button class="vault-add" onclick="vaultOpenModal('api_key')" aria-label="Add an API key">＋ Add</button>
                         </div>
                         <div class="vault-list" id="vaultList-api_key"></div>
                     </section>
 
                     <section class="vault-section" data-kind="card">
                         <div class="vault-section-head">
-                            <h3>Cards<span class="vault-count" id="vaultCount-card"></span></h3>
-                            <button class="vault-add" onclick="vaultOpenModal('card')" title="Add a card" aria-label="Add a card">＋</button>
+                            <span class="vault-section-icon" data-kind="card" aria-hidden="true"></span>
+                            <div class="vault-section-title">
+                                <h3>Cards<span class="vault-count" id="vaultCount-card"></span></h3>
+                                <p class="vault-section-sub">Used only for a payment you approve. The CVV is asked each time, never stored.</p>
+                            </div>
+                            <button class="vault-add" onclick="vaultOpenModal('card')" aria-label="Add a card">＋ Add</button>
                         </div>
                         <div class="vault-list" id="vaultList-card"></div>
                     </section>
 
                     <section class="vault-section" data-kind="upi">
                         <div class="vault-section-head">
-                            <h3>UPI IDs<span class="vault-count" id="vaultCount-upi"></span></h3>
-                            <button class="vault-add" onclick="vaultOpenModal('upi')" title="Add a UPI ID" aria-label="Add a UPI ID">＋</button>
+                            <span class="vault-section-icon" data-kind="upi" aria-hidden="true"></span>
+                            <div class="vault-section-title">
+                                <h3>UPI IDs<span class="vault-count" id="vaultCount-upi"></span></h3>
+                                <p class="vault-section-sub">Used only for a payment you approve.</p>
+                            </div>
+                            <button class="vault-add" onclick="vaultOpenModal('upi')" aria-label="Add a UPI ID">＋ Add</button>
                         </div>
                         <div class="vault-list" id="vaultList-upi"></div>
                     </section>
-
-                    <div class="vault-foot">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-                        Bhai uses these but never sees the secret — it is typed straight into the page, and a card's CVV is asked for fresh at each payment.
-                    </div>
                 </div>
 
                 <!-- Add / Edit modal -->
@@ -1668,7 +1447,7 @@
                         <span class="input-hint" id="vaultStatus"></span>
                         <div class="vault-modal-actions">
                             <button class="btn btn-secondary btn-sm" onclick="vaultCloseModal()">Cancel</button>
-                            <button class="btn btn-sm" onclick="vaultSave()">Save</button>
+                            <button class="btn btn-primary btn-sm" onclick="vaultSave()">Save</button>
                         </div>
                     </div>
                 </div>
@@ -1708,7 +1487,9 @@
 
         function switchTab(tabId) {
             const tabEl = document.getElementById(`tab-${tabId}`);
-            const navEl = document.querySelector(`.nav-item[data-tab="${tabId}"]`);
+            // Pages without a sidebar item light up the item they're opened from.
+            const SUBPAGE_OF = { memory: 'settings' };
+            const navEl = document.querySelector(`.nav-item[data-tab="${SUBPAGE_OF[tabId] || tabId}"]`);
             if (!tabEl || !navEl) return; // tab removed or unknown — ignore silently
 
             document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
@@ -1717,7 +1498,7 @@
             navEl.classList.add('active');
             moveNavPill();
 
-            if (tabId === 'settings') { loadSettings(); loadPreferences(); }
+            if (tabId === 'settings') { loadSettings(); loadPreferences(); autoCheckUpdates(); }
             if (tabId === 'memory') {
                 if (window.MemoryStudio && typeof window.MemoryStudio.mount === 'function') {
                     window.MemoryStudio.mount();
@@ -2093,75 +1874,206 @@
 
         // ── Settings ──────────────────────────────────
 
-        let currentSettings = {};
+
+        // Search: show only the rows (and cards/headings) that match.
+        function filterSettings(raw) {
+            const q = raw.trim().toLowerCase();
+            const scroll = document.querySelector('#tab-settings .settings-scroll');
+            const matches = (el) => !q || (el.textContent + ' ' + (el.dataset.keywords || '')).toLowerCase().includes(q);
+            let shown = 0;
+            scroll.querySelectorAll(':scope > .pref-section, :scope > .settings-section').forEach(card => {
+                const head = card.querySelector('.pref-section-header, .settings-section-header');
+                const headHit = !!head && matches(head);
+                let any = false;
+                card.querySelectorAll('.pref-toggle, .pref-select-group, .pref-shortcut, .pref-update-status').forEach(row => {
+                    const hit = headHit || matches(row);
+                    row.style.display = hit ? '' : 'none';
+                    any = any || hit;
+                });
+                const visible = headHit || any || (!head && !q);
+                card.style.display = visible ? '' : 'none';
+                if (visible) shown++;
+            });
+            scroll.querySelectorAll(':scope > .settings-group-heading').forEach(h => {
+                let el = h.nextElementSibling;
+                let any = false;
+                while (el && !el.classList.contains('settings-group-heading')) {
+                    if ((el.classList.contains('pref-section') || el.classList.contains('settings-section')) && el.style.display !== 'none') any = true;
+                    el = el.nextElementSibling;
+                }
+                h.style.display = any ? '' : 'none';
+            });
+            document.getElementById('settingsEmpty').style.display = shown ? 'none' : '';
+        }
+
+        // Press twice to clear: no confirm() dialog.
+        async function clearChatHistory() {
+            const btn = document.getElementById('clearChatsBtn');
+            if (btn.dataset.armed !== '1') {
+                btn.dataset.armed = '1';
+                btn.textContent = 'Press again to clear';
+                setTimeout(() => { btn.dataset.armed = ''; btn.textContent = 'Clear'; }, 4000);
+                return;
+            }
+            btn.dataset.armed = '';
+            await atlas.clearChats();
+            btn.textContent = 'Cleared';
+            setTimeout(() => { btn.textContent = 'Clear'; }, 2000);
+        }
+
+        // Opening Settings checks for updates quietly, at most every 6 hours.
+        async function autoCheckUpdates() {
+            try {
+                const status = await atlas.getUpdateStatus();
+                if (status && status.lastCheck && Date.now() - new Date(status.lastCheck).getTime() < 6 * 60 * 60 * 1000) return;
+                const result = await atlas.checkForUpdates();
+                updateLastCheckDisplay();
+                if (result && result.available) document.getElementById('prefUpdateStatus').textContent = `Version ${result.version} is available`;
+            } catch { /* offline: try next time */ }
+        }
+
+        // Settings save by themselves; integration changes restart the bot so it picks them up.
+        async function restartBotForChanges(message) {
+            const status = await atlas.getBotStatus().catch(() => null);
+            if (!status || status.status !== 'running') return;
+            showToast(message || 'Saved. Restarting Bhai…');
+            await atlas.stopBot();
+            for (let i = 0; i < 15; i++) {
+                await new Promise(r => setTimeout(r, 1000));
+                const st = await atlas.getBotStatus();
+                if (st.status === 'stopped') break;
+            }
+            await atlas.startBot();
+        }
 
         async function loadSettings() {
-            const result = await atlas.getSettings();
-            if (!result.success) return;
-            currentSettings = result.settings;
-
-            document.getElementById('settingGithubToken').value = currentSettings.GITHUB_TOKEN || '';
-            document.getElementById('settingWorkspace').value = currentSettings.ATLAS_WORKSPACE || '';
-        }
-
-        async function saveSettings() {
-            const btn = document.getElementById('saveSettingsBtn');
-            btn.disabled = true;
-            btn.textContent = 'Saving...';
-
-            // Telegram credentials are managed in the Channels tab. settings:save
-            // uses saveEnvKVs (merge), so omitting these keys leaves the
-            // Channels-written values untouched. Including them with an empty
-            // fallback would silently blank a user's bot token on every save.
-            const settings = {
-                GITHUB_TOKEN: document.getElementById('settingGithubToken').value.trim(),
-                ATLAS_WORKSPACE: document.getElementById('settingWorkspace').value.trim(),
-            };
-
-            const result = await atlas.saveSettings(settings);
-
-            btn.disabled = false;
-            btn.textContent = 'Save Changes';
-
-            if (result.success) {
-                showToast('✅ Settings saved! Restart Bhai for changes to take effect.');
+            const info = await atlas.getIntegrations().catch(() => null);
+            if (!info) return;
+            // Workspace
+            document.getElementById('settingWorkspace').textContent = info.workspace;
+            document.getElementById('workspaceResetBtn').style.display = info.workspaceIsDefault ? 'none' : '';
+            // GitHub: show whose token is saved
+            if (info.githubSaved) {
+                const r = await atlas.testGithubToken('');
+                showGithub(r && r.success ? r : null, !(r && r.success) ? (r && r.message) : '');
             } else {
-                showToast('❌ Failed to save: ' + result.error);
+                showGithub(null, '');
             }
+            // Google
+            const accounts = info.googleAccounts || [];
+            document.getElementById('googleState').textContent = accounts.length ? 'Connected' : 'Not connected';
+            document.getElementById('googleState').classList.toggle('on', accounts.length > 0);
+            const list = document.getElementById('googleAccounts');
+            list.innerHTML = '';
+            for (const email of accounts) {
+                const row = document.createElement('div');
+                row.className = 'integration-row';
+                const who = document.createElement('span');
+                who.textContent = email;
+                const btn = document.createElement('button');
+                btn.className = 'btn btn-secondary btn-sm';
+                btn.textContent = 'Disconnect';
+                btn.onclick = () => disconnectGoogle(email);
+                row.append(who, btn);
+                list.append(row);
+            }
+            document.getElementById('googleConnectLabel').textContent = accounts.length ? 'Add another account' : 'Connect Google';
+            document.getElementById('googleConnectBtn').style.display = info.googleAvailable ? '' : 'none';
+            const comingSoon = !info.googleAvailable && !accounts.length;
+            if (comingSoon) document.getElementById('googleState').textContent = 'Coming soon';
+            document.getElementById('googleFields').style.display = comingSoon ? 'none' : '';
         }
 
+        // ── GitHub ──
+        function showGithub(user, problem) {
+            const state = document.getElementById('ghState');
+            document.getElementById('ghConnected').style.display = user ? 'block' : 'none';
+            document.getElementById('ghSetup').style.display = user ? 'none' : 'block';
+            state.textContent = user ? 'Connected' : 'Not connected';
+            state.classList.toggle('on', !!user);
+            if (user) document.getElementById('ghWho').textContent = '@' + user.login + (user.name ? ' (' + user.name + ')' : '');
+            setStatus(document.getElementById('ghStatus'), problem ? problem + ' Paste a new token below.' : '', 'error');
+        }
+
+        let ghTimer = null;
+        function onGithubTokenInput() {
+            clearTimeout(ghTimer);
+            ghTimer = setTimeout(connectGithub, 500);
+        }
+
+        async function connectGithub() {
+            const token = fieldVal('settingGithubToken');
+            const st = document.getElementById('ghStatus');
+            if (!token) return setStatus(st, '', '');
+            if (!/^(ghp_|github_pat_|gho_)/.test(token)) return setStatus(st, 'GitHub tokens start with ghp_ or github_pat_.', 'error');
+            setStatus(st, 'Checking…', 'loading');
+            const r = await atlas.testGithubToken(token);
+            if (token !== fieldVal('settingGithubToken')) return;
+            if (!r || !r.success) return setStatus(st, (r && r.message) || 'GitHub rejected this token.', 'error');
+            const saved = await atlas.saveSettings({ GITHUB_TOKEN: token });
+            if (!saved || !saved.success) return setStatus(st, "Couldn't save the token.", 'error');
+            document.getElementById('settingGithubToken').value = '';
+            showGithub(r, '');
+            await restartBotForChanges('GitHub connected. Restarting Bhai…');
+        }
+
+        async function disconnectGithub() {
+            await atlas.saveSettings({ GITHUB_TOKEN: '' });
+            showGithub(null, '');
+            await restartBotForChanges('GitHub disconnected. Restarting Bhai…');
+        }
+
+        // ── Workspace ──
         async function chooseWorkspace() {
             const result = await atlas.chooseSettingsWorkspace();
-            if (!result.canceled && result.path) {
-                document.getElementById('settingWorkspace').value = result.path;
-            }
+            if (result.canceled || !result.path) return;
+            await atlas.saveSettings({ ATLAS_WORKSPACE: result.path });
+            await loadSettings();
+            await restartBotForChanges('Workspace changed. Restarting Bhai…');
         }
 
+        async function resetWorkspace() {
+            await atlas.saveSettings({ ATLAS_WORKSPACE: '' });
+            await loadSettings();
+            await restartBotForChanges('Workspace reset. Restarting Bhai…');
+        }
+
+        // ── Google ──
         async function connectGoogleAccount() {
             const btn = document.getElementById('googleConnectBtn');
+            const st = document.getElementById('googleStatus');
             btn.disabled = true;
-            btn.textContent = 'Waiting...';
-
-            const result = await atlas.googleOAuth();
-            if (result.success) {
-                document.getElementById('googleStatus').textContent = '✓ Connected: ' + result.email;
-                document.getElementById('googleStatus').style.color = 'var(--accent-success)';
-            } else {
-                showToast('Google sign-in failed: ' + (result.error || 'Unknown error'));
+            setStatus(st, 'Finish signing in in your browser…', 'loading');
+            try {
+                const result = await atlas.googleOAuth();
+                if (!result.success) return setStatus(st, 'Google sign-in failed: ' + (result.error || 'unknown error'), 'error');
+                setStatus(st, '', '');
+                await loadSettings();
+                await restartBotForChanges('Google connected. Restarting Bhai…');
+            } finally {
+                btn.disabled = false;
             }
-            btn.disabled = false;
-            btn.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18">
-                <path fill="#4285F4" d="M23.7 12.3c0-.8-.1-1.6-.2-2.3H12.2v4.5h6.5c-.3 1.5-1.1 2.7-2.4 3.5v2.9h3.8c2.3-2.1 3.6-5.2 3.6-8.6z"/>
-                <path fill="#34A853" d="M12.2 24c3.3 0 6-1.1 8-2.9l-3.8-2.9c-1.1.7-2.5 1.1-4.2 1.1-3.2 0-6-2.2-6.9-5.1H1.4v3C3.4 21.4 7.5 24 12.2 24z"/>
-                <path fill="#FBBC05" d="M5.3 14.3c-.3-.7-.4-1.5-.4-2.3s.1-1.6.4-2.3V6.6H1.4C.5 8.4 0 10.1 0 12s.5 3.6 1.4 5.4l3.9-3.1z"/>
-                <path fill="#EA4335" d="M12.2 4.8c1.8 0 3.4.6 4.7 1.8L20.3 3C18.2 1.1 15.5 0 12.2 0 7.5 0 3.4 2.6 1.4 6.6l3.9 3.1c.9-2.9 3.7-4.9 6.9-4.9z"/>
-            </svg> Connect Google`;
         }
 
-        // Listen for Google OAuth success from main process
-        atlas.onGoogleOAuthSuccess((email) => {
-            document.getElementById('googleStatus').textContent = '✓ Connected: ' + email;
-            document.getElementById('googleStatus').style.color = 'var(--accent-success)';
+        async function disconnectGoogle(email) {
+            await atlas.googleDisconnect(email);
+            await loadSettings();
+            await restartBotForChanges('Google account removed. Restarting Bhai…');
+        }
+
+        atlas.onGoogleOAuthSuccess(() => {
+            if (document.getElementById('tab-settings').classList.contains('active')) loadSettings();
+        });
+
+        // Back from GitHub with a token copied? Fill it in (main only hands over a GitHub-shaped token).
+        window.addEventListener('focus', async () => {
+            if (!document.getElementById('tab-settings').classList.contains('active')) return;
+            if (document.getElementById('ghSetup').style.display === 'none' || fieldVal('settingGithubToken')) return;
+            const token = await atlas.clipboardToken('github').catch(() => '');
+            if (!token) return;
+            document.getElementById('settingGithubToken').value = token;
+            showToast('Pasted your GitHub token from the clipboard');
+            connectGithub();
         });
 
         // ── Channels ──────────────────────────────────
@@ -2198,6 +2110,8 @@
             "zoho.com": { smtp: {host:"smtp.zoho.com",port:465}, imap: {host:"imap.zoho.com",port:993}, note:"Use your Zoho password." },
         };
 
+        for (const [alias, real] of [["googlemail.com","gmail.com"],["live.com","outlook.com"],["msn.com","outlook.com"],["me.com","icloud.com"],["mac.com","icloud.com"],["ymail.com","yahoo.com"]]) EMAIL_PROVIDERS[alias] = EMAIL_PROVIDERS[real];
+
         // Track current wizard step per channel
         const wizardSteps = { telegram: 1, whatsapp: 1, discord: 1, slack: 1, email: 1, matrix: 1 };
         // Track channel statuses from push events
@@ -2225,6 +2139,21 @@
             const dot = document.getElementById('chStatus' + capitalize(channel));
             if (dot) {
                 dot.className = 'channel-status-dot ' + (enabled ? 'disconnected' : 'disabled');
+            }
+            // WhatsApp needs no credentials: turning it on starts the bot so the QR shows.
+            // Turning off a saved channel applies straight away; there's no Save button.
+            if (!enabled && channel === 'email') {
+                bhaiMail.address = '';
+                bhaiMail.owner = '';
+                document.getElementById('bhaiMailSetup').style.display = 'block';
+                document.getElementById('bhaiMailReady').style.display = 'none';
+            }
+            const saved = channelConfig && channelConfig[channel] && channelConfig[channel].enabled;
+            if ((enabled && channel === 'whatsapp' && !saved) || (!enabled && saved)) {
+                saveChannelConfig();
+            } else if (enabled && fieldsEl) {
+                const first = fieldsEl.querySelector('.channel-wizard-step.active input:not([type=checkbox])');
+                if (first) first.focus();
             }
         }
 
@@ -2270,7 +2199,7 @@
         function goToWizardStep(channel, targetStep) {
             const cap = capitalize(channel);
             // Reset all steps
-            const totalSteps = { telegram: 4, whatsapp: 5, discord: 4, slack: 3, email: 4, matrix: 4 };
+            const totalSteps = { telegram: 2, whatsapp: 5, discord: 2, slack: 2, email: 1, matrix: 1 };
             const max = totalSteps[channel] || 4;
             for (let i = 1; i <= max; i++) {
                 const stepEl = document.getElementById('wizStep' + cap + i);
@@ -2299,89 +2228,246 @@
             const domain = (email.split('@')[1] || '').toLowerCase().trim();
             const provider = EMAIL_PROVIDERS[domain];
             const noteEl = document.getElementById('emailProviderNote');
-            const pwNoteEl = document.getElementById('emailPasswordProviderNote');
             if (provider) {
-                // Fill server fields
                 document.getElementById('chEmailSmtpHost').value = provider.smtp.host;
                 document.getElementById('chEmailSmtpPort').value = provider.smtp.port;
                 document.getElementById('chEmailImapHost').value = provider.imap.host;
                 document.getElementById('chEmailImapPort').value = provider.imap.port;
-                // Show provider note
-                if (noteEl) { noteEl.innerHTML = provider.note; noteEl.style.display = 'block'; }
-                if (pwNoteEl) { pwNoteEl.innerHTML = provider.note; pwNoteEl.style.display = 'block'; }
+                noteEl.innerHTML = provider.note;
+                noteEl.style.display = 'block';
             } else {
-                if (noteEl) noteEl.style.display = 'none';
-                if (pwNoteEl) pwNoteEl.style.display = 'none';
-                // Clear server fields if unknown provider
-                document.getElementById('chEmailSmtpHost').value = '';
-                document.getElementById('chEmailSmtpPort').value = '';
-                document.getElementById('chEmailImapHost').value = '';
-                document.getElementById('chEmailImapPort').value = '';
+                noteEl.style.display = 'none';
+                // Unknown provider: the server fields are needed, so show them.
+                if (domain.includes('.')) document.getElementById('emailAdvanced').open = true;
             }
         }
 
-        function toggleEmailAdvanced() {
-            const fields = ['chEmailSmtpHost', 'chEmailSmtpPort', 'chEmailImapHost', 'chEmailImapPort'];
-            const icon = document.getElementById('emailAdvToggleIcon');
-            const isReadonly = document.getElementById('chEmailSmtpHost').readOnly;
-            fields.forEach(id => { document.getElementById(id).readOnly = !isReadonly; });
-            if (icon) icon.innerHTML = isReadonly ? '&#9660;' : '&#9654;';
+        function setStatus(el, text, kind) {
+            if (!el) return;
+            el.textContent = text;
+            el.className = 'channel-test-result' + (text ? ' visible ' + kind : '');
+        }
+        const fieldVal = (id) => document.getElementById(id).value.trim();
+        const addId = (list, id) => [...new Set(list.split(',').map(x => x.trim()).filter(Boolean).concat(id))].join(',');
+
+        function renderDiscordInvite(clientId) {
+            const url = 'https://discord.com/api/oauth2/authorize?client_id=' + encodeURIComponent(clientId) + '&permissions=274877910016&scope=bot';
+            document.getElementById('discordInviteLink').innerHTML = '<a class="wizard-link" target="_blank" href="' + url + '">Add Bhai to a server</a>';
         }
 
-        function onDiscordTokenChange(token) {
-            const linkArea = document.getElementById('discordInviteLink');
-            if (!linkArea) return;
-            if (!token || token.length < 20) {
-                linkArea.innerHTML = '<div class="provider-note">Enter your bot token in the previous step to generate an invite link.</div>';
+        function renderDiscordIntent(r) {
+            const warn = document.getElementById('dcIntentWarn');
+            if (r.intentOk) return setStatus(warn, '', '');
+            warn.className = 'channel-test-result visible error';
+            warn.innerHTML = 'Message Content Intent is off, so Bhai would see empty messages. <a target="_blank" href="https://discord.com/developers/applications/' + encodeURIComponent(r.clientId) + '/bot">Turn it on here</a>, then connect.';
+        }
+
+        // Paste a token → it is checked right away and the next step opens.
+        const tokenTimers = {};
+        function onTokenInput(channel) {
+            clearTimeout(tokenTimers[channel]);
+            // Both Slack tokens in → connect; nothing left to press.
+            if (channel === 'slack-app') {
+                if (/^xapp-.{20,}/.test(fieldVal('chSlackAppToken')) && /^xoxb-/.test(fieldVal('chSlackBotToken'))) tokenTimers[channel] = setTimeout(() => connectChannel('slack'), 500);
                 return;
             }
-            try {
-                // Discord bot tokens are base64(client_id).base64(timestamp).signature
-                const clientId = atob(token.split('.')[0]);
-                if (clientId && /^\d+$/.test(clientId)) {
-                    const url = 'https://discord.com/api/oauth2/authorize?client_id=' + clientId + '&permissions=274877910016&scope=bot';
-                    linkArea.innerHTML = '<div class="invite-link-box"><a href="' + url + '" target="_blank">' + url + '</a></div>';
-                } else {
-                    linkArea.innerHTML = '<div class="provider-note">Could not extract client ID from token. You can generate an invite link manually from the Developer Portal.</div>';
-                }
-            } catch {
-                linkArea.innerHTML = '<div class="provider-note">Could not parse token. Make sure you copied the full bot token.</div>';
+            tokenTimers[channel] = setTimeout(() => channel === 'slack' ? verifySlackBotToken() : verifyToken(channel), 500);
+        }
+
+        async function verifyToken(channel) {
+            if (channel === 'telegram') {
+                const token = fieldVal('chTelegramToken');
+                const st = document.getElementById('tgTokenStatus');
+                if (!/^\d+:[A-Za-z0-9_-]{30,}$/.test(token)) return setStatus(st, token ? "That doesn't look like a full token yet." : '', 'error');
+                setStatus(st, 'Checking…', 'loading');
+                const r = await atlas.testChannel('telegram', { token });
+                if (token !== fieldVal('chTelegramToken')) return;
+                if (!r || !r.success) return setStatus(st, (r && r.message) || 'Telegram rejected this token.', 'error');
+                setStatus(st, '✓ Found @' + r.username, 'success');
+                const link = document.getElementById('tgBotLink');
+                link.href = 'https://t.me/' + encodeURIComponent(r.username);
+                link.textContent = 'Open @' + r.username;
+                goToWizardStep('telegram', 2);
+                waitForTelegramOwner(token);
+            } else if (channel === 'discord') {
+                const token = fieldVal('chDiscordToken');
+                const st = document.getElementById('dcTokenStatus');
+                if (token.length < 50) return setStatus(st, token ? "That doesn't look like a full token yet." : '', 'error');
+                setStatus(st, 'Checking…', 'loading');
+                const r = await atlas.testChannel('discord', { token });
+                if (token !== fieldVal('chDiscordToken')) return;
+                if (!r || !r.success) return setStatus(st, (r && r.message) || 'Discord rejected this token.', 'error');
+                setStatus(st, '✓ ' + r.message, 'success');
+                if (r.ownerId) document.getElementById('chDiscordUserIds').value = addId(fieldVal('chDiscordUserIds'), r.ownerId);
+                renderDiscordInvite(r.clientId);
+                renderDiscordIntent(r);
+                goToWizardStep('discord', 2);
+                // Ready to run; adding it to a server is the only step left.
+                if (r.intentOk) connectChannel('discord');
             }
+        }
+
+        async function verifySlackBotToken() {
+            const token = fieldVal('chSlackBotToken');
+            const st = document.getElementById('slTokenStatus');
+            if (!/^xoxb-/.test(token)) return setStatus(st, token ? 'The Bot Token starts with xoxb-.' : '', 'error');
+            setStatus(st, 'Checking…', 'loading');
+            const r = await atlas.testChannel('slack', { botToken: token });
+            if (token !== fieldVal('chSlackBotToken')) return;
+            if (!r || !r.success) return setStatus(st, (r && r.message) || 'Slack rejected this token.', 'error');
+            setStatus(st, '✓ ' + r.message, 'success');
+            if (r.ownerId && !fieldVal('chSlackUserIds')) document.getElementById('chSlackUserIds').value = r.ownerId;
+            if (r.appId) {
+                document.getElementById('slAppTokenHint').innerHTML = '<a target="_blank" href="https://api.slack.com/apps/' + encodeURIComponent(r.appId) + '/general">Open App-Level Tokens</a> → Generate Token and Scopes → add <code>connections:write</code> → copy it.';
+            }
+        }
+
+        // Back from BotFather or a developer portal with a token copied? Fill it in.
+        // Main only returns clipboard text shaped like the token asked for.
+        const CLIPBOARD_FIELDS = [
+            ['telegram', 1, 'chTelegramToken', 'telegram'],
+            ['discord', 1, 'chDiscordToken', 'discord'],
+            ['slack', 1, 'chSlackBotToken', 'slackBot'],
+            ['slack', 2, 'chSlackBotToken', 'slackBot'],
+            ['slack', 2, 'chSlackAppToken', 'slackApp'],
+        ];
+        async function pickUpCopiedToken() {
+            if (!atlas.clipboardToken || !document.getElementById('tab-channels').classList.contains('active')) return;
+            for (const [channel, step, id, kind] of CLIPBOARD_FIELDS) {
+                const field = document.getElementById(id);
+                if (!document.getElementById('chToggle' + capitalize(channel)).checked || wizardSteps[channel] !== step || field.value.trim()) continue;
+                const token = await atlas.clipboardToken(kind);
+                if (!token || [...document.querySelectorAll('#tab-channels input')].some(i => i !== field && i.value.trim() === token)) continue;
+                if (channel === 'slack' && step === 1) goToWizardStep('slack', 2);
+                if (channel === 'telegram') document.getElementById('tgManual').open = true;
+                field.value = token;
+                showToast('Pasted your ' + capitalize(channel) + ' token from the clipboard');
+                onTokenInput(channel === 'slack' && kind === 'slackApp' ? 'slack-app' : channel);
+                return;
+            }
+        }
+        window.addEventListener('focus', pickUpCopiedToken);
+
+        function copyText(text) {
+            navigator.clipboard.writeText(text).then(() => showToast('Copied')).catch(() => showToast('Select the text to copy it'));
+        }
+        document.getElementById('tgSuggestedUsername').textContent = 'bhai_' + Math.random().toString(36).slice(2, 7) + '_bot';
+
+        function showTelegramReady(status) {
+            document.getElementById('tgStep2Title').textContent = 'Your bot is ready';
+            document.getElementById('tgStep2Text').textContent = 'Message it in Telegram anytime; Bhai answers there.';
+            setStatus(document.getElementById('tgOwnerStatus'), status, 'success');
+        }
+
+        const bhaiMail = { address: '', owner: '' };
+        function showBhaiMail(address, owner) {
+            bhaiMail.address = address;
+            bhaiMail.owner = owner;
+            document.getElementById('bhaiMailSetup').style.display = 'none';
+            document.getElementById('bhaiMailReady').style.display = 'block';
+            document.getElementById('bhaiMailAddress').textContent = address;
+            document.getElementById('bhaiMailOwnerShown').textContent = owner;
+            document.getElementById('bhaiMailWrite').href = 'mailto:' + address;
+        }
+
+        async function claimBhaiMail() {
+            const owner = fieldVal('chBhaiMailOwner').toLowerCase();
+            const st = document.getElementById('bhaiMailStatus');
+            if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(owner)) return setStatus(st, 'Enter the email you write from.', 'error');
+            const btn = document.getElementById('bhaiMailBtn');
+            btn.disabled = true;
+            setStatus(st, 'Getting an address…', 'loading');
+            try {
+                const r = await atlas.bhaiMailClaim(owner);
+                if (!r || !r.success) {
+                    document.getElementById('emailOwnMailbox').open = true;
+                    return setStatus(st, (r && r.notConfigured ? "Bhai's email isn't switched on yet" : "Couldn't reach Bhai's servers") + '. You can use your own mailbox below.', 'error');
+                }
+                showBhaiMail(r.address, owner);
+                document.getElementById('chToggleEmail').checked = true;
+                setStatus(st, '✓ Done. Send Bhai an email to start.', 'success');
+                await saveChannelConfig();
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        async function createTelegramBot() {
+            const btn = document.getElementById('tgCreateBtn');
+            const st = document.getElementById('tgCreateStatus');
+            btn.disabled = true;
+            try {
+                setStatus(st, 'Opening Telegram…', 'loading');
+                const r = await atlas.telegramManagedStart();
+                if (!r || !r.success) {
+                    document.getElementById('tgManual').open = true;
+                    return setStatus(st, (r && r.notConfigured ? "One-tap setup isn't switched on yet" : "Couldn't reach Bhai's servers") + '. BotFather below takes about a minute.', 'error');
+                }
+                setStatus(st, 'In Telegram, tap Create (keep the suggested username). Waiting…', 'loading');
+                const res = await atlas.telegramManagedWait(r.username);
+                if (!res || !res.success) return setStatus(st, ((res && res.message) || "Telegram didn't confirm") + '. Tap the button to try again.', 'error');
+                document.getElementById('chTelegramToken').value = res.token;
+                document.getElementById('chTelegramUserIds').value = res.userId;
+                setStatus(st, '✓ Created @' + res.username + (res.name ? ' for ' + res.name : ''), 'success');
+                const link = document.getElementById('tgBotLink');
+                link.href = 'https://t.me/' + encodeURIComponent(res.username);
+                link.textContent = 'Open @' + res.username;
+                link.onclick = null;
+                goToWizardStep('telegram', 2);
+                showTelegramReady('✓ Only you can talk to it.');
+                connectChannel('telegram');
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        let tgWaiting = false;
+        async function waitForTelegramOwner(token) {
+            const st = document.getElementById('tgOwnerStatus');
+            tgWaiting = true;
+            setStatus(st, 'Waiting for your message…', 'loading');
+            const r = await atlas.telegramWaitOwner(token);
+            tgWaiting = false;
+            if (token !== fieldVal('chTelegramToken')) return;
+            if (!r || !r.success) return setStatus(st, ((r && r.message) || 'No message yet') + '. Tap the button to try again.', 'error');
+            document.getElementById('chTelegramUserIds').value = addId(fieldVal('chTelegramUserIds'), r.userId);
+            setStatus(st, '✓ Found you' + (r.name ? ': ' + r.name : ''), 'success');
+            connectChannel('telegram');
+        }
+
+        function onTelegramBotLinkClick() {
+            const token = fieldVal('chTelegramToken');
+            if (token && !tgWaiting) waitForTelegramOwner(token);
         }
 
         async function testChannelConnection(channel) {
             const resultEl = document.getElementById('testResult' + capitalize(channel));
-            if (!resultEl) return;
-            resultEl.className = 'channel-test-result visible loading';
-            resultEl.textContent = 'Testing connection...';
+            setStatus(resultEl, 'Checking…', 'loading');
 
-            // Gather params based on channel
             let params = {};
             switch (channel) {
                 case 'telegram':
-                    params = { token: document.getElementById('chTelegramToken').value.trim(), userIds: document.getElementById('chTelegramUserIds').value.trim() };
+                    params = { token: fieldVal('chTelegramToken') };
                     break;
                 case 'discord':
-                    params = { token: document.getElementById('chDiscordToken').value.trim(), userIds: document.getElementById('chDiscordUserIds').value.trim() };
+                    params = { token: fieldVal('chDiscordToken') };
                     break;
                 case 'slack':
-                    params = { botToken: document.getElementById('chSlackBotToken').value.trim(), appToken: document.getElementById('chSlackAppToken').value.trim() };
+                    params = { botToken: fieldVal('chSlackBotToken'), appToken: fieldVal('chSlackAppToken') };
                     break;
                 case 'email':
                     params = {
-                        user: document.getElementById('chEmailUser').value.trim(),
-                        password: document.getElementById('chEmailPassword').value.trim(),
-                        smtpHost: document.getElementById('chEmailSmtpHost').value.trim(),
-                        smtpPort: document.getElementById('chEmailSmtpPort').value.trim(),
-                        imapHost: document.getElementById('chEmailImapHost').value.trim(),
-                        imapPort: document.getElementById('chEmailImapPort').value.trim(),
+                        user: fieldVal('chEmailUser'),
+                        password: fieldVal('chEmailPassword'),
+                        imapHost: fieldVal('chEmailImapHost'),
+                        imapPort: fieldVal('chEmailImapPort'),
                     };
                     break;
                 case 'matrix':
                     params = {
-                        homeserver: document.getElementById('chMatrixHomeserver').value.trim(),
-                        username: document.getElementById('chMatrixUsername').value.trim(),
-                        password: document.getElementById('chMatrixPassword').value.trim(),
+                        homeserver: fieldVal('chMatrixHomeserver'),
+                        username: fieldVal('chMatrixUsername'),
+                        password: fieldVal('chMatrixPassword'),
                     };
                     break;
             }
@@ -2389,17 +2475,57 @@
             try {
                 const result = await atlas.testChannel(channel, params);
                 if (result && result.success) {
-                    resultEl.className = 'channel-test-result visible success';
-                    resultEl.textContent = result.message || 'Connection successful!';
-                } else {
-                    resultEl.className = 'channel-test-result visible error';
-                    resultEl.textContent = (result && result.error) || 'Connection failed. Check your credentials.';
+                    setStatus(resultEl, result.message || 'Connection successful!', 'success');
+                    return result;
                 }
+                setStatus(resultEl, (result && (result.error || result.message)) || 'Connection failed. Check your credentials.', 'error');
             } catch (err) {
-                resultEl.className = 'channel-test-result visible error';
-                resultEl.textContent = 'Error: ' + (err.message || 'Unknown error');
+                setStatus(resultEl, 'Error: ' + (err.message || 'Unknown error'), 'error');
             }
+            return null;
         }
+
+        // The one button per channel: check the credentials, fill in what can be
+        // worked out, save, make it primary if nothing else is, and restart Bhai.
+        async function connectChannel(channel) {
+            const resultEl = document.getElementById('testResult' + capitalize(channel));
+            if (channel === 'slack' && !fieldVal('chSlackAppToken').startsWith('xapp-') && !(channelConfig.slack && channelConfig.slack.appToken)) {
+                return setStatus(resultEl, 'The App Token starts with xapp-. Generate it under Basic Information → App-Level Tokens.', 'error');
+            }
+            const r = await testChannelConnection(channel);
+            if (!r) return;
+            if (channel === 'discord') {
+                renderDiscordIntent(r);
+                if (!r.intentOk) return setStatus(resultEl, 'Turn on Message Content Intent first (link above).', 'error');
+                if (r.ownerId) document.getElementById('chDiscordUserIds').value = addId(fieldVal('chDiscordUserIds'), r.ownerId);
+            }
+            if (channel === 'slack' && !fieldVal('chSlackUserIds')) {
+                if (!r.ownerId) {
+                    document.querySelector('#wizStepSlack2 .ch-advanced').open = true;
+                    return setStatus(resultEl, 'Add your Slack member ID below so Bhai knows who to answer.', 'error');
+                }
+                document.getElementById('chSlackUserIds').value = r.ownerId;
+            }
+            if (channel === 'telegram' && !fieldVal('chTelegramUserIds')) {
+                return setStatus(resultEl, 'Say hi to your bot first, so Bhai knows who you are.', 'error');
+            }
+            if (channel === 'email' && !fieldVal('chEmailWhitelist')) {
+                document.getElementById('chEmailWhitelist').value = fieldVal('chEmailUser');
+            }
+            if (channel === 'matrix' && r.userId) document.getElementById('chMatrixUsername').value = r.userId;
+
+            const sel = document.getElementById('primaryChannelSelect');
+            const cur = sel.value;
+            if (cur !== channel && cur !== 'overlay' && !(channelConfig[cur] && channelConfig[cur].enabled)) {
+                sel.value = channel;
+                try { await atlas.saveSettings({ PRIMARY_CHANNEL: channel }); } catch { /* non-fatal */ }
+            }
+            const who = channel === 'slack' && r.ownerName ? ' Only ' + r.ownerName + ' can talk to it; change that under "Who can talk to Bhai".' : '';
+            setStatus(resultEl, '✓ ' + r.message + '. Turning it on…' + who, 'success');
+            if (await saveChannelConfig()) setStatus(resultEl, '✓ ' + capitalize(channel) + ' is on. Bhai is restarting to pick it up.' + who, 'success');
+        }
+
+        document.getElementById('slackCreateLink').href = 'https://api.slack.com/apps?new_app=1&manifest_json=' + encodeURIComponent(JSON.stringify(JSON.parse(document.getElementById('slackManifest').textContent)));
 
         function copySlackManifest() {
             const text = document.getElementById('slackManifest').textContent;
@@ -2417,8 +2543,7 @@
                 if (!area) return;
                 if (qr === 'connected') {
                     area.innerHTML = '<div class="qr-connected">WhatsApp connected!</div>';
-                    // Auto-advance to step 2
-                    goToWizardStep('whatsapp', 2);
+                    atlas.waGetOwners().then(o => (o && o.length) ? goToWizardStep('whatsapp', 2) : startWhatsAppOwnerStep()).catch(() => goToWizardStep('whatsapp', 2));
                     const dot = document.getElementById('chStatusWhatsapp');
                     if (dot) dot.className = 'channel-status-dot connected';
                 } else {
@@ -2429,40 +2554,58 @@
 
         // WhatsApp OTP listener
         if (atlas.onWhatsAppOTP) {
-            let waOTPInterval = null;
             atlas.onWhatsAppOTP((data) => {
                 if (data.verified) {
-                    // Owner verified — refresh list and advance to step 4
-                    loadWhatsAppOwners();
-                    goToWizardStep('whatsapp', 4);
-                    showToast('Owner verified successfully!');
+                    // Owner verified: done. Owners and personality stay optional.
+                    goToWizardStep('whatsapp', 2);
+                    showToast("WhatsApp is ready. You're the owner.");
+                } else if (data.self && !data.code) {
+                    setWhatsAppChatLink(data.self);
                 } else if (data.code) {
-                    // Display OTP code
-                    const codeEl = document.getElementById('waOTPCode');
-                    if (codeEl) codeEl.textContent = data.code;
-                    // Start countdown timer
-                    let remaining = 300; // 5 minutes
-                    const timerEl = document.getElementById('waOTPTimer');
-                    if (timerEl) {
-                        // A new code supersedes any running countdown — clear it so
-                        // overlapping intervals don't fight over #waOTPTimer.
-                        if (waOTPInterval) clearInterval(waOTPInterval);
-                        waOTPInterval = setInterval(() => {
-                            remaining--;
-                            if (remaining <= 0) {
-                                clearInterval(waOTPInterval);
-                                waOTPInterval = null;
-                                timerEl.textContent = 'Code expired. Generate a new one.';
-                                if (codeEl) codeEl.textContent = '------';
-                                return;
-                            }
-                            const m = Math.floor(remaining / 60);
-                            const s = String(remaining % 60).padStart(2, '0');
-                            timerEl.textContent = `Expires in ${m}:${s}`;
-                        }, 1000);
-                    }
+                    showWhatsAppOTP(data);
                 }
             });
+        }
+
+        let waOTPInterval = null;
+        function showWhatsAppOTP(data) {
+            const codeEl = document.getElementById('waOTPCode');
+            const timerEl = document.getElementById('waOTPTimer');
+            const qrEl = document.getElementById('waOTPQR');
+            const linkEl = document.getElementById('waOTPLink');
+            codeEl.textContent = data.code;
+            qrEl.innerHTML = data.qr ? '<img alt="Scan to send the code" src="' + data.qr + '">' : '';
+            qrEl.style.display = data.qr ? 'inline-block' : 'none';
+            if (data.link) linkEl.href = data.link;
+            linkEl.style.display = data.link ? 'inline-flex' : 'none';
+            let remaining = 300;
+            timerEl.textContent = 'Expires in 5:00';
+            // A new code supersedes any running countdown.
+            if (waOTPInterval) clearInterval(waOTPInterval);
+            waOTPInterval = setInterval(() => {
+                remaining--;
+                if (remaining <= 0) {
+                    clearInterval(waOTPInterval);
+                    waOTPInterval = null;
+                    timerEl.textContent = 'Code expired. Tap New Code.';
+                    codeEl.textContent = '------';
+                    qrEl.style.display = 'none';
+                    linkEl.style.display = 'none';
+                    return;
+                }
+                timerEl.textContent = 'Expires in ' + Math.floor(remaining / 60) + ':' + String(remaining % 60).padStart(2, '0');
+            }, 1000);
+        }
+
+        function setWhatsAppChatLink(number) {
+            const link = document.getElementById('waChatLink');
+            link.href = 'https://wa.me/' + encodeURIComponent(number);
+            link.style.display = 'inline-flex';
+        }
+
+        function startWhatsAppOwnerStep() {
+            goToWizardStep('whatsapp', 3);
+            regenerateWhatsAppOTP(true);
         }
 
         // Accessibility: the channel status dots convey state by color alone.
@@ -2509,6 +2652,21 @@
             });
         }
 
+        // Channels that are on first, off ones after.
+        // Runs on load and after an apply, never mid-toggle, so a card doesn't jump away.
+        function sortChannelCards() {
+            const list = document.querySelector('#tab-channels .settings-scroll');
+            const note = list.querySelector('.settings-note');
+            const cards = [...list.querySelectorAll(':scope > .settings-section')];
+            const rank = (card) => {
+                const toggle = card.querySelector('.settings-section-header input[type=checkbox]');
+                return toggle && toggle.checked ? 0 : 1;
+            };
+            cards.map((card, i) => ({ card, key: rank(card) * 100 + i }))
+                .sort((a, b) => a.key - b.key)
+                .forEach(({ card }) => list.insertBefore(card, note));
+        }
+
         async function loadChannelConfig() {
             try {
                 const config = await atlas.getChannelConfig();
@@ -2525,13 +2683,24 @@
                     document.getElementById('chTelegramToken').value = tg.token;
                 }
                 if (tg.userIds) document.getElementById('chTelegramUserIds').value = tg.userIds;
-                if (tg.enabled && tg.token) goToWizardStep('telegram', 4);
+                if (tg.enabled && tg.token) {
+                    goToWizardStep('telegram', 2);
+                    showTelegramReady('✓ Connected' + (tg.userIds ? '. Allowed: ' + tg.userIds : ''));
+                    atlas.testChannel('telegram', { token: '' }).then(r => {
+                        if (!r || !r.success) return;
+                        const link = document.getElementById('tgBotLink');
+                        link.href = 'https://t.me/' + encodeURIComponent(r.username);
+                        link.textContent = 'Open @' + r.username;
+                        link.onclick = null; // the running bot owns its updates; don't poll them
+                    }).catch(() => {});
+                }
 
                 // WhatsApp
                 const wa = config.whatsapp || {};
                 document.getElementById('chToggleWhatsapp').checked = !!wa.enabled;
                 document.getElementById('chFieldsWhatsapp').style.display = wa.enabled ? 'block' : 'none';
                 const waConnected = wa.status === 'connected' || (channelStatuses && channelStatuses.whatsapp === 'connected');
+                if (wa.selfNumber) setWhatsAppChatLink(wa.selfNumber);
                 document.getElementById('chStatusWhatsapp').className = 'channel-status-dot ' + (wa.enabled ? (waConnected ? 'connected' : 'disconnected') : 'disabled');
 
                 if (wa.enabled) {
@@ -2540,13 +2709,9 @@
                         try {
                             const owners = await atlas.waGetOwners();
                             if (owners && owners.length > 0) {
-                                // Has owners — show owner management (step 4)
-                                goToWizardStep('whatsapp', 4);
-                                loadWhatsAppOwners();
-                                loadWhatsAppPersona();
-                            } else {
-                                // Connected but no owners — show connected step (step 2)
                                 goToWizardStep('whatsapp', 2);
+                            } else {
+                                startWhatsAppOwnerStep();
                             }
                         } catch {
                             // Can't check owners — show connected step
@@ -2567,10 +2732,14 @@
                     document.getElementById('chDiscordToken').placeholder = 'Token saved (leave empty to keep)';
                 } else if (dc.token) {
                     document.getElementById('chDiscordToken').value = dc.token;
-                    onDiscordTokenChange(dc.token);
                 }
                 if (dc.userIds) document.getElementById('chDiscordUserIds').value = dc.userIds;
-                if (dc.enabled && dc.token) goToWizardStep('discord', 4);
+                if (dc.enabled && dc.token) {
+                    goToWizardStep('discord', 2);
+                    atlas.testChannel('discord', { token: '' }).then(r => {
+                        if (r && r.success) { renderDiscordInvite(r.clientId); renderDiscordIntent(r); }
+                    }).catch(() => {});
+                }
 
                 // Slack
                 const sl = config.slack || {};
@@ -2588,7 +2757,7 @@
                     document.getElementById('chSlackAppToken').value = sl.appToken;
                 }
                 if (sl.userIds) document.getElementById('chSlackUserIds').value = sl.userIds;
-                if (sl.enabled && sl.botToken) goToWizardStep('slack', 3);
+                if (sl.enabled && sl.botToken) goToWizardStep('slack', 2);
 
                 // Email
                 const em = config.email || {};
@@ -2600,11 +2769,12 @@
                     onEmailDomainDetect(em.user);
                 }
                 if (em.whitelist) document.getElementById('chEmailWhitelist').value = em.whitelist;
+                if (em.bhaiAddress) showBhaiMail(em.bhaiAddress, em.bhaiOwner);
+                else if (!fieldVal('chBhaiMailOwner')) atlas.getAccountInfo().then(a => { if (a && a.email && !fieldVal('chBhaiMailOwner')) document.getElementById('chBhaiMailOwner').value = a.email; }).catch(() => {});
                 if (em.smtpHost) document.getElementById('chEmailSmtpHost').value = em.smtpHost;
                 if (em.smtpPort) document.getElementById('chEmailSmtpPort').value = em.smtpPort;
                 if (em.imapHost) document.getElementById('chEmailImapHost').value = em.imapHost;
                 if (em.imapPort) document.getElementById('chEmailImapPort').value = em.imapPort;
-                if (em.enabled && em.user) goToWizardStep('email', 4);
 
                 // Matrix
                 const mx = config.matrix || {};
@@ -2614,105 +2784,93 @@
                 if (mx.homeserver) document.getElementById('chMatrixHomeserver').value = mx.homeserver;
                 if (mx.userId || mx.username) document.getElementById('chMatrixUsername').value = mx.userId || mx.username;
                 if (mx.allowedRooms || mx.rooms) document.getElementById('chMatrixRooms').value = mx.allowedRooms || mx.rooms;
-                if (mx.enabled && mx.homeserver) goToWizardStep('matrix', 4);
 
+                sortChannelCards();
             } catch (err) {
                 console.error('Failed to load channel config:', err);
             }
         }
 
+        // Saves every channel and restarts Bhai (or starts it) so the change takes
+        // effect; there's no separate Save button. Returns true on success.
         async function saveChannelConfig() {
-            const btn = document.getElementById('saveChannelsBtn');
-            btn.disabled = true;
-            btn.textContent = 'Saving...';
-
             const config = {
                 telegram: {
                     enabled: document.getElementById('chToggleTelegram').checked,
-                    token: document.getElementById('chTelegramToken').value.trim(),
-                    userIds: document.getElementById('chTelegramUserIds').value.trim(),
+                    token: fieldVal('chTelegramToken'),
+                    userIds: fieldVal('chTelegramUserIds'),
                 },
                 whatsapp: {
                     enabled: document.getElementById('chToggleWhatsapp').checked,
                 },
                 discord: {
                     enabled: document.getElementById('chToggleDiscord').checked,
-                    token: document.getElementById('chDiscordToken').value.trim(),
-                    clientId: (() => { try { return atob(document.getElementById('chDiscordToken').value.trim().split('.')[0]); } catch { return ''; } })(),
-                    userIds: document.getElementById('chDiscordUserIds').value.trim(),
+                    token: fieldVal('chDiscordToken'),
+                    clientId: (() => { try { return atob(fieldVal('chDiscordToken').split('.')[0]); } catch { return ''; } })(),
+                    userIds: fieldVal('chDiscordUserIds'),
                 },
                 slack: {
                     enabled: document.getElementById('chToggleSlack').checked,
-                    botToken: document.getElementById('chSlackBotToken').value.trim(),
-                    appToken: document.getElementById('chSlackAppToken').value.trim(),
-                    userIds: document.getElementById('chSlackUserIds').value.trim(),
+                    botToken: fieldVal('chSlackBotToken'),
+                    appToken: fieldVal('chSlackAppToken'),
+                    userIds: fieldVal('chSlackUserIds'),
                 },
                 email: {
                     enabled: document.getElementById('chToggleEmail').checked,
-                    user: document.getElementById('chEmailUser').value.trim(),
-                    password: document.getElementById('chEmailPassword').value.trim(),
-                    whitelist: document.getElementById('chEmailWhitelist').value.trim(),
-                    smtpHost: document.getElementById('chEmailSmtpHost').value.trim(),
-                    smtpPort: document.getElementById('chEmailSmtpPort').value.trim(),
-                    imapHost: document.getElementById('chEmailImapHost').value.trim(),
-                    imapPort: document.getElementById('chEmailImapPort').value.trim(),
+                    user: fieldVal('chEmailUser'),
+                    password: fieldVal('chEmailPassword'),
+                    whitelist: fieldVal('chEmailWhitelist'),
+                    smtpHost: fieldVal('chEmailSmtpHost'),
+                    smtpPort: fieldVal('chEmailSmtpPort'),
+                    imapHost: fieldVal('chEmailImapHost'),
+                    imapPort: fieldVal('chEmailImapPort'),
+                    bhaiAddress: bhaiMail.address,
+                    bhaiOwner: bhaiMail.owner,
                 },
                 matrix: {
                     enabled: document.getElementById('chToggleMatrix').checked,
-                    homeserver: document.getElementById('chMatrixHomeserver').value.trim(),
-                    username: document.getElementById('chMatrixUsername').value.trim(),
-                    password: document.getElementById('chMatrixPassword').value.trim(),
-                    rooms: document.getElementById('chMatrixRooms').value.trim(),
+                    homeserver: fieldVal('chMatrixHomeserver'),
+                    username: fieldVal('chMatrixUsername'),
+                    password: fieldVal('chMatrixPassword'),
+                    rooms: fieldVal('chMatrixRooms'),
                 },
             };
 
             try {
                 const result = await atlas.saveChannelConfig(config);
-                btn.disabled = false;
-                btn.textContent = 'Save & Apply';
-
-                if (result.success) {
-                    showToast('Channels saved!');
-                    // Offer restart if bot is running
-                    if (result.botRunning) {
-                        if (confirm('Bhai needs to restart for channel changes to take effect. Restart now?')) {
-                            showToast('Stopping bot...');
-                            await atlas.stopBot();
-                            // Wait for bot to actually stop (poll status)
-                            let waitAttempts = 0;
-                            while (waitAttempts < 15) {
-                                await new Promise(r => setTimeout(r, 1000));
-                                const status = await atlas.getBotStatus();
-                                if (status.status === 'stopped') break;
-                                waitAttempts++;
-                            }
-                            showToast('Starting bot with new config...');
-                            await atlas.startBot();
-                            // Reload channel config after restart
-                            setTimeout(() => loadChannelConfig(), 3000);
-                        }
-                    } else {
-                        showToast('Channels saved! Start the bot to apply changes.');
+                if (!result.success) {
+                    showToast('Failed to save: ' + (result.error || 'Unknown error'));
+                    return false;
+                }
+                if (result.botRunning) {
+                    showToast('Saved. Restarting Bhai…');
+                    await atlas.stopBot();
+                    for (let i = 0; i < 15; i++) {
+                        await new Promise(r => setTimeout(r, 1000));
+                        const status = await atlas.getBotStatus();
+                        if (status.status === 'stopped') break;
                     }
                 } else {
-                    showToast('Failed to save: ' + (result.error || 'Unknown error'));
+                    showToast('Saved. Starting Bhai…');
                 }
+                await atlas.startBot();
+                setTimeout(() => loadChannelConfig(), 3000);
+                return true;
             } catch (err) {
-                btn.disabled = false;
-                btn.textContent = 'Save & Apply';
                 showToast('Error saving channels: ' + err.message);
+                return false;
             }
         }
 
         // ── WhatsApp Multi-User Functions ────────────────
 
         // WhatsApp OTP
-        async function regenerateWhatsAppOTP() {
+        async function regenerateWhatsAppOTP(quiet) {
             try {
                 const result = await atlas.waGenerateOTP();
                 if (result && result.code) {
-                    document.getElementById('waOTPCode').textContent = result.code;
-                    showToast('New OTP generated! Send it from your WhatsApp.');
+                    showWhatsAppOTP(result);
+                    if (!quiet) showToast('New code ready.');
                 }
             } catch (err) {
                 showToast('Failed to generate OTP: ' + err.message);
@@ -2883,6 +3041,7 @@
                 if (!info || !info.signedIn) {
                     document.getElementById('accountAuthView').style.display = 'block';
                     document.getElementById('accountProfileView').style.display = 'none';
+                    document.getElementById('authDeviceRemoved').style.display = info && info.deviceRemoved ? '' : 'none';
                     return;
                 }
 
@@ -2920,7 +3079,8 @@
                 // Details
                 document.getElementById('accountPlan').textContent = (info.plan || 'free').charAt(0).toUpperCase() + (info.plan || 'free').slice(1);
                 document.getElementById('accountCredits').textContent = info.ai_credits != null ? info.ai_credits : '—';
-                document.getElementById('accountActivations').textContent = `${info.activations ?? 0} / ${info.max_activations ?? 3}`;
+                document.getElementById('accountActivations').textContent = `${info.activations ?? 1} of ${info.max_activations ?? 3}`;
+                loadDevices();
 
                 if (info.created_at) {
                     const d = new Date(info.created_at);
@@ -2932,6 +3092,56 @@
                 document.getElementById('accountAuthView').style.display = 'block';
                 document.getElementById('accountProfileView').style.display = 'none';
             }
+        }
+
+        // ── Account → Devices ──
+        const DEVICE_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M2 20h20"/></svg>';
+        function lastActive(ms) {
+            const mins = Math.round((Date.now() - ms) / 60000);
+            if (mins < 10) return 'Active now';
+            if (mins < 60) return `Last active ${mins} min ago`;
+            const hrs = Math.round(mins / 60);
+            if (hrs < 24) return `Last active ${hrs} h ago`;
+            const days = Math.round(hrs / 24);
+            return days < 30 ? `Last active ${days} day${days === 1 ? '' : 's'} ago` : `Last active ${new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+        }
+        async function loadDevices() {
+            const list = document.getElementById('accountDevicesList');
+            const r = await atlas.getDevices().catch(() => null);
+            if (!r || !r.success) {
+                list.innerHTML = '<div class="account-devices-empty">Couldn\'t load your devices. Check your connection and reopen this page.</div>';
+                return;
+            }
+            document.getElementById('accountDevicesCount').textContent = r.devices.length ? String(r.devices.length) : '';
+            list.innerHTML = r.devices.length ? r.devices.map((d) => `
+                <div class="account-device-row">
+                    <span class="account-device-icon">${DEVICE_ICON}</span>
+                    <div class="account-device-main">
+                        <div class="account-device-name">${escapeHtml(d.name)}</div>
+                        <div class="account-device-detail">${escapeHtml(d.platform)} · ${escapeHtml(lastActive(d.lastSeen))}</div>
+                    </div>
+                    ${d.current
+                        ? '<span class="account-device-badge">This device</span>'
+                        : `<button class="btn btn-secondary btn-sm account-device-remove" data-device="${escapeHtml(d.id)}" onclick="removeDevice(this)">Remove</button>`}
+                </div>`).join('') : '<div class="account-devices-empty">No devices yet.</div>';
+        }
+        // Two clicks: the first arms the button for a few seconds.
+        async function removeDevice(btn) {
+            if (!btn.classList.contains('armed')) {
+                btn.classList.add('armed');
+                btn.textContent = 'Remove?';
+                setTimeout(() => { btn.classList.remove('armed'); btn.textContent = 'Remove'; }, 4000);
+                return;
+            }
+            btn.disabled = true;
+            const r = await atlas.removeDevice(btn.dataset.device).catch((e) => ({ success: false, error: e.message }));
+            if (!r || !r.success) {
+                btn.disabled = false;
+                showToast(r && r.error ? r.error : "Couldn't remove that device", true);
+                return;
+            }
+            showToast('Device removed — it has been signed out');
+            loadAccountInfo();
         }
 
         let lastKnownCredits = null;
@@ -3056,7 +3266,7 @@
 
             const result = await atlas.checkForUpdates();
 
-            btn.textContent = 'Check Now';
+            btn.textContent = 'Check for updates';
             btn.disabled = false;
 
             if (result.isDev) {
@@ -3077,7 +3287,7 @@
                 if (status.lastCheck) {
                     const date = new Date(status.lastCheck);
                     document.getElementById('prefUpdateStatus').textContent =
-                        `Last checked: ${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
+                        `Checked ${date.toLocaleDateString()}, ${date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
                 }
                 const channelEl = document.getElementById('prefUpdateChannel');
                 if (channelEl && status.channel) channelEl.value = status.channel;
@@ -3119,7 +3329,12 @@
                 // Update hotkey display
                 const info = await atlas.getAppInfo();
                 const customHotkey = prefs.overlayHotkey;
-                if (customHotkey) {
+                // Show the shortcut that actually works: if the preferred one was taken by
+                // another app, main registered a fallback (e.g. Cmd+Shift+J).
+                if (info.overlayShortcut) {
+                    document.getElementById('prefHotkeyShow').textContent = formatAccelerator(info.overlayShortcut, info.platform);
+                    document.getElementById('prefHotkeyReset').style.display = customHotkey ? '' : 'none';
+                } else if (customHotkey) {
                     document.getElementById('prefHotkeyShow').textContent = formatAccelerator(customHotkey, info.platform);
                     document.getElementById('prefHotkeyReset').style.display = '';
                 } else if (info.platform === 'darwin') {
@@ -3249,7 +3464,6 @@
                     const info = await atlas.getAppInfo();
                     const display = formatAccelerator(accelerator, info.platform);
                     el.textContent = display;
-                    document.getElementById('aboutHotkey').innerHTML = `<kbd>${display}</kbd>`;
                     document.getElementById('prefHotkeyReset').style.display = '';
                     showToast('✓ Hotkey updated');
                 } else {
@@ -3269,7 +3483,6 @@
                     const info = await atlas.getAppInfo();
                     const defaultDisplay = info.platform === 'darwin' ? '⌘ Cmd + J' : 'Alt + Space';
                     document.getElementById('prefHotkeyShow').textContent = defaultDisplay;
-                    document.getElementById('aboutHotkey').innerHTML = `<kbd>${defaultDisplay}</kbd>`;
                     document.getElementById('prefHotkeyReset').style.display = 'none';
                     showToast('✓ Hotkey reset to default');
                 } else {
@@ -3301,13 +3514,25 @@
                 }
                 const notes = document.getElementById('personalityNotes');
                 if (notes) notes.value = persona.notes || '';
+                showPersonalityDesc();
             } catch (e) {
                 // Non-fatal — leave defaults
             }
         }
 
+        function showPersonalityDesc() {
+            const row = document.querySelector('input[name="personality-preset"]:checked')?.closest('.pp-row');
+            document.getElementById('ppDescShown').textContent = row ? row.querySelector('.pp-desc').textContent : '';
+        }
+
+        let notesTimer = null;
+        function onPersonalityNotesInput() {
+            clearTimeout(notesTimer);
+            notesTimer = setTimeout(savePersonality, 800);
+        }
+
         async function savePersonality() {
-            const btn = document.getElementById('personalitySaveBtn');
+            const btn = null;
             const status = document.getElementById('personalitySaveStatus');
             if (btn) btn.disabled = true;
             if (status) status.textContent = 'Saving…';
@@ -3325,7 +3550,11 @@
                     if (status) status.textContent = 'Save failed: ' + ((res && res.error) || 'unknown error');
                     return;
                 }
-                if (status) status.textContent = 'Saved. Bhai talks like this from your next message.';
+                if (status) {
+                    status.textContent = 'Saved';
+                    clearTimeout(status._fade);
+                    status._fade = setTimeout(() => { status.textContent = ''; }, 2500);
+                }
             } catch (e) {
                 if (status) status.textContent = 'Save failed: ' + (e.message || e);
             } finally {
@@ -3371,16 +3600,25 @@
         // ── Vault (Settings) ──
         // The renderer only holds masked entries; values stay in main and come
         // here only for "Show"/"Edit" after Touch ID or the vault password.
+        // [field, label, placeholder, input type]
         const VAULT_FIELDS = {
-            login: [['label', 'Name (e.g. Zomato)'], ['domains', 'Website (e.g. zomato.com)'], ['username', 'Username or email'], ['password', 'Password', 'password']],
-            api_key: [['label', 'Name (e.g. OpenAI)'], ['name', 'Key name (e.g. OPENAI_API_KEY)'], ['value', 'Key', 'password'], ['domains', 'Website it is for (optional)']],
-            card: [['label', 'Name (e.g. HDFC Visa)'], ['holder', 'Name on card'], ['number', 'Card number', 'password'], ['expiry', 'Expiry MM/YY'], ['brand', 'Brand (optional)']],
-            upi: [['label', 'Name (e.g. GPay)'], ['vpa', 'UPI ID (name@bank)']],
+            login: [['label', 'Name', 'e.g. Zomato'], ['domains', 'Website', 'e.g. zomato.com'], ['username', 'Username or email', ''], ['password', 'Password', '', 'password']],
+            api_key: [['label', 'Name', 'e.g. OpenAI'], ['name', 'Key name', 'e.g. OPENAI_API_KEY'], ['value', 'Key', '', 'password'], ['domains', 'Website it is for', 'optional']],
+            card: [['label', 'Name', 'e.g. HDFC Visa'], ['holder', 'Name on card', ''], ['number', 'Card number', '', 'password'], ['expiry', 'Expiry', 'MM/YY'], ['brand', 'Brand', 'optional']],
+            upi: [['label', 'Name', 'e.g. GPay'], ['vpa', 'UPI ID', 'name@bank']],
         };
         let vaultEditingId = null;
         let vaultState = { touchId: false, hasPassword: false, entries: [] };
         const vaultPw = () => document.getElementById('vaultPassword').value;
-        const vaultMsg = (t) => { document.getElementById('vaultStatus').textContent = t || ''; };
+        // In the open modal, its status line; otherwise a toast (Show/Delete fail outside it).
+        const vaultMsg = (t) => {
+            const open = document.getElementById('vaultModal').style.display === 'flex';
+            document.getElementById('vaultStatus').textContent = open ? (t || '') : '';
+            if (!open && t) showToast(t, true);
+        };
+        const VAULT_FIELD_LABEL = { username: 'Username', password: 'Password', name: 'Key name', value: 'Key', holder: 'Name on card', number: 'Card number', expiry: 'Expiry', brand: 'Brand', vpa: 'UPI ID' };
+        const VAULT_SECRET_FIELDS = new Set(['password', 'value', 'number', 'vpa']);
+        const vaultShown = new Map(); // id → re-mask timer
         const vaultErr = (r) => r && r.error === 'auth_failed'
             ? (vaultState.touchId ? 'Touch ID was cancelled.' : 'Enter the vault password first.')
             : (r && r.error) || 'Something went wrong';
@@ -3396,8 +3634,8 @@
         };
         function vaultRenderForm(values) {
             const form = document.getElementById('vaultForm');
-            form.innerHTML = VAULT_FIELDS[vaultModalKind].map(([f, ph, type]) =>
-                `<label class="vault-field"><span>${escapeHtml(ph)}</span><input class="clean-input" data-vault-field="${f}" type="${type || 'text'}" autocomplete="off" placeholder="${escapeHtml(ph)}"></label>`).join('')
+            form.innerHTML = VAULT_FIELDS[vaultModalKind].map(([f, label, ph, type]) =>
+                `<label class="vault-field"><span>${escapeHtml(label)}</span><input class="clean-input" data-vault-field="${f}" type="${type || 'text'}" autocomplete="off" placeholder="${escapeHtml(ph)}"></label>`).join('')
                 + (vaultModalKind === 'card' ? '<span class="input-hint">No CVV here: Bhai asks for it each time you pay.</span>' : '');
             for (const el of form.querySelectorAll('[data-vault-field]')) {
                 const v = values && values[el.dataset.vaultField];
@@ -3414,6 +3652,11 @@
             const first = document.querySelector('#vaultForm [data-vault-field]');
             if (first) first.focus();
         }
+        document.addEventListener('keydown', (ev) => {
+            if (document.getElementById('vaultModal').style.display !== 'flex') return;
+            if (ev.key === 'Escape') { ev.preventDefault(); vaultCloseModal(); }
+            else if (ev.key === 'Enter' && ev.target.matches('#vaultForm [data-vault-field]')) { ev.preventDefault(); vaultSave(); }
+        });
         function vaultCloseModal() {
             document.getElementById('vaultModal').style.display = 'none';
             vaultEditingId = null;
@@ -3424,11 +3667,13 @@
             const r = await atlas.vault.list();
             if (!r || !r.success) return vaultMsg(r && r.error);
             vaultState = r;
+            for (const t of vaultShown.values()) clearTimeout(t);
+            vaultShown.clear(); // a re-render masks everything again
             document.getElementById('vaultPwRow').style.display = r.touchId ? 'none' : '';
             document.getElementById('vaultSetPwBtn').textContent = r.hasPassword ? 'Change' : 'Set password';
             for (const kind of ['login', 'api_key', 'card', 'upi']) {
                 const items = r.entries.filter((e) => e.kind === kind);
-                document.getElementById('vaultCount-' + kind).textContent = items.length ? ' · ' + items.length : '';
+                document.getElementById('vaultCount-' + kind).textContent = items.length ? String(items.length) : '';
                 document.getElementById('vaultList-' + kind).innerHTML = items.length ? items.map((e) => {
                     const id = escapeHtml(e.id);
                     const detail = [(e.domains || []).join(', '), e.username_masked, e.name, e.brand, e.last4 && ('•••• ' + e.last4), e.expiry].filter(Boolean).join(' · ');
@@ -3437,19 +3682,45 @@
                         <div class="vault-row-main"><div class="vault-row-name">${escapeHtml(e.label)}</div>
                         <div class="vault-row-detail" id="vaultDetail-${id}">${escapeHtml(detail) || '—'}</div></div>
                         <div class="vault-row-actions">
-                            <button class="btn btn-secondary btn-sm" onclick="vaultShow('${id}')">Show</button>
+                            <button class="btn btn-secondary btn-sm" data-vault-show="${id}" onclick="vaultShow('${id}')">Show</button>
                             <button class="btn btn-secondary btn-sm" onclick="vaultEdit('${id}')">Edit</button>
                             <button class="btn btn-secondary btn-sm vault-del" onclick="vaultDelete('${id}')">Delete</button>
                         </div></div>`;
-                }).join('') : '<div class="vault-empty">Nothing here yet.</div>';
+                }).join('') : `<button class="vault-empty" onclick="vaultOpenModal('${kind}')"><span class="vault-empty-plus" aria-hidden="true">＋</span>Add your first ${VAULT_KIND_LABEL[kind]}</button>`;
             }
+            for (const el of document.querySelectorAll('.vault-section-icon')) el.innerHTML = VAULT_KIND_ICON[el.dataset.kind] || '';
+            const unlock = document.getElementById('vaultUnlockChip') || document.getElementById('vaultTrust').appendChild(Object.assign(document.createElement('span'), { id: 'vaultUnlockChip', className: 'vault-chip' }));
+            unlock.textContent = r.touchId ? 'Touch ID to view' : 'Password to view';
+        }
+        function vaultHide(id) {
+            clearTimeout(vaultShown.get(id));
+            vaultShown.delete(id);
+            vaultLoad();
         }
         async function vaultShow(id) {
+            if (vaultShown.has(id)) return vaultHide(id);
             const r = await atlas.vault.reveal(id, vaultPw());
             if (!r || !r.success) return vaultMsg(vaultErr(r));
-            document.getElementById('vaultDetail-' + id).textContent =
-                Object.entries(r.values).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join(' · ');
-            setTimeout(vaultLoad, 20000); // masked again after 20s
+            const detail = document.getElementById('vaultDetail-' + id);
+            detail.innerHTML = Object.entries(r.values).filter(([, v]) => v).map(([k, v]) =>
+                `<span class="vault-reveal"><span class="vault-reveal-k">${escapeHtml(VAULT_FIELD_LABEL[k] || k)}</span>`
+                + `<code>${escapeHtml(k === 'number' ? v.replace(/(\d{4})(?=\d)/g, '$1 ') : v)}</code>`
+                + (VAULT_SECRET_FIELDS.has(k) || k === 'username' ? `<button class="vault-copy" data-v="${escapeHtml(v)}" onclick="vaultCopy(this)">Copy</button>` : '')
+                + `</span>`).join('');
+            const btn = document.querySelector(`[data-vault-show="${CSS.escape(id)}"]`);
+            if (btn) btn.textContent = 'Hide';
+            vaultShown.set(id, setTimeout(() => vaultHide(id), 20000)); // masked again after 20s
+        }
+        // Copied secrets leave the clipboard after 30s, unless something else was copied since.
+        async function vaultCopy(btn) {
+            const v = btn.dataset.v;
+            try {
+                await navigator.clipboard.writeText(v);
+                btn.textContent = 'Copied';
+                setTimeout(async () => {
+                    try { if ((await navigator.clipboard.readText()) === v) await navigator.clipboard.writeText(''); } catch {}
+                }, 30000);
+            } catch { vaultMsg('Could not copy'); }
         }
         async function vaultEdit(id) {
             const r = await atlas.vault.reveal(id, vaultPw());
@@ -3468,8 +3739,8 @@
             vaultLoad();
         }
         async function vaultDelete(id) {
-            if (!confirm('Delete this from the vault?')) return;
-            const r = await atlas.vault.remove(id);
+            // Touch ID (or the vault password) is the confirmation.
+            const r = await atlas.vault.remove(id, vaultPw());
             if (!r || !r.success) return vaultMsg(vaultErr(r));
             vaultLoad();
         }
@@ -3595,14 +3866,9 @@
             try {
                 const info = await atlas.getAppInfo();
                 document.getElementById('sidebarVersion').textContent = `v${info.version}`;
-                document.getElementById('aboutVersion').textContent = `Version ${info.version}`;
+                document.getElementById('aboutVersion').textContent = info.version;
+                document.getElementById('settingsVersion').textContent = info.version;
 
-                const prefs = await atlas.getPrefs();
-                if (prefs.overlayHotkey) {
-                    document.getElementById('aboutHotkey').innerHTML = `<kbd>${formatAccelerator(prefs.overlayHotkey, info.platform)}</kbd>`;
-                } else if (info.platform === 'darwin') {
-                    document.getElementById('aboutHotkey').innerHTML = '<kbd>⌘ Cmd + J</kbd>';
-                }
             } catch { /* */ }
 
             // Load account info on startup

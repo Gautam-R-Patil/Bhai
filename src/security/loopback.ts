@@ -14,3 +14,15 @@ export function isLoopbackHost(host: string | undefined, port: number): boolean 
 export function isWebOrigin(origin: string | undefined): boolean {
     return /^https?:\/\//i.test(origin || "");
 }
+
+/**
+ * A browser loading this URL as a page (address bar, link, redirect, frame) rather than a
+ * script's fetch. A top-level navigation carries no Origin, so an Origin check alone lets a
+ * web page send the agent's own browser to a token endpoint and read the token as page text.
+ */
+export function isBrowserPageLoad(headers: Record<string, string | string[] | undefined>): boolean {
+    return (
+        headers["sec-fetch-mode"] === "navigate" ||
+        /^(document|iframe|frame)$/.test(String(headers["sec-fetch-dest"] ?? ""))
+    );
+}

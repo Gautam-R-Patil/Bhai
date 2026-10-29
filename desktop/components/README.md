@@ -20,6 +20,8 @@ Each component is a single IIFE file that:
 | `channel-card.js` | `ChannelCard` | Channels picker (D6) + Ready Hub Channels tile (D1) |
 | `install-log.js` | `InstallLog` | Wizard Install step (C11) |
 
+Also in this folder (not in the table above): `wa-owner-row.js`, `ready-hub-body.js`, `channels-boot.js`, `hub-boot.js`, `panel-setup-boot.js`, `tile-model.js`, `magic-moment*.js`, `try-this.js`, `diff-tiles.js`, `mascot.js`, `liquid-glass.js`, `window-chrome.js`. The Settings/Account/Channels pages live in `desktop/panel.html`.
+
 All components load via `components.css` which `wizard.html` and `panel.html` both link.
 
 ## Smoke page
@@ -27,7 +29,7 @@ All components load via `components.css` which `wizard.html` and `panel.html` bo
 In dev, `npm start` to launch the desktop app. When the wizard window opens, open DevTools on it (Cmd+Opt+I on macOS) and navigate to the smoke page:
 
 ```js
-location.href = "file:///Users/user/Desktop/ATLAS/.claude/worktrees/wizard-redesign/desktop/components/_smoke.html";
+location.href = "file:///<path-to-repo>/desktop/components/_smoke.html";
 ```
 
 Use the absolute path for your machine; the `file://` scheme is needed so the relative `../styles.css` and `components.css` links resolve.

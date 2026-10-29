@@ -25,6 +25,7 @@ import {
     setLastElementMap,
     waitForPageReady,
 } from "./core.js";
+import { liveCenter } from "./live-center.js";
 import {
     detectActionLoop,
     getHoverHint,
@@ -35,6 +36,12 @@ import {
 } from "./native-browser.js";
 import { armDialogAccept, takePageEvents } from "./popup-guard.js";
 import { typeVaultText } from "./vault-typing.js";
+
+/** How long browser_click waits for its text/selector target (each step). */
+const LOCATE_MS = 5000;
+
+const VANISHED =
+    "Target vanished or detached: the page changed since the scan, or a dropdown/modal closed before the click. Run browser_scan for fresh labels (re-open the dropdown first if it closed).";
 
 const ACCEPT_DIALOG_PARAM = {
     type: "boolean",
@@ -205,19 +212,30 @@ export const browserClickAt: ToolDefinition = {
                                 }
                                 executionMethod = "element_handle_recovered";
                             } catch {
+                                const live = await liveCenter(handle);
+                                if (!live) return JSON.stringify({ error: VANISHED, raw_error: errMsg });
                                 executionMethod = "coordinates_fallback";
                                 await page.waitForTimeout(150);
-                                await (input.double_click ? page.mouse.dblclick(x, y) : page.mouse.click(x, y));
+                                await (input.double_click
+                                    ? page.mouse.dblclick(live.x, live.y)
+                                    : page.mouse.click(live.x, live.y));
                             }
                         } else if (gone || /detached|not attached|not visible/.test(errMsg)) {
+                            return JSON.stringify({ error: VANISHED, raw_error: errMsg });
+                        } else if (/not enabled|disabled/i.test(errMsg)) {
+                            // Clicking it anyway "succeeds" and does nothing.
                             return JSON.stringify({
-                                error: `Target vanished or detached: the page changed since the scan, or a dropdown/modal closed before the click. Run browser_scan for fresh labels (re-open the dropdown first if it closed).`,
+                                error: "Target is disabled right now (often a form field above is missing or invalid). Check the page, then retry.",
                                 raw_error: errMsg,
                             });
                         } else {
+                            const live = await liveCenter(handle);
+                            if (!live) return JSON.stringify({ error: VANISHED, raw_error: errMsg });
                             executionMethod = "coordinates_fallback";
                             await page.waitForTimeout(150);
-                            await (input.double_click ? page.mouse.dblclick(x, y) : page.mouse.click(x, y));
+                            await (input.double_click
+                                ? page.mouse.dblclick(live.x, live.y)
+                                : page.mouse.click(live.x, live.y));
                         }
                     }
                 } else {
@@ -335,8 +353,10 @@ export const browserClick: ToolDefinition = {
             if (input.text) {
                 const el = page.getByText(input.text as string, { exact: false }).first();
                 // A box below the fold can't be clicked: bring it into view, then measure.
-                await el.scrollIntoViewIfNeeded().catch(() => {});
-                const box = await el.boundingBox().catch(() => null);
+                // Capped well under the tool's 15s: an uncapped wait (30s) outlived the
+                // tool timeout and clicked late, on whatever page was current by then.
+                await el.scrollIntoViewIfNeeded({ timeout: LOCATE_MS }).catch(() => {});
+                const box = await el.boundingBox({ timeout: LOCATE_MS }).catch(() => null);
                 if (box) {
                     const cx = box.x + box.width / 2;
                     const cy = box.y + box.height / 2;
@@ -350,8 +370,10 @@ export const browserClick: ToolDefinition = {
             } else if (input.selector) {
                 const el = page.locator(input.selector as string).first();
                 // A box below the fold can't be clicked: bring it into view, then measure.
-                await el.scrollIntoViewIfNeeded().catch(() => {});
-                const box = await el.boundingBox().catch(() => null);
+                // Capped well under the tool's 15s: an uncapped wait (30s) outlived the
+                // tool timeout and clicked late, on whatever page was current by then.
+                await el.scrollIntoViewIfNeeded({ timeout: LOCATE_MS }).catch(() => {});
+                const box = await el.boundingBox({ timeout: LOCATE_MS }).catch(() => null);
                 if (box) {
                     const cx = box.x + box.width / 2;
                     const cy = box.y + box.height / 2;
@@ -698,11 +720,20 @@ export const browserType: ToolDefinition = {
                     await Promise.resolve(el.handle?.scrollIntoViewIfNeeded?.({ timeout: 1000 })).catch(() => {});
                     await agentCursor(page, el.handle ?? el, "click");
                     if (el.handle) {
+                        let focused = false;
                         try {
                             await el.handle.focus({ timeout: 1000 }); // bounded: a stale aria-ref waits otherwise
+                            focused = true;
                             await el.handle.click({ timeout: 2000 });
                         } catch {
-                            await page.mouse.click(el.x, el.y);
+                            // Focused but the click was blocked (an overlay): keystrokes still go to the field.
+                            if (!focused) {
+                                // Never type at the scan's coordinates: after a re-render or scroll they are
+                                // another field, and clear_first would wipe it (or a secret lands there).
+                                const live = await liveCenter(el.handle);
+                                if (!live) return JSON.stringify({ error: VANISHED });
+                                await page.mouse.click(live.x, live.y);
+                            }
                         }
                     } else {
                         await page.mouse.click(el.x, el.y);

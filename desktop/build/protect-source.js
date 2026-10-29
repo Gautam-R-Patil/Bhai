@@ -74,8 +74,14 @@ const OBFUSCATION_OPTIONS = {
     // Number obfuscation
     numbersToExpressions: true,
 
-    // Object key transformation
-    transformObjectKeys: true,
+    // Object key transformation — OFF. Combined with controlFlowFlattening it
+    // broke object literals in class fields (ChromePageProxy's mouse = {...} and
+    // keyboard = {...}): the flattening helper's const landed after its use, so
+    // dblclick/wheel/move/press threw "X[Y(...)] is not a function" / "Cannot
+    // access 'X' before initialization" in release builds only. Reproduced on the
+    // real bridge bundle 6/6 rolls; off, 5/5 pass. Keep it off unless that is
+    // re-tested with a bundle that has class-field object literals.
+    transformObjectKeys: false,
 
     // Anti-debugging - disabled for production stability
     // (debugProtection creates CPU-heavy loops that slow down the bot)

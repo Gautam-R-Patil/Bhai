@@ -93,6 +93,20 @@ export function recordResponse(
     );
 }
 
+/**
+ * The owner wrote (any channel): every notification of the last 4h still waiting for a
+ * response counts as engaged. Called with id 0 before, which matched no row, so nothing was
+ * ever engaged and isFatigued() muted every proactive message — urgent ones too — after 5.
+ */
+export function recordOwnerEngagement(): void {
+    if (!db) return;
+    db.run(
+        `UPDATE notification_log SET user_response_at = datetime('now'), response_type = 'engaged', response_depth = 1
+         WHERE user_response_at IS NULL AND sent_at > datetime('now', '-4 hours')`,
+        []
+    );
+}
+
 // ── First Message Tracking (for wake-time) ────
 
 export function recordFirstMessageOfDay(hourOfDay: number): void {

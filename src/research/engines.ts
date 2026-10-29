@@ -2,6 +2,7 @@
 // Deep Research v2 — Search engines (Google, Brave, DDG, Bing, SearXNG, Mojeek, Semantic Scholar, arXiv)
 
 import { decodeBingUrl } from "../tools/web-search.js";
+import { baseUrlHostMatches } from "../utils/atomic-io.js";
 import type { SearchResult } from "./types.js";
 import { randomUA, sleep, ENGINE_COOLDOWN_MS, ENGINE_MAX_CONSECUTIVE_FAILURES, SEARCH_BROWSER_IDLE_MS } from "./profiles.js";
 import { getSessionToken } from "../session.js";
@@ -58,7 +59,7 @@ process.on("beforeExit", closeSearchBrowser);
 
 // ── Engine Health Tracking ──────────────────
 
-type EngineName = "google" | "brave" | "duckduckgo" | "bing" | "searxng" | "mojeek" | "tavily" | "exa" | "wikipedia" | "openalex" | "semantic_scholar" | "arxiv";
+type EngineName = "google" | "brave" | "duckduckgo" | "bing" | "searxng" | "mojeek" | "tavily" | "exa" | "parallel" | "wikipedia" | "openalex" | "semantic_scholar" | "arxiv";
 
 interface EngineHealth {
     consecutiveFailures: number;
@@ -162,7 +163,7 @@ async function searchGoogle(query: string): Promise<SearchResult[]> {
                     const snippetEl = block.querySelector(
                         "div[data-sncf], div.VwiC3b, span.aCOpRe, div[style*='line-clamp']",
                     );
-                    if (linkEl && h3El && linkEl.href && !linkEl.href.includes("google.com")) {
+                    if (linkEl && h3El && linkEl.href && !/(^|\.)google\.com$/.test(linkEl.hostname)) {
                         if (seen.has(linkEl.href)) return;
                         seen.add(linkEl.href);
                         items.push({
@@ -181,7 +182,7 @@ async function searchGoogle(query: string): Promise<SearchResult[]> {
                             h3 &&
                             a.href &&
                             a.href.startsWith("http") &&
-                            !a.href.includes("google.com") &&
+                            !/(^|\.)google\.com$/.test(a.hostname) &&
                             !seen.has(a.href)
                         ) {
                             seen.add(a.href);
@@ -225,7 +226,7 @@ function parseGoogleHTML(html: string): SearchResult[] {
     while ((match = pattern.exec(html)) !== null && results.length < 15) {
         const url = decodeURIComponent(match[1]);
         const title = match[2].replace(/<[^>]+>/g, "").trim();
-        if (!seen.has(url) && !url.includes("google.com") && title.length > 3) {
+        if (!seen.has(url) && !baseUrlHostMatches(url, "google.com") && title.length > 3) {
             seen.add(url);
             results.push({ url, title, snippet: "", source: "google" });
         }
@@ -272,7 +273,7 @@ export function parseBraveResults(html: string): SearchResult[] {
     for (const chunk of chunks) {
         if (results.length >= 15) break;
         const lm = linkPattern.exec(chunk);
-        if (!lm || lm[1].includes("brave.com")) continue;
+        if (!lm || baseUrlHostMatches(lm[1], "brave.com")) continue;
         const title = lm[2].replace(/<[^>]+>/g, "").trim();
         if (title.length <= 5 || title.length >= 200 || seenUrls.has(lm[1])) continue;
         const text = chunk.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
@@ -287,7 +288,7 @@ export function parseBraveResults(html: string): SearchResult[] {
         for (const block of blocks) {
             if (results.length >= 15) break;
             const lm = linkPattern.exec(block);
-            if (!lm || lm[1].includes("brave.com")) continue;
+            if (!lm || baseUrlHostMatches(lm[1], "brave.com")) continue;
             const title = lm[2].replace(/<[^>]+>/g, "").trim();
             if (title.length <= 5 || title.length >= 200 || seenUrls.has(lm[1])) continue;
             const fullText = block.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
@@ -365,7 +366,7 @@ async function _searchDDGOnce(url: string): Promise<SearchResult[]> {
             const seen = new Set<string>();
             while ((m = broadLink.exec(html)) !== null && results.length < 15) {
                 let href = m[1];
-                if (href.includes("duckduckgo.com")) continue;
+                if (baseUrlHostMatches(href, "duckduckgo.com")) continue;
                 if (href.includes("uddg=")) {
                     try { href = decodeURIComponent(href.split("uddg=")[1].split("&")[0]); } catch {}
                 }
@@ -421,7 +422,7 @@ async function searchBing(query: string): Promise<SearchResult[]> {
             const url = decodeBingUrl(h2LinkM[1].replace(/&amp;/g, "&"));
 
             // Skip bing/microsoft internal pages
-            if (url.includes("bing.com") || url.includes("microsoft.com/bing")) continue;
+            if (baseUrlHostMatches(url, "bing.com") || url.includes("microsoft.com/bing")) continue;
             if (seenUrls.has(url)) continue;
             seenUrls.add(url);
 
@@ -582,6 +583,33 @@ async function searchTavily(query: string): Promise<SearchResult[]> {
     } catch { markFailure("tavily"); return []; }
 }
 
+// ── Parallel Search API (proxied via Convex; the key stays server-side) ─────
+
+async function searchParallel(query: string): Promise<SearchResult[]> {
+    if (!isAvailable("parallel")) return [];
+    try {
+        const sessionToken = await getSessionToken();
+        if (!sessionToken) return [];
+        const response = await encryptedFetch(`${getConvexSiteUrl()}/api/search/parallel`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${sessionToken}` },
+            body: JSON.stringify({ query, maxResults: 15 }),
+            signal: AbortSignal.timeout(15000),
+        });
+        if (!response.ok) {
+            if (response.status === 429) markFailure("parallel");
+            return [];
+        }
+        const data = await response.json() as { results?: Array<{ url?: string; title?: string; snippet?: string }> };
+        const results: SearchResult[] = (data.results || [])
+            .filter((r) => r.url && r.title)
+            .map((r) => ({ url: r.url as string, title: r.title as string, snippet: (r.snippet || "").substring(0, 400), source: "parallel" }));
+        if (results.length > 0) markSuccess("parallel");
+        else markFailure("parallel");
+        return results;
+    } catch { markFailure("parallel"); return []; }
+}
+
 // ── Exa Search API (proxied via Convex) ─────
 
 async function searchExa(query: string): Promise<SearchResult[]> {
@@ -738,6 +766,7 @@ export async function multiEngineSearch(
     console.log(`[RESEARCH] 🔎 Searching: "${query.substring(0, 60)}..."`);
 
     const searches: Promise<SearchResult[]>[] = [
+        searchParallel(query),   // AI-optimized, dated pages with excerpts
         searchTavily(query),     // AI-optimized, most reliable
         searchExa(query),        // AI-optimized deep search with content
         searchBing(query),       // Large index, fetch-only

@@ -17,7 +17,7 @@ import {
 describe("language — detectLanguage: short input", () => {
     beforeEach(() => resetLanguage());
 
-    it("returns inherited language with confidence 0 for text under 20 chars", () => {
+    it("returns inherited language with confidence 0 for text under 10 chars", () => {
         const result = detectLanguage("hi");
         expect(result.language).toEqual("English");
         expect(result.confidence).toEqual(0);
@@ -41,11 +41,18 @@ describe("language — detectLanguage: short input", () => {
         expect(result.confidence).toEqual(0);
     });
 
-    it("20+ chars of normal English defaults to English with 0.5 confidence", () => {
+    it("plain English is detected confidently (so a session can switch back to it)", () => {
         const result = detectLanguage("The quick brown fox jumps over the lazy dog");
         expect(result.language).toEqual("English");
-        expect(result.confidence).toEqual(0.5);
+        expect(result.confidence).toBeGreaterThanOrEqual(0.8);
         expect(result.script).toEqual("Latin");
+    });
+
+    it("text with no clear signal still defaults to English at 0.5", () => {
+        expect(detectLanguage("Quick brown foxes jumping lazily")).toMatchObject({
+            language: "English",
+            confidence: 0.5,
+        });
     });
 });
 
@@ -164,6 +171,12 @@ describe("language — detectLanguage: Latin-script languages via keywords", () 
         expect(result.language).toEqual("Vietnamese");
     });
 
+    it("keywords that start or end with an accented letter count (qué, être, çok)", () => {
+        expect(detectLanguage("hola, ¿qué tal?").language).toEqual("Spanish");
+        expect(detectLanguage("je veux être avec toi").language).toEqual("French");
+        expect(detectLanguage("çok teşekkür ederim").language).toEqual("Turkish");
+    });
+
     it("requires ≥2 keyword matches AND ratio > 0.15 — a single keyword doesn't trigger", () => {
         // Long English with ONE Spanish word — word ratio too low
         const result = detectLanguage("I went to the store and bought some gracias bread for my family and friends today morning");
@@ -198,10 +211,56 @@ describe("language — detectLanguage: Romanized Hindi / Hinglish", () => {
         expect(result.language).toEqual("Hindi (Romanized)");
     });
 
-    it("confidence boosts with ratio (0.7 + ratio * 0.2 formula)", () => {
+    it("confidence boosts with ratio (0.8 + ratio * 0.15, capped)", () => {
         const highRatio = detectLanguage("bhai kya kaise nahi hai yaar accha theek bahut");
         expect(highRatio.confidence).toBeGreaterThan(0.7);
         expect(highRatio.confidence).toBeLessThan(1.0);
+    });
+});
+
+describe("language — everyday Hinglish and switching back", () => {
+    beforeEach(() => resetLanguage());
+
+    it("catches short, everyday Hinglish", () => {
+        for (const m of [
+            "kal 5 baje meeting set kar do",
+            "acha theek hai",
+            "main bas check kar raha tha",
+            "mujhe ek email bhejna hai boss ko",
+        ])
+            expect(detectLanguage(m), m).toMatchObject({ language: "Hindi (Romanized)" });
+        // ...and confidently enough to switch the session (0.80 bar).
+        expect(detectLanguage("kal 5 baje meeting set kar do").confidence).toBeGreaterThanOrEqual(0.8);
+    });
+
+    it("plain English requests stay English", () => {
+        for (const m of [
+            "send the report to rahul",
+            "set an alarm for 6 am",
+            "open youtube and play some lofi",
+            "the main issue is the code",
+            "add a comment to the doc",
+            "come with me to the store",
+        ])
+            expect(detectLanguage(m).language, m).toEqual("English");
+    });
+
+    it("a session that went Hinglish comes back to English when the owner does", () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2025-01-01T00:00:00Z"));
+        vi.spyOn(console, "log").mockImplementation(() => undefined);
+        try {
+            updateSessionLanguage("bhai kya scene hai aaj");
+            expect(getCurrentLanguage()).toEqual("Hindi (Romanized)");
+            updateSessionLanguage("ok"); // too short to say anything
+            expect(getCurrentLanguage()).toEqual("Hindi (Romanized)");
+            vi.setSystemTime(new Date("2025-01-01T00:00:31Z"));
+            updateSessionLanguage("can you check my calendar for tomorrow");
+            expect(getCurrentLanguage()).toEqual("English");
+            expect(getLanguageInstruction()).toEqual("");
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });
 
@@ -239,8 +298,7 @@ describe("language — detectLanguage: input preprocessing", () => {
 
     it("preserves mixed case text (not stripped)", () => {
         // Mixed Title-Case words stay, detection triggers on keyword density.
-        const input =
-            "Hola Gracias Por Favor cómo estás también puede hacer tengo quiero necesito dónde cuándo";
+        const input = "Hola Gracias Por Favor cómo estás también puede hacer tengo quiero necesito dónde cuándo";
         const result = detectLanguage(input);
         expect(result.language).toEqual("Spanish");
     });

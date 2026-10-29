@@ -9,11 +9,13 @@ import { describe, expect, it, vi } from "vitest";
 
 process.env.ATLAS_DATA_DIR = mkdtempSync(join(tmpdir(), "lt-test-"));
 
-let releasePhase: () => void = () => {};
+// Each running phase queues its release; the test waits for a real one (a no-op default
+// made "is it a function yet?" pass at once, releasing a phase that didn't exist — flaky under load).
+const pendingPhases: Array<() => void> = [];
 vi.mock("./sub-agent.js", () => ({
     runSubAgent: async () => {
         await new Promise<void>((r) => {
-            releasePhase = r;
+            pendingPhases.push(r);
         });
         return { id: "p", role: "general", success: true, output: "done", toolCalls: 0, durationMs: 0, estimatedCost: 0 };
     },
@@ -64,12 +66,11 @@ describe("start_long_task telegram controls", () => {
         turn.mockClear();
         for (let i = 0; i < 2; i++) {
             // finish the phase, then the quality review
-            await vi.waitFor(() => expect(releasePhase).toBeTypeOf("function"));
-            releasePhase();
-            await new Promise((r) => setTimeout(r, 20));
+            await vi.waitFor(() => expect(pendingPhases.length).toBeGreaterThan(0), { timeout: 10_000 });
+            pendingPhases.shift()?.();
         }
-        await vi.waitFor(() =>
-            expect(turn.mock.calls.some((c) => c[0].includes("Task complete"))).toBe(true),
-        );
-    });
+        await vi.waitFor(() => expect(turn.mock.calls.some((c) => c[0].includes("Task complete"))).toBe(true), {
+            timeout: 10_000,
+        });
+    }, 30_000);
 });

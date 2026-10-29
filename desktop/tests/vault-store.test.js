@@ -34,10 +34,11 @@ const CARD = {
     cvv: "321",
 };
 
-function setup({ canTouchId = true, touchOk = true } = {}) {
+function setup({ canTouchId = true, touchOk = true, now } = {}) {
     const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "vault-")), "vault.enc");
     const handlers = {};
     const sent = [];
+    const prompts = { n: 0 };
     const main = { id: "main" };
     registerVaultIpc({
         ipcMain: {
@@ -49,12 +50,16 @@ function setup({ canTouchId = true, touchOk = true } = {}) {
         file,
         trusted: (evt) => evt.sender === main,
         canTouchId: () => canTouchId,
-        promptTouchId: () => (touchOk ? Promise.resolve() : Promise.reject(new Error("cancelled"))),
+        promptTouchId: () => {
+            prompts.n++;
+            return touchOk ? Promise.resolve() : Promise.reject(new Error("cancelled"));
+        },
+        ...(now ? { now } : {}),
         onChange: (entries) => sent.push(entries),
     });
     const call = (ch, ...args) => handlers[ch]({ sender: main }, ...args);
     const callAs = (sender, ch, ...args) => handlers[ch]({ sender }, ...args);
-    return { file, call, callAs, sent };
+    return { file, call, callAs, sent, prompts };
 }
 
 beforeEach(() => {
@@ -142,6 +147,43 @@ describe("vault IPC: the renderer can't read raw secrets", () => {
         );
         expect(r.success).toBe(true);
         expect((await call("vault:reveal", id, "correct horse")).values.password).toBe(PASSWORD); // blank kept the old one
+    }, 30_000); // scrypt (the vault password hash) is slow by design; busy CI machines need room
+
+    it("delete needs Touch ID (or the vault password) like viewing", async () => {
+        const denied = setup({ touchOk: false });
+        await denied.call("vault:save", LOGIN);
+        const id = (await denied.call("vault:list")).entries[0].id;
+        expect(await denied.call("vault:delete", id)).toEqual({ success: false, error: "auth_failed" });
+        expect((await denied.call("vault:list")).entries).toHaveLength(1);
+
+        const pw = setup({ canTouchId: false });
+        await pw.call("vault:save", LOGIN);
+        await pw.call("vault:set-password", "correct horse");
+        const id2 = (await pw.call("vault:list")).entries[0].id;
+        expect(await pw.call("vault:delete", id2, "wrong")).toMatchObject({ success: false, error: "auth_failed" });
+        expect((await pw.call("vault:delete", id2, "correct horse")).entries).toHaveLength(0);
+    }, 30_000); // scrypt (the vault password hash) is slow by design; busy CI machines need room
+
+    it("one Touch ID covers that entry for a minute: Edit (load + save) asks once", async () => {
+        let t = 1_000_000;
+        const { call, prompts } = setup({ now: () => t });
+        await call("vault:save", LOGIN);
+        await call("vault:save", CARD);
+        const [login, card] = (await call("vault:list")).entries;
+        await call("vault:reveal", login.id);
+        await call("vault:save", {
+            id: login.id,
+            label: "Zomato 2",
+            domains: "zomato.com",
+            username: "me@example.com",
+            password: "",
+        });
+        expect(prompts.n).toBe(1);
+        await call("vault:reveal", card.id); // another entry: asks again
+        expect(prompts.n).toBe(2);
+        t += 61_000; // the minute is up
+        await call("vault:reveal", login.id);
+        expect(prompts.n).toBe(3);
     });
 
     it("a login must name its website", async () => {

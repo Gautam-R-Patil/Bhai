@@ -21,6 +21,7 @@ import {
 import { getDataDir } from "../config/paths.js";
 import type { ChatCompletionMessageParam, LLMClient } from "../llm.js";
 import { auditLog } from "../security/audit-log.js";
+import { protectForDisk } from "../security/pii-vault.js";
 import { extractJSON } from "../utils/json-extract.js";
 import { generateUUID } from "../utils/uuid.js";
 import { consolidateMemories } from "./consolidation.js";
@@ -271,8 +272,9 @@ export async function runReflection(
             try {
                 const db = getKnowledgeGraphDB();
                 if (db) {
-                    const messagesToStore = withoutMedia(
-                        selectCorpusMessages(conversationHistory, CORPUS_MAX_MESSAGES),
+                    // The live history is raw (only LLM payloads are masked): mask before it hits disk.
+                    const messagesToStore = protectForDisk(
+                        withoutMedia(selectCorpusMessages(conversationHistory, CORPUS_MAX_MESSAGES)),
                     );
                     // One row per session: periodic reflections append what is new to it.
                     const existing = db.exec(

@@ -154,6 +154,13 @@ describe("playbook success rule", () => {
         expect(looksSensitive("log into netflix, pw: Tr0ub4dor&3")).toBe(true);
         expect(looksSensitive("log into netflix with Tr0ub4dor&3")).toBe(true);
         expect(looksSensitive("send an email to Sam on gmail.com")).toBe(false);
+        // One-time codes and "secret" phrasings are credentials too.
+        expect(looksSensitive("enter the code 482913 on swiggy")).toBe(true);
+        expect(looksSensitive("type 4829 as the verification code")).toBe(true);
+        expect(looksSensitive("use secret letmein")).toBe(true);
+        // ...but an app called "code" or a plain time is not.
+        expect(looksSensitive("open vs code and run the tests")).toBe(false);
+        expect(looksSensitive("set an alarm for 7:30")).toBe(false);
         expect(buildPlaybook("log into chase, my password is Hunter2!x", gmail, done, false)).toBeNull();
     });
 });

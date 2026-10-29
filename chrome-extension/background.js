@@ -42,10 +42,34 @@ const HEARTBEAT_INTERVAL = 20000; // 20s keep-alive (within MV3 30s limit)
 const DISCOVERY_INTERVAL = 5000;
 const MAX_DISCOVERY_INTERVAL = 60000;
 
-// Pin the active tab at the start of a command to prevent race conditions
-// when the user manually switches tabs during command execution
-async function withActiveTab(fn) {
+// ── Bhai's tab ── (agent-tab:start)
+// The tab Bhai works in. Pinned at a task's first command and kept while commands keep
+// coming; after 2 min idle the next task starts on whatever tab is in front. Only Bhai
+// moves it (a new tab, switch_tab). Before, every command re-read "the active tab", so the
+// owner clicking another tab mid-task sent Bhai's next click or typing into that tab.
+let agentTabId = null;
+let agentTabAt = 0;
+const AGENT_TAB_IDLE_MS = 120000;
+function pinAgentTab(id) {
+  agentTabId = id ?? null;
+  agentTabAt = Date.now();
+}
+async function agentTab() {
+  if (agentTabId !== null && Date.now() - agentTabAt < AGENT_TAB_IDLE_MS) {
+    const t = await chrome.tabs.get(agentTabId).catch(() => null);
+    if (t?.id) {
+      agentTabAt = Date.now();
+      return t;
+    }
+  }
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  pinAgentTab(tab?.id);
+  return tab;
+}
+// (agent-tab:end)
+
+async function withActiveTab(fn) {
+  const tab = await agentTab();
   if (!tab || !tab.id) throw new Error("No active tab");
   return fn(tab.id);
 }
@@ -77,7 +101,7 @@ function connect() {
     connectionAttempts = 0;
     reconnectDelay = 1000;
     // The version lets Bhai ask an outdated copy (an update installed under a running Chrome) to reload.
-    ws.send(JSON.stringify({ type: "auth", token: authToken, version: chrome.runtime.getManifest().version }));
+    ws.send(JSON.stringify({ type: "auth", token: authToken, version: chrome.runtime.getManifest().version, native: discoveredVia === "native" }));
     startHeartbeat();
     updateBadge(true);
   };
@@ -566,7 +590,7 @@ function sendResponse(id, success, data, error) {
 // ── Command Implementations ──────────────────
 
 async function getActiveTab() {
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const tab = await agentTab();
   if (!tab) return null;
   return {
     id: tab.id,
@@ -594,9 +618,9 @@ async function getAllTabs() {
 }
 
 async function scanElements(payload) {
-  // Use lastFocusedWindow (not currentWindow) so we get the browser window,
-  // not the DevTools or extension popup which may be focused instead.
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  // Bhai's tab (agentTab: pinned, else the last-focused browser window's active tab —
+  // not DevTools or the extension popup).
+  const tab = await agentTab();
   if (!tab || !tab.id) throw new Error("No active tab");
 
   const results = await chrome.scripting.executeScript({
@@ -1379,9 +1403,7 @@ async function scroll(payload) {
 async function executeJS(payload) {
   // Optional tabId pins the script to one tab (the human-check wait watches the
   // tab the check is on, even if the user switches tabs). Default: the active tab.
-  const [tab] = payload.tabId != null
-    ? [await chrome.tabs.get(payload.tabId)]
-    : await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const tab = payload.tabId != null ? await chrome.tabs.get(payload.tabId) : await agentTab();
   if (!tab || !tab.id) throw new Error("No active tab");
 
   // Use CDP Runtime.evaluate — this runs in the page context and bypasses
@@ -1467,7 +1489,7 @@ async function rawCDP(payload) {
   if (!CDP_ALLOWED_METHODS.has(payload.method)) {
     throw new Error(`CDP method not allowed: ${payload.method}`);
   }
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const tab = await agentTab();
   if (!tab || !tab.id) throw new Error("No active tab");
   await holdCDP(tab.id);
   const result = await chrome.debugger.sendCommand({ tabId: tab.id }, payload.method, payload.params || {});
@@ -1478,7 +1500,7 @@ async function rawCDP(payload) {
 // call: one round trip instead of one per event, and paced here, not over the socket.
 async function mousePath(payload) {
   const events = Array.isArray(payload.events) ? payload.events.slice(0, 200) : [];
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const tab = await agentTab();
   if (!tab || !tab.id) throw new Error("No active tab");
   await holdCDP(tab.id);
   for (const e of events) {
@@ -1498,7 +1520,7 @@ async function mousePath(payload) {
 // them onto the page with the iframe's box. Keep the selectors in step with
 // src/tools/browser/captcha-vision.ts.
 async function captchaFrames() {
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const tab = await agentTab();
   if (!tab || !tab.id) throw new Error("No active tab");
   const results = await chrome.scripting.executeScript({
     target: { tabId: tab.id, allFrames: true },
@@ -1555,10 +1577,17 @@ async function getCookies(payload) {
 }
 
 async function navigate(payload) {
+  // Only web pages (and the blank page): never file://, javascript:, data: or chrome:// —
+  // a second check behind the bridge's own, in case a caller skips it.
+  const target = String(payload.url || "about:blank");
+  if (target !== "about:blank" && !/^https?:\/\//i.test(target)) {
+    throw new Error(`unsafe URL scheme — only http(s) is allowed`);
+  }
   if (payload.newTab) {
-    await chrome.tabs.create({ url: payload.url, active: true });
+    const created = await chrome.tabs.create({ url: payload.url, active: true });
+    pinAgentTab(created?.id);
   } else {
-    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    const tab = await agentTab();
     if (!tab || !tab.id) throw new Error("No active tab");
     await chrome.tabs.update(tab.id, { url: payload.url });
   }
@@ -1566,7 +1595,7 @@ async function navigate(payload) {
 }
 
 async function goBack() {
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const tab = await agentTab();
   if (!tab || !tab.id) throw new Error("No active tab");
   await chrome.tabs.goBack(tab.id);
   return { success: true };
@@ -1579,7 +1608,13 @@ async function captureScreenshot(payload) {
   // Bhai's own cursor / glow / pill (src/tools/browser/agent-cursor.ts) must
   // never reach its vision or OCR: hide the host for the capture. ISOLATED
   // world shares the DOM and needs no debugger attach.
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const tab = await agentTab();
+  // Chrome captures only a window's visible tab: if the owner switched tabs in Bhai's
+  // window, bring Bhai's tab back to front (another window is left alone).
+  if (tab?.id && !tab.active) {
+    await chrome.tabs.update(tab.id, { active: true }).catch(() => {});
+    await new Promise((r) => setTimeout(r, 150));
+  }
   const overlay = (hide) => !tab?.id ? Promise.resolve(false) : chrome.scripting.executeScript({
     target: { tabId: tab.id },
     func: (id, hide) => {
@@ -1593,7 +1628,7 @@ async function captureScreenshot(payload) {
   const hidden = await overlay(true);
   let dataUrl;
   try {
-    dataUrl = await chrome.tabs.captureVisibleTab(null, { format, quality });
+    dataUrl = await chrome.tabs.captureVisibleTab(tab && tab.windowId != null ? tab.windowId : null, { format, quality });
   } finally {
     if (hidden) await overlay(false);
   }
@@ -1605,6 +1640,7 @@ async function captureScreenshot(payload) {
 async function switchTab(payload) {
   if (payload.tabId) {
     const tab = await chrome.tabs.update(payload.tabId, { active: true });
+    pinAgentTab(payload.tabId);
     // focus:true also raises the window (CAPTCHA human handoff)
     if (payload.focus && tab?.windowId !== undefined) {
       await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
@@ -1616,10 +1652,12 @@ async function switchTab(payload) {
 async function closeTab(payload) {
   if (payload.tabId) {
     await chrome.tabs.remove(payload.tabId);
+    if (payload.tabId === agentTabId) pinAgentTab(null);
   } else {
-    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    const tab = await agentTab();
     if (tab && tab.id) {
       await chrome.tabs.remove(tab.id);
+      pinAgentTab(null);
     }
   }
   return { success: true };
@@ -1738,7 +1776,7 @@ async function hover(payload) {
 }
 
 async function selectOption(payload) {
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const tab = await agentTab();
   if (!tab || !tab.id) throw new Error("No active tab");
 
   await chrome.scripting.executeScript({
@@ -1759,7 +1797,7 @@ async function selectOption(payload) {
 }
 
 async function waitFor(payload) {
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const tab = await agentTab();
   if (!tab || !tab.id) throw new Error("No active tab");
 
   const timeout = payload.timeout || 10000;
@@ -1905,7 +1943,32 @@ async function autoDiscover() {
   }
 }
 
+// How the token was obtained, told to the bridge on auth: once it has seen native messaging
+// work, it stops handing tokens out over HTTP (any local process can GET /discover).
+let discoveredVia = "";
+
+function nativeConfig() {
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendNativeMessage("com.atlas.bridge", { action: "get_config" }, (resp) => {
+        resolve(chrome.runtime.lastError ? null : resp);
+      });
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
 async function _autoDiscover() {
+  // Native messaging first: Chrome only starts the host for this extension, as this OS user.
+  const native = await nativeConfig();
+  if (native?.success && native.token) {
+    console.log("[ATLAS Bridge] Discovered via native messaging");
+    discoveredVia = "native";
+    applyDiscovery(native);
+    return true;
+  }
+
   try {
     const res = await fetch(discoveryUrl);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1913,6 +1976,7 @@ async function _autoDiscover() {
 
     if (config.token && config.wsUrl) {
       console.log("[ATLAS Bridge] Auto-discovered Bhai server");
+      discoveredVia = "http";
       applyDiscovery(config);
       return true;
     }
@@ -1923,32 +1987,9 @@ async function _autoDiscover() {
     console.warn("[ATLAS Bridge] /discover fetch failed:", err && err.message ? err.message : String(err));
   }
 
-  // Try native messaging as fallback
-  try {
-    const response = await new Promise((resolve, reject) => {
-      chrome.runtime.sendNativeMessage("com.atlas.bridge", { action: "get_config" }, (resp) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-        } else {
-          resolve(resp);
-        }
-      });
-    });
-
-    if (response && response.success && response.token) {
-      console.log("[ATLAS Bridge] Auto-discovered via native messaging");
-      applyDiscovery(response);
-      return true;
-    }
-  } catch {
-    // Native messaging not available
-  }
-
   // No fallback to the overlay port. 18792 is the overlay chat server — it
   // speaks a different protocol AND requires ?localToken= auth that this
-  // extension does not hold. Connecting there used to silently fail with
-  // ERR_CONNECTION_REFUSED-style errors when the bot wasn't fully booted,
-  // and surface as 4001 closes after. Keep retrying /discover at 18800.
+  // extension does not hold. Keep retrying discovery.
   return false;
 }
 

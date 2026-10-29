@@ -1,3 +1,5 @@
+> **Status: IMPLEMENTED IN CODE, NOT IN THE FIRST-RUN FLOW.** Persona bias and wizard seeding exist (`src/prompts/persona-bias.ts`, `src/setup/wizard-seed.ts`, used by `src/agent.ts`, `src/tool-router.ts`, `src/index.ts`), but the persona/personalize wizard steps are no longer shown: first run is three screens (`desktop/wizard/router.js`, commit `fd43afb`). Whether persona is still collected elsewhere (Settings) is unverified. Tests cited as `tests/setup/wizard-seed.test.ts` are at `src/setup/wizard-seed.test.ts`; `dynamic-assembler.ts`/`dynamic-context.ts` are under `src/prompts/` and `src/social/`.
+
 # Onboarding Reimagined — Wave 2: Persona Specialization — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

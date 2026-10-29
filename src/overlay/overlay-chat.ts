@@ -25,6 +25,7 @@ import {
     type MediaAttachment,
     type ChannelContext,
 } from "../agent.js";
+import { isForeignExtensionOrigin } from "../security/extension-origin.js";
 import { isLoopbackHost as isLoopbackHostFor, isWebOrigin } from "../security/loopback.js";
 import { formatStepStatus, parseStepLine } from "../step-status.js";
 import { logChatMessage, markChatReset, recentChatContext } from "./chat-log.js";
@@ -87,6 +88,11 @@ export function getOverlayLocalToken(): string {
     return _localToken;
 }
 
+/** The token the overlay page may carry: the owner's, only for a request that already holds it. */
+export function overlayPageToken(header: string | string[] | undefined): string {
+    return typeof header === "string" && safeEqualStr(header, getOverlayLocalToken()) ? getOverlayLocalToken() : "";
+}
+
 function safeEqualStr(a: string, b: string): boolean {
     if (a.length !== b.length) return false;
     try {
@@ -100,7 +106,7 @@ function safeEqualStr(a: string, b: string): boolean {
 function extractBearer(req: IncomingMessage): string | null {
     const h = req.headers["authorization"];
     if (!h || typeof h !== "string") return null;
-    const m = h.match(/^Bearer\s+(.+)$/i);
+    const m = h.match(/^Bearer\s+(\S.*)$/i); // \S keeps \s+ and the token disjoint: linear time
     return m ? m[1].trim() : null;
 }
 
@@ -230,7 +236,11 @@ export function initOverlayChat(llm: LLMClient): void {
                     // Token only travels over 127.0.0.1 to a 0o600-gated client.
                     // overlay.html reads it via both %%ATLAS_LOCAL_TOKEN%% (primary,
                     // window.__ATLAS_LOCAL_TOKEN__) and window.__atlasLocalToken.
-                    const token = getOverlayLocalToken();
+                    // Only the desktop app's own overlay window gets the owner token: it sends
+                    // it back in X-Bhai-Overlay (desktop/main.js). Any other load — the agent's
+                    // browser sent here by a web page, another local process or account —
+                    // gets the page without it, so it can't be read off this page.
+                    const token = overlayPageToken(req.headers["x-bhai-overlay"]);
                     html = html.replace(/%%ATLAS_LOCAL_TOKEN%%/g, token);
                     const injection = `<script>window.__atlasLocalToken=${JSON.stringify(token)};</script>`;
                     if (html.includes("</head>")) {
@@ -490,7 +500,8 @@ export function initOverlayChat(llm: LLMClient): void {
             const origin = req.headers.origin;
             const ownPage =
                 origin === `http://127.0.0.1:${OVERLAY_PORT}` || origin === `http://localhost:${OVERLAY_PORT}`;
-            if (isWebOrigin(origin) && !ownPage) {
+            // Nor another installed extension: an extension socket always carries its own origin.
+            if ((isWebOrigin(origin) && !ownPage) || isForeignExtensionOrigin(origin)) {
                 ws.close(4003, "Origin not allowed");
                 return;
             }
@@ -932,7 +943,8 @@ async function handleOverlayMessage(ws: WebSocket, userMessage: string, source =
 
     let taggedMessage = `${userMessage}\n\n[SOURCE: Desktop overlay chat — respond here, NOT on Telegram. Keep your response SHORT and concise — this is a compact overlay, not a full chat. Use 1-3 sentences when possible.]${chromeCtxNote}`;
 
-    if (isScreenQuery(userMessage)) {
+    // Only the owner's own chat bar may look at the screen — never a web-widget visitor.
+    if (wsIsOwner(ws) && isScreenQuery(userMessage)) {
         console.log("  📸 [Overlay] Screen query detected — capturing screenshot...");
         sendToClient(ws, { type: "progress", text: "📸 Looking at your screen…" });
 

@@ -83,6 +83,9 @@ describe("personality-sync", () => {
 
     it("syncs as soon as Settings writes the file", async () => {
         const stop = watchPersonalityFile({ userDataDir: dir });
+        // macOS FSEvents drops writes made in the first few ms after fs.watch() (a third of runs
+        // here); in the app the watcher starts at boot, long before Settings writes.
+        await new Promise((r) => setTimeout(r, 200));
         write("professional_concise");
         await vi.waitFor(() => expect(pushed.length).toBe(1), { timeout: 10000 });
         stop();

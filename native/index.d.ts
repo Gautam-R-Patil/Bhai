@@ -1987,6 +1987,25 @@ export declare function schedulerReleaseGrouped(channel: string): GroupedRelease
  * daily slot, the gap and its topic. Two refused from one release keep the gap (conservative).
  */
 export declare function schedulerRefund(channel: string): void
+/**
+ * What must survive a restart: how many were sent today, when the last went, and the
+ * topics recently sent (dedup). In memory only, a relaunch (every app update) reset the
+ * daily cap and let the same nudge repeat.
+ */
+export interface ChannelSnapshot {
+  channel: string
+  sentToday: number
+  dayBucket: number
+  lastSentMs: number
+  recentTs: Array<number>
+  recentEmbeddings: Array<Array<number>>
+}
+export declare function schedulerSnapshot(channel: string): ChannelSnapshot | null
+/**
+ * Restore a snapshot onto a configured channel. Today's count only carries over on the same
+ * local day; topics older than the 6h dedup window are dropped.
+ */
+export declare function schedulerRestore(snap: ChannelSnapshot): boolean
 export declare function schedulerDebugState(channel: string): string
 export interface GateResult {
   mayRun: boolean

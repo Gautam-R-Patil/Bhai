@@ -84,7 +84,8 @@ document.querySelector("form").addEventListener("submit", async (e) => {
     });
 });
 </script>`;
-const escHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+const escHtml = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 /** Launch Chromium with this so shop.test resolves to the local test server. */
 export const SHOP_RESOLVER_ARG = "--host-resolver-rules=MAP shop.test 127.0.0.1, MAP track.test 127.0.0.1";
 
@@ -190,7 +191,7 @@ export async function startShop(
         }
         if (u.pathname === "/otp") {
             const wrong = u.searchParams.get("wrong") ? "<p>Wrong code, try again</p>" : "";
-            return send(`${wrong}<form method="post" action="/verify"><input type="hidden" name="t" value="${u.searchParams.get("t")}">
+            return send(`${wrong}<form method="post" action="/verify"><input type="hidden" name="t" value="${escHtml(u.searchParams.get("t") ?? "")}">
               <input id="otp" name="otp"><button id="verify">Verify</button></form>`);
         }
         if (u.pathname === "/verify" && req.method === "POST") {
@@ -202,7 +203,7 @@ export async function startShop(
                 redirect(`/done?n=${++orders}`);
             });
         }
-        if (u.pathname === "/done") return send(`<h1>Order placed #${u.searchParams.get("n")}</h1>`);
+        if (u.pathname === "/done") return send(`<h1>Order placed #${escHtml(u.searchParams.get("n") ?? "")}</h1>`);
         send("Not found", 404);
     });
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
