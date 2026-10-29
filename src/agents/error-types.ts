@@ -305,6 +305,14 @@ export function classifyError(message: string, tool?: string, durationMs?: numbe
         }
     }
 
+    // A relative/absolute module specifier ("./x", "../x", "/abs/x.js") that is
+    // not found is a path typo no install can fix — classify it as ImportError
+    // even inside an ESM "ERR_MODULE_NOT_FOUND: Cannot find module '/app/x.js'",
+    // before the (installable) dependency check below.
+    if (/Cannot find module ['"](?:\.{0,2}\/|[a-zA-Z]:[\\/])/.test(message)) {
+        return { category: ErrorCategory.ImportError, message, tool, retryable: true, context, codeLocation: extractCodeLocation(message) };
+    }
+
     // Dependency missing — check before user_caused since ENOENT+spawn overlaps
     for (const pattern of DEPENDENCY_MISSING_PATTERNS) {
         if (pattern.test(message)) {

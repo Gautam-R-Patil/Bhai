@@ -127,9 +127,16 @@ Output ONLY valid JSON:
             (rubric.completeness + rubric.accuracy + rubric.coherence + rubric.actionability) / 4
         );
 
-        const verdict = score >= ACCEPT_THRESHOLD ? "accept"
-            : score >= RETRY_THRESHOLD ? "retry"
-            : "replan" as const;
+        // The score sets a floor the model cannot soften (no self-confirming a low
+        // score), but the model may ESCALATE on a flaw the numbers miss. Take the
+        // more conservative of the two (accept < retry < replan).
+        const scoreVerdict: "accept" | "retry" | "replan" =
+            score >= ACCEPT_THRESHOLD ? "accept" : score >= RETRY_THRESHOLD ? "retry" : "replan";
+        const RANK = { accept: 0, retry: 1, replan: 2 } as const;
+        const modelVerdict = (["accept", "retry", "replan"] as const).includes(parsed.verdict)
+            ? (parsed.verdict as "accept" | "retry" | "replan")
+            : scoreVerdict;
+        const verdict = RANK[modelVerdict] > RANK[scoreVerdict] ? modelVerdict : scoreVerdict;
 
         // Record to harness trace store — uses per-async-context storage (safe for concurrent channels)
         const activeTrace = getActiveEvalTraceId();
@@ -215,6 +222,9 @@ function clamp(value: number, min: number, max: number): number {
 
 /** Coerce a rubric dimension to a 0-100 score, defaulting to 70 only when it isn't a finite number. */
 function clampScore(value: unknown): number {
+    // null / undefined / "" mean the model omitted the dimension → default 70;
+    // a numeric string still coerces; anything non-finite → 70.
+    if (value === null || value === undefined || value === "") return 70;
     const n = Number(value);
     return clamp(Number.isFinite(n) ? n : 70, 0, 100);
 }
