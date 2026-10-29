@@ -35,6 +35,8 @@ import { getShortSummary } from "./session.js";
 import {
     compactMemoryDB,
     dbTimeMs,
+    extractMsgText,
+    getMsgRole,
     indexConversationMessages,
     listMemories,
     remember,
@@ -68,6 +70,26 @@ const CORPUS_MAX_MESSAGES = (() => {
  */
 export function selectCorpusMessages<T>(history: T[], max: number): T[] {
     return max > 0 ? history.slice(-max) : history;
+}
+
+/**
+ * The stored transcript plus the messages it lacks (same role+text match as
+ * indexConversationMessages), so history pruned since the last reflection stays.
+ */
+export function mergeStoredMessages(storedJson: string, messages: unknown[]): unknown[] {
+    let stored: unknown[] = [];
+    try {
+        const parsed = JSON.parse(storedJson);
+        if (Array.isArray(parsed)) stored = parsed;
+    } catch {
+        /* unparseable row: replace it */
+    }
+    const key = (m: unknown) => {
+        const text = extractMsgText(m);
+        return text ? `${getMsgRole(m)}\u0000${text}` : JSON.stringify(m);
+    };
+    const seen = new Set(stored.map(key));
+    return [...stored, ...messages.filter((m) => !seen.has(key(m)))];
 }
 
 // ── Frozen reflection instructions ────────────
@@ -252,20 +274,26 @@ export async function runReflection(
                     const messagesToStore = withoutMedia(
                         selectCorpusMessages(conversationHistory, CORPUS_MAX_MESSAGES),
                     );
-                    const messagesJson = JSON.stringify(messagesToStore);
-                    // One row per session: periodic reflections rewrite it with the grown history.
-                    let convId = db.exec("SELECT id FROM conversations WHERE session_id = ? ORDER BY id DESC LIMIT 1", [
-                        sessionId,
-                    ])[0]?.values[0]?.[0] as number | undefined;
+                    // One row per session: periodic reflections append what is new to it.
+                    const existing = db.exec(
+                        "SELECT id, messages_json FROM conversations WHERE session_id = ? ORDER BY id DESC LIMIT 1",
+                        [sessionId],
+                    )[0]?.values[0];
+                    let convId = existing?.[0] as number | undefined;
                     if (convId) {
+                        const merged = mergeStoredMessages(existing?.[1] as string, messagesToStore);
                         db.run(
                             "UPDATE conversations SET messages_json = ?, summary = ?, updated_at = datetime('now') WHERE id = ?",
-                            [messagesJson, summary.summary, convId],
+                            [
+                                JSON.stringify(selectCorpusMessages(merged, CORPUS_MAX_MESSAGES)),
+                                summary.summary,
+                                convId,
+                            ],
                         );
                     } else {
                         db.run(`INSERT INTO conversations (session_id, messages_json, summary) VALUES (?, ?, ?)`, [
                             sessionId,
-                            messagesJson,
+                            JSON.stringify(messagesToStore),
                             summary.summary,
                         ]);
                         convId = db.exec("SELECT last_insert_rowid()")[0]?.values[0]?.[0] as number;

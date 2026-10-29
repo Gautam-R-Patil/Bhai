@@ -15,6 +15,7 @@ describe("memory goals vs proactive goal-engine", () => {
         raw.exec(`CREATE TABLE goals (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, description TEXT,
             source TEXT, priority REAL, status TEXT DEFAULT 'proposed', parent_goal_id INTEGER, evidence TEXT,
             progress REAL DEFAULT 0, created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')))`);
+        raw.exec("CREATE INDEX idx_goals_status ON goals(status)");
         raw.exec("INSERT INTO goals (title) VALUES ('old engine goal')");
         const db = wrapDatabase(raw);
         initGoals(db);
@@ -27,6 +28,9 @@ describe("memory goals vs proactive goal-engine", () => {
             saveGoal({ title: "t", description: "d", source: "pattern_observed", evidence: "e", priority: 0.5 }),
         ).not.toBeNull();
         expect(raw.prepare("SELECT COUNT(*) AS n FROM proactive_goals").get()).toEqual({ n: 2 });
+        expect(raw.prepare("SELECT tbl_name FROM sqlite_master WHERE name = 'idx_goals_status'").get()).toEqual({
+            tbl_name: "goals",
+        });
     });
 
     it("hides goals untouched for 30 days and ignores 'remind me to'", () => {

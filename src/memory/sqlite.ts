@@ -245,16 +245,6 @@ export async function initMemoryDB(): Promise<CompatDatabase> {
     } catch {
         /* */
     }
-    // Pruned-context facts used to be filed as session_summary (now 'fact'), and
-    // recall used to bump summary importance on every read. Both are no-ops once applied.
-    try {
-        db.run(
-            "UPDATE memories SET category = 'fact' WHERE category = 'session_summary' AND tags LIKE 'context_pruning%'",
-        );
-        db.run("UPDATE memories SET importance = 6 WHERE category = 'session_summary' AND importance > 6");
-    } catch {
-        /* */
-    }
     // Memory Studio — append-only tombstone log so "forget with reason"
     // keeps an audit trail without forcing soft-delete filters everywhere.
     db.run(`
@@ -566,6 +556,18 @@ export async function initMemoryDB(): Promise<CompatDatabase> {
         // Delete/update sync — see fts-triggers.ts (replaces broken older bodies).
         if (rawDb) rawDb.exec(MEMORIES_FTS_SYNC_SQL);
 
+        // Pruned-context facts used to be filed as session_summary (now 'fact'), and
+        // recall used to bump summary importance on every read. Both are no-ops once
+        // applied. Runs after the trigger sync: the old update trigger failed every UPDATE.
+        try {
+            db.run(
+                "UPDATE memories SET category = 'fact' WHERE category = 'session_summary' AND tags LIKE 'context_pruning%'",
+            );
+            db.run("UPDATE memories SET importance = 6 WHERE category = 'session_summary' AND importance > 6");
+        } catch {
+            /* */
+        }
+
         // Backfill both FTS5 tables from existing memories (idempotent).
         backfillFTS5();
 
@@ -799,7 +801,7 @@ export function extractMsgText(msg: unknown): string {
     return "";
 }
 
-function getMsgRole(msg: unknown): string {
+export function getMsgRole(msg: unknown): string {
     if (typeof msg !== "object" || msg === null) return "unknown";
     const r = (msg as { role?: unknown }).role;
     return typeof r === "string" ? r : "unknown";
@@ -2242,7 +2244,8 @@ export async function recall(
         try {
             for (const r of records) {
                 const newAccessCount = r.access_count + 1;
-                const shouldBoost = [10, 25, 50].includes(newAccessCount);
+                // Summaries stay at importance 6, as in remember().
+                const shouldBoost = r.category !== "session_summary" && [10, 25, 50].includes(newAccessCount);
 
                 // ── Reconsolidation: append query context tags to frequently-accessed memories ──
                 if (newAccessCount > 3 && keywords.length > 0) {

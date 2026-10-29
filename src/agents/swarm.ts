@@ -614,7 +614,7 @@ async function decompose(llm: LLMClient, userRequest: string): Promise<SwarmPlan
     try {
         const memCtx = await getMemoryInformedContext(userRequest);
         if (memCtx.contextSummary) {
-            memoryHint = `\n\nMEMORY CONTEXT (relevant past experiences and entities):\n${memCtx.contextSummary}\n`;
+            memoryHint = `\n\nMEMORY CONTEXT (relevant past experiences):\n${memCtx.contextSummary}\n`;
             console.log(
                 `[SWARM] 🧠 Memory-informed context: ${memCtx.relevantMemories.length} memories, ${memCtx.taskLearnings.length} learnings`,
             );

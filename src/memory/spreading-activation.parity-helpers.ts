@@ -10,7 +10,7 @@ import type { ActivationResult } from "./spreading-activation.js";
 // TS iterates JS object keys in insertion order; Rust iterates HashMap in
 // hasher-randomized order. Tiny per-node energy deltas (bounded by
 // DECAY_PER_HOP^MAX_HOPS × max_weight ≈ 0.7^3 × 0.95 ≈ 0.33) are expected
-// and acceptable — the SAN_WEIGHT=0.3 blend smooths these out in final scores.
+// and acceptable — recall's memory.san.weight (0.3) blend smooths these out in final scores.
 export const ENERGY_TOLERANCE = 0.5;
 
 /**

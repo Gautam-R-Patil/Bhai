@@ -72,7 +72,7 @@ export function recordEpisode(
         [userId, userId, MAX_EPISODES_PER_USER]
     );
 
-    console.log(`[MEMORY][EPISODIC] Recorded: [${type}] ${description.substring(0, 60)} (importance=${importanceScore.toFixed(2)})`);
+    console.log(`[MEMORY][EPISODIC] Recorded: [${type}] ${description.substring(0, 60)} (importance=${importance.toFixed(2)})`);
 }
 
 // ── Get Recent Episodes ───────────────────────

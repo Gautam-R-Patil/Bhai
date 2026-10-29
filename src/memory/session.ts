@@ -372,7 +372,7 @@ function previousSessionContext(excludeId = ""): string {
         const llm = raw.prepare(
             "SELECT summary FROM conversations WHERE session_id = ? AND summary IS NOT NULL ORDER BY id DESC LIMIT 1"
         ).get(prev.session_id) as { summary: string } | undefined;
-        const context = llm?.summary || getShortSummary(prev).slice(-400);
+        const context = llm?.summary?.slice(0, 600) || getShortSummary(prev).slice(-400);
         if (!context) return "";
 
         const parts: string[] = [];

@@ -295,6 +295,7 @@ Default ON unless marked opt-IN. Set `"true"` to disable. `grep -rnE "process\.e
 **Memory write-gate:**
 - `ATLAS_NO_MEMORY_GATE=true` — disables value-gate; `remember()` reverts to direct-write (emergency rollback).
 - `ATLAS_MEMORY_GATE_SHADOW=true` (default during rollout) — decides + logs to `data/memory-gate.jsonl` but always inserts. Set `"false"` to enforce.
+- `ATLAS_TRANSCRIPT_RETENTION_DAYS=N` — opt-IN; the decay pass deletes `conversations`/`conversation_messages`/`conversation_embeddings` older than N days. Unset keeps transcripts forever.
 
 **Vision-nav:**
 - `ATLAS_VISION_PROFILE=lite|standard` — override the profile (`src/screen/capability-detector.ts`). There is one setup for everyone (`standard`: accessibility tree → click memory → cloud grounding, no local ML download) and no tier picker in the wizard; `lite` only also skips OmniParser. The old `full` tier (Ollama + UI-TARS, ~4.5 GB) is retired; a stored `full` reads as `standard`.

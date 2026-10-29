@@ -48,6 +48,8 @@ export function initGoals(database: Database): void {
     // proactive/goal-engine.ts used to share this table name; move its rows out of the way.
     if (db.exec("SELECT 1 FROM pragma_table_info('goals') WHERE name = 'title'").length) {
         db.run("ALTER TABLE goals RENAME TO proactive_goals");
+        // The index moved with the table; free its name for the new goals table.
+        db.run("DROP INDEX IF EXISTS idx_goals_status");
     }
 
     db.run(`
