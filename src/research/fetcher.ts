@@ -189,6 +189,35 @@ function stripTagBlocks(html: string, tags: string[]): string {
     return html;
 }
 
+// Linear HTML->markdownish text: one pass, native indexOf only, no regex over
+// tag bodies (a page of "<h1 ".repeat(5e5) with no ">" froze the agent for
+// minutes in the old quantifier chain). Headings/p/li/br become breaks; every
+// other tag becomes a space. Unclosed "<" drops the rest, like stripTagBlocks.
+export function tagsToText(html: string): string {
+    let out = "";
+    let i = 0;
+    const n = html.length;
+    while (i < n) {
+        const lt = html.indexOf("<", i);
+        if (lt === -1) { out += html.slice(i); break; }
+        out += html.slice(i, lt);
+        const gt = html.indexOf(">", lt + 1);
+        if (gt === -1) break; // no closing ">" → drop the remainder
+        const raw = html.slice(lt + 1, gt).toLowerCase();
+        const closing = raw.startsWith("/");
+        const name = (closing ? raw.slice(1) : raw).match(/^[a-z0-9]+/)?.[0] ?? "";
+        if (!closing && (name === "h1" || name === "h2" || name === "h3")) out += "\n## ";
+        else if (!closing && (name === "h4" || name === "h5" || name === "h6")) out += "\n### ";
+        else if (closing && /^h[1-6]$/.test(name)) out += "\n";
+        else if (!closing && name === "p") out += "\n";
+        else if (name === "br") out += "\n";
+        else if (!closing && name === "li") out += "\n- ";
+        else out += " ";
+        i = gt + 1;
+    }
+    return out;
+}
+
 async function fetchPageContentOnce(url: string): Promise<string> {
     // SSRF guard. Attacker-supplied URLs (search results, outbound links) must
     // not reach private/loopback/metadata targets. Fail-open: research continues.
@@ -228,13 +257,7 @@ async function fetchPageContentOnce(url: string): Promise<string> {
         const html = decodeHtml(buf, contentType);
         linksByUrl.set(url, extractOutboundLinks(html, url));
 
-        const text = stripTagBlocks(html, ["script", "style", "nav", "footer", "header"])
-            .replace(/<h[1-3][^>]*>(.*?)<\/h[1-3]>/gi, "\n## $1\n")
-            .replace(/<h[4-6][^>]*>(.*?)<\/h[4-6]>/gi, "\n### $1\n")
-            .replace(/<p[^>]*>/gi, "\n")
-            .replace(/<br\s*\/?>/gi, "\n")
-            .replace(/<li[^>]*>/gi, "\n- ")
-            .replace(/<[^>]+>/g, " ")
+        const text = tagsToText(stripTagBlocks(html, ["script", "style", "nav", "footer", "header"]))
             .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<")
             .replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'")
             .replace(/[ \t]+/g, " ")

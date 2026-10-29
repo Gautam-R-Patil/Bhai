@@ -3,6 +3,7 @@
 // HTML-strip regexes (ReDoS), and decode the declared charset (not force UTF-8).
 import { describe, expect, it, vi } from "vitest";
 import { MAX_CONTENT_PER_PAGE } from "./profiles.js";
+import { tagsToText as _tagsToText } from "./fetcher.js";
 
 let nextResponse: () => Response;
 vi.mock("../security/url-safety.js", () => ({
@@ -68,5 +69,28 @@ describe("fetcher response-body safety", () => {
         expect(page.content).toContain("café");
         expect(page.content).toContain("résumé");
         expect(page.content).not.toContain("�");
+    });
+});
+
+describe("tagsToText — linear, ReDoS-proof HTML→text", () => {
+    it("converts normal HTML to markdownish text", () => {
+        const html = "<h1>Title</h1><p>Hello <b>world</b></p><ul><li>one</li><li>two</li></ul><h4>Sub</h4>line<br>next";
+        const t = _tagsToText(html).replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+        expect(t).toContain("## Title");
+        expect(t).toContain("Hello world");
+        expect(t).toContain("- one");
+        expect(t).toContain("- two");
+        expect(t).toContain("### Sub");
+        expect(t).toContain("next");
+    });
+    it("does not catastrophically backtrack on unclosed-tag spam", () => {
+        const bomb = "<h1 ".repeat(500000); // 2MB of '<h1 ' with no '>'
+        const t0 = Date.now();
+        const out = _tagsToText(bomb);
+        expect(Date.now() - t0).toBeLessThan(1000); // was minutes with the old regex chain
+        expect(out).not.toContain("<h1");
+    });
+    it("drops the remainder after an unclosed '<' like the block stripper", () => {
+        expect(_tagsToText("before<h1 no close here")).toBe("before");
     });
 });
