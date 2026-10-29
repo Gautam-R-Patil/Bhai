@@ -73,3 +73,33 @@ describe("browserHandleCaptcha", () => {
         expect(sent.timeout_s).toBeGreaterThan(500);
     });
 });
+
+describe("Turnstile", () => {
+    it("ticks the box when it doesn't pass by itself, and counts the token as the pass", async () => {
+        vi.useFakeTimers();
+        let clicked = false;
+        const page = {
+            url: () => "https://shop.test",
+            evaluate: vi.fn(async (code: unknown) => {
+                const s = String(code);
+                if (s.includes("cf-turnstile-response") && s.includes("tok"))
+                    return { tok: clicked, present: true, box: { x: 10, y: 20, w: 300, h: 65 } };
+                if (typeof code !== "function") return false;
+                return s.includes("innerHTML") ? '<div class="cf-turnstile"></div>' : { type: "turnstile", siteKey: null };
+            }),
+            mouse: {
+                move: vi.fn(async () => {}),
+                click: vi.fn(async () => {
+                    clicked = true;
+                }),
+            },
+        };
+        const { handleCaptchaIfPresent } = await import("./captcha.js");
+        let result: { method: string } | undefined;
+        handleCaptchaIfPresent(page).then((r) => (result = r));
+        while (!result) await vi.advanceTimersByTimeAsync(500);
+        expect(result).toMatchObject({ handled: true, method: "turnstile_click" });
+        expect(page.mouse.click).toHaveBeenCalledWith(40, 52.5); // 30px in, centred in the 65px strip
+        vi.useRealTimers();
+    });
+});

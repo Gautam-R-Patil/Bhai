@@ -13,7 +13,7 @@ import { transcribeBuffer } from "../../voice/transcribe.js";
 import type { ToolDefinition } from "../get-current-time.js";
 import { getCurrentMode } from "./browser-backend.js";
 import { solveWithVision } from "./captcha-vision.js";
-import { getActivePage } from "./core.js";
+import { getActivePage, touchBrowserActivity } from "./core.js";
 import { isNativeBrowserAvailable } from "./native-browser.js";
 
 // Try to use Rust-native CAPTCHA classifier for speed
@@ -315,27 +315,45 @@ async function injectToken(page: any, type: CaptchaType, token: string): Promise
     );
 }
 
-// ─── Turnstile: try passive wait first ────────
+// ─── Turnstile: passive wait, then one real click ──
+// The pass signal is the token Turnstile writes into input[name="cf-turnstile-response"]
+// (light DOM). Its iframe is often inside a closed shadow root, and it stays visible
+// ("Success!") after an interactive pass, so neither "no iframe" nor "iframe hidden"
+// means passed. The widget box (or iframe) gives where to click.
+const TURNSTILE_JS = `(() => {
+  const tok = [...document.querySelectorAll('input[name="cf-turnstile-response"]')].some((e) => !!e.value);
+  const w = document.querySelector('iframe[src*="challenges.cloudflare.com"]') || document.querySelector('.cf-turnstile,[data-cf-turnstile]');
+  const r = w && w.getBoundingClientRect();
+  return { tok, present: !!w, box: r && r.width > 30 ? { x: r.left, y: r.top, w: r.width, h: r.height } : null };
+})()`;
+type TurnstileState = { tok: boolean; present: boolean; box: { x: number; y: number; w: number; h: number } | null };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function waitForTurnstilePassive(page: any, timeoutMs = 25000): Promise<boolean> {
-    try {
-        // With good stealth, Cloudflare Turnstile often auto-passes without any interaction
-        await page.waitForFunction(
-            /* javascript-obfuscator:disable */ () => {
-                const frame = document.querySelector('iframe[src*="challenges.cloudflare.com"]');
-                if (!frame) return true; // no Turnstile present
-                const s = window.getComputedStyle(frame as Element);
-                // Frame becomes hidden when challenge passes
-                return s.display === "none" || s.visibility === "hidden" || s.opacity === "0";
-            },
-            /* javascript-obfuscator:enable */ undefined, // Playwright signature is (fn, arg, options)
-            { timeout: timeoutMs, polling: 1000 },
-        );
-        return true;
-    } catch {
-        return false;
+async function turnstilePassed(page: any, timeoutMs: number): Promise<boolean> {
+    const end = Date.now() + timeoutMs;
+    while (Date.now() < end) {
+        const s = (await page.evaluate(TURNSTILE_JS).catch(() => null)) as TurnstileState | null;
+        if (s?.tok || (s && !s.present)) return true; // a token, or the widget went away with the page moving on
+        touchBrowserActivity();
+        await new Promise((r) => setTimeout(r, 500));
     }
+    return false;
+}
+
+/** "passive" when Turnstile let the browser through, "click" after ticking its box, else null. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function solveTurnstile(page: any): Promise<"passive" | "click" | null> {
+    if (await turnstilePassed(page, 6000)) return "passive";
+    // The Chrome bridge's synthetic clicks don't count with Cloudflare: real input only.
+    if (getCurrentMode() === "chrome" || typeof page.mouse?.click !== "function") return null;
+    const s = (await page.evaluate(TURNSTILE_JS).catch(() => null)) as TurnstileState | null;
+    if (!s?.box) return null;
+    // The box sits ~30px in from the widget's left edge, centred in its 65px-high strip.
+    const x = s.box.x + 30;
+    const y = s.box.y + Math.min(s.box.h, 65) / 2;
+    await page.mouse.move(x, y, { steps: 8 });
+    await page.mouse.click(x, y);
+    return (await turnstilePassed(page, 15000)) ? "click" : null;
 }
 
 // ─── Audio CAPTCHA Bypass (free, no API key) ──────────────────────────────
@@ -644,10 +662,15 @@ export async function handleCaptchaIfPresent(
 
     console.log(`  🤖 CAPTCHA detected: ${info.type} (sitekey: ${info.siteKey?.substring(0, 20) ?? "unknown"})`);
 
-    // ── Tier 1: Turnstile passive stealth (often auto-passes with good stealth) ──
+    // ── Tier 1: Turnstile: a passive pass (common with good stealth), else one real click ──
     if (info.type === "turnstile") {
-        const passed = await waitForTurnstilePassive(page, 20000);
-        if (passed) return { handled: true, type: "turnstile", method: "passive_stealth" };
+        const how = await solveTurnstile(page);
+        if (how)
+            return {
+                handled: true,
+                type: "turnstile",
+                method: how === "passive" ? "passive_stealth" : "turnstile_click",
+            };
     }
 
     // ── Tier 2: reCAPTCHA v2 audio bypass (free, no API key needed) ──────────
@@ -709,7 +732,7 @@ export const browserHandleCaptcha: ToolDefinition = {
         function: {
             name: "browser_handle_captcha",
             description:
-                'Get past a CAPTCHA / human-verification check on the current page ("I\'m not a robot", hCaptcha, reCAPTCHA, Cloudflare Turnstile). Bhai solves it itself: Turnstile passive wait, reCAPTCHA audio, picture grids read with vision (built-in browser), then the NoCaptchaAI / NopeCHA / 2captcha APIs when keys are set. Only if all of that fails does it hand the check to the owner: brings the tab up, messages them on this channel, and waits (up to ~5 min). On success, continue the task from where you stopped. If it returns requires_user:true, do NOT call it again in a loop: tell the owner the page is still waiting on them.',
+                'Get past a CAPTCHA / human-verification check on the current page ("I\'m not a robot", hCaptcha, reCAPTCHA, Cloudflare Turnstile). Bhai solves it itself: Turnstile (wait, then one real click on its box), reCAPTCHA audio, picture grids and drag puzzles read with vision (built-in browser), then the NoCaptchaAI / NopeCHA / 2captcha APIs when keys are set. Only if all of that fails does it hand the check to the owner: brings the tab up, messages them on this channel, and waits (up to ~5 min). On success, continue the task from where you stopped. If it returns requires_user:true, do NOT call it again in a loop: tell the owner the page is still waiting on them.',
             parameters: { type: "object", properties: {}, required: [] },
         },
     },

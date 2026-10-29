@@ -181,7 +181,7 @@ After key actions, verify they worked:
 ## CAPTCHA Handling
 
 If a page shows a human-verification check ("I'm not a robot", reCAPTCHA, hCaptcha, Cloudflare Turnstile):
-1. Call `browser_handle_captcha`. Bhai solves it (Turnstile wait, reCAPTCHA audio, picture grids by vision, solver APIs); only if all fail does it ask the owner and wait (~5 min)
+1. Call `browser_handle_captcha`. Bhai solves it (Turnstile wait and click, reCAPTCHA audio, picture grids and drag puzzles by vision, solver APIs); only if all fail does it ask the owner and wait (~5 min)
 2. On `success: true`, carry on with the original task from where you stopped
 3. On `requires_user: true`, tell the owner the page is still waiting for them and stop; don't call it again in a loop
 
