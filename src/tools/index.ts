@@ -7,6 +7,7 @@ import fs from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { ChatCompletionTool } from "openai/resources/chat/completions.js";
+import { currentSwarmRun, currentSwarmStep, isPaymentCall, outsideSwarm, shellText, swarmGate } from "../agents/swarm-context.js";
 import { firePostToolUse, firePreToolUse } from "../hooks/index.js";
 import { executeMCPTool, getMCPToolSchemas, isMCPTool } from "../mcp/client.js";
 import { checkConsent } from "../security/consent.js";
@@ -184,10 +185,12 @@ import { osSmartClick, setSmartClickLLM } from "./os-smart-click.js";
 import { sessionSearch } from "./session-search.js";
 import { approveSiteSkillTool, setSiteMintLLM, siteSkillMintTool } from "./site-skill-mint.js";
 import { siteTask } from "./site-task.js";
+import { maskKnownValues } from "../security/pii-vault.js";
+import { vaultCall } from "../security/vault.js";
+import { vaultAuthorizePayment, vaultList } from "./vault.js";
 
 export { setCaptchaLLM } from "./browser/captcha-vision.js";
 export { setSiteMintLLM, setSmartClickLLM };
-
 import { IS_LINUX, IS_MAC, IS_WIN } from "./platform.js";
 import { platformInfoTool } from "./platform-info.js";
 import { createPresentation, exportPresentation, listPresentations, modifyPresentation } from "./presentation/index.js";
@@ -348,6 +351,8 @@ registry.set(osSmartClick.schema.function.name, osSmartClick);
 registry.set(siteTask.schema.function.name, siteTask);
 registry.set(siteSkillMintTool.schema.function.name, siteSkillMintTool);
 registry.set(approveSiteSkillTool.schema.function.name, approveSiteSkillTool);
+registry.set(vaultList.schema.function.name, vaultList);
+registry.set(vaultAuthorizePayment.schema.function.name, vaultAuthorizePayment);
 
 // ── Platform-specific OS tools ────────────────
 if (IS_MAC) {
@@ -627,6 +632,11 @@ for (const tool of documentTools) {
     registry.set(tool.schema.function.name, tool);
 }
 
+// Built-in tools, as registered at load. A name registered later (Forge,
+// store, create_tool), or re-registered over a built-in, is unvetted: the swarm
+// gate treats it like an MCP tool (agents/swarm-context.ts).
+const BUILTIN_TOOLS: ReadonlyMap<string, ToolDefinition> = new Map(registry);
+
 // Warm the template registry so list_templates is instant.
 try {
     initDocumentTools();
@@ -646,6 +656,7 @@ try {
  * Emergency rollback: ATLAS_NO_WHATSAPP_TOOL_GATING=true.
  */
 function isToolOfferable(name: string): boolean {
+    if (name.startsWith("vault_")) return process.env.ATLAS_NO_VAULT !== "true";
     if (process.env.ATLAS_NO_WHATSAPP_TOOL_GATING === "true") return true;
     if (name === "whatsapp_send" || name === "whatsapp_sticker" || name === "whatsapp_group_info") {
         return getWhatsAppStatus() === "connected";
@@ -677,6 +688,7 @@ const TOOL_TIMEOUTS: Record<string, number> = {
     browser_navigate: 30_000,
     browser_click: 15_000,
     browser_type: 30_000, // long text + submit + page-ready can take a while
+    vault_authorize_payment: 150_000, // waits up to 2 min for the owner's CVV
     site_task: 600_000, // up to 40 steps, plus the CAPTCHA pipeline (and the owner's ~5 min); a cut-off checkout would keep running unseen
     site_skill_mint: 600_000, // start returns at once; a safety net
     // AX dump + activation + capture + grounding (+ one Sonnet re-ground). The
@@ -734,6 +746,18 @@ export function consentKey(name: string, args: Record<string, unknown>): string 
     return `${name}:${stableJson(args)}`;
 }
 
+/** The live browser tab's https host for a payment authorization ("" when no https page). */
+async function livePaymentHost(): Promise<string> {
+    try {
+        const { getActivePage } = await import("./browser/core.js");
+        const { liveUrl } = await import("./browser/vault-typing.js");
+        const { siteOf } = await import("../security/vault.js");
+        return siteOf(await liveUrl(await getActivePage()));
+    } catch {
+        return ""; // no browser: authorizePayment refuses with "open the https payment page first"
+    }
+}
+
 function stableJson(v: unknown): string {
     if (Array.isArray(v)) return `[${v.map(stableJson).join(",")}]`;
     if (v && typeof v === "object") {
@@ -770,6 +794,26 @@ const STOPPABLE_TOOLS = new Set(["site_task"]);
 export async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
     const startTime = Date.now();
     const timeout = getToolTimeout(name);
+
+    // Inside a swarm run, external side effects need the owner's OK for the
+    // step (agents/swarm-context.ts); the gate also stands in for the per-call
+    // consent below, since sub-agents can't ask the owner themselves (it holds
+    // everything requiresConfirmation flags, except a dangerous word in a
+    // grep/cat's arguments).
+    const { confirmed: _c, ...gateArgs } = input;
+    const unvetted = isMCPTool(name) || (registry.has(name) && registry.get(name) !== BUILTIN_TOOLS.get(name));
+    const swarm = await swarmGate(name, gateArgs, unvetted);
+    if (swarm && swarm !== "allow") {
+        auditLog({
+            tool: name,
+            args: gateArgs,
+            success: false,
+            cached: false,
+            durationMs: 0,
+            error: "needs_owner_approval",
+        });
+        return swarm;
+    }
 
     // Check MCP tools first (bypass intelligence layer)
     if (isMCPTool(name)) {
@@ -809,10 +853,24 @@ export async function executeTool(name: string, input: Record<string, unknown>):
     // `confirmed` is stripped only for gated calls: other tools (git_op) read
     // their own `confirmed` flag.
     const { confirmed, ...actionArgs } = input;
-    const confirmCheck = requiresConfirmation(name, actionArgs);
+    // vault_authorize_payment binds the owner's OK to the MERCHANT. Capture the live
+    // browser origin NOW and fold it into both the consent prompt and the consent key,
+    // so a yes for site A can't let the card be typed on site B (the tab can't be
+    // swapped between the ask and the confirm). Overwrites any model-supplied `site`.
+    if (name === "vault_authorize_payment") actionArgs.site = await livePaymentHost();
+    // shell_exec runs `command` plus its `args` array: judge the whole line.
+    const confirmCheck = requiresConfirmation(
+        name,
+        name.startsWith("shell_exec") ? { ...actionArgs, command: shellText(name, actionArgs) } : actionArgs,
+    );
     if (
         confirmCheck.needsConfirmation &&
-        checkConsent(consentKey(name, actionArgs), confirmed === true) !== "granted"
+        // The swarm gate stands in for this inside a swarm. A payment is refused there
+        // outright, without checkConsent: recording an ask the owner never sees would let
+        // an unrelated "ok" mid-run grant a sub-agent's confirmed retry.
+        (currentSwarmRun()
+            ? isPaymentCall(name, actionArgs)
+            : checkConsent(consentKey(name, actionArgs), confirmed === true) !== "granted")
     ) {
         console.log(`  ⚠️  ${name} needs the owner's OK first`);
         auditLog({
@@ -823,6 +881,20 @@ export async function executeTool(name: string, input: Record<string, unknown>):
             durationMs: 0,
             error: "needs_confirmation",
         });
+        // Only a payment or an order confirm gets here inside a swarm. A sub-agent can't ask the owner, so
+        // record it: swarm_task tells the main agent to make it itself (isPaymentHold).
+        const run = currentSwarmRun();
+        if (run) {
+            const where = String(actionArgs.site ?? actionArgs.skill ?? "unknown site");
+            const amount = actionArgs.amount !== undefined ? ` for ${String(actionArgs.amount)}` : "";
+            const summary = `${name} → ${where}${amount} (a payment or order can't be approved inside a swarm: do it yourself after the owner's OK)`;
+            run.blocked.push({ step: currentSwarmStep()?.stepId, tool: name, summary });
+            return JSON.stringify({
+                error: `needs_owner_approval: ${summary} was NOT run.`,
+                needs_owner_approval: true,
+                next_step: "Do not retry or work around this. Report that this payment needs the owner's OK.",
+            });
+        }
         return JSON.stringify({
             error: confirmCheck.warningMessage,
             needs_confirmation: true,
@@ -854,9 +926,14 @@ export async function executeTool(name: string, input: Record<string, unknown>):
 
     // PreToolUse hooks — can modify input or block the call outright.
     // Fail-open: any exception leaves input unchanged.
+    // A call typing a saved secret (security/vault.ts): hooks see tokens, not
+    // values, and can't rewrite it (its origin was checked for this input).
+    const vault = vaultCall();
+    const forHooks = (v: Record<string, unknown>) =>
+        vault ? (JSON.parse(maskKnownValues(JSON.stringify(v))) as Record<string, unknown>) : v;
     let effectiveInput = input;
     try {
-        const pre = await firePreToolUse(name, input);
+        const pre = await firePreToolUse(name, forHooks(input));
         if (pre.block) {
             const reason = pre.block_reason ?? "Blocked by PreToolUse hook.";
             auditLog({
@@ -869,9 +946,8 @@ export async function executeTool(name: string, input: Record<string, unknown>):
             });
             return JSON.stringify({ error: reason, blocked_by_hook: true });
         }
-        if (pre.modifiedInput) {
-            effectiveInput = pre.modifiedInput;
-        }
+        if (pre.modifiedInput && vault) console.warn(`[TOOL] PreToolUse hook rewrite ignored: ${name} types a saved secret`);
+        else if (pre.modifiedInput) effectiveInput = pre.modifiedInput;
     } catch (err) {
         console.warn(`[TOOL] PreToolUse hook chain errored for ${name}: ${(err as Error).message}`);
     }
@@ -882,7 +958,10 @@ export async function executeTool(name: string, input: Record<string, unknown>):
 
     try {
         // Execute with timeout protection
-        let result = await executeWithTimeout(tool.handler(effectiveInput), timeout, name);
+        // An allowed side effect runs outside the swarm's stores: background work it
+        // starts (a long task's phases) must not inherit the step's grant.
+        const run = () => tool.handler(effectiveInput);
+        let result = await executeWithTimeout(swarm === "allow" ? outsideSwarm(run) : run(), timeout, name);
         // CAPTCHAs never reach the agent: a check this step left on the page goes to the
         // CAPTCHA pipeline (solvers, then the owner) while this call waits, outside the
         // tool's own timeout; Stop still ends it.
@@ -922,7 +1001,7 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         // PostToolUse hooks — side effects only. Fire-and-forget; don't await
         // anything that could delay the agent's next iteration.
         try {
-            void firePostToolUse(name, effectiveInput, result, success);
+            void firePostToolUse(name, forHooks(effectiveInput), vault ? maskKnownValues(result) : result, success);
         } catch (err) {
             console.warn(`[TOOL] PostToolUse hook chain errored for ${name}: ${(err as Error).message}`);
         }
@@ -935,7 +1014,7 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         recordToolUsage(name, false, durationMs);
 
         try {
-            void firePostToolUse(name, effectiveInput, JSON.stringify({ error: message }), false);
+            void firePostToolUse(name, forHooks(effectiveInput), JSON.stringify({ error: message }), false);
         } catch {
             /* */
         }

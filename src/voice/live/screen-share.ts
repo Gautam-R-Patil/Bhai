@@ -17,6 +17,7 @@ import { promisify } from "node:util";
 import { promises as fsp } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { withCursorHidden } from "../../screen/agent-cursor.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -97,7 +98,7 @@ async function captureFrameMac(): Promise<{ dataB64: string; mimeType: string }>
     const scaledPath = join(tmpDir, `atlas-screenshare-${stamp}-s.jpg`);
     try {
         // -x silent, -t jpg for JPEG, -C exclude cursor (less noise)
-        await execFileAsync("screencapture", ["-x", "-t", "jpg", "-C", rawPath], { timeout: 4000 });
+        await withCursorHidden(() => execFileAsync("screencapture", ["-x", "-t", "jpg", "-C", rawPath], { timeout: 4000 }));
         // sips is part of macOS — downscale without external deps.
         await execFileAsync("sips", [
             "-Z", String(TARGET_WIDTH),

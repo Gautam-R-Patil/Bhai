@@ -198,14 +198,35 @@ async function extractArchive(archivePath: string, destPath: string): Promise<vo
 // and on Windows the vars cmd.exe/npm use to find their dirs. Never tokens
 // (TELEGRAM_BOT_TOKEN, GITHUB_TOKEN, EMAIL_PASSWORD, ...); npm reads the user's
 // own registry auth from ~/.npmrc via HOME.
-const NPM_ENV_EXTRAS = /^(npm_config_|HTTPS?_PROXY$|NO_PROXY$|SystemRoot$|ComSpec$|PATHEXT$|APPDATA$|LOCALAPPDATA$|USERPROFILE$)/i;
+const NPM_ENV_EXTRAS =
+  /^(npm_config_|HTTPS?_PROXY$|NO_PROXY$|NODE_EXTRA_CA_CERTS$|SystemRoot$|ComSpec$|PATHEXT$|APPDATA$|LOCALAPPDATA$|USERPROFILE$|TEMP$|TMP$)/i;
+
+// npm config the package must not choose. A package's own .npmrc is npm's
+// "project" config and may set any key: git=<a binary it ships>, global=true or
+// location=global (install into the global prefix, linking bins that shadow
+// commands on PATH). A git dependency is prepared by a nested `npm install` in
+// its clone, with that dep's .npmrc and without --ignore-scripts. Env config
+// outranks every .npmrc and is inherited by nested npm runs, so pin it here.
+const NPM_LOCKDOWN: Record<string, string> = {
+  npm_config_ignore_scripts: "true",
+  npm_config_allow_git: "none", // npm 11+: no git deps, so no git binary and no nested npm
+  npm_config_git: "git", // older npm: git from PATH, never a path the package names
+  npm_config_global: "false",
+  npm_config_location: "project",
+  // cmd.exe (shell: true on Windows) looks for `npm` in the cwd, the package's
+  // folder, before PATH; this turns that off.
+  NoDefaultCurrentDirectoryInExePath: "1",
+};
+const PINNED = new Set(Object.keys(NPM_LOCKDOWN).map((k) => k.toLowerCase()));
 
 export function buildNpmInstallEnv(): Record<string, string> {
   const env = buildMcpEnv();
   for (const [k, v] of Object.entries(process.env)) {
+    // npm reads npm_config_* case-insensitively: drop any other spelling of a pinned key.
+    if (PINNED.has(k.toLowerCase())) continue;
     if (typeof v === "string" && NPM_ENV_EXTRAS.test(k) && !/auth|token|password/i.test(k)) env[k] = v;
   }
-  return env;
+  return { ...env, ...NPM_LOCKDOWN };
 }
 
 // --ignore-scripts: a store package's (or its deps') install/postinstall hooks
@@ -215,6 +236,8 @@ export function buildNpmInstallEnv(): Record<string, string> {
 // or ship prebuilt binaries inside the package. The server itself later runs
 // under buildMcpEnv, also without the bot's secrets.
 export async function runNpmInstall(dir: string): Promise<void> {
+  // The package's .npmrc has no say at all, whatever keys a future npm adds.
+  await rm(join(dir, ".npmrc"), { force: true, recursive: true });
   return new Promise((resolve, reject) => {
     const proc = spawn("npm", ["install", "--production", "--ignore-scripts", "--no-audit", "--no-fund"], {
       cwd: dir,

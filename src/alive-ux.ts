@@ -431,9 +431,34 @@ export function getMemoryAck(action: "stored" | "recalled" | "forgot"): string {
 
 // ── Smart Message Chunking ───────────────────────────
 
+/** Fenced block that a cut at `pos` would land inside, if any. */
+function findFenceAround(
+    text: string,
+    pos: number,
+): { start: number; openLine: string; openLineEnd: number; end: number } | null {
+    let offset = 0;
+    let open: { start: number; openLine: string; openLineEnd: number } | null = null;
+    for (const line of text.split("\n")) {
+        if (!open && offset >= pos) return null;
+        const lineEnd = offset + line.length;
+        // "```npm i foo``` then …" opens and closes on one line — an even count isn't a fence toggle
+        if (line.trimStart().startsWith("```") && line.split("```").length % 2 === 0) {
+            if (!open) {
+                open = { start: offset, openLine: line.trim(), openLineEnd: lineEnd };
+            } else {
+                if (pos < lineEnd) return { ...open, end: lineEnd };
+                open = null;
+            }
+        }
+        offset = lineEnd + 1;
+    }
+    return open ? { ...open, end: -1 } : null;
+}
+
 /**
  * Splits a message into chunks that preserve code blocks and natural paragraph breaks.
- * Never cuts in the middle of a code block or mid-sentence.
+ * Prefers cutting outside fenced code; when a block is too big to keep whole, the
+ * fence is closed at the end of one chunk and reopened (same language) in the next.
  */
 export function smartChunkMessage(text: string, maxLength: number): string[] {
     const chunks: string[] = [];
@@ -445,58 +470,40 @@ export function smartChunkMessage(text: string, maxLength: number): string[] {
             break;
         }
 
-        // Find the best split point
-        let splitAt = -1;
-        let inCodeBlock = false;
-        let codeBlockStart = -1;
+        // Find best split: double newline (paragraph) > single newline > sentence end > space
+        let splitAt: number;
+        const searchRange = remaining.substring(0, maxLength);
+        const lastParaBreak = searchRange.lastIndexOf("\n\n");
+        const lastLineBreak = searchRange.lastIndexOf("\n");
+        const sentenceEnd = Math.max(
+            searchRange.lastIndexOf(". "),
+            searchRange.lastIndexOf("! "),
+            searchRange.lastIndexOf("? "),
+        );
+        const lastSpace = searchRange.lastIndexOf(" ");
+        if (lastParaBreak > maxLength * 0.3) splitAt = lastParaBreak;
+        else if (lastLineBreak > maxLength * 0.5) splitAt = lastLineBreak;
+        else if (sentenceEnd > maxLength * 0.5) splitAt = sentenceEnd + 1;
+        else splitAt = lastSpace > maxLength * 0.3 ? lastSpace : maxLength;
 
-        // Track code blocks — scan the ENTIRE remaining text to find matching pairs
-        {
-            let scanPos = 0;
-            while (scanPos < remaining.length) {
-                const idx = remaining.indexOf("```", scanPos);
-                if (idx === -1) break;
-                if (!inCodeBlock) {
-                    inCodeBlock = true;
-                    codeBlockStart = idx;
-                } else {
-                    inCodeBlock = false;
-                    codeBlockStart = -1;
-                }
-                scanPos = idx + 3;
-            }
-        }
-
-        // If a code block spans across the maxLength boundary, split BEFORE it opens
-        if (inCodeBlock && codeBlockStart >= 0 && codeBlockStart < maxLength) {
-            splitAt = codeBlockStart > 0 ? codeBlockStart : maxLength;
-        } else {
-            // Find best split: double newline (paragraph) > single newline > sentence end > space
-            const searchRange = remaining.substring(0, maxLength);
-
-            // Prefer paragraph breaks
-            const lastParaBreak = searchRange.lastIndexOf("\n\n");
-            if (lastParaBreak > maxLength * 0.3) {
-                splitAt = lastParaBreak;
+        const fence = findFenceAround(remaining, splitAt);
+        if (fence) {
+            if (fence.end !== -1 && fence.end <= maxLength) {
+                // Block closes within this chunk — cut right after it
+                splitAt = fence.end;
+            } else if (fence.start > maxLength * 0.3) {
+                // Block starts well into the chunk — move it whole to the next one
+                splitAt = fence.start;
             } else {
-                // Try line break
-                const lastLineBreak = searchRange.lastIndexOf("\n");
-                if (lastLineBreak > maxLength * 0.5) {
-                    splitAt = lastLineBreak;
-                } else {
-                    // Try sentence end
-                    const sentenceEnd = Math.max(
-                        searchRange.lastIndexOf(". "),
-                        searchRange.lastIndexOf("! "),
-                        searchRange.lastIndexOf("? ")
-                    );
-                    if (sentenceEnd > maxLength * 0.5) {
-                        splitAt = sentenceEnd + 1;
-                    } else {
-                        // Fall back to word break
-                        const lastSpace = searchRange.lastIndexOf(" ");
-                        splitAt = lastSpace > maxLength * 0.3 ? lastSpace : maxLength;
-                    }
+                // Block too big to keep whole: close it here, reopen in the next chunk
+                const budget = maxLength - 4; // room for "\n```"
+                if (budget > fence.openLineEnd + 1) {
+                    let cut = remaining.lastIndexOf("\n", budget);
+                    if (cut <= fence.openLineEnd) cut = budget;
+                    chunks.push(`${remaining.substring(0, cut).trimEnd()}\n\`\`\``);
+                    const rest = remaining.substring(cut).replace(/^\n/, "");
+                    remaining = `${fence.openLine}\n${rest}`;
+                    continue;
                 }
             }
         }

@@ -480,7 +480,9 @@ export class HNSWIndex {
             vectors.push(decompressVec(node.vector));
         }
 
-        if (nativeModule) {
+        // nativeModule is gated on cosineSimilarity existing, not findTopKSimilar;
+        // guard the exact export so a partial build falls back instead of throwing.
+        if (nativeModule?.findTopKSimilar) {
             // Use native parallel top-k search (10-50x faster)
             const results = nativeModule.findTopKSimilar(query, vectors, k);
             return results.map((r) => ({

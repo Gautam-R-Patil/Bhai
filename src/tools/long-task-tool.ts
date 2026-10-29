@@ -38,6 +38,14 @@ export function clearLongTaskProgress(): void {
 
 // ── Progress adapter ──────────────────────────
 
+/** Exactly what telegram.ts parses: /\[LONG-TASK:([^\]]+)\]\s*(.*)/ */
+export function longTaskMarker(taskId: string, message: string): string {
+    return `[LONG-TASK:${taskId}] ${message}`;
+}
+
+// The channel's callback outlives the turn on purpose: a Discord thread keeps
+// posting phase updates and the result, while Telegram's ignores updates once
+// its status message is gone. Completion also goes to the proactive bus below.
 function makeProgressCallback(): ((progress: LongTaskProgress) => Promise<void>) | undefined {
     if (!_onProgress) return undefined;
     const fn = _onProgress;
@@ -118,6 +126,10 @@ The task runs asynchronously — you'll get a task ID to check on it later.`,
 
         try {
             const task = await startLongTask(_llm, description, makeProgressCallback());
+            // Telegram (progressCallback in telegram.ts) turns this marker into Check/Cancel buttons.
+            await _onProgress?.(
+                longTaskMarker(task.id, `Long task started: ${task.phases.length} phases running in background`),
+            ).catch(() => {});
 
             return JSON.stringify({
                 success: true,
@@ -284,6 +296,9 @@ export const resumeLongTaskTool: ToolDefinition = {
             if (!task) {
                 return JSON.stringify({ error: `Task "${taskId}" not found in checkpoints.` });
             }
+            await _onProgress?.(
+                longTaskMarker(task.id, `Long task resumed from phase ${task.currentPhase + 1}/${task.phases.length}`),
+            ).catch(() => {});
 
             return JSON.stringify({
                 success: true,

@@ -339,8 +339,11 @@ fn is_allowed_command(cmd: &str) -> bool {
             | "select_option"
             | "wait_for"
             | "ping"
-            // Allowlisted CDP methods (the extension holds the allowlist)
+            // Raw CDP (allowlisted in the extension): native typing, file inputs, real
+            // mouse input for the CAPTCHA solver; the site-scoped cookie read used to
+            // carry a login into Playwright.
             | "cdp"
+            | "get_cookies"
             // The picture-CAPTCHA solver: read widget frames, play a mouse gesture
             | "captcha_frames"
             | "mouse_path"

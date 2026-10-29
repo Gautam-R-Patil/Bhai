@@ -66,51 +66,81 @@ const WORD_RE = new Map(
  * Detect emotion from user message text.
  * Zero API cost — uses linguistic cue analysis.
  */
+// A negator just before a cue flips its meaning ("not amazing"), so we drop
+// that cue rather than scoring the praise as positive.
+const NEGATOR_RE = /\b(?:not|no|never|without|hardly|barely)\b|n['’]t\b/;
+
 export function detectEmotion(text: string): EmotionAnalysis {
     const lower = text.toLowerCase();
     const signals: string[] = [];
 
-    let bestEmotion = "neutral";
-    let bestScore = 0;
-    let totalValence = 0;
-    let totalArousal = 0;
-    let emotionCount = 0;
-
+    // Collect every cue hit with its span so overlapping phrases can be
+    // de-duplicated and a preceding negator can be checked.
+    type Hit = { emotion: string; word: string; valence: number; arousal: number; start: number; end: number };
+    const hits: Hit[] = [];
     for (const [emotion, data] of Object.entries(EMOTION_SIGNALS)) {
-        let matchCount = 0;
         for (const word of data.words) {
-            if (WORD_RE.get(word)?.test(lower)) {
-                matchCount++;
-                signals.push(`"${word}" → ${emotion}`);
-            }
-        }
-
-        if (matchCount > 0) {
-            const score = matchCount / data.words.length;
-            totalValence += data.valence * matchCount;
-            totalArousal += data.arousal * matchCount;
-            emotionCount += matchCount;
-
-            if (score > bestScore) {
-                bestScore = score;
-                bestEmotion = emotion;
-            }
+            const m = WORD_RE.get(word)?.exec(lower);
+            if (m) hits.push({ emotion, word, valence: data.valence, arousal: data.arousal, start: m.index, end: m.index + word.length });
         }
     }
 
-    // Punctuation signals
+    // Drop a hit whose span sits inside a longer hit's span ("appreciate" ⊂
+    // "really appreciate") so overlapping cues count once, not twice.
+    hits.sort((a, b) => (b.end - b.start) - (a.end - a.start));
+    const kept: Hit[] = [];
+    for (const h of hits) {
+        if (kept.some((k) => k.start <= h.start && k.end >= h.end)) continue;
+        kept.push(h);
+    }
+
+    // Score by raw cue count per emotion (NOT count/lexiconSize — that
+    // penalised the largest lexicon, "frustrated", so one frustrated cue lost
+    // to one cue from any smaller lexicon). Tie-break follows EMOTION_SIGNALS
+    // order via the strict `>`.
+    const counts = new Map<string, number>();
+    let totalValence = 0;
+    let totalArousal = 0;
+    let emotionCount = 0;
+    for (const h of kept) {
+        // Look back only within the current clause: a negator in a previous clause
+        // ("not a fan, this is terrible") must not flip this cue to neutral.
+        let before = lower.slice(Math.max(0, h.start - 20), h.start);
+        const bound = Math.max(before.lastIndexOf(","), before.lastIndexOf("."), before.lastIndexOf(";"),
+            before.lastIndexOf("!"), before.lastIndexOf("?"), before.lastIndexOf("\n"));
+        if (bound >= 0) before = before.slice(bound + 1);
+        if (NEGATOR_RE.test(before)) continue; // negated cue — ignore
+        signals.push(`"${h.word}" → ${h.emotion}`);
+        totalValence += h.valence;
+        totalArousal += h.arousal;
+        emotionCount++;
+        counts.set(h.emotion, (counts.get(h.emotion) || 0) + 1);
+    }
+
+    let bestEmotion = "neutral";
+    let bestCount = 0;
+    for (const emotion of Object.keys(EMOTION_SIGNALS)) {
+        const c = counts.get(emotion) || 0;
+        if (c > bestCount) { bestCount = c; bestEmotion = emotion; }
+    }
+
+    // Punctuation signals — kept separate so they survive even when no cue
+    // matched (an all-caps shout with no lexicon word is still agitated).
     const exclamations = (text.match(/!/g) || []).length;
     const questionMarks = (text.match(/\?/g) || []).length;
     const capsRatio = (text.match(/[A-Z]/g) || []).length / Math.max(text.length, 1);
 
-    if (exclamations > 2) { totalArousal += 0.3; signals.push("Multiple exclamation marks"); }
-    if (capsRatio > 0.5 && text.length > 5) { totalArousal += 0.4; totalValence -= 0.2; signals.push("Excessive caps"); }
+    let punctValence = 0;
+    let punctArousal = 0;
+    if (exclamations > 2) { punctArousal += 0.3; signals.push("Multiple exclamation marks"); }
+    if (capsRatio > 0.5 && text.length > 5) { punctArousal += 0.4; punctValence -= 0.2; signals.push("Excessive caps"); }
     if (questionMarks > 2) { signals.push("Multiple questions → possible confusion"); }
 
-    // Normalize
-    const valence = emotionCount > 0 ? (totalValence / emotionCount) : 0;
-    const arousal = emotionCount > 0 ? (totalArousal / emotionCount) : 0;
-    const confidence = Math.min(1, bestScore * 2 + (signals.length > 0 ? 0.2 : 0));
+    // Average the cue contributions, THEN add punctuation flat — so emphasis
+    // isn't diluted by cue count and isn't discarded when emotionCount === 0.
+    const valence = (emotionCount > 0 ? totalValence / emotionCount : 0) + punctValence;
+    const arousal = (emotionCount > 0 ? totalArousal / emotionCount : 0) + punctArousal;
+    const confidence = Math.min(1, bestCount * 0.3 + (signals.length > 0 ? 0.2 : 0));
 
     return {
         primary: bestEmotion,

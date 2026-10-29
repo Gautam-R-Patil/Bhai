@@ -503,11 +503,14 @@ describe("site-skill-lib", () => {
         expect(lib.rank(menu, "Dal Makhani")).toEqual({ best: null, ambiguous: [], ranked: [] });
     });
 
-    it("ranks 5000 choices in well under 100 ms", () => {
+    it("ranks 5000 choices without an O(n²) blow-up", () => {
         const many = Array.from({ length: 5000 }, (_, n) => ({ label: `Dish number ${n} — ₹${n}` }));
         const t0 = performance.now();
         const r = lib.rank(many, "dish number 4321");
-        expect(performance.now() - t0).toBeLessThan(100);
+        // Linear ranking of 5000 items is a few ms locally; the bound only has to
+        // catch a genuine O(n²) regression, which would be seconds. 100 ms was too
+        // tight for a loaded CI runner (saw 147 ms on Node 24 / ubuntu).
+        expect(performance.now() - t0).toBeLessThan(1000);
         expect(r.best).toBe(many[4321]);
     });
 

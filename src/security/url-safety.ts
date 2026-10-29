@@ -9,6 +9,7 @@
 //      any private/loopback/link-local/CGNAT target. FAIL-CLOSED on DNS error.
 
 import dns from "node:dns/promises";
+import { Agent } from "undici";
 
 // Cloud-provider instance-metadata endpoints. These are the highest-value SSRF
 // targets (credential exfil) and stay blocked regardless of other config.
@@ -111,6 +112,9 @@ function isBlockedIp(addr: string): boolean {
 export interface UrlSafetyResult {
     safe: boolean;
     reason?: string;
+    /** The vetted address to connect to (pin this so the fetch can't re-resolve). */
+    address?: string;
+    family?: number;
 }
 
 /**
@@ -141,14 +145,16 @@ export async function isSafeUrl(url: string): Promise<UrlSafetyResult> {
     // Literal IPs — no DNS needed.
     if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
         if (isPrivateIPv4(host)) return { safe: false, reason: `blocked private IPv4: ${host}` };
-        return { safe: true };
+        return { safe: true, address: host, family: 4 };
     }
     if (host.includes(":")) {
         if (isPrivateIPv6(host)) return { safe: false, reason: `blocked private IPv6: ${host}` };
-        return { safe: true };
+        return { safe: true, address: host, family: 6 };
     }
 
     // Hostname — resolve and verify EVERY address is public. Fail-closed on error.
+    // Return the first vetted address so the caller can PIN it (connecting to a
+    // re-resolved host would reopen a DNS-rebinding TOCTOU window).
     try {
         const records = await dns.lookup(host, { all: true, verbatim: true });
         for (const r of records) {
@@ -156,10 +162,42 @@ export async function isSafeUrl(url: string): Promise<UrlSafetyResult> {
                 return { safe: false, reason: `blocked via DNS to private address: ${r.address}` };
             }
         }
+        const first = records[0];
+        return first ? { safe: true, address: first.address, family: first.family } : { safe: true };
     } catch (err) {
         return { safe: false, reason: `DNS lookup failed: ${(err as Error).message}` };
     }
-    return { safe: true };
+}
+
+/**
+ * Build a DNS `lookup` that only resolves `host` and only to the pre-vetted
+ * `address` (re-validated at connect time). Passed to undici so the socket
+ * connects to exactly the IP we checked — defeating DNS-rebinding TOCTOU where
+ * the fetch's own re-resolution returns a private/metadata IP. TLS SNI and cert
+ * validation still use the original hostname.
+ */
+export function pinnedLookup(host: string, address: string, family: number) {
+    const fam = family === 6 ? 6 : 4;
+    return (hostname: string, options: unknown, callback: (...args: unknown[]) => void): void => {
+        if (normalizeHost(hostname) !== host || isBlockedIp(address)) {
+            callback(new Error(`SSRF guard: refusing to resolve ${hostname}`));
+            return;
+        }
+        if (options && typeof options === "object" && (options as { all?: boolean }).all) {
+            callback(null, [{ address, family: fam }]);
+        } else {
+            callback(null, address, fam);
+        }
+    };
+}
+
+function pinnedDispatcher(host: string, address: string, family: number): Agent {
+    return new Agent({
+        // Short keep-alive: the per-request Agent is single-use, close sockets fast.
+        keepAliveTimeout: 1,
+        keepAliveMaxTimeout: 1,
+        connect: { lookup: pinnedLookup(host, address, family) as never },
+    });
 }
 
 /**
@@ -179,10 +217,22 @@ export async function fetchWithRedirectGuard(
         const check = await isSafeUrl(currentUrl);
         if (!check.safe) return { error: `SSRF guard: ${check.reason}` };
 
-        const response = await fetch(currentUrl, { ...init, redirect: "manual" });
+        // Pin the vetted IP so undici connects to exactly what we validated
+        // instead of performing its own (re-)resolution of the hostname.
+        const host = normalizeHost(new URL(currentUrl).hostname);
+        const dispatcher = check.address
+            ? pinnedDispatcher(host, check.address, check.family ?? 4)
+            : undefined;
+
+        const response = await fetch(currentUrl, { ...init, redirect: "manual", dispatcher } as RequestInit);
         if (response.status >= 300 && response.status < 400) {
             const loc = response.headers.get("location");
             if (!loc) return { response, finalUrl: currentUrl };
+            // This hop's body is discarded; close its sockets now instead of
+            // churning a short-lived Agent per hop across a 500-source run. The
+            // FINAL response's dispatcher is left to self-close (keepAliveTimeout:1)
+            // so the caller can still read its body.
+            void (dispatcher as Agent | undefined)?.destroy?.();
             if (++hop > maxHops) return { error: `Too many redirects (>${maxHops})` };
             currentUrl = new URL(loc, currentUrl).toString();
             continue;

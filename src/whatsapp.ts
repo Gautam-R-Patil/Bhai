@@ -13,6 +13,7 @@ import pino from "pino";
 import qrcode from "qrcode-terminal";
 import { type MediaAttachment, runAgent } from "./agent.js";
 import { categorizeError, getErrorMessage, smartChunkMessage } from "./alive-ux.js";
+import { isStopCommand } from "./channel-text.js";
 import { getDataDir } from "./config/paths.js";
 import type { LLMClient } from "./llm.js";
 import { recall } from "./memory/sqlite.js";
@@ -23,6 +24,7 @@ import {
     resolveQueryByContactName,
     setRelayContactContext,
 } from "./tools/ask-owner.js";
+import { getChannelSender } from "./tools/channel-send.js";
 import type { ToolDefinition } from "./tools/get-current-time.js";
 import { sweepStaleWhatsAppMaps } from "./whatsapp-sweep.js";
 import {
@@ -91,6 +93,9 @@ let socket: WASocket | null = null;
 let baileys: typeof import("@whiskeysockets/baileys");
 let allowedJids: Set<string> = new Set();
 let reconnectAttempts = 0;
+// Set once we've wiped auth for a bad/logged-out session; a second failure stops instead of looping.
+let authClearedForRepair = false;
+let shuttingDown = false;
 let currentQR: string | null = null;
 
 // Per-JID owner conversation histories (full ChatCompletionMessageParam for agent historyFork)
@@ -1269,31 +1274,8 @@ async function handleOwnerMessage(
         console.log("[WA] monitor check failed (non-fatal):", (err as Error).message);
     }
 
-    // Check concurrent task limit
-    const existingTasks = activeTasks.get(jid) || [];
-    if (existingTasks.length >= MAX_CONCURRENT_TASKS) {
-        await sendMessage(jid, `I'm already working on ${existingTasks.length} things. Let me finish one first.`);
-        return;
-    }
-
-    // Stop/cancel commands
-    const STOP_SIGNALS = [
-        "stop",
-        "cancel",
-        "/stop",
-        "/cancel",
-        "abort",
-        "quit it",
-        "stop it",
-        "leave it",
-        "never mind",
-        "nevermind",
-    ];
-    const isStopSignal =
-        STOP_SIGNALS.some((s) => lower === s || lower.startsWith(`${s} `) || lower.endsWith(` ${s}`)) ||
-        (lower.split(" ").length <= 4 && ["stop", "cancel", "abort", "quit"].some((w) => lower.includes(w)));
-
-    if (isStopSignal) {
+    // Stop/cancel commands (checked before the task limit so "stop" works when busy)
+    if (isStopCommand(text)) {
         const tasks = activeTasks.get(jid) || [];
         if (tasks.length > 0) {
             for (const task of tasks) task.controller.abort();
@@ -1303,6 +1285,13 @@ async function handleOwnerMessage(
         } else {
             await sendMessage(jid, "No active task to stop.");
         }
+        return;
+    }
+
+    // Check concurrent task limit
+    const existingTasks = activeTasks.get(jid) || [];
+    if (existingTasks.length >= MAX_CONCURRENT_TASKS) {
+        await sendMessage(jid, `I'm already working on ${existingTasks.length} things. Let me finish one first.`);
         return;
     }
 
@@ -1399,7 +1388,19 @@ async function handleOwnerMessage(
             })
             .catch(() => {});
     }
-    const progressTimer: ReturnType<typeof setTimeout> | null = null;
+    // WhatsApp drops "composing" after ~10s; refresh it until the reply is out
+    const typingKeepAlive = setInterval(() => {
+        socket?.sendPresenceUpdate("composing", jid).catch(() => {});
+    }, 8000);
+    // A "stop" aborts before runAgent returns (a running tool isn't interrupted); drop "typing" now
+    controller.signal.addEventListener(
+        "abort",
+        () => {
+            clearInterval(typingKeepAlive);
+            socket?.sendPresenceUpdate("paused", jid).catch(() => {});
+        },
+        { once: true },
+    );
 
     try {
         // Subscribe + show typing indicator
@@ -1456,7 +1457,7 @@ async function handleOwnerMessage(
             },
         );
 
-        if (progressTimer) clearTimeout(progressTimer);
+        clearInterval(typingKeepAlive);
 
         if (controller.signal.aborted) return;
 
@@ -1505,7 +1506,6 @@ async function handleOwnerMessage(
         // Response sent — stop typing indicator
         await socket?.sendPresenceUpdate("paused", jid).catch(() => {});
     } catch (err) {
-        if (progressTimer) clearTimeout(progressTimer);
         if (!controller.signal.aborted) {
             console.error("[WA] Agent error:", err);
             const errorType = categorizeError(err as Error);
@@ -1513,13 +1513,14 @@ async function handleOwnerMessage(
             await sendMessage(jid, errorMsg);
         }
     } finally {
+        clearInterval(typingKeepAlive);
         const tasks = activeTasks.get(jid) || [];
         activeTasks.set(
             jid,
             tasks.filter((t) => t.taskId !== taskId),
         );
         if ((activeTasks.get(jid) || []).length === 0) activeTasks.delete(jid);
-        await socket?.sendPresenceUpdate("paused", jid);
+        await socket?.sendPresenceUpdate("paused", jid).catch(() => {});
     }
 }
 
@@ -2121,6 +2122,34 @@ export async function initWhatsApp(llm: LLMClient): Promise<void> {
     await connectWhatsApp(llm);
 }
 
+/** Exponential backoff from 3s, capped at 5 minutes. */
+function reconnectDelay(attempt: number): number {
+    return Math.min(3000 * 2 ** Math.min(attempt - 1, 10), 5 * 60_000);
+}
+
+function scheduleReconnect(llm: LLMClient, delayMs: number): void {
+    setTimeout(() => {
+        if (shuttingDown) return;
+        connectWhatsApp(llm).catch((err) => {
+            reconnectAttempts++;
+            const delay = reconnectDelay(reconnectAttempts);
+            console.warn(
+                `[WHATSAPP] Reconnect failed (${(err as Error).message}), retrying in ${Math.round(delay / 1000)}s`,
+            );
+            scheduleReconnect(llm, delay);
+        });
+    }, delayMs);
+}
+
+/** WhatsApp itself is down, so tell the owner through the other channels' senders. */
+function notifyOwnerRepairNeeded(reason: string): void {
+    const text = `WhatsApp got disconnected (${reason.toLowerCase()}). Open Settings > WhatsApp and scan the new QR code to re-link it.`;
+    for (const channel of ["telegram", "discord", "slack", "matrix", "overlay"]) {
+        const send = getChannelSender(channel);
+        if (send) send(text).catch(() => {});
+    }
+}
+
 async function connectWhatsApp(llm: LLMClient): Promise<void> {
     baileys ??= await import("@whiskeysockets/baileys");
     const {
@@ -2172,6 +2201,7 @@ async function connectWhatsApp(llm: LLMClient): Promise<void> {
         if (connection === "open") {
             currentQR = null;
             reconnectAttempts = 0; // Reset on successful connection
+            authClearedForRepair = false;
             console.log("[WHATSAPP] Connected successfully!");
 
             // Initialize multi-user system on connection
@@ -2215,40 +2245,39 @@ async function connectWhatsApp(llm: LLMClient): Promise<void> {
 
             console.log(`[WHATSAPP] Connection closed (code: ${statusCode})`);
 
+            socket = null;
+            if (shuttingDown) return;
+
             if (isBadSession || isLoggedOut) {
-                // Clear stale auth and reconnect fresh to get a new QR code
-                console.log(
-                    `[WHATSAPP] ${isBadSession ? "Bad session" : "Logged out"} — clearing auth for fresh QR pairing...`,
-                );
+                const reason = isBadSession ? "Bad session" : "Logged out";
+                if (authClearedForRepair) {
+                    // Already wiped once and the fresh pairing failed the same way — stop, don't loop
+                    console.error(
+                        `[WHATSAPP] ${reason} again after clearing auth — stopping. Re-link WhatsApp from Settings (or restart) to pair again.`,
+                    );
+                    return;
+                }
+                authClearedForRepair = true;
+                console.log(`[WHATSAPP] ${reason} — clearing auth once for fresh QR pairing...`);
                 try {
                     const authFiles = await fs.readdir(AUTH_DIR);
                     for (const file of authFiles) {
                         await fs.unlink(join(AUTH_DIR, file)).catch(() => {});
                     }
-                    console.log("[WHATSAPP] Auth cleared. Reconnecting for fresh QR code...");
                 } catch {
                     console.warn("[WHATSAPP] Could not clear auth directory");
                 }
-                socket = null;
+                notifyOwnerRepairNeeded(reason);
                 reconnectAttempts = 0;
-                await new Promise((r) => setTimeout(r, 2000));
-                await connectWhatsApp(llm);
+                scheduleReconnect(llm, 2000); // one fresh connect so a new QR is shown
             } else {
-                // Transient error — reconnect with backoff
+                // Transient error — exponential backoff capped at 5 min, never give up
                 reconnectAttempts++;
-                const delay = Math.min(3000 * 2 ** (reconnectAttempts - 1), 120000);
+                const delay = reconnectDelay(reconnectAttempts);
                 console.log(
                     `[WHATSAPP] Reconnecting (attempt ${reconnectAttempts}, delay ${Math.round(delay / 1000)}s)...`,
                 );
-                if (reconnectAttempts > 20) {
-                    console.error(
-                        "[WHATSAPP] Max reconnect attempts (20) reached. Giving up. Restart the app to retry.",
-                    );
-                    socket = null;
-                    return;
-                }
-                await new Promise((r) => setTimeout(r, delay));
-                await connectWhatsApp(llm);
+                scheduleReconnect(llm, delay);
             }
         }
     });
@@ -2408,6 +2437,7 @@ export async function sendWhatsAppProactiveMessage(message: string, filePath?: s
  * Gracefully close the WhatsApp connection.
  */
 export async function closeWhatsApp(): Promise<void> {
+    shuttingDown = true;
     stopStateSweep();
     if (socket) {
         try {

@@ -101,6 +101,9 @@ export function initTraitsDB(db: Database): void {
     try { db.run("ALTER TABLE behavioral_traits ADD COLUMN explicit INTEGER DEFAULT 0"); } catch { /* already exists */ }
     try { db.run("ALTER TABLE behavioral_traits ADD COLUMN topics TEXT DEFAULT '[]'"); } catch { /* already exists */ }
     try { db.run("ALTER TABLE behavioral_traits ADD COLUMN reinforcement_count INTEGER DEFAULT 0"); } catch { /* already exists */ }
+    // Anchor for incremental decay (see decayTraits). Separate from last_seen_ts
+    // so decay never corrupts the recency signal that ranking reads.
+    try { db.run("ALTER TABLE behavioral_traits ADD COLUMN last_decay_ts TEXT"); } catch { /* already exists */ }
 
     console.log("🧬 Behavioral traits engine initialized (SAC-DR)");
 }
@@ -274,18 +277,43 @@ export function upsertTrait(
 /**
  * Apply exponential decay: confidence *= exp(-λ * days_inactive)
  * Prune traits below threshold. Returns count pruned.
+ *
+ * Decays INCREMENTALLY from last_decay_ts (or last_seen_ts, whichever is
+ * later), then advances last_decay_ts. The product of the per-run factors is
+ * exp(-λ * total_inactive_days), so running this many times a day converges to
+ * the right value instead of compounding. The old `min(confidence, factor)`
+ * never decayed anything below ~0.76 (so pruning was dead), and a plain
+ * `confidence * exp(-λ * fullInactive)` recomputed over the full gap each run
+ * would over-decay quadratically and prune genuine traits after a week's gap.
  */
+/** Pure decay decision for one trait, so the math is testable without the DB. */
+export function computeTraitDecay(
+    confidence: number,
+    lastSeenMs: number,
+    lastDecayMs: number | null,
+    nowMs: number,
+): { action: "prune" | "update" | "none"; newConfidence: number } {
+    const anchor = Math.max(lastSeenMs, lastDecayMs ?? lastSeenMs);
+    const daysInactive = Math.min((nowMs - anchor) / (1000 * 60 * 60 * 24), MAX_DECAY_DAYS);
+    if (daysInactive <= 0) return { action: "none", newConfidence: confidence };
+    const newConf = confidence * Math.exp(-LAMBDA * daysInactive);
+    if (newConf < REMOVAL_THRESHOLD) return { action: "prune", newConfidence: newConf };
+    if (Math.abs(newConf - confidence) > 0.001) return { action: "update", newConfidence: newConf };
+    return { action: "none", newConfidence: confidence };
+}
+
 export function decayTraits(): number {
     if (!_db) return 0;
 
     // Get all traits for decay calculation
     const results = _db.exec(
-        "SELECT trait_key, confidence, last_seen_ts FROM behavioral_traits"
+        "SELECT trait_key, confidence, last_seen_ts, last_decay_ts FROM behavioral_traits"
     );
 
     if (results.length === 0 || results[0].values.length === 0) return 0;
 
     const now = Date.now();
+    const nowIso = new Date(now).toISOString();
     let decayed = 0;
 
     beginTransaction();
@@ -294,26 +322,22 @@ export function decayTraits(): number {
             const traitKey = row[0] as string;
             const confidence = row[1] as number;
             const lastSeen = new Date(row[2] as string).getTime();
+            // Anchor = the later of last-seen / last-decay. Reinforcement bumps
+            // last_seen_ts to now, so a just-reinforced trait has anchor == now
+            // and doesn't decay until real idle time accrues.
+            const lastDecay = row[3] ? new Date(row[3] as string).getTime() : lastSeen;
+            const d = computeTraitDecay(confidence, lastSeen, lastDecay, now);
 
-            const daysInactive = Math.min((now - lastSeen) / (1000 * 60 * 60 * 24), MAX_DECAY_DAYS);
-
-            if (daysInactive > 0) {
-                // Idempotent decay: compute from time-since-last-seen, not from current value.
-                // This prevents double-decay when decayTraits() runs multiple times.
-                const decayFactor = Math.exp(-LAMBDA * daysInactive);
-                const newConf = Math.min(confidence, decayFactor);
-
-                if (newConf < REMOVAL_THRESHOLD) {
-                    _db.run("DELETE FROM behavioral_traits WHERE trait_key = ?", [traitKey]);
-                    debugLog("DECAY", `Pruned trait ${traitKey} (conf=${newConf.toFixed(3)} < ${REMOVAL_THRESHOLD})`);
-                    decayed++;
-                } else if (Math.abs(newConf - confidence) > 0.001) {
-                    _db.run(
-                        "UPDATE behavioral_traits SET confidence = ? WHERE trait_key = ?",
-                        [newConf, traitKey]
-                    );
-                    debugLog("DECAY", `Decayed ${traitKey}: ${confidence.toFixed(3)} → ${newConf.toFixed(3)} (${daysInactive.toFixed(1)} days)`);
-                }
+            if (d.action === "prune") {
+                _db.run("DELETE FROM behavioral_traits WHERE trait_key = ?", [traitKey]);
+                debugLog("DECAY", `Pruned trait ${traitKey} (conf=${d.newConfidence.toFixed(3)} < ${REMOVAL_THRESHOLD})`);
+                decayed++;
+            } else if (d.action === "update") {
+                _db.run(
+                    "UPDATE behavioral_traits SET confidence = ?, last_decay_ts = ? WHERE trait_key = ?",
+                    [d.newConfidence, nowIso, traitKey]
+                );
+                debugLog("DECAY", `Decayed ${traitKey}: ${confidence.toFixed(3)} → ${d.newConfidence.toFixed(3)}`);
             }
         }
         commitTransaction();

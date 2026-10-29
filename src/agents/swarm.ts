@@ -15,17 +15,27 @@ import { selectForPlanning, selectForSynthesis } from "../model-router.js";
 import { createHierarchicalPlan } from "../planning/hierarchical-planner.js";
 import { verifyReasoning } from "../planning/logic-verifier.js";
 import { runMCTSPlanning } from "../planning/mcts-planner.js";
+import { checkConsent } from "../security/consent.js";
 import { maybeCreateSkill, type ToolCallRecord } from "../skills/auto-skill-creator.js";
 import { extractJSON } from "../utils/json-extract.js";
 import { runCodeCriticIfCoder } from "./code-critic.js";
 import { classifyComplexity } from "./complexity-classifier.js";
 import { findTemplates, formatTemplateHint, saveTemplate } from "./decomposition-library.js";
 import { evaluateAndOptimize } from "./evaluator.js";
-import { executeMesh, type MeshStep } from "./mesh.js";
+import { executeMesh, type MeshResult, type MeshStep } from "./mesh.js";
 import { shouldUseMoA, synthesizeWithMoA } from "./mixture.js";
 import { runMultiCriticDebate } from "./multi-critic.js";
 import { replan, shouldConsiderReplan } from "./replanner.js";
 import type { AgentRole, SubAgentResult } from "./sub-agent.js";
+import {
+    currentSwarmRun,
+    currentSwarmStep,
+    isPaymentHold,
+    runWideGrant,
+    type SwarmRunContext,
+    swarmConsentKey,
+    withSwarmRun,
+} from "./swarm-context.js";
 
 // ── Types ─────────────────────────────────────
 
@@ -43,12 +53,36 @@ export interface SwarmResult {
     evaluationScore?: number; // Quality score from evaluator (#7)
     replanned?: boolean; // Whether the plan was revised mid-execution (#6)
     totalEstimatedCost?: number; // Total estimated cost (#16)
+    /** Steps that are NOT done because they need the owner's approval. */
+    needsApproval?: string[];
+    /** Side-effecting tool calls the swarm's tool gate did not run (tool + target). */
+    blocked?: string[];
+    /** Payments a sub-agent tried: never made in a swarm; the main agent makes them after the owner's OK. */
+    paymentsNotMade?: string[];
+    /** Every step's result (a held-back run is resumed from these). */
+    stepResults?: Map<string, SubAgentResult>;
 }
 
 // ── Constants ─────────────────────────────────
 
 const MAX_STEPS = 20;
 const STEP_TIMEOUT_MS = 300000; // 5 minutes per step
+const MAX_SYNTH_STEP_CHARS = 4000; // per-step output cap in the synthesis prompt
+
+/**
+ * Hierarchical planning, logic verification and MCTS refinement cost ~25 LLM
+ * calls before any step runs and only add hint text. Opt-in.
+ */
+function deepPlanningEnabled(): boolean {
+    return process.env.ATLAS_SWARM_DEEP_PLANNING === "true";
+}
+
+/** Head + tail cap so one huge step output can't blow up the synthesis prompt. */
+export function capStepOutput(output: string, max = MAX_SYNTH_STEP_CHARS): string {
+    if (output.length <= max) return output;
+    const half = Math.floor(max / 2);
+    return `${output.slice(0, half)}\n…[${output.length - 2 * half} chars omitted]…\n${output.slice(-half)}`;
+}
 
 // ── Main Entry Point ─────────────────────────
 
@@ -62,19 +96,143 @@ export async function runSwarm(
     llm: LLMClient,
     userRequest: string,
     onProgress?: (msg: string) => Promise<void>,
+    /** swarm_task's `confirmed`: the owner said yes to this exact task (checked by security/consent.ts). */
+    confirmed = false,
+): Promise<SwarmResult> {
+    // The run context the tool gate reads (swarm-context.ts). Consent is checked
+    // once, now, while the owner's yes is still their latest message; a grant is
+    // consumed. It resumes the run that asked: only the steps held back for the
+    // owner (and the steps built on them) run again, with the owner's OK, so
+    // nothing that already ran is repeated. A swarm started inside a swarm step
+    // inherits that step's approval and hands its blocked calls up to it.
+    const outer = currentSwarmRun();
+    const outerStep = currentSwarmStep();
+    const consentKey = outer?.consentKey ?? swarmConsentKey(userRequest);
+    let run: SwarmRunContext;
+    let resume: HeldRun | undefined;
+    if (outer) {
+        run = {
+            consentKey,
+            consentGranted: !!outerStep?.stepApproved || runWideGrant(outer),
+            blocked: [],
+        };
+    } else {
+        const granted = confirmed && checkConsent(consentKey, true) === "granted";
+        const held = heldRuns.get(consentKey);
+        // A confirmed call without the owner's new yes runs nothing: re-running from
+        // scratch would repeat every finished step and end at the same hold.
+        if (confirmed && !granted && held) {
+            console.log("[SWARM] ✋ confirmed re-run without the owner's yes — nothing run");
+            return {
+                plan: held.plan,
+                synthesis:
+                    "Nothing was run: the owner has not said yes in a new message since being asked. The steps that need approval are still not done.",
+                totalDurationMs: 0,
+                stepsCompleted: [...held.results.values()].filter((r) => r.success).length,
+                stepsFailed: 0,
+                needsApproval: held.plan.steps
+                    .filter((s) => held.results.get(s.id)?.needsApproval)
+                    .map((s) => s.description),
+                stepResults: held.results,
+            };
+        }
+        resume = granted ? held : undefined;
+        const approvedSteps = new Set(
+            resume ? [...resume.results].filter(([, r]) => r.needsApproval).map(([id]) => id) : [],
+        );
+        run = { consentKey, consentGranted: granted, blocked: [], approvedSteps };
+    }
+    const result = await withSwarmRun(run, () => runSwarmSteps(llm, userRequest, onProgress, resume));
+    if (outer) {
+        for (const b of run.blocked) outer.blocked.push({ ...b, step: outerStep?.stepId });
+    } else {
+        heldRuns.delete(consentKey);
+        if (result.needsApproval?.length && result.stepResults) {
+            if (heldRuns.size >= 50) heldRuns.delete(heldRuns.keys().next().value as string);
+            heldRuns.set(consentKey, { plan: result.plan, results: result.stepResults });
+        }
+        // Ask the owner once, now that swarm_task is about to tell them what was
+        // held (gate holds and Telegram asks that timed out alike). Only a yes
+        // sent after this grants the confirmed re-run, never one sent mid-run.
+        // A refused payment isn't asked for here: the main agent asks for it itself.
+        if (result.needsApproval?.length || run.blocked.some((b) => !isPaymentHold(b))) checkConsent(consentKey, false);
+    }
+    const summaries = (payments: boolean) => [
+        ...new Set(run.blocked.filter((b) => isPaymentHold(b) === payments).map((b) => b.summary)),
+    ];
+    const blocked = summaries(false);
+    const paymentsNotMade = summaries(true);
+    return {
+        ...result,
+        ...(blocked.length > 0 ? { blocked } : {}),
+        ...(paymentsNotMade.length > 0 ? { paymentsNotMade } : {}),
+    };
+}
+
+interface HeldRun {
+    plan: SwarmPlan;
+    results: Map<string, SubAgentResult>;
+}
+// Runs that ended with steps held for the owner, by consent key: the confirmed
+// re-run resumes them instead of planning and running everything again.
+// ponytail: in memory; after a restart the consent ask is gone too (security/consent.ts).
+const heldRuns = new Map<string, HeldRun>();
+
+/** @internal — tests only. */
+export function _resetHeldRuns(): void {
+    heldRuns.clear();
+}
+
+/**
+ * The steps a confirmed re-run runs again: the held ones, ones that failed or
+ * never ran, and ones built on any of those, except steps the owner declined
+ * and steps that already had side effects (a re-run would repeat them).
+ */
+export function stepsToResume(steps: MeshStep[], results: Map<string, SubAgentResult>): MeshStep[] {
+    const clean = (id: string) => !results.get(id)?.declined && !results.get(id)?.mutatorsRan?.length;
+    const rerun = new Set(
+        steps
+            .filter((s) => {
+                const r = results.get(s.id);
+                return r?.needsApproval || (!r?.success && clean(s.id));
+            })
+            .map((s) => s.id),
+    );
+    let changed = true;
+    while (changed) {
+        changed = false;
+        for (const s of steps) {
+            if (rerun.has(s.id) || !clean(s.id) || !s.depends_on.some((d) => rerun.has(d))) continue;
+            rerun.add(s.id);
+            changed = true;
+        }
+    }
+    return steps.filter((s) => rerun.has(s.id));
+}
+
+async function runSwarmSteps(
+    llm: LLMClient,
+    userRequest: string,
+    onProgress?: (msg: string) => Promise<void>,
+    resume?: HeldRun,
 ): Promise<SwarmResult> {
     const startTime = Date.now();
 
-    console.log("[SWARM] 🐝 Starting swarm decomposition...");
-    if (onProgress) await onProgress("🐝 planning task breakdown…").catch(() => {});
-
     // ── Step 1: Decompose (with hierarchical planning for highly complex tasks) ──
-    let plan: SwarmPlan | null = null;
+    // A resumed run keeps the plan the owner was told about.
+    let plan: SwarmPlan | null = resume
+        ? { ...resume.plan, steps: resume.plan.steps.map((st) => ({ ...st, depends_on: [...st.depends_on] })) }
+        : null;
+    if (resume) console.log("[SWARM] ▶️ Resuming the steps held for the owner's OK");
+    else {
+        console.log("[SWARM] 🐝 Starting swarm decomposition...");
+        if (onProgress) await onProgress("🐝 planning task breakdown…").catch(() => {});
+    }
 
     // For high-complexity tasks, use hierarchical planning
     try {
         const complexity = classifyComplexity(userRequest);
-        if (complexity.score > 0.7) {
+        if (!plan && deepPlanningEnabled() && complexity.score > 0.7) {
             console.log(`[SWARM] 🏗️ High complexity (${complexity.score.toFixed(2)}) — using hierarchical planner`);
             const hierPlan = await createHierarchicalPlan(llm, userRequest);
             if (hierPlan.abstractGoals.length > 0) {
@@ -137,34 +295,38 @@ export async function runSwarm(
     }
 
     // ── Logic Verification: check plan consistency before execution ──
-    try {
-        const stepDescriptions = plan.steps.map((s) => `${s.id} [${s.role}]: ${s.description}`);
-        const conclusion = `Task "${userRequest}" will be completed via ${plan.steps.length} steps`;
-        const verification = await verifyReasoning(llm, stepDescriptions, conclusion);
-        if (!verification.isConsistent) {
-            console.warn(
-                `[SWARM] ⚠️ Logic verifier found inconsistencies (soundness: ${verification.soundnessScore.toFixed(2)}):`,
-            );
-            for (const issue of verification.issues.slice(0, 3)) {
-                console.warn(`  - ${issue}`);
-            }
-            // Optionally re-decompose if soundness is critically low
-            if (verification.soundnessScore < 0.3) {
-                console.log(`[SWARM] 🔄 Soundness critically low — re-decomposing...`);
-                const revisedPlan = await decompose(
-                    llm,
-                    `${userRequest}\n\nIMPORTANT: A previous plan had logical issues: ${verification.issues.slice(0, 2).join("; ")}. Avoid these.`,
+    if (!resume && deepPlanningEnabled()) {
+        try {
+            const stepDescriptions = plan.steps.map((s) => `${s.id} [${s.role}]: ${s.description}`);
+            const conclusion = `Task "${userRequest}" will be completed via ${plan.steps.length} steps`;
+            const verification = await verifyReasoning(llm, stepDescriptions, conclusion);
+            if (!verification.isConsistent) {
+                console.warn(
+                    `[SWARM] ⚠️ Logic verifier found inconsistencies (soundness: ${verification.soundnessScore.toFixed(2)}):`,
                 );
-                if (revisedPlan && revisedPlan.steps.length > 0) {
-                    plan.steps = revisedPlan.steps;
-                    plan.reasoning = revisedPlan.reasoning + " (revised after logic verification)";
+                for (const issue of verification.issues.slice(0, 3)) {
+                    console.warn(`  - ${issue}`);
                 }
+                // Optionally re-decompose if soundness is critically low
+                if (verification.soundnessScore < 0.3) {
+                    console.log(`[SWARM] 🔄 Soundness critically low — re-decomposing...`);
+                    const revisedPlan = await decompose(
+                        llm,
+                        `${userRequest}\n\nIMPORTANT: A previous plan had logical issues: ${verification.issues.slice(0, 2).join("; ")}. Avoid these.`,
+                    );
+                    if (revisedPlan && revisedPlan.steps.length > 0) {
+                        plan.steps = revisedPlan.steps;
+                        plan.reasoning = revisedPlan.reasoning + " (revised after logic verification)";
+                    }
+                }
+            } else {
+                console.log(
+                    `[SWARM] ✅ Logic verification passed (soundness: ${verification.soundnessScore.toFixed(2)})`,
+                );
             }
-        } else {
-            console.log(`[SWARM] ✅ Logic verification passed (soundness: ${verification.soundnessScore.toFixed(2)})`);
+        } catch (lvErr) {
+            console.warn("[SWARM] Logic verification failed (non-fatal):", (lvErr as Error).message);
         }
-    } catch (lvErr) {
-        console.warn("[SWARM] Logic verification failed (non-fatal):", (lvErr as Error).message);
     }
 
     if (onProgress) {
@@ -177,21 +339,38 @@ export async function runSwarm(
     const MAX_REPLANS = 3;
 
     // Execute mesh — replanning happens internally via the replan callback
-    const meshResult = await executeMesh(llm, plan.steps, onProgress, STEP_TIMEOUT_MS);
+    const meshResult = resume
+        ? await resumeMesh(llm, plan.steps, resume.results, onProgress)
+        : await executeMesh(llm, plan.steps, onProgress, STEP_TIMEOUT_MS);
+    // The owner's OK covered the held steps of this wave only: a held step that
+    // didn't get to run, or a replanned step reusing its id, is gated again.
+    currentSwarmRun()?.approvedSteps?.clear();
 
     // Post-execution replan loop: on failures, ask the LLM whether to revise.
     // If it returns revisedSteps, run another mesh wave on those and merge
     // results back. Capped at MAX_REPLANS to bound cost.
+    // Results of the steps currently in the plan (replaced steps drop out).
+    const planResults = (): SubAgentResult[] =>
+        plan.steps.map((s) => meshResult.results.get(s.id)).filter((r): r is SubAgentResult => !!r);
+    // Steps the replanner already saw and left alone are reported, not replanned again.
+    const settled = new Set<string>();
     while (replanCount < MAX_REPLANS) {
-        const waveResults = [...meshResult.results.values()];
+        // Steps the owner declined or must approve are reported, never replanned.
+        const waveResults = planResults().filter((r) => !notRunByOwner(r) && !settled.has(r.id));
         const stepsCompleted = waveResults.filter((r) => r.success).length;
         const stepsFailed = waveResults.filter((r) => !r.success).length;
         if (stepsFailed === 0) break;
         if (!shouldConsiderReplan(waveResults, stepsCompleted, plan.steps.length)) break;
 
+        // What still needs doing: steps that failed or never ran.
+        const remaining = plan.steps.filter((s) => {
+            const r = meshResult.results.get(s.id);
+            return !r?.success && !notRunByOwner(r) && !settled.has(s.id);
+        });
+        if (remaining.length === 0) break;
         let decision;
         try {
-            decision = await replan(llm, userRequest, meshResult.results, []);
+            decision = await replan(llm, userRequest, meshResult.results, remaining);
         } catch {
             break; // Replanner itself failed — stop retrying
         }
@@ -200,22 +379,32 @@ export async function runSwarm(
             console.log(`[SWARM] 🛑 Replanner recommends abort: ${decision.reason}`);
             break;
         }
-        if (decision.action === "continue" || !decision.revisedSteps || decision.revisedSteps.length === 0) {
+        const ownerBlocked = new Set(
+            plan.steps.filter((s) => notRunByOwner(meshResult.results.get(s.id))).map((s) => s.id),
+        );
+        const revisedSteps = (decision.revisedSteps ?? []).filter((s) => !ownerBlocked.has(s.id));
+        if (decision.action === "continue" || revisedSteps.length === 0) {
             console.log(`[SWARM] 🔄 Replanner: ${decision.action} — ${decision.reason}`);
             break;
         }
 
         replanCount++;
         replanned = true;
-        console.log(
-            `[SWARM] 🔄 Replan #${replanCount}: ${decision.revisedSteps.length} revised step(s) — ${decision.reason}`,
-        );
+        console.log(`[SWARM] 🔄 Replan #${replanCount}: ${revisedSteps.length} revised step(s) — ${decision.reason}`);
         if (onProgress) {
-            await onProgress(`🔄 replanning: ${decision.revisedSteps.length} new step(s)`).catch(() => {});
+            await onProgress(`🔄 replanning: ${revisedSteps.length} new step(s)`).catch(() => {});
         }
 
+        const priorSteps = plan.steps;
+        const next = planAfterReplan(priorSteps, meshResult.results, remaining, revisedSteps);
+        plan.steps = next.steps;
+        for (const id of next.settled) settled.add(id);
+
         try {
-            const revisedResult = await executeMesh(llm, decision.revisedSteps, onProgress, STEP_TIMEOUT_MS);
+            const revisedResult = await executeMesh(llm, next.wave, onProgress, STEP_TIMEOUT_MS, {
+                results: meshResult.results,
+                steps: priorSteps,
+            });
             // Merge: revised wave results override any same-id earlier results,
             // new IDs are added. meshResult.totalDurationMs / parallelGroups
             // accumulate across waves.
@@ -228,7 +417,7 @@ export async function runSwarm(
         }
     }
 
-    const finalWaveResults = [...meshResult.results.values()];
+    const finalWaveResults = planResults();
     const stepsCompleted = finalWaveResults.filter((r) => r.success).length;
     const stepsFailed = finalWaveResults.filter((r) => !r.success).length;
     console.log(
@@ -381,7 +570,29 @@ export async function runSwarm(
         evaluationScore,
         replanned,
         totalEstimatedCost: meshResult.totalEstimatedCost,
+        needsApproval: plan.steps.filter((s) => meshResult.results.get(s.id)?.needsApproval).map((s) => s.description),
+        stepResults: meshResult.results,
     };
+}
+
+/** Run the steps of a held-back run that need running again; keep every other result. */
+async function resumeMesh(
+    llm: LLMClient,
+    steps: MeshStep[],
+    prior: Map<string, SubAgentResult>,
+    onProgress?: (msg: string) => Promise<void>,
+): Promise<MeshResult> {
+    const wave = stepsToResume(steps, prior).map((st) => {
+        const did = prior.get(st.id)?.mutatorsRan;
+        const note = did?.length
+            ? `\n\n(Resumed after the owner's OK. The earlier attempt already ran: ${[...new Set(did)].join(", ")}. Don't repeat what is done.)`
+            : "";
+        return { ...st, description: st.description + note, depends_on: [...st.depends_on] };
+    });
+    const res = await executeMesh(llm, wave, onProgress, STEP_TIMEOUT_MS, { results: prior, steps });
+    const results = new Map(prior);
+    for (const [id, r] of res.results) results.set(id, r);
+    return { ...res, results };
 }
 
 // ── Decomposition (Plan Generation) ──────────
@@ -493,7 +704,7 @@ User request: ${userRequest}${learningsHint}${memoryHint}${templateHint}`;
         // ── MCTS Refinement Pass ──
         // For complex tasks (> 5 steps), use MCTS to validate/refine the plan.
         // This is optional — falls back to the LLM-generated plan if MCTS fails.
-        if (steps.length > 5) {
+        if (deepPlanningEnabled() && steps.length > 5) {
             try {
                 const complexity = classifyComplexity(userRequest);
                 if (complexity.score >= 0.4) {
@@ -539,7 +750,51 @@ User request: ${userRequest}${learningsHint}${memoryHint}${templateHint}`;
     }
 }
 
+/**
+ * Fold a replan into the plan. Revised steps replace same-id steps and the
+ * remaining steps they name in `replaces`; every other step stays so its
+ * failure is still counted and reported. Unrevised remaining steps that never
+ * ran, or that ran on a step revised now, run again in the next wave (unless
+ * they already had side effects); the rest are settled: the replanner saw
+ * them and left them alone.
+ */
+export function planAfterReplan(
+    steps: MeshStep[],
+    results: Map<string, SubAgentResult>,
+    remaining: MeshStep[],
+    revised: MeshStep[],
+): { steps: MeshStep[]; wave: MeshStep[]; settled: string[] } {
+    // Old id → the step that now does its work (itself, or a new id that replaces it).
+    const remainingIds = new Set(remaining.map((s) => s.id));
+    const now = new Map<string, string>();
+    for (const r of revised) {
+        now.set(r.id, r.id);
+        for (const old of r.replaces ?? []) if (remainingIds.has(old) && !now.has(old)) now.set(old, r.id);
+    }
+    const rerun: MeshStep[] = [];
+    const settled: string[] = [];
+    for (const s of remaining) {
+        if (now.has(s.id)) continue;
+        const r = results.get(s.id);
+        if (!r || (s.depends_on.some((d) => now.has(d)) && !r.mutatorsRan?.length)) {
+            rerun.push({ ...s, depends_on: [...new Set(s.depends_on.map((d) => now.get(d) ?? d))] });
+        } else {
+            settled.push(s.id);
+        }
+    }
+    return {
+        steps: [...steps.filter((s) => !now.has(s.id)), ...revised],
+        wave: [...revised, ...rerun],
+        settled,
+    };
+}
+
 // ── Synthesis (Result Merging) ────────────────
+
+/** The owner declined it, or it needs an approval nobody could give: not a failure to replan. */
+function notRunByOwner(r: SubAgentResult | undefined): boolean {
+    return !!r && (!!r.needsApproval || !!r.declined);
+}
 
 async function synthesize(
     llm: LLMClient,
@@ -553,12 +808,17 @@ async function synthesize(
         .map((step) => {
             const result = results.get(step.id);
             if (!result) return `### Step ${step.id} (${step.role}): NOT EXECUTED`;
+            if (notRunByOwner(result)) {
+                return `### Step ${step.id} (${step.role}): NOT RUN — ${result.declined ? "the user declined it" : "needs the user's approval"}\n${result.output}`;
+            }
             if (!result.success) {
                 // Keep what a failed step got done (sub-agents return partial output).
-                const partial = result.output?.trim() ? `\nPartial output (incomplete):\n${result.output}` : "";
+                const partial = result.output?.trim()
+                    ? `\nPartial output (incomplete):\n${capStepOutput(result.output)}`
+                    : "";
                 return `### Step ${step.id} (${step.role}): FAILED\nError: ${result.error || "unknown"}${partial}`;
             }
-            return `### Step ${step.id} (${step.role}): ${step.description}\n${result.output}`;
+            return `### Step ${step.id} (${step.role}): ${step.description}\n${capStepOutput(result.output)}`;
         })
         .join("\n\n");
 
@@ -572,7 +832,7 @@ I broke this into ${plan.steps.length} sub-tasks and executed them. Here are the
 
 ${resultSummary}
 ${feedbackNote}
-Now synthesize these results into a single, coherent response for the user. Be concise and natural — don't mention the steps or the decomposition process. Just answer as if you did it all yourself. If a step FAILED, say plainly what didn't get done; use its partial output, but never present it as finished.`;
+Now synthesize these results into a single, coherent response for the user. Be concise and natural — don't mention the steps or the decomposition process. Just answer as if you did it all yourself. If a step FAILED, say plainly what didn't get done; use its partial output, but never present it as finished. If a step was NOT RUN, say so plainly: for one that needs approval, tell the user it was not done, what it would have done, and ask whether to go ahead.`;
 
     try {
         const response = await llm.chat({

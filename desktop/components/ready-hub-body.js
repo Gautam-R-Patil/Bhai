@@ -156,19 +156,30 @@
             return;
         }
         if (route === "wizard:permissions") {
-            // The permissions grid is on this page now.
+            // The permissions grid is on this page now — scroll to it in-place.
             const grid = document.querySelector(".hub-permissions");
             if (grid) grid.scrollIntoView({ behavior: "smooth", block: "center" });
             return;
         }
-        if (route.indexOf("wizard:") === 0) { window.location.href = "wizard.html"; return; }
-        if (route.indexOf("settings:") === 0) {
-            // Open the panel with a hash the panel tab router can consume.
-            window.location.href = "panel.html#" + route.slice("settings:".length);
-            return;
-        }
+        // tileRouteHref keeps the full "settings:<section>" hash so the panel tab
+        // router resolves the Settings tab (stripping it produced e.g. "#hotkey").
+        const href = tileRouteHref(route);
+        if (href) { window.location.href = href; return; }
         // Unknown route — no-op but dispatch an event for debugging
         window.dispatchEvent(new CustomEvent("hub:unhandled-route", { detail: { route: route } }));
+    }
+
+    // Map a tile route to a destination URL. Settings subsection routes keep
+    // the full "settings:<section>" as the hash: panel.html's hash router splits
+    // on [:?/] and resolves the FIRST segment ("settings") to the real tab.
+    // Stripping the prefix produced "panel.html#hotkey" — no "tab-hotkey"
+    // exists, so the panel silently stayed on the default Dashboard tab.
+    function tileRouteHref(route) {
+        if (!route || typeof route !== "string") return null;
+        if (route === "channels") return "channels.html";
+        if (route.indexOf("wizard:") === 0) return "wizard.html";
+        if (route.indexOf("settings:") === 0) return "panel.html#" + route;
+        return null;
     }
 
     function renderTiles(tilesWrap, state, atlas) {
@@ -389,6 +400,7 @@
         applyDiff: applyDiff,
         startLiveUpdates: startLiveUpdates,
         handleTileRoute: handleTileRoute,
+        tileRouteHref: tileRouteHref,
         mergeRealAccount: mergeRealAccount,
         REFRESH_MS: REFRESH_MS,
     };

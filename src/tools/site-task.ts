@@ -8,6 +8,7 @@
 
 import { existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
+import { currentSwarmRun } from "../agents/swarm-context.js";
 import { getDataDir } from "../config/paths.js";
 import { checkConsent } from "../security/consent.js";
 import { pendingRepair, repairBlocked } from "../skills/site/drift.js";
@@ -177,7 +178,10 @@ async function run(input: Record<string, unknown>): Promise<string> {
                         : NEXT[r.status];
             // Showing the total is the "ask": record it, so the owner's next yes
             // grants the confirm call (else the gate would need a second yes).
-            if (r.status === "confirm" && r.confirm) {
+            // Not inside a swarm: the owner hasn't seen the total yet, so an "ok" sent
+            // mid-run must not grant a later confirm; the main agent's own first
+            // confirm attempt registers the ask after it shows the total.
+            if (r.status === "confirm" && r.confirm && !currentSwarmRun()) {
                 const { consentKey } = await import("./index.js");
                 checkConsent(consentKey("site_task", { action: "confirm", amount: r.confirm.amount }), false);
             }
@@ -265,6 +269,11 @@ async function run(input: Record<string, unknown>): Promise<string> {
                 await runSiteTask({ task: current, phase, input: phaseInput, driver, checkpointDir: dir }),
                 phaseInput,
             );
+        }
+        if (action === "resume" && humanCheck) {
+            const { phase, input: phaseInput } = humanCheck;
+            current.repeats = {}; // the same step again after the check is not a loop
+            return view(await runSiteTask({ task: current, phase, input: phaseInput, driver, checkpointDir: dir }), phaseInput);
         }
         if (action === "resume") {
             return view(

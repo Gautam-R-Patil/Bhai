@@ -54,6 +54,9 @@ const REFERENCE_INPUTS: Array<{ name: string; input: string }> = [
     { name: "notion-old", input: `key: secret_${"a".repeat(43)}` },
     { name: "notion-new", input: `key: ntn_${"a".repeat(45)}` },
     { name: "square", input: `EAAA${"a".repeat(60)}` },
+    { name: "telegram-url", input: `GET https://api.telegram.org/bot8123456789:${"A".repeat(35)}/getMe` },
+    { name: "telegram-bare", input: `token 123456789:${"z".repeat(35)} rejected` },
+    { name: "huggingface", input: `load failed: hf_${"a".repeat(34)}` },
     {
         name: "jwt",
         input: "token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c done",
@@ -187,6 +190,14 @@ const REFERENCE_INPUTS: Array<{ name: string; input: string }> = [
         name: "env MY_DATABASE_URL prefixed",
         input: "MY_DATABASE_URL=mysql://a:plainpassword99@h/db",
     },
+    {
+        name: "url-userinfo 34-char scheme",
+        input: "abcdefghijklmnopqrstuvwxyzabcdefgh://admin:S3cretPassw0rd@db.internal:5432/x",
+    },
+    {
+        name: "pem: END lines sharing their dashes",
+        input: "-----BEGIN PRIVATE KEY----------END PRIVATE KEY-----END PRIVATE KEY-----",
+    },
     // ── Negatives (must stay unchanged on both sides) ──────────
     { name: "benign SITE_URL no userinfo", input: "SITE_URL=https://example.com/page" },
     { name: "benign FOO_URL with query", input: "FOO_URL=https://host/page?x=1&y=2 done" },
@@ -195,7 +206,10 @@ const REFERENCE_INPUTS: Array<{ name: string; input: string }> = [
 
 describe("Secrets-sanitizer Rust ↔ TS parity (Phase 1.1)", () => {
     if (!isNativeAvailable()) {
-        it.skip("native module unavailable — skipping parity tests", () => {});
+        // CI's native job sets ATLAS_REQUIRE_NATIVE=true after building the binary.
+        if (process.env.ATLAS_REQUIRE_NATIVE === "true")
+            it("the native binary is loaded (ATLAS_REQUIRE_NATIVE)", () => expect(isNativeAvailable()).toBe(true));
+        else it.skip("native module unavailable — skipping parity tests", () => {});
         return;
     }
 

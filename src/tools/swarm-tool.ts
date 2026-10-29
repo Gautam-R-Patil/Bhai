@@ -48,6 +48,11 @@ Do NOT use for simple, single-focus tasks — just handle those directly.`,
                         type: "string",
                         description: "The full task description to decompose and execute with the swarm",
                     },
+                    confirmed: {
+                        type: "boolean",
+                        description:
+                            "Set true ONLY when re-sending the SAME task text after a swarm_task result listed actions that need the owner's approval and the owner said yes in a NEW message. Setting it on your own does nothing: the owner's reply is checked.",
+                    },
                 },
                 required: ["task"],
             },
@@ -75,9 +80,11 @@ Do NOT use for simple, single-focus tasks — just handle those directly.`,
         }
 
         try {
-            const result = await runSwarm(_llm, task, _onProgress || undefined);
+            const result = await runSwarm(_llm, task, _onProgress || undefined, input.confirmed === true);
 
-            if (result.stepsCompleted === 0 && !result.synthesis) {
+            const held = [...(result.needsApproval ?? []), ...(result.blocked ?? [])];
+            const payments = result.paymentsNotMade ?? [];
+            if (result.stepsCompleted === 0 && !result.synthesis && held.length === 0 && payments.length === 0) {
                 return JSON.stringify({
                     status: "skipped",
                     reason: result.plan.reasoning,
@@ -91,6 +98,21 @@ Do NOT use for simple, single-focus tasks — just handle those directly.`,
                 steps_failed: result.stepsFailed,
                 duration_seconds: (result.totalDurationMs / 1000).toFixed(1),
                 synthesis: result.synthesis,
+                ...(held.length
+                    ? {
+                          not_run_needs_approval: result.needsApproval ?? [],
+                          blocked_actions: result.blocked ?? [],
+                          next_step:
+                              "These steps/actions were NOT done. Tell the owner plainly what was not done and ask. Only if the owner says yes in a new message, call swarm_task again with the SAME task text and confirmed: true; that runs only the held steps and does not repeat finished ones.",
+                      }
+                    : {}),
+                ...(payments.length
+                    ? {
+                          payments_not_made: payments,
+                          payment_next_step:
+                              "These payments/orders were NOT made: a swarm never pays or places an order. Do NOT re-run swarm_task for them. Tell the owner the merchant and amount and ask; only if they say yes in a new message, make it yourself (vault_authorize_payment on that checkout page, or site_task confirm).",
+                      }
+                    : {}),
             });
         } catch (err) {
             return JSON.stringify({

@@ -65,8 +65,14 @@ export function classifyQuery(userMessage: string, _profile?: UserProfile | null
     // Only classify as "llm_only" for explicit greetings/acks that clearly need no memory.
     // Previously, short non-action messages like "this device" or "how much?" were classified
     // as llm_only, skipping ALL semantic recall — causing context loss on follow-up messages.
+    // An action request that merely opens with a greeting/ack ("ok delete
+    // everything", "sure send it") must NOT be treated as a no-memory greeting:
+    // the {0,2} tail cap alone lets 2-token actions slip through, so guard the
+    // match with the action-verb check. Guarding the match (not early-returning)
+    // lets a history query that contains an action verb still fall through to the
+    // RETRIEVAL loop below.
     for (const pattern of LLM_ONLY_PATTERNS) {
-        if (pattern.test(trimmed)) {
+        if (pattern.test(trimmed) && !ACTION_VERB_RE.test(trimmed)) {
             return "llm_only";
         }
     }

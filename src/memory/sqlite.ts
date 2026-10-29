@@ -24,7 +24,7 @@ import { initProspectiveDB } from "./prospective.js";
 import { boostMemory } from "./self-evolving.js";
 import { mergeSANResults, spreadActivation } from "./spreading-activation.js";
 import { getTemporalCache } from "./temporal-cache.js";
-import { hardAllow, hardReject, llmGate, threatReject } from "./value-gate.js";
+import { gateVerdict, llmGate, threatReject } from "./value-gate.js";
 // ── Brain-Inspired Module Imports ─────────────
 import { buildIndexFromDB, getHNSWIndex } from "./vector-index.js";
 
@@ -1080,15 +1080,17 @@ export async function remember(
             gateDecision = "reject";
             gateReason = threat.reason;
         } else {
-            const reject = hardReject(content, source, importance, category);
-            if (reject.reject) {
+            // gateVerdict orders unconditional rejects → explicit allow → shape
+            // rejects, so a curated/high-importance memory that is pure JSON or
+            // oversize (e.g. a brand profile) is no longer dropped by hardReject.
+            const verdict = gateVerdict(content, source, importance, category);
+            if (verdict.verdict === "reject") {
                 gateDecision = "reject";
-                gateReason = reject.reason;
+                gateReason = verdict.reason;
             } else {
-                const allow = hardAllow(content, source, importance, category);
-                if (allow.allow) {
+                if (verdict.verdict === "allow") {
                     gateDecision = "allow";
-                    gateReason = allow.reason;
+                    gateReason = verdict.reason;
                 } else if (shadow) {
                     // Shadow mode always inserts, so classify in the background
                     // instead of adding LLM latency to every remember().

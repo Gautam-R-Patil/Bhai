@@ -17,6 +17,8 @@
 // URLs are left as written: navigation needs them whole, and the secrets
 // sanitizer handles credentials inside URLs.
 
+import { nativeMaskCredentials } from "../native/index.js";
+
 const MASK = "[redacted]";
 
 /** A value that looks like a secret: long enough, not a word, path, call or flag. */
@@ -44,19 +46,42 @@ const COOKIE_HEADER = /\b(set-cookie|cookie)(\s*:\s*)([^\r\n]+)/gi;
 const COOKIE_VALUE = /(["']?\bcookie["']?\s*[:=]\s*)(["'`])([^"'`\r\n]{1,1000})\2|(\bcookie=)([^\s"'`,;&]{6,})/gi;
 // Names that only ever hold secrets. Loose words (token, secret, pass, pin)
 // are left alone: "token=visible-9" is usually a label, not a credential.
+const CREDENTIAL_WORDS =
+    "pass(?:word|wd|phrase)|api[_-]?key|apikey|access[_-]?key|account[_-]?key|accountkey|storage[_-]?key|private[_-]?key|signing[_-]?key|encryption[_-]?key|master[_-]?key|secret[_-]?key|client[_-]?secret|app[_-]?secret|auth[_-]?token|access[_-]?token|refresh[_-]?token|session[_-]?token|totp[_-]?(?:seed|secret)|otp[_-]?secret|credentials?";
+// The match starts at the credential word, not at the name's start: any run of
+// [A-Za-z0-9_-] may precede the word ("my_service_api_key"), so leaving the
+// prefix out masks the same values (the key is written back verbatim), and an
+// unbounded prefix in the regex made every word boundary in "a-a-a-…" rescan the
+// run (quadratic: 1.5s at 20KB). No length bound, so no name is too long.
 const CREDENTIAL_KEY =
-    "(?:[A-Za-z0-9_-]*?(?:pass(?:word|wd|phrase)|api[_-]?key|apikey|access[_-]?key|account[_-]?key|accountkey|storage[_-]?key|private[_-]?key|signing[_-]?key|encryption[_-]?key|master[_-]?key|secret[_-]?key|client[_-]?secret|app[_-]?secret|auth[_-]?token|access[_-]?token|refresh[_-]?token|session[_-]?token|totp[_-]?(?:seed|secret)|otp[_-]?secret|credentials?)" +
+    `(?:${CREDENTIAL_WORDS}` +
     // id_token only on its own ("valid_token" is not "val" + "id_token").
-    "|(?:[A-Za-z0-9]+[_-])*id[_-]?token)s?";
+    "|(?<![A-Za-z0-9])id[_-]?token)s?";
+/** ASSIGNMENT can only match where one of these words is; skip the sweep otherwise. */
+const CREDENTIAL_WORD = new RegExp(`${CREDENTIAL_WORDS}|id[_-]?token`, "i");
 const ASSIGNMENT = new RegExp(
-    `(["']?\\b${CREDENTIAL_KEY}\\b["']?)(\\s*(?::|=|=>)\\s*)("[^"\\r\\n]{0,500}"|'[^'\\r\\n]{0,500}'|\`[^\`\\r\\n]{0,500}\`|[^\\s,;}\\]"'\`]{1,500})`,
+    `(["']?${CREDENTIAL_KEY}\\b["']?)(\\s*(?::|=|=>)\\s*)("[^"\\r\\n]{0,500}"|'[^'\\r\\n]{0,500}'|\`[^\`\\r\\n]{0,500}\`|[^\\s,;}\\]"'\`]{1,500})`,
     "gi",
 );
 const PROVIDER_KEY =
     /\b(?:sk-(?:proj-|ant-(?:api\d{2}-)?|svcacct-|admin-)?[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abposr]-[A-Za-z0-9-]{10,}|(?:AKIA|ASIA)[A-Z0-9]{16}|AIza[0-9A-Za-z_-]{30,}|glpat-[A-Za-z0-9_-]{16,}|hf_[A-Za-z0-9]{20,}|npm_[A-Za-z0-9]{30,}|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|(?:sk|rk)_live_[A-Za-z0-9]{16,}|shp(?:at|ss|ca)_[A-Za-z0-9]{16,})\b/g;
 const JWT = /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g;
 const PEM = /-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z]+ )?PRIVATE KEY-----/g;
-const URL_SPAN = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi;
+const PEM_END = /-----END (?:[A-Z]+ )?PRIVATE KEY-----/g;
+// Scheme bounded to 31 chars: an unbounded one rescanned "x.x.x.…" from every boundary.
+// Fails safe: a URL not parked gets the credential rules, so a longer scheme only masks more.
+const URL_SPAN = /\b[a-z][a-z0-9+.-]{0,30}:\/\/[^\s"'<>]+/gi;
+
+/**
+ * PEM over only the text up to the last END line: a BEGIN with no END after it
+ * never matches, but each one made the lazy body scan to the end of the text
+ * (quadratic over many BEGINs). Same output, linear.
+ */
+function maskPem(text: string): string {
+    let end = -1;
+    for (const m of text.matchAll(PEM_END)) end = m.index + m[0].length;
+    return end < 0 ? text : text.slice(0, end).replace(PEM, MASK) + text.slice(end);
+}
 
 /** "sk-hynix-ddr5-kit-2026" is a product slug; a key has a long mixed run. */
 const providerShaped = (k: string) => !/^sk-/.test(k) || /[A-Za-z0-9]{16,}/.test(k.replace(/^sk-(?:proj-|ant-(?:api\d{2}-)?|svcacct-|admin-)?/, "")) && /\d/.test(k);
@@ -84,13 +109,33 @@ const assignedSecret = (sep: string, value: string) => {
     return true;
 };
 
+// ATLAS_NATIVE_PROTECT=true: the linear-time Rust port (native/src/pii_protect.rs),
+// byte-identical (pii-protect.parity.test.ts). Opt-in until its bench clears the
+// bar. An error napi throws falls back to the TS below; a Rust panic aborts the
+// process (panic = "abort"), so the port must not panic.
+const NATIVE_PROTECT = process.env.ATLAS_NATIVE_PROTECT === "true";
+
 export function maskCredentials(text: string): string {
+    if (!text || text.length < 6) return text;
+    if (NATIVE_PROTECT) {
+        try {
+            const out = nativeMaskCredentials(text);
+            if (out !== null) return out;
+        } catch {
+            // fall through to TS
+        }
+    }
+    return _maskCredentialsTs(text);
+}
+
+/** The TS implementation; exported for the parity test. */
+export function _maskCredentialsTs(text: string): string {
     if (!text || text.length < 6) return text;
     // Park URLs so no rule touches them, then put them back.
     const urls: string[] = [];
-    let out = text.replace(URL_SPAN, (u) => `\u0000U${urls.push(u) - 1}\u0000`);
+    let out = text.includes("://") ? text.replace(URL_SPAN, (u) => `\u0000U${urls.push(u) - 1}\u0000`) : text;
 
-    out = out.replace(PEM, MASK);
+    out = maskPem(out);
     out = out.replace(DIGEST_FIELD, (_m, k, sep, q) => `${k}${sep}${q}${MASK}${q}`);
     out = out.replace(SIGV4_SIGNATURE, (_m, k) => `${k}${MASK}`);
     out = out.replace(AUTH_HEADER, (m, key, sep, scheme, value) => {
@@ -108,14 +153,18 @@ export function maskCredentials(text: string): string {
         const cut = /,\s+(?![\w.-]+\s*=)(?!\d)/.exec(rest);
         const value = cut ? rest.slice(0, cut.index) : rest;
         const tail = cut ? rest.slice(cut.index) : "";
-        const pairs = /[\w.-]+\s*=\s*\S/.test(value);
+        // One name char before "=" is enough (and linear: "[\w.-]+" rescanned a long value from every offset).
+        const pairs = /[\w.-]\s*=\s*\S/.test(value);
         return pairs || secretShaped(value.trim()) ? `${key}${sep}${MASK}${tail}` : m;
     });
     out = out.replace(COOKIE_VALUE, (m, lead, q, inner, bareLead, bare) => {
         if (bareLead) return secretShaped(bare) ? `${bareLead}${MASK}` : m;
         return /=/.test(inner) || secretShaped(inner) ? `${lead}${q}${MASK}${q}` : m;
     });
-    out = out.replace(ASSIGNMENT, (m, key, sep, value) => (assignedSecret(sep, value) ? `${key}${sep}${/^["'`]/.test(value) ? value[0] + MASK + value[0] : MASK}` : m));
+    if (CREDENTIAL_WORD.test(out))
+        out = out.replace(ASSIGNMENT, (m, key, sep, value) =>
+            assignedSecret(sep, value) ? `${key}${sep}${/^["'`]/.test(value) ? value[0] + MASK + value[0] : MASK}` : m,
+        );
     out = out.replace(PROVIDER_KEY, (k) => (providerShaped(k) ? MASK : k));
     out = out.replace(JWT, MASK);
     return out.replace(/\u0000U(\d+)\u0000/g, (_m, i) => urls[Number(i)]);

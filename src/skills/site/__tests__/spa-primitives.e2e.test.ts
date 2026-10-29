@@ -66,6 +66,8 @@ const install = (withExpect: boolean, source = skillSource(withExpect)) => {
 let browser: any = null;
 beforeAll(async () => {
     process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000";
+    // These time the page's own outcomes; Bhai's cursor glide would pad them (agent-cursor.test covers it).
+    process.env.ATLAS_NO_AGENT_CURSOR = "true";
     try {
         const { chromium } = await import("playwright");
         browser = await chromium.launch({ headless: true, args: [SHOP_RESOLVER_ARG] });
@@ -76,6 +78,7 @@ beforeAll(async () => {
 }, 60_000);
 afterAll(async () => {
     delete process.env.ATLAS_SPEND_CAP_DAY_INR;
+    delete process.env.ATLAS_NO_AGENT_CURSOR;
     await browser?.close();
 });
 
@@ -104,7 +107,12 @@ const open = async (url: string) => {
     return { context, page, driver: pageDriver(page) };
 };
 
-describe("SPA primitives on the synthetic shop", () => {
+// Real headless-Chromium E2E: a few assertions turn on request/abort timing
+// (an in-flight search aborted before its successor), which is deterministic on
+// macOS/Linux but drifts on a loaded Windows runner — seen as 'options' (the
+// request completed) where 'aborted' was expected. Retry absorbs that transient
+// ordering; a genuinely broken primitive still fails all attempts.
+describe("SPA primitives on the synthetic shop", { retry: 2 }, () => {
     it("results that render in place: without expect the search loops; with expect it waits for them and the order goes through", async (ctx) => {
         if (!browser) return ctx.skip();
         const shop = await startShop({ spa: true });

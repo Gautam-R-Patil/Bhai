@@ -71,19 +71,24 @@ function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
     return union === 0 ? 0 : intersection / union;
 }
 
-export function deduplicateFindings(findings: string[]): string[] {
-    if (findings.length <= 1) return findings;
+// Dedup items by their text, keeping ONE representative per near-duplicate
+// cluster. Operates on indices, so exact-duplicate texts collapse to a single
+// item — unlike re-filtering the originals by `dedupedTexts.includes(text)`,
+// which re-admits every copy of a surviving text (the dedup becomes a no-op for
+// exact dupes, duplicating findings in the report and memory).
+export function dedupeByText<T>(items: T[], getText: (item: T) => string): T[] {
+    if (items.length <= 1) return items;
 
-    const wordSets = findings.map(f => getWords(f));
-    const keep = new Array(findings.length).fill(true);
+    const wordSets = items.map(it => getWords(getText(it)));
+    const keep = new Array(items.length).fill(true);
 
-    for (let i = 0; i < findings.length; i++) {
+    for (let i = 0; i < items.length; i++) {
         if (!keep[i]) continue;
-        for (let j = i + 1; j < findings.length; j++) {
+        for (let j = i + 1; j < items.length; j++) {
             if (!keep[j]) continue;
             if (jaccardSimilarity(wordSets[i], wordSets[j]) > 0.6) {
                 // Keep the longer/more detailed one
-                if (findings[i].length >= findings[j].length) {
+                if (getText(items[i]).length >= getText(items[j]).length) {
                     keep[j] = false;
                 } else {
                     keep[i] = false;
@@ -93,7 +98,11 @@ export function deduplicateFindings(findings: string[]): string[] {
         }
     }
 
-    return findings.filter((_, i) => keep[i]);
+    return items.filter((_, i) => keep[i]);
+}
+
+export function deduplicateFindings(findings: string[]): string[] {
+    return dedupeByText(findings, f => f);
 }
 
 // ── Cross-Reference Findings ─────────────────

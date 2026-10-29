@@ -17,6 +17,7 @@
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { getDataDir } from "../config/paths.js";
+import { CODE_TOOLS, protect } from "../security/pii-vault.js";
 
 // ── Tuning ────────────────────────────────────
 
@@ -103,6 +104,9 @@ export function offloadIfLarge(toolName: string, toolCallId: string, turnId: str
         return { content: result, offloaded: false };
     }
 
+    // What goes to disk is what the model may read back: masked the same way
+    // (a typed secret, a dashboard showing an API key), never the raw values.
+    result = protect(result, { credentials: !CODE_TOOLS.has(toolName) });
     try {
         ensureRoot();
         const turnDir = path.join(OFFLOAD_ROOT, slug(turnId));

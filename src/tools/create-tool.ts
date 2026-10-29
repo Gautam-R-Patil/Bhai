@@ -158,10 +158,11 @@ function sandboxBridge(op: string, argsJson: string): string {
             else if (base === "readdir") {
                 const withTypes = (args[1] as { withFileTypes?: boolean } | undefined)?.withFileTypes === true;
                 value = withTypes
-                    ? fs.readdirSync(target, { withFileTypes: true }).map((d) => ({ name: d.name, isFile: d.isFile(), isDirectory: d.isDirectory() }))
+                    ? fs
+                          .readdirSync(target, { withFileTypes: true })
+                          .map((d) => ({ name: d.name, isFile: d.isFile(), isDirectory: d.isDirectory() }))
                     : fs.readdirSync(target);
-            }
-            else if (base === "existsSync") value = fs.existsSync(target);
+            } else if (base === "existsSync") value = fs.existsSync(target);
             else {
                 const st = fs.statSync(target);
                 value = { size: st.size, isFile: st.isFile(), isDirectory: st.isDirectory(), mtimeMs: st.mtimeMs };
@@ -179,18 +180,38 @@ function sandboxBridge(op: string, argsJson: string): string {
     }
 }
 
-// Runs inside the sandbox first. Builds utils/console/setTimeout out of
-// sandbox-realm functions; only strings ever cross to the host.
+// Runs inside the sandbox first, as a function the host calls with its four
+// host functions, so they live only in these closures and are never globals
+// (the pattern of scripts/site-skill-host.cjs). Builds utils/console/
+// setTimeout out of sandbox-realm functions; only strings cross either way.
+// The context itself is Object.create(null): with a host-object global,
+// `this.constructor.constructor` was the host Function, whatever got deleted.
 const SANDBOX_BOOTSTRAP = `
-(function () {
+(function (bridge, timer, cfgJson, done, inputJson) {
     "use strict";
-    const bridge = globalThis.__bridge, timer = globalThis.__timer, cfg = JSON.parse(globalThis.__cfg);
-    delete globalThis.__bridge; delete globalThis.__timer; delete globalThis.__cfg;
+    const { stringify, parse } = JSON, apply = Reflect.apply, then = Promise.prototype.then, E = Error;
+    // Every host function goes through this: a host error (e.g. a stack overflow
+    // at the call) must never reach handler code, only a sandbox Error.
+    const safe = (f) => (...a) => { try { return apply(f, undefined, a); } catch { throw new E("host call failed"); } };
+    bridge = safe(bridge); timer = safe(timer); done = safe(done);
+    const cfg = parse(cfgJson);
     const call = (op, fn, args) => {
-        const r = JSON.parse(bridge(op, JSON.stringify({ fn, args })));
+        let raw;
+        try { raw = bridge(op, stringify({ fn, args })); } catch { throw new E(op + "." + fn + " failed"); }
+        const r = parse(typeof raw === "string" ? raw : "{}");
         if (!r.ok) throw new Error(r.error);
         return r.value;
     };
+    const send = (o) => { try { done(stringify(o)); } catch { try { done('{"m":"result is not serializable"}'); } catch {} } };
+    const fail = (e) => { let m; try { m = String(e && typeof e === "object" && "message" in e ? e.message : e); } catch { m = "unknown error"; } send({ m }); };
+    // One-shot: the handler script calls __run(fn) inside runInContext (so the sync
+    // part runs under the vm timeout); the result leaves as one JSON string.
+    Object.defineProperty(globalThis, "__run", { configurable: true, value: (fn) => {
+        delete globalThis.__run;
+        let p;
+        try { p = fn(inputJson); } catch (e) { return fail(e); }
+        apply(then, p, [(r) => { try { send({ v: typeof r === "string" ? r : stringify(r) }); } catch (e) { fail(e); } }, fail]);
+    } });
     const fns = (op, names, isAsync, post = (n, v) => v) => Object.freeze(Object.fromEntries(names.map((n) => [n,
         isAsync(n) ? (...a) => new Promise((ok, no) => { try { ok(post(n, call(op, n, a))); } catch (e) { no(e); } })
                    : (...a) => post(n, call(op, n, a))])));
@@ -202,7 +223,7 @@ const SANDBOX_BOOTSTRAP = `
     const pathApi = Object.freeze({ ...fns("path", cfg.path, () => false), sep: cfg.sep, delimiter: cfg.delimiter });
     const log = (...a) => call("log", "log", a.map((x) => typeof x === "string" ? x : JSON.stringify(x)));
     const consoleApi = Object.freeze({ log, info: log, warn: log, error: log });
-    const setTimeoutApi = (cb, ms) => { timer(Number(ms) || 0, () => { try { cb(); } catch (e) {} }); return 0; };
+    const setTimeoutApi = (cb, ms, ...rest) => { timer(Number(ms) || 0, () => { try { cb(...rest); } catch (e) {} }); return 0; };
     const deny = (what) => () => { throw new Error(what + " is denied here: shell and network need the Phase-4 kernel sandbox (declare the capability in the forge envelope)."); };
     const osApi = Object.freeze({ homedir: () => cfg.home, tmpdir: () => cfg.tmp, platform: cfg.platform });
     const modules = { path: pathApi, "node:path": pathApi, fs: fsApi, "node:fs": fsApi, os: osApi, "node:os": osApi };
@@ -217,12 +238,12 @@ const SANDBOX_BOOTSTRAP = `
         require: requireApi, exec: deny("utils.exec"), execFile: deny("utils.execFile"), fetch: deny("utils.fetch"),
     });
     globalThis.require = requireApi;
-})();
+})
 `;
 
 function buildHandler(code: string): (input: Record<string, unknown>) => Promise<string> {
     const wrappedSource = `
-        (async function __sandboxedHandler(__inputJson) {
+        __run(async function __sandboxedHandler(__inputJson) {
             const input = JSON.parse(__inputJson);
             const utils = globalThis.utils;
             const require = globalThis.require;
@@ -244,27 +265,66 @@ function buildHandler(code: string): (input: Record<string, unknown>) => Promise
 
     return async (input: Record<string, unknown>): Promise<string> => {
         try {
-            // Only these three host values ever enter the context, and the
-            // bootstrap deletes them before any handler code runs.
-            const context = vm.createContext(
-                {
-                    __bridge: sandboxBridge,
-                    __timer: (ms: number, cb: () => void) => {
-                        globalThis.setTimeout(cb, Math.min(Math.max(ms, 0), 60_000));
+            // Null-prototype global: no host object, so no path to the host Function.
+            const context = vm.createContext(Object.create(null), {
+                name: "dynamic-tool-sandbox",
+                codeGeneration: { strings: false, wasm: false },
+            });
+            // The host never awaits a sandbox promise (that would hand its own
+            // resolve functions to a sandbox-overridable `then`); the sandbox calls
+            // `done` with one JSON string instead.
+            let done!: (s: string) => void;
+            let closed = false;
+            let deadline: ReturnType<typeof setTimeout> | undefined;
+            const reply = new Promise<string>((r) => {
+                done = (s) => r(typeof s === "string" ? s : "{}");
+                // A handler awaiting a promise that never settles used to hang the caller forever.
+                deadline = globalThis.setTimeout(() => r('{"m":"timed out after 60s"}'), 60_000);
+            }).finally(() => {
+                closed = true;
+                clearTimeout(deadline);
+            });
+            const bridge = (op: unknown, argsJson: unknown) => {
+                if (closed) throw new Error("tool call has finished");
+                return sandboxBridge(String(op), String(argsJson));
+            };
+            const timer = (ms: unknown, cb: unknown) => {
+                if (closed || typeof cb !== "function") return;
+                globalThis.setTimeout(
+                    () => {
+                        if (closed) return;
+                        try {
+                            cb();
+                        } catch {
+                            /* sandbox callback errors stay in the sandbox */
+                        }
                     },
-                    __cfg: cfg,
-                },
-                { name: "dynamic-tool-sandbox", codeGeneration: { strings: false, wasm: false } },
+                    Math.min(Math.max(Number(ms) || 0, 0), 60_000),
+                );
+            };
+            (bootstrap.runInContext(context) as (...a: unknown[]) => void)(
+                bridge,
+                timer,
+                cfg,
+                done,
+                JSON.stringify(input ?? {}),
             );
-            bootstrap.runInContext(context);
-            const handlerFn = compiledScript.runInContext(context, { timeout: 60000 }) as (
-                inputJson: string,
-            ) => Promise<unknown>;
-            const result = await handlerFn(JSON.stringify(input ?? {}));
-            if (typeof result === "string") return result;
-            return JSON.stringify(result);
+            // ponytail: the timeout covers only the synchronous part; an async busy-loop
+            // after an await still blocks the main loop. Upgrade path: route through
+            // forgeInvokeTool (kernel sandbox, kill switch ATLAS_NO_FORGE_SANDBOX) with
+            // fs-read caps once the forge_sandbox work lands.
+            compiledScript.runInContext(context, { timeout: 60000 });
+            const r = JSON.parse(await reply) as { v?: string; m?: string };
+            if (r.m !== undefined) throw new Error(r.m);
+            return r.v as string;
         } catch (err) {
-            return JSON.stringify({ error: `Dynamic tool error: ${(err as Error)?.message ?? String(err)}` });
+            let m: string;
+            try {
+                m = String((err as Error)?.message ?? err);
+            } catch {
+                m = "unknown error";
+            }
+            return JSON.stringify({ error: `Dynamic tool error: ${m}` });
         }
     };
 }
@@ -383,10 +443,8 @@ export const createTool: ToolDefinition = {
                                     function: {
                                         name: result.slug,
                                         description,
-                                        parameters:
-                                            (result.parametersSchema as Record<string, unknown>) ??
-                                            paramsSchema ??
-                                            { type: "object", properties: {}, required: [] },
+                                        parameters: (result.parametersSchema as Record<string, unknown>) ??
+                                            paramsSchema ?? { type: "object", properties: {}, required: [] },
                                     },
                                 },
                                 handler: sessionHandler,
@@ -577,12 +635,14 @@ export async function loadDynamicTools(): Promise<void> {
             if (registryRef.has(name) && !dynamicToolNames.has(name)) continue; // Don't override built-in
 
             // F8: HMAC verification. Refuse unsigned / tampered files.
-            if (!verifyPersistedTool({
-                name,
-                handler_code,
-                parameters_schema,
-                hmac: data.hmac,
-            })) {
+            if (
+                !verifyPersistedTool({
+                    name,
+                    handler_code,
+                    parameters_schema,
+                    hmac: data.hmac,
+                })
+            ) {
                 quarantineCorruptTool(filePath, "missing or bad HMAC");
                 quarantined++;
                 continue;

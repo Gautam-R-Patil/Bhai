@@ -4,7 +4,7 @@
 // Strategy: sequential per-pattern passes, byte-for-byte mirroring the TS
 // PATTERNS-array iteration order. Each pass uses `regex::Regex` and
 // short-circuits when the pattern doesn't match (zero allocation), so the
-// 23 patterns cost one scan each and only the patterns that actually fire
+// 25 patterns cost one scan each and only the patterns that actually fire
 // pay the cost of building a new String.
 //
 // Why NOT a single alternation: an early benchmark replaced the 23 passes
@@ -112,6 +112,10 @@ const STANDARD_PATTERNS_HEAD: &[(&str, &str)] = &[
         r"\b(?:secret_[A-Za-z0-9]{43}|ntn_[A-Za-z0-9]{45,})\b",
     ),
     ("SQUARE_ACCESS_TOKEN", r"\bEAAA[A-Za-z0-9_-]{60,}\b"),
+    // Telegram bot token (bare, as in api.telegram.org/bot<token>/ URLs) and
+    // HuggingFace token — mirror the two TS entries added after SQUARE.
+    ("TELEGRAM_BOT_TOKEN", r"\d{8,12}:[A-Za-z0-9_-]{35}\b"),
+    ("HUGGINGFACE_TOKEN", r"\bhf_[A-Za-z0-9]{34,}\b"),
 ];
 
 const STANDARD_PATTERNS_TAIL: &[(&str, &str)] = &[
@@ -132,6 +136,8 @@ const STANDARD_PATTERNS_TAIL: &[(&str, &str)] = &[
 // pattern; the `(?!\[REDACTED:)` of the TS URL_USERINFO is emulated by the
 // post-match `value_is_already_redacted` skip in `apply_url_userinfo`.
 const DB_URI_PASSWORD_PATTERN: &str = r"\b((?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|rediss|amqp|amqps)://[^\s:@/]+:)([^@\s/]+)(@)";
+// Unbounded scheme: this crate is linear (the TS checks the scheme with a
+// lookbehind after "://" to stay linear in V8; same matches).
 const URL_USERINFO_PATTERN: &str = r"\b([a-z][a-z0-9+.-]*://[^\s:@/]+:)([^@\s/]+)(@)";
 
 const ENV_VAR_PATTERN: &str = r#"\b[A-Z0-9_]*(?:SECRET|PASSWORD|PASSPHRASE|API[_-]?KEY|PRIVATE[_-]?KEY|ACCESS[_-]?KEY|TOKEN|CLIENT[_-]?SECRET|DATABASE[_-]?URL|CONNECTION[_-]?STRING|DSN)\s*=\s*(?P<value>"[^"\n]{8,}"|'[^'\n]{8,}'|[^\s"'\n]{8,})"#;

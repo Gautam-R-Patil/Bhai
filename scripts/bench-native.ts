@@ -12,7 +12,10 @@ import { writeFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import { __testOnlyBfsWithAdjacency, type ActivationResult } from "../src/memory/spreading-activation.js";
 import { checkParity } from "../src/memory/spreading-activation.parity-helpers.js";
-import { isNativeAvailable, nativeSanitizeSecrets } from "../src/native/index.js";
+import { isNativeAvailable, nativeFindPii, nativeMaskCredentials, nativeSanitizeSecrets } from "../src/native/index.js";
+import { _maskCredentialsTs } from "../src/security/credential-mask.js";
+import { _findPiiTs } from "../src/security/pii-redactor.js";
+import { adversarial } from "../src/security/redos-inputs.js";
 import { _sanitizeSecretsTs, type SanitizeResult } from "../src/security/secrets-sanitizer.js";
 
 interface Rel {
@@ -43,7 +46,7 @@ const ITERATIONS = PARITY_ONLY ? 1 : 5000;
 const results: BenchResult[] = [];
 
 function time(fn: () => unknown, iterations: number): number {
-    for (let i = 0; i < WARMUP; i++) fn();
+    for (let i = 0; i < Math.min(WARMUP, iterations); i++) fn();
     const start = performance.now();
     for (let i = 0; i < iterations; i++) fn();
     return performance.now() - start;
@@ -58,7 +61,14 @@ function time(fn: () => unknown, iterations: number): number {
  */
 type ParityFn = (ts: unknown, native: unknown) => string | null;
 
-function record(module: string, caseName: string, tsFn: () => unknown, nativeFn: () => unknown, parityFn?: ParityFn) {
+function record(
+    module: string,
+    caseName: string,
+    tsFn: () => unknown,
+    nativeFn: () => unknown,
+    parityFn?: ParityFn,
+    iterations = ITERATIONS,
+) {
     if (PARITY_ONLY) {
         // Each step (tsFn / nativeFn / parityFn) is wrapped so a thrown error
         // becomes a per-case "DIVERGED" record rather than killing the whole
@@ -86,10 +96,10 @@ function record(module: string, caseName: string, tsFn: () => unknown, nativeFn:
         return;
     }
 
-    const tsMs = time(tsFn, ITERATIONS);
-    const nativeMs = time(nativeFn, ITERATIONS);
+    const tsMs = time(tsFn, iterations);
+    const nativeMs = time(nativeFn, iterations);
     const speedup = tsMs / Math.max(nativeMs, 1e-6);
-    results.push({ module, case: caseName, tsMs, nativeMs, speedup, iterations: ITERATIONS });
+    results.push({ module, case: caseName, tsMs, nativeMs, speedup, iterations });
     console.log(
         `[${module}] ${caseName.padEnd(40)} ts=${tsMs.toFixed(2)}ms ` +
             `native=${nativeMs.toFixed(2)}ms speedup=${speedup.toFixed(2)}x`,
@@ -217,6 +227,7 @@ function benchSanitizer() {
         { name: "10KB / 0 secrets", size: 10240, secrets: 0 },
         { name: "10KB / 5 secrets", size: 10240, secrets: 5 },
         { name: "100KB / 10 secrets", size: 102400, secrets: 10 },
+        { name: "200KB / 20 secrets", size: 204800, secrets: 20 },
     ];
 
     for (const c of cases) {
@@ -231,7 +242,66 @@ function benchSanitizer() {
                 totalRedactions: r.totalRedactions,
             } as SanitizeResult;
         };
-        record("sanitizer", c.name, runTs, runNative, sanitizerParity);
+        record("sanitizer", c.name, runTs, runNative, sanitizerParity, c.size > 50_000 ? 500 : ITERATIONS);
+    }
+}
+
+// ── Module: protect (credential-mask.ts / pii-redactor.ts vs pii_protect.rs) ──
+
+/** A tool result: page prose with URLs, a few credentials, cards, OTPs and UPI IDs. */
+function buildToolResult(size: number): string {
+    const filler = [
+        "The order page shows a Continue button and a search box with 24 results. ",
+        "Open https://shop.example.com/cart?item=8812&ref=home to check out. ",
+        '{"status":"ok","total":"₹1,249.00","eta":"2 days","items":[{"id":"sku-4410","qty":1}]} ',
+        "Delivery to 12 MG Road, Bengaluru 560001; call 9876543210. ",
+    ];
+    const secrets = [
+        "Authorization: Bearer FAKEtok3nAbc123xyz456 ",
+        "password=hunter2-fake ",
+        "Card number: 4111 1111 1111 1111 ",
+        "Your OTP is 482913. ",
+        "pay priya.s42@okaxis ",
+        "Cookie: sessionid=FAKEsess4455aa; theme=dark\n",
+    ];
+    let out = "";
+    for (let i = 0; out.length < size; i++) {
+        out += i % 7 === 6 ? secrets[Math.floor(i / 7) % secrets.length] : filler[i % filler.length];
+    }
+    return out.slice(0, size);
+}
+
+function benchProtect() {
+    if (moduleFilter && moduleFilter !== "protect") return;
+    if (!nativeMaskCredentials("password=x")) {
+        console.log("[protect] skipped: this native build has no nativeMaskCredentials (npm run build:native)");
+        return;
+    }
+    const exact: ParityFn = (ts, native) => (JSON.stringify(ts) === JSON.stringify(native) ? null : "outputs differ");
+    const spans = (t: string) => () =>
+        (nativeFindPii(t) ?? []).map(({ kind, start, end }) => ({ kind, start, end, value: t.slice(start, end) }));
+    const cases: Array<{ name: string; input: string; iterations: number }> = [
+        { name: "1KB tool result", input: buildToolResult(1024), iterations: 5000 },
+        { name: "10KB tool result", input: buildToolResult(10 * 1024), iterations: 1000 },
+        { name: "200KB tool result", input: buildToolResult(200 * 1024), iterations: 50 },
+        {
+            name: "adversarial 40KB (a-a-… + password=)",
+            input: `${adversarial(40_000)["a-"]} password=FAKEpw123`,
+            iterations: 50,
+        },
+        { name: "adversarial 40KB (x.x.… + ://)", input: `${adversarial(40_000)["x."]}://u:p@h`, iterations: 50 },
+        {
+            name: "adversarial 200KB (a-a-… + password=)",
+            input: `${adversarial(200_000)["a-"]} password=FAKEpw123`,
+            iterations: 10,
+        },
+    ];
+    for (const c of cases) {
+        const ts = () => _maskCredentialsTs(c.input);
+        record("mask_credentials", c.name, ts, () => nativeMaskCredentials(c.input), exact, c.iterations);
+    }
+    for (const c of cases) {
+        record("find_pii", c.name, () => _findPiiTs(c.input), spans(c.input), exact, c.iterations);
     }
 }
 
@@ -245,6 +315,7 @@ if (!isNativeAvailable()) {
 
 benchSpreading();
 benchSanitizer();
+benchProtect();
 // Future phases append more modules here (json-extract, smart-truncate, …).
 
 if (!PARITY_ONLY && results.length > 0) {

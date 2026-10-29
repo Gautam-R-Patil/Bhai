@@ -63,11 +63,13 @@ export class ChromePageProxy {
         this._title = title || "";
     }
 
+    // url() is sync (Playwright API), so it returns the last refresh. Every
+    // action that can navigate (click, key press, back/forward) and every wait
+    // refreshes, so a click or Enter that changes the page is seen.
     url(): string {
         return this._url;
     }
 
-    /** url() is sync and cached; re-read it from the tab after anything that may navigate. */
     /**
      * Re-read url/title after something that may navigate (a click, Enter). A link's
      * navigation starts a beat after the click, so look again shortly after and, while
@@ -100,10 +102,25 @@ export class ChromePageProxy {
         if (this._url !== before) await waitBridgeReady(3000, 200, Date.now()).catch(() => {});
     }
 
-    async title(): Promise<string> {
-        if (this._title) return this._title;
+    /** The active tab's URL right now (url() is a cache: clicks, redirects and tab switches don't update it). */
+    async liveUrl(): Promise<string> {
         const tab = await getActiveExtensionTab();
-        this._title = tab?.title || "";
+        this._url = tab?.url ?? "";
+        if (tab?.title) this._title = tab.title;
+        return this._url;
+    }
+
+    /** Re-read the active tab's URL and title from the extension (best effort). */
+    async refresh(): Promise<void> {
+        const tab = await getActiveExtensionTab().catch(() => null);
+        if (tab?.url) {
+            this._url = tab.url;
+            this._title = tab.title || "";
+        }
+    }
+
+    async title(): Promise<string> {
+        await this.refresh();
         return this._title;
     }
 
@@ -139,6 +156,7 @@ export class ChromePageProxy {
 
     async waitForTimeout(ms: number): Promise<void> {
         await new Promise((resolve) => setTimeout(resolve, ms));
+        await this.refresh();
     }
 
     // Playwright-compatible (fn, arg, options): polls evaluate() until truthy.
@@ -161,16 +179,23 @@ export class ChromePageProxy {
 
     async waitForLoadState(_state?: string, opts?: { timeout?: number }): Promise<void> {
         await waitBridgeReady(Math.min(opts?.timeout ?? 5000, 5000));
+        await this.refresh();
     }
 
     // Navigation
     async goBack(): Promise<void> {
+        const since = Date.now();
         await sendBridgeCommand("go_back", {});
+        await waitBridgeReady(5000, 300, since);
+        await this.refresh();
     }
 
     async goForward(): Promise<void> {
         // Forward is not in our command set — execute via JS
+        const since = Date.now();
         await sendBridgeCommand("execute_js", { code: "window.history.forward()" });
+        await waitBridgeReady(5000, 300, since);
+        await this.refresh();
     }
 
     // Interaction proxies
@@ -239,6 +264,7 @@ export class ChromePageProxy {
             );
             await sendBridgeCommand("keyboard", { key, modifiers, action: "press" });
             if (key === "Enter") await this.syncTab();
+            else await this.refresh();
         },
         down: async (key: string) => {
             await sendBridgeCommand("keyboard", { key, action: "down" });
@@ -246,8 +272,18 @@ export class ChromePageProxy {
         up: async (key: string) => {
             await sendBridgeCommand("keyboard", { key, action: "up" });
         },
-        type: async (text: string) => {
-            await sendBridgeCommand("type_text", { text });
+        // vaultRules: the text holds a saved secret; the extension types it only
+        // if the page's origin matches, checked in the page in the same step.
+        // `clear` (Bhai extension, not Playwright): replace the field instead of typing at the caret.
+        type: async (text: string, opts?: { vaultRules?: unknown[]; clear?: boolean }) => {
+            const clear = opts?.clear === true;
+            const r = (await sendBridgeCommand(
+                "type_text",
+                opts?.vaultRules ? { text, vaultRules: opts.vaultRules, secret: true, clear } : { text, clear },
+            )) as { success?: boolean; error?: string; guarded?: boolean } | null;
+            if (r && r.success === false) throw new Error(r.error || "type_text failed");
+            if (opts?.vaultRules && !r?.guarded)
+                console.warn("  🔐 [vault] the Chrome extension is out of date: no in-page origin check (update it)");
         },
     };
 
@@ -322,11 +358,6 @@ export class ChromePageProxy {
 }
 
 /**
- * Proxy for Playwright's Locator API.
- * Routes element operations through the Chrome extension bridge
- * by finding elements via JS and using coordinate-based interaction.
- */
-/**
  * The active tab's viewport. CDP first: it works with the window unfocused and in any
  * tab; captureVisibleTab (the bridge's screenshot) needs the window in front and
  * fails with "Cannot access contents of url" in some windows. Older extensions
@@ -346,7 +377,7 @@ async function chromeScreenshot(format: "png" | "jpeg", quality?: number): Promi
     return Buffer.from(result.base64, "base64");
 }
 
-class ChromeLocatorProxy {
+export class ChromeLocatorProxy {
     private selector: string;
     /** Which match: 0 = first (the first visible one), -1 = last, n = nth. */
     private index: number;
@@ -356,14 +387,18 @@ class ChromeLocatorProxy {
         this.index = index;
     }
 
-    /** A JS expression for the element, honouring xpath= and the index. */
-    private elJs(): string {
-        const all = this.selector.startsWith("xpath=")
+    /** A JS expression for every element the selector (CSS or xpath=) matches. */
+    private allJs(): string {
+        return this.selector.startsWith("xpath=")
             ? `(() => { const r = document.evaluate(${JSON.stringify(this.selector.slice(6))}, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null); return Array.from({ length: r.snapshotLength }, (_, k) => r.snapshotItem(k)); })()`
             : `(() => { try { return Array.from(document.querySelectorAll(${JSON.stringify(this.selector)})); } catch { return []; } })()`;
+    }
+
+    /** A JS expression for the element, honouring the index. */
+    private elJs(): string {
         // "first" means the first one a person could click: hidden duplicates (menus, templates) come first in the DOM.
         return `(() => {
-            const all = ${all};
+            const all = ${this.allJs()};
             const shown = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
             const i = ${this.index};
             if (i === 0) return all.find(shown) || all[0] || null;
@@ -371,12 +406,13 @@ class ChromeLocatorProxy {
         })()`;
     }
 
+    /** In-page IIFE running `body` with `el` bound to this locator's element (or null). */
+    withEl(body: string): string {
+        return `(() => { const el = ${this.elJs()}; ${body} })()`;
+    }
+
     private run<T>(body: string, timeoutMs = 5000): Promise<T> {
-        return sendBridgeCommand(
-            "execute_js",
-            { code: `(() => { const el = ${this.elJs()}; ${body} })()` },
-            timeoutMs,
-        ) as Promise<T>;
+        return sendBridgeCommand("execute_js", { code: this.withEl(body) }, timeoutMs) as Promise<T>;
     }
 
     private async findElement(): Promise<{ x: number; y: number; found: boolean }> {
@@ -405,14 +441,17 @@ class ChromeLocatorProxy {
     async fill(text: string): Promise<void> {
         const el = await this.findElement();
         if (!el.found) throw new Error(`Element not found: ${this.selector}`);
-        // Click to focus, clear, then type
-        await sendBridgeCommand("click_at", { x: el.x, y: el.y });
-        await this.run("if (el) { el.value = ''; el.dispatchEvent(new Event('input', { bubbles: true })); }");
-        await sendBridgeCommand("type_text", { text });
+        await sendBridgeCommand("click_at", { x: el.x, y: el.y }); // focus
+        await sendBridgeCommand("type_text", { text, clear: true }); // replace, like Playwright fill()
     }
 
     async type(text: string): Promise<void> {
         await this.fill(text);
+    }
+
+    async count(): Promise<number> {
+        const n = await sendBridgeCommand("execute_js", { code: `${this.allJs()}.length` }, 5000);
+        return (n as number) || 0;
     }
 
     boundingBox(): Promise<{ x: number; y: number; width: number; height: number } | null> {
@@ -469,7 +508,7 @@ class ChromeLocatorProxy {
         await this.run("if (el && el.focus) el.focus();");
     }
 
-    // Chain support for .first(), .last(), .nth()
+    // Playwright semantics: the first / last / index-th MATCH (not :first-of-type).
     first(): ChromeLocatorProxy {
         return new ChromeLocatorProxy(this.selector, 0);
     }
@@ -730,10 +769,8 @@ export class ChromeExtensionBackend implements BrowserBackend {
     // ── Get Playwright-compatible page proxy ──
 
     async getPageProxy(): Promise<ChromePageProxy> {
-        if (!this.pageProxy) {
-            const tab = await getActiveExtensionTab();
-            this.pageProxy = new ChromePageProxy(tab?.url || "", tab?.title || "");
-        }
+        if (!this.pageProxy) this.pageProxy = new ChromePageProxy();
+        await this.pageProxy.refresh(); // the user (or a click) may have changed the tab since
         return this.pageProxy;
     }
 }

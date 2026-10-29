@@ -1,5 +1,7 @@
 # Dependencies
 node_modules/
+node_modules
+desktop/node_modules
 
 # Build output
 dist/
@@ -81,18 +83,54 @@ desktop/hostinger-upload/
 # Individual test files that should ship with the repo go here so
 # they survive the broad ignore. Add a new entry when you commit a
 # test you want to keep.
+# Session 2026-10-29: personalization/soul pure-logic fixes
+!src/prompts/dynamic-assembler.test.ts
+!src/alive-ux.test.ts
+!src/memory/relationship.test.ts
+# Session 2026-10-29: Phase 0 + Phase 1 reliability regression tests
+!convex/stt.test.ts
+!src/agent.reliability.test.ts
+!src/agent.prune-nudges.test.ts
+!src/agent.prune-order.test.ts
+!src/account-guard.test.ts
+!src/tool-router.assemble.test.ts
+!src/channel-text.test.ts
+!src/telegram-batch.test.ts
+!src/agents/sub-agent.failure.test.ts
+!src/agents/orchestration-reliability.test.ts
+!src/agents/long-task-reliability.test.ts
+!src/memory/remember-gate.test.ts
+!src/memory/vector-index-rebuild.test.ts
+!src/security/vm-isolate.test.ts
+!src/security/sensitive-paths.test.ts
+!src/tools/coding/git-op.test.ts
+!src/tools/os-computer-action-keys.test.ts
+!src/tools/browser/active-tab.test.ts
+!src/tools/browser/auth-wall-reload.test.ts
+!src/tools/browser/auth-wall.test.ts
+!src/tools/browser/extension-enter.test.ts
+!src/tools/browser/interaction-fixes.test.ts
+!src/tools/browser/scan-reliability.test.ts
+!src/tools/browser/tab-list-active.test.ts
+!src/tools/browser/tree-budget.test.ts
+!src/voice/transcribe.test.ts
+!src/agents/approval-gate.test.ts
+!src/agents/sub-agent-hold.test.ts
+!src/tools/swarm-tool-gate.test.ts
 # Session 2026-10-28: security, consent, Site Skills, computer use, proactive, memory
 !src/security/loopback.test.ts
 !src/security/tool-access.test.ts
 !src/security/consent.test.ts
 !src/security/pii-redactor.test.ts
 !src/security/pii-vault.test.ts
+!src/security/vault.test.ts
 !src/security/credential-mask.test.ts
 !src/store/installer-npm-env.test.ts
 !src/tools/create-tool-sandbox.test.ts
 !src/tools/document-ingest-limits.test.ts
 !src/tools/web-search-rank.test.ts
 !src/tools/site-task-consent.test.ts
+!src/late-night-nudge.test.ts
 !src/tools/site-task-restore.test.ts
 !src/tools/site-skill-mint.test.ts
 !src/tools/site-task-repair.test.ts
@@ -107,17 +145,29 @@ desktop/hostinger-upload/
 !src/tools/browser/bridge-ready.test.ts
 !src/tools/browser/popup-guard.test.ts
 !src/tools/browser/switch-tab-chrome.test.ts
+!src/tools/browser/agent-cursor.test.ts
 !src/memory/self-evolving-safety.test.ts
 !src/memory/task-learnings-relevance.test.ts
+!src/tool-router.chat-lane.test.ts
 !src/memory/traits-correction.test.ts
 !src/overlay/inline-scripts.test.ts
 !src/research/fetcher-links.test.ts
+!src/research/fetcher-safety.test.ts
+!src/research/scoring-dedup.test.ts
+!src/research/analysis-injection.test.ts
+!src/research/engines-backoff.test.ts
+!src/research/engines-brave.test.ts
+!src/research/executor-cap.test.ts
+!src/security/url-safety-pinning.test.ts
 !src/social/emotion-detector.test.ts
 !src/proactive/proactive-reward.test.ts
 !src/tools/__tests__/
 !src/tools/__tests__/mac-typing.test.ts
 !src/tools/__tests__/os-smart-click.test.ts
 !src/tools/__tests__/lazy-heavy-imports.test.ts
+!src/tools/__tests__/create-tool-realm.test.ts
+!src/agents/__tests__/code-action-realm.test.ts
+!src/security/vm-isolate.test.ts
 !src/skills/site/__tests__/
 !src/skills/site/__tests__/**
 !src/skills/site/__tests__/site-primitives.test.ts
@@ -125,6 +175,8 @@ desktop/hostinger-upload/
 !src/skills/site/mint/__tests__/
 !src/skills/site/mint/__tests__/**
 !src/skills/site/mint/__tests__/self-heal.test.ts
+!src/memory/active-inference.test.ts
+!src/memory/traits-decay.test.ts
 !src/memory/embedding-cache.test.ts
 !src/memory/resolve-embedding.test.ts
 !src/memory/reflection-cache.test.ts
@@ -169,12 +221,14 @@ desktop/hostinger-upload/
 !src/tools/__tests__/os-grounding.test.ts
 !src/screen/__tests__/capability-detector.test.ts
 !src/screen/__tests__/ax-dump.test.ts
+!src/screen/__tests__/ax-batch.parity.test.ts
 !src/screen/__tests__/ui-tars.test.ts
 !src/screen/__tests__/omniparser.test.ts
 !src/screen/__tests__/perception-router.test.ts
 !src/screen/__tests__/click-memory.test.ts
 !src/screen/__tests__/drift-calibration.test.ts
 !src/screen/__tests__/outcome-classifier.test.ts
+!src/screen/__tests__/agent-cursor.test.ts
 !src/utils/win-shell.test.ts
 !src/utils/platform-capabilities.test.ts
 !src/commands/index.test.ts
@@ -188,6 +242,8 @@ desktop/hostinger-upload/
 !src/agents/progress-judge.test.ts
 !src/agents/role-analyzer.test.ts
 !src/agents/handoff.test.ts
+!src/agents/evaluator.test.ts
+!src/agents/sub-agent-loop.test.ts
 !src/agents/circuit-breaker.test.ts
 !src/agents/tool-call-guardrail.test.ts
 !src/agents/metacognition.test.ts
@@ -196,6 +252,10 @@ desktop/hostinger-upload/
 !src/memory/spreading-activation.parity.test.ts
 !src/memory/value-gate.parity.test.ts
 !src/security/secrets-sanitizer.parity.test.ts
+!src/security/__tests__/
+!src/security/__tests__/redos.test.ts
+!src/security/__tests__/pii-vault-memo.test.ts
+!src/security/pii-protect.parity.test.ts
 !src/voice/live/pcm-vad.test.ts
 !src/agents/defang-plan-injection.test.ts
 !src/tools/identity-update.test.ts
@@ -249,6 +309,12 @@ desktop/hostinger-upload/
 !src/proactive/composer-morning-batch.test.ts
 !src/proactive/composer-templates.test.ts
 !src/proactive/heartbeat-wake-adaptation.test.ts
+# Session 2026-10-29: memory pure-logic bugfixes (NaN/div-by-zero, gate ordering)
+!src/memory/reranker.test.ts
+!src/memory/classifier.test.ts
+!src/memory/value-gate.test.ts
+!src/memory/strategy-library.test.ts
+!src/memory/sleep-gate.test.ts
 !src/proactive/heartbeat-morning-boundary.test.ts
 !desktop/tests/
 !desktop/tests/auth-helpers.test.js
@@ -264,6 +330,11 @@ desktop/hostinger-upload/
 !desktop/tests/magic-moment-ranker.test.js
 !desktop/tests/try-this.test.js
 !desktop/tests/wizard.terms.test.js
+!desktop/tests/vault-store.test.js
+!desktop/tests/wa-owner-row.test.js
+!desktop/tests/wa-persona-merge.test.js
+!desktop/tests/ready-hub-route.test.js
+!desktop/tests/channel-card-qr.test.js
 !src/setup/wizard-seed.test.ts
 !src/prompts/persona-bias.test.ts
 !src/tool-router.persona.test.ts

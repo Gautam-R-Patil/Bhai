@@ -64,6 +64,14 @@ function deniedDirPrefixes(): string[] {
         path.join(HOME, ".gnupg"),
         path.join(HOME, ".atlas"),
         path.join(getDataDir(), "google-tokens"),
+        // Linux process/kernel pseudo-filesystems. /proc/self/environ dumps THIS
+        // process's env (every token in .env — Telegram/Discord/Slack/GitHub/HF…),
+        // /proc/self/mem exposes its memory (decrypted vault values, session keys),
+        // and /proc/<pid>/* does the same for other processes. No file tool has a
+        // legitimate reason to read these; system info uses dedicated code paths.
+        // Absolute, so unaffected by HOME; harmless on macOS/Windows (no such tree).
+        "/proc",
+        "/sys",
     ];
 }
 

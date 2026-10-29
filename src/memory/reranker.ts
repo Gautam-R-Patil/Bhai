@@ -122,7 +122,9 @@ export function rerankHeuristic(
     const scored = candidates.map((c, i) => {
         const contentWords = c.content.toLowerCase().split(/\s+/);
         const overlap = contentWords.filter(w => queryWords.has(w)).length;
-        const overlapScore = Math.min(overlap / queryWords.size, 1);
+        // Guard empty query set (all tokens ≤2 chars / empty query): overlap is
+        // always 0 then, so the score must be 0 — not 0/0 = NaN poisoning ranking.
+        const overlapScore = Math.min(overlap / (queryWords.size || 1), 1);
 
         // Combine original embedding score with keyword overlap
         const combinedScore = c.originalScore * 0.6 + overlapScore * 0.4;

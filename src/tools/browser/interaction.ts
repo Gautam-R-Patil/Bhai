@@ -5,11 +5,15 @@
 // ── Browser Interaction Tools ─────────────────
 // Click, type, scroll, hover, drag, keyboard
 
+import { vaultCall } from "../../security/vault.js";
 import type { ToolDefinition } from "../get-current-time.js";
+import { agentCursor } from "./agent-cursor.js";
+import { checkAuthWall } from "./auth-wall.js";
+import { getCurrentMode } from "./browser-backend.js";
+import { quickCaptchaCheck } from "./captcha.js";
 import {
     ATLAS_HUD_JS,
     buildElementsText,
-    CLICK_INDICATOR_JS,
     getActivePage,
     getActivePageIndex,
     getBrowser,
@@ -29,6 +33,25 @@ import {
     recordHoverFailure,
     recordHoverSuccess,
 } from "./native-browser.js";
+import { armDialogAccept, takePageEvents } from "./popup-guard.js";
+import { typeVaultText } from "./vault-typing.js";
+
+const ACCEPT_DIALOG_PARAM = {
+    type: "boolean",
+    description:
+        "Accept a confirm()/prompt() dialog this action opens (default: dismiss it). Use only when the user wants that confirmation.",
+};
+
+/** After a mutating action: wait for the page to settle (or the caller's explicit wait). */
+// biome-ignore lint/suspicious/noExplicitAny: Playwright Page or ChromePageProxy
+async function settleAfterAction(page: any, waitAfterMs: unknown): Promise<void> {
+    if (waitAfterMs !== undefined) {
+        if ((waitAfterMs as number) > 0) await page.waitForTimeout(waitAfterMs as number);
+    } else {
+        await waitForPageReady(page, 1500);
+    }
+    invalidateCache(); // the action changed the page: the next scan must be fresh
+}
 
 // ═══════════════════════════════════════════════
 // TOOL: Click at coordinates or label
@@ -55,7 +78,11 @@ export const browserClickAt: ToolDefinition = {
                     shift: { type: "boolean", description: "Hold Shift" },
                     alt: { type: "boolean", description: "Hold Alt" },
                     meta: { type: "boolean", description: "Hold Meta/Cmd" },
-                    wait_after_ms: { type: "number", description: "How long to wait after clicking (default: 1000)" },
+                    wait_after_ms: {
+                        type: "number",
+                        description: "Fixed wait after clicking (default: wait until the page settles, max 1.5s)",
+                    },
+                    accept_dialog: ACCEPT_DIALOG_PARAM,
                 },
                 required: [],
             },
@@ -64,7 +91,8 @@ export const browserClickAt: ToolDefinition = {
     async handler(input) {
         try {
             const context = await getBrowser();
-            const page = await getActivePage();
+            let page = await getActivePage();
+            armDialogAccept(input.accept_dialog === true);
             const lastElementMap = getLastElementMap();
 
             // ── Loop detection: warn if agent is hammering the same failed target ──
@@ -152,7 +180,9 @@ export const browserClickAt: ToolDefinition = {
                 if (handle) {
                     try {
                         // Hybrid Action: Try to use the native DOM handle first for maximum stability
-                        await handle.scrollIntoViewIfNeeded();
+                        // Bounded: an aria-ref Locator whose element is gone waits (30s default) instead of failing.
+                        await handle.scrollIntoViewIfNeeded({ timeout: 1000 });
+                        await agentCursor(page, handle, input.double_click ? "double" : "click");
 
                         if (input.double_click) {
                             await handle.dblclick({ timeout: 2000 });
@@ -160,9 +190,10 @@ export const browserClickAt: ToolDefinition = {
                             await handle.click({ timeout: 2000 });
                         }
                         executionMethod = "element_handle";
-                        await page.evaluate(CLICK_INDICATOR_JS, { x, y, type: "click" });
                     } catch (handleErr) {
                         const errMsg = (handleErr as Error).message;
+                        // A Locator matching nothing now (page changed since the scan) is a stale label.
+                        const gone = typeof handle.count === "function" && (await handle.count().catch(() => 1)) === 0;
                         if (errMsg.includes("intercepts pointer events") || errMsg.includes("overlay")) {
                             await attemptRecovery();
                             try {
@@ -173,29 +204,25 @@ export const browserClickAt: ToolDefinition = {
                                     await handle.click({ timeout: 2000 });
                                 }
                                 executionMethod = "element_handle_recovered";
-                                await page.evaluate(CLICK_INDICATOR_JS, { x, y, type: "click" });
                             } catch {
                                 executionMethod = "coordinates_fallback";
-                                await page.evaluate(CLICK_INDICATOR_JS, { x, y, type: "click" });
                                 await page.waitForTimeout(150);
                                 await (input.double_click ? page.mouse.dblclick(x, y) : page.mouse.click(x, y));
                             }
-                        } else if (errMsg.includes("detached") || errMsg.includes("not visible")) {
+                        } else if (gone || /detached|not attached|not visible/.test(errMsg)) {
                             return JSON.stringify({
-                                error: `Target option vanished or detached. The dropdown or modal may have closed unexpectedly before the click triggered. Re-click the dropdown to open it before trying again.`,
+                                error: `Target vanished or detached: the page changed since the scan, or a dropdown/modal closed before the click. Run browser_scan for fresh labels (re-open the dropdown first if it closed).`,
                                 raw_error: errMsg,
                             });
                         } else {
                             executionMethod = "coordinates_fallback";
-                            await page.evaluate(CLICK_INDICATOR_JS, { x, y, type: "click" });
                             await page.waitForTimeout(150);
                             await (input.double_click ? page.mouse.dblclick(x, y) : page.mouse.click(x, y));
                         }
                     }
                 } else {
                     // Pure coordinate fallback
-                    await page.evaluate(CLICK_INDICATOR_JS, { x, y, type: "click" });
-                    await page.waitForTimeout(150);
+                    await agentCursor(page, { x, y }, input.double_click ? "double" : "click");
                     if (input.double_click) {
                         await page.mouse.dblclick(x, y);
                     } else {
@@ -206,80 +233,38 @@ export const browserClickAt: ToolDefinition = {
                 await releaseModifiers();
             }
 
-            const waitTime = input.wait_after_ms !== undefined ? (input.wait_after_ms as number) : 300;
-            if (waitTime > 0) await page.waitForTimeout(waitTime);
+            await settleAfterAction(page, input.wait_after_ms);
+            armDialogAccept(false); // an armed accept never outlives its action
 
-            // ── Unexpected new-tab guard ──
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const stateTransitions: any = {};
+
+            // ── New tab (target=_blank link, OAuth/payment popup): follow it ──
             const allPages = context.pages();
-            const tabCountAfter = allPages.length;
-            if (tabCountAfter > tabCountBefore) {
-                console.log(
-                    `  ⚠️ Unexpected new tab detected (${tabCountBefore} → ${tabCountAfter}). Auto-closing and returning to original tab.`,
-                );
-                for (let i = tabCountAfter - 1; i >= tabCountBefore; i--) {
-                    try {
-                        await allPages[i].close();
-                    } catch {
-                        /* already closed */
-                    }
-                }
-                const intendedPages = context.pages();
-                const activePageIndex = getActivePageIndex();
-                const safeIdx = Math.min(activePageIndex, intendedPages.length - 1);
-                await intendedPages[safeIdx].bringToFront();
-
-                const newElementMap = await getInteractiveElements(intendedPages[safeIdx]);
-                setLastElementMap(newElementMap);
-                const serializedRecovery = newElementMap.map((e) => ({
-                    label: e.label,
-                    x: e.x,
-                    y: e.y,
-                    tag: e.tag,
-                    text: e.text,
-                }));
-                const recoveryElements =
-                    serializedRecovery.length > 0
-                        ? serializedRecovery.map((e) => `[${e.label}] ${e.tag} '${e.text}'`).join("\n")
-                        : "No interactive elements detected.";
-
-                return JSON.stringify({
-                    warning: "UNEXPECTED_NEW_TAB_AUTO_CLOSED",
-                    action_taken: `A new tab was opened by the click (likely a link instead of a button). The new tab has been automatically closed. You are back on the original form page.`,
-                    instruction:
-                        "DO NOT restart the task or navigate back to the beginning. Simply re-scan the current page and click the CORRECT primary action button (look for a <button> tag labeled 'Next', 'Continue', or similar, NOT an <a> link).",
-                    title: await intendedPages[safeIdx].title(),
-                    url: intendedPages[safeIdx].url(),
-                    open_tabs: context.pages().length,
-                    interactive_elements_text: recoveryElements,
-                });
+            if (allPages.length > tabCountBefore) {
+                const newIdx = allPages.length - 1;
+                const opener = page;
+                page = allPages[newIdx];
+                await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
+                await waitForPageReady(page, 1500);
+                await page.bringToFront().catch(() => {});
+                setActivePageIndex(newIdx, { page, opener }); // closing it (or it closing itself) returns to the opener
+                stateTransitions.new_tab = `The click opened a new tab; switched to it (tab ${newIdx}). browser_switch_tab with close_active:true returns to the previous tab.`;
             }
 
             // State Verifier
             const finalUrl = page.url();
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const stateTransitions: any = {};
-            if (initialUrl !== finalUrl) {
+            const navigated = initialUrl !== finalUrl;
+            if (navigated) {
                 stateTransitions.navigation = `Navigated from ${initialUrl} to ${finalUrl}`;
                 await waitForPageReady(page);
             }
+            // Login/OTP wall after a navigation (may import the Chrome session and reload).
+            // Not on a CAPTCHA page: the pipeline gets that one first, after this tool returns.
+            const authFields = navigated && !(await quickCaptchaCheck(page)) ? await checkAuthWall(page) : {};
 
-            // Generate condensed DOM text of updated elements
             const newElementMap = await getInteractiveElements(page);
             setLastElementMap(newElementMap);
-            const serializedElements = newElementMap.map((e) => ({
-                label: e.label,
-                x: e.x,
-                y: e.y,
-                tag: e.tag,
-                text: e.text,
-            }));
-
-            let interactive_elements_text = "No interactive elements detected.";
-            if (serializedElements.length > 0) {
-                interactive_elements_text = serializedElements
-                    .map((e) => `[${e.label}] ${e.tag} '${e.text}'`)
-                    .join("\n");
-            }
 
             // Record success for native loop/rate tracker
             recordBrowserAction("click", page.url(), String(input.label ?? `${x},${y}`), true);
@@ -295,7 +280,10 @@ export const browserClickAt: ToolDefinition = {
                 title: await page.title(),
                 url: page.url(),
                 open_tabs: context.pages().length,
-                interactive_elements_text,
+                // Ahead of the element list, which the result cap cuts first.
+                ...authFields,
+                ...takePageEvents(),
+                interactive_elements_text: buildElementsText(),
             });
         } catch (err) {
             // Record failure for loop detection
@@ -306,7 +294,9 @@ export const browserClickAt: ToolDefinition = {
             } catch {
                 /* non-fatal */
             }
-            return JSON.stringify({ error: `Click failed: ${(err as Error).message}` });
+            return JSON.stringify({ error: `Click failed: ${(err as Error).message}`, ...takePageEvents() });
+        } finally {
+            armDialogAccept(false); // early returns (stale label, loop, vanished target) included
         }
     },
 };
@@ -327,13 +317,18 @@ export const browserClick: ToolDefinition = {
                 properties: {
                     selector: { type: "string", description: "CSS selector" },
                     text: { type: "string", description: "Visible text to click" },
-                    wait_after_ms: { type: "number", description: "How long to wait after clicking (default: 1500)" },
+                    wait_after_ms: {
+                        type: "number",
+                        description: "Fixed wait after clicking (default: wait until the page settles, max 1.5s)",
+                    },
+                    accept_dialog: ACCEPT_DIALOG_PARAM,
                 },
                 required: [],
             },
         },
     },
     async handler(input) {
+        armDialogAccept(input.accept_dialog === true);
         try {
             const page = await getActivePage();
 
@@ -345,7 +340,7 @@ export const browserClick: ToolDefinition = {
                 if (box) {
                     const cx = box.x + box.width / 2;
                     const cy = box.y + box.height / 2;
-                    await page.evaluate(CLICK_INDICATOR_JS, { x: cx, y: cy, type: "click" });
+                    await agentCursor(page, { x: cx, y: cy }, "click");
                     await page.mouse.click(cx, cy);
                 } else {
                     return JSON.stringify({
@@ -360,7 +355,7 @@ export const browserClick: ToolDefinition = {
                 if (box) {
                     const cx = box.x + box.width / 2;
                     const cy = box.y + box.height / 2;
-                    await page.evaluate(CLICK_INDICATOR_JS, { x: cx, y: cy, type: "click" });
+                    await agentCursor(page, { x: cx, y: cy }, "click");
                     await page.mouse.click(cx, cy);
                 } else {
                     return JSON.stringify({
@@ -371,8 +366,7 @@ export const browserClick: ToolDefinition = {
                 return JSON.stringify({ error: "Provide 'selector' or 'text'" });
             }
 
-            const waitTime = input.wait_after_ms !== undefined ? (input.wait_after_ms as number) : 500;
-            if (waitTime > 0) await page.waitForTimeout(waitTime);
+            await settleAfterAction(page, input.wait_after_ms);
             const newElementMap = await getInteractiveElements(page);
             setLastElementMap(newElementMap);
             return JSON.stringify({
@@ -380,12 +374,16 @@ export const browserClick: ToolDefinition = {
                 clicked: input.selector || input.text,
                 title: await page.title(),
                 url: page.url(),
+                ...takePageEvents(),
                 interactive_elements_text: buildElementsText(),
             });
         } catch (err) {
             return JSON.stringify({
                 error: `Click failed: ${(err as Error).message}. Use browser_scan + browser_click_at with label instead.`,
+                ...takePageEvents(),
             });
+        } finally {
+            armDialogAccept(false);
         }
     },
 };
@@ -416,10 +414,11 @@ export const browserRightClick: ToolDefinition = {
             const x = input.x as number;
             const y = input.y as number;
 
-            await page.evaluate(CLICK_INDICATOR_JS, { x, y, type: "right" });
+            await agentCursor(page, { x, y }, "right");
             await page.waitForTimeout(200);
             await page.mouse.click(x, y, { button: "right" });
             await page.waitForTimeout(200);
+            invalidateCache();
 
             return JSON.stringify({ success: true, right_clicked_at: { x, y } });
         } catch (err) {
@@ -456,11 +455,12 @@ export const browserHoldClick: ToolDefinition = {
             const y = input.y as number;
             const duration = (input.duration_ms as number) || 1000;
 
-            await page.evaluate(CLICK_INDICATOR_JS, { x, y, type: "hold" });
+            await agentCursor(page, { x, y }, "hold");
             await page.mouse.move(x, y);
             await page.mouse.down();
             await page.waitForTimeout(duration);
             await page.mouse.up();
+            invalidateCache();
 
             return JSON.stringify({ success: true, held_at: { x, y }, duration_ms: duration });
         } catch (err) {
@@ -526,11 +526,11 @@ export const browserDrag: ToolDefinition = {
                 modifiers.push("Meta");
             }
 
-            await page.evaluate(CLICK_INDICATOR_JS, { x: fx, y: fy, type: "hold" });
+            await agentCursor(page, { x: fx, y: fy }, "hold");
             await page.mouse.move(fx, fy);
             await page.mouse.down();
+            await agentCursor(page, { x: tx, y: ty }, "hover"); // never alongside the real move (Chrome bridge)
             await page.mouse.move(tx, ty, { steps });
-            await page.evaluate(CLICK_INDICATOR_JS, { x: tx, y: ty, type: "click" });
             await page.mouse.up();
 
             if (input.meta) await page.keyboard.up("Meta");
@@ -539,6 +539,7 @@ export const browserDrag: ToolDefinition = {
             if (input.ctrl) await page.keyboard.up("Control");
 
             await page.waitForTimeout(200);
+            invalidateCache();
 
             return JSON.stringify({
                 success: true,
@@ -602,6 +603,7 @@ export const browserScroll: ToolDefinition = {
                     break;
             }
 
+            await agentCursor(page, { x, y }, "scroll");
             if (input.zoom) {
                 await page.mouse.move(x, y);
                 await page.keyboard.down("Control");
@@ -622,15 +624,19 @@ export const browserScroll: ToolDefinition = {
                     .catch(() => {});
             }
 
-            await page.waitForTimeout(300);
-            // Invalidate element cache AND clear lastElementMap — all stored element
-            // positions are now stale. Clearing lastElementMap forces the agent to
-            // call browser_scan before using label-based clicking, preventing clicks
-            // at wrong coordinates (e.g. 300px off after scrolling 300px down).
-            invalidateCache();
-            setLastElementMap([]);
+            // Every stored position is stale now (and infinite feeds load more):
+            // settle, then rescan so the returned labels match the scrolled page.
+            await settleAfterAction(page, undefined);
+            const newElementMap = await getInteractiveElements(page, true);
+            setLastElementMap(newElementMap);
 
-            return JSON.stringify({ success: true, scrolled: input.direction, pixels: amount, zoom: !!input.zoom });
+            return JSON.stringify({
+                success: true,
+                scrolled: input.direction,
+                pixels: amount,
+                zoom: !!input.zoom,
+                interactive_elements_text: buildElementsText(),
+            });
         } catch (err) {
             return JSON.stringify({ error: `Scroll failed: ${(err as Error).message}` });
         }
@@ -665,10 +671,14 @@ export const browserType: ToolDefinition = {
                         description:
                             "Press a special key instead of typing text (e.g. 'Enter', 'Tab', 'Escape', 'Backspace', 'ArrowDown')",
                     },
-                    clear_first: { type: "boolean", description: "Clear the field before typing (default: true)" },
+                    clear_first: {
+                        type: "boolean",
+                        description:
+                            "Replace the field's content. Default: true for input/textarea fields; in rich editors (Docs, Notion, contenteditable) text goes in at the caret unless this is explicitly true.",
+                    },
                     wait_after_ms: {
                         type: "number",
-                        description: "How long to wait after typing/pressing (default: 500)",
+                        description: "Fixed wait after typing/pressing (default: wait until the page settles)",
                     },
                 },
                 required: [],
@@ -684,17 +694,19 @@ export const browserType: ToolDefinition = {
             if (input.label !== undefined) {
                 const el = lastElementMap.find((e) => e.label === (input.label as number));
                 if (el) {
+                    // Scrolled in first, so the cursor glides to where the click lands.
+                    await Promise.resolve(el.handle?.scrollIntoViewIfNeeded?.({ timeout: 1000 })).catch(() => {});
+                    await agentCursor(page, el.handle ?? el, "click");
                     if (el.handle) {
                         try {
-                            await el.handle.focus();
-                            await el.handle.click();
+                            await el.handle.focus({ timeout: 1000 }); // bounded: a stale aria-ref waits otherwise
+                            await el.handle.click({ timeout: 2000 });
                         } catch {
                             await page.mouse.click(el.x, el.y);
                         }
                     } else {
                         await page.mouse.click(el.x, el.y);
                     }
-                    await page.evaluate(CLICK_INDICATOR_JS, { x: el.x, y: el.y, type: "click" });
                     await page.waitForTimeout(300);
                 } else {
                     return JSON.stringify({
@@ -702,77 +714,76 @@ export const browserType: ToolDefinition = {
                     });
                 }
             } else if (input.x !== undefined && input.y !== undefined) {
-                await page.evaluate(CLICK_INDICATOR_JS, { x: input.x as number, y: input.y as number, type: "click" });
+                await agentCursor(page, { x: input.x as number, y: input.y as number }, "click");
                 await page.mouse.click(input.x as number, input.y as number);
                 await page.waitForTimeout(300);
             }
 
+            // A saved secret (vault.ts) is typed only after its origin check, here, after the click above.
+            const secret = !!vaultCall();
+            if (secret && !input.text)
+                return JSON.stringify({ error: "Type a saved secret as `text`, one field per call." });
+
             // Press special key
-            if (input.key) {
+            if (input.key && !secret) {
                 await page.keyboard.press(input.key as string);
-                await page.waitForTimeout(500);
-                return JSON.stringify({ success: true, pressed: input.key });
-            }
-
-            // Type text — use Rust-computed human-like per-character delays
-            if (input.text) {
-                if (input.clear_first !== false) {
-                    await page.keyboard.press("ControlOrMeta+a"); // cross-platform
-                    await page.waitForTimeout(50);
-                }
-                // Rust humanTypingDelayMs gives realistic WPM-based delays per character
-                // Fall back to 35ms uniform if native unavailable
-                let delayFn: (charCode: number) => number;
-                try {
-                    const { createRequire } = await import("node:module");
-                    const path = await import("node:path");
-                    const { fileURLToPath } = await import("node:url");
-                    const __d = path.default.dirname(fileURLToPath(import.meta.url));
-                    const req = createRequire(import.meta.url);
-                    const nm = req(path.default.resolve(__d, "../../../native/index.js")) as Record<string, unknown>;
-                    if (typeof nm.humanTypingDelayMs === "function") {
-                        const nativeFn = nm.humanTypingDelayMs as (c: number, wpm: number) => number;
-                        delayFn = (c) => nativeFn(c, 65); // ~65 WPM realistic
+            } else {
+                if (input.text) {
+                    await agentCursor(page, null, "type");
+                    if (secret) {
+                        // Replaced by default, as before (a vault field is a plain input).
+                        const clear = input.clear_first !== false;
+                        if (clear) {
+                            await page.keyboard.press("ControlOrMeta+a");
+                            await page.waitForTimeout(50);
+                        }
+                        const refused = await typeVaultText(page, input.text as string, clear);
+                        if (refused) return JSON.stringify({ error: refused });
                     } else {
-                        delayFn = () => 35;
+                        // Replace only a plain field's value by default: select-all in a
+                        // Docs/Notion editor would select (and overwrite) the whole document.
+                        const focus = await page.evaluate(FOCUS_KIND_JS).catch(() => "other");
+                        // "unknown" (cross-origin iframe, closed shadow root): the old default, replace.
+                        const clear =
+                            input.clear_first === true ||
+                            (input.clear_first !== false && (focus === "field" || focus === "unknown"));
+                        if (getCurrentMode() === "chrome") {
+                            // The extension types in one shot; it clears itself (synthetic Ctrl+A selects nothing).
+                            await page.keyboard.type(input.text as string, { clear });
+                        } else {
+                            await typeHumanLike(page, input.text as string, clear);
+                        }
                     }
-                } catch {
-                    delayFn = () => 35;
                 }
-
-                // Human rhythm for the first few characters only: per-character
-                // delays on long text overran the tool timeout (~45+ chars) while
-                // typing carried on in the background.
-                const text = input.text as string;
-                const HUMAN_CHARS = 15;
-                for (const ch of text.slice(0, HUMAN_CHARS)) {
-                    await page.keyboard.type(ch, { delay: 0 });
-                    const delay = delayFn(ch.charCodeAt(0));
-                    if (delay > 0) await page.waitForTimeout(delay);
+                if (input.press_enter) {
+                    const urlBefore = page.url();
+                    await page.keyboard.press("Enter");
+                    // A navigation ends the wait as soon as it commits (Playwright only:
+                    // the Chrome bridge proxy has no waitForURL). Then wait for the page
+                    // — new or updated in place (SPA search) — to settle.
+                    if (typeof (page as { waitForURL?: unknown }).waitForURL === "function") {
+                        await page
+                            .waitForURL((u: URL) => u.toString() !== urlBefore, { timeout: 1500 })
+                            .catch(() => {});
+                    }
+                    await waitForPageReady(page);
                 }
-                if (text.length > HUMAN_CHARS) await page.keyboard.type(text.slice(HUMAN_CHARS), { delay: 10 });
             }
 
-            if (input.press_enter) {
-                const urlBefore = page.url();
-                await page.keyboard.press("Enter");
-                // A navigation ends the wait as soon as it commits (Playwright only:
-                // the Chrome bridge proxy has no waitForURL). Then wait for the page
-                // — new or updated in place (SPA search) — to settle.
-                if (typeof (page as { waitForURL?: unknown }).waitForURL === "function") {
-                    await page.waitForURL((u: URL) => u.toString() !== urlBefore, { timeout: 1500 }).catch(() => {});
-                }
-                await waitForPageReady(page);
-            }
-
-            const waitTime = input.wait_after_ms !== undefined ? (input.wait_after_ms as number) : 200;
-            if (waitTime > 0) await page.waitForTimeout(waitTime);
+            await settleAfterAction(page, input.wait_after_ms);
             const newElementMap = await getInteractiveElements(page);
             setLastElementMap(newElementMap);
+            // The typed text is not echoed (it may hold a secret); its length is enough.
             return JSON.stringify({
                 success: true,
-                typed: input.text || input.key,
+                ...(input.key && !secret
+                    ? { pressed: input.key }
+                    : input.text
+                      ? { typed_chars: String(input.text).length }
+                      : {}),
+                ...(!(input.key && !secret) && input.press_enter ? { pressed_enter: true } : {}),
                 url: page.url(),
+                ...takePageEvents(),
                 interactive_elements_text: buildElementsText(),
             });
         } catch (err) {
@@ -780,6 +791,67 @@ export const browserType: ToolDefinition = {
         }
     },
 };
+
+// What has focus (through same-origin iframes and open shadow roots): a plain text
+// field, a rich/contenteditable editor, other, or unknown (focus can't be inspected).
+export const FOCUS_KIND_JS = `(() => {
+  let a = document.activeElement;
+  for (;;) {
+    if (a && a.shadowRoot && a.shadowRoot.activeElement) { a = a.shadowRoot.activeElement; continue; }
+    if (a && a.tagName === "IFRAME") {
+      let d = null;
+      try { d = a.contentDocument; } catch {}
+      if (!d) return "unknown";
+      a = d.activeElement;
+      continue;
+    }
+    break;
+  }
+  if (!a) return "other";
+  if (a.tagName.includes("-") && !a.shadowRoot && !a.isContentEditable) return "unknown";
+  if (a.tagName === "TEXTAREA") return "field";
+  if (a.tagName === "INPUT") return /^(text|search|email|url|tel|password|number)$/.test(a.type) ? "field" : "other";
+  return a.isContentEditable ? "editable" : "other";
+})()`;
+
+/** Playwright typing with Rust-computed human-like per-character delays for the first few characters. */
+// biome-ignore lint/suspicious/noExplicitAny: Playwright Page
+async function typeHumanLike(page: any, text: string, clear: boolean): Promise<void> {
+    if (clear) {
+        await page.keyboard.press("ControlOrMeta+a"); // cross-platform; selects the field only
+        await page.waitForTimeout(50);
+    }
+    // Rust humanTypingDelayMs gives realistic WPM-based delays per character
+    // Fall back to 35ms uniform if native unavailable
+    let delayFn: (charCode: number) => number;
+    try {
+        const { createRequire } = await import("node:module");
+        const path = await import("node:path");
+        const { fileURLToPath } = await import("node:url");
+        const __d = path.default.dirname(fileURLToPath(import.meta.url));
+        const req = createRequire(import.meta.url);
+        const nm = req(path.default.resolve(__d, "../../../native/index.js")) as Record<string, unknown>;
+        if (typeof nm.humanTypingDelayMs === "function") {
+            const nativeFn = nm.humanTypingDelayMs as (c: number, wpm: number) => number;
+            delayFn = (c) => nativeFn(c, 65); // ~65 WPM realistic
+        } else {
+            delayFn = () => 35;
+        }
+    } catch {
+        delayFn = () => 35;
+    }
+
+    // Human rhythm for the first few characters only: per-character
+    // delays on long text overran the tool timeout (~45+ chars) while
+    // typing carried on in the background.
+    const HUMAN_CHARS = 15;
+    for (const ch of text.slice(0, HUMAN_CHARS)) {
+        await page.keyboard.type(ch, { delay: 0 });
+        const delay = delayFn(ch.charCodeAt(0));
+        if (delay > 0) await page.waitForTimeout(delay);
+    }
+    if (text.length > HUMAN_CHARS) await page.keyboard.type(text.slice(HUMAN_CHARS), { delay: 10 });
+}
 
 // ═══════════════════════════════════════════════
 // TOOL: Hover (move mouse without clicking)
@@ -893,6 +965,7 @@ export const browserHover: ToolDefinition = {
             } catch {
                 /* use input steps */
             }
+            await agentCursor(page, { x: effectiveX, y: effectiveY }, "hover");
             if (prePause > 0) await page.waitForTimeout(Math.min(prePause, 200));
             await page.mouse.move(effectiveX, effectiveY, { steps: moveSteps });
             await page.waitForTimeout(duration);
@@ -963,11 +1036,11 @@ export const browserHover: ToolDefinition = {
                 steps_used: steps,
                 ...(waitFor ? { wait_for_result: waitForResult } : {}),
                 dom_additions: addedNodes.length > 0 ? addedNodes.slice(0, 10) : "none",
-                ...(rescan ? { interactive_elements_text: newElementsText } : {}),
                 tip:
                     addedNodes.length > 0 || waitFor
                         ? "Elements revealed — use updated interactive_elements_text to click them."
                         : "No new elements detected. If controls are still hidden, try a longer duration or different coordinates.",
+                ...(rescan ? { interactive_elements_text: newElementsText } : {}),
             });
         } catch (err) {
             return JSON.stringify({ error: `Hover failed: ${(err as Error).message}` });
@@ -1010,6 +1083,14 @@ export const browserKeyboard: ToolDefinition = {
         try {
             const page = await getActivePage();
 
+            // A saved secret (vault.ts): text only, typed after its origin check.
+            if (vaultCall()) {
+                if (!input.text) return JSON.stringify({ error: "Type a saved secret as `text`, one field per call." });
+                const refused = await typeVaultText(page, input.text as string);
+                if (refused) return JSON.stringify({ error: refused });
+                return JSON.stringify({ success: true, typed_chars: (input.text as string).length });
+            }
+
             // Hold a key down
             if (input.hold) {
                 await page.keyboard.down(input.hold as string);
@@ -1025,7 +1106,8 @@ export const browserKeyboard: ToolDefinition = {
             // Type raw text
             if (input.text) {
                 await page.keyboard.type(input.text as string, { delay: 30 });
-                return JSON.stringify({ success: true, typed: (input.text as string).substring(0, 50) });
+                invalidateCache();
+                return JSON.stringify({ success: true, typed_chars: (input.text as string).length });
             }
 
             // Key combo - e.g. "Control+Shift+z"
@@ -1044,8 +1126,11 @@ export const browserKeyboard: ToolDefinition = {
                 await page.keyboard.press(key);
                 for (const mod of modifiers.reverse()) await page.keyboard.up(mod);
 
-                await page.waitForTimeout(150);
-                return JSON.stringify({ success: true, combo });
+                // Enter submits forms / sends messages: let the page settle before reporting.
+                if (key === "Enter") await waitForPageReady(page, 1500);
+                else await page.waitForTimeout(150);
+                invalidateCache();
+                return JSON.stringify({ success: true, combo, url: page.url(), ...takePageEvents() });
             }
 
             return JSON.stringify({ error: "Provide 'combo', 'text', 'hold', or 'release'" });
@@ -1099,9 +1184,10 @@ export const browserScrollElement: ToolDefinition = {
                     node.scrollIntoView({ behavior: "smooth", block: b as ScrollLogicalPosition });
                 },
                 /* javascript-obfuscator:enable */ block,
+                { timeout: 2000 }, // Locator handles wait for a gone element instead of failing
             );
 
-            await page.waitForTimeout(300);
+            await settleAfterAction(page, undefined);
 
             const newElementMap = await getInteractiveElements(page);
             setLastElementMap(newElementMap);

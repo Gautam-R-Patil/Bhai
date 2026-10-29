@@ -23,16 +23,19 @@ import {
     replayActions,
     shouldReplayActions,
 } from "./action-cache.js";
+import { agentCursor } from "./agent-cursor.js";
 import {
     buildElementsText,
     getAccessibilityTree,
     getActivePage,
     getInteractiveElements,
     getLastElementMap,
+    invalidateCache,
     setLastElementMap,
     waitForPageReady,
 } from "./core.js";
 import { signBrowserAction, validateJsCode } from "./native-browser.js";
+import { vaultTaintError } from "./vault-typing.js";
 
 // ═══════════════════════════════════════════════
 // TOOL: Analyze page (smart element detection)
@@ -156,6 +159,8 @@ export const browserRunJs: ToolDefinition = {
     async handler(input) {
         try {
             const page = await getActivePage();
+            const tainted = await vaultTaintError(page);
+            if (tainted) return JSON.stringify({ error: tainted });
             // IP guard: validate code before execution (blocks exfiltration & Bhai internals access)
             let safeCode: string;
             try {
@@ -256,6 +261,7 @@ export const browserWait: ToolDefinition = {
                 default:
                     await page.waitForTimeout(2000);
             }
+            invalidateCache(); // waited for the page to change
             const newElementMap = await getInteractiveElements(page);
             setLastElementMap(newElementMap);
             return JSON.stringify({
@@ -300,10 +306,15 @@ export const browserSelect: ToolDefinition = {
     async handler(input) {
         try {
             const page = await getActivePage();
+            await agentCursor(page, page.locator(input.selector as string).first(), "click");
             if (input.label) await page.selectOption(input.selector as string, { label: input.label as string });
             else if (input.value) await page.selectOption(input.selector as string, input.value as string);
-            const waitTime = input.wait_after_ms !== undefined ? (input.wait_after_ms as number) : 500;
-            if (waitTime > 0) await page.waitForTimeout(waitTime);
+            if (input.wait_after_ms !== undefined) {
+                if ((input.wait_after_ms as number) > 0) await page.waitForTimeout(input.wait_after_ms as number);
+            } else {
+                await waitForPageReady(page, 1500);
+            }
+            invalidateCache();
             const newElementMap = await getInteractiveElements(page);
             setLastElementMap(newElementMap);
             return JSON.stringify({

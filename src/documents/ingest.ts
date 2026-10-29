@@ -10,9 +10,11 @@
 //      future iteration) to an LLM and ask it to emit JSON Resume. Requires
 //      an injected LLMClient (set by boot).
 
+import { fork } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { resolveScript } from "../config/paths.js";
 import type { LLMClient } from "../llm.js";
 import { MODELS } from "../llm.js";
 import { extractJSON } from "../utils/json-extract.js";
@@ -36,44 +38,72 @@ export function setIngestLLM(client: LLMClient): void {
 // ── Cache for identical inputs (keyed by SHA-256) ─
 const extractionCache = new Map<string, { resume?: Resume; general?: GeneralDocument; confidence: number }>();
 
-function sha256File(filePath: string): string {
-    const buf = fs.readFileSync(filePath);
-    return crypto.createHash("sha256").update(buf).digest("hex");
-}
-
 // ── Tier 1: text extraction ─────────────────────
 
-// Attachments arrive from any channel and pdf.js runs in the bot's event loop,
-// so cap the input size and give up on parses that run too long.
+// Attachments arrive from any channel: cap the input size, read only regular
+// files, and parse in a child process (scripts/pdf-text.cjs) that is killed at
+// the deadline and kills itself past 1GB, so a decompression bomb or a parse
+// that never ends costs that child, never the bot.
 const MAX_PDF_BYTES = 50 * 1024 * 1024;
 const PARSE_DEADLINE_MS = 60_000;
 
-async function extractText(filePath: string): Promise<string> {
+// A FIFO or device (named directly or through a symlink) would block the read
+// or never end. fstat checks the file actually opened, in case the path changed.
+function readPdf(filePath: string): Buffer {
+    const notRegular = () => new Error(`Not a regular file: ${path.basename(filePath)}`);
+    if (!fs.statSync(filePath).isFile()) throw notRegular();
+    const fd = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0));
+    try {
+        const st = fs.fstatSync(fd);
+        if (!st.isFile()) throw notRegular();
+        if (st.size > MAX_PDF_BYTES) {
+            throw new Error(
+                `PDF is too large (${(st.size / 1024 / 1024).toFixed(1)}MB). The limit is ${MAX_PDF_BYTES / 1024 / 1024}MB.`,
+            );
+        }
+        return fs.readFileSync(fd);
+    } finally {
+        fs.closeSync(fd);
+    }
+}
+
+function extractText(data: Buffer): Promise<string> {
     // unpdf ships a current pdf.js; the old pdf-parse fallback (pdf.js 2018) never
     // rescued a PDF the modern parser rejected, so it was dropped.
-    const { extractText: unpdfExtract, getDocumentProxy } = await import("unpdf");
-    let pdf: Awaited<ReturnType<typeof getDocumentProxy>> | undefined;
-    const parse = (async () => {
-        pdf = await getDocumentProxy(new Uint8Array(fs.readFileSync(filePath)));
-        const { text } = await unpdfExtract(pdf, { mergePages: true });
-        return Array.isArray(text) ? text.join("\n") : String(text ?? "");
-    })();
-    parse.catch(() => {}); // a parse abandoned at the deadline must not surface as an unhandled rejection
-    let timer: NodeJS.Timeout | undefined;
-    const deadline = new Promise<never>((_, reject) => {
-        timer = setTimeout(
-            () => reject(new Error(`PDF parsing took longer than ${PARSE_DEADLINE_MS / 1000}s and was stopped.`)),
-            PARSE_DEADLINE_MS,
-        );
+    const script = resolveScript("pdf-text.cjs");
+    if (!script) return Promise.reject(new Error("The PDF reader (scripts/pdf-text.cjs) is missing."));
+    const envMs = Number(process.env.ATLAS_PDF_PARSE_DEADLINE_MS); // tests only; "" or "60s" must not mean 0
+    const ms = Number.isFinite(envMs) && envMs > 0 ? envMs : PARSE_DEADLINE_MS;
+    const child = fork(script, [], {
+        execPath: process.execPath,
+        execArgv: ["--max-old-space-size=512"],
+        env: { ELECTRON_RUN_AS_NODE: "1", PATH: process.env.PATH ?? "" },
+        serialization: "advanced", // the PDF bytes go over as a Uint8Array, not JSON
+        stdio: ["ignore", "ignore", "ignore", "ipc"],
     });
-    try {
-        // ponytail: the deadline frees the caller, but a single synchronous pdf.js
-        // step still blocks the loop until it yields; a worker thread fixes that if it bites.
-        return await Promise.race([parse, deadline]);
-    } finally {
-        clearTimeout(timer);
-        void Promise.resolve(pdf?.destroy()).catch(() => {});
-    }
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        const finish = (err: Error | null, text = "") => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            child.kill("SIGKILL");
+            if (err) reject(err);
+            else resolve(text);
+        };
+        const timer = setTimeout(
+            () => finish(new Error(`PDF parsing took longer than ${ms / 1000}s and was stopped.`)),
+            ms,
+        );
+        child.on("message", (m: { ok?: boolean; text?: unknown; error?: unknown }) =>
+            m?.ok && typeof m.text === "string"
+                ? finish(null, m.text)
+                : finish(new Error(`Could not read the PDF: ${String(m?.error ?? "no text")}`)),
+        );
+        child.on("exit", () => finish(new Error("PDF parsing stopped: the parser ran out of memory or crashed.")));
+        child.on("error", (e) => finish(new Error(`PDF parsing failed: ${e.message}`)));
+        child.send({ data });
+    });
 }
 
 // ── Heuristic resume parser ─────────────────────
@@ -328,18 +358,12 @@ export async function ingestPdfToDocument(
     if (!/\.pdf$/i.test(filePath)) {
         throw new Error(`Only .pdf files are supported by ingest: ${path.basename(filePath)}`);
     }
-    const size = fs.statSync(filePath).size;
-    if (size > MAX_PDF_BYTES) {
-        throw new Error(
-            `PDF is too large (${(size / 1024 / 1024).toFixed(1)}MB). The limit is ${MAX_PDF_BYTES / 1024 / 1024}MB.`,
-        );
-    }
-
-    const hash = sha256File(filePath);
+    const bytes = readPdf(filePath);
+    const hash = crypto.createHash("sha256").update(bytes).digest("hex");
     const cacheKey = `${hash}:${type}`;
     const cached = extractionCache.get(cacheKey);
 
-    const text = await extractText(filePath);
+    const text = await extractText(bytes);
     if (!text || text.trim().length === 0) {
         throw new Error("PDF yielded no extractable text. Image-only PDFs are not supported in this build.");
     }

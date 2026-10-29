@@ -7,9 +7,9 @@
 
 import { getResourceLimits } from "../../utils/system-resources.js";
 import type { ToolDefinition } from "../get-current-time.js";
+import { agentCursor, withAgentUIHidden } from "./agent-cursor.js";
 import {
     buildElementsText,
-    CLICK_INDICATOR_JS,
     getActivePage,
     getBrowser,
     getInteractiveElements,
@@ -20,6 +20,7 @@ import {
     waitForPageReady,
 } from "./core.js";
 import { signBrowserAction, validateJsCode } from "./native-browser.js";
+import { vaultTaintError } from "./vault-typing.js";
 
 // ═══════════════════════════════════════════════
 // TOOL: Parallel Tab Execution
@@ -394,6 +395,8 @@ export const browserParallelActions: ToolDefinition = {
 
                         case "evaluate": {
                             const code = action.code as string;
+                            const tainted = await vaultTaintError(page);
+                            if (tainted) return { id, success: false, error: tainted };
                             let safeCode: string;
                             try {
                                 safeCode = validateJsCode(code);
@@ -408,11 +411,9 @@ export const browserParallelActions: ToolDefinition = {
                         case "screenshot_region": {
                             const region = action.region as { x: number; y: number; width: number; height: number };
                             if (region) {
-                                const buffer = await page.screenshot({
-                                    type: "jpeg",
-                                    quality: 60,
-                                    clip: region,
-                                });
+                                const buffer = await withAgentUIHidden(page, () =>
+                                    page.screenshot({ type: "jpeg", quality: 60, clip: region }),
+                                );
                                 return {
                                     id,
                                     success: true,
@@ -612,7 +613,7 @@ export const browserMultiAction: ToolDefinition = {
                         }
 
                         if (cx !== undefined && cy !== undefined) {
-                            await page.evaluate(CLICK_INDICATOR_JS, { x: cx, y: cy, type: "click" });
+                            await agentCursor(page, { x: cx, y: cy }, "click");
                             await page.mouse.click(cx, cy);
                             invalidateCache(); // Potential DOM change
                             return { success: true };
@@ -622,6 +623,7 @@ export const browserMultiAction: ToolDefinition = {
                     case "type": {
                         if (act.selector) {
                             const el = page.locator(act.selector as string).first();
+                            await agentCursor(page, el, "click");
                             try {
                                 await el.focus();
                                 await el.click();
@@ -632,21 +634,23 @@ export const browserMultiAction: ToolDefinition = {
                             if (box) {
                                 const cx = box.x + box.width / 2;
                                 const cy = box.y + box.height / 2;
-                                await page.evaluate(CLICK_INDICATOR_JS, { x: cx, y: cy, type: "click" });
                                 await page.mouse.click(cx, cy);
                                 await page.waitForTimeout(200);
                             }
                         } else if (act.label !== undefined) {
                             const el = lastElementMap.find((e) => e.label === (act.label as number));
                             if (el) {
+                                await agentCursor(page, el, "click");
                                 await page.mouse.click(el.x, el.y);
                                 await page.waitForTimeout(200);
                             }
                         }
                         if (act.text) {
+                            await agentCursor(page, null, "type");
                             await page.keyboard.press("ControlOrMeta+a"); // cross-platform (Ctrl on Win/Linux, Cmd on Mac)
                             await page.waitForTimeout(80);
-                            await page.keyboard.type(act.text as string, { delay: 25 });
+                            // `clear`: the Chrome extension replaces the content itself (its synthetic Ctrl+A selects nothing); Playwright ignores it.
+                            await page.keyboard.type(act.text as string, { delay: 25, clear: true });
                             return { success: true };
                         } else if (act.key) {
                             await page.keyboard.press(act.key as string);
@@ -678,6 +682,7 @@ export const browserMultiAction: ToolDefinition = {
                                 break;
                         }
                         // mouse.wheel uses native CDP — no eval/compiled-lambda issues
+                        await agentCursor(page, null, "scroll");
                         await page.mouse.wheel(deltaX, deltaY);
                         invalidateCache();
                         setLastElementMap([]); // clear stale positions after scroll
@@ -701,6 +706,7 @@ export const browserMultiAction: ToolDefinition = {
                     }
                     case "select": {
                         if (act.selector && (act.label || act.value)) {
+                            await agentCursor(page, page.locator(act.selector as string).first(), "click");
                             if (act.label)
                                 await page.selectOption(act.selector as string, { label: act.label as string });
                             else if (act.value) await page.selectOption(act.selector as string, act.value as string);
@@ -711,16 +717,19 @@ export const browserMultiAction: ToolDefinition = {
                     case "hover": {
                         const hoverSteps = (act.steps as number) || 8;
                         if (act.x !== undefined && act.y !== undefined) {
+                            await agentCursor(page, { x: act.x as number, y: act.y as number }, "hover");
                             await page.mouse.move(act.x as number, act.y as number, { steps: hoverSteps });
                             return { success: true };
                         } else if (act.label !== undefined) {
                             const el = lastElementMap.find((e) => e.label === (act.label as number));
                             if (el) {
+                                await agentCursor(page, el, "hover");
                                 await page.mouse.move(el.x, el.y, { steps: hoverSteps });
                                 return { success: true };
                             }
                         } else if (act.selector) {
                             const loc = page.locator(act.selector as string).first();
+                            await agentCursor(page, loc, "hover");
                             await loc.hover({ force: true }).catch(() => {});
                             return { success: true };
                         }
@@ -791,6 +800,8 @@ export const browserMultiAction: ToolDefinition = {
                     // IP protection: code is validated by Rust ip_guard before execution
                     case "js_eval": {
                         if (!act.code) return { success: false, error: 'js_eval requires "code"' };
+                        const tainted = await vaultTaintError(page);
+                        if (tainted) return { success: false, error: tainted };
                         // Validate through native IP guard (blocks exfiltration, Bhai var access, eval)
                         let safeCode: string;
                         try {
@@ -837,11 +848,9 @@ export const browserMultiAction: ToolDefinition = {
                         return { success: true, result: { elements, count: elements.length } };
                     }
                     case "screenshot": {
-                        const screenshotBuffer = await page.screenshot({
-                            type: "jpeg",
-                            quality: 50,
-                            fullPage: !!act.fullPage,
-                        });
+                        const screenshotBuffer = await withAgentUIHidden(page, () =>
+                            page.screenshot({ type: "jpeg", quality: 50, fullPage: !!act.fullPage }),
+                        );
                         return { success: true, result: { size_kb: Math.round(screenshotBuffer.length / 1024) } };
                     }
                     case "assert": {
@@ -920,7 +929,8 @@ export const browserMultiAction: ToolDefinition = {
             // Only scan if requested and useful
             let newElementMap = lastElementMap;
             if (finalScan) {
-                await page.waitForTimeout(500);
+                await waitForPageReady(page, 1500);
+                invalidateCache(); // type/keyboard/select steps changed the page too
                 newElementMap = await getInteractiveElements(page);
                 setLastElementMap(newElementMap);
             }

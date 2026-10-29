@@ -76,6 +76,25 @@ describe("site-skill-host sandboxing", () => {
         expect(await run(path.join(missing, "skill.cjs"))).toEqual({ fail: { reason: "skill_load_error" } });
     });
 
+    it("an unserializable result or a throw of a bare object is skill_error, not a crashed child", async () => {
+        const cases = {
+            "async-bigint": `exports.step = async () => ({ done: { summary: "x" }, n: 1n });`,
+            "async-circular": `exports.step = async () => { const o = {}; o.o = o; return o; };`,
+            "async-null-proto-throw": `exports.step = async () => { throw Object.create(null); };`,
+            "async-null-proto-reject": `exports.step = () => Promise.reject(Object.create(null));`,
+            "sync-bigint": `exports.step = () => ({ n: 1n });`,
+            "sync-null-proto-throw": `exports.step = () => { throw Object.create(null); };`,
+        };
+        for (const [name, code] of Object.entries(cases)) {
+            const h = new SkillHost(add(store, name, code));
+            hosts.push(h);
+            expect([name, await h.call("search", {})]).toEqual([name, { fail: { reason: "skill_error" } }]);
+            // Same child answers again: it was never killed and respawned.
+            expect(await h.call("search", {})).toEqual({ fail: { reason: "skill_error" } });
+            expect(h.spawned).toHaveLength(1);
+        }
+    });
+
     it("a built-in skill (<bot>/site-skills beside the shim's scripts/) still runs with require", async () => {
         // A copy of the shim in <root>/bot/scripts makes <root>/bot/site-skills its built-in dir.
         const bot = path.join(root, "bot");

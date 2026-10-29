@@ -505,6 +505,58 @@
                         </div>
                     </div>
 
+                    <!-- ═════════ VAULT ═════════ -->
+                    <div class="settings-section" id="vaultSection">
+                        <div class="settings-section-header">
+                            <span class="settings-section-icon">🔐</span>
+                            <div>
+                                <h3 class="settings-section-title">Vault</h3>
+                                <p class="settings-section-desc">Logins, API keys, cards and UPI IDs Bhai can use but never sees. Encrypted on this device; a login is typed only on its own website, and every payment needs your OK.</p>
+                            </div>
+                        </div>
+                        <div class="settings-fields">
+                            <div id="vaultList" style="display:flex;flex-direction:column;gap:6px;"></div>
+                            <div class="input-group" id="vaultPwRow" style="display:none;">
+                                <label class="input-label">Vault password</label>
+                                <input class="clean-input" type="password" id="vaultPassword" autocomplete="off" placeholder="Needed to view or change an entry">
+                                <div style="display:flex;gap:8px;margin-top:6px;">
+                                    <input class="clean-input" type="password" id="vaultNewPassword" autocomplete="off" placeholder="New vault password (6+ characters)" style="flex:1;">
+                                    <button class="btn btn-secondary btn-sm" id="vaultSetPwBtn" onclick="vaultSetPassword()">Set password</button>
+                                </div>
+                                <span class="input-hint">No Touch ID on this computer, so the vault uses its own password.</span>
+                            </div>
+                            <div class="input-group">
+                                <label class="input-label" id="vaultFormTitle">Add to vault</label>
+                                <select id="vaultKind" onchange="vaultRenderForm()" style="background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:12px;outline:none;">
+                                    <option value="login">Website login</option>
+                                    <option value="api_key">API key</option>
+                                    <option value="card">Card</option>
+                                    <option value="upi">UPI ID</option>
+                                </select>
+                                <div id="vaultForm" style="display:flex;flex-direction:column;gap:6px;margin-top:6px;"></div>
+                                <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px;">
+                                    <button class="btn btn-secondary btn-sm" onclick="vaultResetForm()">Clear</button>
+                                    <button class="btn btn-sm" onclick="vaultSave()">Save</button>
+                                </div>
+                                <span class="input-hint" id="vaultStatus"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Card CVV at pay time: used once, never saved -->
+                    <div id="vaultCvvModal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.5);align-items:center;justify-content:center;">
+                        <div class="surface-card" style="padding:20px;border-radius:12px;max-width:340px;width:90%;background:var(--bg-secondary);">
+                            <h3 style="margin:0 0 6px;">Confirm payment</h3>
+                            <p id="vaultCvvText" style="font-size:13px;color:var(--text-secondary);margin:0 0 12px;"></p>
+                            <input class="clean-input" type="password" id="vaultCvvInput" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="CVV" style="width:100%;">
+                            <span class="input-hint">Used once for this payment, never saved.</span>
+                            <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px;">
+                                <button class="btn btn-secondary btn-sm" onclick="vaultCvvAnswer(false)">Cancel</button>
+                                <button class="btn btn-sm" onclick="vaultCvvAnswer(true)">Pay</button>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- ═════════ INTEGRATIONS ═════════ -->
                     <div class="settings-group-heading">Integrations</div>
 
@@ -1599,6 +1651,7 @@
 
     <script src="components/liquid-glass.js"></script>
     <script src="components/mascot.js"></script>
+    <script src="components/wa-owner-row.js"></script>
 
     <script>
         // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
@@ -2327,6 +2380,7 @@
 
         // WhatsApp OTP listener
         if (atlas.onWhatsAppOTP) {
+            let waOTPInterval = null;
             atlas.onWhatsAppOTP((data) => {
                 if (data.verified) {
                     // Owner verified — refresh list and advance to step 4
@@ -2341,10 +2395,14 @@
                     let remaining = 300; // 5 minutes
                     const timerEl = document.getElementById('waOTPTimer');
                     if (timerEl) {
-                        const interval = setInterval(() => {
+                        // A new code supersedes any running countdown — clear it so
+                        // overlapping intervals don't fight over #waOTPTimer.
+                        if (waOTPInterval) clearInterval(waOTPInterval);
+                        waOTPInterval = setInterval(() => {
                             remaining--;
                             if (remaining <= 0) {
-                                clearInterval(interval);
+                                clearInterval(waOTPInterval);
+                                waOTPInterval = null;
                                 timerEl.textContent = 'Code expired. Generate a new one.';
                                 if (codeEl) codeEl.textContent = '------';
                                 return;
@@ -2357,6 +2415,30 @@
                 }
             });
         }
+
+        // Accessibility: the channel status dots convey state by color alone.
+        // Mirror the color class into an aria-label/title so colorblind and
+        // screen-reader users get the state too. One observer covers every
+        // className swap (there are ~15 sites) plus future ones.
+        const CHANNEL_DOT_LABELS = { connected: 'Connected', connecting: 'Connecting', disconnected: 'Disconnected', disabled: 'Off' };
+        function labelChannelDot(dot) {
+            if (!dot || !dot.classList || !dot.classList.contains('channel-status-dot')) return;
+            let state = 'disabled';
+            for (const s of ['connected', 'connecting', 'disconnected']) {
+                if (dot.classList.contains(s)) { state = s; break; }
+            }
+            const label = 'Status: ' + (CHANNEL_DOT_LABELS[state] || state);
+            dot.setAttribute('aria-label', label);
+            dot.setAttribute('title', label);
+        }
+        (function wireChannelDotLabels() {
+            const scope = document.getElementById('tab-channels') || document;
+            scope.querySelectorAll('.channel-status-dot').forEach(labelChannelDot);
+            try {
+                new MutationObserver(muts => { for (const m of muts) labelChannelDot(m.target); })
+                    .observe(scope, { attributes: true, attributeFilter: ['class'], subtree: true });
+            } catch {}
+        })();
 
         // Channel status update listener
         if (atlas.onChannelStatusUpdate) {
@@ -2597,15 +2679,10 @@
                     list.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:20px;text-align:center;">No owners verified yet.</div>';
                     return;
                 }
-                list.innerHTML = owners.map(o => `
-                    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg-control);border:1px solid var(--separator);border-radius:8px;margin:4px 0;">
-                        <div>
-                            <span style="font-weight:600;font-size:13px;">${o.displayName || o.phoneNumber || o.jid}</span>
-                            <span style="font-size:11px;color:var(--text-muted);margin-left:8px;">${o.phoneNumber || ''}</span>
-                        </div>
-                        <button class="wizard-btn wizard-btn-secondary" style="padding:4px 10px;font-size:11px;" onclick="removeWhatsAppOwner('${o.jid}')">Remove</button>
-                    </div>
-                `).join('');
+                list.innerHTML = window.WaOwnerRow.ownerRowsHtml(owners);
+                list.querySelectorAll('[data-wa-remove-jid]').forEach(btn => {
+                    btn.addEventListener('click', () => removeWhatsAppOwner(btn.getAttribute('data-wa-remove-jid')));
+                });
             } catch (err) { console.error('Failed to load owners:', err); }
         }
 
@@ -3242,6 +3319,122 @@
             } catch { /* best-effort */ }
         }
 
+        // ── Vault (Settings) ──
+        // The renderer only holds masked entries; values stay in main and come
+        // here only for "Show"/"Edit" after Touch ID or the vault password.
+        const VAULT_FIELDS = {
+            login: [['label', 'Name (e.g. Zomato)'], ['domains', 'Website (e.g. zomato.com)'], ['username', 'Username or email'], ['password', 'Password', 'password']],
+            api_key: [['label', 'Name (e.g. OpenAI)'], ['name', 'Key name (e.g. OPENAI_API_KEY)'], ['value', 'Key', 'password'], ['domains', 'Website it is for (optional)']],
+            card: [['label', 'Name (e.g. HDFC Visa)'], ['holder', 'Name on card'], ['number', 'Card number', 'password'], ['expiry', 'Expiry MM/YY'], ['brand', 'Brand (optional)']],
+            upi: [['label', 'Name (e.g. GPay)'], ['vpa', 'UPI ID (name@bank)']],
+        };
+        let vaultEditingId = null;
+        let vaultState = { touchId: false, hasPassword: false, entries: [] };
+        const vaultPw = () => document.getElementById('vaultPassword').value;
+        const vaultMsg = (t) => { document.getElementById('vaultStatus').textContent = t || ''; };
+        const vaultErr = (r) => r && r.error === 'auth_failed'
+            ? (vaultState.touchId ? 'Touch ID was cancelled.' : 'Enter the vault password first.')
+            : (r && r.error) || 'Something went wrong';
+
+        function vaultRenderForm(values) {
+            const kind = document.getElementById('vaultKind').value;
+            const form = document.getElementById('vaultForm');
+            form.innerHTML = VAULT_FIELDS[kind].map(([f, ph, type]) =>
+                `<input class="clean-input" data-vault-field="${f}" type="${type || 'text'}" autocomplete="off" placeholder="${escapeHtml(ph)}">`).join('')
+                + (kind === 'card' ? '<span class="input-hint">No CVV here: Bhai asks for it each time you pay.</span>' : '');
+            for (const el of form.querySelectorAll('[data-vault-field]')) {
+                const v = values && values[el.dataset.vaultField];
+                if (v) el.value = Array.isArray(v) ? v.join(', ') : v;
+            }
+        }
+        function vaultResetForm() {
+            vaultEditingId = null;
+            document.getElementById('vaultKind').disabled = false;
+            document.getElementById('vaultFormTitle').textContent = 'Add to vault';
+            vaultRenderForm();
+        }
+        async function vaultLoad() {
+            const r = await atlas.vault.list();
+            if (!r || !r.success) return vaultMsg(r && r.error);
+            vaultState = r;
+            document.getElementById('vaultPwRow').style.display = r.touchId ? 'none' : '';
+            document.getElementById('vaultSetPwBtn').textContent = r.hasPassword ? 'Change' : 'Set password';
+            document.getElementById('vaultList').innerHTML = r.entries.length ? r.entries.map((e) => {
+                const id = escapeHtml(e.id);
+                const detail = [(e.domains || []).join(', '), e.username_masked, e.name, e.last4 && ('•••• ' + e.last4), e.expiry].filter(Boolean).join(' · ');
+                return `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;">
+                    <div style="flex:1;min-width:0;"><div style="font-weight:600;">${escapeHtml(e.label)} <span style="font-weight:400;font-size:11px;color:var(--text-secondary);">${escapeHtml(e.kind.replace('_', ' '))}</span></div>
+                    <div style="font-size:12px;color:var(--text-secondary);overflow-wrap:anywhere;" id="vaultDetail-${id}">${escapeHtml(detail)}</div></div>
+                    <button class="btn btn-secondary btn-sm" onclick="vaultShow('${id}')">Show</button>
+                    <button class="btn btn-secondary btn-sm" onclick="vaultEdit('${id}')">Edit</button>
+                    <button class="btn btn-secondary btn-sm" onclick="vaultDelete('${id}')">Delete</button></div>`;
+            }).join('') : '<span class="input-hint">Nothing saved yet.</span>';
+        }
+        async function vaultShow(id) {
+            const r = await atlas.vault.reveal(id, vaultPw());
+            if (!r || !r.success) return vaultMsg(vaultErr(r));
+            document.getElementById('vaultDetail-' + id).textContent =
+                Object.entries(r.values).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join(' · ');
+            setTimeout(vaultLoad, 20000); // masked again after 20s
+        }
+        async function vaultEdit(id) {
+            const r = await atlas.vault.reveal(id, vaultPw());
+            if (!r || !r.success) return vaultMsg(vaultErr(r));
+            const e = vaultState.entries.find((x) => x.id === id);
+            vaultEditingId = id;
+            const kind = document.getElementById('vaultKind');
+            kind.value = e.kind;
+            kind.disabled = true;
+            document.getElementById('vaultFormTitle').textContent = 'Edit ' + e.label;
+            vaultRenderForm({ ...r.values, label: e.label, domains: e.domains });
+        }
+        async function vaultSave() {
+            const entry = { kind: document.getElementById('vaultKind').value };
+            if (vaultEditingId) entry.id = vaultEditingId;
+            for (const el of document.querySelectorAll('#vaultForm [data-vault-field]')) entry[el.dataset.vaultField] = el.value;
+            const r = await atlas.vault.save(entry, vaultPw());
+            if (!r || !r.success) return vaultMsg(vaultErr(r));
+            vaultMsg('Saved. Bhai can use it right away.');
+            vaultResetForm();
+            vaultLoad();
+        }
+        async function vaultDelete(id) {
+            if (!confirm('Delete this from the vault?')) return;
+            const r = await atlas.vault.remove(id);
+            if (!r || !r.success) return vaultMsg(vaultErr(r));
+            vaultLoad();
+        }
+        async function vaultSetPassword() {
+            const next = document.getElementById('vaultNewPassword');
+            const r = await atlas.vault.setPassword(next.value, vaultPw());
+            vaultMsg(r && r.success ? 'Vault password set.' : vaultErr(r));
+            if (r && r.success) { next.value = ''; vaultLoad(); }
+        }
+
+        let vaultCvvReq = null;
+        function vaultCvvAnswer(pay) {
+            const input = document.getElementById('vaultCvvInput');
+            const cvv = pay ? input.value.trim() : null;
+            input.value = '';
+            document.getElementById('vaultCvvModal').style.display = 'none';
+            if (vaultCvvReq) atlas.vault.submitCvv(vaultCvvReq.id, cvv);
+            vaultCvvReq = null;
+        }
+        if (window.atlas && atlas.vault) {
+            atlas.vault.onCvvRequest((req) => {
+                if (vaultCvvReq) atlas.vault.submitCvv(vaultCvvReq.id, null); // one prompt at a time
+                vaultCvvReq = req;
+                document.getElementById('vaultCvvText').textContent =
+                    `Bhai wants to pay ₹${req.amount} for "${req.item}" with ${req.label}`
+                    + (req.site ? ` on ${req.site}` : '')
+                    + `. Enter the card's CVV to continue.`;
+                document.getElementById('vaultCvvModal').style.display = 'flex';
+                document.getElementById('vaultCvvInput').focus();
+            });
+            vaultRenderForm();
+            vaultLoad().catch(() => {});
+        }
+
         // Trigger initial load now — the inline script runs after DOMContentLoaded
         // when this panel is opened post-boot, so an addEventListener would never fire.
         // Run inline + also listen, to cover both timings.
@@ -3744,13 +3937,21 @@
                     <span class="installed-item-icon">${typeIcons[item.type] || '📦'}</span>
                     <div class="installed-item-info">
                         <span class="installed-item-name">${escapeHtml(item.name || item.slug)}</span>
-                        <span class="installed-item-version">v${item.version || '1.0.0'}</span>
+                        <span class="installed-item-version">v${escapeHtml(item.version || '1.0.0')}</span>
                     </div>
-                    <button class="btn btn-sm btn-danger" onclick="quickUninstall('${item.slug}', '${item.type}')">
+                    <button class="btn btn-sm btn-danger" data-uninstall-slug="${escapeHtml(item.slug)}" data-uninstall-type="${escapeHtml(item.type)}">
                         Uninstall
                     </button>
                 </div>
             `).join('');
+            // Delegated, so slug/type never enter an inline handler string (XSS-safe).
+            if (!list.dataset.uninstallWired) {
+                list.dataset.uninstallWired = "1";
+                list.addEventListener("click", (e) => {
+                    const btn = e.target.closest("[data-uninstall-slug]");
+                    if (btn) quickUninstall(btn.dataset.uninstallSlug, btn.dataset.uninstallType);
+                });
+            }
         }
 
         function closeInstalledModal() {

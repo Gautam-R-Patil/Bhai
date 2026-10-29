@@ -114,7 +114,8 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "core_memory_append",
             "core_memory_delete",
         ],
-        alwaysInclude: true,
+        // Not alwaysInclude: it took 14 of 36 slots every turn. memory_store and
+        // memory_search are always on (ALWAYS_ON_TOOLS); the rest come with the category.
     },
     shell: {
         description:
@@ -198,12 +199,14 @@ const CATEGORIES: Record<string, CategoryDef> = {
     },
     browser: {
         description:
-            "Web browsing, navigating to websites and URLs, clicking on web page elements, typing into web forms, scrolling web pages, extracting data from websites, scraping, automating web interactions, filling out online forms, logging into websites, web page analysis, tab management, uploading files to websites, downloading from the web, opening multiple URLs in parallel tabs, batch processing. Includes using the user's real Chrome browser via extension (for their active tab, logged-in sites, current page) or headless Playwright (for independent research, background tasks). When the user references 'my tab', 'this page', 'use my Chrome', or asks about what they're viewing, prefer chrome mode.",
+            "Web browsing, navigating to websites and URLs, clicking on web page elements, typing into web forms, scrolling web pages, extracting data from websites, scraping, automating web interactions, filling out online forms, logging into websites (with the owner's saved logins, cards and UPI IDs from the vault), web page analysis, tab management, uploading files to websites, downloading from the web, opening multiple URLs in parallel tabs, batch processing. Includes using the user's real Chrome browser via extension (for their active tab, logged-in sites, current page) or headless Playwright (for independent research, background tasks). When the user references 'my tab', 'this page', 'use my Chrome', or asks about what they're viewing, prefer chrome mode.",
         tools: [
             "browser_navigate",
             "site_task",
             "site_skill_mint",
             "approve_site_skill",
+            "vault_list",
+            "vault_authorize_payment",
             "browser_click_at",
             "browser_type",
             "browser_scan",
@@ -255,10 +258,9 @@ const CATEGORIES: Record<string, CategoryDef> = {
         description:
             "Controlling the computer's operating system, taking screenshots of the desktop, clicking on screen elements by coordinates or OCR text or accessibility-tree id, typing into OS applications, interacting with native desktop apps, visual verification of UI elements, screen capture, mouse control, keyboard input automation, macOS Automator, AppleScript, PowerShell automation, accessibility tree inspection, fast cross-OS element lookup, structured single-action OS calls with percentage coords, GUI grounding by description with cloud vision, keyboard shortcuts for apps, hierarchical computer use for complex multi-step desktop automation tasks.",
         tools: [
-            // Order matters: the first tool gets a reserved slot, then only 12 more
-            // per category are offered (MAX_TOOLS_PER_CATEGORY), and the classifier
-            // sees the first 6 names. Keep what the rules-mac prompt and the
-            // verify-before-done gate rely on inside that window.
+            // Order matters: the first tool gets a reserved slot and at most 12
+            // per category are offered (MAX_TOOLS_PER_CATEGORY). Keep what the
+            // rules-mac prompt and the verify-before-done gate rely on near the top.
             "os_smart_click",
             "os_inspect",
             "os_click_id",
@@ -516,10 +518,47 @@ const INTENT_CACHE_TTL_MS = 120_000; // 2 minutes
 // ATLAS_TOOL_ROUTER_TIMEOUT_MS.
 const LLM_CLASSIFIER_TIMEOUT_MS = Number(process.env.ATLAS_TOOL_ROUTER_TIMEOUT_MS) || 5000;
 
+// The whole routing step shares one deadline: classifier, then the fallback's
+// message embedding gets whatever is left (none → structural scores only).
+function beforeDeadline<T>(work: Promise<T>, deadline: number): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    return Promise.race([
+        work,
+        new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error("timeout")), Math.max(0, deadline - Date.now()));
+        }),
+    ]).finally(() => clearTimeout(timer));
+}
+
+// Embedding budget after a classifier timeout. The classifier can use the whole
+// routing deadline, and a warm MiniLM embedding takes ~15-50ms, so the fallback
+// gets its own small floor rather than the 0ms left over (which meant
+// structural-only scoring and blind MCP picks).
+const FALLBACK_EMBED_MS = 1000;
+
+// Banter with no classifier answer. Only takes the chat lane when it is certain
+// there is no request: target-less banter ("roast me", "lol") and nothing that
+// could be an ask — no question, no "can you/help me/I need", no action verb
+// with an object (a negated verb or one before "and/or/but" doesn't count:
+// "my code doesn't build", "tabs open and …"), no path/URL/file. Anything else
+// falls back to normal routing; the classifier still sends banter to chat.
+const BANTER_RE = /\b(roast me|jokes?|make me laugh|cheer me up|lol|lmao|rofl|haha\w*)\b/i;
+const ASK_RE =
+    /\?|\b(what|whats|how|why|when|where|who|which|whose|can|could|would|will|should|please|pls|plz|help|need|want|lemme|let me know|u|ur)\b/i;
+const ACTION_RE =
+    /(?<!(?:\bnot|\bnever|\bno|n't)\s+(?:\w+\s+)?)\b(?:close|open|fix|debug|run|build|compile|install|uninstall|delete|remove|kill|quit|restart|start|stop|search|find|look up|google|check|show|list|read|send|email|text|message|reply|call|play|pause|resume|skip|create|edit|update|upgrade|download|upload|deploy|commit|push|pull|set|schedule|remind|book|order|buy|pay|cancel|organi[sz]e|clean|save|take|screenshot|summari[sz]e|translate|go to|navigate|click|type|scroll|draft|turn|mute|unmute|move|copy|rename|share|forward|write|add|get|give|fetch|launch|visit|browse|join|track|ping|dm|lock|unlock|shut|reboot|print|convert|generate|draw|tell(?! me (?:a|another|some) jokes?))\b(?!\s+(?:and|or|but)\b)/i;
+const PATH_RE = /(?:^|\s)(?:~|\.{1,2})?\/[\w.-]|https?:\/\/|\b[\w-]+\.[a-z][a-z0-9]{1,4}\b/i;
+
+export function isConversationalBanter(message: string): boolean {
+    const m = message.replace(/’/g, "'");
+    return BANTER_RE.test(m) && !ASK_RE.test(m) && !ACTION_RE.test(m) && !PATH_RE.test(m);
+}
+
 async function classifyWithLLM(
     message: string,
     recentTools?: string[],
     conversationContext?: string,
+    deadline = Date.now() + LLM_CLASSIFIER_TIMEOUT_MS,
 ): Promise<IntentClassification | null> {
     if (!routerLLM) return null;
 
@@ -534,8 +573,10 @@ async function classifyWithLLM(
     const categoryList = Object.entries(CATEGORIES)
         .filter(([_, def]) => !def.alwaysInclude)
         .map(
+            // Every tool name (cheap), so the classifier can name a tool deep in a
+            // big category (browser_video_control) and its specific_tools rank it in.
             ([name, def]) =>
-                `${name}: ${def.description.substring(0, 120)} [tools: ${def.tools.slice(0, 6).join(", ")}${def.tools.length > 6 ? "..." : ""}]`,
+                `${name}: ${def.description.split(/(?<=\.)\s/)[0].slice(0, 200)} [tools: ${def.tools.join(", ")}]`,
         )
         .join("\n");
 
@@ -568,17 +609,15 @@ Rules:
 Respond with JSON only: {"intent":"short_label","categories":["cat1"],"specific_tools":["tool1"],"confidence":0.9,"tier":"simple","multi_step":false}`;
 
     try {
-        const response = await Promise.race([
+        const response = await beforeDeadline(
             routerLLM.chat({
                 messages: [{ role: "user", content: message }],
                 systemPrompt,
                 modelOverride: MODELS.GPT41_NANO,
                 lean: true,
             }),
-            new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error("timeout")), LLM_CLASSIFIER_TIMEOUT_MS),
-            ),
-        ]);
+            deadline,
+        );
 
         const text = response?.choices?.[0]?.message?.content || "";
         // Extract JSON from response (handle markdown code blocks, nested braces)
@@ -1128,6 +1167,7 @@ async function classifyToolNeeds(
     message: string,
     recentToolCalls?: string[],
     _iteration?: number,
+    deadline = Number.POSITIVE_INFINITY,
 ): Promise<{ category: string; score: number; confidence: number }[]> {
     // ── HYBRID: Always run structural first (instant, catches keywords) ──
     const structural = structuralClassify(message);
@@ -1137,7 +1177,7 @@ async function classifyToolNeeds(
     if (embeddingsReady) {
         try {
             const { cosineSimilarity } = await import("./memory/embeddings.js");
-            const messageEmbedding = await getCachedMessageEmbedding(message);
+            const messageEmbedding = await beforeDeadline(getCachedMessageEmbedding(message), deadline);
 
             for (const [name, embedding] of categoryEmbeddings.entries()) {
                 // Clamp to [0, 1] — `cosineSimilarity` is a fast dot product
@@ -1400,14 +1440,71 @@ export function getLastClassification(): {
     return lastClassification;
 }
 
-// Tool selection caps. These must be large enough to hold the ~17 tools
-// from alwaysInclude categories (memory=13, core=1, tool_creation=3) PLUS
-// a meaningful contribution from whatever categories the query triggered —
-// especially `coding`, which has 21 candidate tools that need real room.
+// Tool selection caps. These must be large enough to hold the always-on tools
+// (core=1, tool_creation=3, memory_store/memory_search) PLUS a meaningful
+// contribution from whatever categories the query triggered — especially
+// `coding`, which has 21 candidate tools that need real room.
 const MAX_TOOLS_TOTAL_DEFAULT = 36;
 const MAX_TOOLS_PER_CATEGORY = 12;
+/** Every selected category gets at least this many of its best-ranked tools (within the total cap). */
+const CATEGORY_FLOOR = 4;
+/** Memory tools offered every turn; the rest of `memory` comes with its category or request_tools. */
+const ALWAYS_ON_TOOLS = ["memory_store", "memory_search"];
 function getMaxToolsTotal(): number {
     return getDimensionValue<number>("toolRouter.maxToolsTotal") ?? MAX_TOOLS_TOTAL_DEFAULT;
+}
+
+/**
+ * Stage 3 of selectTools: pick tool names from the ranked candidates.
+ * Always-on tools first, then a floor per selected category (its first-listed
+ * tool plus its best-ranked candidates), then the rest in rank order up to the
+ * per-category and total caps. The floors come before the fill, so a broad
+ * category ranked first (browser, os_control) can't starve a narrow one
+ * (communication's whatsapp_send) — the large categories give up the slots.
+ */
+export function assembleToolNames(
+    selectedCategories: string[],
+    candidateTools: string[],
+    allToolNames: Set<string>,
+    maxTotal: number,
+): Set<string> {
+    const selected = new Set<string>(ALWAYS_ON_TOOLS.filter((t) => allToolNames.has(t)));
+    for (const catName of selectedCategories) {
+        const catDef = CATEGORIES[catName];
+        if (catDef?.alwaysInclude) for (const t of catDef.tools) if (allToolNames.has(t)) selected.add(t);
+    }
+
+    const catOf = (tool: string) => Object.keys(CATEGORIES).find((c) => CATEGORIES[c].tools.includes(tool)) ?? "";
+    const catToolCounts = new Map<string, number>();
+    const take = (tool: string) => {
+        selected.add(tool);
+        const c = catOf(tool);
+        catToolCounts.set(c, (catToolCounts.get(c) ?? 0) + 1);
+    };
+
+    for (const catName of selectedCategories) {
+        const catDef = CATEGORIES[catName];
+        if (!catDef || catDef.alwaysInclude) continue;
+        // The first-listed tool (spotify, shell_exec, browser_navigate) even if
+        // preference reordering ranks a brand-new tool low.
+        const primary = catDef.tools.find((t) => allToolNames.has(t) && !selected.has(t));
+        if (primary) take(primary);
+        let have = catDef.tools.filter((t) => selected.has(t)).length;
+        for (const t of candidateTools) {
+            if (have >= CATEGORY_FLOOR || selected.size >= maxTotal) break;
+            if (!selected.has(t) && catDef.tools.includes(t)) {
+                take(t);
+                have++;
+            }
+        }
+    }
+
+    for (const tool of candidateTools) {
+        if (selected.size >= maxTotal) break;
+        if (selected.has(tool) || (catToolCounts.get(catOf(tool)) ?? 0) >= MAX_TOOLS_PER_CATEGORY) continue;
+        take(tool);
+    }
+    return selected;
 }
 
 export async function selectTools(opts: {
@@ -1418,6 +1515,10 @@ export async function selectTools(opts: {
     conversationContext?: string;
 }): Promise<ToolRouterSelection> {
     const startTime = Date.now();
+    const deadline = startTime + LLM_CLASSIFIER_TIMEOUT_MS;
+    // Message embeddings (fallback scoring + MCP) share one deadline, set on first use.
+    let embedBy: number | undefined;
+    const embedDeadline = () => (embedBy ??= Math.max(deadline, Date.now() + FALLBACK_EMBED_MS));
     currentIteration++;
 
     // ── Check selection cache first ──
@@ -1458,7 +1559,7 @@ export async function selectTools(opts: {
     let classifierUsed = "fallback";
 
     // Try LLM classifier first (primary path)
-    const llmResult = await classifyWithLLM(opts.message, opts.recentToolCalls, opts.conversationContext);
+    const llmResult = await classifyWithLLM(opts.message, opts.recentToolCalls, opts.conversationContext, deadline);
 
     // Expire stale request_tools categories before the chat-lane check uses them.
     if (
@@ -1472,24 +1573,30 @@ export async function selectTools(opts: {
     // Skip the tool schemas entirely (they were most of a greeting's 20K-token
     // prompt). request_tools stays, so a wrong call can still fetch what it needs;
     // memory tools stay only if the classifier asked for them ("remember …").
-    if (
-        llmResult?.tier === "chat" &&
-        llmResult.confidence >= 0.6 &&
-        !opts.requestedCategories &&
-        activeRequestedCategories.categories.length === 0
-    ) {
-        const chatCats = llmResult.categories.filter((c) => c === "memory");
+    // Banter ("… roast me") the classifier answered with no categories also takes
+    // the lane. With no classifier answer at all (timeout), routing stays normal:
+    // a guessed chat lane would turn real requests into chat.
+    const chatResult =
+        llmResult?.tier === "chat" && llmResult.confidence >= 0.6
+            ? llmResult
+            : llmResult && llmResult.categories.length === 0 && isConversationalBanter(opts.message)
+              ? { intent: "banter", categories: [], confidence: 0.6 }
+              : null;
+    if (chatResult && !opts.requestedCategories && activeRequestedCategories.categories.length === 0) {
+        const chatCats = chatResult.categories.filter((c) => c === "memory");
         const chatSchemas = chatCats.length
             ? allSchemas.filter((t) => CATEGORIES.memory.tools.includes(t.function.name))
             : [];
-        lastClassifiedIntent = llmResult.intent;
+        lastClassifiedIntent = chatResult.intent;
         lastClassification = {
-            intent: llmResult.intent,
+            intent: chatResult.intent,
             specific_tools: [],
-            confidence: llmResult.confidence,
+            confidence: chatResult.confidence,
             categories: chatCats,
         };
-        console.log(`🎯 Tool Router: ${chatSchemas.length} tools [chat lane] (${Date.now() - startTime}ms)`);
+        console.log(
+            `🎯 Tool Router: ${chatSchemas.length} tools [chat lane${chatResult === llmResult ? "" : ", banter"}] (${Date.now() - startTime}ms)`,
+        );
         return {
             tools: [...chatSchemas, REQUEST_TOOLS_SCHEMA],
             categories: ["chat_only", ...chatCats],
@@ -1519,7 +1626,7 @@ export async function selectTools(opts: {
         lastClassification = null;
         // Fallback: hybrid structural + semantic + keyword boosts
         const expandedMessage = expandQuery(opts.message);
-        const ranked = await classifyToolNeeds(expandedMessage, opts.recentToolCalls, opts.iteration);
+        const ranked = await classifyToolNeeds(expandedMessage, opts.recentToolCalls, opts.iteration, embedDeadline());
 
         // Apply keyword hard-boosts to ranked scores
         for (const { pattern, category, minScore } of KEYWORD_BOOSTS) {
@@ -1650,51 +1757,7 @@ export async function selectTools(opts: {
     // Precision filter: only send what's needed
     // ══════════════════════════════════════════════
 
-    const selectedToolNames = new Set<string>();
-
-    // Always include tools from alwaysInclude categories (core, memory, tool_creation)
-    for (const catName of selectedCategories) {
-        const catDef = CATEGORIES[catName];
-        if (catDef?.alwaysInclude) {
-            for (const t of catDef.tools) {
-                if (allToolNames.has(t)) selectedToolNames.add(t);
-            }
-        }
-    }
-
-    // Reserve a slot for the primary (first-listed) tool of each selected
-    // non-alwaysInclude category. This guarantees that domain-specific tools
-    // (spotify for media, shell_exec for shell, browser_navigate for browser)
-    // always surface when the user's intent matches their category, even when
-    // alwaysInclude categories consume most of the budget or preference
-    // reordering deprioritizes a brand-new tool.
-    for (const catName of selectedCategories) {
-        const catDef = CATEGORIES[catName];
-        if (!catDef || catDef.alwaysInclude) continue;
-        const primary = catDef.tools.find((t) => allToolNames.has(t) && !selectedToolNames.has(t));
-        if (primary) selectedToolNames.add(primary);
-    }
-
-    // Add candidates up to the cap, respecting per-category limits
-    const catToolCounts = new Map<string, number>();
-    for (const tool of candidateTools) {
-        if (selectedToolNames.size >= getMaxToolsTotal()) break;
-        if (selectedToolNames.has(tool)) continue;
-
-        // Find which category this tool belongs to
-        let toolCat = "";
-        for (const [catName, catDef] of Object.entries(CATEGORIES)) {
-            if (catDef.tools.includes(tool)) {
-                toolCat = catName;
-                break;
-            }
-        }
-        const catCount = catToolCounts.get(toolCat) || 0;
-        if (catCount >= MAX_TOOLS_PER_CATEGORY) continue;
-
-        selectedToolNames.add(tool);
-        catToolCounts.set(toolCat, catCount + 1);
-    }
+    const selectedToolNames = assembleToolNames(selectedCategories, candidateTools, allToolNames, getMaxToolsTotal());
 
     // Build schema array
     const selectedSchemas: ChatCompletionTool[] = [];
@@ -1710,7 +1773,7 @@ export async function selectTools(opts: {
         if (embeddingsReady && selectedSchemas.length < getMaxToolsTotal()) {
             try {
                 const { cosineSimilarity } = await import("./memory/embeddings.js");
-                const messageEmb = await getCachedMessageEmbedding(opts.message);
+                const messageEmb = await beforeDeadline(getCachedMessageEmbedding(opts.message), embedDeadline());
                 const mcpScored: { schema: ChatCompletionTool; score: number }[] = [];
 
                 for (const mcpTool of mcpSchemas) {
@@ -1732,12 +1795,8 @@ export async function selectTools(opts: {
                         selectedSchemas.push(schema);
                 }
             } catch {
-                // If embedding fails, include top 5 MCP tools
-                for (const mcpTool of mcpSchemas.slice(0, 5)) {
-                    if (selectedSchemas.length < getMaxToolsTotal()) {
-                        selectedSchemas.push(mcpTool);
-                    }
-                }
+                // No embedding to score with: add none rather than the first five
+                // blind. request_tools can still fetch an MCP tool by description.
             }
         } else if (!embeddingsReady) {
             for (const mcpTool of mcpSchemas.slice(0, 5)) {

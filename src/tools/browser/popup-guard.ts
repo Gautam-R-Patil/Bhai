@@ -7,6 +7,9 @@
 // prompts, and other overlays that block browser agent interactions.
 // Call attachPopupGuard() once after getBrowser() to auto-dismiss on every page.
 
+import fs from "node:fs";
+import path from "node:path";
+import { getDownloadsDir } from "../../config/paths.js";
 import type { BrowserContext, Page } from "./types.js";
 
 // ─── Cookie / Consent Banner Dismissal ───────────────────────────────────────
@@ -188,39 +191,34 @@ export async function dismissOverlayModals(page: Page): Promise<void> {
         }
     }
 
-    // DOM-based: hide known overlay patterns directly
+    // DOM-based: hide overlays that actually block the page. A class name alone
+    // proves nothing (Tailwind's `backdrop-blur-*` sits on sticky headers), so a
+    // candidate must be fixed/absolute, cover most of the viewport, and sit on top.
     try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await (page as any).evaluate(
             /* javascript-obfuscator:disable */ () => {
-                const patterns = [
-                    "[class*='modal']:not([style*='display: none'])",
-                    "[class*='popup']:not([style*='display: none'])",
-                    "[class*='overlay']:not([class*='video']):not([style*='display: none'])",
+                const sel = [
+                    "[class*='modal']",
+                    "[class*='popup']",
+                    "[class*='overlay']:not([class*='video'])",
                     "[class*='newsletter']",
                     "[class*='subscribe-modal']",
                     "[class*='exit-intent']",
+                    "[class*='backdrop']",
+                    "[class*='dimmer']",
                     "[role='dialog'][aria-modal='true']",
-                ];
-                for (const sel of patterns) {
-                    for (const el of document.querySelectorAll(sel)) {
-                        const s = window.getComputedStyle(el);
-                        if (s.display !== "none" && s.visibility !== "hidden" && s.opacity !== "0") {
-                            const rect = el.getBoundingClientRect();
-                            // Only hide near-fullscreen overlays (width > 65% AND height > 15%)
-                            // to avoid accidentally hiding legitimate sidebars or narrow drawers
-                            if (rect.width > window.innerWidth * 0.65 && rect.height > window.innerHeight * 0.15) {
-                                (el as HTMLElement).style.display = "none";
-                            }
-                        }
+                ].join(",");
+                for (const el of document.querySelectorAll(sel)) {
+                    const s = window.getComputedStyle(el);
+                    if (s.display === "none" || s.visibility === "hidden" || s.opacity === "0") continue;
+                    if (s.position !== "fixed" && s.position !== "absolute") continue;
+                    if (!(Number.parseInt(s.zIndex, 10) >= 10)) continue;
+                    const r = el.getBoundingClientRect();
+                    if (r.width >= window.innerWidth * 0.8 && r.height >= window.innerHeight * 0.8) {
+                        (el as HTMLElement).style.display = "none";
                     }
                 }
-                // Remove backdrop divs that block clicks
-                document
-                    .querySelectorAll("[class*='backdrop'],[class*='dimmer'],[class*='overlay-bg']")
-                    .forEach((el) => {
-                        (el as HTMLElement).style.display = "none";
-                    });
             },
             /* javascript-obfuscator:enable */ undefined,
         );
@@ -245,18 +243,87 @@ function attachGuardToPage(page: Page): void {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (page as any).on(
         "dialog",
-        async (dialog: { type: () => string; dismiss: () => Promise<void>; accept: () => Promise<void> }) => {
+        async (dialog: {
+            type: () => string;
+            message: () => string;
+            defaultValue: () => string;
+            dismiss: () => Promise<void>;
+            accept: (text?: string) => Promise<void>;
+        }) => {
             const type = dialog.type();
             // "Leave site?" must be ACCEPTED: ignoring it leaves the navigation
             // waiting until it times out (the agent already chose to move on).
             if (type === "beforeunload") return dialog.accept().catch(() => {});
-            // A Site Skill's consented submit handles its own "Place order?" confirm
-            // (page-driver.ts); everything else — alerts, prompts, other confirms — is dismissed.
+            // A Site Skill's consented submit handles its own "Place order?" confirm (page-driver.ts).
             // biome-ignore lint/suspicious/noExplicitAny: page flag
             if ((page as any).__bhaiSubmitWindow) return;
-            await dialog.dismiss().catch(() => {});
+            // Alerts are informational: accept. confirm/prompt are the page asking
+            // a question: dismiss (the safe answer) unless the agent armed an accept
+            // for this action — either way the tool result reports it.
+            const accept = type === "alert" || _acceptNextDialog;
+            _acceptNextDialog = false;
+            const message = dialog.message().slice(0, 300);
+            if (accept) await dialog.accept(type === "prompt" ? dialog.defaultValue() : undefined).catch(() => {});
+            else await dialog.dismiss().catch(() => {});
+            _events.dialogs.push({
+                type,
+                message,
+                action: accept ? "accepted" : "dismissed",
+                ...(accept || type === "alert"
+                    ? {}
+                    : { hint: "If you meant to confirm, repeat the action with accept_dialog:true." }),
+            });
         },
     );
+
+    // Downloads: Playwright keeps them in a temp dir it deletes on close. Save to
+    // the workspace Downloads folder and report the path.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (page as any).on(
+        "download",
+        async (d: { suggestedFilename: () => string; saveAs: (p: string) => Promise<void> }) => {
+            const entry: { file: string; status: string; path?: string; error?: string } = {
+                file: path.basename(d.suggestedFilename() || "download"),
+                status: "saving",
+            };
+            _events.downloads.push(entry);
+            try {
+                const dir = getDownloadsDir();
+                let target = path.join(dir, entry.file);
+                if (fs.existsSync(target)) {
+                    const ext = path.extname(entry.file);
+                    target = path.join(dir, `${path.basename(entry.file, ext)}-${Date.now()}${ext}`);
+                }
+                entry.path = target;
+                await d.saveAs(target);
+                entry.status = "saved";
+            } catch (err) {
+                entry.status = "failed";
+                entry.error = (err as Error).message.split("\n")[0];
+            }
+        },
+    );
+}
+
+// ─── Dialog / download reporting ─────────────────────────────────────────────
+
+let _acceptNextDialog = false;
+const _events: {
+    dialogs: Array<Record<string, string>>;
+    downloads: Array<{ file: string; status: string; path?: string; error?: string }>;
+} = { dialogs: [], downloads: [] };
+
+/** Accept the next confirm()/prompt() instead of dismissing it (one-shot). */
+export function armDialogAccept(on = true): void {
+    _acceptNextDialog = on;
+}
+
+/** Dialogs and downloads since the last call, as tool-result fields ({} when none). */
+export function takePageEvents(): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    if (_events.dialogs.length) out.dialogs = _events.dialogs.splice(0);
+    if (_events.downloads.length) out.downloads = _events.downloads.splice(0);
+    return out;
 }
 
 export function attachPopupGuard(context: BrowserContext): void {

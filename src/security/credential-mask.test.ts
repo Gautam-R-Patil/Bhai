@@ -35,6 +35,10 @@ const CREDENTIALS: Array<[string, string]> = [
     ["aws AKIAFAKEFAKEFAKE1234 key", "AKIAFAKEFAKEFAKE1234"],
     ["jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmYWtlIn0.FAKEsignature123", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmYWtlIn0.FAKEsignature123"],
     ["-----BEGIN PRIVATE KEY-----\nFAKEMIIBVQIBADAN\n-----END PRIVATE KEY-----", "FAKEMIIBVQIBADAN"],
+    // Key names of any length (no prefix bound).
+    ["my_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_password=Hunter2Hunter2", "Hunter2Hunter2"],
+    ["a1_b2_c3_d4_e5_f6_g7_h8_i9_id_token=FAKEidtok123", "FAKEidtok123"],
+    ['"svc-a-b-c-d-e-f-g-h-i-j-id-token": "FAKEidtok456"', "FAKEidtok456"],
 ];
 
 // Must come through unchanged.
@@ -52,6 +56,8 @@ const KEEP = [
     "token=visible-fake-9 secret=shown-fake-8",
     '{"token":"visible-4821","secret":"shown-77","pass":"3/5","pin":"required"}',
     "valid_token: abc123def",
+    "xid_token: abc123def",
+    "Valid-Token = abc123def",
     "hasPassword: true",
     "token_type: bearer",
     "PWD=/Users/ravi/projects",

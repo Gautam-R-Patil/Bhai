@@ -13,20 +13,42 @@
  */
 
 import {
+    AX_PERMISSION_ERROR,
     type AxFlatElement,
     dumpAccessibilityTree,
-    findElementByLabel,
     flattenInteractive,
+    isAxPermissionError,
+    matchElementByLabel,
 } from "../screen/ax-dump.js";
+import { getFrontmostApp } from "../screen/frontmost.js";
 import type { ToolDefinition } from "./get-current-time.js";
+
+/** Ids older than this are re-resolved by label before clicking: the UI may have moved. */
+const CLICK_ID_FRESH_MS = 3_000;
+const DEFAULT_INSPECT_DEPTH = 20; // web content (links) sits ~17 levels deep
 
 // In-process cache of the last flattened list for os_click_id lookup.
 interface InspectCache {
     elements: AxFlatElement[];
     app: string;
     pid: number;
+    /** The inspected app was frontmost (else an explicit pid: the Dock, a menu extra, a background window). */
+    wasFront: boolean;
+    depth: number;
     timestamp: number;
 }
+
+// Roles whose AX value is their state (checked, slider position, typed text): it
+// changes when the agent uses them, so it can't identify them on a re-check.
+const STATE_VALUE_ROLES = new Set([
+    "AXCheckBox",
+    "AXRadioButton",
+    "AXSlider",
+    "AXTextField",
+    "AXTextArea",
+    "AXPopUpButton",
+    "AXComboBox",
+]);
 
 let _lastInspect: InspectCache | null = null;
 const INSPECT_CACHE_TTL_MS = 30_000;
@@ -53,7 +75,7 @@ export const osInspect: ToolDefinition = {
                     },
                     depth: {
                         type: "number",
-                        description: "Max tree depth (default 12, max 30). Higher = more elements but slower.",
+                        description: "Max tree depth (default 20, max 30). Higher = more elements but slower.",
                     },
                     max_elements: {
                         type: "number",
@@ -68,7 +90,7 @@ export const osInspect: ToolDefinition = {
 
     async handler(input) {
         const pid = typeof input.pid === "number" ? input.pid : 0;
-        const depth = typeof input.depth === "number" ? Math.max(1, Math.min(30, input.depth)) : 12;
+        const depth = typeof input.depth === "number" ? Math.max(1, Math.min(30, input.depth)) : DEFAULT_INSPECT_DEPTH;
         const maxElements =
             typeof input.max_elements === "number" ? Math.max(5, Math.min(500, input.max_elements)) : 60;
 
@@ -79,15 +101,14 @@ export const osInspect: ToolDefinition = {
                 _lastInspect = null;
                 return JSON.stringify({
                     success: false,
-                    error: dump.error,
-                    hint:
-                        dump.source === "swift" && dump.error === "not_trusted"
-                            ? "Grant Bhai Accessibility permission in System Settings → Privacy & Security → Accessibility."
-                            : dump.source === "pyatspi" && dump.error.includes("atspi_not_available")
-                              ? "Install python3-pyatspi (apt install python3-pyatspi). Electron apps need --force-renderer-accessibility."
-                              : dump.source === "powershell"
-                                ? "Ensure UIAutomationClient assemblies are available (PowerShell 5+ on Win 10+)."
-                                : "Inspection unavailable on this platform.",
+                    error: isAxPermissionError(dump.error) ? AX_PERMISSION_ERROR : dump.error,
+                    hint: isAxPermissionError(dump.error)
+                        ? "Grant Bhai Accessibility permission in System Settings → Privacy & Security → Accessibility, then retry."
+                        : dump.source === "pyatspi" && dump.error.includes("atspi_not_available")
+                          ? "Install python3-pyatspi (apt install python3-pyatspi). Electron apps need --force-renderer-accessibility."
+                          : dump.source === "powershell"
+                            ? "Ensure UIAutomationClient assemblies are available (PowerShell 5+ on Win 10+)."
+                            : "Inspection unavailable on this platform.",
                 });
             }
 
@@ -98,6 +119,8 @@ export const osInspect: ToolDefinition = {
                 elements: all, // os_click_id text= can match past the listed cap
                 app: dump.app,
                 pid: dump.pid,
+                wasFront: !pid || (await getFrontmostApp())?.pid === dump.pid,
+                depth,
                 timestamp: Date.now(),
             };
 
@@ -111,7 +134,7 @@ export const osInspect: ToolDefinition = {
             let bytes = 0;
             for (const e of elements) {
                 const display = e.label ? truncate(e.label, 60) : `<${e.role.toLowerCase()}>`;
-                const line = `[${e.id}] (${e.role}) "${display}" at (${e.center.x},${e.center.y})${e.enabled ? "" : " [disabled]"}`;
+                const line = `[${e.id}] (${e.role}) "${display}" at (${e.center.x},${e.center.y})${e.enabled ? "" : " [disabled]"}${e.offscreen ? " [offscreen]" : ""}`;
                 bytes += Buffer.byteLength(line) + 1;
                 if (bytes > 6000) break;
                 lines.push(line);
@@ -124,6 +147,10 @@ export const osInspect: ToolDefinition = {
             if (dump.source === "pyatspi" && all.length === 0) {
                 hint =
                     "Empty tree — if targeting an Electron/Chromium app (VS Code, Slack, browsers), relaunch with --force-renderer-accessibility for AT-SPI to populate.";
+            }
+            if (dump.partial) {
+                hint =
+                    "Incomplete list: the app stopped answering mid-read, so some elements are missing. Retry os_inspect, or take a screenshot instead.";
             }
 
             return JSON.stringify({
@@ -196,10 +223,71 @@ export const osClickId: ToolDefinition = {
                     error: `No element with id=${id} in last inspect (${cache.elements.length} total).`,
                 });
         } else if (text) {
-            el = findElementByLabel(cache.elements, text, 0.5);
+            const m = matchElementByLabel(cache.elements, text, 0.5);
+            if (m.ambiguous) {
+                return JSON.stringify({
+                    success: false,
+                    error: `"${text}" matches ${m.ambiguous.length} elements equally; click one by id.`,
+                    ambiguous: m.ambiguous.map((e) => ({ id: e.id, role: e.role, label: e.label, at: e.center })),
+                });
+            }
+            if (m.disabled) return JSON.stringify({ success: false, error: `"${m.disabled.label}" is disabled.` });
+            el = m.el;
             if (!el) return JSON.stringify({ success: false, error: `No element matching "${text}" in last inspect.` });
         } else {
             return JSON.stringify({ success: false, error: "Provide either id (number) or text (string)." });
+        }
+
+        // The ids are coordinates from one moment in one app. If another app came
+        // to the front, they point into the wrong window; if they're a few
+        // seconds old, the UI may have scrolled or re-laid out. Re-check first.
+        const age = Date.now() - cache.timestamp;
+        const front = await getFrontmostApp();
+        if (front && cache.pid && cache.wasFront && front.pid !== cache.pid) {
+            return JSON.stringify({
+                success: false,
+                error: `The frontmost app changed since os_inspect (was ${cache.app}, now ${front.name}). Run os_inspect again.`,
+            });
+        }
+        if (age > CLICK_ID_FRESH_MS) {
+            const fresh = await dumpAccessibilityTree({
+                pid: cache.pid || undefined,
+                depth: Math.max(cache.depth, DEFAULT_INSPECT_DEPTH),
+            });
+            if (fresh.error)
+                return JSON.stringify({ success: false, error: `Could not re-check the element: ${fresh.error}` });
+            // A cut-short tree may just be missing the target: don't report it as gone.
+            if (fresh.partial)
+                return JSON.stringify({
+                    success: false,
+                    error: "Could not re-check the element: the app was slow and its tree came back incomplete. Retry, or run os_inspect again.",
+                });
+            const target = el;
+            const same = flattenInteractive(fresh)
+                .filter(
+                    (e) =>
+                        e.role === target.role &&
+                        e.label === target.label &&
+                        (e.value === target.value || (!!e.label && STATE_VALUE_ROLES.has(e.role))),
+                )
+                .sort(
+                    (a, b) =>
+                        Math.hypot(a.center.x - target.center.x, a.center.y - target.center.y) -
+                        Math.hypot(b.center.x - target.center.x, b.center.y - target.center.y),
+                );
+            if (!same.length) {
+                return JSON.stringify({
+                    success: false,
+                    error: `"${target.label || target.role}" is no longer on screen (inspect is ${Math.round(age / 1000)}s old). Run os_inspect again.`,
+                });
+            }
+            el = same[0];
+        }
+        if (el.offscreen) {
+            return JSON.stringify({
+                success: false,
+                error: `"${el.label}" is scrolled out of view; scroll it into view (or use os_smart_click) and inspect again.`,
+            });
         }
 
         // Dispatch via the shared os_computer_action infrastructure to keep one execution path.

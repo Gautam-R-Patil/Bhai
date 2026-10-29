@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<!-- Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved. -->
+<!-- Bhai's ghost cursor + "Bhai is in control" edge glow, one page per display.
+     Click-through, focus-less and hidden before Bhai's own screenshots (set in
+     agent-cursor.js). agent-cursor.js calls window.cursor(msg) with local coords. -->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';">
+    <title>Bhai cursor</title>
+    <style>
+        :root {
+            --bhai: #e87b2d;
+            --bhai-deep: #c2570f;
+            --bhai-glow: rgba(232, 123, 45, 0.5);
+            --bhai-tint: rgba(232, 123, 45, 0.18);
+        }
+        html, body {
+            margin: 0;
+            height: 100%;
+            background: transparent;
+            overflow: hidden;
+            pointer-events: none;
+            user-select: none;
+            font: 600 11px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }
+        #glow {
+            position: fixed;
+            inset: 0;
+            opacity: 0;
+            transition: opacity 600ms ease;
+            box-shadow: inset 0 0 34px 6px var(--bhai-glow), inset 0 0 0 2px rgba(232, 123, 45, 0.55);
+        }
+        #glow.on { opacity: 1; animation: breathe 2.6s ease-in-out infinite; }
+        @keyframes breathe {
+            50% { box-shadow: inset 0 0 52px 10px var(--bhai-glow), inset 0 0 0 2px rgba(232, 123, 45, 0.8); }
+        }
+        #cursor {
+            position: absolute;
+            left: 0;
+            top: 0;
+            opacity: 0;
+            transform: translate(-200px, -200px);
+            transition: opacity 200ms ease;
+            will-change: transform;
+        }
+        #cursor.on { opacity: 1; }
+        #cursor svg {
+            display: block;
+            filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.35));
+            transform-origin: 2px 2px;
+            transition: transform 110ms ease;
+        }
+        #cursor.press svg { transform: scale(0.82); }
+        #tag {
+            position: absolute;
+            left: 18px;
+            top: 21px;
+            padding: 3px 7px;
+            border-radius: 9px;
+            background: var(--bhai);
+            color: #fff;
+            white-space: nowrap;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+        }
+        #cursor.typing #tag { animation: typing 0.9s ease-in-out infinite; }
+        #cursor.typing #tag::after { content: " · typing"; }
+        @keyframes typing {
+            50% { box-shadow: 0 0 0 5px var(--bhai-tint), 0 2px 6px rgba(0, 0, 0, 0.25); }
+        }
+        .ripple {
+            position: absolute;
+            width: 44px;
+            height: 44px;
+            margin: -22px 0 0 -22px;
+            border-radius: 50%;
+            border: 2px solid var(--bhai);
+            background: var(--bhai-tint);
+            animation: ripple 520ms ease-out forwards;
+        }
+        .ripple.right { border-style: dashed; border-color: var(--bhai-deep); }
+        @keyframes ripple {
+            from { transform: scale(0.2); opacity: 1; }
+            to { transform: scale(1.6); opacity: 0; }
+        }
+        .chev {
+            position: absolute;
+            margin: -10px 0 0 -6px;
+            color: var(--bhai-deep);
+            font-size: 14px;
+            animation: chev 600ms ease-out forwards;
+        }
+        .chev.down { --dir: 18px; }
+        .chev.up { --dir: -18px; }
+        @keyframes chev {
+            from { transform: translateY(0); opacity: 1; }
+            to { transform: translateY(var(--dir)); opacity: 0; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            #glow.on, #cursor.typing #tag { animation: none; }
+        }
+    </style>
+</head>
+<body>
+    <div id="glow"></div>
+    <div id="cursor">
+        <svg width="22" height="26" viewBox="0 0 22 26" aria-hidden="true">
+            <path d="M2 2 L2 21 L7.2 16.4 L10.6 24 L14 22.5 L10.7 15 L18 15 Z"
+                  fill="#e87b2d" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/>
+        </svg>
+        <div id="tag">Bhai</div>
+    </div>
+    <script>
+        const cur = document.getElementById("cursor");
+        const glow = document.getElementById("glow");
+        const EASE = "cubic-bezier(.22,.61,.36,1)";
+        let pending = [];
+
+        function later(fn, ms) { pending.push(setTimeout(fn, ms)); }
+
+        // The SVG tip sits at (2,2); place it on the point.
+        function place(x, y, ms) {
+            cur.style.transition = ms ? `transform ${ms}ms ${EASE}, opacity 200ms ease` : "opacity 200ms ease";
+            cur.style.transform = `translate(${x - 2}px, ${y - 2}px)`;
+            if (!ms) cur.getBoundingClientRect(); // commit the jump before the next glide
+            cur.classList.add("on");
+        }
+
+        function burst(cls, x, y, text) {
+            const el = document.createElement("div");
+            el.className = cls;
+            el.style.left = `${x}px`;
+            el.style.top = `${y}px`;
+            if (text) el.textContent = text;
+            el.addEventListener("animationend", () => el.remove());
+            document.body.appendChild(el);
+        }
+
+        function press(ms) {
+            cur.classList.add("press");
+            later(() => cur.classList.remove("press"), ms);
+        }
+
+        window.cursor = function (m) {
+            switch (m.t) {
+                case "session":
+                    glow.classList.toggle("on", !!m.on);
+                    if (!m.on) {
+                        pending.forEach(clearTimeout);
+                        pending = [];
+                        cur.classList.remove("on", "typing", "press");
+                    }
+                    break;
+                case "leave":
+                    cur.classList.remove("on", "typing");
+                    break;
+                case "move":
+                    place(m.x, m.y, m.ms);
+                    break;
+                case "click":
+                    place(m.x, m.y, m.ms);
+                    later(() => {
+                        press(140 * (m.count || 1));
+                        for (let i = 0; i < (m.count || 1); i++) {
+                            later(() => burst(m.button === "right" ? "ripple right" : "ripple", m.x, m.y), i * 140);
+                        }
+                    }, m.ms);
+                    break;
+                case "scroll":
+                    place(m.x, m.y, m.ms);
+                    later(() => burst(m.dy < 0 ? "chev up" : "chev down", m.x, m.y, m.dy < 0 ? "▲" : "▼"), m.ms);
+                    break;
+                case "drag": {
+                    const pts = m.points || [];
+                    const seg = Math.max(60, Math.round(400 / Math.max(1, pts.length - 1)));
+                    later(() => {
+                        cur.classList.add("press");
+                        pts.slice(1).forEach((p, i) => later(() => place(p.x, p.y, seg), i * seg));
+                        later(() => cur.classList.remove("press"), (pts.length - 1) * seg);
+                    }, m.delay || 0);
+                    break;
+                }
+                case "type":
+                    cur.classList.toggle("typing", !!m.on);
+                    break;
+            }
+        };
+    </script>
+</body>
+</html>

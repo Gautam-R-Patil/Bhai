@@ -27,7 +27,8 @@
 //                  data-bhai-hidden, form state copied into attributes, script
 //                  bodies dropped (JSON data kept), password values never kept
 //
-// Typed values stay raw here, on this machine only; anything an LLM sees is
+// Typed values stay raw here (except known secrets: saved vault values and
+// revealed codes are written as their tokens), on this machine only; anything an LLM sees is
 // redacted from it first (P2). A password is recorded as null and a one-time
 // code (page-driver's IS_CODE_FIELD_JS) as "{{answer}}", and neither value is
 // kept in the captured HTML or snapshot. Nothing is ever written into the
@@ -46,6 +47,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { getDataDir } from "../../../config/paths.js";
+import { maskKnownValues } from "../../../security/pii-vault.js";
 import { CAPTURE_JS, IS_CODE_FIELD_JS, MONEY_WORDS, SNAPSHOT_JS } from "../page-driver.js";
 import type { Snapshot } from "../runtime.js";
 
@@ -314,7 +316,8 @@ function finishPending(t: ActiveTrace, events: TraceEvent[], consented: boolean)
         if (commit) commit.consented = true;
     }
     t.pending.events.push(...events);
-    appendFileSync(path.join(t.dir, "trace.jsonl"), `${JSON.stringify(t.pending)}\n`);
+    // A saved secret or revealed code typed on the page is written as its token.
+    appendFileSync(path.join(t.dir, "trace.jsonl"), `${maskKnownValues(JSON.stringify(t.pending))}\n`);
     t.pending = undefined;
 }
 
@@ -356,8 +359,8 @@ export async function drainTrace(page: any, opts: { consented?: boolean } = {}):
     }
     const html = await evaluateSettled<string>(page, CAPTURE_JS);
     const snapshot = await evaluateSettled<Snapshot>(page, SNAPSHOT_JS);
-    writeFileSync(path.join(t.dir, "pages", `${k}.json`), JSON.stringify(snapshot));
-    writeFileSync(path.join(t.dir, "pages", `${k}.html`), html);
+    writeFileSync(path.join(t.dir, "pages", `${k}.json`), maskKnownValues(JSON.stringify(snapshot)));
+    writeFileSync(path.join(t.dir, "pages", `${k}.html`), maskKnownValues(html));
     t.pending = { k, url: snapshot.url, title: snapshot.title, events: [] };
     return k;
 }

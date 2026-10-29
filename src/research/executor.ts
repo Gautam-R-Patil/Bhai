@@ -16,7 +16,7 @@ import {
     detectContradictions, identifyGaps, synthesizeResearch,
     shouldExtractContacts, extractContactsSection,
 } from "./analysis.js";
-import { rankSource, deduplicateFindings, crossReferenceFindings } from "./scoring.js";
+import { rankSource, dedupeByText, crossReferenceFindings } from "./scoring.js";
 import { saveResearchState, deleteResearchState, storeResearchInMemory } from "./persistence.js";
 import { generateHypotheses, updateHypothesis, type Hypothesis, type ResearchPlan } from "./hypothesis-engine.js";
 import { getCredibility, recordClaimVerification } from "./credibility-model.js";
@@ -293,6 +293,7 @@ export async function executeDeepResearch(
                 if (newR.length > 0) {
                     const pages = await fetchPages(newR.slice(0, 8));
                     for (const page of pages) {
+                        if (signal.aborted || allSources.length >= research.maxSources) break;
                         if (!page.content || page.content.length < 100) continue;
                         const analysis = await analyzeAndExtract(llm, research.topic, page.content, page.url);
                         if (analysis.findings.length > 0) {
@@ -490,9 +491,9 @@ export async function executeDeepResearch(
             return;
         }
 
-        // Deduplicate findings
-        const dedupedTexts = deduplicateFindings(allFindings.map(f => f.text));
-        const dedupedFindings = allFindings.filter(f => dedupedTexts.includes(f.text));
+        // Deduplicate findings (by object, so exact-duplicate texts collapse to
+        // one representative instead of all copies re-matching by value)
+        const dedupedFindings = dedupeByText(allFindings, f => f.text);
         console.log(`[RESEARCH]   Deduplication: ${allFindings.length} → ${dedupedFindings.length} findings`);
 
         // Cross-reference for confidence levels

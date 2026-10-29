@@ -1,6 +1,6 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 import { describe, expect, it } from "vitest";
-import { protect, protectMessages, REVEAL_TOOLS, reveal, revealArgs } from "./pii-vault.js";
+import { maskKnownValues, protect, protectMessages, REVEAL_TOOLS, reveal, revealArgs, setSecrets } from "./pii-vault.js";
 
 describe("PII vault", () => {
     it("the model sees handles; only typing tools get the value back", () => {
@@ -50,5 +50,21 @@ describe("PII vault masks a known value in its encoded forms", () => {
         }
         protect("Your OTP is 4829");
         expect(protect("order id 148290")).toBe("order id 148290");
+    });
+
+    it("masks a saved secret a page echoes back spaced out char-by-char", () => {
+        try {
+            setSecrets(new Map([["sk-live-3e9a7c1b5d2f", "[APIKEY_1]"]]));
+            // the literal form
+            expect(maskKnownValues("key: sk-live-3e9a7c1b5d2f end")).toBe("key: [APIKEY_1] end");
+            // spread out with spaces (the browser_scan / OCR dodge)
+            expect(maskKnownValues("s k - l i v e - 3 e 9 a 7 c 1 b 5 d 2 f")).toContain("[APIKEY_1]");
+            expect(maskKnownValues("s k - l i v e - 3 e 9 a 7 c 1 b 5 d 2 f")).not.toMatch(/3 e 9 a/);
+            // a short coincidental run is not masked (floor is 8 normalized chars)
+            setSecrets(new Map([["abc123", "[X_1]"]]));
+            expect(maskKnownValues("a b c 1 2 3 here")).toBe("a b c 1 2 3 here");
+        } finally {
+            setSecrets(new Map());
+        }
     });
 });

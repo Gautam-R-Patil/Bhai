@@ -46,6 +46,8 @@ interface NativeModule {
     dedupActivationResults?(results: NativeActivationResult[]): NativeActivationResult[];
     sanitizeSecrets?(input: string): NativeSanitizeResult;
     containsSecrets?(input: string): boolean;
+    nativeMaskCredentials?(text: string): string;
+    nativeFindPii?(text: string): NativePiiSpan[];
     isSpeechFrame16Khz?(pcm: Buffer, aggressiveness: number): boolean;
     anySpeechFrame16Khz?(pcm: Buffer, aggressiveness: number): boolean;
 }
@@ -59,6 +61,12 @@ export interface NativeEntityRelation {
 export interface NativeSpreadAdjacencyEntry {
     entityId: number;
     relations: NativeEntityRelation[];
+}
+
+export interface NativePiiSpan {
+    kind: string;
+    start: number;
+    end: number;
 }
 
 export interface NativeSanitizeResult {
@@ -361,6 +369,20 @@ export function nativeSanitizeSecrets(input: string): NativeSanitizeResult | nul
 export function nativeContainsSecrets(input: string): boolean | null {
     if (!useNative || !nativeModule?.containsSecrets) return null;
     return nativeModule.containsSecrets(input);
+}
+
+// ── protect() pipeline (pii_protect.rs) ─────────
+
+/** Native linear-time `maskCredentials`; null if the binary lacks it. */
+export function nativeMaskCredentials(text: string): string | null {
+    if (!useNative || !nativeModule?.nativeMaskCredentials) return null;
+    return nativeModule.nativeMaskCredentials(text);
+}
+
+/** Native `findPii` spans (UTF-16 offsets); null if the binary lacks it. */
+export function nativeFindPii(text: string): NativePiiSpan[] | null {
+    if (!useNative || !nativeModule?.nativeFindPii) return null;
+    return nativeModule.nativeFindPii(text);
 }
 
 // ── PCM Voice Activity Detection (Phase 3) ────────

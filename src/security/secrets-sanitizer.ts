@@ -43,9 +43,10 @@ export interface SanitizeResult {
 
 // Native sanitizer is DEFAULT ON. Set ATLAS_NO_NATIVE_SANITIZER=true to force
 // the TS fallback (e.g. for debugging or on a platform without the binary).
-// Bench (scripts/bench-native.ts) shows native at 1.44x–2.00x of TS on inputs
-// from 50B to 100KB after the sequential per-pattern Cow<&str> rewrite —
-// zero allocation on no-match passes, one allocation per pattern that fires.
+// Bench (scripts/bench-native.ts, re-measured Oct 2026) shows native at
+// 1.9x–3.4x of TS on inputs from 1KB to 200KB (1.6x at 50B) with the
+// sequential per-pattern Cow<&str> rewrite — zero allocation on no-match
+// passes, one allocation per pattern that fires.
 const NATIVE_DISABLED = process.env.ATLAS_NO_NATIVE_SANITIZER === "true";
 
 interface Pattern {
@@ -61,6 +62,13 @@ interface Pattern {
      * The Rust mirror reproduces this via a dedicated group-rebuild pass.
      */
     replace?: (full: string, ...groups: string[]) => string;
+    /**
+     * Optional: every match ends at or before the last match of this regex, so
+     * the pass runs on that prefix only. Keeps PRIVATE_KEY_PEM linear: a BEGIN
+     * with no END after it made the lazy body scan to the end of the text, once
+     * per BEGIN. Output is unchanged (the Rust regex crate is linear already).
+     */
+    endsBy?: RegExp;
 }
 
 const PATTERNS: Pattern[] = [
@@ -166,6 +174,20 @@ const PATTERNS: Pattern[] = [
         // EAAA + 60 base64url chars
         regex: /\bEAAA[A-Za-z0-9_-]{60,}\b/g,
     },
+    {
+        name: "TELEGRAM_BOT_TOKEN",
+        // <8-12 digit bot id>:<35-char base64url secret>. This is Bhai's own
+        // bot credential and appears BARE inside api.telegram.org/bot<token>/
+        // URLs, which the Bot API echoes verbatim in error payloads — so it
+        // never reaches the KEY=value ENV_VAR_SECRET pass.
+        regex: /\d{8,12}:[A-Za-z0-9_-]{35}\b/g,
+    },
+    {
+        name: "HUGGINGFACE_TOKEN",
+        // hf_ + >=34 alnum. The bare form (not an "Authorization: Bearer"
+        // header) slips both the BEARER_TOKEN and ENV_VAR_SECRET passes.
+        regex: /\bhf_[A-Za-z0-9]{34,}\b/g,
+    },
     // Note on Cloudflare API tokens: they're 40 chars from a specific
     // alphabet but lack a distinctive prefix, so a standalone pattern
     // produces too many false positives. The BEARER_TOKEN and
@@ -192,7 +214,14 @@ const PATTERNS: Pattern[] = [
         // Generic scheme://user:PASSWORD@host (http/https/ftp/etc.). The
         // `(?!\[REDACTED:)` after the colon stops this from re-matching a
         // DB password DB_URI_PASSWORD already turned into a marker.
-        regex: /\b([a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:)(?!\[REDACTED:)([^@\s/]+)(@)/g,
+        // The scheme is checked by a lookbehind after the literal "://", so
+        // the scan only stops at "://" and looks back to the previous ":" at
+        // most (linear; an unbounded scheme at the front rescanned "a-a-a-…"
+        // from every word boundary: 2s at 40KB). No length bound on the
+        // scheme. It stays outside the match, which leaves the output
+        // unchanged: the replacement kept it verbatim, and a match always ends
+        // at "@", which a scheme can't contain.
+        regex: /(:\/\/(?<=\b[a-z][a-z0-9+.-]*:\/\/)[^\s:@/]+:)(?!\[REDACTED:)([^@\s/]+)(@)/g,
         replace: (_full, pre, _pw, at) => `${pre}[REDACTED:URL_USERINFO]${at}`,
     },
 
@@ -217,6 +246,7 @@ const PATTERNS: Pattern[] = [
         // keys don't merge. We also accept the common variants
         // (plain, RSA, EC, DSA, OPENSSH, PGP).
         regex: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----[\s\S]+?-----END (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----/g,
+        endsBy: /-----END (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----/g,
     },
 
     // ── Env-var-style secret assignments ───────────────────────
@@ -245,6 +275,17 @@ const PATTERNS: Pattern[] = [
     },
 ];
 
+/** End of the last match of `re`, overlapping ones included ("-----END …-----END …-----" shares its dashes); -1 if none. */
+function lastEnd(text: string, re: RegExp): number {
+    let end = -1;
+    re.lastIndex = 0;
+    for (let m = re.exec(text); m; m = re.exec(text)) {
+        end = m.index + m[0].length;
+        re.lastIndex = m.index + 1;
+    }
+    return end;
+}
+
 /**
  * TS implementation of the sanitizer. The exported `sanitizeSecrets` routes
  * to native by default and falls back here when native is unavailable,
@@ -263,9 +304,16 @@ export function _sanitizeSecretsTs(input: string): SanitizeResult {
     const counts: Record<string, number> = {};
     let total = 0;
 
-    for (const { name, regex, replace } of PATTERNS) {
+    for (const { name, regex, replace, endsBy } of PATTERNS) {
         // `replace` with a function lets us count matches in one pass.
         let hits = 0;
+        let tail = "";
+        if (endsBy) {
+            const end = lastEnd(current, endsBy);
+            if (end < 0) continue;
+            tail = current.slice(end);
+            current = current.slice(0, end);
+        }
         if (replace) {
             // Group-preserving pattern (DB_URI_PASSWORD / URL_USERINFO):
             // rebuild the match from its capture groups so only the
@@ -284,6 +332,7 @@ export function _sanitizeSecretsTs(input: string): SanitizeResult {
                 return marker;
             });
         }
+        current += tail;
         if (hits > 0) {
             counts[name] = hits;
             total += hits;
@@ -298,7 +347,7 @@ export function _sanitizeSecretsTs(input: string): SanitizeResult {
  * typed marker like `[REDACTED:ANTHROPIC_API_KEY]`.
  *
  * Routes through the native Rust impl by default — bench shows native at
- * 1.44x–2.00x of TS across input sizes from 50B to 100KB. Force the TS
+ * 1.9x–3.4x of TS across input sizes from 1KB to 200KB. Force the TS
  * fallback with `ATLAS_NO_NATIVE_SANITIZER=true` (debugging / missing binary).
  * Native and TS paths are byte-identical (parity battery in
  * `secrets-sanitizer.parity.test.ts`); falls back to TS on any native error.
@@ -333,11 +382,17 @@ export function sanitizeSecrets(input: string): SanitizeResult {
 // Exported for parity-testing only.
 export function _containsSecretsTs(input: string): boolean {
     if (!input) return false;
-    for (const { regex } of PATTERNS) {
+    for (const { regex, endsBy } of PATTERNS) {
+        let text = input;
+        if (endsBy) {
+            const end = lastEnd(input, endsBy);
+            if (end < 0) continue;
+            text = input.slice(0, end);
+        }
         // Reset lastIndex — regexes with the `g` flag carry state
         // across .test() calls, so stateless use needs this reset.
         regex.lastIndex = 0;
-        if (regex.test(input)) return true;
+        if (regex.test(text)) return true;
     }
     return false;
 }

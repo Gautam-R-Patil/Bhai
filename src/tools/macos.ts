@@ -9,10 +9,18 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { getScriptsDir } from "../config/paths.js";
 import { hideOverlayForAgent, showOverlayForAgent } from "../overlay/overlay-chat.js";
+import { cursorClick, cursorMove, withCursorHidden, withCursorTyping } from "../screen/agent-cursor.js";
 import { gridScreenshot } from "../screen/grid-overlay.js";
-import { getScreenDimensions, percentageToScreen, scaleImageToScreen } from "../screen/screen-dimensions.js";
+import {
+    captureRegionToFile,
+    getScreenDimensions,
+    monitorRect,
+    percentageToScreen,
+    type ScreenDimensions,
+    scaleImageToScreen,
+} from "../screen/screen-dimensions.js";
 import type { ToolDefinition } from "./get-current-time.js";
-import { typeTextMac } from "./os-computer-action.js";
+import { MAC_KEY_CODES, macKeyScript, typeTextMac } from "./os-computer-action.js";
 import { getTelegramContext } from "./send-file.js";
 
 const execFileAsync = promisify(execFile);
@@ -50,6 +58,25 @@ function computeScreenshotHash(buffer: Buffer): string {
 }
 
 let _lastScreenshotBuffer: Buffer | null = null;
+
+/**
+ * Capture the focused window's monitor — the one os_click scales image and
+ * percent coords against — instead of `screencapture -x`'s main display, which
+ * is a different screen whenever the app sits on a second monitor.
+ * Returns the monitor captured, or undefined when it fell back to the main
+ * display (the OCR helper's own main-display mapping is then the right one).
+ */
+async function captureFocusedDisplay(
+    out: string,
+    dims?: ScreenDimensions,
+    type: "png" | "jpg" = "png",
+): Promise<ScreenDimensions | undefined> {
+    const d = dims ?? (await getScreenDimensions({ focusedWindow: true, force: true }));
+    const rect = monitorRect(d);
+    if (rect && (await captureRegionToFile(rect, out, type))) return d;
+    await withCursorHidden(() => execFileAsync("screencapture", ["-x", "-t", type, out], { timeout: 10000 }));
+    return undefined;
+}
 
 // ── Element Map Cache (for os_scan → os_click_element flow) ──
 interface ScanElement {
@@ -199,9 +226,10 @@ export const osScreenshot: ToolDefinition = {
             hideOverlayForAgent();
             await new Promise((r) => setTimeout(r, 100)); // Wait for opacity transition
 
-            // Capture screenshot (Retina: captures at 2x pixel density). JPEG is ~2x
-            // faster to capture than PNG and is what we send anyway.
-            await execFileAsync("screencapture", ["-x", "-t", "jpg", tmpJpg], { timeout: 10000 });
+            // Capture the focused window's monitor (Retina: at 2x pixel density) —
+            // the same monitor os_click maps this image's coordinates onto. JPEG is
+            // ~2x faster to capture than PNG and is what we send anyway.
+            await captureFocusedDisplay(tmpJpg, dims, "jpg");
 
             // Show overlay again
             showOverlayForAgent();
@@ -265,29 +293,6 @@ export const osScreenshot: ToolDefinition = {
         }
     },
 };
-
-// ── Screenshot Diff ─────────────────────────────
-function computeScreenDiff(before: Buffer, after: Buffer): number {
-    // Quick pixel-sampling comparison
-    // Returns 0.0 (identical) to 1.0 (completely different)
-    const sampleCount = 500;
-    const minLen = Math.min(before.length, after.length);
-    if (minLen < sampleCount) return 1.0; // Can't compare, assume different
-
-    const step = Math.max(1, Math.floor(minLen / sampleCount));
-    let diffCount = 0;
-    let totalSampled = 0;
-
-    for (let i = 0; i < minLen; i += step) {
-        totalSampled++;
-        if (Math.abs(before[i] - after[i]) > 10) {
-            // threshold: ignore compression artifacts
-            diffCount++;
-        }
-    }
-
-    return totalSampled > 0 ? diffCount / totalSampled : 1.0;
-}
 
 // ── OS Click Tool (Native Mouse Control) ──────
 
@@ -459,41 +464,24 @@ $.CGEventPost($.kCGHIDEventTap, up);
 
         const tmpFile = join(tmpdir(), `atlas_click_${Date.now()}.js`);
         try {
+            if (action === "move") await cursorMove(x, y);
+            else
+                await cursorClick(x, y, action === "right_click" ? "right" : "left", action === "double_click" ? 2 : 1);
             await fs.writeFile(tmpFile, eventScript, "utf-8");
             const { stdout } = await execFileAsync("osascript", ["-l", "JavaScript", tmpFile], { timeout: 5000 });
             await fs.unlink(tmpFile).catch(() => {});
 
-            const response: Record<string, unknown> = {
+            // No before/after diff here: the last os_screenshot is a gridded 1280px
+            // JPEG and a fresh capture is a raw Retina PNG, so a byte compare said
+            // "changed" every time and cost ~600ms per click.
+            return JSON.stringify({
                 success: true,
                 action,
                 x,
                 y,
                 result: stdout.trim(),
                 tip: "For more reliable clicking, use os_scan + os_click_element instead of coordinate-based clicking.",
-            };
-
-            // Phase 8: Screenshot diff verification
-            try {
-                if (_lastScreenshotBuffer) {
-                    const beforeBuf = _lastScreenshotBuffer;
-                    await new Promise((r) => setTimeout(r, 500));
-                    const tmpDiffPng = join(tmpdir(), `atlas_diff_${Date.now()}.png`);
-                    await execFileAsync("screencapture", ["-x", tmpDiffPng], { timeout: 8000 });
-                    const afterBuf = await fs.readFile(tmpDiffPng);
-                    await fs.unlink(tmpDiffPng).catch(() => {});
-                    const diff = computeScreenDiff(beforeBuf, afterBuf);
-                    response.screen_changed = diff > 0.05;
-                    response.diff_percent = Math.round(diff * 100);
-                    if (diff < 0.01) {
-                        response.warning =
-                            "Click may not have had an effect. Verify with os_screenshot or os_visual_verify.";
-                    }
-                }
-            } catch {
-                /* diff check is non-blocking — ignore errors */
-            }
-
-            return JSON.stringify(response);
+            });
         } catch (err) {
             await fs.unlink(tmpFile).catch(() => {});
             const error = err as { message?: string };
@@ -573,9 +561,9 @@ export const osType: ToolDefinition = {
         } else if (input.text) {
             const text = input.text as string;
             try {
-                const method = await typeTextMac(text);
+                const method = await withCursorTyping(() => typeTextMac(text));
                 await new Promise((r) => setTimeout(r, delayMs));
-                return JSON.stringify({ success: true, typed: text, method });
+                return JSON.stringify({ success: true, typed_chars: text.length, method }); // not echoed: it may be a secret
             } catch (err) {
                 return JSON.stringify({ success: false, error: `Typing failed: ${(err as Error).message}` });
             }
@@ -590,7 +578,7 @@ export const osType: ToolDefinition = {
             await fs.unlink(tmpFile).catch(() => {});
             return JSON.stringify({
                 success: true,
-                typed: input.text || input.key || input.combo,
+                ...(input.text ? { typed_chars: String(input.text).length } : { pressed: input.key || input.combo }),
                 stdout: (stdout || "").substring(0, 500),
                 stderr: (stderr || "").substring(0, 500),
             });
@@ -602,46 +590,8 @@ export const osType: ToolDefinition = {
     },
 };
 
-// macOS virtual key codes. Unknown names are an error, never a guess: a
-// Return fallback once turned "esc" into confirming the dialog it meant to close.
-const KEY_CODES: Record<string, number> = {
-    return: 36,
-    enter: 36,
-    tab: 48,
-    escape: 53,
-    esc: 53,
-    delete: 51,
-    backspace: 51,
-    "forward delete": 117,
-    forwarddelete: 117,
-    space: 49,
-    up: 126,
-    down: 125,
-    left: 123,
-    right: 124,
-    "up arrow": 126,
-    "down arrow": 125,
-    "left arrow": 123,
-    "right arrow": 124,
-    home: 115,
-    end: 119,
-    pageup: 116,
-    "page up": 116,
-    pagedown: 121,
-    "page down": 121,
-    f1: 122,
-    f2: 120,
-    f3: 99,
-    f4: 118,
-    f5: 96,
-    f6: 97,
-    f7: 98,
-    f8: 100,
-    f9: 101,
-    f10: 109,
-    f11: 103,
-    f12: 111,
-};
+// macOS virtual key codes live with os_computer_action (MAC_KEY_CODES), shared by every key path.
+const KEY_CODES = MAC_KEY_CODES;
 
 function keyCode(key: string): number | undefined {
     return Object.hasOwn(KEY_CODES, key) ? KEY_CODES[key] : undefined;
@@ -705,6 +655,8 @@ async function runOcr(
     screenshotPath: string | null,
     mode: "fast" | "accurate" = "accurate",
     screenshotBuffer?: Buffer,
+    /** The monitor the screenshot shows (from captureFocusedDisplay); maps OCR boxes onto it. */
+    region?: ScreenDimensions,
 ): Promise<OcrResult | null> {
     // Check cache
     if (screenshotBuffer) {
@@ -732,6 +684,16 @@ async function runOcr(
     try {
         const { stdout } = await execFileAsync(ocrExecutable, ocrArgs, { timeout: 20000 });
         const parsedResult = JSON.parse(stdout.trim()) as OcrResult;
+        // The helper maps boxes onto the MAIN display; a capture of another
+        // monitor needs that monitor's origin and size instead.
+        if (region) {
+            for (const el of parsedResult.elements as Array<OcrElement & { w_screen?: number; h_screen?: number }>) {
+                el.cx_screen = region.originX + el.cx_norm * region.width;
+                el.cy_screen = region.originY + el.cy_norm * region.height;
+                el.w_screen = el.w_norm * region.width;
+                el.h_screen = el.h_norm * region.height;
+            }
+        }
 
         // Update cache
         if (screenshotBuffer) {
@@ -820,6 +782,7 @@ $.CGEventPost($.kCGHIDEventTap, up);
 
     const tmpFile = join(tmpdir(), `atlas_click_${Date.now()}.js`);
     try {
+        await cursorClick(x, y);
         await fs.writeFile(tmpFile, eventScript, "utf-8");
         await execFileAsync("osascript", ["-l", "JavaScript", tmpFile], { timeout: 5000 });
         await fs.unlink(tmpFile).catch(() => {});
@@ -1128,8 +1091,9 @@ export const osOcrClick: ToolDefinition = {
             // Step 1: Capture screenshot + run OCR
             const tmpPng = join(tmpdir(), `atlas_ocr_cap_${Date.now()}.png`);
             let capBuffer: Buffer | undefined;
+            let capDims: ScreenDimensions | undefined;
             try {
-                await execFileAsync("screencapture", ["-x", tmpPng], { timeout: 8000 });
+                capDims = await captureFocusedDisplay(tmpPng);
                 capBuffer = await fs.readFile(tmpPng);
             } catch (err) {
                 attemptLog.push({
@@ -1146,11 +1110,11 @@ export const osOcrClick: ToolDefinition = {
             // Escalate to accurate on later retries
             const effectiveMode = attempt >= 1 ? ("accurate" as const) : ocrMode;
 
-            let ocrResult = await runOcr(tmpPng, effectiveMode, capBuffer);
+            let ocrResult = await runOcr(tmpPng, effectiveMode, capBuffer, capDims);
 
             // Fast-mode fallback: if fast found 0 elements, retry with accurate
             if (ocrResult && ocrResult.elements.length === 0 && effectiveMode === "fast") {
-                ocrResult = await runOcr(tmpPng, "accurate", capBuffer);
+                ocrResult = await runOcr(tmpPng, "accurate", capBuffer, capDims);
             }
 
             if (!ocrResult || ocrResult.elements.length === 0) {
@@ -1223,7 +1187,7 @@ export const osOcrClick: ToolDefinition = {
 
             // Fast-mode fallback: if best score < 0.4, retry with accurate
             if ((!match || match.score < 0.4) && effectiveMode === "fast") {
-                const accurateResult = await runOcr(tmpPng, "accurate", capBuffer);
+                const accurateResult = await runOcr(tmpPng, "accurate", capBuffer, capDims);
                 if (accurateResult && accurateResult.elements.length > 0) {
                     ocrResult = accurateResult;
                     lastElementCount = ocrResult.elements.length;
@@ -1324,9 +1288,9 @@ export const osOcrClick: ToolDefinition = {
             if (verifyAppears || verifyGone) {
                 const tmpVerify = join(tmpdir(), `atlas_verify_${Date.now()}.png`);
                 try {
-                    await execFileAsync("screencapture", ["-x", tmpVerify], { timeout: 8000 });
+                    const verifyDims = await captureFocusedDisplay(tmpVerify);
                     const verifyBuf = await fs.readFile(tmpVerify);
-                    const verifyOcr = await runOcr(tmpVerify, "fast", verifyBuf);
+                    const verifyOcr = await runOcr(tmpVerify, "fast", verifyBuf, verifyDims);
                     await fs.unlink(tmpVerify).catch(() => {});
 
                     if (verifyOcr) {
@@ -1484,14 +1448,15 @@ export const osVisualVerify: ToolDefinition = {
         // Capture screen + run fast OCR
         const tmpPng = join(tmpdir(), `atlas_verify_${Date.now()}.png`);
         let verifyBuffer: Buffer | undefined;
+        let verifyDims: ScreenDimensions | undefined;
         try {
-            await execFileAsync("screencapture", ["-x", tmpPng], { timeout: 8000 });
+            verifyDims = await captureFocusedDisplay(tmpPng);
             verifyBuffer = await fs.readFile(tmpPng);
         } catch (err) {
             return JSON.stringify({ success: false, error: "Screenshot failed during verification." });
         }
 
-        const ocrResult = await runOcr(tmpPng, "fast", verifyBuffer);
+        const ocrResult = await runOcr(tmpPng, "fast", verifyBuffer, verifyDims);
         await fs.unlink(tmpPng).catch(() => {});
 
         if (!ocrResult) {
@@ -1751,7 +1716,7 @@ export const sendScreenshot: ToolDefinition = {
 
         try {
             // Step 1: Capture screenshot
-            await execFileAsync("screencapture", ["-x", tmpPng], { timeout: 10000 });
+            await withCursorHidden(() => execFileAsync("screencapture", ["-x", tmpPng], { timeout: 10000 }));
 
             // Step 2: Verify the file was created
             if (!existsSync(tmpPng)) {
@@ -1928,7 +1893,7 @@ export const osScan: ToolDefinition = {
             // 2. Hide overlay, capture screenshot
             hideOverlayForAgent();
             await new Promise((r) => setTimeout(r, 100));
-            await execFileAsync("screencapture", ["-x", tmpPng], { timeout: 10000 });
+            const ocrDims = await captureFocusedDisplay(tmpPng, dims);
             showOverlayForAgent();
 
             // 3. Resize to 1280px width
@@ -1940,7 +1905,10 @@ export const osScan: ToolDefinition = {
             }
 
             // 4. Run OCR (accurate mode for reliable text) + accessibility in parallel
-            const [ocrResult, axElements] = await Promise.all([runOcr(tmpPng, "accurate"), getAccessibilityElements()]);
+            const [ocrResult, axElements] = await Promise.all([
+                runOcr(tmpPng, "accurate", undefined, ocrDims),
+                getAccessibilityElements(),
+            ]);
 
             // 5. Merge OCR elements + accessibility elements
             const mergedElements: ScanElement[] = [];
@@ -1994,12 +1962,12 @@ export const osScan: ToolDefinition = {
 
             // 6. Generate SoM overlay
             const elementsJson = join(tmpdir(), `atlas-scan-elements-${Date.now()}.json`);
-            // Convert screen coords to image coords for the overlay
+            // Convert screen coords to image coords for the overlay (image = this monitor)
             const imageElements = mergedElements.map((el) => ({
                 label: el.label,
                 text: el.text,
-                x: Math.round(el.x / scaleFactor),
-                y: Math.round(el.y / scaleFactor),
+                x: Math.round((el.x - dims.originX) / scaleFactor),
+                y: Math.round((el.y - dims.originY) / scaleFactor),
                 w: Math.round(el.w / scaleFactor),
                 h: Math.round(el.h / scaleFactor),
             }));
@@ -2281,39 +2249,18 @@ $.CGEventPost($.kCGHIDEventTap, up);`
 "done"`;
 
             const tmpFile = join(tmpdir(), `atlas_click_elem_${Date.now()}.js`);
+            await cursorClick(el.x, el.y, clickType === "right" ? "right" : "left", clickType === "double" ? 2 : 1);
             await fs.writeFile(tmpFile, jxa, "utf-8");
             await execFileAsync("osascript", ["-l", "JavaScript", tmpFile], { timeout: 5000 });
             await fs.unlink(tmpFile).catch(() => {});
 
-            const response: Record<string, unknown> = {
+            // (No screenshot byte-diff: it compared differently-encoded images and always said "changed".)
+            return JSON.stringify({
                 success: true,
                 clicked: { label: el.label, text: el.text, role: el.role, x: el.x, y: el.y },
                 action: clickType,
                 tip: "Take a screenshot or run os_visual_verify to confirm the click worked.",
-            };
-
-            // Phase 8: Screenshot diff verification
-            try {
-                if (_lastScreenshotBuffer) {
-                    const beforeBuf = _lastScreenshotBuffer;
-                    await new Promise((r) => setTimeout(r, 500));
-                    const tmpDiffPng = join(tmpdir(), `atlas_diff_elem_${Date.now()}.png`);
-                    await execFileAsync("screencapture", ["-x", tmpDiffPng], { timeout: 8000 });
-                    const afterBuf = await fs.readFile(tmpDiffPng);
-                    await fs.unlink(tmpDiffPng).catch(() => {});
-                    const diff = computeScreenDiff(beforeBuf, afterBuf);
-                    response.screen_changed = diff > 0.05;
-                    response.diff_percent = Math.round(diff * 100);
-                    if (diff < 0.01) {
-                        response.warning =
-                            "Click may not have had an effect. Verify with os_screenshot or os_visual_verify.";
-                    }
-                }
-            } catch {
-                /* diff check is non-blocking — ignore errors */
-            }
-
-            return JSON.stringify(response);
+            });
         } catch (err) {
             return JSON.stringify({ success: false, error: (err as Error).message });
         }
@@ -2413,6 +2360,7 @@ export const osMultiAction: ToolDefinition = {
                         });
                         const sx = scaled.x;
                         const sy = scaled.y;
+                        await cursorClick(sx, sy);
                         const jxa = `ObjC.import('CoreGraphics');var pt=$.CGPointMake(${sx},${sy});var m=$.CGEventCreateMouseEvent(null,$.kCGEventMouseMoved,pt,0);$.CGEventPost($.kCGHIDEventTap,m);delay(0.05);var d=$.CGEventCreateMouseEvent(null,$.kCGEventLeftMouseDown,pt,0);$.CGEventPost($.kCGHIDEventTap,d);delay(0.05);var u=$.CGEventCreateMouseEvent(null,$.kCGEventLeftMouseUp,pt,0);$.CGEventPost($.kCGHIDEventTap,u);`;
                         await execFileAsync("osascript", ["-l", "JavaScript", "-e", jxa], { timeout: 5000 });
                         results.push({
@@ -2441,6 +2389,7 @@ export const osMultiAction: ToolDefinition = {
                             if (stopOnError) return JSON.stringify({ results, stopped_early: true });
                             break;
                         }
+                        await cursorClick(element.x, element.y);
                         const jxa = `ObjC.import('CoreGraphics');var pt=$.CGPointMake(${element.x},${element.y});var m=$.CGEventCreateMouseEvent(null,$.kCGEventMouseMoved,pt,0);$.CGEventPost($.kCGHIDEventTap,m);delay(0.05);var d=$.CGEventCreateMouseEvent(null,$.kCGEventLeftMouseDown,pt,0);$.CGEventPost($.kCGHIDEventTap,d);delay(0.05);var u=$.CGEventCreateMouseEvent(null,$.kCGEventLeftMouseUp,pt,0);$.CGEventPost($.kCGHIDEventTap,u);`;
                         await execFileAsync("osascript", ["-l", "JavaScript", "-e", jxa], { timeout: 5000 });
                         results.push({
@@ -2451,80 +2400,24 @@ export const osMultiAction: ToolDefinition = {
                         break;
                     }
                     case "type": {
-                        await typeTextMac(act.text || "");
+                        await withCursorTyping(() => typeTextMac(act.text || ""));
                         results.push({ action: "type", ok: true, detail: { text: act.text } });
                         break;
                     }
                     case "key": {
                         // LLM may send key name in act.key, act.text, or act.combo
-                        const keyInput = (act.key || act.text || "").toString().toLowerCase().trim();
-
-                        // If it contains "+", treat as combo (e.g., "cmd+f", "command+v")
-                        if (keyInput.includes("+")) {
-                            // Redirect to combo handling
-                            act.action = "combo";
-                            act.key = keyInput;
-                            // Fall through to combo case below by re-entering switch
-                            const comboParts = keyInput.split("+");
-                            const modifiers: string[] = [];
-                            let mainKey = "";
-                            for (const p of comboParts) {
-                                const t = p.trim();
-                                if (["cmd", "command", "⌘"].includes(t)) modifiers.push("command down");
-                                else if (["shift", "⇧"].includes(t)) modifiers.push("shift down");
-                                else if (["alt", "option", "⌥"].includes(t)) modifiers.push("option down");
-                                else if (["ctrl", "control", "⌃"].includes(t)) modifiers.push("control down");
-                                else mainKey = t;
-                            }
-                            const modStr = modifiers.length > 0 ? ` using {${modifiers.join(", ")}}` : "";
-                            const script = `tell application "System Events" to keystroke "${mainKey}"${modStr}`;
-                            await execFileAsync("osascript", ["-e", script], { timeout: 3000 });
-                            results.push({ action: "combo", ok: true, detail: { key: keyInput } });
-                            break;
-                        }
-
-                        // Map common key names to key codes
-                        const keyCodes: Record<string, number> = {
-                            return: 36,
-                            enter: 36,
-                            tab: 48,
-                            escape: 53,
-                            esc: 53,
-                            delete: 51,
-                            backspace: 51,
-                            space: 49,
-                            up: 126,
-                            down: 125,
-                            left: 123,
-                            right: 124,
-                        };
-                        const code = keyCodes[keyInput];
-                        if (code !== undefined) {
-                            const jxa = `ObjC.import('CoreGraphics');var e=$.CGEventCreateKeyboardEvent(null,${code},true);$.CGEventPost($.kCGHIDEventTap,e);delay(0.05);var u=$.CGEventCreateKeyboardEvent(null,${code},false);$.CGEventPost($.kCGHIDEventTap,u);`;
-                            await execFileAsync("osascript", ["-l", "JavaScript", "-e", jxa], { timeout: 3000 });
-                        } else if (keyInput.length === 1) {
-                            // Single character — use keystroke
-                            const script = `tell application "System Events" to keystroke "${keyInput}"`;
-                            await execFileAsync("osascript", ["-e", script], { timeout: 3000 });
-                        } else {
-                            results.push({
-                                action: "key",
-                                ok: false,
-                                error: `Unknown key: "${keyInput}". Use: return, tab, escape, delete, space, up, down, left, right, or single characters.`,
-                            });
-                            if (stopOnError) return JSON.stringify({ results, stopped_early: true });
-                            break;
-                        }
+                        // "enter", "home", "f5", "cmd+f", "command+shift+s" — one shared
+                        // key table; an unknown name throws (caught below) instead of
+                        // typing the word or sending "cmd down" AppleScript can't parse.
+                        const keyInput = (act.key || act.text || "").toString().trim();
+                        await execFileAsync("osascript", ["-e", macKeyScript(keyInput)], { timeout: 3000 });
                         results.push({ action: "key", ok: true, detail: { key: keyInput } });
                         break;
                     }
                     case "combo": {
-                        const parts = (act.key || act.text || "").split("+");
-                        const mainKey = parts.pop() || "";
-                        const modifiers = parts.map((m: string) => `${m.trim()} down`).join(", ");
-                        const script = `tell application "System Events"\n    keystroke "${mainKey}" using {${modifiers}}\nend tell`;
-                        await execFileAsync("osascript", ["-e", script], { timeout: 3000 });
-                        results.push({ action: "combo", ok: true, detail: { combo: act.key } });
+                        const combo = (act.key || act.text || "").toString().trim();
+                        await execFileAsync("osascript", ["-e", macKeyScript(combo)], { timeout: 3000 });
+                        results.push({ action: "combo", ok: true, detail: { combo } });
                         break;
                     }
                     case "wait": {
@@ -2535,7 +2428,7 @@ export const osMultiAction: ToolDefinition = {
                     case "screenshot": {
                         // Quick screenshot capture, store buffer
                         const tmp = join(tmpdir(), `atlas-multi-${Date.now()}.png`);
-                        await execFileAsync("screencapture", ["-x", tmp], { timeout: 8000 });
+                        await captureFocusedDisplay(tmp);
                         const buf = await fs.readFile(tmp);
                         _lastScreenshotBuffer = buf;
                         await fs.unlink(tmp).catch(() => {});
@@ -2545,8 +2438,8 @@ export const osMultiAction: ToolDefinition = {
                     case "verify": {
                         // Quick OCR verification
                         const tmp = join(tmpdir(), `atlas-verify-${Date.now()}.png`);
-                        await execFileAsync("screencapture", ["-x", tmp], { timeout: 8000 });
-                        const ocrResult = await runOcr(tmp, "fast");
+                        const vDims = await captureFocusedDisplay(tmp);
+                        const ocrResult = await runOcr(tmp, "fast", undefined, vDims);
                         await fs.unlink(tmp).catch(() => {});
                         const found =
                             ocrResult &&

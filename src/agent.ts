@@ -2,6 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { checkAccountStatus, getKnownCreditBalance, getSessionCreditStats } from "./account-guard.js";
 import {
     injectSystemReminder,
@@ -49,6 +50,8 @@ import {
     recordToolCall as recordGuardrailCall,
 } from "./agents/tool-call-guardrail.js";
 import { offloadIfLarge } from "./agents/tool-output-offload.js";
+import { trackCursorTurn } from "./screen/agent-cursor.js";
+import { anySecretTyped, hasVaultToken, resetVaultTask, resolveVaultArgs, runVaultCall, secretTypedIn, type VaultCall } from "./security/vault.js";
 import {
     buildVerifyReminder,
     isMutator,
@@ -106,6 +109,7 @@ import {
 } from "./model-router.js";
 import { detectTaskType } from "./prompts/dynamic-assembler.js";
 import { buildDynamicContextReminder } from "./prompts/dynamic-context.js";
+import { lateNightNote, noteOwnerReply } from "./late-night-nudge.js";
 import { noteOwnerMessage } from "./security/consent.js";
 import { CODE_TOOLS, protect, REVEAL_TOOLS, reveal, revealArgs } from "./security/pii-vault.js";
 import { isToolAllowed, NON_OWNER_TOOLS } from "./security/tool-access.js";
@@ -291,6 +295,33 @@ const gateOrder = <T extends { isBrowser: boolean }>(rs: T[]): T[] => [
 /** Non-os_* tools that also drive the screen (os_* / win_os_* are matched by prefix). */
 const SCREEN_TOOLS = new Set(["app_manager", "apple_script", "window_manage", "run_shortcut", "computer_use"]);
 
+/**
+ * Steering messages (memory nudge, verification, circuit breaker, retry hints)
+ * matter only for the turn that raised them. They're tagged here and stripped
+ * from history when the turn ends, so they aren't resent on every later turn.
+ */
+// Per turn (ALS), so a turn ending doesn't strip an overlapping turn's nudges.
+const turnNudges = new AsyncLocalStorage<Set<object>>();
+export function pushNudge(msgs: ChatCompletionMessageParam[], content: string): void {
+    const m: ChatCompletionMessageParam = { role: "system", content };
+    turnNudges.getStore()?.add(m);
+    msgs.push(m);
+}
+export function runWithTurnNudges<T>(owned: Set<object>, fn: () => T): T {
+    return turnNudges.run(owned, fn);
+}
+export function stripTurnNudges(msgs: ChatCompletionMessageParam[], owned: ReadonlySet<object>): void {
+    for (let i = msgs.length - 1; i >= 0; i--) if (owned.has(msgs[i])) msgs.splice(i, 1);
+}
+
+/** The orchestrator's TOOLS block, built from the tools this turn actually offers. */
+export function planToolsBlock(tools: Array<{ function?: { name: string; description?: string } }>): string {
+    return tools
+        .flatMap((t) => (t.function?.name ? [t.function] : []))
+        .map((f) => `- ${f.name}: ${(f.description ?? "").split(/(?<=\.)\s/)[0].slice(0, 160)}`)
+        .join("\n");
+}
+
 const HARD_DECISION_TOOLS = new Set(["web_search", "shell_exec", "memory_store"]);
 
 /** Tools whose results don't affect conversation flow — executed in background, synthetic success returned immediately */
@@ -333,7 +364,7 @@ const MILESTONE_DESCRIPTIONS: Record<string, (args: Record<string, unknown>) => 
 // Prevent bloated context from verbose tool outputs (browser scans, extracts, etc.)
 
 const TOOL_RESULT_LIMITS: Record<string, number> = {
-    browser_scan: 2000,
+    browser_scan: 6000, // status/captcha/tip fields come after the element list
     browser_extract: 3000,
     browser_analyze: 2500,
     browser_run_js: 3000,
@@ -457,6 +488,34 @@ export interface ChannelContext {
 
 let conversationHistory: ChatCompletionMessageParam[] = [];
 const MAX_CONVERSATION_HISTORY = 200; // Hard cap to prevent unbounded memory growth
+
+type PendingPrune = { base: ChatCompletionMessageParam[]; result: Awaited<ReturnType<typeof pruneContext>> } | null;
+/** A prune started at the end of the last turn over a snapshot (`base`) of the history. */
+let pendingPrune: Promise<PendingPrune> | null = null;
+const MAX_SUMMARYLESS_PRUNES = 3;
+let summarylessPrunes = 0;
+
+/**
+ * Swap a background prune into the live history: its summary replaces the
+ * snapshot, and whatever was appended since is kept. Null when there's
+ * nothing to apply or the history changed under it (cleared, capped).
+ */
+export function applyPendingPrune(
+    history: ChatCompletionMessageParam[],
+    pending: PendingPrune,
+): ChatCompletionMessageParam[] | null {
+    if (!pending || pending.result.pruned === 0) return null;
+    const { base, result } = pending;
+    if (history.length < base.length || !base.every((m, i) => history[i] === m)) return null;
+    // No summary = the summary call failed (402/offline): don't drop context
+    // unsummarized; the next turn's prune retries. Only a few times, though: a
+    // call that keeps failing (timeout, oversized prompt) would otherwise pin
+    // the history at the hard cap and re-pay the summary + fact flush each turn.
+    if (!result.summary && ++summarylessPrunes < MAX_SUMMARYLESS_PRUNES) return null;
+    summarylessPrunes = 0;
+    console.log(`  ✂️ Pruned ${result.pruned} old messages`);
+    return [...result.messages, ...history.slice(base.length)];
+}
 let _thinkingLevel: ThinkingLevel = "low"; // Default: always think
 
 export function setThinkingLevel(level: string): void {
@@ -570,7 +629,13 @@ interface ToolCallResult {
     finalContent: string | Array<Record<string, unknown>>;
     isBrowser: boolean;
     isError: boolean;
+    /** Ran, but its JSON result said `success: false` (not an error, so no self-heal / escalation). */
+    reportedFailure?: boolean;
 }
+
+/** The tool call failed, judged from its own result flags, not from the word "error" in its output. */
+export const toolFailed = (r: { isError: boolean; reportedFailure?: boolean }): boolean =>
+    r.isError || r.reportedFailure === true;
 
 /**
  * Create a synthetic success result for a deferred (fire-and-forget) tool call.
@@ -588,6 +653,17 @@ function createSyntheticDeferredResult(toolCall: {
     }
     const result = JSON.stringify({ success: true, deferred: true, message: "Saved." });
     return { toolCallId: toolCall.id, fnName, fnArgs, result, finalContent: result, isBrowser: false, isError: false };
+}
+
+/** True when the live browser tab's origin had a saved secret typed into it (screenshots are withheld there). */
+async function browserOriginTainted(): Promise<boolean> {
+    try {
+        const { getActivePage } = await import("./tools/browser/core.js");
+        const { liveUrl } = await import("./tools/browser/vault-typing.js");
+        return secretTypedIn(new URL(await liveUrl(await getActivePage())).origin);
+    } catch {
+        return true; // can't tell + a secret was typed this task → withhold, don't risk a leak
+    }
 }
 
 /**
@@ -736,15 +812,42 @@ async function executeAndProcessToolCall(
 
     // Typing tools get real values for any [OTP_1]-style handles the model used;
     // fnArgs (logs, history, gates) keeps the handles.
-    const execArgs = REVEAL_TOOLS.has(fnName) && channelContext?.isOwner === true ? revealArgs(fnArgs) : fnArgs;
+    let execArgs = REVEAL_TOOLS.has(fnName) && channelContext?.isOwner === true ? revealArgs(fnArgs) : fnArgs;
+    // Saved secrets ({{vault:id.password}}) too, under the vault's domain lock
+    // and consent rules (security/vault.ts). Refused → the model gets the reason.
+    // The call then runs inside runVaultCall: the typing tool re-checks the
+    // origin where the keys land, and hooks only see tokens.
+    let vault: VaultCall | undefined;
+    if (REVEAL_TOOLS.has(fnName) && hasVaultToken(fnArgs)) {
+        const v = await resolveVaultArgs(fnName, execArgs, {
+            isOwner: channelContext?.isOwner === true,
+            pageUrl: async () => {
+                const { getActivePage } = await import("./tools/browser/core.js");
+                const { liveUrl } = await import("./tools/browser/vault-typing.js");
+                return liveUrl(await getActivePage());
+            },
+        });
+        if ("error" in v) {
+            const err = JSON.stringify({ error: v.error });
+            return { toolCallId: toolCall.id, fnName, fnArgs, result: err, finalContent: err, isBrowser: false, isError: true };
+        }
+        execArgs = v.args;
+        vault = { tool: fnName, rules: v.rules };
+    }
     // Stop reaches long waits on the owner, also inside sub-agents/swarms this call starts.
-    let rawResult = await withTurnSignal(signal, () => executeTool(fnName, execArgs));
+    const runTool = () => {
+        const run = () => withTurnSignal(signal, () => executeTool(fnName, execArgs));
+        return vault ? runVaultCall(vault, run) : run();
+    };
+    let rawResult = await runTool();
 
     // ── Self-heal: if tool failed with a dependency error, auto-fix and retry ──
     let isError = false;
+    let reportedFailure = false;
     try {
         const p = JSON.parse(rawResult);
         if (p.error) isError = true;
+        reportedFailure = p?.success === false;
     } catch {
         /* not json */
     }
@@ -754,11 +857,13 @@ async function executeAndProcessToolCall(
             const heal = await attemptSelfHeal(rawResult);
             if (heal.fixed) {
                 console.log(`  🔧 Self-healed (${heal.action}) — retrying ${fnName}`);
-                rawResult = await withTurnSignal(signal, () => executeTool(fnName, execArgs));
+                rawResult = await runTool();
                 isError = false;
+                reportedFailure = false;
                 try {
                     const p = JSON.parse(rawResult);
                     if (p.error) isError = true;
+                    reportedFailure = p?.success === false;
                 } catch {
                     /* not json */
                 }
@@ -775,19 +880,45 @@ async function executeAndProcessToolCall(
         const parsed = JSON.parse(rawResult);
         const b64 = parsed.screenshot_base64 || parsed.zoomed_base64;
         if (b64) {
-            // The API rejects oversized images (e.g. a full-page browser capture).
-            const { downscaleForVision } = await import("./screen/ui-tars.js");
-            const img = await downscaleForVision(Buffer.from(b64, "base64"));
-            imageUrl = `data:${img.mime};base64,${img.buf.toString("base64")}`;
-            delete parsed.screenshot_base64;
-            delete parsed.zoomed_base64;
-            delete parsed.mime_type;
-            parsed.image_attached = true;
-            rawResult = JSON.stringify(parsed);
+            // A browser screenshot of a page a saved secret was typed into can show the
+            // value — a field that echoed it, a card/UPI preview, a split input that
+            // auto-advanced — and an image is never masked (protect() can't touch pixels).
+            // Withhold it; the model still reads the page via browser_scan/extract (text,
+            // which IS masked). Only pay the origin lookup once a secret has been typed.
+            // A browser screenshot: withhold if the live tab's origin is tainted.
+            // Any full-screen capture (os_screenshot, os_smart_click, os_computer_action
+            // …): withhold whenever a secret was typed into any browser page this task,
+            // since the capture can include that window whatever tab is active.
+            const withhold =
+                anySecretTyped() &&
+                (fnName.startsWith("browser_") ? await browserOriginTainted() : true);
+            if (withhold) {
+                delete parsed.screenshot_base64;
+                delete parsed.zoomed_base64;
+                delete parsed.mime_type;
+                parsed.image_attached = false;
+                parsed.screenshot_withheld =
+                    "A saved secret was typed on this page, so its screenshot is withheld (it could show the value). Use browser_scan or browser_extract to read the page.";
+                rawResult = JSON.stringify(parsed);
+            } else {
+                // The API rejects oversized images (e.g. a full-page browser capture).
+                const { downscaleForVision } = await import("./screen/ui-tars.js");
+                const img = await downscaleForVision(Buffer.from(b64, "base64"));
+                imageUrl = `data:${img.mime};base64,${img.buf.toString("base64")}`;
+                delete parsed.screenshot_base64;
+                delete parsed.zoomed_base64;
+                delete parsed.mime_type;
+                parsed.image_attached = true;
+                rawResult = JSON.stringify(parsed);
+            }
         }
     } catch {
         /* not json */
     }
+
+    // A call that typed a saved secret: mask its result now, while every value
+    // it typed (a CVV too) is still known, not only before the next LLM call.
+    if (vault) rawResult = protect(rawResult, { credentials: !CODE_TOOLS.has(fnName) });
 
     // Large-output offload: if the raw result is over the offload threshold,
     // save the full content to disk and replace it with a preview + file path.
@@ -837,7 +968,7 @@ async function executeAndProcessToolCall(
           ]
         : result;
 
-    return { toolCallId: toolCall.id, fnName, fnArgs, result, finalContent, isBrowser, isError };
+    return { toolCallId: toolCall.id, fnName, fnArgs, result, finalContent, isBrowser, isError, reportedFailure };
 }
 
 /**
@@ -1062,7 +1193,27 @@ export async function runAgent(
         // compiled output and crashed every overlay/Telegram message
         // through this path.)
         const mod = await import("./tools/cron-tool.js");
-        const res = await mod.runWithCallerContext({ isOwner: callerIsOwner }, fn);
+        let res: AgentResponse;
+        const nudges = new Set<object>();
+        try {
+            // Outermost turn ending = Bhai lets go of the screen (glow fades).
+            res = await runWithTurnNudges(nudges, () =>
+                mod.runWithCallerContext({ isOwner: callerIsOwner }, () => trackCursorTurn(fn)),
+            );
+        } finally {
+            // Read after the turn: pruning may have swapped the history array.
+            stripTurnNudges(historyFork ?? conversationHistory, nudges);
+            // Prune between turns, off the next turn's critical path.
+            if (!historyFork && !pendingPrune) {
+                const base = [...conversationHistory];
+                pendingPrune = pruneContext(base, llm)
+                    .then((result) => ({ base, result }))
+                    .catch((err) => {
+                        console.error("Context pruning failed (non-fatal):", (err as Error).message);
+                        return null;
+                    });
+            }
+        }
         // The model only ever sees handles ([OTP_1], [CARD_2]); the owner asked
         // about their own values, so show them. Everyone else keeps the handle.
         // Only in a private chat: in a group or public channel the real values
@@ -1075,6 +1226,7 @@ export async function runAgent(
         ) {
             res.text = reveal(res.text);
         }
+        if (callerIsOwner && !channelContext?.autonomous && typeof res?.text === "string") noteOwnerReply(res.text, userMessage);
         return res;
     };
     if (!isForked) {
@@ -1146,6 +1298,10 @@ async function _runAgentBody(
     // tool outputs cluster per turn on disk.
     if (!isForked) nextTurnId();
 
+    // A new top-level turn is the vault's task boundary: forget page taint and any
+    // removed-secret masks from the last task (sub-agents / forks share the task).
+    if (!isForked) resetVaultTask();
+
     // Tell tools which channel produced this turn so they can deliver back
     // on the same channel. Cleared in finally below.
     if (channelContext?.channel) {
@@ -1211,6 +1367,20 @@ async function _runAgentBody(
         }
     };
 
+    if (!isForked && pendingPrune) {
+        // Pruning (an LLM summary) ran in the background after the last turn;
+        // usually it's done by now, so the first token doesn't wait on it.
+        // Applied before the hard cap below: the cap builds a new array, which
+        // would fail the prune's prefix check and drop it.
+        const pending = pendingPrune;
+        pendingPrune = null;
+        const merged = applyPendingPrune(workingHistory, await pending);
+        if (merged) {
+            conversationHistory = merged;
+            workingHistory = conversationHistory;
+        }
+    }
+
     // Strip any literal <system-reminder> tags from user input — those tags
     // are reserved for Bhai runtime instructions and must not be forgeable
     // by attacker-controlled message text.
@@ -1273,15 +1443,6 @@ async function _runAgentBody(
         console.log(
             `  ✂️ Hard-capped conversation history: dropped ${trimmed} oldest messages (limit: ${MAX_CONVERSATION_HISTORY})`,
         );
-    }
-
-    if (!isForked) {
-        const pruneResult = await pruneContext(workingHistory, llm);
-        if (pruneResult.pruned > 0) {
-            conversationHistory = pruneResult.messages;
-            workingHistory = conversationHistory;
-            console.log(`  ✂️ Pruned ${pruneResult.pruned} old messages`);
-        }
     }
 
     const messages: ChatCompletionMessageParam[] = workingHistory;
@@ -1453,7 +1614,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 metaNudged = true;
                 lastMetaNudgeIter = iterations;
                 const nudge = `[SYSTEM — METACOGNITION] ${metaCheck.reasoning}. You have been running for ${iterations} iterations and ${totalToolCalls} tool calls. ${metaCheck.loopDetected ? "A repeating tool-call pattern was detected." : "You appear to be struggling."} Please reflect: are you stuck in a loop or making actual progress? If you are stuck, summarize what you have accomplished so far and present it to the user. If you are making real progress, continue with a different approach.`;
-                messages.push({ role: "system", content: nudge });
+                pushNudge(messages, nudge);
                 console.warn(`  ⚠️ Metacognition nudge: ${metaCheck.reasoning} (iteration ${iterations})`);
             }
             // Low confidence can inform cascade escalation
@@ -1518,10 +1679,10 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 if (tryHalfOpen(circuitBreaker)) {
                     console.log(`  [CIRCUIT-BREAKER] Half-open: one probe attempt with highest-tier model`);
                     // Force the highest-tier model for the probe (handled below via modelOverride)
-                    messages.push({
-                        role: "system" as const,
-                        content: `[SYSTEM — CIRCUIT BREAKER HALF-OPEN] The agent has been stuck. This is a recovery probe. Take a completely different approach to complete the task. Summarize what has been tried so far and attempt one final strategy.`,
-                    });
+                    pushNudge(
+                        messages,
+                        `[SYSTEM — CIRCUIT BREAKER HALF-OPEN] The agent has been stuck. This is a recovery probe. Take a completely different approach to complete the task. Summarize what has been tried so far and attempt one final strategy.`,
+                    );
                 } else if (circuitBreaker.state === "open") {
                     // Still in cooldown — notify user and exit
                     const statusMsg = getStatusMessage(circuitBreaker);
@@ -1597,7 +1758,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
         // sees and the final answer replies to the nudge instead of the user.
         if (iterations > 1 && iterations % MEMORY_NUDGE_INTERVAL === 0 && !guiPinned()) {
             const nudge = `[Memory nudge] Review the conversation so far. If any important facts, decisions, user preferences, or task learnings have emerged that aren't yet stored, use memory_store to persist them now. Focus on information that would be valuable in future conversations.`;
-            messages.push({ role: "system", content: nudge });
+            pushNudge(messages, nudge);
             console.log(`  🧠 Memory nudge injected (iteration ${iterations})`);
         }
 
@@ -1741,28 +1902,34 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 }
             }
 
-            // ── Project memory (ATLAS.md walk-up) ──
-            // Only for coding-classified queries to avoid injecting
-            // project conventions into chat/research flows.
-            try {
-                if (detectTaskType(rawUserMessage) === "coding") {
+            // ── Coding context ──
+            // The codebase index + repo map are synchronous disk/CPU work that can
+            // hold the event loop for 10s+. Started while routing was in flight they
+            // starved its timeout (a 5s budget took 15s on "… my code doesn't build.
+            // roast me"), so they start once routing settles and are skipped on a
+            // chat-lane turn. Memory retrieval below does not wait for either; the
+            // parts are spliced back in at this position before the context cap.
+            const buildCodingContext = async (): Promise<string[]> => {
+                const parts: string[] = [];
+                // ── Project memory (ATLAS.md walk-up) ──
+                // Only for coding-classified queries to avoid injecting
+                // project conventions into chat/research flows.
+                try {
                     const projectMemory = getProjectMemorySnippet();
                     if (projectMemory) parts.push(projectMemory);
+                } catch {
+                    /* project memory not available */
                 }
-            } catch {
-                /* project memory not available */
-            }
 
-            // ── Repo map (structural symbol summary) ──
-            // Token-budgeted structural overview for coding queries so the agent
-            // knows "what's where" without reading every file. Kept tight at 1500
-            // tokens to avoid crowding the rest of the context injection.
-            // ── repo_map + codebase index architecture injection (parallel) ──
-            // For coding tasks, run the repo_map walk and the codebase-index
-            // + architecture extraction concurrently. They hit disjoint caches
-            // so parallelism roughly halves first-iteration cold latency
-            // compared to the previous serial flow.
-            if (detectTaskType(rawUserMessage) === "coding") {
+                // ── Repo map (structural symbol summary) ──
+                // Token-budgeted structural overview for coding queries so the agent
+                // knows "what's where" without reading every file. Kept tight at 1500
+                // tokens to avoid crowding the rest of the context injection.
+                // ── repo_map + codebase index architecture injection (parallel) ──
+                // For coding tasks, run the repo_map walk and the codebase-index
+                // + architecture extraction concurrently. They hit disjoint caches
+                // so parallelism roughly halves first-iteration cold latency
+                // compared to the previous serial flow.
                 const cwd = process.cwd();
                 const repoMapTask = (async () => {
                     if (process.env.ATLAS_NO_REPO_MAP === "true") return null;
@@ -1813,45 +1980,24 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 const safeArch = await guardContext("architecture", arch);
                 if (safeRepoMap) parts.push(safeRepoMap);
                 if (safeArch) parts.push(safeArch);
-            }
 
-            // ── Platform capabilities (injected once per session) ──
-            // Tells the LLM which shell, screenshot engine, clipboard engine, OCR
-            // tool, and automation helpers are actually available at runtime so it
-            // avoids calling tools that will fail on this platform.
-            if (process.env.ATLAS_NO_CAPABILITY_INJECTION !== "true") {
+                // ── Past coding-strategy recall (Phase 4E read side) ──
+                // For coding tasks, surface the code-category task-learnings ahead
+                // of the general recall so previously-validated patterns aren't
+                // crowded out by browser/os/app entries when the top-3 is shared.
                 try {
-                    const { getPlatformCapabilities, formatCapabilitiesForContext } = await import(
-                        "./utils/platform-capabilities.js"
-                    );
-                    const caps = await getPlatformCapabilities();
-                    const capsText = formatCapabilitiesForContext(caps);
-                    parts.push(`<platform_capabilities>\n${capsText}\n</platform_capabilities>`);
-                } catch {
-                    /* non-fatal */
-                }
-            }
-
-            // ── Past coding-strategy recall (Phase 4E read side) ──
-            // For coding tasks, surface the code-category task-learnings ahead
-            // of the general recall so previously-validated patterns aren't
-            // crowded out by browser/os/app entries when the top-3 is shared.
-            try {
-                if (detectTaskType(rawUserMessage) === "coding") {
                     const codingLearnings = getTaskLearningsContext(rawUserMessage, "code");
                     if (codingLearnings) parts.push(codingLearnings);
+                } catch {
+                    /* task-learnings not initialized */
                 }
-            } catch {
-                /* task-learnings not initialized */
-            }
 
-            // ── Coding complexity classification ──
-            // Inject a short reminder telling the agent which flow to
-            // follow: trivial skips design-docs, standard implements
-            // directly with Pro tier, complex triggers the full PRD →
-            // approval → walkthrough ceremony.
-            try {
-                if (detectTaskType(rawUserMessage) === "coding") {
+                // ── Coding complexity classification ──
+                // Inject a short reminder telling the agent which flow to
+                // follow: trivial skips design-docs, standard implements
+                // directly with Pro tier, complex triggers the full PRD →
+                // approval → walkthrough ceremony.
+                try {
                     const { classifyCodingComplexity } = await import("./model-router.js");
                     const c = classifyCodingComplexity(userMessage);
                     if (c === "complex") {
@@ -1880,9 +2026,38 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                                 "</coding_complexity>",
                         );
                     }
+                } catch {
+                    /* classifier unavailable — don't block the agent */
                 }
-            } catch {
-                /* classifier unavailable — don't block the agent */
+                return parts;
+            };
+            const codingInsertAt = parts.length;
+            const codingPartsPromise: Promise<string[]> =
+                detectTaskType(rawUserMessage) !== "coding"
+                    ? Promise.resolve([])
+                    : toolSelectionPromise
+                          .then(
+                              (s) => !s.categories.includes("chat_only"),
+                              () => true,
+                          )
+                          .then((coding) => (coding ? buildCodingContext() : []))
+                          .catch(() => []);
+
+            // ── Platform capabilities (injected once per session) ──
+            // Tells the LLM which shell, screenshot engine, clipboard engine, OCR
+            // tool, and automation helpers are actually available at runtime so it
+            // avoids calling tools that will fail on this platform.
+            if (process.env.ATLAS_NO_CAPABILITY_INJECTION !== "true") {
+                try {
+                    const { getPlatformCapabilities, formatCapabilitiesForContext } = await import(
+                        "./utils/platform-capabilities.js"
+                    );
+                    const caps = await getPlatformCapabilities();
+                    const capsText = formatCapabilitiesForContext(caps);
+                    parts.push(`<platform_capabilities>\n${capsText}\n</platform_capabilities>`);
+                } catch {
+                    /* non-fatal */
+                }
             }
 
             // ── 3. Behavioral traits (token-budgeted, relevance-scored) ──
@@ -2138,9 +2313,21 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                         /* persona injection is best-effort — skip on read failure */
                     }
                 }
+                let _relationshipDepth: number | undefined;
+                let _preferredLength: "terse" | "normal" | "detailed" | undefined;
+                try {
+                    const relMod = await import("./memory/relationship.js");
+                    _relationshipDepth = relMod.getRelationshipState().depth_score;
+                    const persMod = await import("./setup/personality-sync.js");
+                    _preferredLength = persMod.getPreferredLength();
+                } catch {
+                    /* best-effort — the tone/relationship modules just stay off */
+                }
                 const dynCtx = buildDynamicContextReminder(rawUserMessage, {
                     hour: localHour,
                     persona: _personaForCtx,
+                    relationshipDepth: _relationshipDepth,
+                    preferredLength: _preferredLength,
                 });
                 if (dynCtx) parts.push(dynCtx);
             } catch {
@@ -2234,6 +2421,8 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
 - Save info as you learn it: identity_update for name/role/company, trait_update for preferences.
 - After this chat, you'll remember everything. Never re-introduce or re-ask.`);
             }
+
+            parts.splice(codingInsertAt, 0, ...(await codingPartsPromise));
 
             // Contact agents: drain ALL owner memory that was just collected and
             // replace with only the contact's own profile. The LLM must not have
@@ -2580,6 +2769,13 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             const tone = getToneReminder();
             if (tone) iterationMessages.push({ role: "system", content: tone });
         }
+        // identity.md allows one late-hour remark per night; the model can't
+        // remember it made one, so say so (owner only; every step, since the
+        // reply is usually written after the tool steps).
+        if (channelContext?.isOwner === true) {
+            const lateNote = lateNightNote();
+            if (lateNote) iterationMessages.push({ role: "system", content: lateNote });
+        }
 
         // ── Orchestrator Planning: Sonnet 4.6 generates execution plan for interactive tasks ──
         const planningCategories = ["os_control", "app_management", "browser", "media", "communication", "scheduling"];
@@ -2721,29 +2917,13 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
 
 Create a precise execution plan.
 
-TOOLS (pick the right one — listed by domain):
+TOOLS (the only tools available this turn — name no others):
+${planToolsBlock(tools.filter((t) => toolAllowlist === undefined || isToolAllowed(toolAllowlist, t.function.name)))}
 
-Desktop / GUI automation (any "click X", "open app Y", "send via the WhatsApp app", "click in Figma"):
-- app_manager: action='activate' app="WhatsApp" (also: list, quit, force_quit, hide, unhide). Accepts \`app\` OR \`app_name\`.
-- os_smart_click: DEFAULT click-by-description tool. Pass instruction="the Send button" — it cascades click-memory → AX exact → AX fuzzy → OmniParser → UI-TARS local grounding automatically. ALWAYS prefer this over os_nav+os_click_element / raw apple_script for click tasks. Optional: app, window_title, surface_hint=native|canvas|web.
-- os_type: text="hello" or key=Return or combo="command+f". Use AFTER focusing the right field with os_smart_click.
-- os_screenshot: capture the screen for vision-grounding tools or for os_visual_verify.
-- os_visual_verify: REQUIRED after any UI-driving step that claims to have changed state (sent a message, opened a tab, clicked a button). Pass expect_text (text that should now be on screen) or expect_gone (text that should have disappeared). Without this, "did the click work?" is a guess.
-- os_inspect / os_click_id: cross-OS AX-based element listing + click-by-id when os_smart_click misses.
-- os_computer_action: structured single-action API with percentage coords (cross-OS).
-- Legacy fallbacks (use only when os_smart_click + os_inspect both miss): os_nav, os_click_element, os_ocr_click, apple_script. Raw AppleScript keystroke sequences are LAST resort — they fire blind, never check focus, and routinely "succeed" while doing nothing.
-
-Music:
-- spotify: action='play' query="exact song name" plays a track; query="<name> playlist" or uri="spotify:playlist:<id>" plays a playlist; query="liked songs" plays Liked Songs. action='now_playing' to verify. action='pause'/'resume'/'next'/'previous'/'volume'/'seek'/'shuffle'/'repeat'/'search'/'queue_add'/'queue_get'/'devices'.
-- music_control: same for Apple Music.
-
-Messaging:
-- whatsapp_send: protocol-level send via Baileys. Works for contacts the bot is already paired with. Use for "message AP saying gym?" when the bot has a WhatsApp session.
-- messages_tool: iMessage only.
-- If whatsapp_send fails OR the contact lives only inside the desktop app: app_manager activate WhatsApp → os_smart_click "new chat button" → os_type the contact name → os_smart_click on that contact in the result list → os_type the message → os_smart_click "send button" → os_visual_verify expect_text=the_message.
-
-Web:
-- browser_navigate / browser_type / browser_click / browser_extract: for web tasks.
+HINTS (apply a hint only if the tools it names are listed above):
+- Desktop: app_manager action='activate' app="WhatsApp"; os_smart_click instruction="the Send button" clicks by description (prefer it over os_nav+os_click_element or raw apple_script); os_type text=/key=/combo= after focusing the field; os_visual_verify expect_text=/expect_gone= after any step that changes UI state. Raw AppleScript keystrokes are the LAST resort.
+- Music: spotify action='play' query="exact song name" (or "<name> playlist", "liked songs"); action='now_playing' to verify. music_control is the same for Apple Music.
+- Messaging: whatsapp_send for paired contacts; messages_tool is iMessage only. If whatsapp_send fails, drive the WhatsApp app: app_manager activate → os_smart_click "new chat button" → os_type the name → os_smart_click the contact → os_type the message → os_smart_click "send button" → os_visual_verify expect_text=the_message.
 
 CRITICAL RULES:
 1. **Verify before declaring done.** Every UI-driving plan ENDS with os_visual_verify (or for music, spotify action='now_playing'). Never say "done" off a fire-and-forget AppleScript.
@@ -2948,10 +3128,7 @@ PLAN:`,
                     };
                 }
                 console.warn(`[AGENT] LLM error (attempt ${errorCount}/3) — retrying next iteration`);
-                messages.push({
-                    role: "system" as const,
-                    content: "[SYSTEM] The LLM call failed. Retry with a different approach.",
-                });
+                pushNudge(messages, "[SYSTEM] The LLM call failed. Retry with a different approach.");
                 continue;
             }
         }
@@ -3016,11 +3193,10 @@ PLAN:`,
             if (!recovered) {
                 errorCount++;
                 console.error(`[AGENT] All empty response retries exhausted — continuing loop`);
-                messages.push({
-                    role: "system" as const,
-                    content:
-                        "[SYSTEM] Previous LLM call returned empty. Take a different approach to complete the user's request.",
-                });
+                pushNudge(
+                    messages,
+                    "[SYSTEM] Previous LLM call returned empty. Take a different approach to complete the user's request.",
+                );
                 continue;
             }
         }
@@ -3631,8 +3807,7 @@ PLAN:`,
         let lastFailedTool: string | null = null;
         for (const r of batchResults) {
             const content = typeof r.finalContent === "string" ? r.finalContent : JSON.stringify(r.finalContent);
-            const isFail = content.includes('"success":false') || content.includes('"error"');
-            if (isFail) {
+            if (toolFailed(r)) {
                 recordToolFailure(r.fnName, content.substring(0, 200));
                 lastFailedTool = r.fnName;
                 // World model + self-model: track tool failure
@@ -3806,7 +3981,7 @@ PLAN:`,
         const allResults = resultTexts.join(" ");
 
         // Detect states that need further action
-        const hasToolFailure = allResults.includes('"success":false') || allResults.includes('"error"');
+        const hasToolFailure = batchResults.some(toolFailed);
         if (hasToolFailure) guiTrouble = true;
         const hasAppOpened = allResults.includes('"action":"activate"') || allResults.includes('"action":"launch"');
         // Click results ("clicked", "double_clicked", "right_clicked", the smart-click
@@ -3830,23 +4005,22 @@ PLAN:`,
         ) {
             // Once until a verification happens: one copy per step piled up in history.
             verificationNagged = true;
-            messages.push({
-                role: "system",
-                content: `[VERIFICATION REQUIRED] Your last action may not have completed the task. Before responding to the user:
+            pushNudge(
+                messages,
+                `[VERIFICATION REQUIRED] Your last action may not have completed the task. Before responding to the user:
 1. VERIFY the result (e.g., spotify action='now_playing', os_nav to confirm state, os_visual_verify)
 2. If verification shows the task isn't done, keep working — try alternative approaches
 3. Only tell the user "done" after you have CONFIRMED the task succeeded
 Do NOT assume success from a single click or tool call.`,
-            });
+            );
         }
         if (musicFastPathActive && !hasToolFailure) {
             const sawSpotifyCall = batchResults.some((r) => r.fnName === "spotify" || r.fnName === "music_control");
             if (sawSpotifyCall) {
-                messages.push({
-                    role: "system",
-                    content:
-                        "[FAST_PATH_DONE] The music tool returned success. Reply briefly confirming the song is playing (one short sentence). Do NOT call now_playing or any other tool unless the user asks a follow-up question.",
-                });
+                pushNudge(
+                    messages,
+                    "[FAST_PATH_DONE] The music tool returned success. Reply briefly confirming the song is playing (one short sentence). Do NOT call now_playing or any other tool unless the user asks a follow-up question.",
+                );
             }
         }
 

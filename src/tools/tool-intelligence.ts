@@ -8,6 +8,7 @@
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { protect } from "../security/pii-vault.js";
 
 // ═══════════════════════════════════════════════
 // 1. RESULT CACHE (TTL-based)
@@ -235,7 +236,8 @@ export function auditLog(entry: {
             args: truncateObj(entry.args, 200),
             error: entry.error?.substring(0, 200),
         });
-        appendFileSync(logPath, line + "\n");
+        // Typing tools log revealed values (an OTP, a saved password): mask them.
+        appendFileSync(logPath, protect(line, { credentials: false }) + "\n");
     } catch {
         // Never let audit logging break tool execution
     }
@@ -377,6 +379,7 @@ const DESTRUCTIVE_ACTIONS: Record<string, Set<string>> = {
     app_manager: new Set(["force_quit"]),
     delete_file: new Set(["*"]), // all actions
     site_task: new Set(["confirm"]), // places an order / pays
+    vault_authorize_payment: new Set(["*"]), // lets Bhai type a saved card / UPI ID for this item and amount
 };
 
 // Dangerous shell command patterns that should trigger a warning
@@ -515,6 +518,9 @@ export function requiresConfirmation(
                 break;
             case "app_manager":
                 warning = `⚠️ Force-quitting "${args.app}" may cause unsaved data loss.`;
+                break;
+            case "vault_authorize_payment":
+                warning = `⚠️ This lets Bhai pay ₹${args.amount} for "${args.item}" with a saved card or UPI ID on ${args.site ? String(args.site) : "an unknown site — open the https payment page in the browser first"}.`;
                 break;
             case "site_task":
                 warning = `⚠️ This places the order and pays ₹${args.amount}. It cannot be undone.`;

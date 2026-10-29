@@ -51,6 +51,7 @@ import { closeOverlayChat, initOverlayChat, sendOverlayNotification } from "./ov
 import { startHeartbeat, stopHeartbeat } from "./proactive/heartbeat.js";
 import { initCredibilityModel } from "./research/credibility-model.js";
 import { initSandbox } from "./security/sandbox.js";
+import { loggableRejection } from "./security/vm-isolate.js";
 import { initSession, revokeCurrentSession } from "./session.js";
 import { seedProfileIfPresent } from "./setup/wizard-seed.js";
 import { initSkillMetadata } from "./skills/loader.js";
@@ -163,6 +164,10 @@ async function boot() {
     } catch (err) {
         console.warn("[BOOT] registerProtectedPath skipped:", (err as Error).message);
     }
+
+    // Saved secrets from the desktop app's vault arrive on stdin (security/vault.ts).
+    const { initVault } = await import("./security/vault.js");
+    initVault();
 
     // ── Session (must run first — creates auth token for all Convex calls) ──
     // Retry up to 3 times with backoff for transient network failures
@@ -1276,7 +1281,8 @@ async function boot() {
     // and keep serving; a real uncaught exception leaves state unknown, so exit
     // non-zero and let the desktop app restart us (main.js backoff).
     process.on("unhandledRejection", (reason) => {
-        console.error("⚠️ Unhandled rejection (continuing):", reason instanceof Error ? reason.stack : reason);
+        // A code_action/Forge sandbox can reject with a Proxy; never touch its traps.
+        console.error("⚠️ Unhandled rejection (continuing):", loggableRejection(reason));
     });
     process.on("uncaughtException", (err) => {
         console.error("💥 Uncaught exception, exiting for a clean restart:", err.stack ?? err);

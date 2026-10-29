@@ -9,6 +9,8 @@
 // handle such as [CARD_1] and returns the originals so a caller can put them
 // back where the user meant them to go (see pii-vault.ts).
 
+import { nativeFindPii } from "../native/index.js";
+
 export type PiiKind = "CARD" | "AADHAAR" | "UPI" | "OTP" | "COOKIE";
 
 export interface PiiMatch {
@@ -87,7 +89,31 @@ const OTP_RE =
 // The one form the policy doesn't cover: a script setting a cookie.
 const JS_COOKIE_RE = /\bdocument\.cookie\s*=\s*["'`]([^"'`\r\n]+)/gi;
 
+// ATLAS_NATIVE_PROTECT=true: the linear-time Rust port (native/src/pii_protect.rs),
+// same spans (pii-protect.parity.test.ts). An error napi throws falls back to TS;
+// a Rust panic aborts the process (panic = "abort"), so the port must not panic.
+const NATIVE_PROTECT = process.env.ATLAS_NATIVE_PROTECT === "true";
+
 export function findPii(text: string): PiiMatch[] {
+    if (NATIVE_PROTECT && text) {
+        try {
+            const spans = nativeFindPii(text);
+            if (spans !== null)
+                return spans.map((s) => ({
+                    kind: s.kind as PiiKind,
+                    start: s.start,
+                    end: s.end,
+                    value: text.slice(s.start, s.end),
+                }));
+        } catch {
+            // fall through to TS
+        }
+    }
+    return _findPiiTs(text);
+}
+
+/** The TS implementation; exported for the parity test. */
+export function _findPiiTs(text: string): PiiMatch[] {
     const out: PiiMatch[] = [];
     const add = (kind: PiiKind, start: number, value: string) =>
         out.push({ kind, start, end: start + value.length, value });

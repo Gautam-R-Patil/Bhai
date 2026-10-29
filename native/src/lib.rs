@@ -36,6 +36,7 @@ mod metacognition;
 mod model_router;
 mod notification_tracker;
 mod pattern_speculator;
+mod pii_protect;
 mod proactive_calendar;
 mod proactive_intent;
 mod proactive_monitor;
