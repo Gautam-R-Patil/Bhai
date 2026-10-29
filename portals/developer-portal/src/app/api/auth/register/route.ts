@@ -8,7 +8,7 @@ import type { Developer } from "@/lib/types";
 
 // F14: simple RFC-style email validation. Not a full grammar — just enough
 // to reject obvious garbage at the API boundary before we hash and store.
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EMAIL_RE = /^[^\s@]+@[^\s@.]+\.[^\s@]+$/;
 // bcrypt truncates inputs above 72 bytes. Reject explicitly so user is
 // told their password is too long instead of silently being capped.
 const PASSWORD_MIN = 8;

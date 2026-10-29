@@ -223,10 +223,14 @@ export const browserParallelTabs: ToolDefinition = {
                                 /* javascript-obfuscator:enable */ undefined,
                             );
                         } else if (tabAction.extract_selector) {
-                            const _sel = (tabAction.extract_selector as string).replace(/`/g, "\\`");
+                            // Selector goes in as an argument, never spliced into code.
                             const els = (await page
                                 .evaluate(
-                                    `Array.from(document.querySelectorAll(\`${_sel}\`)).slice(0,50).map(e=>e.textContent?.trim())`,
+                                    /* javascript-obfuscator:disable */ ({ s }: { s: string }) =>
+                                        Array.from(document.querySelectorAll(s))
+                                            .slice(0, 50)
+                                            .map((e) => e.textContent?.trim()),
+                                    /* javascript-obfuscator:enable */ { s: tabAction.extract_selector as string },
                                 )
                                 .catch(() => [])) as string[];
                             extracted = els.join("\n");
@@ -834,15 +838,19 @@ export const browserMultiAction: ToolDefinition = {
                         return { success: true, result: { selector: act.selector, opacity_reached: threshold } };
                     }
                     case "extract": {
-                        const _sel2 = (act.selector as string).replace(/`/g, "\\`");
-                        const attr = (act.attribute as string) || "textContent";
-                        const _attrExpr =
-                            attr === "textContent"
-                                ? `el.textContent?.trim()`
-                                : `el.getAttribute("${attr.replace(/"/g, '\\"')}")`;
+                        // Selector and attribute go in as arguments, never spliced into code.
                         const elements = (await page
                             .evaluate(
-                                `Array.from(document.querySelectorAll(\`${_sel2}\`)).slice(0,30).map(el=>${_attrExpr})`,
+                                /* javascript-obfuscator:disable */ ({ s, a }: { s: string; a: string }) =>
+                                    Array.from(document.querySelectorAll(s))
+                                        .slice(0, 30)
+                                        .map((el) =>
+                                            a === "textContent" ? el.textContent?.trim() : el.getAttribute(a),
+                                        ),
+                                /* javascript-obfuscator:enable */ {
+                                    s: act.selector as string,
+                                    a: (act.attribute as string) || "textContent",
+                                },
                             )
                             .catch(() => [])) as unknown[];
                         return { success: true, result: { elements, count: elements.length } };

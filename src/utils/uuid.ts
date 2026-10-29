@@ -5,10 +5,8 @@
 // ── Shared UUID v4 Generator ──────────────────
 // Single implementation used across all modules.
 
+import { randomUUID } from "node:crypto";
+
 export function generateUUID(): string {
-    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-        const r = (Math.random() * 16) | 0;
-        const v = c === "x" ? r : (r & 0x3) | 0x8;
-        return v.toString(16);
-    });
+    return randomUUID();
 }

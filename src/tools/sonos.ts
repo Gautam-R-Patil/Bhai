@@ -105,12 +105,13 @@ function extractTag(xml: string, tag: string): string {
 }
 
 function decodeXmlEntities(str: string): string {
+    // &amp; is decoded last, so "&amp;lt;" stays the literal text "&lt;"
     return str
-        .replace(/&amp;/g, "&")
         .replace(/&lt;/g, "<")
         .replace(/&gt;/g, ">")
         .replace(/&quot;/g, '"')
-        .replace(/&apos;/g, "'");
+        .replace(/&apos;/g, "'")
+        .replace(/&amp;/g, "&");
 }
 
 // ── SSDP Discovery ───────────────────────────

@@ -37,6 +37,9 @@ describe("web search ranking", () => {
         const enc = Buffer.from(target).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
         expect(decodeBingUrl(`https://www.bing.com/ck/a?!&&p=abc&u=a1${enc}&ntb=1`)).toBe(target);
         expect(decodeBingUrl("https://example.com/page")).toBe("https://example.com/page");
+        // Only bing.com itself (or a subdomain) is unwrapped, not a lookalike host
+        const fake = `https://notbing.com/ck/a?u=a1${enc}`;
+        expect(decodeBingUrl(fake)).toBe(fake);
     });
 });
 

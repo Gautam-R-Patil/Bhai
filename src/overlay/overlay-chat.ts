@@ -105,7 +105,7 @@ function safeEqualStr(a: string, b: string): boolean {
 function extractBearer(req: IncomingMessage): string | null {
     const h = req.headers["authorization"];
     if (!h || typeof h !== "string") return null;
-    const m = h.match(/^Bearer\s+(.+)$/i);
+    const m = h.match(/^Bearer\s+(\S.*)$/i); // \S keeps \s+ and the token disjoint: linear time
     return m ? m[1].trim() : null;
 }
 

@@ -6,6 +6,7 @@
 // 3-tier fallback: JS Player API → keyboard shortcuts → hover+click UI
 // Supports YouTube, Vimeo, and HTML5 <video> elements.
 
+import { baseUrlHostMatches } from "../../utils/atomic-io.js";
 import type { ToolDefinition } from "../get-current-time.js";
 import { getActivePage } from "./core.js";
 import { getVideoPlayerState, invalidateVideoState, setVideoPlayerState, signBrowserAction } from "./native-browser.js";
@@ -145,8 +146,8 @@ export const browserVideoControl: ToolDefinition = {
 
             // Auto-detect site from URL
             const url = page.url();
-            const isYouTube = url.includes("youtube.com") || url.includes("youtu.be");
-            const isVimeo = url.includes("vimeo.com");
+            const isYouTube = baseUrlHostMatches(url, "youtube.com") || baseUrlHostMatches(url, "youtu.be");
+            const isVimeo = baseUrlHostMatches(url, "vimeo.com");
             const siteHint = (input.site as string) || (isYouTube ? "youtube" : isVimeo ? "vimeo" : "html5");
 
             // Sign this action for tamper-evident audit trail (IP protection)

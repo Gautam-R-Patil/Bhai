@@ -1597,7 +1597,7 @@ function startLocalServer() {
             fs.readFile(resolved, (err, data) => {
                 if (err) {
                     res.writeHead(404);
-                    res.end("Not found: " + req.url);
+                    res.end("Not found"); // never echo req.url: it would reflect into this origin
                     return;
                 }
                 // F1: ACAO:* removed. Same-origin loads from the BrowserWindow

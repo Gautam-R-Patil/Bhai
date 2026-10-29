@@ -7,6 +7,7 @@ import { encryptedFetch } from "../crypto-transport.js";
 import { getSessionToken } from "../session.js";
 import { getLocation } from "../location/index.js";
 import type { ToolDefinition } from "./get-current-time.js";
+import { baseUrlHostMatches } from "../utils/atomic-io.js";
 
 // One log line per engine and failure kind — a silent `return []` hid that
 // Tavily/Exa had no API key, so every search quietly ran on Bing scraping.
@@ -217,7 +218,7 @@ export function parseBraveHtml(html: string): SearchResult[] {
         const titleMatch = content.match(/<div[^>]*class="[^"]*title[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
         const title = htmlText(titleMatch ? titleMatch[1] : content);
 
-        if (url.startsWith("http") && !url.includes("brave.com") && title.length > 5 && !seenUrls.has(url)) {
+        if (url.startsWith("http") && !baseUrlHostMatches(url, "brave.com") && title.length > 5 && !seenUrls.has(url)) {
             seenUrls.add(url);
 
             const afterLink = html.substring(match.index + match[0].length, match.index + match[0].length + 1500);
@@ -330,7 +331,7 @@ async function searchBingLite(query: string): Promise<SearchResult[]> {
             // param ("a1" + base64url). The <cite> text is display-only and
             // often just the domain, so it is not used.
             const url = decodeBingUrl(h2LinkM[1].replace(/&amp;/g, "&"));
-            if (url.includes("bing.com") || seenUrls.has(url)) continue;
+            if (baseUrlHostMatches(url, "bing.com") || seenUrls.has(url)) continue;
             seenUrls.add(url);
 
             const snippetM = block.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
@@ -348,7 +349,7 @@ export function decodeBingUrl(href: string): string {
     try {
         const u = new URL(href, "https://www.bing.com");
         const enc = u.searchParams.get("u");
-        if (u.hostname.endsWith("bing.com") && enc && enc.startsWith("a1")) {
+        if (baseUrlHostMatches(u.href, "bing.com") && enc?.startsWith("a1")) {
             const decoded = Buffer.from(enc.slice(2).replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
             if (/^https?:\/\//.test(decoded)) return decoded;
         }

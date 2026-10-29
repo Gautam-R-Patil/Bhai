@@ -912,7 +912,7 @@ export const osNav: ToolDefinition = {
             // Get frontmost app info
             let appTarget = "first process whose frontmost is true";
             if (input.app) {
-                appTarget = `process "${(input.app as string).replace(/"/g, '\\"')}"`;
+                appTarget = `process "${(input.app as string).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
             }
 
             // Query accessibility tree with role filtering for interactive elements

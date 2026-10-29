@@ -2050,7 +2050,7 @@ http.route({
                 /* refund best-effort */
             }
             return await buildResponse(
-                { error: String(err?.message ?? err).slice(0, 300) },
+                { error: (typeof err?.message === "string" ? err.message : "web search failed").slice(0, 300) },
                 502,
                 encrypted,
                 account.sharedKey,
