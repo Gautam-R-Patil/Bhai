@@ -191,7 +191,7 @@ export function retryOf(status: Status, reason: string | undefined, writeStatus:
     const k = kind ?? (r.startsWith("input_rejected") ? "input_rejected" : r.startsWith("needs_owner") ? "needs_owner" : undefined);
     if (k === "input_rejected") return "fix_input";
     if (k === "needs_owner" || /^(spend_cap|consent_required)$/.test(r)) return "ask_owner";
-    if (k === "site_error" || r === "network_error" || (r.startsWith("driver_error") && TRANSIENT.test(r))) return "later";
+    if (k === "site_error" || r === "network_error" || r === "skill_boot_timeout" || (r.startsWith("driver_error") && TRANSIENT.test(r))) return "later";
     return "manual";
 }
 

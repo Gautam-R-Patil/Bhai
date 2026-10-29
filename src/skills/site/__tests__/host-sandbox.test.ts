@@ -110,7 +110,8 @@ describe("site-skill-host sandboxing", () => {
                     serialization: "json",
                     stdio: ["ignore", "ignore", "ignore", "ipc"],
                 });
-                c.once("message", (m) => {
+                c.on("message", (m: { ready?: boolean }) => {
+                    if (m?.ready) return; // "Node is up", sent before the skill loads
                     c.kill("SIGKILL");
                     resolve(m as never);
                 });

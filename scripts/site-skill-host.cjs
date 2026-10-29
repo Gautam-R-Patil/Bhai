@@ -163,6 +163,11 @@ function load(file) {
     return manifest.minted || !isBuiltin(file) ? loadMinted(file) : require(file);
 }
 
+// Node is up: from here the host's step deadline runs, so a slow process start
+// (a loaded Windows machine) isn't read as the skill hanging. Loading the skill
+// is the skill's own code and stays inside that deadline.
+if (process.send) process.send({ ready: true });
+
 let skill;
 try {
     skill = load(process.argv[2]);
