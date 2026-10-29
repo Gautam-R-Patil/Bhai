@@ -250,7 +250,8 @@ export function auditLog(entry: {
             ts: new Date().toISOString(),
             ...entry,
             // Truncate large args/errors
-            args: truncateObj(entry.args, 200),
+            // Memory tools carry the owner's facts; those live in the memory DB, where forget can reach them.
+            args: /^(memory|identity|trait)_/.test(entry.tool) ? Object.keys(entry.args) : truncateObj(entry.args, 200),
             error: entry.error?.substring(0, 200),
         });
         // Typing tools log revealed values (an OTP, a saved password): mask them.

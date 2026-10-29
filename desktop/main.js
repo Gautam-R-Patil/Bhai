@@ -3394,6 +3394,8 @@ function registerIPC() {
             )`).run();
         } catch { /* */ }
         try { handle.prepare("CREATE INDEX IF NOT EXISTS idx_forget_log_kind ON memory_forget_log(kind, forgotten_at)").run(); } catch { /* */ }
+        // Forgotten means gone: older rows kept the content.
+        try { handle.prepare("UPDATE memory_forget_log SET content_snapshot = NULL WHERE content_snapshot IS NOT NULL").run(); } catch { /* */ }
         try {
             handle.prepare(`CREATE TABLE IF NOT EXISTS memory_insights (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3501,11 +3503,9 @@ function registerIPC() {
             try {
                 _studioRunWithRetry(() => {
                     const tx = db.transaction(() => {
-                        const snap = db.prepare("SELECT content FROM memories WHERE id = ? LIMIT 1").get(id);
-                        const snapshot = snap ? snap.content ?? null : null;
                         db.prepare(
-                            "INSERT INTO memory_forget_log (kind, original_id, content_snapshot, reason, source) VALUES (?, ?, ?, ?, 'user')"
-                        ).run("memory", String(id), snapshot, reason || "unspecified");
+                            "INSERT INTO memory_forget_log (kind, original_id, reason, source) VALUES (?, ?, ?, 'user')"
+                        ).run("memory", String(id), reason || "unspecified");
                         db.prepare("DELETE FROM memory_embeddings WHERE memory_id = ?").run(id);
                         db.prepare("DELETE FROM memories WHERE id = ?").run(id);
                     });
@@ -3528,11 +3528,9 @@ function registerIPC() {
                 _studioRunWithRetry(() => {
                     const tx = db.transaction(() => {
                         for (const id of ids) {
-                            const snap = db.prepare("SELECT content FROM memories WHERE id = ? LIMIT 1").get(id);
-                            const snapshot = snap ? snap.content ?? null : null;
                             db.prepare(
-                                "INSERT INTO memory_forget_log (kind, original_id, content_snapshot, reason, source) VALUES (?, ?, ?, ?, 'user')"
-                            ).run("memory", String(id), snapshot, reason || "unspecified");
+                                "INSERT INTO memory_forget_log (kind, original_id, reason, source) VALUES (?, ?, ?, 'user')"
+                            ).run("memory", String(id), reason || "unspecified");
                             db.prepare("DELETE FROM memory_embeddings WHERE memory_id = ?").run(id);
                             db.prepare("DELETE FROM memories WHERE id = ?").run(id);
                             forgotten++;
@@ -3554,11 +3552,9 @@ function registerIPC() {
             try {
                 _studioRunWithRetry(() => {
                     const tx = db.transaction(() => {
-                        const snap = db.prepare("SELECT value FROM behavioral_traits WHERE trait_key = ? LIMIT 1").get(traitKey);
-                        const snapshot = snap ? snap.value ?? null : null;
                         db.prepare(
-                            "INSERT INTO memory_forget_log (kind, original_id, content_snapshot, reason, source) VALUES (?, ?, ?, ?, 'user')"
-                        ).run("trait", String(traitKey), snapshot, reason || "unspecified");
+                            "INSERT INTO memory_forget_log (kind, original_id, reason, source) VALUES (?, ?, ?, 'user')"
+                        ).run("trait", String(traitKey), reason || "unspecified");
                         db.prepare("DELETE FROM behavioral_traits WHERE trait_key = ?").run(traitKey);
                     });
                     tx();
@@ -3578,15 +3574,13 @@ function registerIPC() {
                 let relCount = 0;
                 _studioRunWithRetry(() => {
                     const tx = db.transaction(() => {
-                        const snap = db.prepare("SELECT name FROM entities WHERE id = ? LIMIT 1").get(id);
-                        const snapshot = snap ? snap.name ?? null : null;
                         if (cascade !== false) {
                             const r = db.prepare("SELECT COUNT(*) AS c FROM relationships WHERE from_id = ? OR to_id = ?").get(id, id);
                             relCount = r ? r.c ?? 0 : 0;
                         }
                         db.prepare(
-                            "INSERT INTO memory_forget_log (kind, original_id, content_snapshot, reason, source) VALUES (?, ?, ?, ?, 'user')"
-                        ).run("entity", String(id), snapshot, reason || "unspecified");
+                            "INSERT INTO memory_forget_log (kind, original_id, reason, source) VALUES (?, ?, ?, 'user')"
+                        ).run("entity", String(id), reason || "unspecified");
                         db.prepare("DELETE FROM entities WHERE id = ?").run(id);
                     });
                     tx();

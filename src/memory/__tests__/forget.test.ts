@@ -70,7 +70,7 @@ describe("memory_forget across tiers", () => {
             ]),
         );
         expect(p.count).toBe(tiers.length);
-        expect(p.preview).toMatch(/^1\. \[/);
+        expect(p.preview).toMatch(/^10 items: 1 memory \(fact\), .*\n1\. \[/);
         const token = p.token as string;
 
         // A quote the owner never sent, or one from before the preview, is refused.
@@ -113,6 +113,38 @@ describe("memory_forget across tiers", () => {
         expect(log).toHaveLength(1);
         expect(log[0]).toMatchObject({ kind: "forget", original_id: `${tiers.length} items`, reason: "private now" });
         expect(JSON.stringify(log)).not.toMatch(/priya/i);
+    });
+
+    it("matches whole words in any script and reaches goals, the graph, insights, caches and logs", async () => {
+        consent._resetConsent();
+        const db = sqlite.getMemoryDB();
+        (await import("../goals.js")).initGoals(db);
+        (await import("../knowledge-graph.js")).initKnowledgeGraph(db);
+        const ins = raw.prepare("INSERT INTO memories (content, category) VALUES (?, ?)");
+        ins.run("Маша moved to Pune", "fact");
+        ins.run("Same as before, sample sizes from Samsung", "fact");
+        raw.prepare("INSERT INTO goals (description) VALUES ('Plan a trip with Маша')").run();
+        raw.prepare("INSERT INTO entities (id, name) VALUES (1, 'Маша'), (2, 'Pune')").run();
+        raw.prepare("INSERT INTO relationships (from_id, to_id, type) VALUES (1, 2, 'lives_in')").run();
+        raw.prepare("INSERT INTO memory_insights (kind, title, body) VALUES ('most_discussed', 'People', 'You talk about Маша a lot')").run();
+        const tools = await import("../../tools/tool-intelligence.js");
+        tools.setCache("memory_search", { query: "маша" }, "Маша moved to Pune");
+        fs.writeFileSync(path.join(process.env.ATLAS_DATA_DIR as string, "memory-gate.jsonl"), '{"content_preview":"x\\nМаша moved"}\n{"sha":"1"}\n');
+
+        expect(forget.findForgettable("sam")).toEqual([]); // not "same", "sample" or "Samsung"
+        const p = forget.previewForget("маша");
+        expect(p.preview.split("\n")[0]).toBe("4 items: 1 memory (fact), 1 goal, 1 graph entity, 1 insight");
+        consent.noteOwnerMessage("yes");
+        expect(forget.executeForget(p.token as string, "yes", "")).toEqual({ forgotten: 4 });
+
+        expect(raw.prepare("DELETE FROM memories WHERE content LIKE 'Same%'").run().changes).toBe(1);
+        for (const t of ["goals", "entities WHERE id = 1", "relationships", "memory_insights"]) {
+            expect(count(`SELECT COUNT(*) n FROM ${t}`)).toBe(0);
+        }
+        expect(tools.getCached("memory_search", { query: "маша" })).toBeNull();
+        const gate = fs.readFileSync(path.join(process.env.ATLAS_DATA_DIR as string, "memory-gate.jsonl"), "utf8");
+        expect(gate).not.toContain("Маша");
+        expect(gate).toContain('"sha":"1"');
     });
 
     it("forgetMemoryById drops one memory without keeping its content", () => {

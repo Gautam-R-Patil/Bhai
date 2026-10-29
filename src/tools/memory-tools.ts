@@ -2,7 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import { executeForget, previewForget } from "../memory/forget.js";
+import { executeForget, forgetTerms, previewForget } from "../memory/forget.js";
 import {
     addGoal,
     addProject,
@@ -126,7 +126,8 @@ export const memoryForget: ToolDefinition = {
     async handler(input) {
         if (!isOwnerCaller()) return JSON.stringify({ success: false, error: "Only the owner can make Bhai forget." });
         const query = typeof input.query === "string" ? input.query.trim() : "";
-        if (query.replace(/\s/g, "").length < 3) {
+        // Whole words match, so a query of only short words ("my ex") would sweep up far too much.
+        if (!forgetTerms(query).some((t) => t.length >= 3)) {
             return JSON.stringify({ success: false, error: "query is too broad; use a distinctive phrase." });
         }
         if (typeof input.token !== "string" || !input.token) {

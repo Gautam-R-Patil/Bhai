@@ -9,8 +9,12 @@
 // of the content is kept: the log says "forgot N items (reason)".
 
 import { randomUUID } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { getDataDir } from "../config/paths.js";
 import { clearCache as clearResponseCache } from "../llm-cache.js";
 import { ownerApproved } from "../security/consent.js";
+import { clearCache as clearToolCache } from "../tools/tool-intelligence.js";
 import { getFieldValue, getIdentityProfile, type UserProfile } from "./identity.js";
 import { redactCurrentSession, redactSession, type SessionState } from "./session.js";
 import { extractMsgText, forgetMemoryWithReason, getRawDb } from "./sqlite.js";
@@ -31,12 +35,22 @@ const TOKEN_TTL_MS = 10 * 60_000;
 const PREVIEW_LINES = 15;
 const pending = new Map<string, { query: string; at: number }>();
 
-const terms = (query: string) => query.toLowerCase().split(/\s+/).filter(Boolean);
+// Letters keep their combining marks (Devanagari vowel signs) so words stay whole.
+const words = (t: string) =>
+    ` ${t
+        .toLowerCase()
+        .replace(/[^\p{L}\p{M}\p{N}]+/gu, " ")
+        .trim()} `;
+export const forgetTerms = (query: string) => words(query).trim().split(" ").filter(Boolean);
 
-/** True when `text` holds every term of `query` (case-insensitive). */
+/** True when `text` holds every term of `query` as a whole word (case-insensitive). */
 export function forgetMatcher(query: string): (text: unknown) => boolean {
-    const ts = terms(query);
-    return (text) => typeof text === "string" && ts.length > 0 && ts.every((t) => text.toLowerCase().includes(t));
+    const ts = forgetTerms(query);
+    return (text) => {
+        if (typeof text !== "string" || ts.length === 0) return false;
+        const w = words(text);
+        return ts.every((t) => w.includes(` ${t} `));
+    };
 }
 
 function snippet(text: string, term: string): string {
@@ -94,14 +108,17 @@ const toSession = (r: SessionRow) => ({
 /** Everything that matches `query`, across every tier. */
 export function findForgettable(query: string): ForgetItem[] {
     const raw = getRawDb();
-    const ts = terms(query);
+    const ts = forgetTerms(query);
     if (!raw || ts.length === 0) return [];
     const hit = forgetMatcher(query);
     const first = ts[0];
     const items: ForgetItem[] = [];
     const add = (tier: string, ref: string | number, date: unknown, text: string) =>
         items.push({ tier, ref, date: String(date ?? "").slice(0, 10), snippet: snippet(text, first) });
-    const rows = <T>(sql: string) => raw.prepare(sql).all({ t: first }) as T[];
+    // SQLite lower() folds ASCII only, so a non-ASCII query pre-filters nothing
+    // (instr(x, '') is 1) and hit() does the matching.
+    const t = ts.find((w) => /^[a-z0-9]+$/.test(w)) ?? "";
+    const rows = <T>(sql: string) => raw.prepare(sql).all({ t }) as T[];
 
     for (const r of rows<{ id: number; content: string; category: string; created_at: string }>(
         "SELECT id, content, category, created_at FROM memories WHERE instr(lower(content), @t) > 0",
@@ -130,10 +147,40 @@ export function findForgettable(query: string): ForgetItem[] {
         const text = [l.taskPattern, l.context, ...l.whatWorked, ...l.whatFailed, ...l.tips].join(" · ");
         if (hit(text)) add("task learning", l.id, l.lastSeen, text);
     }
-    for (const r of rows<{ id: number; content: string; created_at: string }>(
-        "SELECT id, content, created_at FROM conversation_messages WHERE instr(lower(content), @t) > 0",
+    // conversation_messages is absent with ATLAS_NO_SESSION_SEARCH; goals and the graph come up at boot.
+    if (hasTable("conversation_messages")) {
+        for (const r of rows<{ id: number; content: string; created_at: string }>(
+            "SELECT id, content, created_at FROM conversation_messages WHERE instr(lower(content), @t) > 0",
+        )) {
+            if (hit(r.content)) add("chat message", r.id, r.created_at, r.content);
+        }
+    }
+    if (hasTable("goals")) {
+        for (const r of rows<{ id: number; description: string; created_at: string }>(
+            "SELECT id, description, created_at FROM goals WHERE instr(lower(description), @t) > 0",
+        )) {
+            if (hit(r.description)) add("goal", r.id, r.created_at, r.description);
+        }
+    }
+    if (hasTable("entities")) {
+        for (const r of rows<{ id: number; name: string; properties: string; updated_at: string }>(
+            "SELECT id, name, properties, updated_at FROM entities WHERE instr(lower(name || ' ' || COALESCE(properties, '')), @t) > 0",
+        )) {
+            const text = `${r.name}: ${r.properties ?? ""}`;
+            if (hit(text)) add("graph entity", r.id, r.updated_at, text);
+        }
+        for (const r of rows<{ id: number; type: string; properties: string; created_at: string }>(
+            "SELECT id, type, properties, created_at FROM relationships WHERE instr(lower(type || ' ' || COALESCE(properties, '')), @t) > 0",
+        )) {
+            const text = `${r.type}: ${r.properties ?? ""}`;
+            if (hit(text)) add("graph link", r.id, r.created_at, text);
+        }
+    }
+    for (const r of rows<{ id: number; title: string; body: string; computed_at: string }>(
+        "SELECT id, title, body, computed_at FROM memory_insights WHERE instr(lower(title || ' ' || body), @t) > 0",
     )) {
-        if (hit(r.content)) add("chat message", r.id, r.created_at, r.content);
+        const text = `${r.title}: ${r.body}`;
+        if (hit(text)) add("insight", r.id, r.computed_at, text);
     }
     for (const r of rows<{ id: number; messages_json: string; summary: string | null; updated_at: string }>(
         "SELECT id, messages_json, summary, updated_at FROM conversations WHERE instr(lower(messages_json), @t) > 0 OR instr(lower(summary), @t) > 0",
@@ -164,9 +211,12 @@ export function previewForget(query: string): { token?: string; count: number; p
     if (items.length === 0) return { count: 0, preview: "Nothing matches." };
     const token = randomUUID().slice(0, 8);
     pending.set(token, { query, at: Date.now() });
+    const byTier = new Map<string, number>();
+    for (const it of items) byTier.set(it.tier, (byTier.get(it.tier) ?? 0) + 1);
+    const total = `${items.length} items: ${[...byTier].map(([k, n]) => `${n} ${k}`).join(", ")}`;
     const lines = items.slice(0, PREVIEW_LINES).map((it, i) => `${i + 1}. [${it.tier} · ${it.date}] ${it.snippet}`);
     if (items.length > PREVIEW_LINES) lines.push(`…and ${items.length - PREVIEW_LINES} more`);
-    return { token, count: items.length, preview: lines.join("\n") };
+    return { token, count: items.length, preview: [total, ...lines].join("\n") };
 }
 
 function forgetItems(query: string, items: ForgetItem[]): void {
@@ -204,6 +254,14 @@ function forgetItems(query: string, items: ForgetItem[]): void {
         for (const id of of("feeling")) raw.prepare("DELETE FROM emotional_memory WHERE id = ?").run(id);
         // The FTS mirrors follow through the conv_msg_ad trigger.
         for (const id of of("chat message")) raw.prepare("DELETE FROM conversation_messages WHERE id = ?").run(id);
+        for (const id of of("goal")) raw.prepare("DELETE FROM goals WHERE id = ?").run(id);
+        // foreign_keys is off, so the entity's links go by hand.
+        for (const id of of("graph entity")) {
+            raw.prepare("DELETE FROM relationships WHERE from_id = ? OR to_id = ?").run(id, id);
+            raw.prepare("DELETE FROM entities WHERE id = ?").run(id);
+        }
+        for (const id of of("graph link")) raw.prepare("DELETE FROM relationships WHERE id = ?").run(id);
+        for (const id of of("insight")) raw.prepare("DELETE FROM memory_insights WHERE id = ?").run(id);
         for (const id of of("chat log")) {
             const r = raw.prepare("SELECT messages_json, summary FROM conversations WHERE id = ?").get(id) as
                 | { messages_json: string; summary: string | null }
@@ -244,8 +302,30 @@ function forgetItems(query: string, items: ForgetItem[]): void {
     } catch {
         /* the boot rebuild drops vectors whose memory is gone */
     }
+    // Plaintext copies in the tool audit and value-gate logs (and their rotations).
+    for (const file of ["audit.jsonl", "memory-gate.jsonl"]) {
+        for (const f of [join(getDataDir(), file), join(getDataDir(), `${file}.1`)]) {
+            try {
+                const lines = readFileSync(f, "utf8").split("\n");
+                // JSON escapes newlines; unescape so a word right after one still matches.
+                const kept = lines.filter((l) => !hit(l.replace(/\\[nrt]/g, " ")));
+                if (kept.length < lines.length) writeFileSync(f, kept.join("\n"));
+            } catch {
+                /* no log yet */
+            }
+        }
+    }
+    dropCaches();
+}
+
+function hasTable(name: string): boolean {
+    return !!getRawDb()?.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name);
+}
+
+function dropCaches(): void {
     getTemporalCache().clearCache();
     clearResponseCache();
+    clearToolCache(); // memory_search/memory_list/trait_list/identity_view results
 }
 
 /**
@@ -288,7 +368,9 @@ function logForget(n: number, reason: string): void {
 /** One memory, gone now. For the owner's own taps (undo, digest prune): no quote needed. */
 export function forgetMemoryById(id: number, reason = "undo"): boolean {
     const exists = getRawDb()?.prepare("SELECT 1 FROM memories WHERE id = ?").get(id);
-    return !!exists && forgetMemoryWithReason(id, reason, "user");
+    if (!exists || !forgetMemoryWithReason(id, reason, "user")) return false;
+    dropCaches();
+    return true;
 }
 
 /** @internal — tests only. */

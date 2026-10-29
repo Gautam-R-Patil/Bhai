@@ -260,6 +260,8 @@ export async function initMemoryDB(): Promise<CompatDatabase> {
   `);
     try {
         db.run("CREATE INDEX IF NOT EXISTS idx_forget_log_kind ON memory_forget_log(kind, forgotten_at)");
+        // Forgotten means gone: older rows kept the content.
+        db.run("UPDATE memory_forget_log SET content_snapshot = NULL WHERE content_snapshot IS NOT NULL");
     } catch {
         /* */
     }
