@@ -9,7 +9,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { IS_MAC, IS_WIN } from "../tools/platform.js";
-import { isQuietNow } from "./kill-switches.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -103,8 +102,6 @@ export function isImportantMessage(message: string): boolean {
 export async function shouldSuppressMessage(message: string): Promise<boolean> {
     // Important messages ALWAYS get through
     if (isImportantMessage(message)) return false;
-    // The owner said "not now", or it's a serious moment.
-    if (isQuietNow()) return true;
 
     // Check DND status
     const dndActive = await isDNDActive();

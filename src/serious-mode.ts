@@ -8,7 +8,6 @@
 // own words and hold it for a day, or until they're laughing again.
 
 import { setQuietUntil } from "./proactive/kill-switches.js";
-import { detectEmotion } from "./social/emotion-detector.js";
 
 export const SHADES_OFF_NOTE = "Serious moment: no catchphrases, jokes, emoji or cube lines; short, steady, present.";
 
@@ -22,13 +21,13 @@ const SERIOUS_RE = new RegExp(
         // grief
         String.raw`\bpassed away\b`,
         String.raw`\b(?:my|our) (?:\w+ )?(?:mom|mum|mother|dad|father|parents?|grand\w+|nani|nana|dadi|dada|brother|sister|wife|husband|son|daughter|uncle|aunt|friend|dog|cat) (?:just |has |had )?(?:died|passed(?! (?:the|his|her|their|an?|my|with)\b)|is no more)\b`,
-        String.raw`\bfuneral\b`,
+        String.raw`\b(?:\w+'s|his|her|their|to the|at the) funeral\b|\bfuneral (?:is|was|today|tomorrow|tonight)\b`,
         String.raw`\bguzar gay[ei]\b`,
         String.raw`\bnahi rahe\b`,
         // health
         String.raw`\b(?:got|been|was|were|is|am|i'?m|just) diagnosed\b`,
-        String.raw`\b(?:in|to|at|from) (?:the )?(?:hospital|icu|emergency room)\b`,
-        String.raw`\b(?:surgery|chemo|tumou?r)\b`,
+        String.raw`(?:'s|\b(?:is|are|was|were|am|i'?m|been|got|rushed|admitted|taken|go|going|went|way|back|still)) (?:\w+ )?(?:in|to|at|into|from) (?:the )?(?:hospital|icu|emergency room)\b`,
+        String.raw`(?:'s|\b(?:my|his|her|their|has|have|had|got|needs?|having|getting|starts?|started|starting)) (?:a |an )?(?:surgery|chemo|tumou?r)\b`,
         String.raw`\b(?:has|have|had|got) cancer\b`,
         String.raw`\b(?:had|having) (?:a )?(?:heart attack|stroke|panic attack|seizure)\b`,
         // money
@@ -57,8 +56,8 @@ export function noteOwnerMood(text: string, now = Date.now()): void {
         seriousUntil = now + HOLD_MS;
         lightInARow = 0;
         setQuietUntil(seriousUntil); // proactive holds non-urgent sends
-    } else if (now < seriousUntil && (LIGHT_RE.test(text) || detectEmotion(text).valence > 0.5)) {
-        if (++lightInARow >= 2) seriousUntil = 0; // laughing again
+    } else if (now < seriousUntil && LIGHT_RE.test(text)) {
+        if (++lightInARow >= 2) seriousUntil = 0; // laughing again; "thanks" isn't
     } else {
         lightInARow = 0;
     }

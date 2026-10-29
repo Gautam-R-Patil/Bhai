@@ -38,7 +38,8 @@ export function isShadowMode(): boolean {
 
 // ── Timed quiet ──
 // "shut up" is permanent; "not now" or a serious moment holds non-urgent sends
-// for a while. Read by the observer's DND and dnd.ts, so urgent still passes.
+// for a while. Read by the observer's DND and dispatch, so urgent still passes.
+// Not by dnd.ts: every Telegram/overlay send goes through it, asked-for ones too.
 // ponytail: in-memory, so a restart clears it; persist next to cfg.quiet if that matters.
 let quietUntil = 0;
 

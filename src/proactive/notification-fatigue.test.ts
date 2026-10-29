@@ -10,14 +10,28 @@ import {
     recordOwnerEngagement,
 } from "./notification-tracker.js";
 
+let raw: BetterSqlite3.Database;
+// Moves every row logged so far 10 minutes into the past.
+const earlier = () => raw.prepare("UPDATE notification_log SET sent_at = datetime(sent_at, '-10 minutes')").run();
+
 describe("proactive fatigue", () => {
-    beforeEach(() => initNotificationTracker(wrapDatabase(new BetterSqlite3(":memory:"))));
+    beforeEach(() => {
+        raw = new BetterSqlite3(":memory:");
+        initNotificationTracker(wrapDatabase(raw));
+    });
 
     it("two unanswered sends is fatigue; one is not", () => {
         recordNotification("proactive", "nudge 1");
+        earlier();
         expect(isFatigued()).toBe(false);
         recordNotification("proactive", "nudge 2");
         expect(isFatigued()).toBe(true);
+    });
+
+    it("one message fanned out to Telegram and the overlay is one send", () => {
+        recordNotification("proactive", "research complete");
+        recordNotification("proactive", "research complete");
+        expect(isFatigued()).toBe(false);
     });
 
     it("heartbeat's own log of the same delivery doesn't count twice", () => {
@@ -28,6 +42,7 @@ describe("proactive fatigue", () => {
 
     it("the owner replying (any channel) clears it", () => {
         recordNotification("proactive", "nudge 1");
+        earlier();
         recordNotification("proactive", "nudge 2");
         recordOwnerEngagement();
         expect(isFatigued()).toBe(false);

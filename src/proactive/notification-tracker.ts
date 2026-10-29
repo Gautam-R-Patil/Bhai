@@ -199,14 +199,23 @@ export function isFatigued(): boolean {
     if (!db) return false;
 
     const results = db.exec(
-        `SELECT response_type FROM notification_log
+        `SELECT CAST(strftime('%s', sent_at) AS INTEGER), response_type FROM notification_log
          WHERE type = 'proactive' AND sent_at > datetime('now', '-48 hours')
-         ORDER BY id DESC LIMIT 2`,
+         ORDER BY id DESC LIMIT 12`,
         []
     );
 
-    const rows = results[0]?.values ?? [];
-    return rows.length === 2 && rows.every((r) => r[0] === null);
+    // One delivery fanned out to several channels logs a row per channel: rows
+    // within 2 minutes of each other are the same send.
+    let sends = 0;
+    let newer = Number.POSITIVE_INFINITY;
+    for (const [at, response] of (results[0]?.values ?? []) as [number, string | null][]) {
+        if (response !== null) return false;
+        if (newer - at > 120) sends++;
+        newer = at;
+        if (sends === 2) return true;
+    }
+    return false;
 }
 
 // ── Helpers ───────────────────────────────────
