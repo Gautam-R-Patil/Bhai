@@ -136,13 +136,16 @@ export function isVerifiedWin(calls: PlaybookCall[], reply: string, stuck: boole
     return lastCheck(calls) === "checked";
 }
 
-/** Card numbers, IDs, keys, "password …" or a password-like word: never kept in memory. */
-const PASSWORDISH_RE = /\b(pass(word|code|phrase)?|pwd|pw|pin|otp|cvv|cvc)\b|(?=\S*[A-Za-z])(?=\S*\d)\S{8,}/i;
+/** Card numbers, IDs, keys, "password …"/"secret …" or a password-like word: never kept in memory. */
+const PASSWORDISH_RE = /\b(pass(word|code|phrase)?|pwd|pw|pin|otp|cvv|cvc|secret)\b|(?=\S*[A-Za-z])(?=\S*\d)\S{8,}/i;
+/** A one-time code: "enter the code 482913", "4829 is the verification code". */
+const ONE_TIME_CODE_RE = /\bcode\b\D{0,20}\b\d{4,8}\b|\b\d{4,8}\b\D{0,30}\bcode\b/i;
 /** Contacts: findPii covers cards and IDs, not email addresses or phone numbers. */
 const CONTACT_RE = /[^\s@]+@[^\s@]+\.[a-z]{2,}|\+?\d[\d\s().-]{6,}\d/i;
 export function looksSensitive(text: string): boolean {
     return (
         PASSWORDISH_RE.test(text) ||
+        ONE_TIME_CODE_RE.test(text) ||
         CONTACT_RE.test(text) ||
         findPii(text).length > 0 ||
         sanitizeSecrets(text).totalRedactions > 0 ||
