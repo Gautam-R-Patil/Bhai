@@ -2,7 +2,13 @@
 **Date:** 2026-04-26  
 **Company:** XAGI Labs Private Limited  
 **Product:** Bhai v0.2.1 — Autonomous Personal AI Agent  
-**Status:** Approved for implementation
+**Status:** Strategy document (2026-04-26), partly superseded. Verified against code on 2026-10-30.
+
+> **Implemented vs. strategy (read this first)**
+> - **Implemented:** server-side credit metering. `convex/credit_cost.ts` charges per call by the Claude model that answers: **Haiku 0.25, Sonnet 1, Opus 2 credits**. Every model id (GPT/Gemini/Nova/Grok etc.) is mapped onto one of those three by `convex/claude.ts` `toClaudeModel`, so the per-model tiers in section 1 (3 cr Opus, 0.5 cr Mid, Gemini/Nova rows) are obsolete. `convex/accounts.ts` deducts atomically and rejects at insufficient credits; new accounts are created with `plan: "free"` and `ai_credits: 100`.
+> - **Plans in code:** only `free` | `pro` | `enterprise` (`convex/schema.ts` accounts.plan is a free string). Solo/Power/Team tiers, seat pools, SSO, white-label and on-prem packaging below are strategy only; no code exists.
+> - **Not implemented:** payment integration (no Stripe/Razorpay in the repo), monthly credit refill/overage packs/top-up flow (credits are added manually via `accounts` admin mutations), upgrade prompts, API keys/metering, paid marketplace installs and developer payouts. The store tables and `priceCredits` fields exist in `convex/schema.ts`; the developer portal exists in `portals/developer-portal/` but has no payment wiring.
+> - Cost figures and margins in sections 1-6 assume the old multi-provider model mix and Opus 3 cr; they are not re-derived for the current three-model setup (Sonnet/Opus 5.5 pricing in `credit_cost.ts`: Haiku $0.10/$0.50, Sonnet $2/$10, Opus $4/$20 per 1M tokens). Treat the numbers as historical.
 
 ---
 
@@ -23,7 +29,7 @@ All pricing is derived from actual model costs in `native/src/model_router.rs` a
 | Gemini Flash Lite | Light (0.25 cr) | $0.002 | $0.006 |
 | Nova Micro | Light (0.25 cr) | $0.001 | $0.002 |
 
-> **Prompt caching note:** `convex/http.ts:296` implements Anthropic cache breakpoints. At 80% cache hit rate on 9K of 12K tokens, Sonnet input cost drops ~50%. This is already live and compounding.
+> **Prompt caching note:** `convex/http.ts` implements Anthropic cache breakpoints. At 80% cache hit rate on 9K of 12K tokens, Sonnet input cost drops ~50%. This is already live and compounding.
 
 ### Blended Cost Per Credit (40% light / 30% mid / 20% pro / 10% heavy mix)
 

@@ -56,11 +56,11 @@ Bhai is a **local-first** autonomous agent. The Node.js process runs on the user
   │          │          │          │          │          │
 ┌─▼────┐ ┌───▼───┐ ┌────▼────┐ ┌───▼────┐ ┌───▼─────┐ ┌──▼──────┐
 │Memory│ │Agents │ │  Tools  │ │Research│ │Proactive│ │ Screen  │
-│70 mod│ │50 mod │ │ 120+ t  │ │ 11 mod │ │110+ mod │ │ 23 mod  │
+│59 mod│ │36 mod │ │ 140 mod │ │ 11 mod │ │ 60 mod  │ │ 16 mod  │
 └──────┘ └───────┘ └─────────┘ └────────┘ └─────────┘ └─────────┘
    │         │          │          │          │           │
 ┌──▼─────────▼──────────▼──────────▼──────────▼───────────▼──────────────┐
-│                    Native Rust Layer  (native/src/, 78 modules)          │
+│                    Native Rust Layer  (native/src/, 80 modules)          │
 │  SIMD vectors · model router · HNSW search · swarm/mesh · harness       │
 │  browser guard · proactive scheduler · metacognition · MCTS             │
 │  AX walker · secrets sanitizer · pcm-VAD · spreading · query classifier │
@@ -68,20 +68,20 @@ Bhai is a **local-first** autonomous agent. The Node.js process runs on the user
                                │
 ┌──────────────────────────────▼──────────────────────────────────────────┐
 │                     Convex Backend  (convex/)                            │
-│  LLM proxy (E2E encrypted) · Sessions · Credits · Store · Sys prompts   │
+│  Claude proxy (E2E encrypted) · Sessions · Credits · Store · Prompts    │
 │  Dev: avid-finch-726.convex.cloud · Prod: avid-finch-726.convex.cloud   │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### How it all connects
 
-1. **Ingress** — A message arrives on any channel (Telegram, WhatsApp, Discord, Slack, Matrix, Email, Canvas, Overlay, Web Widget). The channel adapter extracts media (voice/image/video), runs sender authentication (user ID allowlist or persona check), and converts the inbound payload into a standardized `UserMessage` shape.
+1. **Ingress** — A message arrives on any channel (Telegram, WhatsApp, Discord, Slack, Matrix, Email, Canvas, Overlay, Web Widget). The channel adapter extracts media (voice/image/video), runs sender authentication (owner ID allowlist, or contact/guest handling with a restricted tool set), and converts the inbound payload into a standardized `UserMessage` shape.
 2. **Agent entrypoint** — The channel handler calls `runAgent(llm, message, onProgress, media)` in `src/agent.ts`. This function owns the entire conversation lifecycle; it is re-entrant (multiple channels may call it concurrently), but each invocation gets its own iteration counter and memory context.
 3. **Memory fan-out (first iteration only)** — 12 memory retrieval systems fire in parallel via `Promise.all()`. Results are composed into an injection block under a ~2–3 K token budget and prepended to the system prompt. Each retrieval has a hard token ceiling so a single noisy source cannot starve the others.
-4. **Model routing** — `chooseModel()` calls into native Rust (`native/src/model_router.rs`) with the current message, iteration count, error count, tool-call history, and media flags. The router returns a tier (Light / Pro / Heavy) and a `thinkingLevel` ("off" / "low" / "medium" / "high" / "max").
+4. **Model routing** — `chooseModel()` calls into native Rust (`native/src/model_router.rs`) with the current message, iteration count, error count, tool-call history, and media flags. The router returns a model id (always one of Haiku / Sonnet / Opus once it reaches Convex) and a `thinkingLevel` ("off" / "low" / "medium" / "high" / "max").
 5. **Tool routing** — The query is embedded into a 384-dim MiniLM vector. Cosine similarity against the cached category embeddings selects the top-K tool categories. Only those tool schemas are loaded into the LLM context (typical: 15–36 tools out of 100+ available).
-6. **LLM call** — The request is encrypted end-to-end with a per-session AES-256-GCM key derived via ECDH, posted to Convex, proxied to OpenRouter, and the response is decrypted client-side. API keys never appear on the client.
-7. **Tool execution** — The agent parses `tool_calls` from the LLM response. Non-browser tools execute in parallel (`Promise.all`); browser tools execute sequentially because they share a single Playwright `Page` object.
+6. **LLM call** — The request is encrypted end-to-end with a per-session AES-256-GCM key derived via ECDH, posted to Convex, translated to a Claude Messages API call (`convex/claude.ts`), and the response is decrypted client-side. API keys never appear on the client.
+7. **Tool execution** — The agent parses `tool_calls` from the LLM response. Non-browser tools execute in parallel (`Promise.all`); browser tools (shared page state) and screen-driving tools (`os_*`, `app_manager`, `apple_script`, `window_manage`, `run_shortcut`) execute sequentially, in call order.
 8. **Loop termination** — The loop continues until `finish_reason === "stop"`, the agent emits `TASK_COMPLETE`, the iteration cap (200) is hit, or the circuit breaker trips.
 9. **Egress** — The final assistant message is streamed back to the originating channel using its own formatting adapter (Markdown → HTML for Telegram, blocks for Slack, embeds for Discord, plain for SMS-style channels).
 10. **Post-session** — After the conversation settles (no follow-up within a threshold), `runReflection()` runs: extract coding strategies, detect goals, record outcomes into the self-model, and embed the turn into episodic memory.
@@ -101,44 +101,49 @@ Bhai runs as a single long-lived Node.js process on the user's own machine. This
 
 | Layer | Technology | Version | Notes |
 |-------|-----------|---------|-------|
-| Runtime | Node.js | >= 20 | ES Modules throughout (`"type":"module"`) |
+| Runtime | Node.js | >= 20.19 / >= 22.12 | ES Modules throughout (`"type":"module"`) |
 | Language | TypeScript | ^5.7 | Strict mode, ES2022, NodeNext resolution |
 | Native acceleration | Rust + napi-rs | edition 2021 | Compiled to `.node` binary per platform |
 | SIMD math | `wide` + `simsimd` | 0.7 / 6.5 | ~15-20x speedup vs pure JS |
 | Parallelism | `rayon` | 1.10 | CPU-parallel batch ops in Rust |
 | Encryption (native) | `aes-gcm` + `scrypt` | 0.10 / 0.11 | AES-256-GCM + Argon2-class KDF |
-| Local database | SQLite (better-sqlite3) | ^12.6 | WAL mode, 64 MB cache, 256 MB mmap |
+| Local database | SQLite (better-sqlite3) | ^12.11 | WAL mode, 64 MB cache, 256 MB mmap |
 | Serverless backend | Convex | ^1.34 | Auth, LLM proxy, credits, store |
-| LLM routing | OpenRouter | — | All providers via one proxy |
+| LLM backend | Claude API via Convex (`convex/claude.ts`) | — | Haiku / Sonnet / Opus; keys only in Convex env |
 | Embeddings | `@xenova/transformers` | ^2.17 | MiniLM L6 v2 (384-dim), Nomic optional |
-| Browser automation | Playwright | ^1.50 | Chromium headless, persistent profile |
+| Browser automation | Playwright | ^1.51 | Chromium headless, persistent profile |
 | Chrome bridge | Custom extension | MV3 | Real Chrome via WebSocket IPC |
-| Desktop app | Electron | ^40+ | macOS + Windows, auto-updater |
+| Desktop app | Electron | ^42 | macOS + Windows, auto-updater |
 | Telegram | grammY | ^1.35 | Bot API |
 | Discord | discord.js | ^14.26 | Text |
 | Slack | @slack/bolt | ^4.7 | Socket Mode |
-| WhatsApp | @whiskeysockets/baileys | ^7.0-rc.9 | WhatsApp Web protocol |
+| WhatsApp | @whiskeysockets/baileys | ^7.0.0-rc14 | WhatsApp Web protocol |
 | Email | IMAPFlow + Nodemailer | ^1.2 / ^8.0 | IMAP read + SMTP send |
 | Video processing | fluent-ffmpeg | ^2.1 | FFmpeg wrapper |
 | Code parsing | tree-sitter | ^0.22 | TS/JS default; Python/Rust/Go gated behind `ATLAS_MULTI_TREE_SITTER`; regex fallback covers 15 langs |
 | Schema validation | Zod | ^4.3 | All tool parameter schemas |
 | Linter/formatter | Biome | ^2.4 | Replaces ESLint + Prettier |
-| Test runner | Vitest | ^3.2 | Unit + integration tests |
-| Swift helpers | Swift 5.9 | macOS 13+ | OCR (`ocr_screen.swift`), GPS (`get_location.swift`) |
+| Test runner | Vitest | ^4.1 | Unit + integration tests |
+| Swift helpers | Swift 5.9 | macOS 13+ | OCR (`ocr_screen.swift`), GPS (`get_location.swift`), AX dump (`dump_ax.swift`) |
 | MCP | @modelcontextprotocol/sdk | ^1.9 | External tool providers |
 
-### LLM Providers (via OpenRouter)
+### LLM Providers (Claude API via Convex)
 
-| Provider | Models used |
-|---------|------------|
-| Anthropic | Claude Opus 4.6, Sonnet 4.6, Sonnet 4.5, Haiku 4.5 |
-| Google | Gemini 3.1 Pro, 2.5 Flash, 3 Flash Preview, 3.1 Flash Lite, 2.0 Flash, 2.5 Flash Lite |
-| Amazon | Nova Pro v1, Nova Lite v1, Nova Micro v1 |
-| OpenAI | GPT-5 nano, GPT-5 mini, GPT-4.1 nano (cost-aware cheap rungs); GPT-5 Image (image generation) |
-| DeepSeek / Z-AI | DeepSeek V3.1, DeepSeek V3.2 (exp), GLM 4.6 (background / low-cost routing) |
-| Qwen | Qwen3.7-plus, Qwen3-VL-235B (Vision-Nav cloud-grounding tier only) |
+The client never talks to a model vendor. Every request goes to Convex, and `convex/claude.ts` translates the client's OpenAI-format body into a Claude Messages API call (prompt-cache breakpoints, effort, image and PDF blocks) and the reply back into the OpenAI chat-completion shape the client already parses. `toClaudeModel()` collapses any client model id onto one of three Claude models:
 
-All LLM API keys live exclusively in Convex environment variables.
+| Claude model | Convex id | Chosen for client ids containing | Credits / call |
+|--------------|-----------|----------------------------------|----------------|
+| Haiku 5.5 | `claude-haiku-5-5` | `haiku`, `nano`, `mini`, `micro`, `lite`, `flash` (whole id segments) | 0.25 |
+| Sonnet 5.5 | `claude-sonnet-5-5` | everything else (default) | 1 |
+| Opus 5.5 | `claude-opus-5-5` | `opus` | 2 |
+
+Other server-side routes:
+
+- **Azure AI Foundry** (`convex/grok.ts`): xAI Grok for unhinged mode (18+, owner opt-in; falls back to Sonnet, billed like Sonnet) and any `azure/<deployment>` id (used by the picture-CAPTCHA solver).
+- **Speech-to-text** (`convex/stt.ts`, `/api/stt`): Claude can't hear audio, so voice notes go to any OpenAI-compatible transcription API configured in Convex env; billed like a Haiku call.
+- **Search proxies** (`/api/search/parallel|claude|tavily|exa`) so search keys never reach the client.
+
+All provider keys (`ANTHROPIC_API_KEY`, Azure, STT, search, voice) live exclusively in Convex environment variables.
 
 ---
 
@@ -154,27 +159,17 @@ Every LLM call goes through a two-layer security stack:
 When the desktop app starts (or when a new session begins), the client generates an ephemeral P-256 key pair and sends the public key to Convex via `/api/auth/session`. Convex returns its own ephemeral public key. Both sides derive the same 256-bit shared secret using ECDH + SHA-256. This shared key is stored with the session record.
 
 **Layer 2 — AES-256-GCM payload encryption**
-Every subsequent request to `/api/llm/chat` is encrypted with the derived key. The envelope format is `{ iv, ct, tag, ts, rid }` (all base64). The server decrypts, validates the timestamp (90-second replay window), forwards to OpenRouter with its own API key, encrypts the response, and returns it. API keys never travel to or from the client.
+Every subsequent request to `/api/llm/chat` is encrypted with the derived key. The envelope format is `{ iv, ct, tag, ts, rid }` (all base64). The server decrypts, validates the timestamp (90-second replay window), deducts credits and forwards to Claude with its own API key, encrypts the response, and returns it. API keys never travel to or from the client.
 
-**Semantic response cache** (`src/llm-cache.ts`): Simple queries are cached in a 200-entry LRU using MiniLM cosine similarity. A hit requires similarity > 0.88 and age < 3 minutes. Tool-call requests and extended-thinking requests are never cached. The cache key is the query's 384-dim embedding plus a hash of the skill slugs and model hint; mismatched skills or different models bypass the cache.
+**Semantic response cache** (`src/llm-cache.ts`): Simple queries (20–500 chars) are cached in a 200-entry LRU keyed by MiniLM embedding. A hit requires cosine similarity ≥ 0.97 by default (`ATLAS_LLM_CACHE_THRESHOLD`; lowered thresholds produced false positives on short follow-ups) and age < 10 minutes. Tool-call requests and extended-thinking requests are never cached, and tool state is not part of the key.
 
 **Adaptive language matching** (`src/language.ts`): Every request is analyzed for writing system (Devanagari, CJK, Cyrillic, Arabic, Hangul, Thai, and 10+ Latin-script languages + Hinglish romanization). A `Respond in {language}` directive is injected automatically. Detection uses Unicode script analysis as the primary signal, with keyword heuristics as a tiebreaker (e.g. distinguishing Hindi-in-Latin-script from English).
 
-**Thinking levels** — the `thinkingLevel` parameter controls extended reasoning budgets on supported providers:
-
-| Level | Budget | When chosen |
-|-------|--------|-------------|
-| `off` | 0 | Casual chat, simple classification |
-| `low` | 1 K tokens | Standard tool loops |
-| `medium` | 4 K tokens | Complex reasoning, planning |
-| `high` | 12 K tokens | Heavy research synthesis, design docs |
-| `max` | 32 K tokens | Deep research final reports, complex coding tasks |
-
-Thinking level is inferred from task type by the Rust router; the LLM client never overrides it unless `ATLAS_NO_CODING_THINKING=true` for coding tasks.
+**Thinking levels** — `thinkingLevel` (`off|low|medium|high|max`) is sent as `reasoning.effort`, and the proxy maps it to Claude's `output_config.effort` (`low` … `max`). `off`/`none` turns thinking off where the model allows it (Haiku `disabled`, Sonnet `between_tools`; Opus cannot, so it gets the lowest effort). The thinking level is inferred from task type by the router; coding tasks skip the thinking bump with `ATLAS_NO_CODING_THINKING=true`. The per-attempt HTTP timeout scales with the effort (`ATLAS_LLM_ATTEMPT_TIMEOUT_MS`, default 25 s; each fallback hop gets a fresh timeout).
 
 **Skills injection** — when the caller passes `skillSlugs`, the Convex server prepends the matching markdown skill content to the system prompt (from the `system_skills` table). This lets specialized domains (e.g. Convex development, video editing) get additional context without the client ever holding the skill content.
 
-**Response format** — callers can pass `responseFormat: "json_object"` to force valid JSON output. The Convex proxy translates this to `response_format: { type: "json_object" }` for OpenAI-compatible providers or `responseMimeType: "application/json"` for Gemini routes. The `extractJSON()` utility in `src/utils/json-extract.ts` provides a fallback for providers that don't support the flag — it strips markdown fences and recovers JSON from mixed output.
+**Response format** — callers can pass `responseFormat: "json_object"` to ask for JSON. The `extractJSON()` utility in `src/utils/json-extract.ts` is the fallback: it strips markdown fences and recovers JSON from mixed output, so callers do not depend on provider support for the flag.
 
 ---
 
@@ -182,64 +177,28 @@ Thinking level is inferred from task type by the Rust router; the LLM client nev
 
 **Files:** `src/model-router.ts`, `native/src/model_router.rs`
 
-The router is implemented in Rust and exposed to TypeScript via napi-rs. It selects a model and thinking budget based on:
+A TypeScript wrapper around the napi-rs native router (JS-only fallback when the binary is missing). Inputs: iteration count, error count, last tool calls, task type (`coding`, `research`, `tool_loop`, `error_recovery`, …), media, the user's `"simple"`/`"complex"` hint, and conversation mood. Output: a model id, a thinking level, and a horizontal-failover list. The client still picks among legacy multi-vendor ids (the `MODELS` constant in `src/llm.ts`), but **every id lands on one of three Claude models** in `convex/claude.ts` (`toClaudeModel`), billed per call: **Haiku 0.25 cr, Sonnet 1 cr, Opus 2 cr** (`convex/credit_cost.ts`; see §3.1 and §3.8). Cheap client-side rungs (GPT-5 nano/mini, Gemini Flash, Nova …) therefore bill and run as Haiku.
 
-- Current iteration count and error count
-- Task type (`coding`, `research`, `tool_loop`, `error_recovery`, etc.)
-- Whether the query involves vision, audio, or media
-- User hint (`"simple"` / `"complex"` strings in the message)
-- Conversation mood (`casual`, `focused`, `emotional`, `urgent`)
+**Task-context routing (iteration 1).** The tool router's lean classifier also returns `tier` (`chat|simple|standard|complex`) and `multi_step`. `agent.ts` adjusts the native pick from it: `chat` → Haiku with thinking off and only `request_tools` (the "chat lane"); `simple` → Haiku with low thinking; `complex` → at least Sonnet. The planner runs only for multi-step, complex or chained work, and later iterations reuse the turn's tool set (prompt cache). A non-complex desktop-only turn (categories within `os_control` / `app_management` / `system_controls`) stays on Haiku for its first 8 iterations until a step fails, metacognition flags a loop, or `request_tools` widens it. Opus is gated by `opusWarranted()` (explicit ask, `modelHint` complex, or 3+ errors).
 
-**Cost tiers:**
+**Cascade escalation:** on errors (or a circuit-breaker trip) the router upgrades Haiku → Sonnet → Opus. This works in sub-agents too.
 
-| Tier | Credits | Models | When used |
-|------|---------|--------|-----------|
-| Light | 0.25 | Haiku 4.5, Gemini Flash, Nova Micro/Lite, Gemini Flash Lite | Casual chat, simple retrieval, tool routing |
-| Mid | 0.50 | Nova Pro, Gemini 2.5 Flash | Moderate tool use, summaries |
-| Pro | 1.0 | Sonnet 4.6, Sonnet 4.5, Gemini 3.1 Pro | Browser automation, coding, multi-tool |
-| Heavy | 3.0 | Opus 4.6 | Complex reasoning, deep research, error recovery |
+**Cost-aware routing** (`ATLAS_NO_COST_ROUTING` disables the TS net): native `select_dynamic_model` down-routes the cheapest user-facing rungs (`pn≤3 & score≤15` → GPT-5 nano, `pn≤4 & score≤25` → GPT-5 mini); otherwise Haiku → Sonnet → Opus, with Opus gated to ComplexChat / explicit-complexity branches. A TS safety net caps plain single-turn chat at Sonnet. Cost tables are kept in sync across `native/src/model_router.rs`, `src/llm-middleware.ts` (`MODEL_COSTS`, telemetry) and `convex/credit_cost.ts` (the billing source of truth).
 
-**Cascade escalation:** If errors accumulate or the circuit breaker trips (5 consecutive failures or 3 min without progress), the router automatically upgrades to the next tier. This works in sub-agents too, not just the main loop.
+**Dynamic orchestrator.** The plan call (`needsPlanning && iteration === 1`) picks its model via `classifyOrchestratorComplexity()` — simple → Haiku (thinking off), mild → Haiku (low), complex → Sonnet (low) — and sends `serverPromptSlug: "orchestrator-base"` so the proxy serves rules + that slug instead of the full identity stack. A cheap-tier failure is retried once on Sonnet. A single-target OS/app/messaging/media action (not chained, confidence ≥ 0.7) skips the plan entirely (`ATLAS_NO_GUI_FASTPATH` restores it). Routing is always logged to `data/orchestrator-routing.jsonl`. Kill-switches: `ATLAS_NO_DYNAMIC_ORCHESTRATOR`, `ATLAS_ORCH_SHADOW`.
 
-**Coding escalation** (`maybeEscalateForCoding`): Any non-trivial coding intent forces tier ≤ Pro. Extended thinking budget is injected unless `ATLAS_NO_CODING_THINKING=true`.
+**Browser/OS routing.** The native `browser_os` block picks by complexity — complex (creative/design, media, 2+ errors, CAPTCHA handling, auth keywords) → Sonnet; moderate → Gemini 3.1 Pro tier; simple + vision → GPT-5 mini; simple text-DOM → GPT-5 nano (the latter two still bill as Haiku). Design-tool or stuck (`iter>=20` / `errors>=4`) browser work goes to Opus. `ATLAS_NO_DYNAMIC_BROWSER_ROUTING` restores "any action browser/OS tool → Sonnet".
 
-**Complete model catalog** (`MODELS` constant in `src/llm.ts`):
+**Coding escalation** (`maybeEscalateForCoding`, `ATLAS_NO_CODING_ESCALATION`): non-trivial coding forces a Pro-or-better tier (the router's tiers are inverted: 0 = Opus … 5 = Haiku; `PRO_TIER_CEILING = 4`), and sub-agent coders are pinned to Pro. Extended thinking is added unless `ATLAS_NO_CODING_THINKING=true`.
 
-| Symbol | Model ID | Display name | Tier |
-|--------|---------|--------------|------|
-| `PRO` | `anthropic/claude-opus-4.6` | Opus 4.6 | Heavy |
-| `SONNET` | `anthropic/claude-sonnet-4.6` | Sonnet 4.6 | Pro |
-| `SONNET_45` | `anthropic/claude-sonnet-4.5` | Sonnet 4.5 | Pro |
-| `HAIKU` | `anthropic/claude-haiku-4.5` | Haiku 4.5 | Light |
-| `GEMINI_PRO` | `google/gemini-3.1-pro-preview-customtools` | Gemini 3.1 Pro | Pro |
-| `GEMINI_25_FLASH` | `google/gemini-2.5-flash` | Gemini 2.5 Flash | Mid |
-| `FLASH` | `google/gemini-3-flash-preview` | Gemini 3 Flash | Light |
-| `FLASH_LITE` | `google/gemini-3.1-flash-lite-preview` | Gemini 3.1 Flash Lite | Light |
-| `GEMINI_25_FLASH_LITE` | `google/gemini-2.5-flash-lite` | Gemini 2.5 Flash Lite | Light |
-| `GEMINI_20_FLASH` | `google/gemini-2.0-flash-001` | Gemini 2.0 Flash | Light |
-| `NOVA_PRO` | `amazon/nova-pro-v1` | Nova Pro | Mid |
-| `NOVA_LITE` | `amazon/nova-lite-v1` | Nova Lite | Light |
-| `NOVA_MICRO` | `amazon/nova-micro-v1` | Nova Micro | Light |
-| `GPT5_MINI` | `openai/gpt-5-mini` | GPT-5 mini | Light (cost-routed) |
-| `GPT5_NANO` | `openai/gpt-5-nano` | GPT-5 nano | Light (cost-routed) |
-| `GPT41_NANO` | `openai/gpt-4.1-nano` | GPT-4.1 nano | Light |
-| `DEEPSEEK_V31` | `deepseek/deepseek-chat-v3.1` | DeepSeek V3.1 | Light (background) |
-| `DEEPSEEK_V32` | `deepseek/deepseek-v3.2-exp` | DeepSeek V3.2 (exp) | Light (background) |
-| `GLM_46` | `z-ai/glm-4.6` | GLM 4.6 | Light (background) |
-| `QWEN37_PLUS` | `qwen/qwen3.7-plus` | Qwen3.7-plus | Vision cloud-grounding |
-| `QWEN3_VL_235B` | `qwen/qwen3-vl-235b-a22b-instruct` | Qwen3-VL-235B | Vision cloud-grounding (fallback) |
+**Tool-synthesis routing:** a dedicated `tool_synthesis` `TaskType` routes Skill Forge synthesis to Sonnet + high thinking (Opus + max in dream-replay when `ATLAS_FORGE_DREAM_OPUS=true`).
 
-**Cost-aware routing** (`ATLAS_NO_COST_ROUTING` to disable): On top of the tier ladder, the native `select_dynamic_model` down-routes the cheapest user-facing rungs — `pn≤3 & score≤15` → GPT-5 nano, `pn≤4 & score≤25` → GPT-5 mini — and otherwise climbs Haiku → Sonnet → Opus, with Opus gated to ComplexChat / explicit-complexity branches. A belt-and-suspenders TS net caps plain single-turn chat at Sonnet (never Opus) even when the native binary is stale. Background work (reflection, classification) can route to DeepSeek/GLM/GPT. Cost tables are kept in sync across `native/src/model_router.rs`, `src/llm-middleware.ts` (`MODEL_COSTS`), and `convex/credit_cost.ts`.
+**Context-window awareness:** the router carries each model's context window so the agent loop prunes tokens proactively and the failover guard avoids routing an over-budget conversation to a smaller-window model. The native router returns a `horizontalFailover` list that the TS client walks on error before escalating a tier (DeepSeek is in the native failover chain).
 
-**Context-window awareness:** The router carries each model's context window so the agent loop prunes tokens proactively and the failover guard avoids routing an over-budget conversation to a smaller-window model.
-
-**Tool-synthesis routing:** A dedicated `tool_synthesis` `TaskType` (native enum `ToolSynthesis`) routes Skill Forge synthesis to Sonnet + high thinking (Opus + max in dream-replay when `ATLAS_FORGE_DREAM_OPUS=true`).
-
-**Fallback chains** (`MODEL_FALLBACKS`): when a primary model returns 5xx, rate-limits, or times out, the router tries the next model in its fallback list. Each model has a 2-model fallback chain ordered by similarity of capability.
-
-**Horizontal failover** — the Rust router returns a `horizontalFailover` list derived dynamically from model metadata (tier, speed, context window, tool support). The TS client iterates through this list on error before escalating to a higher tier.
+**Helper calls** (classifier, HyDE, briefing) pass `lean: true` — no thinking, no client clock block, no server `rules` preamble when tool-less. HyDE runs only in `retrieve` mode; the memory briefing only above `BRIEFING_MIN_CHARS`. LLM telemetry logs cached tokens.
 
 ---
+
 
 ### 3.3 Tool Router
 
@@ -256,6 +215,8 @@ A `request_tools` meta-tool lets the agent ask for additional tool categories mi
 **Categories:** core, memory, browser, web_search, file_system, shell, os_control, system_controls, media, communication, scheduling, app_management, research, coding, long_tasks, google_api, social_media, voice, document, integrations.
 
 **FunctionGemma fallback** (`src/models/function-gemma.ts`): An optional 270M local model via Ollama (85% accuracy) can be used for zero-cost tool routing when the LLM call budget is tight.
+
+**Chat lane and gating:** the lean classifier also decides when a turn needs no tools at all (small talk, opinions, writing, math) so the agent takes the cheap chat lane (§3.2). `isToolOfferable` hides tools that cannot work right now — for example `whatsapp_send` / `whatsapp_sticker` / `whatsapp_group_info` while WhatsApp is not connected (`ATLAS_NO_WHATSAPP_TOOL_GATING` restores them); it is re-evaluated per message. Non-owners (contacts, guests, email senders, widget visitors) only ever get the narrow `NON_OWNER_TOOLS` set (`src/security/tool-access.ts`).
 
 **Analytics** (`src/tool-router-analytics.ts`): Tracks tool usage patterns, selection accuracy, and category hit rates for the Meta-Harness optimizer.
 
@@ -276,9 +237,21 @@ The core execution engine. Each call to `runAgent()` runs through this pipeline:
    - Task learnings, knowledge graph entities
    - Each has a token budget; total injection ~2-3K tokens
 4. **Each iteration:** `chooseModel()` → semantic tool select → LLM call → tool execution → check for `finish_reason: stop` or `TASK_COMPLETE` signal
-5. **Tool execution:** Browser tools run sequentially (shared page state); all other tools run in parallel
+5. **Tool execution:** Browser tools run sequentially (shared page state), and so do screen-driving tools (`os_*`, `app_manager`, `apple_script`, `window_manage`, `run_shortcut`) in call order; all other tools run in parallel. Tool results carrying `screenshot_base64` / `zoomed_base64` are turned into image parts (≤ 1568 px) before offload/truncation, and only the newest few screenshots stay in history
 6. **Cascade escalation:** Errors accumulate → auto-upgrade model tier
 7. **Max 200 iterations;** mid-session credit check every 5 tool calls
+
+**Reliability layer:**
+
+- **Per-turn nudges** — steering messages go through `pushNudge` and are stripped at turn end; a context prune is computed after the turn and applied before the next turn's history cap.
+- **Send ledger** (`src/tools/send-ledger.ts`) — the same message or file to the same recipient within 10 minutes is refused unless the call passes `resend: true`; an in-flight send reports "still being sent".
+- **Task contract** — the first line of real work is "on it — …; done = …" (`prompts/rules.md`). The `[ACK]` progress line shows it and the verify-before-done nudge quotes the done-criterion back (`src/agents/verify-before-done.ts`, order-aware: a screenshot taken after the last action counts as verification).
+- **Stuck report** — "never give up silently, never fake done": after 2–3 different attempts, or when only the owner can unblock, the reply ends with `[[STUCK]]` (stripped by `takeStuckMarker`, `src/channel-text.ts`). Telegram shows I'll take over / Retry / Skip; other channels get a reply line. Failing exits (circuit breaker, LLM failures, iteration cap) also return a stuck report.
+- **Done receipt** — after a mutator plus a later screenshot, the owner's private chat gets the clean (ungridded) screenshot; never on vault/withheld turns, failed last actions or stuck turns.
+- **Step heartbeat** (`src/step-status.ts`) — progress reads "step N · status · Ns", re-sent about every 20 s while a tool batch runs.
+- **Playbooks** (`src/memory/playbooks.ts`) — a programmatically verified win stores its tool steps in task-learnings (tool names and short targets only: no typed text, bodies, secrets, emails or phones; never a task carrying a one-time code or a "secret"); a failed replay demotes it.
+- **Swarm approval gate** (`src/agents/swarm-context.ts`, `src/tools/swarm-gate.ts`) — inside swarm runs, explicit external-action tools, per-call-consent tools and shell launchers are held until the owner's fresh yes (`swarm_task confirmed: true`, enforced by `src/security/consent.ts`); payments and orders never run in a swarm. Accepted limit: effects through generic UI clicks or self-written scripts.
+- **Owner vs. guest turns** — only the owner's own turns set the reply language, goals, session summary and owner memories; guests and contacts get their own short conversation (`src/guest-history.ts`) and never see the owner's chat, Settings tone or personal learnings.
 
 **Circuit breaker** (`src/agents/circuit-breaker.ts`): Trips on 5 consecutive failures, 8 no-progress iterations, or 3-minute stall. States: CLOSED → OPEN → HALF-OPEN with escalating cooldowns (30s → 60s).
 
@@ -295,7 +268,7 @@ The core execution engine. Each call to `runAgent()` runs through this pipeline:
 
 Each state has an explicit `*_ALLOWED_TOOLS` list in `plan-mode.ts`; `filterToolsFor*` strips tools before the LLM call, and `checkWritePathInApprovalMode()` enforces at execution time.
 
-**Context pruning** (`src/memory/context-pruning.ts`): When total message history tokens exceed the configured cap (`ATLAS_CONTEXT_CAP`, default 8000), older messages are summarized rather than dropped. The pruner preserves:
+**Context pruning** (`src/memory/context-pruning.ts`): When the message history exceeds its cap, older messages are summarized rather than dropped; first-iteration memory injection is separately capped by the tunable `agent.contextCap` harness dimension (default 8000 chars). The pruner preserves:
 
 - All system reminders
 - The most recent user message
@@ -312,7 +285,7 @@ Each state has an explicit `*_ALLOWED_TOOLS` list in `plan-mode.ts`; `filterTool
 
 ### 3.5 Four-Tier Agent Orchestration
 
-**Directory:** `src/agents/` (50 files)
+**Directory:** `src/agents/` (36 files)
 
 | Tier | Entry point | Max scale | Purpose |
 |------|------------|-----------|---------|
@@ -335,11 +308,13 @@ Each state has an explicit `*_ALLOWED_TOOLS` list in `plan-mode.ts`; `filterTool
 
 **Shared context:** `blackboard.ts` provides a per-swarm key-value store for inter-agent data passing.
 
+**Swarm approval gate:** runs started by `swarm_task` hold explicit external-action tools, per-call-consent tools and shell launchers until the owner gives a fresh yes (see §3.4); payments and orders never run inside a swarm.
+
 **Human-in-the-loop:** `human-interrupt.ts` pauses dangerous operations (delete, deploy, send email) and waits for user confirmation (default 5-minute timeout with configurable default action).
 
 ---
 
-### 3.6 Memory System (70 modules)
+### 3.6 Memory System (59 modules)
 
 **Directory:** `src/memory/`
 
@@ -374,6 +349,9 @@ All memory is local SQLite (`data/memory.db`) with WAL journal mode, 64 MB page 
 | `anticipation.ts` / `briefing.ts` | Forward-looking context | Upcoming-event scan + morning briefing assembly |
 | `value-gate.ts` + `gate-audit.ts` | Write value-gate | Every `remember()` passes a Haiku gate (hardReject/hardAllow short-circuits + LLM judgment); sha256-cached, fail-closed, decisions logged to `data/memory-gate.jsonl` (10 MB rotation) |
 | `compression-template.ts` | Structured compression | 13-section continuity template (active task verbatim, completed actions, exact errors, decisions, pending asks, files); persisted so the next iterative pass parses + extends it |
+| `playbooks.ts` | Playbooks from verified wins | Compact tool-step recipes stored in task-learnings; failed replay demotes |
+| `at-rest-scrub.ts` | At-rest masking migration | One-time scrub of card numbers, OTPs and typed passwords saved before at-rest masking (`secrets_at_rest_v1`); new writes are masked via `protectForDisk` |
+| `sleep-gate.ts` / `reranker.ts` / `strategy-library.ts` / `memory-tiers.ts` | Consolidation + retrieval support | Conflict detection, cross-encoder rerank, reusable strategies, tiering |
 
 **Write value-gate** (`value-gate.ts`): `remember()` is async and routes through a gate. `hardReject` drops tool-result prefixes, screenshot/image blobs, WM-spill rows, and oversize (>2000-char) content; `hardAllow` fast-passes curated categories, high-importance writes, and reflection/consolidation sources; everything else gets a cheap Haiku yes/no (sha256-cached, fails closed to allow). Default is **shadow mode** (`ATLAS_MEMORY_GATE_SHADOW`, decides + logs but always inserts); set to `"false"` to enforce. `ATLAS_NO_MEMORY_GATE=true` reverts to direct writes. Working-memory spill no longer persists to LTM; per-message flush uses a Haiku extractor rather than a blanket filter.
 
@@ -383,7 +361,9 @@ All memory is local SQLite (`data/memory.db`) with WAL journal mode, 64 MB page 
 
 **Memory decay:** Runs every 6 hours. Self-evolving synaptic pruning uses a strength score: `importance × log₂(1 + access_count) × exp(-0.01 × days_since_access)`. Memories below 30% of median strength are deleted.
 
-**Dream consolidation** (`reflection.ts`, `dreaming.ts`): When the user has been idle for 2+ hours during 11 pm–6 am, Bhai enters dream mode — consolidates memories, runs pending tasks via sub-agents, proposes self-edits for repeated failures, and queues results for morning delivery.
+**Dream consolidation** (`src/memory/reflection.ts`, `src/proactive/dreaming.ts`): When the user has been idle for 2+ hours during 11 pm–6 am, Bhai enters dream mode — consolidates memories, runs pending tasks via sub-agents, proposes self-edits for repeated failures, and queues results for morning delivery.
+
+**Privacy at rest and owner/guest separation:** card numbers, one-time codes and typed passwords are masked before they reach the memory DB, the conversation archive or logs (`src/security/pii-vault.ts`, `credential-mask.ts`). A contact's photos and tool results stay out of the owner's memory, and guests' words never become the owner's goals or session summary.
 
 **Memory categories** — every entry stored via `remember()` is tagged with a category for retrieval scoping and decay tuning:
 
@@ -419,7 +399,7 @@ All memory is local SQLite (`data/memory.db`) with WAL journal mode, 64 MB page 
 
 ---
 
-### 3.7 Native Rust Layer (78 modules)
+### 3.7 Native Rust Layer (80 modules)
 
 **Directory:** `native/src/`
 
@@ -441,7 +421,7 @@ Built with napi-rs, compiled to platform-specific `.node` binaries. TypeScript l
 | Browser | `browser_agent.rs`, `browser_guard.rs`, `chrome_bridge.rs`, `ip_guard.rs` | Element scoring, stealth, CAPTCHA detection |
 | Vision Nav | `ax_walker.rs` (opt-in) | Cross-OS accessibility-tree flatten/find |
 | Voice | `pcm_vad.rs` (cargo feature `vad`, opt-in) | libfvad-backed barge-in detection for hybrid voice |
-| Security | `security.rs`, `secrets_sanitizer.rs` (default-ON) | Encryption helpers + multi-pattern outbound secrets scrubber (1.44–2.00× faster than TS) |
+| Security | `security.rs`, `secrets_sanitizer.rs` (default-ON), `pii_protect.rs` (opt-in `ATLAS_NATIVE_PROTECT`) | Encryption helpers; multi-pattern outbound secrets scrubber (1.9–3.4× faster than TS at 1–200 KB); linear-time credential masking / PII finding, byte-identical to the TS |
 | Research | `research_engine.rs`, `info_gain.rs`, `citation_graph.rs`, `skill_scorer.rs` | Research acceleration |
 | Harness | `harness_optimizer.rs` | NSGA-II Pareto, GP surrogate, TextGrad scoring |
 | Skill Forge sandbox | `forge_sandbox/` (`pool.rs`, `worker.rs`, `strikes.rs`, `linux_seccomp.rs`, `linux_landlock.rs`, `macos.rs`, `windows_appcontainer.rs`, …) | OS-level kernel sandbox supervisor for persisted dynamic tools: macOS sandbox-exec, Linux seccomp + Landlock + netns, Windows AppContainer + JobObject; LRU warm-pool, three-strike auto-archive |
@@ -462,16 +442,20 @@ Built with napi-rs, compiled to platform-specific `.node` binaries. TypeScript l
 
 Convex serves as the secure cloud layer. The Node.js client connects to it via the Convex SDK; API keys for LLMs live only in Convex environment variables and are never sent to the client.
 
-**Database tables** (11 total, defined in `convex/schema.ts`):
+**Database tables** (27, defined in `convex/schema.ts`):
 
 | Table | Purpose |
 |-------|---------|
 | `accounts` | OTPless identity, plan (free/pro/enterprise), AI credits, activations |
 | `sessions` | 24h TTL tokens; ECDH shared key for E2E encryption; device fingerprint |
+| `devices` | The owner's devices (`platform:host:user` fingerprint, first/last seen) behind Account → Devices; removing one signs it out |
+| `auth_handoffs` | Short-lived email-link sign-in handoff (OTPless) |
 | `rate_limits` / `request_rate_limits` | Sliding-window LLM rate limit + per-endpoint request limiter |
 | `llm_usage_counters` / `llm_call_log` / `error_log` | Per-account usage rollups, per-call telemetry, server-side error log |
 | `waitlist` / `contact_submissions` | Marketing-site waitlist + contact form intake |
-| `user_prompt_addenda` / `user_prompt_addendum_history` | Per-user system-prompt addenda + edit history (usage-tracked, nightly staleness sweep) |
+| `user_prompt_addenda` / `user_prompt_addendum_history` | Per-user system-prompt addenda (e.g. the personality tone) + edit history; usage-tracked, nightly staleness sweep |
+| `telegram_bot_claims` | One-tap Telegram bot creation: username claimed by an account, token held until the desktop collects it once |
+| `bhai_mail_addresses` / `bhai_mail_inbox` / `bhai_mail_sends` / `bhai_mail_cursor` | Bhai's own email address (`<name>.bhai@…`): address claims, queued inbound mail, capped sends, mailbox read cursor |
 | `developers` | Store publisher accounts (email + bcrypt, approval workflow) |
 | `admins` | Admin panel users with role + permissions |
 | `store_items` | Published skills, tools, MCP servers (slug, type, category, tags, pricing) |
@@ -479,39 +463,42 @@ Convex serves as the secure cloud layer. The Node.js client connects to it via t
 | `store_installs` | User install records with auto-update preference |
 | `store_reviews` | 1–5 star ratings with helpful votes |
 | `store_activity_log` | Analytics for admin dashboard |
-| `system_prompts` | Server-side identity/rules/coding/browsing prompts (versioned) |
+| `system_prompts` | Server-side prompts (versioned); client fetches by slug |
 | `system_skills` | Built-in skill definitions served at runtime |
 
-**HTTP endpoints** (`convex/http.ts`):
+**HTTP endpoints** (`convex/http.ts`; the admin-panel `/api/admin/*` and `/api/store/*` routes are omitted):
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/api/llm/chat` | POST | Authenticated LLM proxy with Anthropic prompt caching |
-| `/api/auth/session` | POST | OTPless → session token + optional ECDH key exchange |
-| `/api/account/status` | GET | Credit balance and account status |
-| `/api/auth/refresh` | POST | Extend session TTL |
-| `/api/auth/revoke` | POST | Logout |
-| `/api/system/prompt` | GET | Fetch system prompt by slug |
-| `/api/search/tavily` | POST | Tavily search proxy |
-| `/api/search/exa` | POST | Exa search proxy |
-| `/api/keys/voice` | GET | Google/OpenAI/Deepgram keys for voice |
-| `/api/spotify/app-token` | POST | Spotify client credentials |
+| `/api/llm/chat` | POST | Authenticated, E2E-encrypted Claude proxy with prompt caching and credit pre-check |
+| `/api/llm/audit` | POST | Client-side LLM audit/telemetry intake |
+| `/api/stt` | POST | Speech-to-text for voice notes (any OpenAI-compatible provider set in Convex env) |
+| `/api/auth/session` · `/refresh` · `/revoke` | POST | Session create (+ optional ECDH key exchange), TTL extension, logout |
+| `/api/otpless/validate-token` · `/handoff` | POST | OTPless token validation (also reactivates a device); email-link sign-in handoff |
+| `/auth-login` | GET | Hosted sign-in page |
+| `/api/account/status` · `/info` · `/update-profile` | GET/POST | Credit balance, account info, profile |
+| `/api/account/devices` · `/devices/remove` | GET/POST | List / remove the owner's devices |
+| `/api/system/prompt` · `/api/system/skill-metadata` | GET | System prompt by slug; skill metadata |
+| `/api/user/addendum/{list,upsert,revert,deactivate}` | POST | Per-user prompt addenda (personality tone etc.) |
+| `/api/search/{parallel,claude,tavily,exa}` | POST | Search proxies (keys stay server-side) |
+| `/api/mail/{claim,inbox,ack,send}` | POST | Bhai's own email address: claim, collect, acknowledge, send |
+| `/api/telegram/managed/{claim,collect}` · `/api/telegram/manager-webhook` | POST | One-tap Telegram bot creation |
+| `/api/keys/voice` · `/api/spotify/app-token` · `/api/config/secrets` | GET/POST | Voice-backend keys, Spotify client credentials, shared config secrets |
 | `/api/app/runtime-key` | POST | XOR key delivery for desktop app protection |
-| `/api/updates/latest-mac.yml` | GET | Electron auto-updater metadata |
-| `/api/config/secrets` | GET | HuggingFace token, CAPTCHA keys |
+| `/api/updates/latest-mac.yml` · `/latest.yml` | GET | Electron auto-updater metadata (macOS / Windows) |
+| `/api/waitlist/submit` · `/api/contact/submit` | POST | Marketing-site forms |
 
-**Prompt caching:** The `/api/llm/chat` handler adds `cache_control` breakpoints to Anthropic model requests (system prompt, tools schema, conversation history), enabling up to 90% cost reduction on repeated context via Anthropic's prompt caching feature.
+**Prompt caching:** `convex/claude.ts` adds `cache_control: ephemeral` breakpoints (system prompt, tools schema, conversation history) to Claude requests, so repeated context is billed at the cached rate.
 
-**Credit costs** (per LLM call):
+**Credit costs** (`convex/credit_cost.ts`, server-side only; one credit per call by the Claude model that actually answers, in line with real API prices):
 
-| Tier | Cost | Examples |
-|------|------|---------|
-| Light | 0.25 cr | Haiku 4.5, Gemini Flash, Nova Micro/Lite |
-| Mid | 0.50 cr | Nova Pro, Gemini 2.5 Flash |
-| Pro | 1.00 cr | Sonnet 4.6, Gemini 3.1 Pro |
-| Heavy | 3.00 cr | Opus 4.6, GPT-5 Image |
+| Model | Cost |
+|-------|------|
+| Haiku 5.5 | 0.25 cr |
+| Sonnet 5.5 | 1 cr |
+| Opus 5.5 | 2 cr |
 
-New accounts start with 100 free credits.
+Any client model id resolves through `toClaudeModel()`; unknown ids land on Sonnet so a typo can't skip billing. Grok (unhinged mode) is priced like Sonnet; a voice-note transcription costs 0.25. New accounts start with 100 free credits.
 
 **Atomic credit deduction** — OCC (Optimistic Concurrency Control) is used to prevent race conditions:
 
@@ -531,7 +518,7 @@ Convex's OCC serializes concurrent mutations on the same document, so two LLM ca
 3. Client stores token in `safeStorage` (Electron) or memory (CLI)
 4. Each subsequent request sends `Authorization: Bearer <token>`
 5. Server validates: token exists → not expired → matches device fingerprint (if set) → not revoked
-6. Expired sessions are garbage-collected by a Convex cron job every hour
+6. Expired sessions and stale rate-limit rows are swept by a daily Convex cron (`sweep sessions+rate_limits`, 04:45 UTC); the same cron file also trims `llm_call_log` and `error_log` to 30 days, retires never-used prompt addenda, and polls Bhai's mailbox every minute
 
 **System prompt management** — prompts are source-of-truth in `prompts/*.md` in the repo, seeded to the `system_prompts` table via `scripts/seed-system-content.ts` (needs `ADMIN_API_KEY`). The client pulls them on demand:
 
@@ -542,7 +529,7 @@ const prompt = await fetchSystemPrompt('coding');  // HTTP GET /api/system/promp
 
 In-flight request coalescing ensures concurrent callers requesting the same slug share a single HTTP round-trip. A single-flight auth refresh handler prevents auth-token-expired requests from stampeding the refresh endpoint.
 
-**Seeded slugs:** `identity`, `rules`, `rules-mac`, `rules-windows`, `browsing`, `thinking`, `coding` (Phase 4 tool-use workflow), `spec` (spec-mode guidance).
+**Seeded slugs** (14): `identity`, `rules`, `rules-mac`, `rules-windows`, `browsing`, `thinking`, `coding`, `spec`, `proactive-composer`, `monitor-rule-parser`, `orchestrator-base`, `site-skill-mint`, `site-skill-review`, `unhinged`. A client-side system-prompt cache has a TTL with stale-fallback so a re-seed propagates without a restart. The personality chosen in Settings is pushed as a `user-personality` addendum (`src/setup/personality-sync.ts`) and rendered by `convex/systemContent.ts` as its own "Tone the user chose in Settings" section.
 
 **Store marketplace flow:**
 
@@ -553,15 +540,21 @@ In-flight request coalescing ensures concurrent callers requesting the same slug
 5. User installs → `store_installs` row created; hot-reload injects the item into the running agent
 6. User reviews → `store_reviews` row; affects item ranking and featured placement
 
+**Bhai's own email** (`convex/bhaiMail*.ts`, `src/bhai-mail.ts`): "Get Bhai's email" claims `<name>.bhai@<domain>` on a catch-all Hostinger mailbox. A Convex cron reads the mailbox over IMAP every minute and routes mail to its user; each user's bot collects its mail through `/api/mail/*`, runs the agent and replies via SMTP. Mail from the owner's address gets full Bhai; everyone else gets guest mode (own conversation, `NON_OWNER_TOOLS`). Newsletters and auto-replies are only announced, never answered, and sends are capped per day so the company domain cannot be used to spam. The mailbox password lives only in Convex env.
+
+**One-tap Telegram bot** (`convex/telegramManaged.ts`): XAGI runs a single manager bot with Telegram's Bot Management Mode. The desktop asks for a `t.me/newbot/<manager>/<username>` link, the user taps Create, the manager's webhook receives the new bot, Convex fetches its token (only for a username that account claimed), locks the bot to its owner, and the desktop collects token and owner id once (claims expire after 30 minutes). Without the manager env vars the button falls back to BotFather steps.
+
 ### 3.9 Browser Automation
 
-**Directory:** `src/tools/browser/` (21 files)
+**Directory:** `src/tools/browser/` (27 files)
 
 Bhai supports two browser backends behind a unified `BrowserBackend` interface:
 
 **Playwright backend** (`playwright-backend.ts`): Headless Chromium with a persistent profile at `data/browser-profile/`. Default for most use cases.
 
 **Chrome extension backend** (`chrome-backend.ts`, `chrome-bridge.ts`): A WebSocket bridge to the user's real Chrome browser via a companion extension (Manifest V3). The `ChromePageProxy` class mimics Playwright's Page API, so the rest of the code doesn't know which backend is active.
+
+**Bridge security.** The extension talks to Bhai over two loopback servers (bridge `:18800`, overlay `:18792`) guarded against DNS rebinding (`src/security/loopback.ts`). Only Bhai's own Chrome extension (by extension ID, `src/security/extension-origin.ts`) may take the bridge token or the owner socket. The bridge token is delivered over **Chrome native messaging** (Chrome starts the host only for Bhai's extension, as the same OS user); once that works for the first time (`~/.atlas/bridge-native-ok`), `/discover` stops serving tokens. Owner tokens cannot be read off Bhai's own pages by the agent's browser or other pages. **Agent tab pinning:** Bhai keeps working on its own tab even if the owner clicks another one; `close_active` can never close the owner's tab in another window. Every way of opening a URL refuses `file://`, `javascript:` and `data:`.
 
 **Stealth** (`browser_guard.rs`): The Rust module compiles a 13-patch stealth initialization script that:
 - Sets `navigator.webdriver = false`
@@ -577,14 +570,17 @@ Because the script is compiled into the Rust binary, it cannot be read from unpa
 
 **Human timing simulation:** `humanTypingDelayMs()` uses WPM-based per-character delays with ±30% jitter and extra pauses for punctuation. `humanClickDwellMs()` simulates 150–400 ms button holds. Mouse movement follows Fitts's law via `humanMouseParams()`.
 
-**CAPTCHA solving** (`captcha.ts`) — 4-tier waterfall:
+**CAPTCHA solving** (`captcha.ts`, `captcha-vision.ts`, `captcha-forms.ts`, `captcha-chrome.ts`) — detection covers reCAPTCHA v2/v3, hCaptcha, Cloudflare Turnstile (broadened detection) and form-style checks (image text, text questions, click-the-image). Solving is a waterfall:
 
 | Tier | Method | Cost | Notes |
 |------|--------|------|-------|
-| 1 | Turnstile passive stealth | Free | Waits up to 20s for frame to hide |
-| 2 | reCAPTCHA v2 audio bypass | Free | Downloads MP3, transcribes via Whisper/Gemini |
-| 3 | NopeCHA API | Free (100/day) | `NOPECHA_API_KEY` env var |
-| 4 | 2captcha | Paid | `CAPTCHA_API_KEY` env var |
+| 1 | Turnstile passive stealth | Free | Waits for the frame to hide |
+| 2 | Picture solver (`captcha-vision.ts`) | Credits | Bhai reads the challenge DOM and asks vision models only "which numbered tiles match?" (a lettered grid for click/drag puzzles); Bhai does every click and drag itself. Default models run in parallel (`azure/gpt-6-astra` + `azure/gpt-6.1-terra`) with `azure/gpt-5.4` breaking ties, chosen from a measured bake-off (`ATLAS_CAPTCHA_MODELS` overrides). Built-in Playwright browser only |
+| 3 | reCAPTCHA v2 audio bypass | Free | Downloads MP3, transcribes it |
+| 4 | NopeCHA API | Free (100/day) | `NOPECHA_API_KEY` |
+| 5 | 2captcha | Paid | `CAPTCHA_API_KEY` |
+
+If the pipeline fails, Bhai hands the challenge to the owner (`human-handoff.ts`; wait tunable with `ATLAS_CAPTCHA_HANDOFF_MS`).
 
 **Video control** (`video-control.ts`): Controls YouTube and HTML5 video players with 3-tier fallback: JS Player API → keyboard shortcuts → hover+click UI. A 10-second native cache (LRU 16 entries) avoids redundant state queries.
 
@@ -607,25 +603,21 @@ The agent calls `set_browser_mode({ mode: "vision" })` when text-only DOM inspec
 
 **Profile sync** (`profile-sync.ts`): Synchronizes the persistent Playwright profile across devices by exporting cookies, localStorage, and IndexedDB to a portable archive.
 
+**Vault-aware typing** (`vault-typing.ts`): browser typing resolves `{{vault:<id>.field}}` tokens only on an https page whose origin matches the entry's domains, checked again right before the keys land (§5.12).
+
+**Site Skills** (`src/skills/site/`, `src/tools/site-task.ts`, `site-skill-mint.ts`): a learned per-site skill lets `site_task` book or order in ~3 calls instead of 20–40 raw browser steps. Checkout goes through the consent gate (the owner's fresh yes mints a single-use token, plus a spend cap). When no skill exists the session is recorded locally; the owner can say "learn this site" and the Skill Minter builds one in the background (`mint/`, prompts `site-skill-mint` / `site-skill-review`), which goes live only on the owner's own approval. A drift detector (`drift.ts`) queues a repair re-mint when a site changes under a learned skill; a repair that leaves what the skill may click and ask unchanged goes live by itself, any other asks for approval.
+
 ---
 
 ### 3.10 Vision Navigation
 
-**Directory:** `src/screen/` (23 files), tools at `src/tools/os-*.ts` + `src/tools/platform*.ts`
+**Directory:** `src/screen/` (16 files), tools at `src/tools/os-*.ts` + `src/tools/platform*.ts`
 
-Autonomous GUI control without relying on a single cloud VLM. The pipeline runs entirely on the user's machine; only the captioning/grounding models are downloaded on demand, and the orchestrator is plain TypeScript so the agent can debug it like any other subsystem.
+Autonomous GUI control: accessibility tree first, learned click memory next, and a cloud grounding call only when those miss. There is one setup for everyone — no tier picker and no local ML download.
 
 #### Capability detection (`capability-detector.ts`)
 
-On boot, Bhai profiles the host (RAM, free RAM, CPU bench score, GPU class, free disk, online status, deps: python / pip / Ollama / models). The detector picks one of three profiles:
-
-| Profile  | Picked when                                          | Available perception stack            |
-|----------|------------------------------------------------------|---------------------------------------|
-| `lite`   | Low-spec Windows / no GPU / Ollama missing / <8 GB RAM | AX only (`ax-dump.ts`)                |
-| `standard` | Typical laptop ≥8 GB RAM, integrated GPU, Ollama present | AX + OmniParser captions              |
-| `full`   | Apple silicon or discrete GPU + Ollama + UI-TARS model | AX + OmniParser + UI-TARS grounding    |
-
-`ATLAS_VISION_PROFILE=lite|standard|full` overrides the picked tier (useful for testing tier-specific code paths).
+On boot Bhai profiles the host. The picked profile is `standard` (AX tree → click memory → cloud grounding). `ATLAS_VISION_PROFILE=lite|standard` overrides it; `lite` additionally skips OmniParser. The old `full` tier (Ollama + UI-TARS, ~4.5 GB) is retired and a stored `full` reads as `standard`; the setup wizard no longer has a vision step.
 
 #### Tiered Perception Cascade (`perception-router.ts`)
 
@@ -636,47 +628,41 @@ Given a natural-language instruction ("click Send"), the router walks tiers in c
 | 1 | `memory` — click-memory recall (DB lookup) | ~5 ms           | ≥ 0.90          |
 | 2 | `ax_exact` — AX exact-label match | 50–200 ms        | ≥ 0.95          |
 | 3 | `ax_fuzzy` — AX fuzzy-label match | 50–200 ms        | ≥ 0.80          |
-| 4 | `omniparser` — caption match   | 200–800 ms       | ≥ 0.80 (Standard+) |
-| 5 | `ui_tars` — grounding          | 400–800 ms       | ≥ 0.70 (Full only) |
-| 6 | `cloud_grounding` — Qwen VLM   | 1500–4000 ms     | ≥ 0.60 (Lite/Standard + degraded-Full) |
+| 4 | `omniparser` — caption match   | 200–800 ms       | ≥ 0.80; runs only if its deps, icon_detect weights and Florence caption weights are all present (no install ships them any more, so in practice skipped) |
+| 5 | `ui_tars` — local grounding    | 400–800 ms       | ≥ 0.70; retired (no install ships UI-TARS; `os_ground` is no longer offered) |
+| 6 | `cloud_grounding`              | 1500–4000 ms     | ≥ 0.60 |
 | 7 | `cloud_vlm_required`           | —                | router returns null → caller falls back to the agentic VLM |
 
-First tier whose confidence clears its gate wins; remaining tiers are skipped. The **cloud-grounding tier** (`cloud-grounding.ts`) runs a cloud VLM cascade (Qwen3.7-plus → Qwen3-VL-235B) and fires when local AX/OmniParser/UI-TARS miss — this is what makes GPU-less Lite/Standard hosts (and degraded-Full hosts) usable; it needs an injected LLM client and is disabled by `ATLAS_NO_CLOUD_GROUNDING`. An **AX cold-window retry** re-dumps the tree once (after a settle delay, `ATLAS_AX_RETRY_DELAY_MS`, default 250 ms) when both AX tiers miss, since a just-activated window's first dump is often incomplete (`ATLAS_NO_AX_RETRY` to disable). The router does NOT execute the click — it returns a `ClickTarget` that the caller hands to `os_computer_action` with `coordSystem='screen'`.
+First tier whose confidence clears its gate wins. The **cloud-grounding tier** (`cloud-grounding.ts`, on by default, `ATLAS_NO_CLOUD_GROUNDING` disables) sends the screenshot plus instruction to a cloud VLM through the LLM proxy with a grounding-only system prompt and a 30 s timeout. The screenshot is downscaled to ≤ 1568 px (`downscaleForVision`) and coordinates are scaled from the image actually sent. The call defaults to Haiku; `os_smart_click` re-grounds on Sonnet once after a verified miss. An **AX cold-window retry** re-dumps the tree once (after `ATLAS_AX_RETRY_DELAY_MS`, default 250 ms) when both AX tiers miss, since a freshly activated window's first dump is often incomplete (`ATLAS_NO_AX_RETRY`). The router does NOT execute the click — it returns a `ClickTarget` that the caller hands to `os_computer_action` with `coordSystem='screen'`.
 
 #### Click memory (`click-memory.ts`)
 
-Successful clicks (verified by `outcome-classifier.ts` — pre/post screenshot diff) write `{ app, window_title, instruction_hash, x_pct, y_pct, success_count, last_used_at }` to `data/click-memory.db`. On the next visit to the same app/instruction, the perception-router's Tier 1 returns the recalled site in microseconds. Kill-switch: `ATLAS_NO_CLICK_MEMORY=true` makes recall return null and record/forget no-op.
+Successful clicks (verified by `outcome-classifier.ts` — pre/post screenshot diff) write `{ app, window_title, instruction_hash, x_pct, y_pct, success_count, last_used_at }` to `data/click-memory.db`. On the next visit to the same app/instruction, tier 1 returns the recalled site in microseconds. Kill-switch: `ATLAS_NO_CLICK_MEMORY=true`.
 
 #### Drift calibration (`drift-calibration.ts`)
 
-Per-monitor affine correction. Every confirmed click contributes a sample; once a monitor has ≥10 samples the calibrator fits a 2D affine transform (scale + translation) to correct systematic offset (typical sources: DPI scaling, fractional zoom, multi-monitor coordinate boundary). `applyCalibration(monitorId, x, y)` is called before every click. Kill-switch: `ATLAS_NO_DRIFT_CALIBRATION=true`.
-
-#### Vision models
-
-- **OmniParser** (`omniparser.ts` + `omniparser-setup.ts`) — Microsoft icon-detection + caption model. On Standard/Full, `ensureOmniParser` background-provisions an isolated Python venv + deps + `icon_detect` weights (~500 MB, detached so it survives the bot exiting). The cascade tier is gated by `omniParserWeightsPresent()` so it never spawns Python before the weights exist. Returns `{ bbox, caption, type }` per element. Disable with `ATLAS_NO_OMNIPARSER` (tier) / `ATLAS_NO_OMNIPARSER_AUTOSETUP` (provisioning).
-- **UI-TARS** (`ui-tars.ts`) — ByteDance vision-language model that grounds free-form instructions to coordinates (Full tier). A verified-working default quant is pinned (override `ATLAS_UI_TARS_TAG`); on a Full host with Ollama but no model, `ensureUITarsForFullTier` background-pulls it (~4.7 GB, detached). A one-time vision-inference smoke test (`isUITarsHealthy`, 4×4 PNG probe, 30-min cached) detects pulled-but-broken GGUFs (mismatched mmproj → GGML_ASSERT / Ollama 500) in ~3 s so the cascade skips straight to cloud grounding instead of eating a 30 s crash per click. Disable auto-pull / health-check with `ATLAS_NO_UI_TARS_AUTOPULL` / `ATLAS_NO_UITARS_HEALTHCHECK`.
-- **Cloud grounding** (`cloud-grounding.ts`) — Qwen3.7-plus → Qwen3-VL-235B cascade used as a tier (see cascade table). Requires the injected LLM client; `ATLAS_NO_CLOUD_GROUNDING` disables it.
+Per-monitor affine correction. Every confirmed click contributes a sample; once a monitor has ≥ 10 samples the calibrator fits a 2D affine transform to correct systematic offset (DPI scaling, fractional zoom, multi-monitor boundaries). `applyCalibration(monitorId, x, y)` runs before every click. Kill-switch: `ATLAS_NO_DRIFT_CALIBRATION=true`.
 
 #### AX walker (`ax-dump.ts`)
 
 Cross-OS accessibility-tree dump:
-- **macOS:** `scripts/dump_ax_bin` (Swift, `AXUIElement` API) — built by `npm run build:ax`
-- **Windows:** UIA `IUIAutomation` via PowerShell helper
-- **Linux:** AT-SPI `gdbus` helper
+- **macOS:** `scripts/dump_ax_bin` (Swift, `AXUIElement` API), built by `npm run build:helpers`
+- **Windows:** UIA `IUIAutomation` via `dump_uia.ps1`
+- **Linux:** AT-SPI helper (`dump_atspi.py`)
 
-The TS implementation flattens the tree and finds matches by label. `ATLAS_NATIVE_AX=true` routes through `native/src/ax_walker.rs` for large trees (>200 nodes); the empirical default is TS because JSON marshalling dominates Rust's BFS win on small trees.
+Helper scripts resolve through the bundle-aware `getScriptsDir()` / `resolveScript()` in `src/config/paths.ts`, because the packaged app is a single esbuild bundle (`bot-bundle.mjs`) whose `__dirname` is flat; the old resolver missed them and silently forced every click onto the slow vision path. Rows with empty labels (text lives in a child `AXStaticText`) get a label from `deriveLabelFromDescendants`, and `scoreText` is token-aware. A dump that was cut short (slow or hung app) sets `"partial": true` and is treated as an AX miss. Opt-in knobs: `ATLAS_AX_BATCH=true` (batched attribute reads, ~2–3.5× faster dumps; AXValue stays a per-node read so a secure field's value is never requested), `ATLAS_AX_MSG_TIMEOUT_MS=N`, and `ATLAS_NATIVE_AX=true` (Rust flatten/find, only worth it for very large trees — the TS default wins below ~200 nodes).
 
 #### Primary GUI tool
 
-`os_smart_click` (`src/tools/os-smart-click.ts`) is wired into the tool registry as the agent's primary GUI interaction tool. The tool router prompt explicitly demotes coordinate-based legacy tools in its favor. A boot-time permission probe ensures macOS Accessibility / Windows UIA / Linux AT-SPI access is granted before the agent tries to use it.
+`os_smart_click` (`src/tools/os-smart-click.ts`) is the agent's primary GUI interaction tool; the tool router prompt demotes coordinate-based legacy tools in its favor. A boot-time permission probe ensures macOS Accessibility / Windows UIA / Linux AT-SPI access is granted before the agent tries to use it.
 
-On each call it **activates the target app**, then **auto-captures a screenshot** so the vision tiers always have an image — window-scoped via `screencapture -R` when the focused window's bounds are known (handing the cascade window-relative dims so coordinate scaling stays correct), else full-screen (`ATLAS_NO_WINDOW_SCOPED_CAPTURE` forces full-screen). Without this auto-capture the cascade was AX-only and silently skipped the vision tiers — the root cause of earlier low click accuracy.
+On each call it **activates the target app**, then **re-captures a fresh screenshot at click time** — window-scoped via `screencapture -R` when the focused window's bounds are known (the cascade gets window-relative dims so scaling stays correct), else full-screen (`ATLAS_NO_WINDOW_SCOPED_CAPTURE`). A caller-passed `screenshot_base64` is only a last resort (`ATLAS_SMARTCLICK_USE_CALLER_SCREENSHOT=true` restores trusting it), because stale pixels caused misclicks.
 
-**Post-click verification:** VISION-tier clicks (`omniparser` / `ui_tars` / `cloud_grounding`) are verified by capturing before/after and running `classifyOutcome`; a `no_op`/`wrong_target` records a click-miss and returns `click_unverified` instead of a false success, then triggers one self-correcting re-ground that forces descent past the failed tier. AX/memory tiers stay trusted (no verify). Disable with `ATLAS_NO_SMARTCLICK_VERIFY` (verification) / `ATLAS_NO_SMARTCLICK_SELFCORRECT` (self-correction only).
+**Post-click verification:** VISION-tier clicks are verified by capturing before/after and running `classifyOutcome`; `no_op` / `wrong_target` records a click-miss and returns `click_unverified` instead of a false success, then triggers one self-correcting re-ground that descends past the failed tier. A slow UI is no longer mistaken for a missed click and clicked twice. AX and memory tiers stay trusted. Disable with `ATLAS_NO_SMARTCLICK_VERIFY` / `ATLAS_NO_SMARTCLICK_SELFCORRECT`.
 
-#### Wizard integration
+#### Agent cursor (`agent-cursor.ts`, `desktop/agent-cursor.js`)
 
-The desktop wizard (`desktop/wizard/steps/install.js`) includes a "Vision Intelligence" step that surfaces the capability-detector's profile pick to the user and lets them upgrade (install Ollama + pull OmniParser / UI-TARS models) or downgrade (Lite-only). Dependencies install into an isolated Python venv (PEP 668-safe).
+When the desktop app spawned the bot, computer-use tools emit `##BHAI_CURSOR##{json}` stdout lines and the desktop draws a ghost cursor plus a "Bhai is in control" edge glow in click-through windows, one per display. Captures run inside `withCursorHidden()` (hide, ack ≤ 150 ms, capture, show). Not drawn on Linux; `ATLAS_NO_AGENT_CURSOR=true` disables it.
 
 ---
 
@@ -704,7 +690,7 @@ Every coding request is classified on the first iteration:
 #### Supporting tools
 
 - **LSP** (`lsp.ts`): `goToDefinition`, `findReferences`, `hover`, `documentSymbol`; auto-attached to edit results as `post_edit_diagnostics` unless `ATLAS_NO_POST_EDIT_DIAGNOSTICS=true`
-- **Codebase index** (`codebase-index.ts`): Per-repo SQLite sidecar at `data/codebase-index/{hash}.db`; tree-sitter parses TS/JS/Python/Rust/Go; BM25 FTS5 over symbol names; depth auto-picks: ≤500 files → call graph, ≤5000 → imports, else → symbols
+- **Codebase index** (`codebase-index.ts`): Per-repo SQLite sidecar at `data/codebase-index/{hash}.db`; tree-sitter parses TS/JS by default (Python/Rust/Go gated behind `ATLAS_MULTI_TREE_SITTER=true`; a regex fallback covers 15 languages); BM25 FTS5 over symbol names; depth auto-picks: ≤500 files → call graph, ≤5000 → imports, else → symbols
 - **git_op** (`git-op.ts`): 4-tier safety model — safe (status, commit, branch) / confirm (merge, cherry-pick) / destructive (reset, push) / blocked; protected branches `main`, `master`, `production`, `release/*`
 - **Code critic** (`code-critic.ts`): compile (weight 0.4) + test (0.4) + lint (0.2) + SAST/Semgrep (0.15) + UI verify; fires in swarm synthesis for coder steps; 90s wall-clock budget
 
@@ -722,7 +708,7 @@ A 3-phase background research loop that runs as a separate async task.
 
 **Phase 3 — Verification (20%):** Cross-references findings. `crossReferenceFindings()` assigns confidence: strong (≥2 sources), moderate (1), weak (0).
 
-**Search engines** (12 total): Google, Brave, DuckDuckGo, Bing, SearXNG, Mojeek, Tavily, Exa, Wikipedia, OpenAlex, Semantic Scholar, arXiv.
+**Search engines** (13, queried in parallel and merged): Parallel (first; AI-optimized, dated pages with excerpts, proxied through Convex), Tavily, Exa, Bing, SearXNG, Brave, DuckDuckGo, Wikipedia, Google (Playwright-based, may be blocked), Mojeek, plus Semantic Scholar, arXiv and OpenAlex when the academic profile is on. The lighter `web_search` tool uses a fetch-only subset (Parallel, Claude, Tavily, Exa, Brave, DuckDuckGo, Bing); its Google scraper was dropped because google.com/search now serves a JavaScript-only page, and one stalled engine no longer sinks the whole search.
 
 **Engine health:** Exponential backoff on failures: 15s → 30s → 60s → 120s → 240s (5 min cap). Failed engines are bypassed automatically.
 
@@ -765,7 +751,7 @@ Each hypothesis gets Bayesian confidence updates based on found evidence, with `
 
 ### 3.13 Proactive Engine
 
-**Directory:** `src/proactive/` (111 files)
+**Directory:** `src/proactive/` (60 files)
 
 Bhai can send messages without being prompted. The proactive system runs on three levels:
 
@@ -791,6 +777,8 @@ Bhai can send messages without being prompted. The proactive system runs on thre
 Defaults: Telegram = active, WhatsApp = calm, Overlay = ambient, Discord/Slack/Matrix/Email = calm.
 
 **Kill-switches:** `ATLAS_PROACTIVE_DISABLE` (global off), `ATLAS_PROACTIVE_DISABLE_SOURCES` (CSV list of sources), `ATLAS_PROACTIVE_DISABLE_CHANNELS` (CSV list), `ATLAS_PROACTIVE_SHADOW` (compose + log but never send).
+
+Other guardrails: "shut up" mutes proactive messages until "resume" (kept across restarts, and no raw pushes slip past it); the daily message cap resets at the owner's local midnight and daily counts and sent topics survive a restart; the morning briefing goes out as one message; alert floods are collapsed.
 
 **Rust scheduler** (`proactive_scheduler.rs`): Intent queue per channel with priority formula: `base × freshness × posture_weight × source_weight`. Urgent=100, normal=10, ambient=1 base. Freshness decays exponentially.
 
@@ -820,7 +808,7 @@ Defaults: Telegram = active, WhatsApp = calm, Overlay = ambient, Discord/Slack/M
 
 ### 3.14 Video Studio
 
-**Directory:** `src/video-studio/` (49 files), `src/tools/video-studio.ts`
+**Directory:** `src/video-studio/` (25 files), `src/tools/video-studio.ts`
 
 A complete AI-guided video editing pipeline.
 
@@ -871,7 +859,7 @@ A `validateEditPlan()` helper returns `{ ok: true, plan }` or `{ ok: false, erro
 
 ### 3.15 Meta-Harness Optimizer
 
-**Directory:** `src/harness/` (25 files)
+**Directory:** `src/harness/` (17 files)
 
 An automated outer-loop optimization system (based on arxiv 2603.28052) that treats Bhai configuration as a tunable parameter space and evolves it automatically.
 
@@ -950,11 +938,11 @@ Candidates that fail safety gates are marked `scope-violation` and discarded wit
 
 ### 3.16 Voice Subsystem
 
-**Directory:** `src/voice/` (31 files total, incl. `live/` subdirectory with ~26 files)
+**Directory:** `src/voice/` (22 files, incl. `live/` with 19)
 
-**Transcription** (`transcribe.ts`, `telegram-voice.ts`): Tries in order — OpenAI Whisper or Groq `whisper-large-v3-turbo` → OpenRouter Gemini 2.5 Flash (with `input_audio` content). `transcribeAudio()` and `transcribeBuffer()` variants both supported.
+**Transcription** (`transcribe.ts`, `telegram-voice.ts`): local Whisper (OpenAI `whisper-1` or Groq `whisper-large-v3-turbo`) when an `OPENAI_API_KEY` / `GROQ_API_KEY` is configured; otherwise the server transcribes via `/api/stt` (`convex/stt.ts`), so a fresh install needs no voice key. It throws `STT_NOT_CONFIGURED` when neither can. `transcribeAudio()` and `transcribeBuffer()` variants both supported.
 
-**TTS** (`tts.ts`, `elevenlabs.ts`): OpenAI `tts-1` (default voice `nova`; also `alloy`, `echo`, `fable`, `onyx`, `shimmer`) and ElevenLabs as paid premium. Output format: Opus. For local-only operation, `voice/live/kokoro-tts.ts` runs Kokoro TTS in-process via `kokoro-js` — zero API cost, fully offline.
+**TTS** (`tts.ts`, `elevenlabs.ts`): provider order is `ATLAS_TTS_PROVIDER` → `ELEVENLABS_API_KEY` → `OPENAI_API_KEY` → none. OpenAI `tts-1` (default voice `nova`; also `alloy`, `echo`, `fable`, `onyx`, `shimmer`) and ElevenLabs as paid premium. Output format: Opus. For local-only operation, `voice/live/kokoro-tts.ts` runs Kokoro TTS in-process via `kokoro-js` — zero API cost, fully offline.
 
 **Live voice mode** (`live/`): Streaming bidirectional voice with tool calling. The subdirectory contains the backend abstractions, audio pipeline (`audio/`), screen-share streaming, transcript speaker, memory bridge, tool bridge, and prompt builder.
 
@@ -1005,17 +993,21 @@ Bhai implements Google's Agent-to-Agent (A2A) protocol, which enables external s
 
 | Channel | Library | Notes |
 |---------|---------|-------|
-| Telegram | grammY ^1.35 | Sender ID allowlist; voice/image/video extraction; Markdown→HTML |
+| Telegram | grammY ^1.35 | Owner ID allowlist; voice/image/video extraction; Markdown→HTML; one-tap bot creation (§3.8); stuck-report buttons |
 | Discord | discord.js ^14 | Text; message content intent |
 | Slack | @slack/bolt ^4.7 | Socket Mode |
 | Matrix | matrix-js-sdk | Federated messaging |
 | WhatsApp | @whiskeysockets/baileys ^7 | 4 identity tiers (owner/contact/unknown/group); persona system; rate limit 50/hr, min 2s interval |
-| Email | IMAPFlow + Nodemailer | IMAP read + SMTP send; sender allowlist |
+| Email | IMAPFlow + Nodemailer | Own address `<name>.bhai@…` (§3.8), or the owner's own IMAP/SMTP account with a sender allowlist |
 | Canvas | ws (WebSocket) | Port 18791 on `127.0.0.1`; CanvasWidget types: html/chart/table/form/markdown |
-| Web Widget | Inline IIFE | Served at `/widget.js`; `?token=` auth; 56 px bubble, 350×500 window |
-| Desktop | Electron overlay | 340 px panel at `http://127.0.0.1:18792`; Chrome extension bridge at `ws://127.0.0.1:18792` |
+| Web Widget | Inline IIFE | Served at `/widget.js`; `?token=` auth; 56 px bubble, 350×500 window; visitors are guests and the widget cannot screenshot |
+| Desktop | Electron overlay | Panel at `http://127.0.0.1:18792`; Chrome extension bridge on `:18800`. Always on, so it has no card on the Channels page |
 
-**WhatsApp groups:** Auto-approve if owner added; otherwise notifies owner with approve/decline prompts. Response gating: skip if < 30s since last send or bot share > 15% of total messages; then Haiku yes/no decision.
+**Setup flows** (desktop Channels page, `desktop/components/channel-card.js`): a passing token check saves the channel and restarts Bhai by itself (no Save & Apply); the first connected channel becomes Primary, and switching a channel off applies at once. Telegram: one-tap managed bot, otherwise a pasted token (checked on paste; "say hi" to the bot fills the user ID). Discord: invite button, owner ID filled from the app, Message Content intent check. Slack: one link creates the app from a prefilled manifest. Email and Matrix: one screen; email does a real IMAP sign-in. WhatsApp (`desktop/setup/whatsapp-pair.js`): scan a QR in the wizard or Channels page, then the owner step shows a QR / `wa.me` link with the one-time code typed in — tap Send. Copied tokens on the clipboard fill in automatically (only text shaped like that token is handed over).
+
+**Non-owners:** contacts, guests and email senders get their own conversation and the `NON_OWNER_TOOLS` allowlist, never the owner's chat, memories or Settings tone.
+
+**WhatsApp groups:** Auto-approve if owner added; otherwise notifies owner with approve/decline prompts. Response gating: skip if < 30s since last send or bot share > 15% of total messages; then Haiku yes/no decision. The persona's anti-impersonation rules are hard-coded in `whatsapp.ts`, not in the persona.
 
 ---
 
@@ -1023,14 +1015,16 @@ Bhai implements Google's Agent-to-Agent (A2A) protocol, which enables external s
 
 **Directory:** `desktop/`
 
-Cross-platform Electron app (macOS + Windows) with:
+Cross-platform Electron app (macOS + Windows, Electron ^42) with:
 
-- **Overlay panel:** The overlay is now the single Electron overlay window (`desktop/`, served from `src/overlay/overlay.html` + `overlay-chat.ts`) — the former native macOS Swift `overlay-app/` has been removed. It floats on top of all windows and connects to the Bhai overlay WebSocket; the socket is authenticated (a `?localToken=` gate is exchanged via a discovery-first handshake) so it reliably connects cross-platform.
-- **Auto-updater:** `electron-updater`; provider = generic; update metadata served from Convex
+- **Panel pages** (`desktop/panel.html`): Dashboard, Chats, Channels, Store, Vault, Account and Settings; Memory (the Memory Studio graph viewer) opens from Settings. **Settings** saves by itself, has search, shows what is really connected, and holds personality (pills: casual_playful, professional_concise, warm_supportive, direct_terse, unhinged — 18+, owner-only), hotkey, theme, voice, an update channel (Advanced) and Data & privacy; About is folded in. **Account** has a real Devices list (§3.8). **Vault** (`desktop/vault-store.js`) is the owner's saved logins, API keys, cards and UPI IDs (§5.12); showing, editing or deleting an entry asks for Touch ID, once per entry per minute.
+- **Overlay panel:** the single Electron overlay window (served from `src/overlay/overlay.html` + `overlay-chat.ts`); the former native Swift `overlay-app/` is gone. It floats on top of all windows and connects to the Bhai overlay WebSocket, authenticated by a `?localToken=` gate exchanged through a discovery-first handshake. It says so when a message can't be sent because Bhai isn't connected.
+- **Agent cursor** (`desktop/agent-cursor.js`): ghost cursor and edge glow while Bhai drives the screen (§3.10).
+- **Auto-updater:** `electron-updater`; provider = generic; update metadata served from Convex (`/api/updates/latest-mac.yml`, `/latest.yml`); a quiet update check, with an update-channel option in Advanced.
 - **Source protection:** Bytecode compilation via `bytenode`; runtime XOR key fetched from Convex `/api/app/runtime-key`; `.env.enc` encrypted with the runtime key
 - **Session management:** Session token cached in Electron `safeStorage` with 1-hour refresh before expiry
-- **Setup wizard:** `desktop/wizard/` guides first-time config across staged steps (W1/W2/W3): channel/token setup, a **persona step** (5 persona cards that bias identity + tool selection), a Vision-Intelligence tier step, and a "Magic Moment" Ready Hub whose suggestions are ranked from a live snapshot of the user's running apps (`magic-moment-ranker`). Persona seeds into the prompt layer (`src/prompts/persona-bias.ts`) and onboarding graduation nudges (Day-2/3/5) follow via the proactive engine.
-- **Chrome extension bridge:** Companion extension (`chrome-extension/`) connects over two WebSocket servers — a command bridge and the overlay chat channel; the extension discovers the overlay token via a `/discover` endpoint. Manifest V3 service worker with heartbeat.
+- **Setup wizard:** `desktop/wizard/` — first run is three screens: sign in (terms clickwrap inline) → connect Chrome (setup installs in the background meanwhile, `desktop/installer/`) → the Ready Hub, where permissions live and suggestions are ranked from a live snapshot of the user's running apps (`magic-moment-ranker`). Name, persona, hotkey, theme and voice have defaults and live in Settings. Persona seeds the prompt layer (`src/prompts/persona-bias.ts`) and onboarding graduation nudges (Day-2/3/5) follow via the proactive engine.
+- **Chrome extension bridge:** companion MV3 extension (`chrome-extension/`) with the `nativeMessaging` permission; it asks the native host for the bridge token first and falls back to the loopback `/discover` endpoint (§3.9). Service worker with heartbeat.
 - **Store IPC:** Desktop store install/uninstall routes through the authenticated Convex proxy rather than calling the store backend directly.
 
 **Build targets:**
@@ -1119,11 +1113,11 @@ runAgent(llm, message, onProgress, media)
     ├─ tool-router: embed query → cosine similarity → load top-K tool schemas
     │
     ├─ encryptedFetch() → POST /api/llm/chat on Convex
-    │       → Convex: decrypt request → assemble system prompt → forward to OpenRouter
-    │       → OpenRouter → LLM provider → response
-    │       → Convex: encrypt response → return
+    │       → Convex: decrypt request → assemble system prompt → translate to the Claude Messages API
+    │       → Claude (Haiku / Sonnet / Opus) → response
+    │       → Convex: deduct credits → encrypt response → return
     │
-    ├─ parse tool calls → execute in parallel (except browser: sequential)
+    ├─ parse tool calls → execute in parallel (except browser + screen-driving tools: sequential)
     │       each tool result → feed back into messages array
     │
     ├─ check finish_reason / TASK_COMPLETE → loop or exit
@@ -1164,11 +1158,12 @@ Server:  _ecdh.generateKeys()  → pubKey_S
          returns { pubKey: pubKey_S, token, sharedKey_id }
 
 Both:    salt = b"atlas-e2e-salt"
-         info = b"atlas-e2e-aes256-key"
-         key  = SHA-256(shared || salt || info)   ← 256-bit AES key
+         info = b"atlas-e2e-aes256-key|" + pubKey_C + b"|" + pubKey_S   ← binds both public keys
+         key  = HKDF-SHA256(shared, salt, info, 32 bytes)   ← 256-bit AES key
+                (legacy v1 sessions used SHA-256(shared || salt || info))
 ```
 
-**Step 2 — Per-request envelope (AES-256-GCM):**
+**Step 2 — Per-request envelope (AES-256-GCM):** the AAD (`METHOD|path|ts|rid`) is bound to the GCM tag, so a captured envelope cannot be replayed against another route or have its `ts`/`rid` rewritten on the wire.
 ```
 envelope = {
   iv:  random 12 bytes (base64)
@@ -1183,7 +1178,7 @@ envelope = {
 
 **Step 4 — Response encryption:** the server encrypts the response with the same derived key before returning. The client verifies the auth tag and decrypts before parsing.
 
-API keys (OpenRouter, Google, Deepgram, Apify, Apollo, Hunter, CAPTCHA services, etc.) live only in Convex environment variables. They are never sent to the client in any form.
+API keys (Claude, Azure, speech-to-text, search, voice, Apify, Apollo, Hunter, CAPTCHA services, etc.) live only in Convex environment variables. They are never sent to the client in any form.
 
 ### 5.2 Docker Sandbox
 
@@ -1218,14 +1213,7 @@ Bhai's own data directory (`data/`, `dist/`, `src/`, `native/`) is also protecte
 
 ### 5.4 Secrets Storage
 
-`src/security/secrets.ts` encrypts any user-provided secret before writing to disk:
-
-- Algorithm: AES-256-GCM
-- KDF: `scrypt` with salt "atlas-salt", 32-byte key
-- Format: `iv:tag:ciphertext` (all hex)
-- Location: `data/secrets.enc`
-
-The key is derived at runtime from a machine-stable seed — compromising the encrypted file alone is not enough to read secrets; the attacker also needs the host machine.
+Provider and service keys are never on the client: they live only in Convex env. The owner's own secrets (logins, API keys, cards, UPI IDs) live in the desktop vault, encrypted with Electron `safeStorage` (Keychain / Credential Manager) in `vault.enc`, and are handed to the bot over its stdin pipe at spawn and on every edit — held in memory only, never written to disk by the bot and never sent to Convex. See §5.12.
 
 ### 5.5 Rate Limiting
 
@@ -1258,7 +1246,7 @@ Before installing an MCP package, `src/security/osv-check.ts` queries OSV for kn
 
 ### 5.10 Secrets Sanitizer (Outbound)
 
-`secrets-sanitizer.ts` (native default-ON, `ATLAS_NO_NATIVE_SANITIZER` to force TS) scans every tool result for credentials before it reaches the LLM — API keys, tokens, and now **DB connection strings and URL userinfo passwords** (`postgres://user:pass@…` → redacted). `sensitive-paths.ts` enumerates path patterns that must never be read into context.
+`secrets-sanitizer.ts` (native default-ON, `ATLAS_NO_NATIVE_SANITIZER` to force TS) scans every tool result for credentials before it reaches the LLM — API keys, tokens, **DB connection strings and URL userinfo passwords** (`postgres://user:pass@…` → redacted). Its regexes are linear-time (no backtracking blow-ups; `redos.test.ts`). `credential-mask.ts` masks credentials by structure rather than by ordinary words, `log-redaction.ts` runs every console line through the sanitizer (imported first by `src/index.ts`), and `sensitive-paths.ts` enumerates path patterns that must never be read into context.
 
 ### 5.11 Other Security Measures
 
@@ -1267,6 +1255,20 @@ Before installing an MCP package, `src/security/osv-check.ts` queries OSV for kn
 - **Skill Forge kernel sandbox:** persisted dynamic tools execute in OS-isolated child processes (macOS sandbox-exec, Linux seccomp + Landlock + netns, Windows AppContainer + JobObject) with a three-strike auto-archive on capability violations — see §3.7 and the Forge spec
 - **MCP tool vetting:** external MCP server tool schemas are validated against a JSON Schema before being exposed to the LLM
 - **Audit log:** every tool call is appended to `data/audit.jsonl` with timestamp, tool name, args (redacted), and outcome; HMAC-signed on reflection events for tamper detection
+- **Consent gate for irreversible actions** (`src/security/consent.ts`): deleting files, emptying Trash, dangerous shell commands, checkout and payments are refused the first time and recorded as pending; the call is allowed only when it comes back with `confirmed: true` after the owner sent a *new* message that reads as a yes. A flag the model sets on its own (say, because a web page told it to) is never enough, and autonomous runs (scheduled tasks, swarms) cannot confirm.
+- **Local servers:** the overlay (`:18792`) and Chrome bridge (`:18800`) reject non-loopback `Host` headers (DNS-rebinding guard, `loopback.ts`), accept only Bhai's own extension origin (`extension-origin.ts`), and OAuth callback servers listen on loopback only with a random `state` that is checked and page output escaped (`oauth-state.ts`).
+- **Owner vs. non-owner:** contacts, guests and email senders get `NON_OWNER_TOOLS` only (`tool-access.ts`) and their own conversation; LLM-written JS runs in a fresh `vm` context with no host-realm objects (`vm-isolate.ts`).
+
+### 5.12 Secrets Vault & PII Handling
+
+**Vault** (`src/security/vault.ts`, `src/tools/vault.ts`, `desktop/vault-store.js`): the agent *uses* the owner's saved secrets but never *sees* them.
+
+- The model sees labels (`vault_list`) and writes tokens like `{{vault:<id>.password}}`. `resolveVaultArgs()` swaps a token for its value in the typing tools only, at the moment they run.
+- **Login / API-key tokens are domain-locked:** they resolve only on an https page on one of the entry's domains (or a subdomain, never a public suffix), checked again right where the keys land, so a navigation, redirect or tab switch cannot redirect the secret. In a native desktop app (`os_type`) there is no origin, so the owner must OK that exact call.
+- **Cards / UPI** resolve only inside a payment authorization the owner approved for an item and amount (`vault_authorize_payment`, behind the consent gate and the Site Skill spend cap), in the browser, on the page it was made on, for 5 minutes, each field once. The CVV is never stored; it is asked for at that moment.
+- The desktop gates Show / Edit / Delete behind Touch ID (once per entry per minute). `ATLAS_NO_VAULT` turns the vault off.
+
+**PII vault** (`src/security/pii-vault.ts`, `pii-redactor.ts`, `value-forms.ts`): card numbers, Aadhaar numbers, UPI IDs, one-time codes and cookie values are swapped for handles (`[CARD_1]`, `[OTP_2]` …) in LLM payloads and logs; `reveal()` swaps them back only inside typing tools. Every vault value is registered, so a page or tool result that shows it gets the token back, including trimmed, whitespace-collapsed or encoded forms. Values are kept in process memory only (capped); `protect()` has a memo (`ATLAS_NO_PROTECT_CACHE` disables) and `ATLAS_NATIVE_PROTECT` opts into the native linear-time version. Conversation text is masked before it is written to disk (`protectForDisk`), and `at-rest-scrub.ts` masks older rows once.
 
 ---
 
@@ -1281,7 +1283,7 @@ Bhai is designed to run on the user's own machine. All memory (SQLite, embedding
 | Environment | URL | When used |
 |-------------|-----|-----------|
 | Development | `avid-finch-726.convex.cloud` | Default (`ATLAS_ENV` not set) |
-| Production | `avid-finch-726.convex.cloud` | `ATLAS_ENV=prod` |
+| Production | `avid-finch-726.convex.cloud` | `ATLAS_ENV=prod` (currently the same deployment id as dev in `src/config/keys.ts`) |
 | Custom | `CONVEX_URL` / `CONVEX_SITE_URL` | Override either individually |
 
 ### Platform binaries (native Rust)
@@ -1306,8 +1308,9 @@ npm install
 npm run build:native
 
 # Compile Swift helpers (macOS only)
-npm run build:ocr        # OCR screen helper
-npm run build:location   # GPS/location helper
+npm run build:helpers    # OCR + location + AX Swift helpers (macOS; the Mac builds fail without them)
+npm run build:ocr        # OCR screen helper only
+npm run build:location   # GPS/location helper only
 
 # TypeScript compilation
 npm run build            # tsc → dist/
@@ -1338,10 +1341,10 @@ npm run build:win    # Windows NSIS installer
 
 | Component | Minimum |
 |-----------|---------|
-| Node.js | >= 20 |
+| Node.js | >= 20.19 or >= 22.12 (older skips rolldown's native binding and Vitest won't start) |
 | Rust toolchain | Latest stable (for native build) |
 | RAM | 2 GB recommended |
-| macOS | 13+ (for Swift helpers, overlay app) |
+| macOS | 13+ (for Swift helpers) |
 | Docker | Optional (for sandboxed code execution) |
 
 ---
@@ -1432,30 +1435,40 @@ All configuration is via `.env` (copy from `.env.example`).
 | `ATLAS_FORGE_DREAM_OPUS=true` | Route dream-replay tool synthesis to Opus + max thinking |
 | `ATLAS_NO_RECOVERY_JITTER=true` | Disable full-jitter exponential backoff in error-recovery |
 | `ATLAS_TOOL_LOOP_HARDSTOP` / `ATLAS_NO_PROGRESS_LIMIT` | Tune / disable the per-turn identical-args tool-loop guardrail |
+| `ATLAS_LLM_ATTEMPT_TIMEOUT_MS` / `ATLAS_TOOL_ROUTER_TIMEOUT_MS` | Per-attempt LLM HTTP timeout (default 25000) / tool-router classifier timeout (default 5000) |
+| `ATLAS_LLM_CACHE_THRESHOLD=<0..1>` | Semantic response cache hit threshold (default 0.97) |
+| `ATLAS_NO_GUI_FASTPATH=true` / `ATLAS_ALWAYS_ORCHESTRATE=true` | Plan even single-target GUI/messaging actions |
+| `ATLAS_NO_DYNAMIC_ORCHESTRATOR=true` / `ATLAS_ORCH_SHADOW=true` | Force every plan to Sonnet / log the chosen tier but route to Sonnet |
+| `ATLAS_NO_DYNAMIC_BROWSER_ROUTING=true` | Restore "any action browser/OS tool → Sonnet" |
+| `ATLAS_NO_WHATSAPP_TOOL_GATING=true` | Offer WhatsApp tools even when WhatsApp isn't connected |
+| `ATLAS_NO_VAULT=true` | Turn the secrets vault off |
+| `ATLAS_NO_PROTECT_CACHE=true` | Disable the `protect()` memo in `pii-vault.ts` |
+| `ATLAS_CAPTCHA_MODELS=csv` / `ATLAS_CAPTCHA_HANDOFF_MS=<ms>` | Override the picture-CAPTCHA solver models / owner-handoff wait |
 
 ### Optional — Vision Navigation
 
 | Variable | Effect |
 |----------|--------|
-| `ATLAS_VISION_PROFILE=lite\|standard\|full` | Override the capability-detector's auto-picked profile |
+| `ATLAS_VISION_PROFILE=lite\|standard` | Override the capability-detector's profile (`standard` is the one real setup; `lite` also skips OmniParser; a stored `full` reads as `standard`) |
 | `ATLAS_NO_CLICK_MEMORY=true` | Disable persistent click-memory recall / record |
 | `ATLAS_NO_DRIFT_CALIBRATION=true` | Disable per-monitor affine drift correction |
-| `ATLAS_NO_CLOUD_GROUNDING=true` | Disable the Qwen cloud-grounding cascade tier |
-| `ATLAS_NO_OMNIPARSER=true` / `ATLAS_NO_OMNIPARSER_AUTOSETUP=true` | Skip the OmniParser tier / its background venv+weights provisioning |
-| `ATLAS_NO_UI_TARS_AUTOPULL=true` | Don't auto-pull the UI-TARS quant on Full hosts |
-| `ATLAS_NO_UITARS_HEALTHCHECK=true` | Skip the UI-TARS vision-inference smoke test |
-| `ATLAS_UI_TARS_TAG=<tag>` | Override the pinned UI-TARS Ollama quant |
+| `ATLAS_NO_CLOUD_GROUNDING=true` | Disable the cloud-grounding cascade tier |
+| `ATLAS_NO_OMNIPARSER=true` | Force-skip the OmniParser tier (it only runs when its deps and weights are present, which no install ships) |
 | `ATLAS_NO_SMARTCLICK_VERIFY=true` / `ATLAS_NO_SMARTCLICK_SELFCORRECT=true` | Trust vision-tier clicks without before/after verification / disable one-shot self-correction |
+| `ATLAS_SMARTCLICK_USE_CALLER_SCREENSHOT=true` | Trust a caller-passed `screenshot_base64` instead of re-capturing at click time |
 | `ATLAS_NO_AX_RETRY=true` / `ATLAS_AX_RETRY_DELAY_MS=<ms>` | Disable cold-window AX re-dump / tune its settle delay (default 250) |
 | `ATLAS_NO_WINDOW_SCOPED_CAPTURE=true` | Force `os_smart_click` to full-screen capture instead of window-region |
-| `ATLAS_NATIVE_AX=true` | Opt-in: route AX tree flatten/find through `native/src/ax_walker.rs` (TS is faster for trees <200 nodes; only flip for AX-heavy workloads) |
+| `ATLAS_AX_BATCH=true` / `ATLAS_AX_MSG_TIMEOUT_MS=<ms>` | Opt-in batched AX attribute reads / per-call AX messaging timeout (100–5000) |
+| `ATLAS_NATIVE_AX=true` | Opt-in: route AX tree flatten/find through `native/src/ax_walker.rs` (TS is faster for trees <200 nodes) |
+| `ATLAS_NO_AGENT_CURSOR=true` | No ghost cursor / "Bhai is in control" glow |
 
 ### Optional — Native Rust opt-ins / overrides
 
 | Variable | Effect |
 |----------|--------|
-| `ATLAS_NO_NATIVE_SANITIZER=true` | Force TypeScript fallback for outbound secrets scrubbing (default is native — 1.44–2.00× faster) |
+| `ATLAS_NO_NATIVE_SANITIZER=true` | Force TypeScript fallback for outbound secrets scrubbing (default is native — 1.9–3.4× faster) |
 | `ATLAS_NATIVE_VAD=true` | Opt-in: libfvad barge-in for hybrid voice (requires native binary built with cargo feature `vad`; gracefully falls back to RMS gate if missing) |
+| `ATLAS_NATIVE_PROTECT=true` | Opt-in: native linear-time `maskCredentials` / `findPii` (`pii_protect.rs`, byte-identical to the TS) |
 | `ATLAS_VAD_MODE=0..3` | libfvad aggressiveness — 0 quality / 3 very aggressive (default 2) |
 | `ATLAS_NATIVE_SPREADING=true` | Opt-in: route SAN BFS through `native/src/spreading.rs` (only wins on >1000-node induced graphs) |
 | `ATLAS_NATIVE_AX=true` | See Vision Navigation table above |
@@ -1567,6 +1580,11 @@ The environment variables listed below all default to the feature being ON. Sett
 - Vision-nav click memory: `ATLAS_NO_CLICK_MEMORY`
 - Vision-nav drift calibration: `ATLAS_NO_DRIFT_CALIBRATION`
 - Native secrets sanitizer: `ATLAS_NO_NATIVE_SANITIZER`
+- Dynamic orchestrator / GUI fast path: `ATLAS_NO_DYNAMIC_ORCHESTRATOR`, `ATLAS_NO_GUI_FASTPATH`
+- Dynamic browser routing: `ATLAS_NO_DYNAMIC_BROWSER_ROUTING`
+- Cloud grounding / smart-click verification: `ATLAS_NO_CLOUD_GROUNDING`, `ATLAS_NO_SMARTCLICK_VERIFY`
+- Agent cursor: `ATLAS_NO_AGENT_CURSOR`
+- Vault: `ATLAS_NO_VAULT`
 
 ---
 
@@ -1574,7 +1592,7 @@ The environment variables listed below all default to the feature being ON. Sett
 
 ```
 Bhai/
-├── src/                        (TypeScript source, ~770 files incl. tests)
+├── src/                        (TypeScript source, ~580 non-test files; ~770 incl. tests)
 │   ├── index.ts                (entry point, boot sequence)
 │   ├── agent.ts                (runAgent, core loop)
 │   ├── llm.ts / llm-middleware.ts / llm-cache.ts / llm-parsers/
@@ -1582,21 +1600,23 @@ Bhai/
 │   ├── crypto-kdf.ts / context-scrubber.ts
 │   ├── model-router.ts         (Rust wrapper — tiers + cost-aware routing)
 │   ├── tool-router.ts          (semantic tool selection)
-│   ├── memory/                 (70 files + code-parse/ — incl. value-gate, compression-template, Memory Studio)
-│   ├── screen/                 (23 files — Vision Navigation: capability detector, perception router, click memory, drift calibration, OmniParser + setup, UI-TARS, cloud grounding, AX dump)
-│   ├── agents/                 (50 files — swarm, mesh, long-task, sub-agent, metacognition, etc.)
-│   ├── forge/                  (52 files — Skill Forge: dynamic-tool synthesis + verifier + kernel sandbox shim)
-│   ├── tools/                  (149 files)
-│   │   ├── browser/            (21 files — dual-backend automation)
-│   │   ├── coding/             (34 files — design docs, LSP, codebase index)
+│   ├── memory/                 (59 files + code-parse/ — incl. value-gate, playbooks, at-rest-scrub, compression-template, Memory Studio)
+│   ├── screen/                 (16 files — Vision Navigation: capability detector, perception router, click memory, drift calibration, cloud grounding, AX dump, agent cursor)
+│   ├── agents/                 (36 files — swarm, mesh, long-task, sub-agent, metacognition, verify-before-done, etc.)
+│   ├── forge/                  (17 files — Skill Forge: dynamic-tool synthesis + verifier + kernel sandbox shim)
+│   ├── tools/                  (141 files)
+│   │   ├── browser/            (27 files — dual-backend automation, CAPTCHA solver, vault typing)
+│   │   ├── coding/             (31 files — design docs, LSP, codebase index)
 │   │   ├── session-search.ts   (FTS5 conversation-corpus recall)
+│   │   ├── vault.ts / site-task.ts / site-skill-mint.ts / send-ledger.ts
 │   │   └── os-smart-click.ts / os-computer-action.ts / os-grounding.ts / os-inspect.ts / platform.ts
+│   ├── skills/                 (loader + site/ — Site Skills runtime, drift repair, skill minter)
 │   ├── research/               (11 files — deep research engine)
-│   ├── proactive/              (111 files — heartbeat, dreaming, composer, dispatch, inbox, monitors, sources, telemetry)
-│   ├── harness/                (25 files — Meta-Harness optimizer)
-│   ├── video-studio/           (49 files — AI video editing)
+│   ├── proactive/              (60 files — heartbeat, dreaming, composer, dispatch, inbox, monitors, sources, telemetry)
+│   ├── harness/                (17 files — Meta-Harness optimizer)
+│   ├── video-studio/           (25 files — AI video editing)
 │   ├── marketing/              (29 files — Marketing Brain)
-│   ├── voice/                  (31 files incl. live/ ~26 — TTS, STT, live voice, Kokoro local TTS)
+│   ├── voice/                  (22 files incl. live/ 19 — TTS, STT, live voice, Kokoro local TTS)
 │   ├── social/                 (emotion-detector.ts — lexicon + punctuation heuristic)
 │   ├── documents/              (10 files — block-based doc renderer + templates)
 │   ├── location/               (7 files — GPS → Wi-Fi → IP fallback)
@@ -1605,27 +1625,30 @@ Bhai/
 │   ├── commands/               (slash commands — /recap, /doctor)
 │   ├── diagnostics/            (/doctor system probe)
 │   ├── overlay/                (Electron overlay chat server + overlay.html)
-│   ├── prompts/                (8 files — dynamic assembly + persona-bias + watermark)
-│   ├── hooks/ cron/            (3 + 6 files — built-in tool hooks, cron schedules)
-│   └── security/               (17 files — threat patterns, URL/SSRF guard, OSV check, skill scanner, secrets sanitizer, allowlist, sandbox)
-├── native/                     (Rust, 78 modules)
+│   ├── prompts/                (5 files — dynamic assembly + persona-bias + watermark)
+│   ├── hooks/ cron/            (3 + 3 files — built-in tool hooks, cron schedules)
+│   └── security/               (22 files — threat patterns, URL/SSRF guard, OSV check, skill scanner, secrets sanitizer, PII vault, vault, consent, allowlist, sandbox)
+├── native/                     (Rust, 80 modules)
 │   ├── src/
 │   │   ├── ax_walker.rs        (cross-OS AX flatten/find — opt-in)
 │   │   ├── pcm_vad.rs          (libfvad barge-in — cargo feature `vad`, opt-in)
-│   │   ├── secrets_sanitizer.rs (default-ON, 1.44–2.00× faster than TS)
+│   │   ├── secrets_sanitizer.rs (default-ON, 1.9–3.4× faster than TS)
 │   │   ├── forge_sandbox/      (kernel-sandbox supervisor: seccomp/Landlock · sandbox-exec · AppContainer)
-│   │   └── … 73 more modules
+│   │   └── … more modules
 │   └── Cargo.toml
-├── convex/                     (serverless backend — 30 .ts files, 21 tables)
+├── convex/                     (serverless backend — 27 tables)
 │   ├── schema.ts
 │   ├── http.ts
+│   ├── claude.ts / credit_cost.ts (Claude proxy + billing)
 │   ├── crypto.ts
+│   ├── bhaiMail*.ts / telegramManaged.ts / devices.ts / stt.ts / grok.ts / userAddenda.ts
 │   └── store/
 ├── desktop/                    (Electron app + overlay window)
-│   ├── installer/              (phase runner — Ollama, Python venv, vision deps)
-│   ├── wizard/                 (first-run wizard — persona step, vision-intelligence tier, magic-moment Ready Hub)
-│   └── components/ detection/ migration/ hostinger-upload/
-├── chrome-extension/           (MV3 companion extension)
+│   ├── installer/              (phase runner — background setup)
+│   ├── wizard/                 (first-run wizard — sign in, connect Chrome, Ready Hub)
+│   ├── setup/                  (wizard-scoped WhatsApp pairing)
+│   └── components/ pages/ vault-store.js agent-cursor.js
+├── chrome-extension/           (MV3 companion extension — native messaging + /discover handshake)
 ├── portals/
 │   ├── admin-panel/            (Next.js admin dashboard)
 │   └── developer-portal/       (Next.js developer portal)
@@ -1633,7 +1656,7 @@ Bhai/
 ├── prompts/                    (server-side prompt source)
 ├── scripts/                    (Swift helpers — OCR, GPS, AX dump — Convex seeds, hotkeys)
 ├── data/                       (runtime state — gitignored)
-│   ├── memories.db             (SQLite, WAL)
+│   ├── memory.db               (SQLite, WAL)
 │   ├── click-memory.db         (vision-nav learnt click sites)
 │   ├── codebase-index/
 │   ├── agent-worktrees/
@@ -1643,7 +1666,7 @@ Bhai/
 │   ├── video-projects/
 │   ├── harness/runs/
 │   ├── proactive-config.json
-│   └── secrets.enc
+│   └── audit.jsonl
 └── .env                        (user config)
 ```
 
@@ -1655,9 +1678,9 @@ Bhai/
 - **Tool routing:** semantic selection via MiniLM embeddings loads only the needed ~15–36 tools per request (out of 100+)
 - **Memory fan-out:** 12 retrieval systems execute in parallel, total latency bounded by the slowest single retrieval (~150–300 ms in practice)
 - **Prompt caching:** Anthropic cache breakpoints on system prompt + tools schema + conversation history reduce token costs by up to 90% on repeated context
-- **LLM response cache:** semantic LRU with cosine > 0.88 and 3-minute TTL catches exact repeats and near-paraphrases of simple queries
+- **LLM response cache:** semantic LRU (cosine ≥ 0.97 by default, 10-minute TTL) catches exact repeats and near-paraphrases of simple queries
 - **Incremental codebase index:** Merkle-hashed file tracking means a refresh after small edits touches only changed files
-- **Model cascading:** trivial tasks hit Haiku (0.25 credits); complex tasks auto-escalate to Opus (3.0 credits) — average spend stays low while peak capability is always reachable
+- **Model cascading:** trivial tasks hit Haiku (0.25 credits); complex tasks auto-escalate to Opus (2 credits) — average spend stays low while peak capability is always reachable
 - **Tool result truncation:** per-tool smart truncation (shell keeps tail, JSON prunes trees, browser keeps IDs, files keep head + tail) prevents token-bloat feedback loops
 
 ---

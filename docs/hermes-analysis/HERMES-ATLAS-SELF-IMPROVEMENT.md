@@ -1,3 +1,5 @@
+> **Status: HISTORICAL analysis (Hermes comparison, written before the Oct 2026 reliability layer).** Not a live spec. Implementation status is **unverified** per item. Note the claim that `incrementHits` has zero callers refers to the code of that date. Modules named here live under `src/memory/` (`value-gate`, `strategy-library`, `self-model`, `task-learnings`), `src/agents/` and `src/prompts/` (`prompt-evolver.ts`); `self-improvement-synthesis.ts` is at `src/proactive/` and `critics.ts` at `src/forge/`. LLM routing is now Claude-only via Convex (see CLAUDE.md).
+
 All load-bearing claims verified: `incrementHits` exists but has zero callers (dead), `maybeCreateSkill` is wired into swarm:337 / long-task:601, reflection uses fresh throwaway prompts (line 653), SAST critic has exactly 19 rules, `systemContent.ts:284` injects addenda without calling `incrementHits`, and the `decay` reason is a type affordance with no emission site. The corrected findings hold. Writing the report.
 
 ---

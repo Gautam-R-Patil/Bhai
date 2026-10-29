@@ -17,6 +17,15 @@ because Chrome warns on unrecognized (`_`-prefixed) manifest keys.
   when its own Playwright browser hits a login/OTP wall on that site, so it can
   continue in the user's existing session instead of asking them to sign in again.
 
+- **`nativeMessaging`** — `chrome.runtime.sendNativeMessage("com.atlas.bridge", { action: "get_config" })`
+  fetches the bridge token from the local native-messaging host Bhai registers
+  (`src/tools/browser/chrome-bridge.ts`), scoped to this OS user. Once that works,
+  `/discover` stops serving the token over HTTP.
+
+- **`activeTab`, `tabs`, `scripting`, `storage`, `contextMenus`, `alarms`** — tab
+  targeting and content-script injection, popup/settings state, the right-click
+  menu, and service-worker keep-alive/reconnect timers.
+
 - **`host_permissions: <all_urls>`** — the agent operates on whatever tab the
   user is on; we cannot enumerate a finite host list at install time.
   `activeTab` is insufficient: it only grants access on user-gesture-initiated
@@ -25,7 +34,7 @@ because Chrome warns on unrecognized (`_`-prefixed) manifest keys.
   at runtime; debugger access requires explicit `chrome.debugger.attach`, which
   surfaces an OS-level "Bhai started debugging this browser" banner.
 
-- **`host_permissions: http://127.0.0.1:18800/*` + `http://127.0.0.1:18792/*`** —
+- **`host_permissions: http://127.0.0.1:18800/*` + `http://127.0.0.1:18792/*` (and the `localhost` equivalents)** —
   the extension fetches `http://127.0.0.1:18800/discover` (bridge token + overlay
   localToken) and opens WebSockets to the bridge (18800) and overlay (18792).
   Loopback hosts must be listed explicitly; `<all_urls>` does not cover them.

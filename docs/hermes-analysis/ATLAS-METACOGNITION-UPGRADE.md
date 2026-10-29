@@ -1,3 +1,5 @@
+> **Status: HISTORICAL analysis (Hermes comparison, written before the Oct 2026 reliability layer).** Not a live spec. Implementation status of the proposed metacognition upgrade is **unverified**; `src/agents/metacognition.ts` exists. The logprobs track depended on a `convex/http.ts` allowlist edit; `logprobs` does not appear in `convex/http.ts` today, and LLM calls now go to the Claude API (`convex/claude.ts`) rather than OpenRouter, so that track is effectively superseded. File names are bare (`metacognition.ts`, `evaluator.ts`, etc. live under `src/agents/`; `reflection.ts`/`task-learnings.ts` under `src/memory/`).
+
 This is the key Track-2 result, and it's decisive:
 
 - **`openrouterBody` is an explicit allowlist** (lines 690-704) — `logprobs`/`top_logprobs` are NOT forwarded. Adding them requires a `convex/http.ts` edit + redeploy.

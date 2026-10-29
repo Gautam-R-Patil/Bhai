@@ -19,6 +19,8 @@ Admin dashboard for managing the Bhai Store - developers, app submissions, and u
    - `JWT_SECRET` - Generate a random 64-character string
    - `INITIAL_ADMIN_EMAIL` - Email for the first admin account
    - `INITIAL_ADMIN_PASSWORD` - Password for the first admin account
+   - `ATLAS_ADMIN_KEY` (server-side only) - must match `ADMIN_API_KEY` in Convex; `NEXT_PUBLIC_ATLAS_ADMIN_API_BASE` optional
+   - `ATLAS_MCP_CONVEX_SITE_URL` + `ATLAS_MCP_ADMIN_KEY` (server-side only) - for the Enterprise page
 
 3. **Create initial admin:**
    ```bash
@@ -35,6 +37,8 @@ Admin dashboard for managing the Bhai Store - developers, app submissions, and u
    ```bash
    npm run build
    ```
+
+Tests: `npm test` (vitest).
 
 ## Deployment to Hostinger
 
@@ -64,6 +68,10 @@ npm run build
 ## Features
 
 - **Dashboard** - Overview stats and pending items
+- **Users** - Bhai accounts
+- **Waitlist** / **Contact** - Waitlist signups (resend invite) and contact-form messages
+- **Enterprise** - Bhai Tools MCP customer licenses and usage (isolated enterprise Convex deployment)
+- **LLM logs** / **Error logs** - Observability (admin-gated Convex httpActions)
 - **Developers** - Approve/reject developer accounts
 - **Submissions** - Review and approve app submissions
 - **Apps** - Manage published apps, feature/unfeature

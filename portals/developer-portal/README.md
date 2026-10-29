@@ -17,6 +17,7 @@ Web portal for developers to register, create, and publish Skills, MCP Servers, 
    Edit `.env.local`:
    - `NEXT_PUBLIC_CONVEX_URL` - Your Convex deployment URL
    - `JWT_SECRET` - Generate a random 64-character string
+   - Tests: `npm test` (vitest)
 
 3. **Run development server:**
    ```bash
@@ -55,10 +56,9 @@ Web portal for developers to register, create, and publish Skills, MCP Servers, 
 - **Register** - Create developer account
 
 ### Dashboard (After Approval)
-- **Overview** - Stats and recent activity
+- **Dashboard** - Stats and recent activity
 - **My Apps** - Published apps management
 - **Submissions** - Track submission status
-- **Analytics** - Install and rating stats
 - **Settings** - Profile management
 
 ## Developer Workflow

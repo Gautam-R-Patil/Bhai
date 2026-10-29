@@ -1,3 +1,5 @@
+> **Status (verified 2026-10-30): NOT DONE.** `googleapis` ^171.4.0 is still a dependency in the root `package.json` and is still imported by `src/tools/google-api.ts` and `src/marketing/adapters/youtube.ts`; no `@googleapis/*` packages are installed. Only a boot-time mitigation shipped: commit `c048e46`/`e7e3757` "Load googleapis, Baileys and Slack Bolt lazily to speed up boot". The ~190 MB bundle saving below is still unrealized.
+
 # Refactor Plan — Replace `googleapis` with per-service `@googleapis/*`
 
 Companion to `desktop/BUNDLE_SIZE.md`. This doc captures the
