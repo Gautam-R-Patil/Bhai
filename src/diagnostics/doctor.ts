@@ -80,7 +80,7 @@ async function probeAuthed(): Promise<DoctorCheck> {
 function probeCredits(): DoctorCheck {
     const bal = getKnownCreditBalance();
     if (bal === null) return { check: "Credit balance", status: "warn", detail: "unknown — run a query first" };
-    if (bal <= 0) return { check: "Credit balance", status: "fail", detail: `${bal}`, fix: "top up credits" };
+    if (bal <= 0) return { check: "Credit balance", status: "fail", detail: `${bal}`, fix: "ask the XAGI Labs team (xagilab.com) for more credits" };
     return { check: "Credit balance", status: "ok", detail: `${bal}` };
 }
 

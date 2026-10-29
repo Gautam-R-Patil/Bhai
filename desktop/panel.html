@@ -1831,7 +1831,7 @@
                     // Block if out of credits. null means data temporarily unavailable
                     // (bot process will enforce credits itself via account-guard).
                     if (info.ai_credits === 0) {
-                        showToast('⛔ Out of AI credits. Purchase more credits to continue.');
+                        showToast('⛔ Out of AI credits. Reach the XAGI Labs team at xagilab.com for more.');
                         document.getElementById('startBtn').disabled = false;
                         document.getElementById('startBtn').textContent = 'Start Bhai';
                         startFailed();
@@ -2961,7 +2961,7 @@
         function friendlyError(raw) {
             const m = raw.toLowerCase();
             if (m.includes('session') && (m.includes('401') || m.includes('not_validated') || m.includes('auth'))) return 'Bhai couldn\'t sign in. Open Account and sign in again.';
-            if (m.includes('credit') || m.includes('402')) return 'You\'re out of credits. Check the Account tab.';
+            if (m.includes('credit') || m.includes('402')) return 'You\'re out of AI credits. Reach the XAGI Labs team at xagilab.com for more.';
             if (m.includes('enotfound') || m.includes('econnrefused') || m.includes('network') || m.includes('timed out')) return 'Bhai can\'t reach the internet right now. It will retry.';
             if (m.includes('permission') || m.includes('not authorized')) return 'Bhai is missing a macOS permission. See Settings → Permissions.';
             if (m.includes('exited with code')) return 'Bhai stopped unexpectedly. Click Start to try again, or open Logs for details.';

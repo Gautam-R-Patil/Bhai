@@ -543,6 +543,11 @@ export function asksLeaveToLook(responseText: string): boolean {
     );
 }
 
+// There is no in-app purchase yet (Account shows the balance only), so don't send people
+// looking for a top-up button.
+const OUT_OF_CREDITS_REPLY =
+    "You're out of AI credits, so I can't do this right now. Credits can't be bought in the app yet: reach the XAGI Labs team at xagilab.com for more, then ask me again.";
+
 // ── Milestone tool descriptions ───────────────
 
 const MILESTONE_DESCRIPTIONS: Record<string, (args: Record<string, unknown>) => string> = {
@@ -3396,7 +3401,7 @@ PLAN:`,
             if ((llmErr as { status?: number }).status === 402) {
                 if (_harnessTraceId) finalizeTrace(_harnessTraceId, false);
                 return {
-                    text: "You're out of AI credits, so I can't do this right now. Top up in Settings → Account and ask me again.",
+                    text: OUT_OF_CREDITS_REPLY,
                     toolCalls: totalToolCalls,
                 };
             }
@@ -3427,7 +3432,7 @@ PLAN:`,
                     const outOfCredits = /run out of (AI )?credits|insufficient credits/i.test(lastLlmError);
                     return {
                         text: outOfCredits
-                            ? "You're out of AI credits, so I can't do this right now. Top up in Settings → Account and ask me again."
+                            ? OUT_OF_CREDITS_REPLY
                             : stuckExitText(
                                   messages,
                                   "I lost my connection to the AI model",

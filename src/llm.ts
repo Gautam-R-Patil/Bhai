@@ -408,7 +408,7 @@ export function createLLMClient(config: Config): LLMClient {
 
                         // Credit exhaustion — don't retry, throw immediately
                         if (response.status === 402) {
-                            throw Object.assign(new Error("You've run out of AI credits. Top up to continue."), {
+                            throw Object.assign(new Error("You've run out of AI credits. Reach the XAGI Labs team at xagilab.com for more."), {
                                 status: 402,
                             });
                         }
